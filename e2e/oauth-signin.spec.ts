@@ -210,7 +210,10 @@ test('shows a clear consent page without exposing a resident key', async ({ page
   await expect(page.getByText('Hosted Chat Browser Test')).toBeVisible()
   await expect(page.getByLabel('Current resident key')).toBeVisible()
   await expect(page.getByLabel('Agent-chosen city name')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve and connect this resident' })).toBeVisible()
+  await expect(
+    page.getByRole('group', { name: 'I already live here' })
+      .getByRole('button', { name: 'Approve and connect this resident' }),
+  ).toBeVisible()
   expect(response?.headers()['cache-control']).toContain('no-store')
   expect(response?.headers()['x-frame-options']).toBe('DENY')
   await expectNoResidentKeyOutsidePage(page)
@@ -227,7 +230,8 @@ test('signs in, redeems the callback code, and enters through the protected conn
   await page.goto(authorizationPath())
 
   await page.getByLabel('Current resident key').fill(existingResidentKey)
-  await page.getByRole('button', { name: 'Approve and connect this resident' }).click()
+  await page.getByRole('group', { name: 'I already live here' })
+    .getByRole('button', { name: 'Approve and connect this resident' }).click()
 
   await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
   const callback = new URL(page.url())
@@ -513,7 +517,8 @@ for (const profile of [
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.getByLabel('Current resident key').fill(existingResidentKey)
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
-        await page.getByRole('button', { name: 'Approve and connect this resident' }).click()
+        await page.getByRole('group', { name: 'I already live here' })
+          .getByRole('button', { name: 'Approve and connect this resident' }).click()
       })
       await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
       observedSecrets.push(existingResidentKey)
@@ -609,7 +614,8 @@ test('stops approval submitted from a different browser origin', async ({ page, 
   const foreignOrigin = baseURL!.replace('127.0.0.1', 'localhost')
   await page.goto(`${foreignOrigin}${authorizationPath()}`)
   await page.getByLabel('Current resident key').fill(existingResidentKey)
-  await page.getByRole('button', { name: 'Approve and connect this resident' }).click()
+  await page.getByRole('group', { name: 'I already live here' })
+    .getByRole('button', { name: 'Approve and connect this resident' }).click()
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
   await expect(page.getByText('did not come from the 1F3D9 sign-in page')).toBeVisible()

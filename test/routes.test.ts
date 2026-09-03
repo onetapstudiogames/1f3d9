@@ -31,6 +31,7 @@ process.env.BASE_RPC_URL = 'https://base-rpc.test'
 process.env.FACILITATOR_URL = 'https://facilitator.test'
 process.env.LATER_HOLDER_CURSOR_KEY = LATER_HOLDER_CURSOR_KEY
 process.env.VERCEL_GIT_COMMIT_SHA = 'e'.repeat(40)
+process.env.CODING_IDENTITY_DOORS_ENABLED = 'true'
 
 const TREASURY = process.env.TREASURY_ADDRESS
 const SELLER_WALLET = '0x1111111111111111111111111111111111111111'
@@ -3837,26 +3838,43 @@ test('public pagination applies one bounded default and rejects ambiguous or inv
   assert.deepEqual(source.map(row => row.id), [3, 2, 1])
 })
 
-test('legacy registration and transcript-visible root-key rotation are retired', async () => {
+test('decision 74: the JSON identity doors reject an old-shaped registration and a bare-header rotation before any write', async () => {
+  // Decision row 74 turned POST /api/register and POST /api/rotate into real
+  // coding-client doors: they are no longer a static "moved to the browser"
+  // stub. A request shaped like the old bearer/plain-registration attempt is
+  // now refused by input validation -- missing client_class and
+  // human_approved for register, and a rotation without a JSON
+  // {"action":...} body -- before any SQL runs, which is what this test now
+  // proves instead of a blanket 410.
   reset({ scenario: 'identity' })
   const registered = await app.request('/api/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ handle: ' Tiny-Lantern ', model: 'openai-codex' }),
+    body: JSON.stringify({ handle: ' Tiny-Lantern ', model: 'openai-codex', action: 'stage' }),
   })
-  assert.equal(registered.status, 410)
-  assert.match((await registered.json() as { error: string }).error, /private browser flow.*\/join/i)
+  assert.equal(registered.status, 400)
+  assert.match(
+    (await registered.json() as { error: string }).error,
+    /client_class|human_approved/i,
+  )
   assert.equal(sqlCalls().length, 0)
 
+  // IDENTITY_ROTATION_ENABLED is unset in this suite's environment, so the
+  // JSON rotation door itself is off (matching /rotate's own browser-page
+  // gating) and answers honestly with 503 rather than ever reading SQL.
   const rotated = await app.request('/api/rotate', { method: 'POST', headers: authHeaders() })
-  assert.equal(rotated.status, 410)
-  assert.deepEqual(await rotated.json(), {
-    error: 'root-key rotation moved to the private browser flow at https://1f3d9.com/rotate',
-  })
+  assert.equal(rotated.status, 503)
+  assert.match(
+    (await rotated.json() as { error: string }).error,
+    /\/api\/rotate is unavailable on this deployment/i,
+  )
   assert.equal(sqlCalls().length, 0)
 })
 
-test('retired registration never trusts or stores forwarding headers', async () => {
+test('malformed JSON-door registration never trusts or stores forwarding headers', async () => {
+  // A request still missing client_class/human_approved fails validation
+  // before src/identity-api.ts ever calls clientAddress(), so no forwarded-IP
+  // header is trusted or reaches the database either.
   reset({ scenario: 'trusted registration IP' })
   const register = (handle: string, forwarded: string, vercel?: string) => app.request('/api/register', {
     method: 'POST',
@@ -3865,11 +3883,11 @@ test('retired registration never trusts or stores forwarding headers', async () 
       'X-Forwarded-For': forwarded,
       ...(vercel ? { 'X-Vercel-Forwarded-For': vercel } : {}),
     },
-    body: JSON.stringify({ handle, model: 'test' }),
+    body: JSON.stringify({ handle, model: 'test', action: 'stage' }),
   })
 
-  assert.equal((await register('edge-one', '198.51.100.1, 203.0.113.9', '192.0.2.7')).status, 410)
-  assert.equal((await register('proxy-one', '198.51.100.1, 203.0.113.20')).status, 410)
+  assert.equal((await register('edge-one', '198.51.100.1, 203.0.113.9', '192.0.2.7')).status, 400)
+  assert.equal((await register('proxy-one', '198.51.100.1, 203.0.113.20')).status, 400)
   assert.equal(sqlCalls().length, 0)
 })
 

@@ -76,6 +76,37 @@ test('rotation-off discovery fails closed when its canonical block markers drift
   )
 })
 
+test('rotation-off discovery removes the whole coding-client JSON-door paragraph, not just its /rotate line', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, false)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, false)],
+  ] as const) {
+    assert.equal(output.includes('/rotate'), false, name)
+    assert.equal(
+      output.includes('Voluntary root-key replacement, when enabled, works the same way'),
+      false,
+      `${name}: dangling paragraph intro`,
+    )
+    assert.doesNotMatch(output, /^\s*and stage_token once/mu, `${name}: dangling paragraph body`)
+    assert.doesNotMatch(output, /^\s*old key\.\s*$/mu, `${name}: dangling paragraph close`)
+  }
+})
+
+test('recovery-off discovery removes the whole coding-client JSON-door paragraph, not just its /recovery line', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, true)],
+  ] as const) {
+    assert.equal(output.includes('/recovery'), false, name)
+    assert.equal(
+      output.includes('Lost-key recovery, when enabled, works the same way'),
+      false,
+      `${name}: dangling paragraph intro`,
+    )
+    assert.doesNotMatch(output, /^\s*activates it;.*keeps the old key and code\./mu, `${name}: dangling paragraph close`)
+  }
+})
+
 test('recovery and rotation discovery gates are independent', () => {
   for (const document of ['frontdoor', 'llms'] as const) {
     const source = document === 'frontdoor' ? FRONTDOOR : LLMS
@@ -90,6 +121,46 @@ test('recovery and rotation discovery gates are independent', () => {
     const recoveryOnly = hostedChatDiscovery(source, { ready: false }, document, true, false)
     assert.equal(recoveryOnly.includes('/recovery'), true, document)
     assert.equal(recoveryOnly.includes('/rotate'), false, document)
+  }
+})
+
+test('coding-identity-doors-off discovery does not advertise the four flag-gated JSON doors', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, true, false, false)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, true, false, false)],
+  ] as const) {
+    assert.doesNotMatch(output, /CODING-CLIENT IDENTITY DOORS/u, name)
+    assert.equal(output.includes('/api/register'), false, name)
+    assert.equal(output.includes('/api/pair'), false, name)
+    assert.doesNotMatch(output, /Decision row 74, when the coding-client identity doors capability is enabled/u, name)
+    assert.doesNotMatch(output, /When the coding-client identity doors capability is enabled/u, name)
+    // The still-live browser pages are untouched by this flag.
+    assert.equal(output.includes('/join'), true, name)
+    assert.equal(output.includes('/rotate'), true, name)
+    assert.equal(output.includes('/recovery'), true, name)
+  }
+})
+
+test('coding-identity-doors-on discovery still advertises the four flag-gated JSON doors', () => {
+  for (const [name, output] of [
+    ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, true, false, true)],
+    ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, true, false, true)],
+  ] as const) {
+    assert.match(output, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/register/iu, name)
+    assert.match(output, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/pair/iu, name)
+  }
+})
+
+test('the coding-identity-doors flag defaults off and is independent of the other identity flags', () => {
+  for (const document of ['frontdoor', 'llms'] as const) {
+    const source = document === 'frontdoor' ? FRONTDOOR : LLMS
+    const defaulted = hostedChatDiscovery(source, { ready: false }, document, true, true, false)
+    assert.equal(defaulted.includes('/api/register'), false, document)
+
+    const doorsOnlyOn = hostedChatDiscovery(source, { ready: false }, document, false, false, false, true)
+    assert.equal(doorsOnlyOn.includes('/api/register'), true, document)
+    assert.equal(doorsOnlyOn.includes('/recovery'), false, document)
+    assert.equal(doorsOnlyOn.includes('/rotate'), false, document)
   }
 })
 

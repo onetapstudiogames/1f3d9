@@ -6,6 +6,7 @@ process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/f
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 process.env.IDENTITY_RECOVERY_ENABLED = 'true'
 process.env.IDENTITY_ROTATION_ENABLED = 'true'
+process.env.CODING_IDENTITY_DOORS_ENABLED = 'true'
 
 const { default: app } = await import('../src/index.ts')
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -196,7 +197,7 @@ test('MCP omits the browser rotation route while its independent switch is off',
   }
 })
 
-test('every identity surface uses private browser capture and retires transcript-visible registration', async () => {
+test('every identity surface uses private browser capture, and decision 74 names the coding-client JSON exception explicitly', async () => {
   for (const [name, value] of [
     ['front door source', read('../src/door.ts')],
     ['front door', read('../src/frontdoor.txt')],
@@ -211,9 +212,14 @@ test('every identity surface uses private browser capture and retires transcript
     assert.match(value, /old (?:root |resident )?key[^\n]{0,160}(?:remain|stay|active|works?)/iu, `${name}: old root stays active until confirmation`)
     assert.match(value, /(?:connector|delegated|session|access|refresh|authorization code|auth code)[\s\S]{0,280}(?:stop|revoke|invalid)/iu, `${name}: delegated access revoked`)
     assert.match(value, /never[^\n]{0,120}(?:chat|MCP|tool result)|(?:chat|MCP|tool result)[^\n]{0,120}never/iu, `${name}: transcript ban`)
-    assert.doesNotMatch(value, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/register/iu, `${name}: retired API`)
-    assert.doesNotMatch(value, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/rotate/iu, `${name}: retired rotation API`)
-    assert.doesNotMatch(value, /Tools?:[^\n]*\bregister\b/iu, `${name}: retired MCP tool`)
+    assert.doesNotMatch(value, /Tools?:[^\n]*\bregister\b/iu, `${name}: register is never an MCP tool`)
+    // Decision row 74: POST /api/register, POST /api/rotate, and POST /api/recovery
+    // are real coding-client JSON doors now, gated to coding_persistent/coding_ephemeral
+    // and one human approval, never a naive plaintext-return stub.
+    assert.match(value, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/register/iu, `${name}: coding-client JSON register door`)
+    assert.match(value, /coding_persistent[\s\S]{0,80}coding_ephemeral|coding_ephemeral[\s\S]{0,80}coding_persistent/iu, `${name}: coding-only client_class gate`)
+    assert.match(value, /human_approved/iu, `${name}: human approval declaration`)
+    assert.match(value, /never[^\n]{0,120}MCP tool|MCP tool[^\n]{0,120}never/iu, `${name}: JSON doors are also never MCP tools`)
   }
 
   const official = await (await app.request('/api/official')).json() as {
@@ -226,7 +232,14 @@ test('every identity surface uses private browser capture and retires transcript
     rotate: 'https://1f3d9.com/rotate',
     rotation_enabled: true,
     legacy_registration: 'retired',
-    root_key_transport: 'first-party no-store browser only; never API, MCP, or chat output',
+    coding_client_json: {
+      register: 'https://1f3d9.com/api/register',
+      rotate: 'https://1f3d9.com/api/rotate',
+      recovery: 'https://1f3d9.com/api/recovery',
+      client_classes: ['coding_persistent', 'coding_ephemeral'],
+      doors_enabled: true,
+    },
+    root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only when its coding-client doors are enabled; never MCP or chat output',
   })
 })
 

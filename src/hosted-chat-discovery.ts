@@ -109,30 +109,60 @@ function llmsCopy(origin: string): string {
 `
 }
 
+/**
+ * Removes one whole paragraph, from startMarker through endMarker
+ * inclusive, collapsing the surrounding blank lines. Used instead of a
+ * blanket "strip any line naming this path" regex, which only deletes the
+ * one line inside a multi-line paragraph that happens to contain the path
+ * -- leaving that paragraph's intro and closing lines dangling around a
+ * hole. Returns source unchanged if either marker is not found.
+ */
+function removeMarkedParagraph(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start)
+  if (start < 0 || end < 0) return source
+  const prefix = source.slice(0, start).trimEnd()
+  const suffix = source.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
+  return `${prefix}\n\n${suffix}`
+}
+
 function recoveryAwareSource(
   source: string,
   document: 'frontdoor' | 'llms',
   recoveryEnabled: boolean,
 ): string {
   if (recoveryEnabled) return source
+  // Decision row 74 reworded this sentence on both mirrors to also name the
+  // coding-client JSON door; frontdoor.txt and llms.txt phrase the "above"/
+  // "below" pointer and connective differently (their layouts differ), so
+  // this pattern tolerates that gap instead of pinning one exact wording.
   const policyAwareSource = source.replace(
-    /Recovery, when enabled, stays browser-only through \/recovery; it is never an MCP tool\.?/gu,
+    /Recovery, when enabled, stays browser-only through \/recovery,? or through the coding-client[\s\S]{0,10}JSON door[\s\S]{0,60}also separately enabled; it is never an MCP tool\.?/gu,
     'Recovery stays browser-only and is never an MCP tool; no recovery page is enabled on this deployment.',
   )
   if (document === 'llms') {
     return policyAwareSource.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:'
-  const endMarker = 'connector sessions, and all superseded codes stop together.'
-  const start = policyAwareSource.indexOf(startMarker)
-  const end = policyAwareSource.indexOf(endMarker, start)
-  if (start < 0 || end < 0) return policyAwareSource
-  const prefix = policyAwareSource.slice(0, start)
-    .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
-    .trimEnd()
-  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
+  // Two separate paragraphs name /recovery in frontdoor.txt: the browser
+  // page's own paragraph, and decision row 74's coding-client JSON-door
+  // paragraph. Each gets removed by its own start/end markers so neither
+  // leaves orphaned intro/closing lines behind. The trailing blanket strip
+  // is a fail-closed net only: if either paragraph's markers ever drift, it
+  // still removes a bare stray line naming the disabled path rather than
+  // silently leaving it live.
+  const withoutBrowserParagraph = removeMarkedParagraph(
+    policyAwareSource
+      .replace('Permanent keys and recovery codes never', 'Permanent resident keys never'),
+    'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:',
+    'connector sessions, and all superseded codes stop together.',
+  )
+  const withoutJsonDoorParagraph = removeMarkedParagraph(
+    withoutBrowserParagraph,
+    'Lost-key recovery, when enabled, works the same way as its browser page:',
+    'keeps the old key and code.',
+  )
+  return withoutJsonDoorParagraph.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
 }
 
 function rotationAwareSource(
@@ -141,24 +171,60 @@ function rotationAwareSource(
   rotationEnabled: boolean,
 ): string {
   if (rotationEnabled) return source
+  // Decision row 74 reworded this sentence the same way as recovery's above.
   const policyAwareSource = source.replace(
-    /Rotation, when enabled, stays browser-only through \/rotate; it is never an MCP tool\.?/gu,
+    /Rotation, when enabled, stays browser-only through \/rotate,? or through the coding-client[\s\S]{0,10}JSON door[\s\S]{0,60}also separately enabled; it is never an MCP tool\.?/gu,
     'Rotation stays browser-only and is never an MCP tool; no rotation page is enabled on this deployment.',
   )
   if (document === 'llms') {
     return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
   }
 
-  const startMarker = 'Voluntarily replace a current root key only on the first-party, no-store page:'
-  const endMarker = 'chat, an API body or response, MCP, a tool, ordinary logs, or public city content.'
-  const start = policyAwareSource.indexOf(startMarker)
-  const end = policyAwareSource.indexOf(endMarker, start)
-  if (start < 0 || end < 0) {
-    return policyAwareSource.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+  // Same two-paragraph situation as recovery above: the browser page's own
+  // paragraph, and decision row 74's coding-client JSON-door paragraph. The
+  // trailing blanket strip is the same fail-closed net described there.
+  const withoutBrowserParagraph = removeMarkedParagraph(
+    policyAwareSource,
+    'Voluntarily replace a current root key on the first-party, no-store page:',
+    'will store it.',
+  )
+  const withoutJsonDoorParagraph = removeMarkedParagraph(
+    withoutBrowserParagraph,
+    'Voluntary root-key replacement, when enabled, works the same way as its browser page:',
+    'keeps the\n  old key.',
+  )
+  return withoutJsonDoorParagraph.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+}
+
+function codingIdentityDoorsAwareSource(
+  source: string,
+  document: 'frontdoor' | 'llms',
+  doorsEnabled: boolean,
+): string {
+  if (doorsEnabled) return source
+
+  if (document === 'llms') {
+    // Four bullet lines, each its own line, document decision row 74's
+    // coding-client JSON doors (register/rotate/recovery/pair). Removed by
+    // distinct line-start text rather than a blanket "mentions /api/" strip,
+    // so an unrelated bullet naming one of these paths for another reason
+    // is not silently deleted too.
+    return source
+      .replace(/^- Decision row 74, when the coding-client identity doors capability is enabled.*\r?\n/mu, '')
+      .replace(/^- Decision row 74, when both rotation and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
+      .replace(/^- Decision row 74, when both recovery and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
+      .replace(/^- When the coding-client identity doors capability is enabled.*\r?\n/mu, '')
   }
-  const prefix = policyAwareSource.slice(0, start).trimEnd()
-  const suffix = policyAwareSource.slice(end + endMarker.length).replace(/^(?:\r?\n)+/u, '')
-  return `${prefix}\n\n${suffix}`.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+
+  // Same removeMarkedParagraph approach used for rotation and recovery
+  // above: the section is deleted whole, from its heading through its
+  // closing sentence, rather than line-by-line, so no dangling intro or
+  // closing text is left behind around the hole.
+  return removeMarkedParagraph(
+    source,
+    'CODING-CLIENT IDENTITY DOORS\n----------------------------',
+    'Skill repositories call this script instead of reimplementing the ceremony.',
+  )
 }
 
 function purchaseAwareSource(source: string, purchasesReady: boolean): string {
@@ -227,6 +293,7 @@ export function hostedChatDiscovery(
   recoveryEnabled: boolean,
   rotationEnabled = false,
   purchasesReady = false,
+  codingIdentityDoorsEnabled = false,
 ): string {
   const recoveryBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
   const featureBoundSource = rotationAwareSource(
@@ -234,7 +301,12 @@ export function hostedChatDiscovery(
     document,
     rotationEnabled,
   )
-  const purchaseBoundSource = purchaseAwareSource(featureBoundSource, purchasesReady)
+  const doorsBoundSource = codingIdentityDoorsAwareSource(
+    featureBoundSource,
+    document,
+    codingIdentityDoorsEnabled,
+  )
+  const purchaseBoundSource = purchaseAwareSource(doorsBoundSource, purchasesReady)
   if (!readiness.ready) return hostedSigninUnavailableSource(purchaseBoundSource, document)
 
   const originBoundSource = purchaseBoundSource.replaceAll('https://1f3d9.com', readiness.origin)

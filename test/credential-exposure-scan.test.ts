@@ -16,6 +16,7 @@ const accessToken = `1f3d9_at_${'b2'.repeat(32)}`
 const refreshToken = `1f3d9_rt_${'b2'.repeat(32)}`
 const authorizationCode = `1f3d9_ac_${'d4'.repeat(32)}`
 const recoveryCode = `1f3d9_rc_${'e5'.repeat(32)}`
+const pairingCode = `1f3d9_pc_${'f6'.repeat(32)}`
 const partialAccessToken = `1f3d9_at_${'c3'.repeat(6)}`
 const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
 
@@ -66,6 +67,7 @@ test('the read-only scan reports resident IDs and counts without exposing matche
     Object.freeze({ associated_resident_id: 11, content: `historical ${accessToken}` }),
     Object.freeze({ associated_resident_id: 12, content: `historical ${authorizationCode}` }),
     Object.freeze({ associated_resident_id: 13, content: `historical ${recoveryCode}` }),
+    Object.freeze({ associated_resident_id: 14, content: `historical ${pairingCode}` }),
     Object.freeze({ associated_resident_id: null, content: `partial ${partialAccessToken}` }),
   ])
   const originalRows = structuredClone(exposureRows)
@@ -77,6 +79,17 @@ test('the read-only scan reports resident IDs and counts without exposing matche
     async query(text) {
       statements.push(text)
       if (/public_credential_exposures/i.test(text)) return { rows: [...exposureRows] }
+      if (/credential_identity_pairing_codes_exists/i.test(text)) {
+        return { rows: [{ table_exists: true }] }
+      }
+      if (/credential_identity_matches_pairing_codes/i.test(text)) {
+        return { rows: [
+          {
+            credential_hash: digest(pairingCode), credential_kind: 'pairing_code',
+            resident_id: 15, live: true,
+          },
+        ] }
+      }
       if (/credential_identity_matches/i.test(text)) {
         return { rows: [
           {
@@ -120,14 +133,14 @@ test('the read-only scan reports resident IDs and counts without exposing matche
   assert.equal(connected, 1)
   assert.equal(ended, 1)
   assert.deepEqual(exposureRows, originalRows)
-  assert.deepEqual(result.associated_resident_ids, [7, 8, 11, 12, 13])
-  assert.deepEqual(result.credential_owner_resident_ids, [9, 10, 11, 12, 13])
-  assert.deepEqual(result.live_credential_owner_resident_ids, [9, 11, 13])
+  assert.deepEqual(result.associated_resident_ids, [7, 8, 11, 12, 13, 14])
+  assert.deepEqual(result.credential_owner_resident_ids, [9, 10, 11, 12, 13, 15])
+  assert.deepEqual(result.live_credential_owner_resident_ids, [9, 11, 13, 15])
   assert.deepEqual(result.counts, {
-    public_fields: 6,
-    exact_credentials: 5,
+    public_fields: 7,
+    exact_credentials: 6,
     partial_shapes: 1,
-    live_credentials: 3,
+    live_credentials: 4,
     inactive_credentials: 2,
     unresolved_credentials: 0,
     resident_key: 1,
@@ -135,6 +148,7 @@ test('the read-only scan reports resident IDs and counts without exposing matche
     oauth_refresh_token: 1,
     oauth_authorization_code: 1,
     recovery_code: 1,
+    pairing_code: 1,
   })
   assert.match(statements.join('\n'), /BEGIN[^;]*READ ONLY/i)
   assert.match(statements.join('\n'), /statement_timeout/i)
@@ -151,6 +165,56 @@ test('the read-only scan reports resident IDs and counts without exposing matche
   assert.doesNotMatch(publicOutput, /credential_hash|content|surface|row_id|handle|body/i)
   assert.match(statements.join('\n'), /SET LOCAL search_path = pg_catalog, public/i)
   assert.doesNotMatch(statements.join('\n'), /\b(?:FROM|JOIN)\s+(?!public\.)[a-z_]+/i)
+})
+
+test('the scan still finds ordinary credential matches on a database that has not run the pairing_codes migration yet', async () => {
+  const exposureRows = Object.freeze([
+    Object.freeze({ associated_resident_id: 7, content: `historical ${rootKey}` }),
+    Object.freeze({ associated_resident_id: 14, content: `historical ${pairingCode}` }),
+  ])
+  const statements: string[] = []
+  const client: CredentialScanClient = {
+    async connect() {},
+    async query(text) {
+      statements.push(text)
+      if (/public_credential_exposures/i.test(text)) return { rows: [...exposureRows] }
+      // Decision row 74: pairing_codes does not exist pre-migration, so
+      // to_regclass reports it absent and the pairing-code-specific query
+      // (credential_identity_matches_pairing_codes) must never be sent --
+      // sending it against a database without that table would throw.
+      if (/credential_identity_pairing_codes_exists/i.test(text)) {
+        return { rows: [{ table_exists: false }] }
+      }
+      if (/credential_identity_matches_pairing_codes/i.test(text)) {
+        throw new Error('pairing_codes does not exist on this database')
+      }
+      if (/credential_identity_matches/i.test(text)) {
+        return { rows: [
+          {
+            credential_hash: digest(rootKey), credential_kind: 'resident_key',
+            resident_id: 9, live: true,
+          },
+        ] }
+      }
+      return { rows: [] }
+    },
+    async end() {},
+  }
+
+  const result = await runCredentialExposureScan({
+    argv: ['--target', 'local', '--database', 'city'],
+    environment: {
+      CONFIRM_LOCAL_CREDENTIAL_SCAN: LOCAL_SCAN_ACKNOWLEDGEMENT,
+      LOCAL_DATABASE_URL_UNPOOLED: 'postgres://operator:password@127.0.0.1:5432/city',
+    },
+    createClient: () => client,
+    log: () => {},
+  })
+
+  assert.deepEqual(result.credential_owner_resident_ids, [9])
+  assert.equal(result.counts.exact_credentials, 2)
+  assert.equal(result.counts.pairing_code, 1)
+  assert.equal(result.counts.unresolved_credentials, 1)
 })
 
 test('wrong or unproven targets fail before a database client or Neon request exists', async () => {

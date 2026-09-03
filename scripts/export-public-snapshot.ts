@@ -76,6 +76,7 @@ function staticRecords(): readonly PublicSnapshotRecord[] {
     && process.env.IDENTITY_RECOVERY_ENABLED === 'true'
   const identityRotationEnabled = domainConfiguration.identityBrowserReady
     && process.env.IDENTITY_ROTATION_ENABLED === 'true'
+  const codingIdentityDoorsEnabled = process.env.CODING_IDENTITY_DOORS_ENABLED === 'true'
   return Object.freeze([
     Object.freeze({
       class_name: 'official',
@@ -90,6 +91,7 @@ function staticRecords(): readonly PublicSnapshotRecord[] {
           identityBrowserReady: domainConfiguration.identityBrowserReady,
           identityRecoveryEnabled,
           identityRotationEnabled,
+          codingIdentityDoorsEnabled,
         }),
       }),
     }),

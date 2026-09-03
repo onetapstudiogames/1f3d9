@@ -173,7 +173,11 @@ test('the source scan includes place lifecycle helper refusals added on main', (
 
 test('the refusal census covers every non-identity HTTP and MCP boundary', () => {
   const http = discoverHttpBoundaries(projectRoot)
-  assert.equal(http.registrations.length, 117)
+  // Decision row 74 security fix: pair.ts is no longer excluded from this
+  // census (see IDENTITY_MODULES in check-refusal-census.ts), so its two
+  // POST /api/pair registrations -- mountPairRoutes and the new
+  // mountPairDisabledRoute -- are now counted here too.
+  assert.equal(http.registrations.length, 121)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

@@ -226,6 +226,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: legacy.sessionHash,
           csrfHash: legacy.csrfHash,
           residentSecretHash: legacy.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /registration confirmation produced no outcome/i,
       )
@@ -333,6 +334,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: legacy.sessionHash,
         csrfHash: legacy.csrfHash,
         residentSecretHash: legacy.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       }), {
         status: 'confirmed', residentId: 2, handle: legacy.handle,
       })
@@ -485,6 +487,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: sha256('wrong-key'),
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'credential_rejected' })
       const afterWrongKey = await database!.query(
         `SELECT confirmed_at, canceled_at, secret_hash,
@@ -503,11 +506,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
       assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'confirmed', residentId: 2, handle: 'new-resident' })
       assert.deepEqual(await store.getResidentRegistrationProgress({
         sessionHash: pending.sessionHash,
@@ -542,6 +547,56 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
       }])
       assert.equal((await database!.query("SELECT count(*) FROM events WHERE kind = 'register' AND actor = 'new-resident'")).rows[0]!.count, '1')
       assert.equal((await database!.query('SELECT last_id FROM resident_id_allocator WHERE singleton')).rows[0]!.last_id, 2)
+      // Decision row 74 security fix: json_door_human_approval_declared has
+      // no column of its own on pending_resident_registrations -- it is
+      // bound in directly from confirmResidentRegistration's own
+      // jsonDoorHumanApprovalDeclared input parameter, supplied here
+      // exactly like identity-api.ts (the JSON door) always supplies it:
+      // true.
+      const registerEvent = await database!.query<{
+        detail: { json_door_human_approval_declared: boolean; client_class: string }
+      }>(
+        "SELECT detail FROM events WHERE kind = 'register' AND actor = 'new-resident'",
+      )
+      assert.deepEqual(registerEvent.rows[0]!.detail.json_door_human_approval_declared, true)
+      assert.deepEqual(registerEvent.rows[0]!.detail.client_class, 'coding_ephemeral')
+    })
+
+    await t.test('a browser-shaped registration keeps its register event byte-identical to main, never client_class or a human-approval key', async () => {
+      // Complements the JSON-shaped assertion above: identity-browser.ts's
+      // /join page always calls confirmResidentRegistration with
+      // jsonDoorHumanApprovalDeclared: null, even when it stages
+      // client_class coding_persistent/coding_ephemeral, so the browser
+      // path's event detail stays exactly what main has always written --
+      // {resident_id, model} -- and never gains client_class or any
+      // human-approval key it never declared.
+      await resetDatabase()
+      const pending = registration('browser-shape', 'browser-shape-resident')
+      assert.equal((await store.stageResidentRegistration(pending))?.status, 'staged')
+      assert.deepEqual(await store.confirmResidentRegistration({
+        sessionHash: pending.sessionHash,
+        csrfHash: pending.csrfHash,
+        residentSecretHash: pending.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: null,
+      }), { status: 'confirmed', residentId: 2, handle: 'browser-shape-resident' })
+      const registerEvent = await database!.query<{ detail: Record<string, unknown> }>(
+        "SELECT detail FROM events WHERE kind = 'register' AND actor = 'browser-shape-resident'",
+      )
+      assert.equal(registerEvent.rows.length, 1)
+      const detail = registerEvent.rows[0]!.detail
+      assert.deepEqual(Object.keys(detail).sort(), ['model', 'resident_id'])
+      assert.equal(detail.model, 'postgres-test')
+      // Neither human_approved nor json_door_human_approval_declared is
+      // ever persisted anywhere but the JSON door's confirmed register
+      // event's jsonb detail -- confirm no such column exists.
+      assert.equal(
+        (await database!.query(
+          `SELECT count(*) FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'pending_resident_registrations'
+             AND column_name IN ('human_approved', 'json_door_human_approval_declared')`,
+        )).rows[0]!.count,
+        '0',
+      )
     })
 
     await t.test('a missing world root leaves the whole registration pending and unchanged', async () => {
@@ -556,6 +611,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /registration confirmation produced no outcome/i,
       )
@@ -672,11 +728,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: canceled.sessionHash,
         csrfHash: canceled.csrfHash,
         residentSecretHash: canceled.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'request_unavailable' })
       assert.deepEqual(await store.confirmResidentRegistration({
         sessionHash: expired.sessionHash,
         csrfHash: expired.csrfHash,
         residentSecretHash: expired.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       }), { status: 'request_unavailable' })
     })
 
@@ -703,12 +761,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       })
       await new Promise(resolve => setTimeout(resolve, 50))
       const wrong = store.confirmResidentRegistration({
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: sha256('wrong-racing-key'),
+        jsonDoorHumanApprovalDeclared: true,
       })
       assert.deepEqual(await Promise.all([correct, wrong]), [
         { status: 'confirmed', residentId: 2, handle: 'race-exact-key' },
@@ -741,6 +801,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         { code: '23505', constraint: 'resident_recovery_codes_code_hash_key' },
       )
@@ -791,6 +852,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: pending.sessionHash,
           csrfHash: pending.csrfHash,
           residentSecretHash: pending.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         /injected registration event failure/i,
       )
@@ -821,10 +883,12 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         store.confirmResidentRegistration({
           sessionHash: first.sessionHash, csrfHash: first.csrfHash,
           residentSecretHash: first.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
         store.confirmResidentRegistration({
           sessionHash: second.sessionHash, csrfHash: second.csrfHash,
           residentSecretHash: second.residentSecretHash,
+          jsonDoorHumanApprovalDeclared: true,
         }),
       ])
       assert.equal(results.filter(result => result.status === 'confirmed').length, 1)
@@ -878,6 +942,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: pending.sessionHash,
         csrfHash: pending.csrfHash,
         residentSecretHash: pending.residentSecretHash,
+        jsonDoorHumanApprovalDeclared: true,
       })
       await new Promise(resolve => setTimeout(resolve, 25))
       const cancellation = store.cancelResidentRegistration({
@@ -922,6 +987,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: stage.sessionHash,
         csrfHash: stage.csrfHash,
         replacementSecretHash: sha256('wrong-replacement'),
+        invalidatePairingCodes: true,
       }), { status: 'credential_rejected' })
       assert.equal(await store.cancelRootRecovery(stage), true)
       const state = await database!.query(
@@ -957,6 +1023,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
          END, 'access', id, now() + interval '5 minutes' FROM families`,
         [sha256('active-access-token'), sha256('orphaned-access-token')],
       )
+      // A pairing code minted under the pre-recovery key must not survive
+      // recovery when invalidatePairingCodes is true.
+      await database!.query(
+        `INSERT INTO pairing_codes (resident_id, code_hash, secret_hash_at_mint, expires_at)
+         VALUES (1, $1, $2, now() + interval '9 minutes')`,
+        [sha256('winner:pairing-code'), sha256('existing-root-key')],
+      )
       const first = {
         sessionHash: sha256('winner:first-session'), csrfHash: sha256('winner:first-csrf'),
         recoveryCodeHash: sha256(codes[0]!), replacementSecretHash: sha256('replacement-one'),
@@ -971,10 +1044,12 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         store.confirmRootRecovery({
           sessionHash: first.sessionHash, csrfHash: first.csrfHash,
           replacementSecretHash: first.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
         store.confirmRootRecovery({
           sessionHash: second.sessionHash, csrfHash: second.csrfHash,
           replacementSecretHash: second.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
       ])
       assert.equal(results.filter(result => result.status === 'recovered').length, 1)
@@ -988,12 +1063,14 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
            (SELECT count(*) FROM resident_recovery_codes WHERE invalidated_at IS NOT NULL) AS invalidated,
            (SELECT count(*) FROM oauth_token_families WHERE revoked_at IS NOT NULL) AS revoked_families,
            (SELECT count(*) FROM oauth_tokens WHERE revoked_at IS NOT NULL) AS revoked_tokens,
-           (SELECT count(*) FROM events WHERE kind = 'rotate' AND actor = 'existing-agent') AS rotate_events`,
+           (SELECT count(*) FROM events WHERE kind = 'rotate' AND actor = 'existing-agent') AS rotate_events,
+           (SELECT invalidated_at IS NOT NULL FROM pairing_codes WHERE resident_id = 1) AS pairing_code_invalidated`,
       )
       assert.deepEqual(state.rows[0], {
         secret_hash: winner.replacementSecretHash,
         generation: '2', used: '1', invalidated: '7',
         revoked_families: '2', revoked_tokens: '2', rotate_events: '1',
+        pairing_code_invalidated: true,
       })
 
       const usedCode = await store.stageRootRecovery({
@@ -1038,6 +1115,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: canceled.sessionHash,
         csrfHash: canceled.csrfHash,
         replacementSecretHash: sha256('wrong-replacement'),
+        invalidatePairingCodes: true,
       }), { status: 'credential_rejected' })
       assert.equal(await store.cancelRootRotation(canceled), true)
 
@@ -1054,6 +1132,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: expired.sessionHash,
         csrfHash: expired.csrfHash,
         replacementSecretHash: expired.replacementSecretHash,
+        invalidatePairingCodes: true,
       }), { status: 'request_unavailable' })
       assert.equal((await store.stageRootRotation(rotation('rotation-cleanup'))).status, 'staged')
 
@@ -1143,6 +1222,20 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         )
       }
 
+      // A pairing code minted under the pre-rotation key must not survive
+      // rotation for its own resident, but a different resident's pairing
+      // code must be untouched.
+      await database!.query(
+        `INSERT INTO pairing_codes (resident_id, code_hash, secret_hash_at_mint, expires_at)
+         VALUES
+           (1, $1, $2, now() + interval '9 minutes'),
+           (2, $3, $4, now() + interval '9 minutes')`,
+        [
+          sha256('rotation-winner:pairing-code'), sha256('existing-root-key'),
+          sha256('rotation-winner:unrelated-pairing-code'), sha256('unrelated-root-key'),
+        ],
+      )
+
       const first = rotation('rotation-first')
       const second = rotation('rotation-second')
       assert.equal((await store.stageRootRotation(first)).status, 'staged')
@@ -1152,11 +1245,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: first.sessionHash,
           csrfHash: first.csrfHash,
           replacementSecretHash: first.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
         store.confirmRootRotation({
           sessionHash: second.sessionHash,
           csrfHash: second.csrfHash,
           replacementSecretHash: second.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
       ])
       assert.equal(rotationResults.filter(result => result?.status === 'rotated').length, 1)
@@ -1204,7 +1299,11 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
              WHERE resident_id = 2 AND used_at IS NOT NULL) AS unrelated_invalidated_codes,
            (SELECT secret_hash FROM residents WHERE id = 2) AS unrelated_secret_hash,
            (SELECT count(*) FROM events
-             WHERE kind = 'rotate' AND actor = 'existing-agent') AS rotate_events`,
+             WHERE kind = 'rotate' AND actor = 'existing-agent') AS rotate_events,
+           (SELECT invalidated_at IS NOT NULL FROM pairing_codes WHERE resident_id = 1)
+             AS resident_pairing_code_invalidated,
+           (SELECT invalidated_at IS NOT NULL FROM pairing_codes WHERE resident_id = 2)
+             AS unrelated_pairing_code_invalidated`,
       )
       assert.deepEqual(state.rows[0], {
         secret_hash: rotationWinner.replacementSecretHash,
@@ -1220,9 +1319,63 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         unrelated_revoked_tokens: '0',
         unrelated_invalidated_codes: '0',
         unrelated_secret_hash: sha256('unrelated-root-key'),
+        resident_pairing_code_invalidated: true,
+        unrelated_pairing_code_invalidated: false,
         rotate_events: '1',
       })
       assert.equal(recoveryCodes.length, 8)
+    })
+
+    await t.test('invalidatePairingCodes false leaves a resident\'s pairing code untouched even after rotation and recovery succeed', async () => {
+      // Decision row 74 security fix: CODING_IDENTITY_DOORS_ENABLED off (the
+      // default) means identity-browser.ts passes invalidatePairingCodes:
+      // false to both confirmRootRotation and confirmRootRecovery. This
+      // must never fail the rotation or recovery itself, and must leave any
+      // pairing code exactly as it was -- the redundant secret_hash_at_mint
+      // recheck at redemption (oauth-store.ts) is what keeps this fail-closed.
+      await resetDatabase()
+      await database!.query(
+        `INSERT INTO pairing_codes (resident_id, code_hash, secret_hash_at_mint, expires_at)
+         VALUES (1, $1, $2, now() + interval '9 minutes')`,
+        [sha256('untouched:pairing-code'), sha256('existing-root-key')],
+      )
+      const staged = rotation('untouched-rotation')
+      assert.equal((await store.stageRootRotation(staged)).status, 'staged')
+      assert.deepEqual(await store.confirmRootRotation({
+        sessionHash: staged.sessionHash,
+        csrfHash: staged.csrfHash,
+        replacementSecretHash: staged.replacementSecretHash,
+        invalidatePairingCodes: false,
+      }), { status: 'rotated', residentId: 1, handle: 'existing-agent' })
+      const afterRotation = await database!.query(
+        `SELECT invalidated_at IS NOT NULL AS invalidated FROM pairing_codes WHERE resident_id = 1`,
+      )
+      assert.deepEqual(afterRotation.rows, [{ invalidated: false }])
+
+      // Insert a fresh recovery code directly at resident 1's post-rotation
+      // recovery_generation (rotation already invalidated the original set).
+      await database!.query(
+        `INSERT INTO resident_recovery_codes (resident_id, generation, code_hash)
+         SELECT id, recovery_generation, $1 FROM residents WHERE id = 1`,
+        [sha256('untouched-recovery-code')],
+      )
+      const stagedRecovery = await store.stageRootRecovery({
+        sessionHash: sha256('untouched-recovery:session'),
+        csrfHash: sha256('untouched-recovery:csrf'),
+        recoveryCodeHash: sha256('untouched-recovery-code'),
+        replacementSecretHash: sha256('untouched-recovery:replacement'),
+      })
+      assert.equal(stagedRecovery.status, 'staged')
+      assert.deepEqual(await store.confirmRootRecovery({
+        sessionHash: sha256('untouched-recovery:session'),
+        csrfHash: sha256('untouched-recovery:csrf'),
+        replacementSecretHash: sha256('untouched-recovery:replacement'),
+        invalidatePairingCodes: false,
+      }), { status: 'recovered', residentId: 1, handle: 'existing-agent' })
+      const afterRecovery = await database!.query(
+        `SELECT invalidated_at IS NOT NULL AS invalidated FROM pairing_codes WHERE resident_id = 1`,
+      )
+      assert.deepEqual(afterRecovery.rows, [{ invalidated: false }])
     })
 
     await t.test('root rotation and recovery use one shared generation winner', async () => {
@@ -1242,11 +1395,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: recovery.sessionHash,
           csrfHash: recovery.csrfHash,
           replacementSecretHash: recovery.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
         store.confirmRootRotation({
           sessionHash: rootRotation.sessionHash,
           csrfHash: rootRotation.csrfHash,
           replacementSecretHash: rootRotation.replacementSecretHash,
+          invalidatePairingCodes: true,
         }),
       ])
       assert.deepEqual(recoveryRace[0], {
@@ -1282,11 +1437,13 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: otherRotation.sessionHash,
         csrfHash: otherRotation.csrfHash,
         replacementSecretHash: otherRotation.replacementSecretHash,
+        invalidatePairingCodes: true,
       }))?.status, 'rotated')
       assert.deepEqual(await store.confirmRootRecovery({
         sessionHash: otherRecovery.sessionHash,
         csrfHash: otherRecovery.csrfHash,
         replacementSecretHash: otherRecovery.replacementSecretHash,
+        invalidatePairingCodes: true,
       }), { status: 'request_unavailable' })
       const rotationWon = await database!.query(
         `SELECT secret_hash, recovery_generation,
@@ -1312,6 +1469,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
           sessionHash: intent.sessionHash,
           csrfHash: intent.csrfHash,
           replacementSecretHash: intent.replacementSecretHash,
+          invalidatePairingCodes: true,
         }))?.status, 'rotated')
         currentSecret = nextSecret
       }
@@ -1321,6 +1479,7 @@ test('identity registration and recovery are atomic in PostgreSQL', async t => {
         sessionHash: limited.sessionHash,
         csrfHash: limited.csrfHash,
         replacementSecretHash: limited.replacementSecretHash,
+        invalidatePairingCodes: true,
       }), { status: 'rate_limited' })
       const state = await database!.query(
         `SELECT secret_hash, recovery_generation,

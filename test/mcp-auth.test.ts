@@ -1607,6 +1607,42 @@ test('legacy initialize plainly distinguishes the key door from ChatGPT browser 
   assert.match(initialized.result.instructions, /remove|delete|recreate/i)
 })
 
+test('legacy and hosted instructions never call registration browser-only in the same breath as offering the JSON door', async () => {
+  process.env.CODING_IDENTITY_DOORS_ENABLED = 'true'
+  process.env.IDENTITY_ROTATION_ENABLED = 'true'
+  process.env.IDENTITY_RECOVERY_ENABLED = 'true'
+  try {
+    for (const [hostedChatFlag, path] of [[false, '/mcp'], [true, '/mcp']] as const) {
+      setHostedChatFlag(hostedChatFlag)
+      const { gateway } = createHarness()
+      const initialized = await rpc(gateway, 'initialize', {}, undefined, path) as {
+        result: { instructions: string }
+      }
+      const text = initialized.result.instructions
+      // The opening sentence must not flatly claim "browser-only" (the sole
+      // option) once it goes on, moments later, to offer the coding-client
+      // JSON identity doors as an alternative -- see hosted-chat-discovery.ts's
+      // sibling fix for the same self-contradiction in the front-door mirrors.
+      assert.match(
+        text,
+        /Registration, rotation, and recovery remain browser-only, or through the coding-client JSON identity/i,
+        `hostedChat=${hostedChatFlag}`,
+      )
+      assert.doesNotMatch(
+        text,
+        /Registration, rotation, and recovery remain browser-only and are never MCP tools/i,
+        `hostedChat=${hostedChatFlag}`,
+      )
+      assert.match(text, /api\/register/i, `hostedChat=${hostedChatFlag}`)
+    }
+  } finally {
+    delete process.env.CODING_IDENTITY_DOORS_ENABLED
+    delete process.env.IDENTITY_ROTATION_ENABLED
+    delete process.env.IDENTITY_RECOVERY_ENABLED
+    setHostedChatFlag(false)
+  }
+})
+
 test('hosted MCP accepts the ChatGPT namespace alias without advertising or widening it', async () => {
   setHostedChatFlag(true)
   const harness = createHarness()

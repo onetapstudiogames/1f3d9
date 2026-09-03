@@ -7,7 +7,7 @@ import {
 } from './core.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
-export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke'
+export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke' | 'pair_mint'
 
 export interface AuthorizationRequestInput {
   sessionHash: string
@@ -325,6 +325,8 @@ export async function approveExistingResidentAndIssueAuthorizationCode(input: {
   return { status: 'approved', redirectUri: result.redirect_uri, state: result.state }
 }
 
+export type PairingCodeMintResult = { expiresAt: string }
+
 export async function stageNewResidentRegistration(input: {
   sessionHash: string
   csrfHash: string
@@ -608,6 +610,176 @@ export async function getAuthorizationCode(codeHash: string): Promise<Authorizat
     scope: code.scope,
     codeChallenge: code.code_challenge,
   } : null
+}
+
+/**
+ * Decision row 74: a signed-in coding client mints a ten-minute, single-use
+ * pairing code bound to its own resident, at the secret hash that resident
+ * holds right now. The raw code is returned once by the caller
+ * (POST /api/pair); only its hash is stored here. Reuses the same table
+ * shape and hash-only-storage discipline as every other identity secret in
+ * this codebase.
+ *
+ * secret_hash_at_mint is read from `residents` inside this same statement
+ * (never trusted from the caller) so a code always carries the credential
+ * generation that actually existed when it was minted. Redemption
+ * (approveExistingResidentByPairingCodeAndIssueAuthorizationCode below)
+ * requires that stored hash to still match the resident's CURRENT
+ * secret_hash, so a rotation or recovery that changes the key makes any
+ * outstanding code fail closed even in the hypothetical case where the
+ * rotation/recovery transaction's own invalidation somehow missed it.
+ */
+export async function mintPairingCode(input: {
+  residentId: number
+  codeHash: string
+}): Promise<PairingCodeMintResult> {
+  const rows = (await sql`
+    WITH cleanup AS (
+      DELETE FROM pairing_codes
+      WHERE expires_at <= now() - interval '1 day'
+    ), current_secret AS MATERIALIZED (
+      SELECT secret_hash FROM residents WHERE id = ${input.residentId}
+    ), inserted AS (
+      INSERT INTO pairing_codes (resident_id, code_hash, secret_hash_at_mint, expires_at)
+      SELECT ${input.residentId}, ${input.codeHash}, current_secret.secret_hash,
+        now() + interval '10 minutes'
+      FROM current_secret
+      RETURNING expires_at
+    )
+    SELECT expires_at FROM inserted
+  `) as { expires_at: string }[]
+  const row = rows[0]
+  if (!row) throw new Error('pairing-code mint produced no outcome')
+  return { expiresAt: row.expires_at }
+}
+
+export type PairingCodeApprovalResult =
+  | ({ status: 'approved' } & AuthorizationRedirect)
+  | { status: 'pairing_code_rejected' }
+  | { status: 'request_unavailable' }
+
+export type PairingCodePeekResult =
+  | { status: 'valid'; handle: string }
+  | { status: 'pairing_code_rejected' }
+
+/**
+ * Decision row 74 security fix: a read-only lookup, never consuming the
+ * code, so the sign-in page can show the human which resident a pairing
+ * code connects and ask for one explicit click before
+ * approveExistingResidentByPairingCodeAndIssueAuthorizationCode below
+ * actually redeems it. Applies the exact same eligibility checks as
+ * redemption (unused, unexpired, uninvalidated, and still at the secret
+ * hash held at mint time) so a code this reports as valid is the same code
+ * redemption will accept -- and if something changes between the peek and
+ * the click (the code expires, or the resident rotates away from it),
+ * redemption still fails closed on its own.
+ */
+export async function peekPairingCodeResident(pairingCodeHash: string): Promise<PairingCodePeekResult> {
+  const rows = (await sql`
+    SELECT resident.handle
+    FROM pairing_codes code
+    JOIN residents resident ON resident.id = code.resident_id
+    WHERE code.code_hash = ${pairingCodeHash}
+      AND code.used_at IS NULL
+      AND code.expires_at > now()
+      AND code.invalidated_at IS NULL
+      AND code.secret_hash_at_mint = resident.secret_hash
+    LIMIT 1
+  `) as { handle: string }[]
+  const row = rows[0]
+  return row ? { status: 'valid', handle: row.handle } : { status: 'pairing_code_rejected' }
+}
+
+/**
+ * The hosted OAuth sign-in page's "I already live here" fieldset accepts a
+ * pairing code in place of the resident key. This mirrors
+ * approveExistingResidentAndIssueAuthorizationCode exactly, substituting a
+ * proven unexpired unused pairing code for a proven resident secret. The
+ * pairing code is marked used only once it is actually linked to an issued
+ * authorization code, so a submission against no active browser request
+ * never burns the caller's one use.
+ */
+export async function approveExistingResidentByPairingCodeAndIssueAuthorizationCode(input: {
+  sessionHash: string
+  csrfHash: string
+  pairingCodeHash: string
+  authorizationCodeHash: string
+}): Promise<PairingCodeApprovalResult> {
+  const rows = (await sql`
+    WITH active_request AS MATERIALIZED (
+      SELECT id, client_id, redirect_uri, resource, scope, state, code_challenge
+      FROM oauth_authorization_requests
+      WHERE session_hash = ${input.sessionHash}
+        AND csrf_hash = ${input.csrfHash}
+        AND intent IS NULL
+        AND resident_id IS NULL
+        AND used_at IS NULL
+        AND expires_at > now()
+      FOR UPDATE
+    ), proven_code AS MATERIALIZED (
+      SELECT code.id, code.resident_id
+      FROM pairing_codes code
+      JOIN residents resident ON resident.id = code.resident_id
+      WHERE code.code_hash = ${input.pairingCodeHash}
+        AND code.used_at IS NULL
+        AND code.expires_at > now()
+        AND code.invalidated_at IS NULL
+        AND code.secret_hash_at_mint = resident.secret_hash
+      FOR UPDATE OF code
+    ), consumed_request AS (
+      UPDATE oauth_authorization_requests request
+      SET intent = 'existing',
+          resident_id = code.resident_id,
+          verified_at = now(),
+          approved_at = now(),
+          used_at = now()
+      FROM active_request active, proven_code code
+      WHERE request.id = active.id
+      RETURNING request.id, code.id AS pairing_code_id, code.resident_id,
+        request.client_id, request.redirect_uri, request.resource, request.scope,
+        request.state, request.code_challenge
+    ), consumed_code AS (
+      UPDATE pairing_codes
+      SET used_at = now()
+      FROM consumed_request
+      WHERE pairing_codes.id = consumed_request.pairing_code_id
+      RETURNING pairing_codes.id
+    ), issued_code AS (
+      INSERT INTO oauth_authorization_codes (
+        request_id, code_hash, resident_id, client_id, redirect_uri, resource,
+        scope, code_challenge, code_challenge_method, expires_at
+      )
+      SELECT id, ${input.authorizationCodeHash}, resident_id, client_id, redirect_uri,
+        resource, scope, code_challenge, 'S256', now() + interval '5 minutes'
+      FROM consumed_request
+      RETURNING request_id
+    ), completed AS MATERIALIZED (
+      SELECT request.redirect_uri, request.state
+      FROM consumed_request request
+      JOIN issued_code code ON code.request_id = request.id
+      WHERE EXISTS (SELECT 1 FROM consumed_code)
+    )
+    SELECT 'approved'::text AS status, completed.redirect_uri, completed.state
+    FROM completed
+    UNION ALL
+    SELECT 'request_unavailable'::text, NULL::text, NULL::text
+    WHERE NOT EXISTS (SELECT 1 FROM active_request)
+    UNION ALL
+    SELECT 'pairing_code_rejected'::text, NULL::text, NULL::text
+    WHERE EXISTS (SELECT 1 FROM active_request)
+      AND NOT EXISTS (SELECT 1 FROM proven_code)
+  `) as {
+    status: 'approved' | 'pairing_code_rejected' | 'request_unavailable'
+    redirect_uri: string | null
+    state: string | null
+  }[]
+  const result = rows[0]
+  if (!result) throw new Error('pairing-code approval produced no outcome')
+  if (result.status !== 'approved') return { status: result.status }
+  if (result.redirect_uri === null || result.state === null) {
+    throw new Error('pairing-code approval returned an incomplete redirect')
+  }
+  return { status: 'approved', redirectUri: result.redirect_uri, state: result.state }
 }
 
 export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promise<boolean> {
@@ -974,6 +1146,9 @@ export const postgresOAuthStore = {
   getAuthorizationRequestProgress,
   cancelAuthorizationRequest,
   approveExistingResidentAndIssueAuthorizationCode,
+  mintPairingCode,
+  peekPairingCodeResident,
+  approveExistingResidentByPairingCodeAndIssueAuthorizationCode,
   stageNewResidentRegistration,
   confirmNewResidentAndIssueAuthorizationCode,
   getAuthorizationCode,

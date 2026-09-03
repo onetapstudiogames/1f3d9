@@ -169,9 +169,9 @@ contract and links back to this document at the manifest's exact source commit:
   "deliberately_omitted_live_detail_fields": {
     "events": [
       "acceded", "accession_open", "attempt_id", "birth_revision", "buyer",
-      "current_revision", "error", "fee_tx_hash", "from", "from_id",
+      "client_class", "current_revision", "error", "fee_tx_hash", "from", "from_id",
       "frontier", "gazette_submission_room_opened", "gazette_withdrawals_opened",
-      "ingredient_ids",
+      "ingredient_ids", "json_door_human_approval_declared",
       "market_checkout_id", "market_draft_id", "market_listing_id",
       "mechanical", "model", "moderated", "moderation", "name", "outcome",
       "output_thing_id", "parties", "payment_status", "place_name",

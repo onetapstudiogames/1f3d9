@@ -74,6 +74,15 @@ function fakeStore() {
     async resolveOAuthAccessToken() {
       throw new Error('token auth is not part of this test')
     },
+    async mintPairingCode() {
+      throw new Error('pairing-code mint is not part of this test')
+    },
+    async peekPairingCodeResident() {
+      throw new Error('pairing-code peek is not part of this test')
+    },
+    async approveExistingResidentByPairingCodeAndIssueAuthorizationCode() {
+      throw new Error('pairing-code approval is not part of this test')
+    },
     async consumeOAuthRateLimit(input: { bucketHash: string; attemptKind: string; maximum: number }) {
       rateLimitCalls.push(input)
       return { admitted: true, retryAfterSeconds: 17 }

@@ -38,6 +38,8 @@ import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
 import { mountActionRoutes } from './actions.ts'
 import { mountIdentityRoutes } from './identity-browser.ts'
+import { jsonError, mountCodingIdentityDoorsDisabled, mountIdentityApiRoutes } from './identity-api.ts'
+import { mountPairDisabledRoute, mountPairRoutes } from './pair.ts'
 import {
   engineSql,
   residentPresence,
@@ -190,6 +192,12 @@ const IDENTITY_RECOVERY_ENABLED = IDENTITY_BROWSER_READY
   && process.env.IDENTITY_RECOVERY_ENABLED === 'true'
 const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
   && process.env.IDENTITY_ROTATION_ENABLED === 'true'
+// Decision row 74 security fix: default-off and independent of
+// IDENTITY_BROWSER_READY (already true in production) so this PR shipping
+// alone cannot open the coding-client JSON identity doors or the
+// pairing-mint door before an operator has run
+// db/migrations/20260902_identity_json_doors.sql and verified it.
+const CODING_IDENTITY_DOORS_ENABLED = process.env.CODING_IDENTITY_DOORS_ENABLED === 'true'
 const PAYPAL_PURCHASES_READY = paypalReadiness(process.env).ready
 const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
 const RESIDENT_FLAGS_PER_HOUR = 20
@@ -472,7 +480,7 @@ app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = hostedChatDiscovery(
     FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
-    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
+    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
   )
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
@@ -496,7 +504,7 @@ app.get('/', async c => {
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
   LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
-  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY,
+  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
@@ -613,7 +621,7 @@ app.get('/api/changes', async c => {
 
 if (requestedHostedChatSignin.ready) {
   try {
-    mountOAuthRoutes(app)
+    mountOAuthRoutes(app, { pairingEnabled: CODING_IDENTITY_DOORS_ENABLED })
     configureOAuthResidentResolver()
     hostedChatSignin = requestedHostedChatSignin
   } catch {
@@ -626,25 +634,57 @@ if (IDENTITY_BROWSER_READY) {
     environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
     hostedChatSigninReady: hostedChatSignin.ready,
   })
+  // Decision row 74: the same identity ceremony, reachable by a coding
+  // client through authenticated JSON instead of a browser page. Gated
+  // separately on CODING_IDENTITY_DOORS_ENABLED (see its definition above)
+  // so this shared live path never needs a pre-deploy migration just to
+  // keep working -- a disabled door answers a documented 503, never a 500.
+  if (CODING_IDENTITY_DOORS_ENABLED) {
+    mountIdentityApiRoutes(app, {
+      environment: { ...process.env, PUBLIC_ORIGIN: DOMAIN },
+    })
+  } else {
+    mountCodingIdentityDoorsDisabled(app)
+  }
 } else {
   const unavailableIdentity = (c: Context) => {
     c.header('Cache-Control', 'no-store')
-    return c.json({ error: 'identity browser routes are unavailable' }, 503)
+    return jsonError(
+      c, 503, 'request_unavailable',
+      'identity routes are unavailable on this deployment because required identity infrastructure is not ready; ask the city operator to enable it',
+      'Ask the city operator to enable identity routes on this deployment, then retry.',
+    )
   }
   app.all('/join', unavailableIdentity)
   app.all('/rotate', unavailableIdentity)
   app.all('/recovery', unavailableIdentity)
   app.post('/api/register', unavailableIdentity)
+  app.post('/api/rotate', unavailableIdentity)
+  app.post('/api/recovery', unavailableIdentity)
 }
 
-app.post('/api/rotate', async c => {
-  if (!IDENTITY_BROWSER_READY) {
-    return c.json({ error: 'identity browser routes are unavailable' }, 503)
+if (hostedChatSignin.ready) {
+  // Decision row 74: a signed-in coding client mints a ten-minute, single-use
+  // pairing code so a human can finish hosted-chat sign-in without typing the
+  // resident key. Pairing has nowhere to redeem a code when OAuth itself is
+  // unconfigured, so the door stays unmounted until hosted sign-in is ready.
+  // Gated separately on CODING_IDENTITY_DOORS_ENABLED, same as the other
+  // JSON identity doors above and for the same reason.
+  if (CODING_IDENTITY_DOORS_ENABLED) {
+    mountPairRoutes(app, { authenticate: authRootKey })
+  } else {
+    mountPairDisabledRoute(app)
   }
-  return c.json({
-    error: `root-key rotation moved to the private browser flow at ${DOMAIN}/rotate`,
-  }, 410)
-})
+} else {
+  app.post('/api/pair', c => {
+    c.header('Cache-Control', 'no-store')
+    return jsonError(
+      c, 503, 'request_unavailable',
+      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed',
+      'Ask the city operator to configure hosted-chat sign-in, or complete sign-in directly with the resident key if a browser or JSON identity door is enabled on this deployment.',
+    )
+  })
+}
 
 mountActionRoutes(app)
 mountDrawingRoutes(app, { database: runtimeDatabase, authenticate: auth })
@@ -1324,6 +1364,7 @@ app.get('/api/official', c => {
     identityBrowserReady: IDENTITY_BROWSER_READY,
     identityRecoveryEnabled: IDENTITY_RECOVERY_ENABLED,
     identityRotationEnabled: IDENTITY_ROTATION_ENABLED,
+    codingIdentityDoorsEnabled: CODING_IDENTITY_DOORS_ENABLED,
   }))
 })
 

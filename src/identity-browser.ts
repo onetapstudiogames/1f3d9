@@ -453,12 +453,13 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
   const publicOrigin = configuredPublicOrigin(environment)
   const recoveryEnabled = environment.IDENTITY_RECOVERY_ENABLED === 'true'
   const hostedChatSigninReady = options.hostedChatSigninReady === true
-
-  app.post('/api/register', c => c.json({
-    error: `registration moved to the private browser flow at ${publicOrigin}/join`,
-    next_step: 'Choose your client path there. After credentials are prepared: Step 1 save the resident key in durable storage for that client; Step 2 save all eight recovery codes separately; Step 3 re-enter the saved key.',
-    front_door: `${publicOrigin}/`,
-  }, 410))
+  // The pairing_codes table (oauth-store.ts) only exists once an operator
+  // has run and verified db/migrations/20260902_identity_json_doors.sql,
+  // which always precedes turning this flag on -- see
+  // confirmRootRecoveryOnce's invalidatePairingCodes doc comment
+  // (identity-store.ts) for why this browser page cannot reference that
+  // table unconditionally.
+  const invalidatePairingCodes = environment.CODING_IDENTITY_DOORS_ENABLED === 'true'
 
   app.get('/join', c => withJoinStorageErrors(c, async () => {
     const cookieState = inspectBrowserSessionCookie(c, JOIN_COOKIE)
@@ -594,6 +595,11 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       }
       const resident = await store.confirmResidentRegistration({
         sessionHash, csrfHash, residentSecretHash: sha256(residentKey),
+        // The browser join page never asks for or declares human approval
+        // of the handle the way the coding-client JSON door does, so its
+        // confirmed register event stays byte-identical to main's -- see
+        // confirmResidentRegistration's own doc comment in identity-store.ts.
+        jsonDoorHumanApprovalDeclared: null,
       })
       if (resident.status === 'request_unavailable') {
         const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
@@ -869,6 +875,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
         sessionHash,
         csrfHash,
         replacementSecretHash: sha256(residentKey),
+        invalidatePairingCodes,
       })
       if (resident.status === 'rate_limited') {
         return browserError(
@@ -1030,6 +1037,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
     }
     const resident = await store.confirmRootRecovery({
       sessionHash, csrfHash, replacementSecretHash: sha256(residentKey),
+      invalidatePairingCodes,
     })
     if (resident.status === 'request_unavailable') {
       return browserError(

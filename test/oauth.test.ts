@@ -13,6 +13,7 @@ import {
   validateAuthorizationRequest,
   verifyPkceS256,
 } from '../src/oauth.ts'
+import { PAIRING_CODE_PREFIX } from '../src/pair.ts'
 
 const REDIRECT_URI = 'https://chat.example.test/oauth/callback'
 const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
@@ -143,6 +144,12 @@ test('every credential form is recognized before it can reach chat, public text,
     `${OAUTH_AUTHORIZATION_CODE_PREFIX}${'a'.repeat(48)}`,
     `${OAUTH_ACCESS_TOKEN_PREFIX}${'b'.repeat(48)}`,
     `${OAUTH_REFRESH_TOKEN_PREFIX}${'c'.repeat(48)}`,
+    // Decision row 74: tokenLooksSensitive derives its pattern from
+    // credential-safety.ts's PUBLIC_CREDENTIAL_PATTERN_SOURCE, which was
+    // widened to include pairing codes -- proves that widening actually
+    // reaches this door instead of drifting out of sync with a
+    // separately hand-maintained pattern.
+    `${PAIRING_CODE_PREFIX}${'d'.repeat(64)}`,
   ]) {
     assert.equal(tokenLooksSensitive(credential), true)
     assert.equal(tokenLooksSensitive(`accidental public note: ${credential}`), true)

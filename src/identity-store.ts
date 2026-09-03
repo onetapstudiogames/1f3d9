@@ -143,10 +143,12 @@ export async function stageResidentRegistration(
         RETURNING code.registration_session_hash
       ), staged AS MATERIALIZED (
         INSERT INTO pending_resident_registrations (
-          session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash, expires_at
+          session_hash, csrf_hash, ip_hash, handle, model, client_class, secret_hash,
+          expires_at
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
-          ${input.model}, ${input.clientClass}, ${input.residentSecretHash}, now() + interval '15 minutes'
+          ${input.model}, ${input.clientClass}, ${input.residentSecretHash},
+          now() + interval '15 minutes'
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -230,11 +232,30 @@ export async function confirmResidentRegistration(input: {
   sessionHash: string
   csrfHash: string
   residentSecretHash: string
+  /**
+   * Supplied fresh by the caller at confirm time -- never read back from a
+   * persisted column, so the already-live browser /join path never grows a
+   * schema dependency just to keep working. null means "not the
+   * coding-client JSON door" -- identity-browser.ts (the browser /join
+   * page) always passes null here, even though it can also stage
+   * client_class coding_persistent/coding_ephemeral, so its confirmed
+   * `register` event stays byte-identical to what main has always written:
+   * only `resident_id` and `model`. identity-api.ts (the coding-client JSON
+   * door) is the only caller that ever passes a boolean, and it is always
+   * `true`, since that door already refused to stage the registration at
+   * all unless the request body carried {"human_approved":true}. Only when
+   * this is non-null does the confirmed event additionally record
+   * `client_class` and `json_door_human_approval_declared` -- named for
+   * exactly what it is (the JSON door's caller declared human approval at
+   * stage time; this event does not itself re-verify that), not
+   * `human_approved`, which would read as this event having confirmed it.
+   */
+  jsonDoorHumanApprovalDeclared: boolean | null
 }): Promise<RegistrationConfirmationResult> {
   try {
     const rows = (await sql`
       WITH active_request AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
         FROM pending_resident_registrations
         WHERE session_hash = ${input.sessionHash}
           AND csrf_hash = ${input.csrfHash}
@@ -251,7 +272,7 @@ export async function confirmResidentRegistration(input: {
           AND pending.confirmed_at IS NOT NULL
           AND pending.canceled_at IS NULL
       ), eligible AS MATERIALIZED (
-        SELECT session_hash, ip_hash, handle, model, secret_hash
+        SELECT session_hash, ip_hash, handle, model, secret_hash, client_class
         FROM active_request
         WHERE secret_hash = ${input.residentSecretHash}
       ), handle_conflict AS MATERIALIZED (
@@ -328,7 +349,7 @@ export async function confirmResidentRegistration(input: {
         FROM eligible CROSS JOIN new_resident resident
         WHERE pending.session_hash = eligible.session_hash
         RETURNING resident.id, resident.handle, resident.model, eligible.ip_hash,
-          eligible.session_hash
+          eligible.session_hash, eligible.client_class
       ), scrubbed_pending_codes AS (
         DELETE FROM pending_resident_registration_recovery_codes code
         USING consumed
@@ -339,9 +360,22 @@ export async function confirmResidentRegistration(input: {
         SELECT ip_hash FROM consumed
         RETURNING ip_hash
       ), new_event AS (
+        -- json_door_human_approval_declared is bound in directly from this
+        -- function's own jsonDoorHumanApprovalDeclared input parameter (see
+        -- the doc comment above), never read back from a stored column. A
+        -- browser /join registration passes null here, so its event detail
+        -- stays exactly {resident_id, model} -- byte-identical to what main
+        -- has always written -- and never gains client_class or a human
+        -- approval key it never declared.
         INSERT INTO events (kind, actor, detail)
         SELECT 'register', handle,
-          jsonb_build_object('resident_id', id, 'model', model)
+          CASE WHEN ${input.jsonDoorHumanApprovalDeclared}::boolean IS NULL
+            THEN jsonb_build_object('resident_id', id, 'model', model)
+            ELSE jsonb_build_object(
+              'resident_id', id, 'model', model, 'client_class', client_class,
+              'json_door_human_approval_declared', ${input.jsonDoorHumanApprovalDeclared}::boolean
+            )
+          END
         FROM consumed
         RETURNING actor
       ), completed AS MATERIALIZED (
@@ -558,10 +592,48 @@ export async function stageRootRecovery(input: {
   return staged ? { status: 'staged', handle: staged.handle } : { status: 'credential_rejected' }
 }
 
+/**
+ * Invalidates every unused pairing code (oauth-store.ts) for one resident,
+ * as its own statement issued only when CODING_IDENTITY_DOORS_ENABLED is on
+ * -- see confirmRootRecoveryOnce's and confirmRootRotationOnce's own
+ * invalidatePairingCodes doc comments for why this cannot be a CTE in their
+ * main statement. A pairing code only proves its minter held a valid key at
+ * mint time, never a specific hash; without this, a code minted under a
+ * stolen key would still redeem after the legitimate owner recovers or
+ * rotates away from that key.
+ */
+async function invalidatePairingCodesForResident(residentId: number): Promise<void> {
+  await sql`
+    UPDATE pairing_codes
+    SET invalidated_at = coalesce(invalidated_at, now())
+    WHERE resident_id = ${residentId}
+      AND used_at IS NULL
+      AND invalidated_at IS NULL
+  `
+}
+
 async function confirmRootRecoveryOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
+  /**
+   * True only when CODING_IDENTITY_DOORS_ENABLED is on. The pairing_codes
+   * table (oauth-store.ts) does not exist on the live production schema
+   * until an operator has run and verified
+   * db/migrations/20260902_identity_json_doors.sql, and that migration is
+   * always applied before the flag is ever turned on -- so this flag is
+   * also proof the table exists. Referencing pairing_codes from this
+   * function's own main statement unconditionally would give the
+   * already-live /rotate and /recovery browser pages a hard dependency on
+   * that migration before it ships; issuing the invalidation as its own
+   * statement, sent only when this is true, keeps the flag-off path
+   * byte-for-byte what main already does. Skipping it here still fails
+   * closed: approveExistingResidentByPairingCodeAndIssueAuthorizationCode
+   * (oauth-store.ts) independently re-checks secret_hash_at_mint against the
+   * resident's CURRENT secret_hash, so a code minted under a since-replaced
+   * key still cannot resolve even if this invalidation never ran.
+   */
+  invalidatePairingCodes: boolean
 }): Promise<RecoveryConfirmationResult> {
   const rows = (await sql`
       WITH active_request AS MATERIALIZED (
@@ -683,6 +755,9 @@ async function confirmRootRecoveryOnce(input: {
   if (result.resident_id === null || result.handle === null) {
     throw new Error('root recovery confirmation returned an incomplete resident')
   }
+  if (input.invalidatePairingCodes) {
+    await invalidatePairingCodesForResident(result.resident_id)
+  }
   return { status: 'recovered', residentId: result.resident_id, handle: result.handle }
 }
 
@@ -690,6 +765,7 @@ export async function confirmRootRecovery(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
+  invalidatePairingCodes: boolean
 }): Promise<RecoveryConfirmationResult> {
   return retryIdentityDeadlockOnce(() => confirmRootRecoveryOnce(input))
 }
@@ -786,6 +862,13 @@ async function confirmRootRotationOnce(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
+  /**
+   * True only when CODING_IDENTITY_DOORS_ENABLED is on -- see
+   * confirmRootRecoveryOnce's matching doc comment for why the pairing_codes
+   * invalidation runs as its own statement instead of a CTE here, and why
+   * skipping it still fails closed.
+   */
+  invalidatePairingCodes: boolean
 }): Promise<RootRotationResult> {
   const rows = (await sql`
       WITH cleared_expired AS (
@@ -944,6 +1027,9 @@ async function confirmRootRotationOnce(input: {
   if (result.resident_id === null || result.handle === null) {
     throw new Error('root rotation confirmation returned an incomplete resident')
   }
+  if (input.invalidatePairingCodes) {
+    await invalidatePairingCodesForResident(result.resident_id)
+  }
   return {
     status: 'rotated',
     residentId: result.resident_id,
@@ -955,6 +1041,7 @@ export async function confirmRootRotation(input: {
   sessionHash: string
   csrfHash: string
   replacementSecretHash: string
+  invalidatePairingCodes: boolean
 }): Promise<RootRotationResult> {
   return retryIdentityDeadlockOnce(() => confirmRootRotationOnce(input))
 }

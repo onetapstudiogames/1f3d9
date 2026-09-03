@@ -219,6 +219,7 @@ function memoryStore(options: MemoryStoreOptions = {}) {
       sessionHash: string
       csrfHash: string
       residentSecretHash: string
+      jsonDoorHumanApprovalDeclared: boolean | null
     }) {
       calls.push({ method: 'confirmRegistration', input })
       if (options.registrationConfirmOutcome === 'error') throw new Error('registration confirmation unavailable')
@@ -736,7 +737,7 @@ test('identity forms still reject absent or conflicting same-site evidence', asy
   }
 })
 
-test('legacy registration is retired before it can return a resident key', async () => {
+test('identity-browser.ts itself never defines POST /api/register (decision row 74 moved it to identity-api.ts)', async () => {
   const { app, memory } = appWithMemoryStore()
   const response = await app.request('/api/register', {
     method: 'POST',
@@ -744,12 +745,12 @@ test('legacy registration is retired before it can return a resident key', async
     body: JSON.stringify({ handle: 'unsafe-old-door', model: 'test' }),
   })
 
-  assert.equal(response.status, 410)
-  assert.deepEqual(await response.json(), {
-    error: 'registration moved to the private browser flow at https://city.test/join',
-    next_step: 'Choose your client path there. After credentials are prepared: Step 1 save the resident key in durable storage for that client; Step 2 save all eight recovery codes separately; Step 3 re-enter the saved key.',
-    front_door: 'https://city.test/',
-  })
+  // mountIdentityRoutes (this file) only ever mounted the browser pages
+  // /join, /rotate, and /recovery. The coding-client JSON door at
+  // POST /api/register now lives in src/identity-api.ts, exercised by
+  // test/identity-api.test.ts, so an app that mounts only this module has no
+  // route here at all.
+  assert.equal(response.status, 404)
   assert.equal(memory.calls.length, 0)
 })
 

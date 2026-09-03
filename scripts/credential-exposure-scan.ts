@@ -74,6 +74,7 @@ export type CredentialExposureScanResult = Readonly<{
     oauth_refresh_token: number
     oauth_authorization_code: number
     recovery_code: number
+    pairing_code: number
   }>
 }>
 
@@ -168,6 +169,26 @@ const IDENTITY_MATCH_SQL = `
   SELECT code.code_hash, 'recovery_code'::text, code.resident_id,
     (code.used_at IS NULL AND code.invalidated_at IS NULL) AS live
   FROM public.resident_recovery_codes code WHERE code.code_hash = ANY($1::text[])
+`
+
+// Decision row 74: pairing_codes (oauth-store.ts) does not exist on a
+// database until an operator has run and verified
+// db/migrations/20260902_identity_json_doors.sql. Referencing it from
+// IDENTITY_MATCH_SQL directly would break this scan on every database that
+// has not run that migration yet, so it is queried separately and only when
+// to_regclass confirms the table is actually there.
+const PAIRING_CODE_MATCH_SQL = `
+  /* credential_identity_matches_pairing_codes */
+  SELECT code.code_hash AS credential_hash, 'pairing_code'::text AS credential_kind,
+    code.resident_id AS resident_id,
+    (code.used_at IS NULL AND code.invalidated_at IS NULL
+      AND code.expires_at > statement_timestamp()) AS live
+  FROM public.pairing_codes code WHERE code.code_hash = ANY($1::text[])
+`
+
+const PAIRING_CODE_TABLE_EXISTS_SQL = `
+  /* credential_identity_pairing_codes_exists */
+  SELECT to_regclass('public.pairing_codes') IS NOT NULL AS table_exists
 `
 
 function argumentValue(args: readonly string[], index: number, flag: string): string {
@@ -285,6 +306,7 @@ function parseIdentityRows(rows: readonly Record<string, unknown>[]): readonly I
     'oauth_refresh_token',
     'oauth_authorization_code',
     'recovery_code',
+    'pairing_code',
   ])
   return Object.freeze(rows.map(row => {
     const residentId = positiveResidentId(row.resident_id)
@@ -328,6 +350,7 @@ function buildResult(
     oauth_refresh_token: 0,
     oauth_authorization_code: 0,
     recovery_code: 0,
+    pairing_code: 0,
   }
   let exactCredentials = 0
   let partialShapes = 0
@@ -443,9 +466,16 @@ export async function runCredentialExposureScan(options: Readonly<{
     const credentialHashes = Object.freeze([...new Set(exposureRows.flatMap(row => (
       extractResidentCredentials(row.content).map(match => sha256(match.token))
     )))])
-    const identityRows = credentialHashes.length === 0
-      ? Object.freeze([]) as readonly IdentityRow[]
-      : parseIdentityRows((await client.query(IDENTITY_MATCH_SQL, [credentialHashes])).rows)
+    let identityRows: readonly IdentityRow[] = Object.freeze([])
+    if (credentialHashes.length > 0) {
+      const baseRows = (await client.query(IDENTITY_MATCH_SQL, [credentialHashes])).rows
+      const pairingCodesExist = (await client.query(PAIRING_CODE_TABLE_EXISTS_SQL)).rows[0]
+        ?.table_exists === true
+      const pairingRows = pairingCodesExist
+        ? (await client.query(PAIRING_CODE_MATCH_SQL, [credentialHashes])).rows
+        : []
+      identityRows = parseIdentityRows([...baseRows, ...pairingRows])
+    }
     result = buildResult(target, exposureRows, identityRows)
     await client.query('COMMIT')
     transactionStarted = false

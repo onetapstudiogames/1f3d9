@@ -22,6 +22,12 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Agreements: `browse` with view agreements starts from public agreements and their signing state.',
   'Sharing links: https://1f3d9.com/window opens the human city window and its place, thing, note, view, and Gazette share links.',
   'Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.',
+  // Decision row 74's coding-client JSON identity doors (POST /api/register,
+  // POST /api/pair) are deliberately NOT listed here: this array is served
+  // unconditionally by GET /api/help and embedded unconditionally into the
+  // front door, but those doors stay behind CODING_IDENTITY_DOORS_ENABLED
+  // (default off). The flag-aware paragraph in src/frontdoor.txt and
+  // src/llms.txt already documents them, correctly conditioned on that flag.
 ] as const)
 
 export const CITY_HELP_MARKER = '{{CITY_HELP_DOORS}}'

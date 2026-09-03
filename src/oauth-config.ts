@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 
 export const OAUTH_RESOURCE = 'https://1f3d9.com/mcp/connect'
 export const OAUTH_SCOPE = 'city:resident'
@@ -14,7 +15,11 @@ const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const MAX_STATE = 4_096
 const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
-const CREDENTIAL = /1f3d9_(?:sk|at|rt|ac|rc)_[0-9a-f]{8,}/i
+// Decision row 74: derived from the same PUBLIC_CREDENTIAL_PATTERN_SOURCE
+// used to redact resident credentials from public output (credential-safety.ts)
+// so this door's own credential shape (including the pc_ pairing-code
+// prefix) cannot silently drift out of sync with that one.
+const CREDENTIAL = new RegExp(PUBLIC_CREDENTIAL_PATTERN_SOURCE, 'i')
 
 export type OAuthEnvironment = Readonly<Record<string, string | undefined>>
 

@@ -114,6 +114,7 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `HOSTED_CHAT_SIGNIN_ENABLED` | Staged rollout gate for hosted-chat sign-in. |
 | `IDENTITY_ROTATION_ENABLED` | Staged rollout gate for the rotation door. |
 | `IDENTITY_RECOVERY_ENABLED` | Staged rollout gate for the recovery door. |
+| `CODING_IDENTITY_DOORS_ENABLED` | Staged rollout gate for the coding-client JSON identity doors (`/api/register`, `/api/rotate`, `/api/recovery`) and the pairing-mint door (`/api/pair`), decision row 74. Independent of `IDENTITY_ROTATION_ENABLED`/`IDENTITY_RECOVERY_ENABLED` above and of the already-live browser identity flag, so this repository can ship the doors' code before an operator has applied and verified `db/migrations/20260902_identity_json_doors.sql`. Default off; while off, all four doors answer a documented `503 request_unavailable`, never a generic 500. See "Coding-client identity doors" below. |
 | `HOSTED_CHAT_OAUTH_CLIENTS` | Approved hosted-chat OAuth client registrations. |
 | `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_URL`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` selects the preview database path above. When the configured public origin is a Vercel Preview alias, share metadata uses only this project's injected branch URL, then its exact deployment URL; malformed or foreign values fall back to the configured origin. |
@@ -315,6 +316,60 @@ issue, commit, prompt, or chat.
 The form's public-host check is storage admission, not permission for a future server
 fetch. Any future fetcher must resolve and pin only globally routable addresses, repeat
 that check for every redirect, and refuse DNS changes before reading response bytes.
+
+## Coding-client identity doors (decision #74)
+
+`db/migrations/20260902_identity_json_doors.sql` is a pre-deploy prerequisite for the
+coding-client JSON identity doors (`POST /api/register`, `POST /api/rotate`,
+`POST /api/recovery`) and the pairing-mint door (`POST /api/pair`). It is additive only: a
+new `pairing_codes` table (bound at mint to the resident's secret hash, invalidated by a
+later rotation or recovery) and a one-value widening of the closed
+`oauth_rate_limits.attempt_kind` check constraint to add `pair_mint`. It adds no column to
+`pending_resident_registrations`; the JSON doors' `human_approved` declaration is enforced
+in-process and never stored, only recorded in the confirmed registration's `register` event
+detail. Because `pairing_codes` does not exist until this migration runs,
+`confirmRootRotation` and `confirmRootRecovery` (identity-store.ts) take an
+`invalidatePairingCodes` flag from their caller instead of referencing that table
+unconditionally: the already-live `/rotate` and `/recovery` browser pages pass
+`CODING_IDENTITY_DOORS_ENABLED`'s own value, so they invalidate pairing codes only once the
+flag is on (and therefore the migration has run), and behave exactly as they do today while
+it is off.
+
+Apply it through the same guarded Preview-then-Production ceremony used by other additive
+migrations:
+
+```sh
+CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+npm run migrate:preview:identity-json-doors
+
+CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+PRODUCTION_SNAPSHOT_NAME=<verified-snapshot-name> \
+npm run migrate:production:identity-json-doors
+```
+
+Both commands also require the matching direct database URL, Neon project key, project ID,
+and branch IDs from the operator variables below; never substitute a pooled URL or omit the
+verified Production snapshot. Verify `pairing_codes` exists with its `secret_hash_at_mint`
+and `invalidated_at` columns, and that `oauth_rate_limits_attempt_kind_allowed` validates
+including `pair_mint`.
+
+Applying the migration does not open the doors: they stay behind
+`CODING_IDENTITY_DOORS_ENABLED` (default off, see the runtime variable above) until the
+operator sets it in both Preview and Production after the migration is verified there.
+Before that flag is set, `POST /api/register`, `POST /api/rotate`, `POST /api/recovery`,
+and `POST /api/pair` all answer a documented `503 request_unavailable` on a deployment that
+already has this application code, never a generic 500; the hosted sign-in page's
+pairing-code fieldset does not render, and a posted `pair` or `pair_confirm` action there
+answers that same 503 instead of reaching the database. Set the flag only after confirming
+the migration's postconditions in that same database.
+
+Two other not-ready states answer this same documented shape rather than a bare `{error}`
+body: an invalid `PUBLIC_ORIGIN` takes every identity route (`/join`, `/rotate`, `/recovery`,
+and the three JSON doors above) to `503 request_unavailable`, and `POST /api/pair` alone
+answers the same `503 request_unavailable` when hosted-chat sign-in itself is not configured
+(there being nowhere to redeem a pairing code without it). Both always include `reason`,
+`next_step`, `request_id`, and the `X-1F3D9-Reason` header, exactly like every other
+identity-door refusal.
 
 ## Runtime log drain (dormant until the operator creates it)
 

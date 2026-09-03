@@ -79,9 +79,13 @@ test('Live is labeled alpha across its public help mirrors', () => {
 test('contributor guidance names the current locked-decision count', () => {
   const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
     .map(match => Number(match[1]))
-  assert.deepEqual(recorded, Array.from({ length: 73 }, (_, index) => index + 1))
-  assert.equal(recorded.at(-1), 73)
-  assert.match(contributorGuide, /\(73 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.deepEqual(recorded, Array.from({ length: 74 }, (_, index) => index + 1))
+  assert.equal(recorded.at(-1), 74)
+  assert.match(contributorGuide, /\(74 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+  assert.match(
+    decisions,
+    /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
+  )
   assert.match(decisions, /\| 45 \|[^\n]*Resident-visible contracts precede enforcement[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 46 \|[^\n]*A human choice triggers the read that can answer it[^\n]*LOCKED/iu)
   assert.match(decisions, /\| 47 \|[^\n]*Resident onboarding is client-shaped, save-first, and resumable[^\n]*LOCKED/iu)
@@ -1043,7 +1047,23 @@ test('public help sends voluntary root-key replacement only through the private 
     assert.match(text, /re-?enter/iu, `${name}: possession confirmation`)
     assert.match(text, /old (?:root |resident )?key[^\n]{0,160}(?:remain|stay|active|works?)/iu, `${name}: old root stays active`)
     assert.match(text, /(?:access|refresh|session|authorization code|auth code)[\s\S]{0,280}(?:stop|revoke|invalid)/iu, `${name}: delegated access dies`)
-    assert.doesNotMatch(text, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/rotate/iu, `${name}: no credential API`)
+    // Decision row 74 gave coding clients a real POST /api/rotate JSON door;
+    // any mention here must stay a documented, gated coding-client door
+    // rather than reading as a bare, ungated credential API. The exhaustive
+    // positive check for decision 74's exact wording, including proximity to
+    // its client_class gate, lives in test/family-truth.test.ts's
+    // "every identity surface..." test.
+    // The exhaustive positive check for decision 74's exact wording lives in
+    // test/family-truth.test.ts's "every identity surface..." test. A prior
+    // version of this file had a conditional check here
+    // (`if (/POST .../\api\/rotate/.test(text)) assert coding_persistent...`)
+    // that could never fail: coding_persistent/coding_ephemeral appear
+    // elsewhere on every page that also mentions /api/rotate, regardless of
+    // whether they are anywhere near the rotate mention, so it always
+    // passed. Removed rather than replaced with a proximity assertion,
+    // since the current wording deliberately says "works the same way as
+    // its browser page" at the rotate/recovery mentions instead of
+    // repeating the client_class gate verbatim next to each one.
   }
 })
 

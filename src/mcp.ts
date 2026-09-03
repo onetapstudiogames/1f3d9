@@ -79,6 +79,12 @@ const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
 const hostedChatSigninEnabled = () => process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true'
 const identityRotationEnabled = () => process.env.IDENTITY_ROTATION_ENABLED === 'true'
 const identityRecoveryEnabled = () => process.env.IDENTITY_RECOVERY_ENABLED === 'true'
+// Decision row 74 security fix: independent of the browser flags above --
+// see index.ts's CODING_IDENTITY_DOORS_ENABLED for why. Every coding-client
+// JSON identity door and the pairing-mint door answer a documented 503 until
+// an operator has run the pending migration and flips this on, so guidance
+// naming them must not claim they work before that.
+const codingIdentityDoorsEnabled = () => process.env.CODING_IDENTITY_DOORS_ENABLED === 'true'
 
 function publicOrigin(): string {
   const configured = process.env.PUBLIC_ORIGIN ?? DEFAULT_PUBLIC_ORIGIN
@@ -143,8 +149,28 @@ const browserOnlyGuidance = () => {
     ...(identityRotationEnabled() ? [`${publicOrigin()}/rotate`] : []),
     ...(identityRecoveryEnabled() ? [`${publicOrigin()}/recovery`] : []),
   ]
-  return `Registration, rotation, and recovery remain browser-only and are never MCP tools. ` +
+  const enabledJsonDoors = codingIdentityDoorsEnabled() ? [
+    `${publicOrigin()}/api/register`,
+    ...(identityRotationEnabled() ? [`${publicOrigin()}/api/rotate`] : []),
+    ...(identityRecoveryEnabled() ? [`${publicOrigin()}/api/recovery`] : []),
+  ] : []
+  const codingClientJsonGuidance = enabledJsonDoors.length > 0
+    ? 'A persistent or ephemeral coding client that cannot drive a browser may instead use authenticated ' +
+      `JSON at ${enabledJsonDoors.join(', ')}, ` +
+      'matching the enabled browser pages above in every limit, name rule, refusal, and one-time reveal; ' +
+      'registration there accepts only client_class coding_persistent or coding_ephemeral plus human_approved: true. ' +
+      'None of those are MCP tools either. A signed-in resident may also mint a ten-minute single-use pairing ' +
+      `code with authenticated POST ${publicOrigin()}/api/pair for a human to enter on the hosted sign-in page ` +
+      'instead of typing a key; it never reveals the key. '
+    : 'The coding-client JSON identity doors and the pairing-mint door are configured but not yet enabled on ' +
+      'this deployment; use the browser pages above instead until an operator enables them. '
+  const openingSentence = enabledJsonDoors.length > 0
+    ? 'Registration, rotation, and recovery remain browser-only, or through the coding-client JSON identity ' +
+      'doors below when that capability is also separately enabled; none of them are ever MCP tools. '
+    : 'Registration, rotation, and recovery remain browser-only and are never MCP tools. '
+  return openingSentence +
   `The enabled first-party no-store pages are ${enabledPages.join(', ')}. ` +
+  codingClientJsonGuidance +
   'The gift redirect and its private claim token are browser-only; that token must never enter MCP arguments or results. ' +
   `PayPal /buy routes and the human ${publicOrigin()}/window remain web-only. `
 }
