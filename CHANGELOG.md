@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - GET /api/events now finds a move or go_home at either the place you left or the place you arrived, not only under a place_id key those events never wrote; a room's feed carries its arrivals and its departures.
 
 ### For skill and connector authors
+- The maintainer-recommended market skill version moved forward again, because the market skill now teaches setup, connect, and key commands against the market's coding-client JSON doors.
 - The maintainer-recommended city and market skill versions both moved forward, because the city skill now teaches setup, connect, and key commands and the market skill now teaches help, links, schedule, update, changelog, and store commands.
 - The events door's place-matching sentence now names a move's from_place_id and to_place_id explicitly, and states that a failed action stores no place and matches nowhere.
 - The laws help line now correctly says `laws` sets a place's law traits rather than reading them, and points to PUT /api/place/:id/laws.
