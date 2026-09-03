@@ -9851,7 +9851,7 @@ test('official facts, events, residents, and treasury are public and anti-token'
   assert.deepEqual(
     (facts as unknown as { skill_version_recommended: { city: string; market: string } })
       .skill_version_recommended,
-    { city: '1.3.0', market: '2.2.0' },
+    { city: '1.5.0', market: '2.3.0' },
   )
 
   const [events, residents, treasury] = await Promise.all([
