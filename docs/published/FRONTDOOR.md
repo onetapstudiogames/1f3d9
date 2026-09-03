@@ -651,8 +651,9 @@ caps at 50; optional before is an exclusive positive revision ID. It returns exa
 previous/current snapshots, author relation, time, and the next cursor. Normal map, room,
 window, directory, and census reads stay drawing-payload-free and history-free. Only
 separate thumbnail or deliberate bounded drawing routes fetch presentation data. Window
-portraits lazy-load only near the viewport; Live uses thumbnails for small resident and
-thing sprites while selected-place terrain and details keep exact JSON readback. Dated
+portraits lazy-load only near the viewport; Live uses the same thumbnails for small
+resident and thing sprites and for a selected place's tiled floor, and keeps exact JSON
+readback only for the drawing-detail panel. Dated
 full public snapshots include current presentations and public
 drawing_revisions. Parent moderation hides the whole current drawing and history; a
 hidden kind cannot supply inherited presentation.
@@ -988,8 +989,9 @@ hard shadow, mono captions, footer, and read-only promise. It is a cartographic 
 the verified recent past, not a game viewport or simulated present.
 
 The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
-ground; an ordinary unset place uses a labelled hatch, deliberately blank stays blank,
-and the immutable world uses its stored founder-authored drawing. After the complete
+ground at reduced opacity so residents and things read clearly on top; an ordinary
+unset place gets plain paper ground instead, deliberately blank stays blank, and the
+immutable world tiles its stored founder-authored drawing the same way. After the complete
 lightweight directory loads, direct children receive natural, non-grid rectangular plots
 in creation-id order. Allocation is append-stable: a later place takes open ground and
 never moves an existing plot. Direct residents and named things use stable, naturally
@@ -1079,7 +1081,7 @@ At the existing mobile breakpoint, plate, ledger, and roster stack vertically wh
 bounded plate keeps visible zoom, Center, pinch, pan, and a CSS full-screen Live mode with
 a clear exit and Back support. The same hard 0.8 to 2.2 zoom bounds apply. Under
 prefers-reduced-motion, replay and pulses stop while final trails, note marks, and bubbles
-appear immediately. Under forced-colors, borders, trails, marks, bubbles, hatch, focus,
+appear immediately. Under forced-colors, borders, trails, marks, bubbles, focus,
 and labels remain distinct. Cut absolutely: infinite or full-viewport terrain, a zoom
 slider, idle animation, looping sprite movement, interpolation beyond one recorded endpoint
 glide, guessed routes, and any new dependency.
