@@ -196,6 +196,10 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
     'unchanged... because the city keeps public books", and e2e/public-window-interactions.spec.ts ' +
     'explicitly asserts an actor\'s handle and a quiet place\'s name both appear in Happenings entries ' +
     'for moves into and out of it.'],
+  ['liveItemPopoverContent',
+    'Step 4: builds the single reusable Live item popover from facts and a name its caller already ' +
+    'resolved through liveItemPopoverFacts, which calls isQuietPlace per item before this function ever ' +
+    'runs; like livePortraitGrid and liveThingShelf above, it has no place context of its own to check.'],
 ])
 
 test('the window client source actually contains identity-bearing DOM writes for this scan to find', () => {

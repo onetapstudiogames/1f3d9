@@ -1359,6 +1359,12 @@ async function expectEveryTargetCenterExposed(page: Page, targets: Locator) {
     }
     await target.hover()
     expect(await target.evaluate(node => node.matches(':hover'))).toBe(true)
+    // Step 4: every resident/thing/plot anchor now opens the single Live
+    // item popover on hover. Left open, it would sit near THIS target and
+    // could cover the NEXT target's centre point on the following
+    // iteration -- a false positive in this loop, not a real gap in the
+    // ground. Moving off-plate closes it (pointerout) before that check.
+    await page.mouse.move(0, 0)
   }
   expect(covered).toEqual([])
 }
@@ -4292,7 +4298,11 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
   expect(focusedZ).toBeGreaterThan(neighborZ)
 
   const plotNameplate = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
-  await expect(plotNameplate).toHaveAttribute('title', 'Open the live plate for Cinder lane')
+  // Step 4: the title attribute this used to carry is gone; the same
+  // accessible name lives on aria-label now, and the complete place name
+  // an ellipsised nameplate truncates is reachable through the popover.
+  await expect(plotNameplate).toHaveAccessibleName('Open the live plate for Cinder lane')
+  await expect(plotNameplate).not.toHaveAttribute('title', /.+/u)
   await expect(plotNameplate.locator('.live-plot-name')).toHaveCSS('text-overflow', 'ellipsis')
 
   const cameraAttributeWrites = await page.locator('#live-viewport').evaluate(async viewport => {
@@ -5760,4 +5770,284 @@ test('a quiet place nested two levels below the plotted place never leaks its re
   await expect(occupants.locator('.quiet-room-notice')).toContainText(
     'harbor-owner prefers to keep this room private.',
   )
+})
+
+// Step 4: the single reusable Live item popover.
+
+test('one popover serves all three kinds: hover a resident, a thing, and a plot in turn', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const popover = page.locator('#live-item-popover')
+
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await resident.hover()
+  await expect(page.locator('.live-item-popover')).toHaveCount(1)
+  await expect(popover).toBeVisible()
+  await expect(popover).toHaveAttribute('data-live-popover-kind', 'resident')
+  await expect(popover).toHaveAttribute('aria-label', /harbor-1 details/u)
+  await expect(resident).toHaveAttribute('aria-describedby', 'live-item-popover')
+
+  const thing = page.locator('[data-live-thing-id="9"]').first()
+  await panLiveTargetIntoView(page, thing)
+  await thing.hover()
+  await expect(page.locator('.live-item-popover')).toHaveCount(1)
+  await expect(popover).toHaveAttribute('data-live-popover-kind', 'thing')
+  await expect(popover).toContainText('kept by')
+
+  const plot = page.locator('.live-plot[data-place-id="2"]')
+  const plotOpen = plot.locator('.live-plot-open')
+  await panLiveTargetIntoView(page, plotOpen)
+  await plotOpen.hover()
+  await expect(page.locator('.live-item-popover')).toHaveCount(1)
+  await expect(popover).toHaveAttribute('data-live-popover-kind', 'place')
+  await expect(popover).toContainText('Cinder lane')
+})
+
+test('keyboard focus opens the popover with an accessible group name and no title attributes remain', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await page.locator('#live-viewport').focus()
+  await resident.focus()
+  const popover = page.locator('#live-item-popover')
+  await expect(popover).toBeVisible()
+  await expect(page.getByRole('group', { name: /details$/u })).toHaveCount(1)
+
+  // The title attributes step 2/3 left as the only carrier of state and
+  // provenance are gone; the accessible names they duplicated still work.
+  await expect(page.locator(
+    '.live-walker [title], .live-thing-specimen [title], .live-plot-open[title]',
+  )).toHaveCount(0)
+  await expect(resident).toHaveAccessibleName('Focus on harbor-1')
+})
+
+test('touch keeps the locked raise-then-open rule and also opens the popover on the first tap', async ({ page }, testInfo) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const touch = async (target: Locator) => {
+    await panLiveTargetIntoView(page, target)
+    if (testInfo.project.name === 'mobile-chromium') {
+      await target.tap()
+      return
+    }
+    await target.dispatchEvent('pointerdown', { pointerType: 'touch' })
+    await target.dispatchEvent('click', { pointerType: 'touch' })
+  }
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  const shell = resident.locator('xpath=..')
+  const popover = page.locator('#live-item-popover')
+  await touch(resident)
+  await expect(shell).toHaveAttribute('data-live-raised', 'true')
+  // The first tap's own bring-forward branch already calls
+  // control.focus({preventScroll:true}), which fires focusin -- the
+  // mechanism that opens the popover on touch without any new touch code.
+  await expect(popover).toBeVisible()
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
+
+  await touch(resident)
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on harbor-1')
+})
+
+test('the popover never covers the item it describes, and closes on Escape with focus returned to the anchor', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await resident.focus()
+  const popover = page.locator('#live-item-popover')
+  await expect(popover).toBeVisible()
+  const [popoverBox, anchorBox] = await Promise.all([popover.boundingBox(), resident.boundingBox()])
+  expect(popoverBox).toBeTruthy()
+  expect(anchorBox).toBeTruthy()
+  const intersects = popoverBox!.x < anchorBox!.x + anchorBox!.width &&
+    popoverBox!.x + popoverBox!.width > anchorBox!.x &&
+    popoverBox!.y < anchorBox!.y + anchorBox!.height &&
+    popoverBox!.y + popoverBox!.height > anchorBox!.y
+  expect(intersects).toBe(false)
+
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
+  await expect(resident).toBeFocused()
+  await expect(resident).not.toHaveAttribute('aria-describedby', /.+/u)
+})
+
+test('a press outside the popover closes it; a press on the popover neither closes it nor pans the plate', async ({ page }) => {
+  // The clock is frozen so this fixture's own recorded-movement replay
+  // never rebuilds the plate mid-test (which would, correctly, close the
+  // popover under rule C5 -- its anchor left the plate -- but that is a
+  // different behavior than this test is checking).
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await resident.focus()
+  const popover = page.locator('#live-item-popover')
+  await expect(popover).toBeVisible()
+
+  // Playwright's own actionability-aware hover waits for the popover's
+  // layout to settle before dispatching, avoiding a transitional-layout
+  // hit-test race a raw one-shot mouse.move can hit on an element that
+  // just became visible this same tick.
+  await popover.hover({ position: { x: 4, y: 4 } })
+  await page.mouse.down()
+  await page.mouse.up()
+  await expect(popover).toBeVisible()
+  await expect(page.locator('#live-viewport')).toHaveAttribute('data-live-dragging', 'false')
+
+  const viewport = page.locator('#live-viewport')
+  const box = await viewport.boundingBox()
+  expect(box).toBeTruthy()
+  await page.mouse.move(box!.x + 4, box!.y + 4, { steps: 1 })
+  await page.mouse.down()
+  await page.mouse.up()
+  await expect(popover).toBeHidden()
+})
+
+test('the popover action opens the right record and no extra request fires while opening, moving, or closing it', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+
+  const requests: string[] = []
+  page.on('request', request => { requests.push(request.url()) })
+  await resident.hover()
+  const popover = page.locator('#live-item-popover')
+  await expect(popover).toBeVisible()
+  await resident.hover({ position: { x: 0, y: 0 } })
+  await page.mouse.move(0, 0)
+  await expect(popover).toBeHidden()
+  const noteRequests = requests.filter(url => /\/api\/note\//u.test(url))
+  const drawingJsonRequests = requests.filter(url =>
+    /\/api\/drawing\/[^/]+\/\d+$/u.test(new URL(url).pathname))
+  expect(noteRequests).toEqual([])
+  expect(drawingJsonRequests).toEqual([])
+
+  await resident.focus()
+  await expect(popover).toBeVisible()
+  await popover.getByRole('button', { name: /Open current drawing for harbor-1/u }).click()
+  await expect(popover).toBeHidden()
+  const detail = page.locator('#record-detail')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('#record-detail-title')).toContainText('harbor-1')
+})
+
+test('at 375px the popover never covers its anchor, wherever the camera leaves it', async ({ page }) => {
+  // Exact full-viewport containment at 375px with a fixed-size popover is
+  // proven deterministically, side by side with the non-fitting fallback,
+  // by windowLiveItemPopoverPlacement's own unit tests (including the
+  // exact 375x812-viewport-with-a-320-wide-popover case). What a real
+  // browser run adds is confirming the one invariant that holds
+  // regardless of exactly where the camera happens to leave the anchor:
+  // the popover never covers it. panLiveTargetIntoView's landing spot
+  // varies with each render pass, so this test intentionally does not
+  // pin one exact position -- it is the never-covers-anchor contract that
+  // must hold everywhere, not one hand-picked coordinate.
+  await page.setViewportSize({ width: 375, height: 812 })
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const popover = page.locator('#live-item-popover')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  await resident.focus()
+  await expect(popover).toBeVisible()
+  const [popoverBox, anchorBox] = await Promise.all([popover.boundingBox(), resident.boundingBox()])
+  expect(popoverBox).toBeTruthy()
+  expect(anchorBox).toBeTruthy()
+  const intersectsAnchor = popoverBox!.x < anchorBox!.x + anchorBox!.width &&
+    popoverBox!.x + popoverBox!.width > anchorBox!.x &&
+    popoverBox!.y < anchorBox!.y + anchorBox!.height &&
+    popoverBox!.y + popoverBox!.height > anchorBox!.y
+  expect(intersectsAnchor).toBe(false)
+})
+
+test('proof: one popover carries what the chips carried, for one resident, one thing, and one place', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+  const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+  await expect(proofPanel).toBeVisible()
+  // Settle the retry room first, exactly as the sibling proof tests do, so
+  // the layout is stable before the anchors below are located and tapped.
+  const retry = page.getByRole('button', { name: 'Retry proof room' })
+  await expect(retry).toBeVisible()
+  await retry.click()
+  await expect(retry).toHaveCount(0)
+
+  const popover = proofPanel.locator('#live-item-popover')
+  const requests: string[] = []
+  page.on('request', request => { requests.push(request.url()) })
+
+  // RESIDENT: proof-alex (9201) has a real cached drawing fixture, so the
+  // popover shows the exact drawing state and source label.
+  const alex = proofPanel.locator('[data-live-resident-handle="proof-alex"]').first()
+  await panLiveTargetIntoView(page, alex)
+  await alex.hover()
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText('proof-alex')
+  await expect(popover).toContainText('resident #9201')
+  const alexBox = await alex.boundingBox()
+  const alexPopoverBox = await popover.boundingBox()
+  expect(alexBox && alexPopoverBox).toBeTruthy()
+  const alexIntersects = alexPopoverBox!.x < alexBox!.x + alexBox!.width &&
+    alexPopoverBox!.x + alexPopoverBox!.width > alexBox!.x &&
+    alexPopoverBox!.y < alexBox!.y + alexBox!.height &&
+    alexPopoverBox!.y + alexPopoverBox!.height > alexBox!.y
+  expect(alexIntersects).toBe(false)
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
+  await expect(alex).toBeFocused()
+
+  // THING: the pace lantern (9401), made by and kept by proof-alex, open
+  // to use, with a 28-byte ASCII body the owner can verify by eye.
+  const lantern = proofPanel.locator('[data-live-thing-id="9401"]').first()
+  await panLiveTargetIntoView(page, lantern)
+  await lantern.hover()
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText('pace lantern')
+  await expect(popover).toContainText('Thing #9401')
+  await expect(popover).toContainText('made by proof-alex')
+  await expect(popover).toContainText('kept by proof-alex')
+  await expect(popover).toContainText('body 28 bytes')
+  await expect(popover).toContainText('open to use')
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
+
+  // PLACE: the Crowded activity workshop (9103), owned by proof-alex, with
+  // its owner-written purpose and its 7-thing exact count.
+  const workshopPlot = proofPanel.locator('.live-plot[data-place-id="9103"]')
+  const workshopOpen = workshopPlot.locator('.live-plot-open')
+  await panLiveTargetIntoView(page, workshopOpen)
+  await workshopOpen.hover()
+  await expect(popover).toBeVisible()
+  await expect(popover).toContainText('Crowded activity workshop')
+  await expect(popover).toContainText('Place #9103')
+  await expect(popover).toContainText('kept by proof-alex')
+  await expect(popover).toContainText('Preview-only Live View proof ground.')
+  await expect(popover).toContainText('7 things')
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
+
+  // Thumbnail portrait images (the sprites' own lazy-loaded thumb.png
+  // requests, unrelated to hovering) are expected; the popover itself must
+  // add no note read and no JSON drawing read.
+  const noteOrJsonDrawingRequests = requests.filter(url => {
+    const pathname = new URL(url).pathname
+    return /^\/api\/note\//u.test(pathname) || /^\/api\/drawing\/[^/]+\/\d+$/u.test(pathname)
+  })
+  expect(noteOrJsonDrawingRequests).toEqual([])
 })

@@ -330,6 +330,26 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   await expect(page.locator('#live-plates')).toBeVisible()
   await assertNoLeak(page, 'Live tab, default load')
 
+  // Step 4: the single reusable Live item popover. Drill to lantern_row so
+  // the quiet grandchild (hushed_cellar) renders as one of its own direct
+  // plots -- the only anchor a quiet room offers on the plate, since its
+  // residents and things never render at all -- and open the popover on
+  // its nameplate. liveItemPopoverFacts resolves this place's own quiet
+  // mark and must print only its name, owner, and counts (all public per
+  // decision #75) plus the locked quiet sentence, never the sentinel
+  // resident, thing, or note this fixture would otherwise leak.
+  await page.evaluate(placeId => { window.location.hash = '#view=live&place=' + String(placeId) }, CHILD_PLACE_ID)
+  const quietPlot = page.locator('.live-plot[data-place-id="' + String(QUIET_PLACE_ID) + '"]')
+  await expect(quietPlot).toBeVisible()
+  await quietPlot.locator('.live-plot-open').hover()
+  await expect(page.locator('#live-item-popover')).toBeVisible()
+  await expect(page.locator('#live-item-popover')).toContainText('hushed_cellar')
+  await expect(page.locator('#live-item-popover .quiet-room-notice')).toContainText(
+    'archivist prefers to keep this room private.',
+  )
+  await assertNoLeak(page, 'Live item popover on the quiet grandchild plot')
+  await page.keyboard.press('Escape')
+
   // Things tab: the city-wide heading list (renderThingIndex) and its own
   // history-page control.
   await page.getByRole('tab', { name: 'Things' }).click()

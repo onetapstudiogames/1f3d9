@@ -276,6 +276,14 @@ test('every path that lists a resident, thing, or note resolves quiet through is
       name: "liveFocusInteractionsPanel's thing list collapses a thing pointing at a quiet place",
       pattern: /const quietPlace = isQuietPlace\(place\) \? place : isQuietPlace\(recordedPlace\) \? recordedPlace : null\s*\n\s*if \(quietPlace\) \{/u,
     },
+    // Step 4: the single reusable Live item popover resolves a resident's
+    // current place quiet mark itself -- placeReference at the resident's
+    // own row, then isQuietPlace -- before ever building a location fact,
+    // exactly like every other listing path above.
+    {
+      name: 'liveItemPopoverFacts: the Live item popover resolves a resident location quiet at its own row',
+      pattern: /function liveItemPopoverFacts\(kind, item, snapshot\) \{[\s\S]{0,400}locationQuiet: isQuietPlace\(place\)/u,
+    },
   ]
   for (const path of paths) {
     assert.match(WINDOW_JS, path.pattern, path.name + ' must resolve quiet through isQuietPlace')
@@ -293,6 +301,14 @@ test('every path that lists a resident, thing, or note resolves quiet through is
     "if (focus.quiet)",
     "if (place.quiet)",
     "if (place && place.quiet)",
+    // Step 4: windowLiveItemFacts is the pure, unit-tested content
+    // assembler for the Live item popover (src/window-client/live-popover.ts).
+    // It receives an already-identified place row from its one caller,
+    // liveItemPopoverFacts, which is the function that actually resolves
+    // *which* place to check via placeReference/isQuietPlace (see the path
+    // table above). This is the terminal read of that already-resolved
+    // place's own quiet mark, not a second independent quiet decision.
+    "if (place.quiet === true)",
   ])
   for (const check of bespokeQuietChecks) {
     assert.ok(

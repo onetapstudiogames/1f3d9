@@ -24,6 +24,9 @@ import {
   windowLiveSpeechLine,
   windowLiveTouchActivation,
   windowLiveTraceOpacity,
+  windowLiveItemFacts,
+  windowLiveItemLastAction,
+  windowLiveItemPopoverPlacement,
 } from '../src/window-client.ts'
 
 type SurveyedPlace = Readonly<{
@@ -1642,4 +1645,247 @@ test('speech bubbles keep only the first line and use an honest 60-character ell
   const bubble = windowLiveSpeechLine(longLine)
   assert.equal(Array.from(bubble).length, 60)
   assert.equal(bubble, '🙂'.repeat(59) + '…')
+})
+
+// Step 4: the single reusable Live item popover. windowLiveItemFacts,
+// windowLiveItemLastAction, and windowLiveItemPopoverPlacement are the
+// pure, stringified-into-the-client helpers behind it
+// (src/window-client/live-popover.ts).
+
+test('windowLiveItemFacts builds the same fact-row shape for a resident, a thing, and a place, and marks an unknown fact absent rather than guessing', () => {
+  const residentFacts = windowLiveItemFacts('resident', { asleep: false, has_drawing: false }, {})
+  assert.deepEqual(residentFacts.facts, ['no drawing yet'])
+  assert.equal(residentFacts.quiet, false)
+
+  const thingWithoutMaker = windowLiveItemFacts('thing', {
+    made_by: null, current_owner: 'proof-alex', body: 'hi', truncated: false,
+    open_to_use: false, kind: null, has_drawing: false,
+  }, {})
+  assert.ok(!thingWithoutMaker.facts.some(fact => fact.startsWith('made by')))
+  assert.deepEqual(thingWithoutMaker.facts, ['kept by proof-alex', 'body 2 bytes', 'no drawing yet'])
+
+  const residentWithNoResolvedLocation = windowLiveItemFacts(
+    'resident', { asleep: false, has_drawing: false }, { locationName: null },
+  )
+  assert.ok(!residentWithNoResolvedLocation.facts.some(fact => fact.startsWith('in ')))
+
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveItemFacts = function windowLiveItemFacts/u,
+  )
+})
+
+test('windowLiveItemFacts reports an exact body size as UTF-8 byte length, and omits it entirely for a truncated thing', () => {
+  const multiByte = windowLiveItemFacts('thing', {
+    made_by: 'proof-alex', current_owner: 'proof-alex', body: 'éé', truncated: false,
+    open_to_use: false, kind: null, has_drawing: false,
+  }, {})
+  assert.ok(multiByte.facts.includes('body 4 bytes'))
+
+  const truncated = windowLiveItemFacts('thing', {
+    made_by: 'proof-alex', current_owner: 'proof-alex', body: 'x'.repeat(1000), truncated: true,
+    open_to_use: false, kind: null, has_drawing: false,
+  }, {})
+  assert.ok(!truncated.facts.some(fact => /^body \d+ bytes$/.test(fact)))
+  assert.ok(truncated.facts.includes(
+    'body continues past the loaded head — open the record for the whole body',
+  ))
+})
+
+test('windowLiveItemFacts on a quiet place returns the name, owner, and both counts with quiet true and zero content facts', () => {
+  const quiet = windowLiveItemFacts('place', {
+    owner: 'proof-alex', purpose: 'A private workshop.', places: 2, notes: 3, quiet: true,
+  }, { exactThingTotal: 7 })
+  assert.equal(quiet.quiet, true)
+  assert.deepEqual(quiet.facts, ['kept by proof-alex', '2 places · 3 notes', '7 things'])
+  assert.ok(!quiet.facts.some(fact => fact === 'A private workshop.'))
+})
+
+test('windowLiveItemFacts on a resident whose current place is quiet omits the location name entirely', () => {
+  const result = windowLiveItemFacts(
+    'resident',
+    { asleep: false, has_drawing: false },
+    { locationName: 'Quiet porch', locationQuiet: true },
+  )
+  assert.ok(!result.facts.some(fact => fact.includes('Quiet porch')))
+})
+
+test('windowLiveItemFacts degrades the drawing fact honestly: exact label when cached, else only has/no drawing yet', () => {
+  const cachedComplete = windowLiveItemFacts('resident', { asleep: false, has_drawing: true }, {
+    cachedDrawing: {
+      state: 'complete',
+      drawing: Object.freeze({
+        palette: Object.freeze(['#102030']),
+        indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null)),
+      }),
+      source: 'resident',
+    },
+  })
+  assert.ok(cachedComplete.facts.includes('Complete · Own drawing'))
+
+  const cachedBlank = windowLiveItemFacts('resident', { asleep: false, has_drawing: true }, {
+    cachedDrawing: {
+      state: 'complete',
+      drawing: Object.freeze({ palette: Object.freeze([]), indices: Array(64).fill(null) }),
+      source: 'resident',
+    },
+  })
+  assert.ok(cachedBlank.facts.includes('Blank · Own drawing'))
+
+  const uncachedDrawn = windowLiveItemFacts('resident', { asleep: false, has_drawing: true }, {})
+  assert.ok(uncachedDrawn.facts.includes('has a drawing'))
+  const uncachedUndrawn = windowLiveItemFacts('resident', { asleep: false, has_drawing: false }, {})
+  assert.ok(uncachedUndrawn.facts.includes('no drawing yet'))
+})
+
+test('windowLiveItemFacts omits the exact thing count only when the survey total is null, never a loaded-row count dressed as exact', () => {
+  const unavailable = windowLiveItemFacts('place', {
+    owner: 'proof-alex', places: 0, notes: 0,
+  }, { exactThingTotal: null })
+  assert.ok(unavailable.facts.includes('exact thing count unavailable'))
+
+  const exact = windowLiveItemFacts('place', {
+    owner: 'proof-alex', places: 0, notes: 0,
+  }, { exactThingTotal: 7 })
+  assert.ok(exact.facts.includes('7 things'))
+})
+
+test('windowLiveItemFacts on the ownerless world root prints "nobody owns it", and an empty purpose yields no purpose row', () => {
+  const root = windowLiveItemFacts('place', { owner: null, purpose: '', places: 3, notes: 0 }, {
+    exactThingTotal: 0,
+  })
+  assert.ok(root.facts.includes('nobody owns it'))
+  assert.ok(!root.facts.some(fact => fact === ''))
+  assert.equal(root.facts.filter(fact => fact === 'nobody owns it').length, 1)
+})
+
+test('windowLiveItemLastAction returns a body-free phrase for move, note, make, and use, and null when nothing covers the item', () => {
+  const at = new Date('2026-01-01T00:00:00.000Z')
+  const moveRecord = Object.freeze({
+    actor: 'proof-alex', kind: 'action', at,
+    detail: Object.freeze({ action: 'move', status: 'applied', from_place_id: 1, to_place_id: 2 }),
+  })
+  assert.equal(
+    windowLiveItemLastAction([moveRecord], 'resident', 'proof-alex', () => 'Movement garden'),
+    'moved in from Movement garden',
+  )
+
+  const noteRecord = Object.freeze({
+    actor: 'proof-alex', kind: 'note', at,
+    detail: Object.freeze({ note_id: 9301, place_id: 2 }),
+  })
+  assert.equal(windowLiveItemLastAction([noteRecord], 'resident', 'proof-alex'), 'spoke here')
+
+  const makeRecord = Object.freeze({
+    actor: 'proof-alex', kind: 'thing_created', at,
+    detail: Object.freeze({ place_id: 2, thing_id: 9401 }),
+  })
+  assert.equal(
+    windowLiveItemLastAction([makeRecord], 'resident', 'proof-alex'),
+    'made thing #9401',
+  )
+
+  const useRecord = Object.freeze({
+    actor: 'proof-alex', kind: 'action', at,
+    detail: Object.freeze({
+      action: 'use', status: 'applied', place_id: 2, source_thing_id: 9401,
+    }),
+  })
+  assert.equal(
+    windowLiveItemLastAction([useRecord], 'resident', 'proof-alex'),
+    'used thing #9401',
+  )
+
+  assert.equal(windowLiveItemLastAction([], 'resident', 'proof-alex'), null)
+  assert.equal(windowLiveItemLastAction([moveRecord], 'place', '2'), null)
+
+  const usedByThing = windowLiveItemLastAction([useRecord], 'thing', 9401)
+  assert.equal(usedByThing, 'used by proof-alex')
+  const madeByThing = windowLiveItemLastAction([makeRecord], 'thing', 9401)
+  assert.equal(madeByThing, 'made by proof-alex here')
+  const carriedThing = windowLiveItemLastAction([Object.freeze({
+    actor: 'proof-bea', kind: 'action', at,
+    detail: Object.freeze({
+      action: 'move', status: 'applied', from_place_id: 1, to_place_id: 2,
+      mode: 'carry', thing_id: 9401,
+    }),
+  })], 'thing', 9401)
+  assert.equal(carriedThing, 'carried in by proof-bea')
+
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveItemLastAction = function windowLiveItemLastAction/u,
+  )
+})
+
+test('windowLiveItemLastAction withholds a place name when that place is quiet, for both endpoints of a move', () => {
+  const at = new Date('2026-01-01T00:00:00.000Z')
+  const moveRecord = Object.freeze({
+    actor: 'proof-alex', kind: 'action', at,
+    detail: Object.freeze({ action: 'move', status: 'applied', from_place_id: 1, to_place_id: 2 }),
+  })
+  const withheld = windowLiveItemLastAction([moveRecord], 'resident', 'proof-alex', () => null)
+  assert.equal(withheld, 'moved in')
+  assert.ok(!withheld.includes('from'))
+})
+
+test('windowLiveItemPopoverPlacement never returns a rectangle intersecting the anchor rect', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 800, bottom: 600 })
+  const size = Object.freeze({ width: 200, height: 100 })
+  const anchors = [
+    Object.freeze({ left: 400, top: 300, right: 420, bottom: 320 }), // centre
+    Object.freeze({ left: 0, top: 0, right: 20, bottom: 20 }), // top-left corner
+    Object.freeze({ left: 780, top: 0, right: 800, bottom: 20 }), // top-right corner
+    Object.freeze({ left: 0, top: 580, right: 20, bottom: 600 }), // bottom-left corner
+    Object.freeze({ left: 780, top: 580, right: 800, bottom: 600 }), // bottom-right corner
+  ]
+  for (const anchor of anchors) {
+    const placement = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+    if (!placement) continue
+    const intersects = placement.left < anchor.right && placement.left + size.width > anchor.left &&
+      placement.top < anchor.bottom && placement.top + size.height > anchor.top
+    assert.equal(intersects, false, JSON.stringify(anchor))
+  }
+})
+
+test('windowLiveItemPopoverPlacement keeps the popover fully inside the viewport with margin whenever any side fits, and clamps without covering the anchor otherwise', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 800, bottom: 600 })
+  const size = Object.freeze({ width: 200, height: 100 })
+  const anchor = Object.freeze({ left: 400, top: 300, right: 420, bottom: 320 })
+  const placement = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+  assert.ok(placement)
+  assert.ok(placement.left >= 8)
+  assert.ok(placement.left + size.width <= 800 - 8)
+  assert.ok(placement.top >= 8)
+  assert.ok(placement.top + size.height <= 600 - 8)
+
+  // A 375x812 phone viewport with a 320-wide popover, anchored near the edge.
+  const phoneViewport = Object.freeze({ left: 0, top: 0, right: 375, bottom: 812 })
+  const phoneSize = Object.freeze({ width: 320, height: 160 })
+  const edgeAnchor = Object.freeze({ left: 2, top: 2, right: 22, bottom: 22 })
+  const phonePlacement = windowLiveItemPopoverPlacement(edgeAnchor, phoneSize, phoneViewport, 10, 8)
+  assert.ok(phonePlacement)
+  assert.ok(phonePlacement.left >= 0)
+  assert.ok(phonePlacement.left + phoneSize.width <= 375)
+})
+
+test('windowLiveItemPopoverPlacement is deterministic and fails closed on invalid input', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 800, bottom: 600 })
+  const size = Object.freeze({ width: 200, height: 100 })
+  const anchor = Object.freeze({ left: 400, top: 300, right: 420, bottom: 320 })
+  const first = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+  const second = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+  assert.deepEqual(first, second)
+
+  assert.equal(windowLiveItemPopoverPlacement(
+    Object.freeze({ left: NaN, top: 0, right: 20, bottom: 20 }), size, viewport, 10, 8,
+  ), null)
+  assert.equal(windowLiveItemPopoverPlacement(
+    Object.freeze({ left: 10, top: 10, right: 10, bottom: 10 }), size, viewport, 10, 8,
+  ), null)
+
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveItemPopoverPlacement = function windowLiveItemPopoverPlacement/u,
+  )
 })
