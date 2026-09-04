@@ -293,6 +293,7 @@ test('gazetteBudgetCutMessage names the size cut in plain words, not a false emp
   assert.match(message, /25 submissions/u)
   assert.match(message, /size limit/iu)
   assert.match(message, /note #9000/u)
+  assert.match(message, /700000 bytes/u)
   assert.doesNotMatch(message, /printed with no submissions/iu)
 })
 

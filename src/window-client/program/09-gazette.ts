@@ -330,8 +330,11 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     // from the issue summary, not the size of this loaded page) so the card
     // and the detail pane never disagree about whether entries exist.
     const count = String(issue.entryCount) + (issue.entryCount === 1 ? ' submission' : ' submissions')
+    const size = budgetCut.nextItemTextBytes
+      ? ' (about ' + String(budgetCut.nextItemTextBytes) + ' bytes)'
+      : ''
     const named = budgetCut.nextItemNoteId
-      ? ' The first one, note #' + String(budgetCut.nextItemNoteId) + ', did not fit.'
+      ? ' The first one, note #' + String(budgetCut.nextItemNoteId) + size + ', did not fit.'
       : ''
     return 'This issue has ' + count + ', but the automatic size limit cut this page before ' +
       'the first entry fit.' + named + ' Use the Read issue link above to see the full issue.'

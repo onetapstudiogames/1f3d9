@@ -4314,6 +4314,7 @@ test('a Gazette page the size limit cut before the first entry says so, and matc
   await expect(detail).toContainText('25 submissions')
   await expect(detail).toContainText('size limit')
   await expect(detail).toContainText('note #9101')
+  await expect(detail).toContainText('700000 bytes')
   await expect(detail).not.toContainText('printed with no submissions')
   await expect(panel.getByRole('button', { name: 'Load more entries', exact: true })).toHaveCount(0)
 })
