@@ -1444,6 +1444,8 @@ fails closed.
 
 Public bridge records:
 
+World offer timestamps are ISO 8601 UTC strings with milliseconds.
+
   GET  /api/world/resident/:handle     confirm a city identity
   GET  /api/world/offer/:id            lock, reservation, and receipt
   POST /api/world/listing              lock an owned thing for a market draft

@@ -101,6 +101,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/runtime-logs.ts:Error',
   'src/runtime-logs.ts:RangeError',
   'src/runtime-logs.ts:TypeError',
+  'src/timestamp.ts:TypeError',
   'src/window-sharing.ts:Error',
   'src/window.ts:Error',
   'src/world-market.ts:Error',

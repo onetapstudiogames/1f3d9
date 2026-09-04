@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isoTimestamp } from './timestamp.ts'
 
 const WALLET_RE = /^0x[0-9a-f]{40}$/u
 const HASH_RE = /^0x[0-9a-f]{64}$/u
@@ -256,13 +257,6 @@ export async function paymentResponseReplayReady(
   }
 }
 
-function isoString(value: unknown): string | null {
-  if (value == null) return null
-  const date = value instanceof Date ? value : new Date(String(value))
-  if (Number.isNaN(date.getTime())) throw new TypeError('invalid timestamp row')
-  return date.toISOString()
-}
-
 function integer(value: unknown): number | null {
   if (value == null) return null
   const parsed = Number(value)
@@ -443,7 +437,7 @@ function tokenValue(value: unknown): string | null {
 }
 
 function requiredTimestamp(row: Record<string, unknown>, camel: string, snake: string): string {
-  const value = isoString(rowValue(row, camel, snake))
+  const value = isoTimestamp(rowValue(row, camel, snake))
   if (value == null) throw new TypeError(`invalid ${snake} row`)
   return value
 }
@@ -452,8 +446,8 @@ function recoveryWindow(row: Record<string, unknown>): {
   recoveryStartedAt: string | null
   recoveryDeadlineAt: string | null
 } {
-  const recoveryStartedAt = isoString(rowValue(row, 'recoveryStartedAt', 'recovery_started_at'))
-  const recoveryDeadlineAt = isoString(rowValue(row, 'recoveryDeadlineAt', 'recovery_deadline_at'))
+  const recoveryStartedAt = isoTimestamp(rowValue(row, 'recoveryStartedAt', 'recovery_started_at'))
+  const recoveryDeadlineAt = isoTimestamp(rowValue(row, 'recoveryDeadlineAt', 'recovery_deadline_at'))
   if ((recoveryStartedAt == null) !== (recoveryDeadlineAt == null)) {
     throw new TypeError('invalid recovery window row')
   }
@@ -527,17 +521,17 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
     x402ValidAfter: bigintValue(rowValue(row, 'x402ValidAfter', 'x402_valid_after')),
     x402ValidBefore: bigintValue(rowValue(row, 'x402ValidBefore', 'x402_valid_before')),
     startBlock: bigintValue(rowValue(row, 'startBlock', 'start_block')),
-    startTime: isoString(rowValue(row, 'startTime', 'start_time')),
-    endTime: isoString(rowValue(row, 'endTime', 'end_time')),
+    startTime: isoTimestamp(rowValue(row, 'startTime', 'start_time')),
+    endTime: isoTimestamp(rowValue(row, 'endTime', 'end_time')),
     status: status!,
     leaseOwner: textValue(rowValue(row, 'leaseOwner', 'lease_owner')),
-    leaseExpiresAt: isoString(rowValue(row, 'leaseExpiresAt', 'lease_expires_at')),
+    leaseExpiresAt: isoTimestamp(rowValue(row, 'leaseExpiresAt', 'lease_expires_at')),
     ...recovery,
     txHash: hashValue(rowValue(row, 'txHash', 'tx_hash')),
     finalizedBlockNumber: bigintValue(rowValue(row, 'finalizedBlockNumber', 'finalized_block_number')),
     finalizedBlockHash: hashValue(rowValue(row, 'finalizedBlockHash', 'finalized_block_hash')),
-    finalizedBlockTime: isoString(rowValue(row, 'finalizedBlockTime', 'finalized_block_time')),
-    finalizedAt: isoString(rowValue(row, 'finalizedAt', 'finalized_at')),
+    finalizedBlockTime: isoTimestamp(rowValue(row, 'finalizedBlockTime', 'finalized_block_time')),
+    finalizedAt: isoTimestamp(rowValue(row, 'finalizedAt', 'finalized_at')),
     invalidReason: textValue(rowValue(row, 'invalidReason', 'invalid_reason')),
     result: objectValue(rowValue(row, 'result', 'result_json')),
     responseStatus: integer(rowValue(row, 'responseStatus', 'response_status')),
@@ -546,7 +540,7 @@ function paymentAttemptFromRow(row: Record<string, unknown> | undefined): Paymen
     ...(paymentResponseHeader ? { paymentResponseHeader } : {}),
     createdAt: requiredTimestamp(row, 'createdAt', 'created_at'),
     updatedAt: requiredTimestamp(row, 'updatedAt', 'updated_at'),
-    completedAt: isoString(rowValue(row, 'completedAt', 'completed_at')),
+    completedAt: isoTimestamp(rowValue(row, 'completedAt', 'completed_at')),
   }
 }
 
@@ -625,8 +619,8 @@ function finalityValue(finality: {
 } {
   if (finality.blockNumber < 0n) throw new TypeError('invalid finalized block number')
   const blockHash = requiredHash(finality.blockHash, 'finality')
-  const blockTime = isoString(finality.blockTime)
-  const finalizedAt = isoString(finality.finalizedAt)
+  const blockTime = isoTimestamp(finality.blockTime)
+  const finalizedAt = isoTimestamp(finality.finalizedAt)
   if (!blockTime || !finalizedAt) throw new TypeError('invalid finality timestamp')
   return { blockNumber: finality.blockNumber, blockHash, blockTime, finalizedAt }
 }
