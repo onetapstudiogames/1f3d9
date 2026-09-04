@@ -20,7 +20,7 @@ this file.
 | City #85: Window audit | SHIPPED | The audit, owner visibility decision, and PR #110 fixes exist; re-check after PR #162 merges before closing. Audit: `Open city issues`. |
 | City #83: Universality review | STILL OPEN | No requested census, design, or owner decision exists. Audit: `Open city issues`. |
 | City #82: Documentation overhaul | STILL OPEN | Partial: several fixes shipped, but 28 point-in-time audit files and root wave docs remain unreconciled. Audit: `Open city issues`. |
-| City #79: Split the window client | STILL OPEN | `src/window-client.ts` was 11,861 lines at audit time. Audit: `Open city issues`. |
+| City #79: Split the window client | STILL OPEN | Phase 1 (mechanical split into `src/window-client/**.ts`; `WINDOW_JS` byte-identical, sha256 `8388f3b9b32ccb8b0c4c5c97ca9bd40a9d24e895c2abaaebbc69d0a60845f178`) shipped; see `docs/DRAWING_AND_LIVE_VIEW.md#9-client-source-layout-issue-79-phase-1`. Phase 2, the typed accessor layer over `state` that stops a renderer reading the raw caches, remains open. |
 | City #78: Setup sentences | STILL OPEN | Half shipped: the stale-tool-cache sentence exists; the shared-machine per-agent credential warning does not. Audit: `Open city issues`. |
 | City #77: Typed identity outcomes | STILL OPEN | `generateRecoveryCodes` still returned `Promise<RecoveryGenerationResult | null>` at `src/identity-store.ts:459`. Audit: `Open city issues`. |
 | City #76: Failure-message honesty | STILL OPEN | No two-site, both-sides, all-door census proves cause plus safe next step. Audit: `Open city issues`. |
