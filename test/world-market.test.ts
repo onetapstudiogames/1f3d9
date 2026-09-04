@@ -1107,7 +1107,7 @@ test('checkout city handle is bound to the authenticated resident', async () => 
   assert.equal(harness.getState().offer?.buyer_id, null)
 })
 
-test('a valid checkout opens exactly five minutes and retries idempotently', async () => {
+test('the pre-existing first-reservation behavior records market_listing_id and opens exactly five minutes', async () => {
   const harness = makeHarness({
     offer: openOffer(),
     thingLocked: true,
@@ -1134,6 +1134,30 @@ test('a valid checkout opens exactly five minutes and retries idempotently', asy
   })
   assert.equal(race.status, 409)
 })
+
+for (const [name, marketDraft] of [
+  ['pending draft with no listing', draft()],
+  ['active draft with a canceled listing', draft({ status: 'active', listing_id: 91, listing_state: 'canceled' })],
+  ['active draft whose listing differs from checkout', draft({ status: 'active', listing_id: 92, listing_state: 'active' })],
+] as const) {
+  test(`claim rejects ${name}`, async () => {
+    const harness = makeHarness({
+      offer: openOffer(),
+      thingLocked: true,
+      draft: marketDraft,
+    })
+    const response = await harness.app.request('/api/world/offer/101/claim', {
+      method: 'POST', headers: jsonHeaders(BUYER_SECRET),
+      body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+    })
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), {
+      error: 'market listing is not active or does not match this world offer; re-read 1F3EA and use its current active listing',
+    })
+    assert.equal(harness.getState().offer?.market_listing_id, null)
+    assert.equal(harness.getState().facilitatorSettlements, 0)
+  })
+}
 
 test('claim accepts a live listing after its activated draft expiry', async () => {
   const harness = makeHarness({
@@ -1709,6 +1733,58 @@ test('cancellation tells the seller how to end a live market listing', async () 
   assert.equal(response.status, 409)
   assert.deepEqual(await response.json(), {
     error: 'the market listing is still live; withdraw it at 1F3EA, then retry cancellation here to unlock the thing',
+  })
+  assert.equal(harness.getState().thingLocked, true)
+})
+
+test('cancellation tells the seller when an ended listing world record is still catching up', async () => {
+  const harness = makeHarness({
+    offer: openOffer({ market_listing_id: 91 }),
+    thingLocked: true,
+    listing: listing({ state: 'withdrawn', world_state: 'active' }),
+  })
+  const response = await harness.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'the market listing has ended, but its world record has not finished catching up; retry after 1F3EA finishes ending the listing',
+  })
+  assert.equal(harness.getState().thingLocked, true)
+})
+
+test('cancellation falls back to the durable draft only when a known listing is not found', async () => {
+  const harness = makeHarness(
+    {
+      offer: openOffer({ market_listing_id: 91 }),
+      thingLocked: true,
+      draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }),
+    },
+    path => publicMarketGet(MARKET, path, async () =>
+      path === '/api/listing/91'
+        ? Response.json({ error: 'no such listing' }, { status: 404 })
+        : Response.json({ draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }) })),
+  )
+  const response = await harness.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.equal(harness.getState().thingLocked, false)
+})
+
+test('cancellation keeps a strict 502 for a present listing inconsistent with the world offer', async () => {
+  const harness = makeHarness({
+    offer: openOffer({ market_listing_id: 91 }),
+    thingLocked: true,
+    listing: listing({ world_offer_id: 102 }),
+    draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }),
+  })
+  const response = await harness.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(response.status, 502)
+  assert.deepEqual(await response.json(), {
+    error: 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing',
   })
   assert.equal(harness.getState().thingLocked, true)
 })

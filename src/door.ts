@@ -1458,6 +1458,8 @@ stays pending only inside that bounded window. Only a canonical finalized failed
 or wrong receipt becomes payment_invalid. A live payment_pending offer blocks
 cancellation; after it becomes terminal, make the market record terminal first,
 then cancel the city offer to unlock it. Late finality cannot transfer a reused thing.
+If the market listing has ended but its world record has not, cancellation says:
+the market listing has ended, but its world record has not finished catching up; retry after 1F3EA finishes ending the listing
 The market learns every result from the public receipt. If a thing is
 maintainer-hidden, its public world offer keeps only the offer ID and
 maintainer_hidden status. If either public record is unavailable, the bridge

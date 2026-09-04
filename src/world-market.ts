@@ -1177,24 +1177,30 @@ export function mountWorldMarketRoutes(
     const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
       ? new Set([...endedStates, 'stale'])
       : endedStates
-    let marketEnded: boolean
+    let marketEnded: boolean | undefined
+    let endedListingAwaitingWorld = false
     if (offer.market_listing_id != null) {
       const listingPayload = await getMarket(c, dependencies, `/api/listing/${offer.market_listing_id}`)
-      if (isResponse(listingPayload)) return listingPayload
-      const listing = object(object(listingPayload)?.listing)
-      const listingId = positiveId(listing?.id)
-      const offerId = positiveId(listing?.world_offer_id)
-      const draftId = positiveId(listing?.world_draft_id)
-      const listingState = publicLabel(listing?.state, 50)
-      const worldState = publicLabel(listing?.world_state, 50)
-      if (
-        listingId !== offer.market_listing_id || offerId !== offer.id ||
-        draftId !== offer.market_draft_id || !listingState || !worldState
-      ) {
-        return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
+      if (isResponse(listingPayload)) {
+        if (listingPayload.status !== 404) return listingPayload
+      } else {
+        const listing = object(object(listingPayload)?.listing)
+        const listingId = positiveId(listing?.id)
+        const listingOfferId = positiveId(listing?.world_offer_id)
+        const listingDraftId = positiveId(listing?.world_draft_id)
+        const listingState = publicLabel(listing?.state, 50)
+        const worldState = publicLabel(listing?.world_state, 50)
+        if (
+          listingId !== offer.market_listing_id || listingOfferId !== offer.id ||
+          listingDraftId !== offer.market_draft_id || !listingState || !worldState
+        ) {
+          return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
+        }
+        marketEnded = endedStates.has(listingState) && listingEndedStates.has(worldState)
+        endedListingAwaitingWorld = endedStates.has(listingState) && !listingEndedStates.has(worldState)
       }
-      marketEnded = endedStates.has(listingState) && listingEndedStates.has(worldState)
-    } else {
+    }
+    if (marketEnded === undefined) {
       const draftPayload = await getMarket(c, dependencies, `/api/world/draft/${offer.market_draft_id}`)
       if (isResponse(draftPayload)) return draftPayload
       const draft = draftRecord(draftPayload, offer.market_draft_id)
@@ -1207,6 +1213,9 @@ export function mountWorldMarketRoutes(
           (draft.status === 'pending' && draft.expiresAt <= dependencies.now())
     }
     if (!marketEnded) {
+      if (endedListingAwaitingWorld) {
+        return err(c, 409, 'the market listing has ended, but its world record has not finished catching up; retry after 1F3EA finishes ending the listing')
+      }
       return err(c, 409, 'the market listing is still live; withdraw it at 1F3EA, then retry cancellation here to unlock the thing')
     }
 
