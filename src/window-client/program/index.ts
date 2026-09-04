@@ -1,6 +1,6 @@
 // Ordered client-JS program parts that assemble WINDOW_JS in src/window-client.ts.
 //
-// BYTE-IDENTITY CONTRACT (Phase 1 of issue #79 — see docs/DRAWING_AND_LIVE_VIEW.md):
+// BYTE-IDENTITY CONTRACT (Phase 1 of issue #79; see docs/DRAWING_AND_LIVE_VIEW.md):
 // R1 - PART FILE SHAPE. Every part file is exactly:
 //        export const PART_NN_NAME = `<first source line>
 //        <...>

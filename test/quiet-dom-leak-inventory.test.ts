@@ -22,7 +22,7 @@ import test from 'node:test'
 // Phase 1 of issue #79 (see docs/DRAWING_AND_LIVE_VIEW.md) split the window
 // client's runtime body out of src/window-client.ts into ordered program
 // parts under src/window-client/program/. Each part file is
-// `export const PART_NN_NAME = \`<source>\`` — stripping that header/footer
+// `export const PART_NN_NAME = \`<source>\``: stripping that header/footer
 // and joining the parts in filename order reproduces exactly the same
 // client source text this scanner watched before the split (proven by the
 // PR's byte-identity proof: the assembled WINDOW_JS is unchanged).
