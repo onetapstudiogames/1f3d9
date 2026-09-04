@@ -900,7 +900,7 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   logUnrecognizedExecutionFailure('action', actionId, error)
   return new EngineError(
     500,
-    'the city hit an internal failure running this action; that failure is not something you did, so retry once, then contact the city operator if it keeps failing',
+    'the city could not complete the action because of an internal failure; retry once, then contact the city operator if it keeps failing',
   )
 }
 

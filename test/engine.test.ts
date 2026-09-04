@@ -2308,7 +2308,7 @@ test('a recognized internal engine failure is generic in the public record', asy
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  const expectedError = 'the city hit an internal failure running this action; that failure is not something you did, so retry once, then contact the city operator if it keeps failing'
+  const expectedError = 'the city could not complete the action because of an internal failure; retry once, then contact the city operator if it keeps failing'
   assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.deepEqual(logged[0]?.[1], {
@@ -2362,7 +2362,7 @@ test('an unknown action failure is generic in the public record but useful in se
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  const expectedError = 'the city hit an internal failure running this action; that failure is not something you did, so retry once, then contact the city operator if it keeps failing'
+  const expectedError = 'the city could not complete the action because of an internal failure; retry once, then contact the city operator if it keeps failing'
   assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.equal(logged[0]?.[0], 'unrecognized action execution failure')
