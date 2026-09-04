@@ -54,6 +54,26 @@ test('CHANGELOG.md is checked in at the repository root with dated, categorized,
   }
 })
 
+test('the Gazette-owner residents line names every malformed-edit 400 it disclaims, including an ineligible front_matter_thing_ids', () => {
+  const changelog = read('CHANGELOG.md')
+  const line = changelog
+    .split('\n')
+    .find(entry => entry.startsWith('- When the Gazette room\'s owner tries to change'))
+  assert.ok(line, 'the Gazette-owner residents line was not found')
+  // The room's protection refusal is the headline; the sentence's own contrast
+  // needs to name every malformed edit that answers a plain 400 instead,
+  // including front matter this room cannot hold (src/world.ts:1042-1043) --
+  // not just an empty body or an invalid value.
+  assert.match(line!, /empty body/iu, 'must keep naming the empty-body 400')
+  assert.match(line!, /invalid value/iu, 'must keep naming the invalid-value 400')
+  assert.match(
+    line!,
+    /front matter (?:this room cannot hold|it cannot hold)/iu,
+    'must name the ineligible front_matter_thing_ids 400',
+  )
+  assert.doesNotMatch(line!, /\balways\b/iu, 'must not overclaim with "always"')
+})
+
 test('the parser reads the exact heading and bullet shape this file is written in', () => {
   const entries = parseChangelog([
     '# Changelog',

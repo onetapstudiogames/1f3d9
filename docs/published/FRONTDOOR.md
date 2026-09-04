@@ -527,12 +527,12 @@ LOOK AND BUILD
   GET  /api/search              find public notes and active things without their bodies
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409
-  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409
+  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions
-  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409
+  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409
+  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, or open_to_use
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
@@ -568,11 +568,13 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. POST /api/place with parent_id 454,
-PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any
+Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454
+that would change any field, POST /api/place with parent_id 454,
+PUT /api/place/:id/laws for #454 that would add or remove a law,
+POST /api/thing with place_id 454, and any
 action effect that would move a thing there all return HTTP 409 with
-"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things".
-Even founder #1 is not exempt.
+"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things";
+every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
 
 DRAWINGS
 --------
@@ -1167,8 +1169,9 @@ A thing's kind traits are consulted only for an action that names that thing: us
 consume, and give with thing_id. move, talk, make, and go_home never name a source
 thing, so those keys in a trait's recipe do nothing on a kind and fire only where
 the same trait is adopted as a place law.
-No action or effect may move a thing into Gazette room #454, even for owner #1;
-that attempt returns the shared protected-service HTTP 409 stated under LOOK AND BUILD.
+No action or effect may move a thing into Gazette room #454; for the room's owner,
+including owner #1, that attempt returns the shared protected-service HTTP 409
+stated under LOOK AND BUILD, and every other caller is turned away earlier, at 401 or 403.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed

@@ -822,7 +822,9 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
         ? 'gazette_submission_room_children'
         : q.includes('insert into things')
           ? 'gazette_submission_room_things'
-          : null
+          : q.includes('update places set')
+            ? 'gazette_submission_room_lifecycle'
+            : null
     if (constraint) {
       throw Object.assign(new Error('private database constraint detail'), {
         code: '23514',
@@ -3644,6 +3646,26 @@ const jsonResponse = (value: unknown, status = 200) => new Response(JSON.stringi
   headers: { 'content-type': 'application/json' },
 })
 
+// Neon's SQL-over-HTTP endpoint reports a failed query as one HTTP 400 whose
+// JSON body carries the Postgres error fields (code, constraint, ...) flatly;
+// the driver copies those straight onto the top-level NeonDbError it throws.
+// Mirror that exact shape here instead of letting a thrown fake-DB error
+// reject the fetch() call itself, which the driver reports as a network
+// failure and nests the original error one level deeper under
+// `sourceError` -- a shape real Postgres query failures never take.
+function postgresErrorHttpResponse(error: unknown): Response | null {
+  if (error == null || typeof error !== 'object') return null
+  const code = (error as { code?: unknown }).code
+  if (typeof code !== 'string') return null
+  const constraint = (error as { constraint?: unknown }).constraint
+  const message = error instanceof Error ? error.message : 'database error'
+  return jsonResponse({
+    message,
+    code,
+    ...(typeof constraint === 'string' ? { constraint } : {}),
+  }, 400)
+}
+
 function pgArray(values: unknown[]) {
   return `{${values.map(value => `"${String(value).replace(/(["\\])/g, '\\$1')}"`).join(',')}}`
 }
@@ -3709,7 +3731,15 @@ globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
     })
     return jsonResponse({ results })
   }
-  if (url.includes('/sql')) return jsonResponse(neonEncode(dbRespond(body.query, body.params ?? [])))
+  if (url.includes('/sql')) {
+    try {
+      return jsonResponse(neonEncode(dbRespond(body.query, body.params ?? [])))
+    } catch (error) {
+      const errorResponse = postgresErrorHttpResponse(error)
+      if (errorResponse) return errorResponse
+      throw error
+    }
+  }
   if (url.includes('base-rpc.test')) {
     const result = body.method === 'eth_blockNumber'
       ? '0x100'
@@ -10515,6 +10545,9 @@ test('all Gazette room dependency writes return one protected-service refusal', 
       name: 'forbidden thing',
       body: '',
     }],
+    ['/api/place/454', 'PATCH', { description: 'forbidden edit' }],
+    ['/api/place/454', 'PATCH', { quiet: true }],
+    ['/api/place/454', 'PATCH', { front_matter_thing_ids: [] }],
   ] as const
 
   for (const [path, method, body] of requests) {

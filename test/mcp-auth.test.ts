@@ -829,7 +829,7 @@ test('say states its placement, body, status, and duplicate-note contract', asyn
     )
     assert.match(
       say.description,
-      /Gazette room #454 accepts notes only[\s\S]*refused even for owner #1 with HTTP 409/iu,
+      /Gazette room #454 accepts notes only[\s\S]*even owner #1 is not exempt[\s\S]*refused earlier, at 401 or 403/iu,
       path,
     )
     assert.ok(
@@ -1156,7 +1156,7 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(make.description, /open_to_use[^.]*defaults? false/iu, `${path}: make open_to_use default`)
     assert.match(make.description, /ingredient_ids[^.]*empty unless kind_id/iu, `${path}: kindless ingredient rule`)
     assert.match(make.description, /crafted makes return consumed_ingredient_ids[^.]*kindless makes omit/iu, `${path}: make response shape`)
-    assert.match(make.description, /place_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected make destination`)
+    assert.match(make.description, /place_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected make destination`)
     assert.equal(
       (make.inputSchema.properties?.open_to_use as { default?: unknown }).default,
       false,
@@ -1192,9 +1192,9 @@ test('MCP descriptions state enforced caller contracts before use', async () => 
     assert.match(act.description, /may also take target_type with target_id, to_place_id, or to_handle/iu, `${path}: effect inputs`)
     assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
     assert.match(act.description, /target_type and target_id always appear together/iu, `${path}: target pair`)
-    assert.match(act.description, /move a thing into room #454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected thing movement`)
-    assert.match(found.description, /parent_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected child place`)
-    assert.match(laws.description, /place_id 454[\s\S]*even (?:for )?owner #1[\s\S]*HTTP 409/iu, `${path}: protected local laws`)
+    assert.match(act.description, /move a thing into room #454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected thing movement`)
+    assert.match(found.description, /parent_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected child place`)
+    assert.match(laws.description, /place_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected local laws`)
     assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
     assert.match(act.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
     assert.match(listWorld.description, /thing[^.]*owned by you[^.]*not withdrawn[^.]*unlocked/iu, `${path}: world thing state`)

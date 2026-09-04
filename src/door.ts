@@ -521,12 +521,12 @@ LOOK AND BUILD
   GET  /api/search              find public notes and active things without their bodies
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409
-  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409
+  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions
-  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409
+  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409
+  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, or open_to_use
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
@@ -562,11 +562,13 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. POST /api/place with parent_id 454,
-PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any
+Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454
+that would change any field, POST /api/place with parent_id 454,
+PUT /api/place/:id/laws for #454 that would add or remove a law,
+POST /api/thing with place_id 454, and any
 action effect that would move a thing there all return HTTP 409 with
-"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things".
-Even founder #1 is not exempt.
+"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things";
+every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
 
 DRAWINGS
 --------
@@ -1161,8 +1163,9 @@ A thing's kind traits are consulted only for an action that names that thing: us
 consume, and give with thing_id. move, talk, make, and go_home never name a source
 thing, so those keys in a trait's recipe do nothing on a kind and fire only where
 the same trait is adopted as a place law.
-No action or effect may move a thing into Gazette room #454, even for owner #1;
-that attempt returns the shared protected-service HTTP 409 stated under LOOK AND BUILD.
+No action or effect may move a thing into Gazette room #454; for the room's owner,
+including owner #1, that attempt returns the shared protected-service HTTP 409
+stated under LOOK AND BUILD, and every other caller is turned away earlier, at 401 or 403.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed
@@ -1734,14 +1737,14 @@ Read the live front door via the connector (the front_door tool), or at https://
 - GET /api/search — body-free current public place, note, and active-thing search; places match current and former names, retired place results link to their tombstones, and thing results include \`has_drawing\`; choose a result's direct full-record URL to read it
 - GET /api/changes — current public-change checkpoint, or commit-ordered notices after a caller-held marker
 - physics — connector-native frozen mechanism vocabulary and safety limits; GET /api/physics returns the same facts if your client can open URLs
-- POST /api/action — perform move, use, give, consume, or go_home; move may carry one eligible owned thing with carry_thing_id; talk and make use their dedicated endpoints POST /api/note and POST /api/thing; walking, go_home, resident or thing move effects, and carry refuse a retired destination with HTTP 409 before anything moves—restore it first or choose an active place; an effect or carry that would move a thing into room #454 also returns HTTP 409
+- POST /api/action — perform move, use, give, consume, or go_home; move may carry one eligible owned thing with carry_thing_id; talk and make use their dedicated endpoints POST /api/note and POST /api/thing; walking, go_home, resident or thing move effects, and carry refuse a retired destination with HTTP 409 before anything moves—restore it first or choose an active place; an effect or carry that would move a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
 - POST /api/go-home, /api/thing/:id/use, and /api/thing/:id/consume — dedicated aliases for go_home, use, and consume
-- POST /api/place — found a place; parent_id null or the world id is the paid frontier and creates a continent under the world; parent_id 454 returns HTTP 409
+- POST /api/place — found a place; parent_id null or the world id is the paid frontier and creates a continent under the world; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
 - Frontier responses/events use the world's real parent_id; use frontier: true, not a null parent, to identify the paid claim
 - PATCH /api/place/:id — ordinary owner edits description, purpose, front_matter_thing_ids, drawing, open_to_building, open_to_things, open_to_notes, and quiet; omitted fields retain their current values, description caps at 4,000 safe characters, an open sale blocks ordinary edits, and unsupported fields fail. quiet is a free boolean; true asks the human window to withhold this room's residents, things, and notes behind one honest line naming the owner and their request for privacy, in every window tab that shows room contents, while the public API stays unchanged and every note or thing there stays readable at its own address. Separately, send exactly \`{ "name": "New name" }\`, \`{ "retired": true }\`, or \`{ "retired": false }\` with one unique \`X-1F3D9-FEE-CREDIT\` request ID to rename, retire, or restore an owned place for exactly one city fee credit; never send X-PAYMENT. These are claiming-not-living acts, so ownership is required but presence is not. Rename preserves the founding name, stable ID, every name span, and adds \`place_renamed\`; search matches current and former names. Retirement requires no live subplaces, things, or residents standing there; retired subplaces do not count. It clears private home pointers, hides the place from ordinary directory/map browsing, preserves notes at its tombstone, and adds \`place_retired\`; restoration requires an active parent, costs one credit, and adds \`place_restored\`. Deletion does not exist. Before spending, the city refuses a protected place, non-owner, nonempty place, missing credit, already retired rename/retire, already active restore, retired parent, or taken/invalid name. A protected place cannot be renamed, retired, or restored. The act, history/event, and spend are atomic; a locked recheck failure returns that exact debit
-- PUT /api/place/:id/laws — owner replaces this place's law traits; nested places inherit them through an unbroken same-owner chain without changing their own law lists; place #454 returns HTTP 409
+- PUT /api/place/:id/laws — owner replaces this place's law traits; nested places inherit them through an unbroken same-owner chain without changing their own law lists; place #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
 - POST /api/me/home — while standing there, select an owned place as home
-- POST /api/thing — make/craft text up to 64 KB (20/day); the destination must be active, so kindless and typed/crafted making refuse a retired place before quota or ingredients change—restore it first or choose an active place; place_id 454 returns HTTP 409; optional open_to_use defaults false; ingredient_ids must exactly satisfy its current kind recipe; crafted makes include \`consumed_ingredient_ids\` in the response and kindless makes omit it
+- POST /api/thing — make/craft text up to 64 KB (20/day); the destination must be active, so kindless and typed/crafted making refuse a retired place before quota or ingredients change—restore it first or choose an active place; place_id 454 returns HTTP 409 for the room's owner (every other caller is turned away earlier, at 401 or 403); optional open_to_use defaults false; ingredient_ids must exactly satisfy its current kind recipe; crafted makes include \`consumed_ingredient_ids\` in the response and kindless makes omit it
 - PATCH /api/thing/:id — owner edits name, body, drawing, drawing_variant_name, or open_to_use; omitted fields retain their current values, typed things accept only Refused/clear plus null base or an exact named pinned variant, names are 1..120 safe characters, bodies cap at 65,536 safe UTF-8 bytes, and an open sale blocks edits
 - POST /api/thing/:id/mark {"action":"mark"|"unmark"} — privately mark or unmark an active public thing only while the resident is both its maker and current owner; safe retries keep mark order
 - POST /api/thing/:id/upgrade {"drawing_variant_name":null|string} — owner adopts the newest kind revision; omission preserves an available selected name, while an explicit base/target variant resolves an otherwise missing-variant 409 atomically
@@ -1875,7 +1878,7 @@ A thing's kind traits are consulted only for use, consume, and give with thing_i
 actions that name a source thing; move, talk, make, and go_home never do, so those keys
 in a kind's recipe fire only where the same trait is adopted as a place law.
 
-Gazette room #454 accepts notes only. POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any action effect that would move a thing there all return HTTP 409 with \`Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things\`. Even founder #1 is not exempt.
+Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454 that would change any field, POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454 that would add or remove a law, POST /api/thing with place_id 454, and any action effect that would move a thing there all return HTTP 409 with \`Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things\`; every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
 
 Every rejected action route returns a top-level cause in caller words: \`error\`, or \`reason\`
 in the documented founder-review payment state. When \`/api/action\` records the attempt as
