@@ -1484,6 +1484,28 @@ test('detail budget keeps attention residents plus the nearest six movers with s
   ).simple, [])
 })
 
+test('detail budget caps oversized attention so footsteps stay within 18 marks', () => {
+  const movers = Object.freeze(Array.from({ length: 12 }, (_, index) => Object.freeze({
+    actor: `resident-${String(index + 1)}`,
+    x: index,
+    y: 0,
+    order: index,
+  })))
+  const selected = windowLiveDetailMoverSelection(
+    movers,
+    Object.freeze(movers.slice(6).map(mover => mover.actor)),
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  )
+
+  assert.deepEqual(selected.detailed, [
+    'resident-7', 'resident-8', 'resident-9',
+    'resident-1', 'resident-2', 'resident-3',
+    'resident-4', 'resident-5', 'resident-6',
+  ])
+  assert.equal(selected.detailed.length * 2, 18)
+})
+
 test('redraw gate schedules changed visible input and stays idle when identical or hidden', () => {
   const visibleChange = Object.freeze({
     liveViewActive: true,

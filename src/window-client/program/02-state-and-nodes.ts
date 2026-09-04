@@ -244,6 +244,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveResidentPointsByPlaceId = Object.freeze({})
   let liveThingPointsByPlaceId = Object.freeze({})
   const liveFloorTiles = new Map()
+  const liveProofFloorTiles = new Map()
   const liveFloorTileLoads = new Map()
   let livePlotDetailContext = null
   let livePendingRevealPlaceId = null

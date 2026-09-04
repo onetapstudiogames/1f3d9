@@ -321,7 +321,8 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
     place, className, pixelBox = null, undrawnTarget = null, tileSize = LIVE_FLOOR_TILE_SIZE,
   ) {
     const cacheKey = String(place.id) + ':' + className
-    const cached = state.live.proofScene ? null : liveFloorTiles.get(cacheKey)
+    const floorTiles = state.live.proofScene ? liveProofFloorTiles : liveFloorTiles
+    const cached = floorTiles.get(cacheKey)
     if (cached) {
       if (undrawnTarget) undrawnTarget.dataset.undrawn = cached.dataset.undrawn
       if (pixelBox) {
@@ -381,6 +382,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
         }
         sizeToBox()
       }
+      floorTiles.set(cacheKey, terrain)
       return terrain
     }
     setUndrawn(true)
@@ -397,7 +399,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       if (liveFloorTileLoads.get(cacheKey) !== loadToken) return
       liveFloorTileLoads.delete(cacheKey)
       setUndrawn(false)
-      liveFloorTiles.set(cacheKey, terrain)
+      floorTiles.set(cacheKey, terrain)
     })
     probe.addEventListener('error', () => {
       if (liveFloorTileLoads.get(cacheKey) !== loadToken) return

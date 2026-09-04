@@ -2232,6 +2232,8 @@ test('Live ignores an outside focus when framing First Town', async ({ page }) =
   await expect(page.locator('[data-live-resident-scope="outside"]'))
     .toContainText('map-walker')
   await expect(page.locator('.live-plot')).toHaveCount(217)
+  await expect.poll(() => readLiveChildFraming(page).then(frame =>
+    frame.mountedChildren >= 1 && frame.safeOpenButtons >= 1)).toBe(true)
   const initial = await readLiveChildFraming(page)
   await page.getByRole('button', { name: 'Center live view' }).click()
   const centered = await readLiveChildFraming(page)
@@ -3125,6 +3127,12 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
   await expect(proofPanel).toBeVisible()
   await expectProofDrawingContract(page)
+  const workshopTerrain = proofPanel.locator(
+    '.live-plot[data-place-id="9103"] .live-plot-terrain',
+  )
+  await workshopTerrain.evaluate(node => {
+    ;(window as Window & { __proofWorkshopTerrain?: Element }).__proofWorkshopTerrain = node
+  })
   await expect(proofPanel.locator('.live-proof-frame-time')).toContainText(/p95 .* max/u)
 
   const retry = page.getByRole('button', { name: 'Retry proof room' })
@@ -3170,12 +3178,16 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   }
   expect(sawUse).toBe(true)
   await expect(replays).toHaveCount(0)
+  const scriptedBubble = page.locator('.live-speech-bubble')
+  await expect(scriptedBubble).toHaveText('The workshop bell rings above the busy floor.')
+  expect(await workshopTerrain.evaluate(node =>
+    node === (window as Window & { __proofWorkshopTerrain?: Element }).__proofWorkshopTerrain,
+  )).toBe(true)
 
   await page.locator('#place-filter').selectOption('9103')
   await expect(proofPanel.locator('.live-world-ground-tiles')).toHaveAttribute(
     'data-undrawn', 'false',
   )
-  const scriptedBubble = page.locator('.live-speech-bubble')
   await expect(scriptedBubble).toHaveText('The workshop bell rings above the busy floor.')
   await expect(scriptedBubble).toHaveAttribute(
     'aria-label', "The workshop bell rings above the busy floor. (open proof-dara's note)",

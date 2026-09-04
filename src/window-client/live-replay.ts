@@ -40,7 +40,8 @@ export function windowLiveDetailMoverSelection(
     unique.set(mover.actor, mover)
   }
   const ordered = [...unique.values()]
-  const attention = new Set(attentionActors.filter(actor => unique.has(actor)))
+  const attention = new Set([...new Set(attentionActors.filter(actor => unique.has(actor)))]
+    .slice(0, 3))
   const center = [viewportCenter?.x, viewportCenter?.y].every(Number.isFinite)
     ? viewportCenter
     : Object.freeze({ x: 0, y: 0 })
