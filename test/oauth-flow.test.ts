@@ -2642,17 +2642,19 @@ test('an unrecognized pairing code is refused as pairing_code_rejected with a re
   assert.deepEqual(diagnostics.map(record => record.failed_check), ['code_not_accepted', 'code_not_accepted'])
 })
 
-test('a malformed pairing value records the failed format check without changing the human sentence', async () => {
-  const memory = new MemoryOAuthStore()
-  const diagnostics: OAuthDiagnosticRecord[] = []
-  const app = appFor(memory, record => diagnostics.push(record))
-  const session = await begin(app)
-  const response = await browserPost(app, session, {
-    action: 'pair', csrf: session.csrf, pairing_code: 'not-a-pairing-code',
-  })
-  assert.equal(response.status, 403)
-  assert.match(await response.text(), /Pairing codes work once and expire ten minutes/iu)
-  assert.equal(diagnostics[0]?.failed_check, 'not_a_code')
+test('a malformed pairing value records the failed format check at either step without changing the human sentence', async () => {
+  for (const action of ['pair', 'pair_confirm'] as const) {
+    const memory = new MemoryOAuthStore()
+    const diagnostics: OAuthDiagnosticRecord[] = []
+    const app = appFor(memory, record => diagnostics.push(record))
+    const session = await begin(app)
+    const response = await browserPost(app, session, {
+      action, csrf: session.csrf, pairing_code: 'not-a-pairing-code',
+    })
+    assert.equal(response.status, 403, action)
+    assert.match(await response.text(), /Pairing codes work once and expire ten minutes/iu, action)
+    assert.equal(diagnostics[0]?.failed_check, 'not_a_code', action)
+  }
 })
 
 test('pairing exhausts the shared ten-attempt budget with a pairing-specific message', async () => {

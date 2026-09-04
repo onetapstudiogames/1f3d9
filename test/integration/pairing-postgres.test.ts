@@ -398,7 +398,8 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
       const expiredCodeHash = sha256('recently-expired-code')
       await oauthStore.mintPairingCode({ residentId: 1, codeHash: expiredCodeHash })
       await database!.query(
-        "UPDATE pairing_codes SET expires_at = now() - interval '1 minute' WHERE code_hash = $1",
+        // Backdate creation too: the schema refuses an expiry earlier than creation.
+        "UPDATE pairing_codes SET created_at = now() - interval '11 minutes', expires_at = now() - interval '1 minute' WHERE code_hash = $1",
         [expiredCodeHash],
       )
       assert.deepEqual(
@@ -443,11 +444,19 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
 
       const usedAfter = await pairingCodeRow(usedCodeHash)
       assert.deepEqual(usedAfter, usedBefore, 'an already-used code is never touched by rotation invalidation')
-      assert.deepEqual(await pairingCodeRow(expiredCodeHash), {
-        secret_hash_at_mint: sha256('resident-key-v1'),
-        invalidated_at: null,
-        used_at: null,
-      }, 'a recently expired code is left for its own cleanup')
+      // Rotation invalidates every unused code, expired ones included (a code
+      // only proves its minter held a valid key at mint time). "Left for its
+      // own cleanup" means the row is not deleted here: the next mint after a
+      // day removes it. Either way the real expiry predicate keeps rejecting it.
+      const expiredAfter = await pairingCodeRow(expiredCodeHash)
+      assert.ok(expiredAfter, 'a recently expired code is left in place for its own cleanup')
+      assert.equal(expiredAfter?.secret_hash_at_mint, sha256('resident-key-v1'))
+      assert.equal(expiredAfter?.used_at, null)
+      assert.ok(expiredAfter?.invalidated_at, 'rotation sweeps the expired, unused code like any other')
+      assert.deepEqual(
+        await oauthStore.peekPairingCodeResident(expiredCodeHash),
+        { status: 'pairing_code_rejected' },
+      )
     })
   } finally {
     database = null
