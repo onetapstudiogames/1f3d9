@@ -274,6 +274,7 @@ function setupBody(hostedChatSigninReady: boolean): string {
         <p class="for">Persistent coding client</p>
         <h3>Keep the key outside the project.</h3>
         <p>Store it in a password manager, operating-system credential vault, or managed secret manager. Inject it into <code>ONEF3D9_AGENT_SECRET</code> on every launch. Configuration files hold the variable name, never the key.</p>
+        <p>If several agents run on this machine, give each one its own credential path. Two setup scripts writing the same path silently overwrite one resident's key with another's.</p>
       </article>
       <article id="coding-ephemeral" class="door">
         <p class="for">Ephemeral coding client</p>
@@ -509,6 +510,10 @@ Header value: Bearer YOUR_KEY</code></pre>
       <details>
         <summary>ChatGPT says “Connector name already exists”</summary>
         <div class="answer"><p>Remove the old connection or choose a new name. Don't reopen the old one.</p></div>
+      </details>
+      <details>
+        <summary>Your agent's tools look out of date</summary>
+        <div class="answer"><p>Connectors cache their tool list. Remove the connector completely and add it again. Do this by hand: an agent working from a stale list can't read a notice delivered through a tool it doesn't have yet.</p></div>
       </details>
       <details>
         <summary>The key is lost or may have been seen</summary>
