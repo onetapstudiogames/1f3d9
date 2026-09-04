@@ -13,6 +13,79 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     return liveAnchorPoint(anchor, focus.id, children)
   }
 
+  function liveRoutePoints(points) {
+    return Object.freeze(points.filter(point => point &&
+      [point.x, point.y].every(Number.isFinite)).filter((point, index, held) =>
+      index === 0 || point.x !== held[index - 1].x || point.y !== held[index - 1].y))
+  }
+
+  function liveRouteLength(points) {
+    return points.slice(1).reduce((total, point, index) =>
+      total + Math.hypot(point.x - points[index].x, point.y - points[index].y), 0)
+  }
+
+  function liveRoutePoint(points, requestedProgress) {
+    if (!points.length) return null
+    if (points.length === 1) return points[0]
+    const progress = Math.max(0, Math.min(1, Number(requestedProgress) || 0))
+    const length = liveRouteLength(points)
+    if (!(length > 0)) return points.at(-1)
+    const target = length * progress
+    let covered = 0
+    for (let index = 1; index < points.length; index += 1) {
+      const from = points[index - 1]
+      const to = points[index]
+      const segment = Math.hypot(to.x - from.x, to.y - from.y)
+      if (covered + segment >= target || index === points.length - 1) {
+        const local = segment > 0 ? (target - covered) / segment : 1
+        return Object.freeze({
+          x: from.x + (to.x - from.x) * Math.max(0, Math.min(1, local)),
+          y: from.y + (to.y - from.y) * Math.max(0, Math.min(1, local)),
+        })
+      }
+      covered += segment
+    }
+    return points.at(-1)
+  }
+
+  function liveRouteSlice(points, requestedStart, requestedEnd) {
+    if (points.length < 2) return liveRoutePoints(points)
+    const start = Math.max(0, Math.min(1, Number(requestedStart) || 0))
+    const end = Math.max(start, Math.min(1, Number(requestedEnd) || 0))
+    const length = liveRouteLength(points)
+    if (!(length > 0)) return liveRoutePoints([points[0], points.at(-1)])
+    const sliced = [liveRoutePoint(points, start)]
+    let covered = 0
+    for (let index = 1; index < points.length - 1; index += 1) {
+      covered += Math.hypot(
+        points[index].x - points[index - 1].x,
+        points[index].y - points[index - 1].y,
+      )
+      const progress = covered / length
+      if (progress > start && progress < end) sliced.push(points[index])
+    }
+    sliced.push(liveRoutePoint(points, end))
+    return liveRoutePoints(sliced)
+  }
+
+  function livePlateBoundaryPoint(point, survey) {
+    if (!point) return null
+    const inset = 12
+    const choices = Object.freeze([
+      Object.freeze({ distance: Math.abs(point.x), x: inset, y: point.y }),
+      Object.freeze({ distance: Math.abs(survey.width - point.x),
+        x: survey.width - inset, y: point.y }),
+      Object.freeze({ distance: Math.abs(point.y), x: point.x, y: inset }),
+      Object.freeze({ distance: Math.abs(survey.height - point.y),
+        x: point.x, y: survey.height - inset }),
+    ])
+    const closest = [...choices].sort((left, right) => left.distance - right.distance)[0]
+    return Object.freeze({
+      x: Math.max(inset, Math.min(survey.width - inset, closest.x)),
+      y: Math.max(inset, Math.min(survey.height - inset, closest.y)),
+    })
+  }
+
   function liveReplayMoveGeometry(
     record,
     snapshot,
@@ -28,7 +101,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
           record, snapshot, focus, children, renderContext, false),
       )
     }
-    const from = liveResidentReplayPoint(
+    const recordedFrom = liveResidentReplayPoint(
       snapshot,
       record.detail.from_place_id,
       record.actor,
@@ -36,7 +109,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       children,
       renderContext,
     )
-    const to = liveResidentReplayPoint(
+    const recordedTo = liveResidentReplayPoint(
       snapshot,
       record.detail.to_place_id,
       record.actor,
@@ -44,27 +117,148 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       children,
       renderContext,
     )
+    if (!recordedFrom && !recordedTo) return null
+    const survey = renderContext?.survey || liveStageSurvey(livePlaceRows(snapshot), focus.id)
+    const from = recordedFrom || livePlateBoundaryPoint(recordedTo, survey)
+    const to = recordedTo || livePlateBoundaryPoint(recordedFrom, survey)
     if (!from || !to || (from.x === to.x && from.y === to.y)) return null
-    return Object.freeze({ from, to })
+    const fromDoor = recordedFrom
+      ? liveReplayPoint(record.detail.from_place_id, focus, children, renderContext)
+      : from
+    const toDoor = recordedTo
+      ? liveReplayPoint(record.detail.to_place_id, focus, children, renderContext)
+      : to
+    const points = liveRoutePoints([from, fromDoor, toDoor, to])
+    return Object.freeze({ from, to, points, distance: liveRouteLength(points) })
   }
 
-  function queueLiveReplayCompletion(actor, key) {
-    const held = state.live.replayActive[actor]
-    if (!held || held.key !== key || liveReplayCompletions.some(completion =>
-      completion.actor === actor && completion.key === key)) return
-    liveReplayCompletions = Object.freeze([
-      ...liveReplayCompletions,
-      Object.freeze({ actor, key }),
-    ])
-    if (!liveReplayCompletionFrame) {
-      liveReplayCompletionFrame = window.requestAnimationFrame(flushLiveReplayCompletions)
+  function liveRenderedReplayPoint(actor) {
+    const portrait = nodes.livePlates?.querySelector(
+      '.live-replay-portrait [data-live-resident-handle="' + CSS.escape(actor) + '"]')
+    const shell = portrait?.closest('.live-replay-portrait')
+    if (!shell || !nodes.liveStage) return null
+    const stageBox = nodes.liveStage.getBoundingClientRect()
+    const shellBox = shell.getBoundingClientRect()
+    const stageWidth = Number(nodes.liveStage.dataset.liveStageWidth)
+    const scale = stageWidth > 0 ? stageBox.width / stageWidth : 0
+    if (!(scale > 0)) return null
+    return Object.freeze({
+      x: (shellBox.left + shellBox.width / 2 - stageBox.left) / scale,
+      y: (shellBox.bottom - stageBox.top) / scale,
+    })
+  }
+
+  function liveMovementPresentations(snapshot, focus, children, renderContext, now) {
+    const base = Object.entries(state.live.replayActive).flatMap(([actor, held], order) => {
+      if (held.type !== 'move') return []
+      const geometry = liveReplayMoveGeometry(
+        held.record, snapshot, focus, children, renderContext)
+      if (!geometry) return []
+      const progress = Math.max(0, Math.min(1,
+        (now - held.startedAt) / Math.max(1, held.duration)))
+      const point = liveRoutePoint(geometry.points, progress)
+      return point ? [Object.freeze({ actor, held, geometry, progress, point, order })] : []
+    })
+    const viewport = liveCameraViewport()
+    const center = viewport ? Object.freeze({
+      x: (viewport.left + viewport.right) / 2,
+      y: (viewport.top + viewport.bottom) / 2,
+    }) : Object.freeze({ x: 0, y: 0 })
+    const hovered = [...(nodes.livePlates?.querySelectorAll(
+      '.live-portrait:hover, .live-portrait:focus') || [])].flatMap(node =>
+      node.dataset.liveResidentHandle ? [node.dataset.liveResidentHandle] : [])
+    const selected = windowLiveDetailMoverSelection(
+      base.map(movement => Object.freeze({
+        actor: movement.actor, x: movement.point.x, y: movement.point.y,
+        order: movement.order,
+      })),
+      Object.freeze([state.resident, ...hovered].filter(Boolean)),
+      center,
+      LIVE_DETAIL_MOVER_LIMIT,
+    )
+    liveDetailedMoveActors = new Set(selected.detailed)
+    const result = new Map()
+    for (const movement of base) {
+      const detailed = liveDetailedMoveActors.has(movement.actor)
+      const canonical = detailed
+        ? movement.geometry.points
+        : Object.freeze([movement.geometry.from, movement.geometry.to])
+      const canonicalPoint = liveRoutePoint(canonical, movement.progress)
+      const renderedPoint = liveRenderedReplayPoint(movement.actor)
+      const remainder = liveRouteSlice(canonical, movement.progress, 1)
+      const points = liveRoutePoints([
+        renderedPoint || canonicalPoint,
+        ...remainder.slice(1),
+      ])
+      const visibleIntervals = viewport
+        ? windowLiveRouteVisibilityIntervals(canonical, viewport, 56)
+        : Object.freeze([])
+      const visible = visibleIntervals.some(interval =>
+        movement.progress >= interval.start && movement.progress <= interval.end)
+      result.set(movement.actor, Object.freeze({
+        ...movement, detailed, points, visible, visibleIntervals,
+        remaining: Math.max(0,
+          movement.held.startedAt + movement.held.duration - now),
+      }))
     }
+    return result
   }
 
-  function flushLiveReplayCompletions() {
-    liveReplayCompletionFrame = 0
-    const completions = liveReplayCompletions
-    liveReplayCompletions = Object.freeze([])
+  function scheduleLiveReplayVisibility(movements) {
+    window.clearTimeout(liveReplayVisibilityTimer)
+    liveReplayVisibilityTimer = 0
+    if (document.hidden || !livePanelIsVisible()) return
+    const now = Date.now()
+    const waits = [...movements.values()].flatMap(movement =>
+      movement.visibleIntervals.flatMap(interval => [interval.start, interval.end])
+        .filter(progress => progress > movement.progress)
+        .map(progress => movement.held.startedAt + movement.held.duration * progress - now))
+      .filter(wait => wait >= 0)
+    const wait = Math.min(...waits)
+    if (!Number.isFinite(wait)) return
+    liveReplayVisibilityTimer = window.setTimeout(() => {
+      liveReplayVisibilityTimer = 0
+      scheduleLiveMotionRedraw()
+    }, Math.max(0, wait) + 16)
+  }
+
+  function armLiveReplayCompletionTimer() {
+    window.clearTimeout(liveReplayCompletionTimer)
+    liveReplayCompletionTimer = 0
+    const nextDeadline = Math.min(...liveReplayCompletionDeadlines.map(entry => entry.at))
+    if (!Number.isFinite(nextDeadline) || document.hidden || !livePanelIsVisible()) return
+    liveReplayCompletionTimer = window.setTimeout(
+      flushScheduledLiveReplayCompletions,
+      Math.max(0, nextDeadline + LIVE_REPLAY_COMPLETION_BATCH_MS - Date.now()) + 1,
+    )
+  }
+
+  function scheduleLiveReplayCompletions(starts) {
+    if (!starts.length) return
+    const actors = new Set(starts.map(start => start.actor))
+    liveReplayCompletionDeadlines = Object.freeze([
+      ...liveReplayCompletionDeadlines.filter(entry => !actors.has(entry.actor)),
+      ...starts.map(start => Object.freeze({
+        actor: start.actor,
+        key: start.key,
+        at: Number(state.live.replayActive[start.actor]?.startedAt || Date.now()) +
+          start.duration,
+      })),
+    ])
+    armLiveReplayCompletionTimer()
+  }
+
+  function flushScheduledLiveReplayCompletions() {
+    liveReplayCompletionTimer = 0
+    const now = Date.now()
+    const completions = liveReplayCompletionDeadlines.filter(entry => entry.at <= now)
+    liveReplayCompletionDeadlines = Object.freeze(
+      liveReplayCompletionDeadlines.filter(entry => entry.at > now))
+    flushLiveReplayCompletions(completions)
+    armLiveReplayCompletionTimer()
+  }
+
+  function flushLiveReplayCompletions(completions) {
     if (!completions.length) return
     const active = { ...state.live.replayActive }
     const positions = { ...state.live.replayPositions }
@@ -122,7 +316,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       absorptionEndsAtByPlaceId: Object.freeze(absorptionEndsAtByPlaceId),
       replayReadyAtByActor: Object.freeze(replayReadyAtByActor),
     } }
-    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    if (state.view === 'live' && state.snapshot) markLiveDirty()
     for (const [placeId, absorptionEndsAt] of absorptionDeadlines) {
       const absorbedActors = Object.entries(positions)
         .filter(([actor, placeIdAtRest]) =>
@@ -145,7 +339,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
           absorptionEndsAtByPlaceId: Object.freeze(remaining),
           replayPositions: Object.freeze(remainingPositions),
         } }
-        if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+        if (state.view === 'live' && state.snapshot) markLiveDirty()
       }, LIVE_ABSORPTION_MS)
     }
   }
@@ -189,7 +383,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     if (liveMotionReduced()) {
       if (liveReplayHeldKeys().size) {
         settleLiveReplays()
-        renderLive(state.snapshot)
+        markLiveDirty()
       }
       return
     }
@@ -247,14 +441,6 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       const readyAt = Number(replayReadyAtByActor[actor]) || 0
       if (readyAt > now) {
         nextReadyAt = Math.min(nextReadyAt, readyAt)
-        continue
-      }
-      if (state.resident && actor !== state.resident) {
-        for (const record of queues[actor]) revealed.add(liveTraceKey(record))
-        delete queues[actor]
-        delete positions[actor]
-        delete replayReadyAtByActor[actor]
-        changed = true
         continue
       }
       let queue = windowLiveReplayOrder(queues[actor], Number.NEGATIVE_INFINITY)
@@ -372,10 +558,8 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       trailStarts: Object.freeze(trailStarts),
       replayRevealedKeys: Object.freeze([...revealed]),
     } }
-    renderLive(state.snapshot)
-    for (const start of starts) {
-      window.setTimeout(() => queueLiveReplayCompletion(start.actor, start.key), start.duration)
-    }
+    markLiveDirty()
+    scheduleLiveReplayCompletions(starts)
     if (Number.isFinite(nextReadyAt)) {
       liveReplayStartTimer = window.setTimeout(
         startLiveReplays,
@@ -390,11 +574,11 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     focus,
     children,
     bubbles,
+    movements,
     renderContext = null,
   ) {
     const residentIndex = liveRenderResidentIndex(snapshot, renderContext)
     for (const [actor, placeId] of Object.entries(state.live.replayPositions)) {
-      if (state.resident && actor !== state.resident) continue
       const resident = residentIndex.residentByHandle(actor)
       if (!resident) continue
       const held = state.live.replayActive[actor]
@@ -410,18 +594,13 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
         snapshot, placeId, actor, focus, children, renderContext)
       let destination = null
       let remaining = 0
+      let movement = null
       if (held?.type === 'move') {
-        const geometry = liveReplayMoveGeometry(
-          held.record, snapshot, focus, children, renderContext)
-        if (!geometry) continue
-        const progress = Math.max(0, Math.min(1,
-          (Date.now() - held.startedAt) / held.duration))
-        point = Object.freeze({
-          x: geometry.from.x + (geometry.to.x - geometry.from.x) * progress,
-          y: geometry.from.y + (geometry.to.y - geometry.from.y) * progress,
-        })
-        destination = geometry.to
-        remaining = Math.max(0, held.duration - (Date.now() - held.startedAt))
+        movement = movements.get(actor)
+        if (!movement?.visible) continue
+        point = movement.points[0]
+        destination = movement.points.at(-1)
+        remaining = movement.remaining
       }
       if (!point) continue
       const portrait = element('button', resident.asleep
@@ -437,7 +616,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === actor))
       const shell = livePortraitShell(
         portrait,
-        bubbles.get(actor),
+        movement && !movement.detailed ? null : bubbles.get(actor),
         'live-portrait-wrap live-replay-portrait',
       )
       shell.dataset.liveReplayKey = held?.key || ''
@@ -465,8 +644,25 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       shell.style.left = String(point.x) + 'px'
       shell.style.top = String(point.y) + 'px'
       if (destination && remaining > 0) {
-        shell.style.setProperty('--live-replay-delta-x', String(destination.x - point.x) + 'px')
-        shell.style.setProperty('--live-replay-delta-y', String(destination.y - point.y) + 'px')
+        shell.dataset.liveMovement = movement.detailed ? 'detail' : 'simple'
+        if (movement.detailed) {
+          const path = movement.points.map((routePoint, index) =>
+            (index ? 'L ' : 'M ') + String(routePoint.x) + ' ' + String(routePoint.y)).join(' ')
+          shell.style.left = '0px'
+          shell.style.top = '0px'
+          shell.style.offsetPath = 'path("' + path + '")'
+          shell.style.offsetDistance = '0%'
+          shell.style.offsetAnchor = '50% 100%'
+          shell.style.offsetRotate = '0deg'
+          shell.style.transform = 'none'
+          shell.style.animationName = 'live-recorded-route'
+          shell.dataset.liveRoutePointCount = String(movement.geometry.points.length)
+        } else {
+          shell.style.setProperty(
+            '--live-replay-delta-x', String(destination.x - point.x) + 'px')
+          shell.style.setProperty(
+            '--live-replay-delta-y', String(destination.y - point.y) + 'px')
+        }
         shell.style.animationDuration = String(remaining) + 'ms'
         shell.dataset.fromPlaceId = String(held.fromPlaceId)
         shell.dataset.toPlaceId = String(held.toPlaceId)
@@ -474,11 +670,12 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
       bindLiveItemPopover(portrait, itemKey, 'resident', () => resident)
-      portrait.append(portraitNode(
-        'resident', resident.id, actor, resident.has_drawing, 'live-entity-portrait',
+      portrait.append(liveSpriteNode(
+        'resident', resident.id, actor, resident.has_drawing,
       ))
       layer.append(shell)
     }
+    scheduleLiveReplayVisibility(movements)
   }
 
 `

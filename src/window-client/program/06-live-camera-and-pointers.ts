@@ -70,7 +70,17 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
   }
 
   function applyLiveCamera(next) {
+    const visualChanged = (
+      Object.hasOwn(next, 'scale') && next.scale !== liveCamera.scale
+    ) || (
+      Object.hasOwn(next, 'offsetX') && next.offsetX !== liveCamera.offsetX
+    ) || (
+      Object.hasOwn(next, 'offsetY') && next.offsetY !== liveCamera.offsetY
+    )
     liveCamera = Object.freeze({ ...liveCamera, ...next })
+    if (visualChanged && Object.keys(state.live.replayActive).length) {
+      scheduleLiveMotionRedraw()
+    }
     if (!nodes.liveStage || liveCameraFrame) return
     liveCameraFrame = window.requestAnimationFrame(commitLiveCamera)
   }

@@ -1631,6 +1631,12 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-trail-inking, .live-trail[data-replaying="true"] {
   animation: live-trail-ink var(--live-trail-duration, 3.2s) linear both;
 }
+.live-footstep {
+  fill: var(--brick);
+  pointer-events: none;
+  animation: live-footstep-fade 2s linear both;
+  vector-effect: non-scaling-stroke;
+}
 .live-speech-bubble::after {
   content: "";
   position: absolute;
@@ -1651,6 +1657,15 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
       calc(-100% + var(--live-replay-delta-y, 0px))
     );
   }
+}
+
+@keyframes live-recorded-route {
+  to { offset-distance: 100%; }
+}
+
+@keyframes live-footstep-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 @keyframes live-overflow-absorb {
@@ -2464,7 +2479,10 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-thing-specimen.live-pulse { animation: none !important; }
   .live-walker, .live-replay-portrait, .live-overflow-absorbing,
   .live-speech-bubble { animation: none !important; transition: none !important; }
-  .live-trail, .live-trail-inking { animation: none !important; transition: none !important; }
+  .live-trail, .live-trail-inking, .live-footstep {
+    animation: none !important;
+    transition: none !important;
+  }
   .live-item-popover, .live-notes-panel { transition: none !important; }
 }
 @media (forced-colors: active) {
@@ -2476,6 +2494,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
   .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }
+  .live-footstep { fill: LinkText; }
   .live-footnote-mark, .live-action-mark, .live-resident-more,
   .live-thing-more, .live-control-button, .live-item-popover-open,
   .live-place-notes, .live-notes-close, .live-notes-continue {

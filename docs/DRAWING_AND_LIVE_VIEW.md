@@ -273,9 +273,9 @@ body or the complete private event detail.
 
 The Live tab draws only facts a record states. It never guesses a route between
 places, a thing used, a note body, or a missing event. The one disclosed visual
-in-between is a straight glide along the already drawn trail between a committed
-move record's stated endpoints; the endpoints are recorded fact and the glide is
-browser presentation.
+in-between is a straight glide between a committed move record's stated endpoints;
+the endpoints are recorded fact and the glide is browser presentation. Only an
+explicitly followed resident receives a complete drawn route.
 
 ## 5. The Live tab is a cartographic plate
 
@@ -320,8 +320,8 @@ not a simulation of the present.
   with a named retry; an incomplete or contradictory survey prints no exact badge
   for either count.
 - Residents are walkers above the ground and plots. A committed move visibly
-  carries its resident between the fixed endpoint plots while inking the exact
-  straight route beneath it. A resident or thing changes position only when a
+  carries its resident between the fixed endpoint plots; only an explicitly followed
+  resident keeps the complete route beneath it. A resident or thing changes position only when a
   recorded city event says it moved. Still residents do not idle, bob, or loop.
 - Wheel or `+`/`-` zoom, two-pointer pinch zoom, pointer or arrow-key pan, and
   the visible `Center` control transform only this viewer's plate from a hard
@@ -396,25 +396,23 @@ order. Opening rows paint their settled positions only: no dashed trail and no
 arrowhead for a move, and no speech bubble for a note, when the record is one
 the viewer was not present to watch. A backlog note still prints its numbered
 footnote mark; only the bubble is gated (see below). Each resident's newly learned rows replay once in
-ascending `change_id` order, trail and all, while the tab remains visible. The
+ascending `change_id` order while the tab remains visible. The
 first successful catch-up after a hidden tab settles the same quiet way opening
 history does, so hidden activity never returns as stale replay or a converging
 web of trails. If opening history cannot be completed, the plate names the
 incomplete edge and draws its verified rows statically rather than replaying a
 sequence that may be missing an earlier step.
 
-- Applied `move` and `go_home` records draw a dashed brick trail (no
-  arrowhead) from their stated old place to their stated new place, but only
-  once, for a record the viewer actually watched happen: opening backlog and
-  the first catch-up after a hidden tab settle at their recorded endpoint with
-  no trail at all. A newly learned move walks once along that exact straight
-  trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then
-  fades for 4.5 seconds beginning when the walk completes. If reduced motion,
-  a hidden tab, or a replay-scope change settles an active walk, the final
-  trail receives a fresh 4.5-second fade from that settlement. The plate
-  keeps only a capped live set of this fading ink and removes each trail when
-  its fade ends. That visual cap never truncates, reorders, or removes the
-  verified public record.
+- Every newly learned applied `move` and `go_home` reaches its recorded endpoint.
+  A move keeps its distance-scaled duration of 3.2 to 8 seconds.
+  The followed resident, hovered residents, and the nearest six moving residents
+  receive detail: the route uses its door exit, two or three footstep dots fade
+  over two seconds, and an eligible speech bubble may appear. Other residents
+  glide at a constant rate with no route or bubble; detail returns when capacity
+  is free. Only the explicitly followed resident keeps the complete route, which
+  fades for 4.5 seconds after settlement. Reduced motion or a hidden tab settles
+  every move at its endpoint and preserves that followed route's final fade.
+  Opening backlog and the first catch-up after a hidden tab remain positions-only.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
   note's replay step, a square speech bubble with an opaque paper fill, 2px ink
   border, and drop tail appears beside the speaker with the first line capped at
@@ -483,7 +481,11 @@ quiet-room line. The old recent ledger strip is gone.
 The ordinary window cadence remains 60 seconds. While Live is visible, a read
 that finds events schedules the next read in 25 seconds; quiet reads back off in
 order to 60, 120, 240, then 300 seconds. Reads pause while the browser tab is
-hidden, and the last completed plate remains visible.
+hidden, and the last completed plate remains visible. Live batches changed
+visual state into one animation frame, batches replay completions over 250 ms,
+and schedules no animation frame for a hidden tab, hidden plate, or off-camera
+route. A confirmed floor tile node and thumbnail URL remain in place across a
+redraw unless a change specifically invalidates that place.
 
 The clock prints the facts: `last change 42s ago · next read in 18s`. After a
 minute without change it says, for example, `The city has been still for 14
@@ -512,7 +514,8 @@ full-screen mode with a visible exit; Escape or browser Back exits that mode
 before navigating away.
 
 On Vercel preview builds only, a visible `Run proof scene` control starts the
-same repeatable in-memory crowded plate every time. It demonstrates concurrent
+same repeatable in-memory plate with 152 residents and 64 movers every time. Its
+live readout reports p95 and maximum frame time. It demonstrates concurrent
 recorded movement, speech, thing use, inline resident and thing Show more, a
 forced room-load failure, and a working Retry without waiting for live traffic.
 Its workshop includes 52 in-memory notes so the exact control, first 50 rows,
@@ -520,9 +523,9 @@ Continue, and final 52 of 52 state can be checked without live traffic.
 Production omits this control. Reduced motion presents the same final evidence
 without animated replay.
 
-Under `prefers-reduced-motion`, replay and pulses stop; trails, note marks, and
-speech bubbles render immediately at their final static state. Under
-`forced-colors`, plate borders, trails, marks, bubbles, hatches, focus, and labels
+Under `prefers-reduced-motion`, replay and pulses stop; the followed resident's final
+route, note marks, and speech bubbles render immediately at their final static state. Under
+`forced-colors`, plate borders, the followed route, marks, bubbles, hatches, focus, and labels
 remain distinguishable without depending on authored colour alone.
 
 ## 6. Absolute cuts

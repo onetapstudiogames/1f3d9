@@ -280,7 +280,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   window.addEventListener('resize', () => {
     scheduleBodyDisclosureSync()
     if (state.view === 'live' && state.snapshot) {
-      renderLive(state.snapshot)
+      markLiveDirty()
     }
   })
   document.addEventListener('visibilitychange', () => {
@@ -300,6 +300,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
         }) } }
       }
       if (liveReplayHeldKeys().size) settleLiveReplays()
+      stopLiveVisualWork()
       state = { ...state, pollTimer: 0, live: {
         ...state.live,
         nextReadAt: null,
@@ -310,7 +311,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     } else {
       drainLiveNoteQueue()
       if (state.view === 'live' && state.snapshot) {
-        renderLive(state.snapshot)
+        markLiveDirty()
         if (!state.live.openingLoaded && !state.live.openingLoading) {
           void loadLiveOpeningHistory(state.snapshot, Boolean(
             state.live.openingNextBeforeId || state.live.openingEvents.length))
@@ -321,7 +322,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   })
   LIVE_MOTION_PREFERENCE.addEventListener?.('change', () => {
     if (LIVE_MOTION_PREFERENCE.matches) settleLiveReplays()
-    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    if (state.view === 'live' && state.snapshot) markLiveDirty()
   })
 
   const initialLocationState = readLocationState()

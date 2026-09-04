@@ -32,6 +32,7 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     const total = liveSurveyNoteTotal(state.snapshot, id)
     if (total === null) return
     liveNotesTargetId = safeId(noteId)
+    const focusesClose = !liveNotesTargetId
     liveNotesReturnFocus = Object.freeze({
       focusKey: opener?.dataset?.focusKey || document.activeElement?.dataset?.focusKey || null,
       fallbackKey: opener?.dataset?.focusFallbackKey || null,
@@ -49,8 +50,8 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     // Move keyboard focus into the panel once it is rendered, the mirror of
     // closeLiveNotes returning focus to the opener; the close control is the
     // first thing a keyboard or screen-reader user needs.
-    window.queueMicrotask(() => {
-      const target = liveNotesTargetId ? null : nodes.liveNotesClose
+    window.requestAnimationFrame(() => {
+      const target = focusesClose ? nodes.liveNotesClose : null
       if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true })
     })
   }
@@ -66,7 +67,7 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     liveNotesTargetId = null
     liveNotesReturnFocus = null
     navigate({ liveNotesOpen: false })
-    window.queueMicrotask(() => {
+    window.requestAnimationFrame(() => {
       // The opener first (a bubble, a footnote mark, or the room's notes
       // control), then the speaker's sprite if the bubble has since faded,
       // then the room's notes control, then the viewport.
@@ -135,6 +136,9 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
         ? 'This room’s next note page could not be read. Completed notes remain visible.'
         : 'Showing ' + String(entry.rows.length) + ' of ' + String(total) +
           ' direct room notes, newest first.'
+    const focusedNoteKey = nodes.liveNotesList.contains(document.activeElement)
+      ? document.activeElement?.dataset?.focusKey || null
+      : null
     nodes.liveNotesList.replaceChildren(...(entry.rows.length
       ? entry.rows.map(note => liveNoteRow(note, place))
       : [element('li', entry.loading ? 'loading-row' : entry.error ? 'error-row' : 'empty-row',
@@ -154,6 +158,7 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
         nodes.liveNotesClose?.focus({ preventScroll: true })
       }
     }
+    if (focusedNoteKey) restoreFocus(focusedNoteKey, null, 'live-notes-close')
     const focusedKey = nodes.liveNotesPage.contains(document.activeElement)
       ? document.activeElement?.dataset?.focusKey || null
       : null

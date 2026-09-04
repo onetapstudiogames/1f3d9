@@ -8,14 +8,17 @@ import {
   normalizeLiveNotesPage,
   windowLiveClampZoomScale,
   windowLiveExpandedGroundLayout,
+  windowLiveDetailMoverSelection,
   windowLiveFloorAccessibleLabel,
   windowLiveFloorTiling,
+  windowLiveFootstepBeat,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
   windowLiveReplayOrder,
   windowLiveReplayPace,
   windowLiveReplayStartOffsets,
+  windowLiveRouteVisibilityIntervals,
   windowLivePruneTrailStarts,
   windowLiveScatterSurfaceHeight,
   windowLiveSeparatedPoints,
@@ -23,6 +26,7 @@ import {
   windowLiveScatteredPoints,
   windowLiveSurveyedPlots,
   windowLiveSpeechLine,
+  windowLiveShouldScheduleRedraw,
   windowLiveTouchActivation,
   windowLiveTraceOpacity,
   windowLiveItemFacts,
@@ -196,11 +200,6 @@ type LiveClientExports = Readonly<{
     visible: readonly CapacityRow[]
     overflowCount: number
   }>
-  windowLiveSelectTrailKeys?: (
-    keys: readonly string[],
-    capacity: number,
-    protectedKeys: readonly string[],
-  ) => readonly string[]
 }>
 
 const liveClientExports = windowClientModule as unknown as LiveClientExports
@@ -1443,27 +1442,91 @@ test('expired trail starts are pruned without mutation', () => {
   assert.equal(windowLivePruneTrailStarts(pruned, 10_000, 4_500, ['active']), pruned)
 })
 
-test('trail selection stays hard-capped and keeps active keys ahead of older ink', () => {
-  const selectTrailKeys = liveClientExports.windowLiveSelectTrailKeys
-  assert.equal(typeof selectTrailKeys, 'function')
-  if (!selectTrailKeys) return
-
-  const keys = Object.freeze([
-    'change:120',
-    'change:119',
-    'change:118',
-    'change:5',
-    'change:4',
+test('detail budget keeps attention residents plus the nearest six movers with stable ties', () => {
+  const movers = Object.freeze([
+    Object.freeze({ actor: 'far-followed', x: 100, y: 100, order: 0 }),
+    Object.freeze({ actor: 'far-hovered', x: 90, y: 90, order: 1 }),
+    ...Array.from({ length: 8 }, (_, index) => Object.freeze({
+      actor: `near-${String(index + 1)}`,
+      x: index < 2 ? 1 : index,
+      y: 0,
+      order: index + 2,
+    })),
   ])
-  const protectedKeys = Object.freeze(['change:5'])
-  const selected = selectTrailKeys(keys, 3, protectedKeys)
+  const selected = windowLiveDetailMoverSelection(
+    movers,
+    Object.freeze(['far-followed', 'far-hovered']),
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  )
 
-  assert.deepEqual(selected, ['change:120', 'change:119', 'change:5'])
-  assert.equal(selected.length, 3)
-  assert.ok(selected.includes('change:5'))
-  assert.equal(Object.isFrozen(selected), true)
-  assert.deepEqual(keys, ['change:120', 'change:119', 'change:118', 'change:5', 'change:4'])
-  assert.deepEqual(protectedKeys, ['change:5'])
+  assert.deepEqual(selected.detailed, [
+    'far-followed', 'far-hovered',
+    'near-1', 'near-2', 'near-3', 'near-4', 'near-5', 'near-6',
+  ])
+  assert.deepEqual(selected.simple, ['near-7', 'near-8'])
+  assert.deepEqual(windowLiveDetailMoverSelection(
+    [...movers].reverse(),
+    Object.freeze([]),
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  ).detailed, windowLiveDetailMoverSelection(
+    movers,
+    Object.freeze([]),
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  ).detailed)
+  assert.deepEqual(windowLiveDetailMoverSelection(
+    movers.slice(0, 5),
+    Object.freeze(['far-followed', 'far-hovered']),
+    Object.freeze({ x: 0, y: 0 }),
+    6,
+  ).simple, [])
+})
+
+test('redraw gate schedules changed visible input and stays idle when identical or hidden', () => {
+  const visibleChange = Object.freeze({
+    liveViewActive: true,
+    documentVisible: true,
+    panelVisible: true,
+    dirtyRevision: 4,
+    paintedRevision: 3,
+    framePending: false,
+  })
+
+  assert.equal(windowLiveShouldScheduleRedraw(visibleChange), true)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, dirtyRevision: 3 }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, documentVisible: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, panelVisible: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, liveViewActive: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, framePending: true }), false)
+})
+
+test('route visibility returns exact progress windows for camera crossings', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(Object.freeze([
+    Object.freeze({ x: -100, y: 50 }),
+    Object.freeze({ x: 200, y: 50 }),
+  ]), viewport), [Object.freeze({ start: 1 / 3, end: 2 / 3 })])
+  assert.deepEqual(windowLiveRouteVisibilityIntervals(Object.freeze([
+    Object.freeze({ x: -20, y: -20 }),
+    Object.freeze({ x: -10, y: -10 }),
+  ]), viewport), [])
+})
+
+test('footstep beat emits at cadence and its two-second lifetime expires exactly', () => {
+  assert.deepEqual(windowLiveFootstepBeat(1_000, 0, 3_100), {
+    due: true,
+    first: true,
+    nextAt: 3_100,
+  })
+  assert.deepEqual(windowLiveFootstepBeat(3_000, 2, 3_100), {
+    due: false,
+    first: false,
+    nextAt: 3_650,
+  })
+  assert.equal(windowLiveTraceOpacity(1_000, 2_999, 2_000) > 0, true)
+  assert.equal(windowLiveTraceOpacity(1_000, 3_000, 2_000), 0)
 })
 
 test('recorded movement is visibly slower than the mockup and still scales with distance', () => {

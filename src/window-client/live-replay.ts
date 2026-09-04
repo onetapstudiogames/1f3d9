@@ -24,23 +24,132 @@ export function windowLivePruneTrailStarts(
     : Object.freeze(Object.fromEntries(entries))
 }
 
-export function windowLiveSelectTrailKeys(
-  keys: readonly string[],
-  capacity: number,
-  protectedKeys: readonly string[],
-): readonly string[] {
-  const limit = Number.isFinite(capacity) ? Math.max(0, Math.floor(capacity)) : 0
-  if (!limit || !keys.length) return Object.freeze([])
-  const uniqueKeys = [...new Set(keys)]
-  const availableKeys = new Set(uniqueKeys)
-  const protectedSet = new Set(protectedKeys.filter(key => availableKeys.has(key)))
-  const protectedInOrder = uniqueKeys.filter(key => protectedSet.has(key)).slice(0, limit)
-  const ordinaryLimit = Math.max(0, limit - protectedInOrder.length)
-  const selected = new Set([
-    ...uniqueKeys.filter(key => !protectedSet.has(key)).slice(0, ordinaryLimit),
-    ...protectedInOrder,
-  ])
-  return Object.freeze(uniqueKeys.filter(key => selected.has(key)).slice(0, limit))
+export function windowLiveDetailMoverSelection(
+  movers: readonly Readonly<{ actor: string; x: number; y: number; order: number }>[],
+  attentionActors: readonly string[],
+  viewportCenter: Readonly<{ x: number; y: number }>,
+  nearestLimit = 6,
+): Readonly<{ detailed: readonly string[]; simple: readonly string[] }> {
+  const unique = new Map<string, Readonly<{
+    actor: string; x: number; y: number; order: number
+  }>>()
+  for (const mover of movers) {
+    if (!mover || typeof mover.actor !== 'string' || !mover.actor ||
+        ![mover.x, mover.y, mover.order].every(Number.isFinite) ||
+        unique.has(mover.actor)) continue
+    unique.set(mover.actor, mover)
+  }
+  const ordered = [...unique.values()]
+  const attention = new Set(attentionActors.filter(actor => unique.has(actor)))
+  const center = [viewportCenter?.x, viewportCenter?.y].every(Number.isFinite)
+    ? viewportCenter
+    : Object.freeze({ x: 0, y: 0 })
+  const limit = Number.isFinite(nearestLimit)
+    ? Math.max(0, Math.floor(nearestLimit))
+    : 0
+  const detailed = ordered.filter(mover => attention.has(mover.actor))
+    .map(mover => mover.actor)
+  detailed.push(...ordered.filter(mover => !attention.has(mover.actor))
+    .sort((left, right) => {
+      const leftDistance = (left.x - center.x) ** 2 + (left.y - center.y) ** 2
+      const rightDistance = (right.x - center.x) ** 2 + (right.y - center.y) ** 2
+      return leftDistance - rightDistance || left.order - right.order ||
+        left.actor.localeCompare(right.actor)
+    })
+    .slice(0, limit)
+    .map(mover => mover.actor))
+  const detailedSet = new Set(detailed)
+  return Object.freeze({
+    detailed: Object.freeze(detailed),
+    simple: Object.freeze(ordered.filter(mover => !detailedSet.has(mover.actor))
+      .map(mover => mover.actor)),
+  })
+}
+
+export function windowLiveRouteVisibilityIntervals(
+  points: readonly Readonly<{ x: number; y: number }>[],
+  viewport: Readonly<{ left: number; top: number; right: number; bottom: number }>,
+  visibilityMargin = 0,
+): readonly Readonly<{ start: number; end: number }>[] {
+  if (points.length < 2 || !points.every(point => [point.x, point.y].every(Number.isFinite)) ||
+      ![viewport.left, viewport.top, viewport.right, viewport.bottom, visibilityMargin]
+        .every(Number.isFinite) || viewport.right < viewport.left ||
+      viewport.bottom < viewport.top || visibilityMargin < 0) return Object.freeze([])
+  const lengths = points.slice(1).map((point, index) =>
+    Math.hypot(point.x - points[index]!.x, point.y - points[index]!.y))
+  const total = lengths.reduce((sum, length) => sum + length, 0)
+  if (!(total > 0)) return Object.freeze([])
+  const bounds = Object.freeze({
+    left: viewport.left - visibilityMargin,
+    top: viewport.top - visibilityMargin,
+    right: viewport.right + visibilityMargin,
+    bottom: viewport.bottom + visibilityMargin,
+  })
+  const intervals: Array<Readonly<{ start: number; end: number }>> = []
+  let covered = 0
+  for (let index = 0; index < lengths.length; index += 1) {
+    const length = lengths[index]!
+    if (!(length > 0)) continue
+    const from = points[index]!
+    const to = points[index + 1]!
+    const dx = to.x - from.x
+    const dy = to.y - from.y
+    let entry = 0
+    let exit = 1
+    let visible = true
+    for (const [p, q] of [
+      [-dx, from.x - bounds.left],
+      [dx, bounds.right - from.x],
+      [-dy, from.y - bounds.top],
+      [dy, bounds.bottom - from.y],
+    ] as const) {
+      if (p === 0) {
+        if (q < 0) visible = false
+        continue
+      }
+      const ratio = q / p
+      if (p < 0) entry = Math.max(entry, ratio)
+      else exit = Math.min(exit, ratio)
+      if (entry > exit) visible = false
+    }
+    if (visible) intervals.push(Object.freeze({
+      start: (covered + length * entry) / total,
+      end: (covered + length * exit) / total,
+    }))
+    covered += length
+  }
+  return Object.freeze(intervals)
+}
+
+export function windowLiveShouldScheduleRedraw(input: Readonly<{
+  liveViewActive: boolean
+  documentVisible: boolean
+  panelVisible: boolean
+  dirtyRevision: number
+  paintedRevision: number
+  framePending: boolean
+}>): boolean {
+  return input.liveViewActive === true && input.documentVisible === true &&
+    input.panelVisible === true && input.framePending === false &&
+    Number.isSafeInteger(input.dirtyRevision) && Number.isSafeInteger(input.paintedRevision) &&
+    input.dirtyRevision > input.paintedRevision
+}
+
+export function windowLiveFootstepBeat(
+  lastAt: number | null | undefined,
+  survivingMarks: number,
+  now: number,
+  intervalMs = 650,
+): Readonly<{ due: boolean; first: boolean; nextAt: number }> {
+  const safeNow = Number.isFinite(now) ? now : 0
+  const previous = Number.isFinite(lastAt) && Number(lastAt) > 0 ? Number(lastAt) : 0
+  const interval = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 650
+  const due = previous === 0 || safeNow - previous >= interval
+  return Object.freeze({
+    due,
+    first: !Number.isFinite(survivingMarks) || survivingMarks <= 0,
+    nextAt: due ? safeNow : previous + interval,
+  })
 }
 
 export function windowLiveReplayDuration(
