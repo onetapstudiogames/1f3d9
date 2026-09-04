@@ -144,11 +144,27 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     ) {
       throw new Error('invalid Gazette entry continuation')
     }
+    // Round 4 review finding 2 (issue #71): the exemption above turned a loud
+    // client error into a false statement, because the render layer could not
+    // tell "this page is genuinely empty" apart from "the size ceiling cut
+    // this page before the first entry fit". Surface that distinction here so
+    // the render layer can say what actually happened instead of claiming the
+    // issue printed with no submissions. next_item_note_id and
+    // next_item_text_bytes name the entry the budget could not fit, when the
+    // server reported one; either can come back malformed or absent without
+    // this shape becoming untrustworthy, so both are optional.
+    const budgetCut = budgetStoppedWithNothingAdmitted
+      ? Object.freeze({
+          nextItemNoteId: safeId(payload.next_item_note_id),
+          nextItemTextBytes: safeGazetteCount(payload.next_item_text_bytes),
+        })
+      : null
     return Object.freeze({
       issue,
       entries,
       hasMore: budgetStoppedWithNothingAdmitted ? false : hasMore,
       nextAfterOrdinal,
+      budgetCut,
     })
   }
 
@@ -177,6 +193,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
         entries: [],
         nextAfterOrdinal: null,
         hasMoreEntries: false,
+        detailBudgetCut: null,
         detailLoading: false,
         detailInitialized: false,
         detailError: null,
@@ -307,6 +324,19 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     nodes.gazetteEntriesPage.replaceChildren(load)
   }
 
+  function gazetteBudgetCutMessage(issue, budgetCut) {
+    // Round 4 review finding 2 (issue #71): match what gazetteIssueLink
+    // already shows for the same issue (issue.entryCount, the true count
+    // from the issue summary, not the size of this loaded page) so the card
+    // and the detail pane never disagree about whether entries exist.
+    const count = String(issue.entryCount) + (issue.entryCount === 1 ? ' submission' : ' submissions')
+    const named = budgetCut.nextItemNoteId
+      ? ' The first one, note #' + String(budgetCut.nextItemNoteId) + ', did not fit.'
+      : ''
+    return 'This issue has ' + count + ', but the automatic size limit cut this page before ' +
+      'the first entry fit.' + named + ' Use the Read issue link above to see the full issue.'
+  }
+
   function renderGazetteIssue(gazette) {
     if (!nodes.gazetteIssue) return
     nodes.gazetteIssue.setAttribute('aria-busy', String(gazette.detailLoading))
@@ -350,6 +380,13 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     if (gazette.entries.length) {
       entries.append(...gazette.entries.map(gazetteEntryCard))
       nodes.gazetteIssue.replaceChildren(heading, printTime, provenance, entries)
+    } else if (gazette.detailBudgetCut) {
+      nodes.gazetteIssue.replaceChildren(
+        heading,
+        printTime,
+        provenance,
+        element('p', 'empty-row', gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut)),
+      )
     } else {
       nodes.gazetteIssue.replaceChildren(
         heading,
@@ -585,6 +622,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
           entries: [...combined.values()].sort((left, right) => left.ordinal - right.ordinal),
           nextAfterOrdinal: page.nextAfterOrdinal,
           hasMoreEntries: page.hasMore && Boolean(page.nextAfterOrdinal),
+          detailBudgetCut: page.budgetCut,
           detailLoading: false,
           detailError: null,
         },

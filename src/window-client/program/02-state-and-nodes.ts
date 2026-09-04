@@ -151,6 +151,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
       entries: [],
       nextAfterOrdinal: null,
       hasMoreEntries: false,
+      detailBudgetCut: null,
       detailLoading: false,
       detailInitialized: false,
       detailError: null,
