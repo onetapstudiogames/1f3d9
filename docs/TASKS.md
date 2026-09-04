@@ -16,8 +16,7 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   declared in `src/window-client/program/02-state-and-nodes.ts` (snapshot, live,
   histories, drawings, noteBodies, changes, plus the strays `rovingTabActivation`,
   `bodyDisclosureFrame`, `forwardRefreshKeys`), and force every renderer that reads
-  it today through that layer — see the enumerable list of affected parts (15,
-  16, 19-27, 28-35) in `docs/DRAWING_AND_LIVE_VIEW.md#9-client-source-layout-issue-79-phase-1`.
+  it today through that layer, including parts 15, 16, 19-27, and 28-35.
   Decompose `refreshCity` (`src/window-client/program/38-refresh-city.ts`), the
   single function issue #79 names as doing five jobs behind one try/catch, once
   the accessor layer gives it somewhere to hand off to. Phase 1 (the mechanical
