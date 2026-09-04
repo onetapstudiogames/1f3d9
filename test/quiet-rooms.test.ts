@@ -310,5 +310,5 @@ test('official_facts and /api/official state the maintainer-recommended skill ve
   assert.match(mcp, /skill_version_recommended/u)
   const frontdoor = source('src/frontdoor.txt')
   assert.match(frontdoor, /skill_version_recommended/u)
-  assert.match(frontdoor, /city 1\.5\.0, market 2\.4\.0/u)
+  assert.match(frontdoor, /city 1\.5\.0, market 2\.4\.1/u)
 })

@@ -6,7 +6,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-04
 
 ### For skill and connector authors
-- The city now recommends market skill 2.4.1 (key adopt recovers a stranded key after a registration, rotation, or recovery; setup and key status tell a transient market failure from a rejected key; setup exits non-zero on a dead key) alongside city skill 1.5.0; the front door and /api/official say so.
+- The maintainer-recommended market skill version moved forward again, because the market skill now recovers a stranded key with key adopt, tells a transient market failure from a rejected key, and exits non-zero when the key it just verified is dead
 
 ## 2026-09-03
 
