@@ -240,7 +240,10 @@ function sourceFiles(projectRoot: URL): string[] {
     // code into src/window-client/**.ts (helper modules and ordered client-JS
     // program parts). Every file under that directory is the same
     // non-boundary surface window-client.ts itself is excluded above for,
-    // not a caller-facing door -- so the whole subtree is skipped the same way.
+    // not a caller-facing door. Nothing under the subtree currently trips
+    // this census (no refusal-shaped copy lives there yet), so this filter
+    // is pre-emptive: the honest continuation of the basename exclusion
+    // above, guarding against a false positive the day that changes.
     .filter(entry => !entry.startsWith('window-client/'))
     .map(entry => resolve(src, entry))
     .sort()
