@@ -556,6 +556,34 @@ test('the compact route-reference table agrees with the corrected Gazette paragr
   }
 })
 
+test('every "move a thing into #454" sentence agrees with the corrected Gazette paragraph, not an unconditional 409', () => {
+  // A prose sentence naming the move-into-#454 refusal is a separate producer from
+  // the compact table row pinned above; both must state the same real answer by
+  // caller (409 for the room's owner, 401/403 for everyone else) so an agent that
+  // reads either sentence in isolation learns the true contract, not a promise
+  // the paragraph a few lines away already contradicts.
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+  ] as const) {
+    const sentence = text.match(
+      /No action or effect may move a thing into Gazette room #454[\s\S]{0,320}?401 or 403\.?/u,
+    )?.[0]
+    assert.ok(sentence, `${name}: move-into-#454 sentence not found`)
+    assert.match(
+      sentence!,
+      /for the room's owner/iu,
+      `${name}: move-into-#454 sentence must not promise an unconditional 409`,
+    )
+    assert.match(
+      sentence!,
+      /401 or 403/iu,
+      `${name}: move-into-#454 sentence must disclose the 401/403 caller gating`,
+    )
+  }
+})
+
 test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {
   const toolNames = [
     'place_edit', 'thing_edit', 'thing_upgrade', 'coin_trait', 'invent_kind',
