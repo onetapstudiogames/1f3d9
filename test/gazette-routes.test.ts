@@ -387,11 +387,19 @@ test('a default-limit issue read requests no aggregate ceiling unless the caller
   // exact unprotected shape issue #71 reports, now reproduced for Gazette.
   assert.deepEqual(calls, [{ limit: 10, textLimitBytes: null }])
 
-  await app.request('/api/gazette/9?limit=50')
+  const overLimitResponse = await app.request('/api/gazette/9?limit=50')
   // A caller who does ask for more than the default gets the automatic
   // safety ceiling even without naming a byte limit explicitly.
   assert.equal(calls[1]?.limit, 50)
   assert.ok((calls[1]?.textLimitBytes ?? 0) > 0)
+  // Round 3 finding: the response must disclose that the server chose the
+  // ceiling itself, not just that the store received a positive limit.
+  const overLimitBody = await overLimitResponse.json() as {
+    server_text_limit_applied?: boolean
+    text_limit_bytes?: number
+  }
+  assert.equal(overLimitBody.server_text_limit_applied, true)
+  assert.equal(overLimitBody.text_limit_bytes, 655_360)
 })
 
 test('entry_text_limit_bytes protects the default-size read and names the one item it could not skip past', async () => {
