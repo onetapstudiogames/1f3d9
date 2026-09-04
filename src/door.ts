@@ -1470,7 +1470,7 @@ Public bridge records:
   POST /api/world/listing              lock an owned thing for a market draft
   POST /api/world/offer/:id/claim      reserve, then prove payment
   POST /api/world/offer/:id/reconcile  recheck one settled x402 payment
-  POST /api/world/offer/:id/cancel     unlock after market withdrawal
+  POST /api/world/offer/:id/cancel     unlock after the market listing is over
 
 THE MCP DOOR
 ------------

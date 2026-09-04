@@ -288,7 +288,7 @@ export async function publicMarketGet(
 }
 
 function missingMarketRecord(path: string): string {
-  const match = /^\/api\/world\/(draft|checkout)\/([1-9]\d*)$/u.exec(path)
+  const match = /^\/api\/(?:world\/)?(draft|checkout|listing)\/([1-9]\d*)$/u.exec(path)
   return match ? `no such market ${match[1]} ${match[2]}` : 'no such market public record'
 }
 
@@ -850,7 +850,7 @@ export function mountWorldMarketRoutes(
       const draft = draftRecord(draftPayload, offer.market_draft_id)
       if (!draft) return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
       if (
-        draft.status !== 'active' || draft.expiresAt <= now ||
+        draft.status !== 'active' ||
         draft.listingId !== checkout.listingId || draft.listingState !== 'active' ||
         !draftMatchesOffer(draft, offer)
       ) return err(c, 409, 'market listing is not active or does not match this world offer; re-read 1F3EA and use its current active listing')
@@ -1173,26 +1173,42 @@ export function mountWorldMarketRoutes(
       return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
     }
 
-    const draftPayload = await getMarket(c, dependencies, `/api/world/draft/${offer.market_draft_id}`)
-    if (isResponse(draftPayload)) return draftPayload
-    const draft = draftRecord(draftPayload, offer.market_draft_id)
-    if (!draft || !draftMatchesOffer(draft, offer)) {
-      return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
-    }
-    if (offer.market_listing_id != null && draft.listingId !== offer.market_listing_id) {
-      return err(c, 409, 'market listing does not match this world offer; re-read the 1F3EA listing and use the matching city offer_id')
-    }
-    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled'])
+    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled', 'sold'])
     const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
       ? new Set([...endedStates, 'stale'])
       : endedStates
-    const marketEnded = offer.market_listing_id == null
-      ? draft.listingId == null && draft.listingState == null &&
-        (endedStates.has(draft.status) ||
-          (draft.status === 'pending' && draft.expiresAt <= dependencies.now()))
-      : endedStates.has(draft.status) && draft.listingState != null &&
-        listingEndedStates.has(draft.listingState)
-    if (!marketEnded) return err(c, 409, 'withdraw or expire the market listing before unlocking the thing')
+    let marketEnded: boolean
+    if (offer.market_listing_id != null) {
+      const listingPayload = await getMarket(c, dependencies, `/api/listing/${offer.market_listing_id}`)
+      if (isResponse(listingPayload)) return listingPayload
+      const listing = object(object(listingPayload)?.listing)
+      const listingId = positiveId(listing?.id)
+      const offerId = positiveId(listing?.world_offer_id)
+      const draftId = positiveId(listing?.world_draft_id)
+      const listingState = publicLabel(listing?.state, 50)
+      const worldState = publicLabel(listing?.world_state, 50)
+      if (
+        listingId !== offer.market_listing_id || offerId !== offer.id ||
+        draftId !== offer.market_draft_id || !listingState || !worldState
+      ) {
+        return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
+      }
+      marketEnded = endedStates.has(listingState) && listingEndedStates.has(worldState)
+    } else {
+      const draftPayload = await getMarket(c, dependencies, `/api/world/draft/${offer.market_draft_id}`)
+      if (isResponse(draftPayload)) return draftPayload
+      const draft = draftRecord(draftPayload, offer.market_draft_id)
+      if (!draft || !draftMatchesOffer(draft, offer)) {
+        return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
+      }
+      marketEnded = draft.listingId != null || draft.listingState != null
+        ? draft.listingId != null && draft.listingState != null && listingEndedStates.has(draft.listingState)
+        : endedStates.has(draft.status) ||
+          (draft.status === 'pending' && draft.expiresAt <= dependencies.now())
+    }
+    if (!marketEnded) {
+      return err(c, 409, 'the market listing is still live; withdraw it at 1F3EA, then retry cancellation here to unlock the thing')
+    }
 
     const rows = await dependencies.query(`
       /* world-market:cancel */

@@ -99,6 +99,7 @@ interface FakeState {
   thingModerated: boolean
   offer: FakeOffer | null
   draft: Record<string, unknown>
+  listing: Record<string, unknown>
   checkout: Record<string, unknown>
   marketFailure: boolean
   marketInvalid: boolean
@@ -127,6 +128,17 @@ function draft(overrides: Record<string, unknown> = {}) {
     listing_state: null,
     expires_at: '2026-08-12T13:00:00.000Z',
     created_at: '2026-08-12T11:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function listing(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 91,
+    state: 'active',
+    world_state: 'active',
+    world_offer_id: 101,
+    world_draft_id: 71,
     ...overrides,
   }
 }
@@ -207,6 +219,7 @@ function initialState(patch: Partial<FakeState> = {}): FakeState {
     thingModerated: false,
     offer: null,
     draft: draft(),
+    listing: listing(),
     checkout: checkout(),
     marketFailure: false,
     marketInvalid: false,
@@ -677,6 +690,7 @@ function makeHarness(
       if (state.marketFailure) throw new Error('market offline')
       if (state.marketInvalid) return { nope: true }
       if (path === '/api/world/draft/71') return { draft: state.draft }
+      if (path === '/api/listing/91') return { listing: state.listing }
       if (path === '/api/world/checkout/81' || path === '/api/world/checkout/82') {
         return { checkout: { ...state.checkout, id: Number(path.split('/').at(-1)) } }
       }
@@ -1105,6 +1119,7 @@ test('a valid checkout opens exactly five minutes and retries idempotently', asy
   })
   const first = await reserve()
   assert.equal(first.status, 402, await first.clone().text())
+  assert.equal(harness.getState().offer?.market_listing_id, 91)
   assert.equal(
     Date.parse(harness.getState().offer!.reserved_until!) - Date.parse(harness.getState().offer!.reserved_at!),
     300_000,
@@ -1118,6 +1133,25 @@ test('a valid checkout opens exactly five minutes and retries idempotently', asy
     body: JSON.stringify({ market_checkout_id: 82, buyer_wallet: OTHER_WALLET }),
   })
   assert.equal(race.status, 409)
+})
+
+test('claim accepts a live listing after its activated draft expiry', async () => {
+  const harness = makeHarness({
+    offer: openOffer(),
+    thingLocked: true,
+    draft: draft({
+      status: 'active',
+      listing_id: 91,
+      listing_state: 'active',
+      expires_at: new Date(NOW.getTime() - 60_000).toISOString(),
+    }),
+  })
+  const response = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST', headers: jsonHeaders(BUYER_SECRET),
+    body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
+  })
+  assert.equal(response.status, 402, await response.clone().text())
+  assert.equal(harness.getState().offer?.market_listing_id, 91)
 })
 
 test('an expired world reservation can bind a different resident with a fresh checkout', async () => {
@@ -1621,13 +1655,62 @@ test('conclusive invalid x402 receipt becomes durable payment_invalid and still 
   assert.equal(tooEarly.status, 409)
   harness.setState(current => ({
     ...current,
-    draft: draft({ status: 'canceled', listing_id: 91, listing_state: 'stale' }),
+    listing: listing({ state: 'canceled', world_state: 'stale' }),
   }))
   const cancel = await harness.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
   })
   assert.equal(cancel.status, 200, await cancel.clone().text())
   assert.equal(harness.getState().thingLocked, false)
+})
+
+test('cancellation unlocks after every terminal listing or draft state', async () => {
+  for (const state of ['canceled', 'withdrawn', 'expired', 'sold']) {
+    const knownListing = makeHarness({
+      offer: openOffer({ market_listing_id: 91 }),
+      thingLocked: true,
+      listing: listing({ state, world_state: state === 'sold' ? 'sold' : 'canceled' }),
+    })
+    const listingResponse = await knownListing.app.request('/api/world/offer/101/cancel', {
+      method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+    })
+    assert.equal(listingResponse.status, 200, `${state}: ${await listingResponse.clone().text()}`)
+    assert.equal(knownListing.getState().thingLocked, false)
+  }
+
+  for (const [state, status] of [
+    ['canceled', 'withdrawn'],
+    ['withdrawn', 'active'],
+    ['expired', 'active'],
+    ['sold', 'active'],
+  ]) {
+    const draftOnly = makeHarness({
+      offer: openOffer(),
+      thingLocked: true,
+      draft: draft({ status, listing_id: 91, listing_state: state }),
+    })
+    const draftResponse = await draftOnly.app.request('/api/world/offer/101/cancel', {
+      method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+    })
+    assert.equal(draftResponse.status, 200, `${state}: ${await draftResponse.clone().text()}`)
+    assert.equal(draftOnly.getState().thingLocked, false)
+  }
+})
+
+test('cancellation tells the seller how to end a live market listing', async () => {
+  const harness = makeHarness({
+    offer: openOffer({ market_listing_id: 91 }),
+    thingLocked: true,
+    listing: listing({ state: 'active', world_state: 'active' }),
+  })
+  const response = await harness.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), {
+    error: 'the market listing is still live; withdraw it at 1F3EA, then retry cancellation here to unlock the thing',
+  })
+  assert.equal(harness.getState().thingLocked, true)
 })
 
 test('cancellation follows the market first, fails closed, and is idempotent', async () => {
@@ -1644,9 +1727,9 @@ test('cancellation follows the market first, fails closed, and is idempotent', a
   })
 
   for (const [patch, expected] of [
-    [{ draft: draft({ status: 'active', listing_id: 91, listing_state: 'active' }) }, 409],
-    [{ draft: draft({ status: 'active', listing_id: 91, listing_state: 'withdrawn' }) }, 409],
-    [{ draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'active' }) }, 409],
+    [{ listing: listing({ state: 'active', world_state: 'active' }) }, 409],
+    [{ listing: listing({ state: 'active', world_state: 'withdrawn' }) }, 409],
+    [{ listing: listing({ state: 'withdrawn', world_state: 'active' }) }, 409],
     [{ marketFailure: true }, 503],
   ] as const) {
     const harness = makeHarness({ offer: openOffer({ market_listing_id: 91 }), thingLocked: true, ...patch })
@@ -1660,7 +1743,7 @@ test('cancellation follows the market first, fails closed, and is idempotent', a
   const harness = makeHarness({
     offer: openOffer({ market_listing_id: 91 }),
     thingLocked: true,
-    draft: draft({ status: 'withdrawn', listing_id: 91, listing_state: 'withdrawn' }),
+    listing: listing({ state: 'withdrawn', world_state: 'canceled' }),
   })
   const cancel = () => harness.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
@@ -1715,7 +1798,7 @@ test('founder-review evidence keeps the world thing locked until market-first ca
   const active = makeHarness({
     offer: reviewed,
     thingLocked: true,
-    draft: draft({ status: 'active', listing_id: 91, listing_state: 'active' }),
+    listing: listing({ state: 'active', world_state: 'active' }),
   })
   const blocked = await active.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
@@ -1726,7 +1809,7 @@ test('founder-review evidence keeps the world thing locked until market-first ca
   const ended = makeHarness({
     offer: reviewed,
     thingLocked: true,
-    draft: draft({ status: 'canceled', listing_id: 91, listing_state: 'stale' }),
+    listing: listing({ state: 'canceled', world_state: 'stale' }),
   })
   const canceled = await ended.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
