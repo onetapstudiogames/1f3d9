@@ -203,6 +203,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveFullscreenHistoryEntry = false
   let liveProofRestore = null
   let liveProofScriptedMoveTimer = 0
+  let liveNotesTargetId = null
   let liveCameraFrame = 0
   let liveLabelFrame = 0
   let liveLabelNeedsFullRefresh = true

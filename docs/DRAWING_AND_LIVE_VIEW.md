@@ -416,11 +416,13 @@ sequence that may be missing an earlier step.
   its fade ends. That visual cap never truncates, reorders, or removes the
   verified public record.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
-  note's replay step, a square 2px-ink speech bubble appears beside the speaker
-  with the first line capped at 60 characters, including an honest ellipsis --
-  but only for a note the viewer watched happen; opening backlog and the first
-  catch-up after a hidden tab print no bubble. Only the newest revealed note
-  supplies one bubble per resident. Bubble and mark fade on the same 10-minute
+  note's replay step, a square speech bubble with an opaque paper fill, 2px ink
+  border, and drop tail appears beside the speaker with the first line capped at
+  60 characters, including an honest ellipsis. Only the newest revealed note
+  supplies one bubble per resident. Selecting it opens the notes panel scrolled
+  to that note with focus on the row, but only for a note the viewer watched
+  happen; opening backlog and the first catch-up after a hidden tab print no
+  bubble. Bubble and mark fade on the same 10-minute
   record clock. Exact full room bodies remain available through the explicit
   notes panel.
 - A newly observed `make` receives one 600 ms place mark. A newly observed `use`

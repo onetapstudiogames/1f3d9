@@ -200,6 +200,9 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
     'Step 4: builds the single reusable Live item popover from facts and a name its caller already ' +
     'resolved through liveItemPopoverFacts, which calls isQuietPlace per item before this function ever ' +
     'runs; like livePortraitGrid and liveThingShelf above, it has no place context of its own to check.'],
+  ['liveSpeechBubbleNode',
+    'Receives only note records already filtered by the Live plate quiet-room gates; this shared sink ' +
+    'has no snapshot or place context of its own to check again.'],
 ])
 
 test('the window client source actually contains identity-bearing DOM writes for this scan to find', () => {

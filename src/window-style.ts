@@ -1058,7 +1058,8 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border: 2px solid var(--line);
   border-radius: 0;
   box-shadow: 3px 3px 0 rgba(32, 56, 47, 0.22);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   font: 750 0.58rem/1.35 ui-monospace, "Cascadia Mono", Consolas, monospace;
   overflow-wrap: anywhere;
   text-align: start;
@@ -1432,6 +1433,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   pointer-events: none;
 }
 .live-walker-layer { z-index: 12; }
+.live-walker-layer:has(.live-speech-bubble) { z-index: 65; }
 .live-plot > .live-walker-layer[data-live-expanded="true"] {
   z-index: 29;
   inset: auto;
@@ -1458,6 +1460,8 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-replay-portrait[data-live-focus-resident] { z-index: 40; }
 .live-walker[data-live-raised="true"],
 .live-replay-portrait[data-live-raised="true"] { z-index: 44; }
+.live-walker:has(.live-speech-bubble),
+.live-replay-portrait:has(.live-speech-bubble) { z-index: 50; }
 .live-plot .live-walker { width: 3.5rem; height: 3.5rem; }
 .live-replay-portrait {
   z-index: 18;

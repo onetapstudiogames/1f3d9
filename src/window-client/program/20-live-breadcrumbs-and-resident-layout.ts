@@ -68,13 +68,30 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
     return bubbles
   }
 
-  function liveSpeechBubbleNode(bubble) {
+  function liveSpeechBubbleNode(bubble, interactive = true) {
     const node = element('span', 'live-speech-bubble', bubble.text)
-    node.setAttribute('aria-hidden', 'true')
+    node.dataset.liveNoteId = String(bubble.record.detail.note_id)
+    node.dataset.liveNotePlaceId = String(bubble.record.detail.place_id)
     node.dataset.liveAt = String(bubble.record.at.getTime())
     node.dataset.liveLifetime = String(LIVE_NOTE_LIFETIME_MS)
     node.style.opacity = String(windowLiveTraceOpacity(
       bubble.record.at.getTime(), Date.now(), LIVE_NOTE_LIFETIME_MS))
+    if (!interactive) {
+      node.setAttribute('aria-hidden', 'true')
+      return node
+    }
+    node.setAttribute('role', 'button')
+    node.tabIndex = 0
+    node.setAttribute('aria-label', 'Open ' + bubble.record.actor + "'s note")
+    const open = event => {
+      event.preventDefault()
+      event.stopPropagation()
+      openLiveNotes(bubble.record.detail.place_id, bubble.record.detail.note_id, node)
+    }
+    node.addEventListener('click', open)
+    node.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') open(event)
+    })
     return node
   }
 
