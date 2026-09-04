@@ -528,3 +528,76 @@ exact colour, transparent cells, blank versus unset, palette-plus-indices,
 bounded fetched reads, honest stand-ins, owner description, redraw history,
 refusal, incompletion, and kind-owner-shaped variation. Locked decision #62
 makes the complete resolved contract above binding.
+
+## 9. Client source layout (issue #79, phase 1)
+
+`src/window-client.ts` used to hold the whole human-window client in one file:
+roughly its first 1,000 lines were exported TypeScript helpers, and the rest
+was the client's own JavaScript held inside one template-literal IIFE
+exported as `WINDOW_JS` and served verbatim by `src/window.ts` at
+`/window.js`. Phase 1 of issue #79 split that file mechanically, with **no
+behavior change of any kind** — `WINDOW_JS` is byte-identical before and
+after the split.
+
+**Where things live now:**
+
+- `src/window-client.ts` survives as a **facade**. It re-exports every
+  TypeScript helper under its original name (so every existing import path —
+  tests, e2e specs, `src/window.ts` — keeps working unchanged) and assembles
+  `WINDOW_JS` from the ordered program parts:
+  `export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')`.
+- `src/window-client/*.ts` holds the eight TypeScript helper modules
+  (`drawing.ts`, `live-ground.ts`, `live-scatter.ts`, `live-visibility.ts`,
+  `live-camera.ts`, `live-replay.ts`, `rows.ts`, `directory.ts`) — the
+  functions and types the facade re-exports.
+- `src/window-client/program/NN-*.ts` holds the 39 ordered client-JS
+  fragments that make up the client's own JavaScript. Each part file is
+  exactly `export const PART_NN_NAME = \`<source lines>\``, copied
+  line-for-line out of the original file with no reformatting, renaming, or
+  reordering. The `NN-` filename prefix is only for `ls` to show ship order;
+  `src/window-client/program/index.ts` imports every part and assembles
+  `WINDOW_CLIENT_PARTS` in the array order, which is the real authority.
+
+**Why fragments, not modules.** A fragment is a byte range, not a JavaScript
+module: every fragment shares one lexical scope inside the shipped IIFE, and
+none has its own import surface. There is no bundler on this page and none
+may be added, so turning the client's own code into real ES modules needs
+either a module loader on the page or a build step — a later, separate
+decision. Phase 1 only moved bytes; it did not change what ships.
+
+**The byte-identity proof.** Two independent checks confirm nothing changed:
+
+- *Source-level*: the 39 part files' template bodies, stripped of their
+  `export const PART_NN_NAME = \`...\`` wrapper and joined in filename order,
+  reproduce the original file's `WINDOW_JS` template source text exactly
+  (`sha256:b83ddcaf9319974f0c15099d7c01184fc8d16820847eff9d3ba03ee91970946e`,
+  496,819 chars / 497,106 bytes).
+- *Runtime-level*: importing `src/window-client.ts` and hashing the actual
+  assembled `WINDOW_JS` string (after every `${...}` interpolation resolves)
+  gives the same result before and after the split
+  (`sha256:8388f3b9b32ccb8b0c4c5c97ca9bd40a9d24e895c2abaaebbc69d0a60845f178`,
+  548,218 chars / 548,524 bytes).
+
+Both hashes were computed against a clean checkout of `main` and against the
+split branch's tip, and matched exactly. The PR that shipped this split
+carries both numbers in its body.
+
+**What moved in the same PR, mechanically, to keep other tooling honest:**
+`scripts/check-refusal-census.ts` now skips the whole `src/window-client/`
+subtree the same way it already skipped `window-client.ts` (non-boundary
+presentation code, not a caller-facing door); `test/quiet-dom-leak-inventory.test.ts`
+now scans the program parts' template bodies instead of the (now-tiny) facade
+file, so it keeps watching the same client code; and
+`test/city-credit-http-mcp.test.ts` and `test/prepaid-credit-acceptance.test.ts`
+now include the whole `src/window-client/` subtree in the source text they
+scan for private payment/gift fields, so that scan keeps covering the real
+client instead of passing vacuously against an 96-line facade.
+
+**What phase 1 deliberately did not do** — these are phase 2 of issue #79, a
+separate change: no typed accessor layer was added over the mutable `state`
+object (still declared whole in `src/window-client/program/02-state-and-nodes.ts`);
+no renderer was forced through such an accessor; `refreshCity`'s five jobs
+(`src/window-client/program/38-refresh-city.ts`) were isolated into their own
+file but not decomposed; and the facade still re-exports about twenty helper
+names that no test imports directly, kept only because part 01 stringifies
+them — narrowing that surface is also phase 2 work, not phase 1.
