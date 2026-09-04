@@ -5825,6 +5825,70 @@ test('keyboard focus opens the popover with an accessible group name and no titl
   await expect(resident).toHaveAccessibleName('Focus on harbor-1')
 })
 
+test('keyboard reach without a trap: forward Tab from the action button continues into the ordinary plate order', async ({ page }) => {
+  // Round-1 review finding #4: forward Tab from the popover's action
+  // button used to close the popover and land back on the anchor, costing
+  // the keyboard user an extra Tab press. It must instead continue on,
+  // never trapping focus inside the popover or bouncing it back.
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+  await panLiveTargetIntoView(page, resident)
+  const popover = page.locator('#live-item-popover')
+  const action = popover.locator('.live-item-popover-open')
+
+  await resident.focus()
+  await expect(popover).toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(action).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(resident).toBeFocused()
+  await expect(popover).toBeVisible()
+
+  await page.keyboard.press('Tab')
+  await expect(action).toBeFocused()
+  await page.keyboard.press('Tab')
+  // Moves on rather than trapping: focus is neither still on harbor-1 nor
+  // dropped to the document body. Whatever comes next in the ordinary
+  // plate order receives it -- if that next element happens to be another
+  // bound Live item, its own focusin listener legitimately opens ITS
+  // popover, which is a continuation, not the same trap this finding
+  // describes (closing and landing back on harbor-1 itself).
+  const focusedIsAnchorOrBody = await page.evaluate(() => {
+    const anchor = document.querySelector('[data-live-resident-handle="harbor-1"]')
+    return document.activeElement === anchor || document.activeElement === document.body
+  })
+  expect(focusedIsAnchorOrBody).toBe(false)
+  await expect(popover).not.toHaveAttribute('data-live-popover-key', 'resident:harbor-1')
+})
+
+test('a resident mid-walk keeps their facts reachable through the same popover a settled resident gets', async ({ page }) => {
+  // Round-1 review finding #2 (MEDIUM): the walking (.live-replay-portrait)
+  // resident was never wired to bindLiveItemPopover, so their state,
+  // provenance, and last recorded action were unreachable by hover,
+  // keyboard focus, or touch for the whole 3.2-8s walk -- a real
+  // regression versus the old mouse-only title tooltip.
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+
+  await publishReplayChanges(page, fixture)
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveCount(1)
+  await expect(replay).toHaveAttribute('data-live-replay-key', 'change:11')
+
+  const portrait = replay.locator('.live-portrait')
+  const popover = page.locator('#live-item-popover')
+  await portrait.focus()
+  await expect(popover).toBeVisible()
+  await expect(popover).toHaveAttribute('data-live-popover-kind', 'resident')
+  await expect(popover).toContainText('map-walker')
+  await expect(portrait).toHaveAttribute('aria-describedby', 'live-item-popover')
+})
+
 test('touch keeps the locked raise-then-open rule and also opens the popover on the first tap', async ({ page }, testInfo) => {
   await installReplayRoutes(page, Date.now())
   await page.goto('/window#view=live')
@@ -5942,17 +6006,15 @@ test('the popover action opens the right record and no extra request fires while
   await expect(detail.locator('#record-detail-title')).toContainText('harbor-1')
 })
 
-test('at 375px the popover never covers its anchor, wherever the camera leaves it', async ({ page }) => {
+test('at 375px the popover stays inside the viewport and never covers its anchor, on camera and off', async ({ page }) => {
   // Exact full-viewport containment at 375px with a fixed-size popover is
   // proven deterministically, side by side with the non-fitting fallback,
   // by windowLiveItemPopoverPlacement's own unit tests (including the
   // exact 375x812-viewport-with-a-320-wide-popover case). What a real
-  // browser run adds is confirming the one invariant that holds
+  // browser run adds is confirming the two invariants that must hold
   // regardless of exactly where the camera happens to leave the anchor:
-  // the popover never covers it. panLiveTargetIntoView's landing spot
-  // varies with each render pass, so this test intentionally does not
-  // pin one exact position -- it is the never-covers-anchor contract that
-  // must hold everywhere, not one hand-picked coordinate.
+  // the popover never leaves #live-viewport, and it never covers the item
+  // it describes.
   await page.setViewportSize({ width: 375, height: 812 })
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
@@ -5961,6 +6023,34 @@ test('at 375px the popover never covers its anchor, wherever the camera leaves i
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
   const popover = page.locator('#live-item-popover')
   const resident = page.locator('[data-live-resident-handle="harbor-1"]').first()
+
+  // Round-1 review finding #1, reproduced live on the deployed preview:
+  // most residents on a plate wider than the viewport sit off-camera by
+  // default -- the normal state for a keyboard user tabbing through them,
+  // and the state every other test in this file avoids by calling
+  // panLiveTargetIntoView first. This deliberately does NOT pan the camera,
+  // so it exercises the exact off-screen anchor the round-1 bug shipped
+  // with (a fully off-screen popover, invisible to the keyboard user step 4
+  // was built to serve). focus() does not require the target to be visible,
+  // so it works on an anchor the camera has not framed.
+  await resident.focus()
+  await expect(popover).toBeVisible()
+  const [offCameraPopoverBox, viewportBox] = await Promise.all([
+    popover.boundingBox(), page.locator('#live-viewport').boundingBox(),
+  ])
+  expect(offCameraPopoverBox).toBeTruthy()
+  expect(viewportBox).toBeTruthy()
+  expect(offCameraPopoverBox!.x).toBeGreaterThanOrEqual(viewportBox!.x)
+  expect(offCameraPopoverBox!.x + offCameraPopoverBox!.width)
+    .toBeLessThanOrEqual(viewportBox!.x + viewportBox!.width)
+  expect(offCameraPopoverBox!.y).toBeGreaterThanOrEqual(viewportBox!.y)
+  expect(offCameraPopoverBox!.y + offCameraPopoverBox!.height)
+    .toBeLessThanOrEqual(viewportBox!.y + viewportBox!.height)
+
+  // The panned-into-view case keeps proving the never-covers-anchor
+  // contract this test originally pinned. panLiveTargetIntoView's landing
+  // spot varies with each render pass, so this intentionally does not pin
+  // one exact position.
   await panLiveTargetIntoView(page, resident)
   await resident.focus()
   await expect(popover).toBeVisible()
