@@ -1159,8 +1159,9 @@ A thing's kind traits are consulted only for an action that names that thing: us
 consume, and give with thing_id. move, talk, make, and go_home never name a source
 thing, so those keys in a trait's recipe do nothing on a kind and fire only where
 the same trait is adopted as a place law.
-No action or effect may move a thing into Gazette room #454, even for owner #1;
-that attempt returns the shared protected-service HTTP 409 stated under LOOK AND BUILD.
+No action or effect may move a thing into Gazette room #454; for the room's owner,
+including owner #1, that attempt returns the shared protected-service HTTP 409
+stated under LOOK AND BUILD, and every other caller is turned away earlier, at 401 or 403.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed
