@@ -4318,3 +4318,120 @@ test('a Gazette page the size limit cut before the first entry says so, and matc
   await expect(detail).not.toContainText('printed with no submissions')
   await expect(panel.getByRole('button', { name: 'Load more entries', exact: true })).toHaveCount(0)
 })
+
+test('a Load more request that admits nothing still says so, keeps the already-loaded entry, and drops the button honestly', async ({ page }) => {
+  // Round 5 review finding 1 (issue #71): round 4's fix only rendered the
+  // honest budget-cut notice when the entry list was still empty. Before
+  // this fix, a Load more request hitting the same byte ceiling AFTER one
+  // entry already loaded left the window showing a single truncated entry
+  // with no notice and no Load more control, as if the issue simply ended
+  // at one submission, while the card beside it kept showing 25.
+  await page.route('**/api/gazette**', route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/gazette') {
+      return route.fulfill({
+        json: {
+          first_print_at: '2026-08-31T16:00:00.000Z',
+          submission_room: { place_id: 454, submissions_open: true },
+          issues: [{
+            issue_number: 10,
+            scheduled_for: '2026-10-26T16:00:00.000Z',
+            printed_at: '2026-10-26T16:00:02.000Z',
+            entry_count: 25,
+          }],
+          has_more: false,
+          next_before_issue_number: null,
+        },
+      })
+    }
+    if (url.pathname === '/api/gazette/10') {
+      const continuation = url.searchParams.get('after_ordinal') === '1'
+      if (continuation) {
+        return route.fulfill({
+          json: {
+            issue: {
+              issue_number: 10,
+              scheduled_for: '2026-10-26T16:00:00.000Z',
+              printed_at: '2026-10-26T16:00:02.000Z',
+              header: 'Stored provenance: Room #454, Monday tick, unprinted notes before the cutoff.',
+              entry_count: 25,
+            },
+            entries: [],
+            has_more: true,
+            next_after_ordinal: null,
+            returned_text_bytes: 0,
+            text_limit_bytes: 655360,
+            stopped_for_text_limit: true,
+            next_item_ordinal: 2,
+            next_item_note_id: 9202,
+            next_item_text_bytes: 650000,
+            server_text_limit_applied: true,
+          },
+        })
+      }
+      return route.fulfill({
+        json: {
+          issue: {
+            issue_number: 10,
+            scheduled_for: '2026-10-26T16:00:00.000Z',
+            printed_at: '2026-10-26T16:00:02.000Z',
+            header: 'Stored provenance: Room #454, Monday tick, unprinted notes before the cutoff.',
+            entry_count: 25,
+          },
+          entries: [{
+            ordinal: 1,
+            note_id: 9201,
+            author: 'leafwalker',
+            body: 'The first entry, which fit fine on its own.',
+            created_at: '2026-10-26T15:55:00.000Z',
+          }],
+          has_more: true,
+          next_after_ordinal: 1,
+        },
+      })
+    }
+    return route.abort('failed')
+  })
+
+  await page.evaluate(() => {
+    history.pushState(null, '', '/window/gazette?issue=10')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
+  const tab = page.getByRole('tab', { name: 'Gazette', exact: true })
+  const panel = page.locator('#gazette-panel')
+  const detail = page.locator('#gazette-issue')
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
+  await expect(panel).toBeVisible()
+  await expect(detail.locator('.gazette-entry')).toHaveCount(1)
+  await expect(detail).toContainText('The first entry, which fit fine on its own.')
+
+  const continuationRequest = page.waitForRequest(request => {
+    const url = new URL(request.url())
+    return url.pathname === '/api/gazette/10' && url.searchParams.get('after_ordinal') === '1'
+  })
+  await page.getByRole('button', { name: 'Load more entries', exact: true }).click()
+  await continuationRequest
+
+  // The already-loaded entry must still be there: this is not a genuinely
+  // empty issue and must not look like one.
+  await expect(detail.locator('.gazette-entry')).toHaveCount(1)
+  await expect(detail).toContainText('The first entry, which fit fine on its own.')
+
+  // The honest notice must appear too, naming the entry that did not fit,
+  // matching the card's true count, and worded for a continuation (not
+  // claiming the FIRST entry was the one that failed to fit, since one
+  // already loaded).
+  const card = panel.locator('.gazette-issue-summary').filter({ hasText: 'Issue 10' })
+  await expect(card.locator('.gazette-issue-summary-meta')).toContainText('25 submissions')
+  await expect(detail).toContainText('25 submissions')
+  await expect(detail).toContainText('size limit')
+  await expect(detail).toContainText('note #9202')
+  await expect(detail).toContainText('650000 bytes')
+  await expect(detail).not.toContainText('printed with no submissions')
+  await expect(detail).not.toContainText('before the first entry fit')
+
+  // The control is gone (there is genuinely no cursor to page further with),
+  // but its disappearance is now explained, not silent.
+  await expect(panel.getByRole('button', { name: 'Load more entries', exact: true })).toHaveCount(0)
+})
