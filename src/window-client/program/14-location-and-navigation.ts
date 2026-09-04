@@ -57,6 +57,7 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
             entries: [],
             nextAfterOrdinal: null,
             hasMoreEntries: false,
+            detailBudgetCut: null,
             detailLoading: false,
             detailInitialized: false,
             detailError: null,

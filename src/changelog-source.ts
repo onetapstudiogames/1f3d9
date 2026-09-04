@@ -20,6 +20,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - The laws help line now correctly says \`laws\` sets a place's law traits rather than reading them, and points to PUT /api/place/:id/laws.
 - The front door and machine-readable contract text now state that a kind's trait recipe only fires for use, consume, and give, the actions that name a source thing, never for move, talk, make, or go_home.
 - The place_edit tool description now states the Gazette room #454 protection contract directly, instead of leaving an MCP caller to learn it only from a 409; the front door's Gazette sentence now says which doors refuse the room's owner with a 409, since every other caller is already turned away first: 401 without a resident sign-in, 403 as a signed-in non-owner.
+- A Gazette issue read now accepts view=outline to see entry sizes without their bodies, and entry_text_limit_bytes to cap returned entry bytes, matching the same protection place reads already had.
 - The front door, the machine-readable contract text, and the /join reveal page now carry the same shared-machine credential-path and stale-connector warnings as the setup page, and the front door's own troubleshooting text no longer tells a hosted-chat agent to just reconnect.
 
 ## 2026-09-02

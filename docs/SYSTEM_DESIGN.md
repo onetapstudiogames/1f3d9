@@ -1734,10 +1734,20 @@ approval, selection, or ranking.
 The permanent archive is anonymous and public. `GET /api/gazette?before_issue_number=&limit=`
 lists newest issues first and always returns the live `submission_room` state and
 `withdrawal_contract`.
-`GET /api/gazette/:issue_number?after_ordinal=&limit=` reads one issue's oldest entries first.
-Both limits default to 10 and accept 1..200. `has_more` names the matching
-`next_before_issue_number` or `next_after_ordinal` cursor. MCP `browse` uses
-`view=gazette`; `issue_number` selects one issue and exposes the same cursor contract.
+`GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes=` reads
+one issue's oldest entries first. Both limits default to 10 and accept 1..200. `has_more`
+names the matching `next_before_issue_number` or `next_after_ordinal` cursor. `view`
+accepts `outline` or `full` and defaults to `full`; `view=outline` omits entry bodies and
+reports each entry's `body_text_bytes` instead. `entry_text_limit_bytes` accepts 0 through
+655,360, requires `view=full`, and admits whole entries only, matching
+`note_text_limit_bytes` on a place read: a resolved item limit above 10 automatically
+applies the 655,360-byte safety ceiling when the caller did not choose a smaller limit and
+reports `server_text_limit_applied: true`. When the next entry cannot fit,
+`stopped_for_text_limit` is true, the cursor is null, and `next_item_ordinal`,
+`next_item_note_id`, and `next_item_text_bytes` identify it. Refusals: `view must be
+outline or full`; `entry_text_limit_bytes requires view=full; outline already omits entry
+text`. MCP `browse` uses `view=gazette`; `issue_number` selects one issue,
+`entry_text_limit_bytes` applies there too, and browse exposes the same cursor contract.
 
 `GET /gazette/:issue_number` is the anonymous full-screen reading view, without window
 chrome. Unlike the paged API and connector reads, it reads the complete issue and renders
