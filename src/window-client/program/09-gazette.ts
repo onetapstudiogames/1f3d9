@@ -120,9 +120,23 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       ? null
       : safeId(payload.next_after_ordinal)
     const lastOrdinal = entries.at(-1)?.ordinal ?? (requestedAfterOrdinal || 0)
+    // Issue #71 round 4: the server's automatic aggregate byte ceiling (any
+    // view=full read above the default item limit, which this fixed-size
+    // page always requests) can stop before even the first entry fits under
+    // the budget. That page reports has_more true with no next_after_ordinal
+    // cursor, since nothing was admitted to page after
+    // (src/gazette-store.ts readGazetteIssue: nextAfterOrdinal is null
+    // whenever entries.length is 0). That is not a protocol violation, it is
+    // what stopped_for_text_limit with zero admitted entries looks like, so
+    // it is treated as the end of what this page can show rather than an
+    // error. Only this exact shape is exempt: hasMore true, no cursor, and
+    // no entries at all. hasMore true with a missing cursor while entries
+    // were actually admitted still fails below, unchanged.
+    const budgetStoppedWithNothingAdmitted = hasMore && nextAfterOrdinal === null && !entries.length
     if (
-      hasMore !== Boolean(nextAfterOrdinal) || summary.entryCount < entries.length ||
-      (hasMore && (
+      (hasMore !== Boolean(nextAfterOrdinal) && !budgetStoppedWithNothingAdmitted) ||
+      summary.entryCount < entries.length ||
+      (hasMore && !budgetStoppedWithNothingAdmitted && (
         !entries.length || nextAfterOrdinal !== lastOrdinal ||
         nextAfterOrdinal >= summary.entryCount
       )) ||
@@ -133,7 +147,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     return Object.freeze({
       issue,
       entries,
-      hasMore,
+      hasMore: budgetStoppedWithNothingAdmitted ? false : hasMore,
       nextAfterOrdinal,
     })
   }
