@@ -104,7 +104,7 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
       // Fourth review pass on row 75: a trail arrow, note mark, or make/use
       // pulse names its actor in an aria-label and plots at a place the
       // record touches — the same two-place (move) or one-place (everything
-      // else) resolution liveLedgerQuietPlace already uses for the ledger
+      // else) resolution liveLedgerQuietPlace uses for public activity
       // must gate this layer too, or a quiet place's exact plate position
       // and its visitor's handle leak through the trace SVG instead.
       if (liveLedgerQuietPlace(snapshot, record)) continue
@@ -183,14 +183,8 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
     return layer
   }
 
-  function livePlaceName(snapshot, id) {
-    const place = placeReference(snapshot, id)
-    return place ? place.name : id ? 'Place #' + String(id) : 'between places'
-  }
-
-  // Decision #75: a ledger row can point at up to two places (a move's from
-  // and to); if either is quiet the whole row collapses instead of naming
-  // the resident, the thing, or (for a note) printing its body. Returns the
+  // Decision #75: a public record can point at up to two places (a move's
+  // from and to); if either is quiet it stays off the plate. Returns the
   // quiet place to notice, or null when nothing about this record is quiet.
   function liveLedgerQuietPlace(snapshot, record) {
     if (liveRecordType(record) === 'move') {
@@ -201,91 +195,6 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
     }
     const place = placeReference(snapshot, liveRecordPlaceId(record))
     return isQuietPlace(place) ? place : null
-  }
-
-  function liveLedgerText(snapshot, record) {
-    const type = liveRecordType(record)
-    if (type === 'move') {
-      const carrying = record.detail.mode === 'carry' && record.detail.thing_id
-        ? ' carrying Thing #' + String(record.detail.thing_id)
-        : ''
-      return record.actor + ' moved' + carrying + ': ' +
-        livePlaceName(snapshot, record.detail.from_place_id) +
-        ' → ' + livePlaceName(snapshot, record.detail.to_place_id)
-    }
-    if (type === 'note') {
-      const noteId = record.detail.note_id
-      const entry = state.live.noteBodies[String(noteId)]
-      if (!entry && noteId) void loadLiveNote(noteId)
-      if (entry?.body) {
-        return record.actor + ': ' + entry.body
-      }
-      if (entry?.error) return record.actor + "'s note #" + String(noteId) + ' could not be read.'
-      return 'Reading ' + record.actor + "'s note #" + String(noteId) + '…'
-    }
-    const placeId = liveRecordPlaceId(record)
-    if (type === 'make') {
-      return record.actor + ' made thing #' + String(record.detail.thing_id || '?') +
-        ' in ' + livePlaceName(snapshot, placeId)
-    }
-    return record.actor + ' used thing #' + String(record.detail.source_thing_id || '?') +
-      ' in ' + livePlaceName(snapshot, placeId)
-  }
-
-  function renderLiveLedger(snapshot, focus, children, suppliedRecords) {
-    if (!nodes.liveLedger) return
-    const liveFocus = focus || liveFocusPlace(snapshot)
-    if (!liveFocus) {
-      nodes.liveLedger.replaceChildren(element('li', 'empty-row', 'No public plate is available.'))
-      return
-    }
-    if (liveFocus.quiet) {
-      const row = element('li', 'quiet-room-notice-row')
-      row.append(quietRoomNotice(liveFocus))
-      nodes.liveLedger.replaceChildren(row)
-      return
-    }
-    const liveChildrenRows = children || liveChildren(snapshot, liveFocus)
-    const records = suppliedRecords || visibleLiveRecords(snapshot, liveFocus, liveChildrenRows)
-    if (!records.length) {
-      nodes.liveLedger.replaceChildren(element('li', 'empty-row',
-        'No recent marks reach this plate. The city moves only when residents act.'))
-      return
-    }
-    nodes.liveLedger.replaceChildren(...records.map((record, index) => {
-      const row = element('li', 'live-ledger-row')
-      const key = liveTraceKey(record)
-      const quietPlace = liveLedgerQuietPlace(snapshot, record)
-      if (quietPlace) {
-        row.classList.add('live-ledger-row-quiet')
-        row.append(quietRoomNotice(quietPlace))
-        return row
-      }
-      const number = element('span', 'live-ledger-number', String(index + 1).padStart(2, '0'))
-      const copy = element('p', 'live-ledger-copy', liveLedgerText(snapshot, record))
-      const age = windowLiveTraceOpacity(record.at.getTime(), Date.now(), liveRecordLifetime(record))
-      row.dataset.liveAt = String(record.at.getTime())
-      row.dataset.liveLifetime = String(liveRecordLifetime(record))
-      row.style.opacity = String(Math.max(0.25, age))
-      row.append(number, copy, timeNode(record.at, 'live-ledger-time'))
-      const thingId = activityThingId(record)
-      if (thingId) {
-        const thing = namedThingReference(snapshot, thingId)
-        const label = thing?.name || 'Thing #' + String(thingId)
-        const reference = openDetailLink(
-          'thing', thingId, label, 'detail-link live-ledger-thing-reference',
-        )
-        reference.prepend(portraitNode(
-          'thing', thingId, label,
-          thing ? thing.has_drawing === true : record.thingHasDrawing,
-          'live-entity-portrait',
-        ))
-        row.append(reference)
-      }
-      row.tabIndex = 0
-      bindLiveHighlight(row, key, 'ledger')
-      return row
-    }))
   }
 
 `

@@ -81,6 +81,7 @@ import {
   windowLiveItemLastAction,
   windowLiveItemPopoverPlacement,
 } from '../live-popover.ts'
+import { normalizeLiveNotesPage } from '../live-notes.ts'
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -140,6 +141,7 @@ const WINDOW_LIVE_TOUCH_ACTIVATION_JS = windowLiveTouchActivation.toString()
 const WINDOW_LIVE_ITEM_FACTS_JS = windowLiveItemFacts.toString()
 const WINDOW_LIVE_ITEM_LAST_ACTION_JS = windowLiveItemLastAction.toString()
 const WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS = windowLiveItemPopoverPlacement.toString()
+const NORMALIZE_LIVE_NOTES_PAGE_JS = normalizeLiveNotesPage.toString()
 const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
 )
@@ -266,5 +268,6 @@ export const PART_01_PRELUDE = `(() => {
   const windowLiveItemFacts = ${WINDOW_LIVE_ITEM_FACTS_JS}
   const windowLiveItemLastAction = ${WINDOW_LIVE_ITEM_LAST_ACTION_JS}
   const windowLiveItemPopoverPlacement = ${WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS}
+  const normalizeLiveNotesPage = ${NORMALIZE_LIVE_NOTES_PAGE_JS}
 
 `

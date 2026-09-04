@@ -41,6 +41,15 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
       kind_moderated: false,
       has_drawing: index !== 5,
     }))
+    const notes = Object.freeze(Array.from({ length: 52 }, (_, index) => Object.freeze({
+      id: 9352 - index,
+      place_id: workshopId,
+      author: index % 2 ? 'proof-bea' : 'proof-alex',
+      body: 'Proof room note ' + String(52 - index) + ' of 52.',
+      created_at: new Date(now - index * 1_000),
+      moderated: false,
+      truncated: false,
+    })))
     const child = (id, name, thingCount) => ({
       id,
       parent_id: rootId,
@@ -56,7 +65,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     })
     const children = [
       child(gardenId, 'Movement garden', 0),
-      child(workshopId, 'Crowded activity workshop', things.length),
+      { ...child(workshopId, 'Crowded activity workshop', things.length), notes: notes.length },
       child(retryRoomId, 'Retry room', 0),
     ]
     const places = [{
@@ -84,7 +93,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
       totals: {
         places: 4,
         residents: residents.length,
-        conversations: 1,
+        conversations: notes.length,
         things: things.length,
         agreements: 0,
         events: 5,
@@ -92,11 +101,12 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
       pages: Object.fromEntries(['places', 'residents', 'notes', 'things',
         'agreements', 'events'].map(collection => [collection, { has_more: false }])),
       live_survey: [
-        { id: rootId, parent_id: null, things: 0 },
+        { id: rootId, parent_id: null, things: 0, notes: 0 },
         ...children.map(place => ({
           id: place.id,
           parent_id: rootId,
           things: place.things,
+          notes: place.notes,
         })),
       ],
       refreshed_at: new Date(now).toISOString(),
@@ -118,7 +128,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         actor: 'proof-bea', detail: { action: 'use', status: 'applied',
           place_id: workshopId, source_thing_id: things[1].id } },
     ]
-    return Object.freeze({ rootId, snapshot, changes, residents, things })
+    return Object.freeze({ rootId, snapshot, changes, residents, things, notes })
   }
 
   function liveProofDrawings(proof) {
@@ -329,6 +339,10 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         proofScene: true,
         proofFailure: true,
         proofRetrySucceeded: false,
+        notesPanel: emptyLiveNotesPanel(null, 0),
+        proofNotesByPlaceId: Object.freeze({
+          [String(LIVE_PROOF_WORKSHOP_ID)]: proof.notes,
+        }),
       },
     }
     const panel = document.getElementById('live-panel')

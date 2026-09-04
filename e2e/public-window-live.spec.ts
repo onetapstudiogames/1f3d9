@@ -564,10 +564,13 @@ async function installReplayRoutes(
     // false so a test can exercise the neutral-marker path deliberately,
     // without inventing a second resident fixture.
     undrawnResidentIds?: readonly number[]
+    liveNotesCount?: number
+    surveyNoteMismatch?: boolean
   }> = {},
 ) {
   let published = false
   let thingPageRequests = 0
+  let liveNotesPageRequests = 0
   let residentPageRequests = 0
   let openingEventRequests = 0
   let windowRequests = 0
@@ -709,6 +712,29 @@ async function installReplayRoutes(
     }
     const requested = url.searchParams.get('after_change_marker')
     const marker = requested ?? currentMarker()
+    if (url.searchParams.get('collection') === 'notes' && controls.liveNotesCount !== undefined) {
+      liveNotesPageRequests += 1
+      const placeId = Number(url.searchParams.get('place_id'))
+      const beforeId = Number(url.searchParams.get('before_id')) || null
+      const notes = Array.from({ length: controls.liveNotesCount }, (_, index) => ({
+        id: controls.liveNotesCount - index,
+        place_id: 3,
+        author: index % 2 ? 'harbor-one' : 'map-walker',
+        body: `Room note ${controls.liveNotesCount - index}.`,
+        created_at: new Date(now - index * 1_000).toISOString(),
+        moderated: false,
+        truncated: false,
+      })).filter(note => note.place_id === placeId && (!beforeId || note.id < beforeId))
+      const rows = notes.slice(0, 50)
+      const hasMore = notes.length > rows.length
+      await route.fulfill({ json: {
+        change_marker: marker,
+        notes: rows,
+        has_more: hasMore,
+        next_before_id: hasMore ? rows.at(-1)?.id : null,
+      } })
+      return
+    }
     if (url.searchParams.get('collection') === 'things') {
       thingPageRequests += 1
       const withinPlaceId = url.searchParams.get('within_place_id')
@@ -814,17 +840,34 @@ async function installReplayRoutes(
           ],
         }
       : ordinarySnapshot
+    const notesSnapshot = controls.liveNotesCount === undefined
+      ? baseSnapshot
+      : {
+          ...baseSnapshot,
+          places: baseSnapshot.places.map(root => ({
+            ...root,
+            children: root.children.map(place => place.id === 3
+              ? { ...place, notes: controls.liveNotesCount }
+              : place),
+          })),
+          totals: { ...baseSnapshot.totals, conversations: controls.liveNotesCount },
+          live_survey: baseSnapshot.live_survey.map(place => place.id === 3
+            ? { ...place, notes: controls.surveyNoteMismatch
+                ? Math.max(0, controls.liveNotesCount - 1)
+                : controls.liveNotesCount }
+            : place),
+        }
     const outlinedSnapshot = controls.omitFocusedPlaceFromOutline
       ? {
-          ...baseSnapshot,
-          places: baseSnapshot.places.map(place => ({
+          ...notesSnapshot,
+          places: notesSnapshot.places.map(place => ({
             ...place,
             children: place.children.map(child => child.id === 3
               ? { ...child, children: [] }
               : child),
           })),
         }
-      : baseSnapshot
+      : notesSnapshot
     const surveyedSnapshot = controls.surveyTotalMismatch
       ? {
           ...outlinedSnapshot,
@@ -1208,6 +1251,7 @@ async function installReplayRoutes(
   return {
     publish: () => { published = true },
     thingPageRequests: () => thingPageRequests,
+    liveNotesPageRequests: () => liveNotesPageRequests,
     thingWithinPlaceIds: () => [...thingWithinPlaceIds],
     thingLimits: () => [...thingLimits],
     residentPageRequests: () => residentPageRequests,
@@ -1457,6 +1501,65 @@ test('Live paints exact surveyed counts and Focus ids while named thing cards lo
     .toContainText('Thing #90 · recorded in Harbor room')
   await expect(page.locator('#live-focus-interactions [data-live-focus-thing="91"]'))
     .toContainText('Thing #91 · recorded in Harbor room')
+})
+
+test('Live notes controls require their own complete survey gate', async ({ page }) => {
+  const now = Date.now()
+  await installReplayRoutes(page, now, 'complete', 0, {
+    liveNotesCount: 52,
+    surveyNoteMismatch: true,
+  })
+  await page.goto('/window/live?place=3')
+  await expect(page.locator('#live-plates .live-plot')).not.toHaveCount(0)
+  await expect(page.locator('[data-live-notes-place-id]')).toHaveCount(0)
+})
+
+test('Live notes open, page, share, close, and stay inside a 375px viewport', async ({ page }) => {
+  const now = Date.now()
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    liveNotesCount: 52,
+  })
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('/window/live?place=3')
+
+  const control = page.getByRole('button', { name: 'Open 52 notes in Harbor room' })
+  await expect(control).toHaveText('notes · 52')
+  expect(fixture.liveNotesPageRequests()).toBe(0)
+  await control.click()
+  await expect(page).toHaveURL(/\/window\/live\?place=3&notes=open$/u)
+
+  const panel = page.locator('#live-notes-panel')
+  await expect(panel).toBeVisible()
+  // Opening moves keyboard focus into the panel (the close control), the
+  // mirror of Escape returning it to the opener below.
+  await expect(page.locator('#live-notes-close')).toBeFocused()
+  await expect(panel.locator('.live-note-row')).toHaveCount(50)
+  await expect.poll(fixture.liveNotesPageRequests).toBe(1)
+  const more = panel.getByRole('button', { name: 'Continue' })
+  await more.focus()
+  await more.click()
+  await expect(panel.locator('.live-note-row')).toHaveCount(52)
+  await expect(panel.locator('#live-notes-status')).toContainText('Showing 52 of 52')
+  await expect(page.locator('#live-notes-close')).toBeFocused()
+  await expect.poll(fixture.liveNotesPageRequests).toBe(2)
+
+  const bounds = await panel.evaluate(node => {
+    const box = node.getBoundingClientRect()
+    return { left: box.left, right: box.right, width: box.width }
+  })
+  expect(bounds.left).toBeGreaterThanOrEqual(0)
+  expect(bounds.right).toBeLessThanOrEqual(375)
+  expect(bounds.width).toBeLessThanOrEqual(375)
+
+  await page.reload()
+  await expect(panel).toBeVisible()
+  await expect(panel.locator('.live-note-row')).toHaveCount(50)
+  await expect.poll(fixture.liveNotesPageRequests).toBe(3)
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+  await expect(page).toHaveURL('/window/live?place=3')
+  await page.waitForTimeout(200)
+  expect(fixture.liveNotesPageRequests()).toBe(3)
 })
 
 test('Focus / Interactions withholds a thing whose place is quiet, current or recorded', async ({ page }) => {
@@ -2572,7 +2675,6 @@ test('Live catches up after a hidden tab without replaying the hidden backlog', 
   })
 
   await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeCatchUp)
-  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   // Quiet opening: the first catch-up read after a hidden tab settles the
   // same way opening history does -- no trail, no arrowhead.
@@ -2580,7 +2682,7 @@ test('Live catches up after a hidden tab without replaying the hidden backlog', 
   await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
 })
 
-test('Live moves a carried thing with its owner and names the carry', async ({ page }) => {
+test('Live moves a carried thing with its owner', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     carryMove: true,
     movementOnly: true,
@@ -2593,9 +2695,6 @@ test('Live moves a carried thing with its owner and names the carry', async ({ p
 
   await expect(page.locator('[data-place-id="2"] [data-live-thing-id="20"]')).toHaveCount(0)
   await expect(carriedThing).toHaveCount(1)
-  await expect(page.locator('#live-ledger')).toContainText(
-    'map-walker moved carrying Thing #20: Cinder lane → Lantern nook',
-  )
   await page.locator('.live-plot[data-place-id="3"] > .live-plot-open').click()
   await expect(page.locator('[data-place-id="4"] [data-live-thing-id="20"]')).toHaveCount(1)
 })
@@ -2621,7 +2720,6 @@ test('an empty read already in flight cannot consume hidden-backlog suppression'
   fixture.releaseHeldEmptyChange()
 
   await expect.poll(fixture.changeRequests).toBeGreaterThan(readsBeforeRelease)
-  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
   await page.waitForTimeout(300)
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
 })
@@ -2640,7 +2738,6 @@ test('a final opening page completed while hidden cannot release queued stale mo
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     return fixture.changeRequests()
   }).toBeGreaterThan(readsBeforePublish)
-  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
   await expect(page.locator('#window-status')).toContainText('Watching')
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
@@ -2676,8 +2773,6 @@ test('a hidden multi-page opening continuation keeps pre-hide pending changes st
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     return fixture.changeRequests()
   }).toBeGreaterThan(readsBeforePublish)
-  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Lantern nook')
-
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
     document.dispatchEvent(new Event('visibilitychange'))
@@ -2722,14 +2817,13 @@ test('Live finishes one named thing page while hidden and does not start another
   expect(fixture.thingPageRequests()).toBe(1)
 })
 
-test('Live bounds concurrent note detail reads during a visible burst', async ({ page }) => {
+test('Live starts no note reads while its notes panels stay closed', async ({ page }) => {
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 8)
   await page.goto('/window#view=live')
 
-  await expect(page.locator('#live-ledger')).toContainText('note #1000')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
   await expect.poll(fixture.activeNoteRequests).toBe(0)
-  expect(fixture.maximumNoteRequests()).toBeGreaterThan(0)
-  expect(fixture.maximumNoteRequests()).toBeLessThanOrEqual(4)
+  expect(fixture.maximumNoteRequests()).toBe(0)
 })
 
 test('Live stage portraits stay unboxed on the ground and when focused', async ({ page }) => {
@@ -3093,7 +3187,12 @@ test('preview proof scene has a static reduced-motion alternative', async ({ pag
   await expect(proofPanel.locator('.live-walker')).not.toHaveCount(0)
   await expect(proofPanel.locator('.live-thing-specimen')).not.toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
-  await expect(proofPanel.locator('#live-ledger')).toContainText(/moved|spoke|used/u)
+  await page.locator('#place-filter').selectOption('9103')
+  await proofPanel.locator('.live-root-notes').click()
+  await expect(proofPanel.locator('.live-note-row')).toHaveCount(50)
+  await proofPanel.getByRole('button', { name: 'Continue' }).click()
+  await expect(proofPanel.locator('.live-note-row')).toHaveCount(52)
+  await expect(proofPanel.locator('#live-notes-status')).toContainText('Showing 52 of 52')
 })
 
 test('proof: quiet opening, no arrows', async ({ page }) => {
@@ -3806,7 +3905,6 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   await expect(page.locator('.live-speech-bubble')).toHaveText('L'.repeat(59) + '…')
   await expect(page.locator('.live-speech-bubble')).toHaveCount(1)
-  await expect(page.locator('#live-ledger')).toContainText('Latest detail stays in the ledger.')
 
   await page.clock.fastForward(651)
   const pulsedThing = page.locator('.live-thing-specimen.live-pulse')
@@ -3836,8 +3934,6 @@ test('new change rows replay once in recorded order and leave truthful residue',
   expect(Math.abs(settledPoint.x - start.x2)).toBeLessThan(1)
   expect(Math.abs(settledPoint.y - start.y2)).toBeLessThan(1)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
-  await expect(page.locator('#live-ledger')).not.toContainText('Too old to replay')
-  await expect(page.locator('#live-ledger')).not.toContainText('moved: Harbor room → Cinder lane')
   const platePortrait = page.locator('#live-plates [data-live-resident-handle="map-walker"]')
   await expect(platePortrait).toHaveAccessibleName(/map-walker/u)
   await expect(platePortrait).not.toHaveAccessibleName(/Earlier|L{10}/u)
@@ -3939,7 +4035,7 @@ test(
   },
 )
 
-test('an expired trail moves keyboard focus to its paired ledger row, then to the viewport', async ({ page }) => {
+test('an expired trail moves keyboard focus to the viewport', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
   const fixture = await installReplayRoutes(page, now)
@@ -3947,9 +4043,8 @@ test('an expired trail moves keyboard focus to its paired ledger row, then to th
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   // A record learned while watching still draws a trail immediately, so
-  // this keyboard-accessibility interaction (expiring the trail moves
-  // focus to its ledger row, expiring that moves focus to the viewport)
-  // is exercised against motion the viewer actually observed.
+  // this keyboard-accessibility interaction is exercised against motion
+  // the viewer actually observed.
   await publishReplayChanges(page, fixture)
   const trail = page.locator('.live-trail')
   await expect(trail).toHaveCount(1)
@@ -3967,14 +4062,6 @@ test('an expired trail moves keyboard focus to its paired ledger row, then to th
   })
   await page.clock.runFor(1_001)
   await expect(trail).toHaveCount(0)
-  const pairedLedgerRow = page.locator('#live-ledger [data-live-key="change:11"]')
-  await expect(pairedLedgerRow).toBeFocused()
-
-  await pairedLedgerRow.evaluate(node => {
-    const lifetime = Number((node as HTMLElement).dataset.liveLifetime)
-    ;(node as HTMLElement).dataset.liveAt = String(Date.now() - lifetime - 1)
-  })
-  await page.clock.runFor(1_001)
   await expect(page.locator('#live-viewport')).toBeFocused()
 })
 
@@ -4100,7 +4187,6 @@ test('an unshown thing never consumes visible replay time', async ({ page }) => 
   await page.clock.runFor(movementDuration + 1 + 650 + 1 + 650 + 1)
   await expect(page.locator('.live-replay-portrait[data-live-replay-key="change:14"]'))
     .toHaveCount(0)
-  await expect(page.locator('#live-ledger')).toContainText('used thing #22')
 })
 
 test('focus keeps every exact interaction visible outside finite plate slots', async ({ page }) => {
@@ -4617,7 +4703,7 @@ test('reduced motion shows new records statically without replay animation', asy
   expect(await liveResidentLocalPositions(harbor)).toEqual(stableResidentsBefore)
 })
 
-test('a large opening backlog settles as quiet residue without trimming the ledger', async ({ page }) => {
+test('a large opening backlog settles without stale motion', async ({ page }) => {
   const now = Date.now()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.clock.install({ time: new Date(now) })
@@ -4629,14 +4715,11 @@ test('a large opening backlog settles as quiet residue without trimming the ledg
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
   // Quiet opening: even a large opening backlog paints settled positions
-  // only -- no trail ink to hard-cap or fade -- while the separate recent
-  // ledger still carries every one of the 120 verified rows.
+  // only, with no trail ink to hard-cap or fade.
   await expect(page.locator('.live-trail')).toHaveCount(0)
   await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
-  await expect(page.locator('.live-ledger-row')).toHaveCount(120)
   await page.clock.fastForward(4_501)
   await expect(page.locator('.live-trail')).toHaveCount(0)
-  await expect(page.locator('.live-ledger-row')).toHaveCount(120)
 })
 
 test('sixty-four simultaneous walks complete in one painted batch', async ({ page }) => {
@@ -4723,7 +4806,6 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
     return heldWindow.liveCompletionMutations ?? 0
   })
   expect(completionMutations).toBeLessThanOrEqual(2)
-  await expect(page.locator('.live-ledger-row')).toHaveCount(64)
   await expect(page.locator('.live-trail')).toHaveCount(64)
 })
 
@@ -4800,7 +4882,6 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   )
 
   const replays = page.locator('.live-replay-portrait')
-  await expect(page.locator('.live-ledger-row')).toHaveCount(actorCount, { timeout: 45_000 })
   await expect(replays).toHaveCount(expectedTransientReplayKeys.length)
   const stableResidentsDuring = await stableResidentPositions()
   const fixedPlotsDuring = await fixedPlotPositions()
@@ -4843,23 +4924,6 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   const stableResidentsAfter = await stableResidentPositions()
   const fixedPlotsAfter = await fixedPlotPositions()
 
-  const ledgerRows = await page.locator('.live-ledger-row').evaluateAll(rows =>
-    rows.map(row => ({
-      key: (row as HTMLElement).dataset.liveKey,
-      copy: row.querySelector('.live-ledger-copy')?.textContent ?? '',
-    })))
-  const expectedLedgerKeys = Array.from(
-    { length: actorCount }, (_, index) => `change:${2_600 - index}`,
-  )
-  const repeatedActorLedger = ledgerRows
-    .filter(row => row.copy.startsWith('walker-burst-1401 moved:'))
-  expect(repeatedActorLedger).toEqual([{
-    key: 'change:2401',
-    copy: 'walker-burst-1401 moved: Cinder lane → Harbor room',
-  }, {
-    key: 'change:2400',
-    copy: 'walker-burst-1401 moved: Harbor room → Cinder lane',
-  }])
   const rosterOutcomes = await page.locator('#live-roster .resident-row').evaluateAll(rows =>
     rows.flatMap(row => {
       const handle = row.querySelector<HTMLElement>('[data-live-resident-handle]')
@@ -4913,8 +4977,6 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
       JSON.stringify(resident) === JSON.stringify(stableResidentsBefore[index])) &&
     JSON.stringify(fixedPlotsDuring) === JSON.stringify(fixedPlotsBefore) &&
     JSON.stringify(fixedPlotsAfter) === JSON.stringify(fixedPlotsBefore) &&
-    JSON.stringify(ledgerRows.map(row => row.key)) === JSON.stringify(expectedLedgerKeys) &&
-    ledgerRows.some(row => row.copy.startsWith('walker-burst-1600 moved:')) &&
     rosterOutcomes.length === actorCount && missingRosterActors.length === 0 &&
     wrongCurrentPlaces.length === 0, JSON.stringify({
       renders: work.renders,
@@ -4945,8 +5007,6 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
       stableResidentsBefore,
       stableResidentsDuring,
       stableResidentsAfter,
-      ledgerRowCount: ledgerRows.length,
-      repeatedActorLedger,
       rosterActorCount: rosterOutcomes.length,
       missingRosterActors: missingRosterActors.slice(0, 10),
       wrongCurrentPlaces: wrongCurrentPlaces.slice(0, 10),
@@ -5302,18 +5362,13 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   expect(captionClearOfViewport).toBe(true)
   await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
   // Quiet opening: this backlog was recorded before the tab was ever
-  // watched, so it settles at rest -- no trail, no arrowhead, no bubble --
-  // while the separate recent ledger keeps every exact row.
+  // watched, so it settles at rest with no trail, arrowhead, or bubble.
   await expect(page.locator('.live-trail')).toHaveCount(0)
   await expect(page.locator('#live-trace-arrow')).toHaveCount(0)
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
-  await expect(page.locator('#live-ledger')).toContainText('A bell answers')
-  await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Harbor room')
-  await expect(page.locator('#live-ledger')).toContainText('used thing #9 in Harbor room')
-  await expect(page.locator('#live-ledger')).not.toContainText('used thing #9 in Cinder lane')
   // Step 3: the world's own drawing tiles its ground as a cached
   // background-image (the same thumb.png the resident/thing sprites read),
   // repeated by the compositor, at the shared reduced-opacity token -- not
@@ -5389,15 +5444,12 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     left: (node as HTMLElement).style.left,
     top: (node as HTMLElement).style.top,
   })).sort((left, right) => String(left.key).localeCompare(String(right.key))))
-  // Quiet opening leaves no backlog trail on this plate to keyboard-focus;
-  // that expiry-moves-focus-to-the-ledger-row interaction now has its own
-  // dedicated test (below) against a record actually learned while
-  // watching. This test keeps the same elapsed clock budget so the note
-  // expiry checked below still lands where it always did.
+  // Quiet opening leaves no backlog trail on this plate to keyboard-focus.
+  // Keep the same elapsed clock budget so the note expiry checked below
+  // still lands where it always did.
   await page.clock.runFor(2_002)
   await page.clock.fastForward(6_000)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
-  await expect(page.locator('#live-ledger')).not.toContainText('An older mark')
 
   moderationPublished = true
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
@@ -5409,8 +5461,6 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     'data-undrawn', 'true',
   )
   await expect(cinderTerrain).toHaveAttribute('data-undrawn', 'true')
-  await expect(page.locator('#live-ledger')).toContainText("map-walker's note #77 could not be read.")
-  await expect(page.locator('#live-ledger')).not.toContainText('A bell answers')
   await expect(page.locator('#live-plates .live-plot')).toHaveCount(3)
   await expect(page.locator('#live-plates')).toContainText('New observatory')
   const expandedPlots = await page.locator('.live-plot').evaluateAll(plots => plots.map(plot => ({
@@ -5640,12 +5690,6 @@ test('drilling into a quiet room in Live withholds its residents and things ever
   await expect(page.locator('#live-roster')).toContainText(
     'cinder-owner prefers to keep this room private.',
   )
-  // The ledger must never leak a resident or thing name through recorded
-  // actions either — it is part of the same plate.
-  await expect(page.locator('#live-ledger')).toContainText(
-    'cinder-owner prefers to keep this room private.',
-  )
-
   await expect(livePanel).not.toContainText('map-walker')
   await expect(livePanel).not.toContainText('harbor keepsake')
   await expect(livePanel).not.toContainText('field lantern')

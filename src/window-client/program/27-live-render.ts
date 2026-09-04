@@ -90,6 +90,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
     }
     if (focus.quiet) {
       renderLiveQuietPlate(snapshot, focus)
+      renderLiveNotesPanel(snapshot)
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
@@ -154,6 +155,8 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
           'live-map-caption-drawing-detail drawing-detail-open',
         ),
       )
+      const rootNotesControl = liveNotesControl(snapshot, focus, 'live-root-notes')
+      if (rootNotesControl) nodes.liveMapCaption.append(rootNotesControl)
     }
 
     if (nodes.liveWorldGround) {
@@ -231,7 +234,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
             : liveRevealTargetsForPlace(focus.id)
       revealLiveElements(firstPaintTargets)
     }
-    renderLiveLedger(snapshot, focus, children, records)
+    renderLiveNotesPanel(snapshot)
     renderLiveRoster(snapshot, focus, records, interactionThings)
     renderLiveHistoryStatus()
     scheduleLiveClock()

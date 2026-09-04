@@ -72,12 +72,14 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
       const id = safeId(raw.id)
       const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
       const things = raw.things
+      const notes = raw.notes
       if (!id || (raw.parent_id !== null && !parentId) || parentId === id || seen.has(id) ||
-          typeof things !== 'number' || !Number.isSafeInteger(things) || things < 0) {
+          typeof things !== 'number' || !Number.isSafeInteger(things) || things < 0 ||
+          typeof notes !== 'number' || !Number.isSafeInteger(notes) || notes < 0) {
         throw new Error('invalid public live survey')
       }
       seen.add(id)
-      return Object.freeze({ id, parent_id: parentId, things })
+      return Object.freeze({ id, parent_id: parentId, things, notes })
     })
     return Object.freeze(rows)
   }

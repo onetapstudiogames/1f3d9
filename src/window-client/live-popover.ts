@@ -165,8 +165,7 @@ export type WindowLiveItemRecord = Readonly<{
 
 // Built only from records already held in memory (liveRecords() /
 // visibleLiveRecords()), never from a fetch — it must NOT call
-// liveLedgerText, which lazily fires loadLiveNote(noteId) for its note
-// phrasing and would turn a hover into a network read. `records` must
+// loadLiveNote(noteId), which would start a note read from a hover. `records` must
 // already be newest-first, matching every existing caller of liveRecords().
 export function windowLiveItemLastAction(
   records: readonly WindowLiveItemRecord[],

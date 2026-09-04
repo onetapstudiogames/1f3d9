@@ -159,7 +159,11 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       if (filters.resident) url.searchParams.set('actor', filters.resident)
     } else {
       url.searchParams.set('collection', collection)
-      if (filters.placeId) url.searchParams.set('within_place_id', String(filters.placeId))
+      if (filters.placeId && filters.exactPlace) {
+        url.searchParams.set('place_id', String(filters.placeId))
+      } else if (filters.placeId) {
+        url.searchParams.set('within_place_id', String(filters.placeId))
+      }
       if (filters.resident) url.searchParams.set('resident', filters.resident)
       if (filters.context) url.searchParams.set('context', 'place')
     }

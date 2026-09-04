@@ -398,9 +398,11 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     bindLiveItemPopover(open, itemKey, 'place', () => place)
     open.append(element('span', 'live-plot-name', place.name),
       element('span', 'live-plot-number', '#' + String(place.id)))
+    const notesControl = liveNotesControl(snapshot, place)
     card.dataset.undrawn = 'false'
     card.dataset.placeKind = focus.parent_id === null ? 'continent' : 'place'
     card.append(open)
+    if (notesControl) card.append(notesControl)
     if (detailed || focused) mountLivePlaceDetail(card, renderContext, place)
     return card
   }

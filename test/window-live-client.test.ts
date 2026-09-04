@@ -5,6 +5,7 @@ import * as windowClientModule from '../src/window-client.ts'
 import {
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
   normalizeWindowDrawing,
+  normalizeLiveNotesPage,
   windowLiveClampZoomScale,
   windowLiveExpandedGroundLayout,
   windowLiveFloorAccessibleLabel,
@@ -28,6 +29,40 @@ import {
   windowLiveItemLastAction,
   windowLiveItemPopoverPlacement,
 } from '../src/window-client.ts'
+
+const LIVE_NOTES_PAGE = Object.freeze({
+  change_marker: '25',
+  notes: Object.freeze([
+    Object.freeze({
+      id: 52,
+      place_id: 422,
+      author: 'tinylantern',
+      body: 'The newest note.',
+      created_at: '2026-09-04T12:00:00.000Z',
+      moderated: false,
+      truncated: false,
+    }),
+  ]),
+  has_more: true,
+  next_before_id: 52,
+})
+
+test('normalizeLiveNotesPage accepts one bounded direct-place page', () => {
+  const page = normalizeLiveNotesPage(LIVE_NOTES_PAGE, 422, null)
+  assert.ok(page)
+  assert.equal(page.rows.length, 1)
+  assert.equal(page.rows[0]?.place_id, 422)
+  assert.equal(page.nextBeforeId, 52)
+})
+
+test('normalizeLiveNotesPage rejects malformed pages, repeated cursors, and another place row', () => {
+  assert.equal(normalizeLiveNotesPage({ ...LIVE_NOTES_PAGE, notes: null }, 422, null), null)
+  assert.equal(normalizeLiveNotesPage(LIVE_NOTES_PAGE, 422, 52), null)
+  assert.equal(normalizeLiveNotesPage({
+    ...LIVE_NOTES_PAGE,
+    notes: LIVE_NOTES_PAGE.notes.map(note => ({ ...note, place_id: 438 })),
+  }, 422, null), null)
+})
 
 type SurveyedPlace = Readonly<{
   id: number

@@ -320,7 +320,8 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_HTML, /id="live-tab"[\s\S]*?data-view="live"/u)
   assert.match(WINDOW_HTML, /id="live-panel"[\s\S]*?aria-labelledby="live-tab"/u)
   for (const id of [
-    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-ledger',
+    'live-clock', 'live-breadcrumbs', 'live-plates', 'live-notes-panel',
+    'live-notes-title', 'live-notes-status', 'live-notes-list', 'live-notes-page',
     'live-roster', 'live-resident-page', 'live-viewport', 'live-stage',
     'live-zoom-in', 'live-zoom-out', 'live-center', 'live-fullscreen',
     'live-proof', 'live-pause', 'live-focus-status',
@@ -667,7 +668,10 @@ test('filtered happenings fetch their real slice from the server', () => {
   // The interim load control stays focusable; disabled buttons cannot
   // receive restored focus. Arrow-key tab roving must not flood history.
   assert.match(WINDOW_JS, /aria-busy/)
-  assert.doesNotMatch(WINDOW_JS, /button\.disabled = entry\.loading/)
+  const historyControl = WINDOW_JS.match(
+    /function renderHistoryControl\([\s\S]*?function historyRequestUrl/u,
+  )?.[0] ?? ''
+  assert.doesNotMatch(historyControl, /button\.disabled = entry\.loading/)
   assert.match(WINDOW_JS, /rovingTabActivation = true/)
 })
 
@@ -1331,10 +1335,6 @@ test('the THINGS tab is bounded, body-free, and reuses lazy transparent portrait
   assert.match(WINDOW_JS, /portraitNode\('thing', thing\.id, thing\.name/u)
   assert.match(WINDOW_JS, /archiveResultCard[\s\S]*?portraitNode\('thing'/u)
   assert.match(WINDOW_JS, /renderActivity[\s\S]*?portraitNode\('thing'/u)
-  assert.match(
-    WINDOW_JS,
-    /live-ledger-thing-reference[\s\S]{0,500}thing \? thing\.has_drawing === true : record\.thingHasDrawing/u,
-  )
   assert.match(WINDOW_JS, /\|thing:' \+ String\(activityThingId\(event\)/u)
   assert.match(
     WINDOW_JS,
