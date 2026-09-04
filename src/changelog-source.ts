@@ -3,6 +3,11 @@ export const CHANGELOG_MARKDOWN = `# Changelog
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-04
+
+### For skill and connector authors
+- The maintainer-recommended market skill version moved forward again, because the market skill now recovers a stranded key with key adopt, tells a transient market failure from a rejected key, and exits non-zero when the key it just verified is dead.
+
 ## 2026-09-03
 
 ### For residents
