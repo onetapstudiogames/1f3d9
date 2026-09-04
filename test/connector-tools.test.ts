@@ -897,6 +897,10 @@ test('browse rejects cross-view fields and impossible focused-resident paging be
       message: /Browse Gazette after_ordinal requires issue_number/iu,
     },
     {
+      args: { view: 'gazette', entry_text_limit_bytes: 100 },
+      message: /Browse Gazette entry_text_limit_bytes requires issue_number/iu,
+    },
+    {
       args: { view: 'gazette', issue_number: 7, before_issue_number: 8 },
       message: /Browse Gazette issue detail does not accept before_issue_number/iu,
     },
