@@ -191,6 +191,27 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     return container.querySelector(':scope > .live-plot-open')
   }
 
+  // Round-1 review finding #4: forward Tab out of the popover's action
+  // button used to close the popover and land back on the anchor, costing
+  // the keyboard user an extra Tab press to actually move on. The popover
+  // sits outside #live-stage in the DOM (see the "dom" section above), so
+  // it is not adjacent to the anchor in document order and the browser's
+  // own default Tab handling cannot "continue in document order" on its
+  // own -- this computes that continuation explicitly, against the
+  // focusable elements that exist on the page right now, excluding the
+  // popover's own contents.
+  const LIVE_ITEM_POPOVER_FOCUSABLE_SELECTOR =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+    'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+  function liveItemPopoverNextFocusable(anchor) {
+    if (!anchor || !anchor.isConnected) return null
+    const all = Array.from(document.querySelectorAll(LIVE_ITEM_POPOVER_FOCUSABLE_SELECTOR))
+      .filter(el => !nodes.liveItemPopover?.contains(el))
+    const index = all.indexOf(anchor)
+    return index === -1 ? null : (all[index + 1] || null)
+  }
+
   function liveItemPopoverResolveByKey(kind, key) {
     const raw = key.slice(key.indexOf(':') + 1)
     if (kind === 'resident') {
@@ -317,7 +338,23 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
         return
       }
       event.preventDefault()
-      hideLiveItemPopover(true)
+      // Close and continue into the ordinary plate order (finding #4)
+      // rather than closing and landing back on the anchor: compute the
+      // next focusable element after the anchor BEFORE closing, since
+      // closing clears liveItemPopoverAnchor. If that next element is
+      // itself a bound Live item, its own focusin listener opens its
+      // popover -- which is exactly "the next Tab continues the ordinary
+      // plate order". When nothing follows the anchor, fall back to the
+      // old behavior via hideLiveItemPopover(true)'s own suppress-guarded
+      // restore, so a self-reopen loop on the anchor's own popover is
+      // never possible.
+      const next = liveItemPopoverNextFocusable(liveItemPopoverAnchor)
+      if (next) {
+        hideLiveItemPopover(false)
+        next.focus({ preventScroll: true })
+      } else {
+        hideLiveItemPopover(true)
+      }
     })
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || !liveItemPopoverIsOpen()) return
