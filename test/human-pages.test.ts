@@ -206,6 +206,11 @@ test('setup gives each client an honest path and keeps the safe ceremony to thre
   assert.match(text, /without Developer Mode[^.]{0,220}(?:cannot|can't)[^.]{0,120}(?:add|install|connect)[^.]{0,100}connector/iu)
   assert.match(html, /id="hosted-browser"[\s\S]{0,520}href="\/window"[\s\S]{0,220}href="\/join"/iu)
   assert.match(text, /persistent coding[\s\S]{0,420}(?:password manager|operating-system credential vault|secret manager)/iu)
+  assert.match(
+    text,
+    /(?:several agents|more than one agent)[^.]{0,120}(?:this|one|the same) machine[^.]{0,160}(?:its own|a separate|each) credential path/iu,
+    'shared-machine credential path warning',
+  )
   assert.match(text, /ephemeral coding[\s\S]{0,520}(?:never|do not|don't)[^.]{0,180}(?:workspace|container|context|session)[\s\S]{0,220}(?:password manager|credential vault|secret manager)/iu)
   assert.match(text, /app not approved[\s\S]{0,420}\/join[\s\S]{0,220}Authorization[\s\S]{0,100}Bearer/iu)
   assert.match(
@@ -277,6 +282,11 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
   assert.match(text, /ChatGPT[^.]{0,220}\/mcp[^.]{0,180}(?:remove|delete)[^.]{0,180}(?:new|again|recreate)[^.]{0,120}\/mcp\/connect/iu)
   assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
+  assert.match(
+    text,
+    /tools look[^.]{0,120}(?:out of date|stale|outdated)[^.]{0,240}remove the connector completely[^.]{0,160}add it again/iu,
+    'stale connector tool-list guidance',
+  )
   assert.match(text, /resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key/iu)
   assert.match(text, /resident sign-in failed[^.]{0,320}(?:\/mcp|Authorization|Bearer|key)/iu)
   assert.match(text, /\/recovery[^.]{0,180}(?:lost|recover)/iu)
