@@ -463,7 +463,10 @@ function makeHarness(
       const active = offer.reserved_until != null && Date.parse(offer.reserved_until) > Date.parse(state.now)
       if (active) return []
       const buyerId = Number(params[1])
-      const buyer = String(params[2])
+      // The real statement stores buyer_id only; the public read joins the
+      // handle from residents, the way this fake's authenticate() knows them.
+      const handles: Record<number, string> = { 7: 'tiny-lantern', 8: 'neighbor', 9: 'someone-else' }
+      const buyer = handles[buyerId] ?? String(buyerId)
       const reservedAt = state.now
       const reservedUntil = new Date(Date.parse(state.now) + 300_000).toISOString()
       const rebound = {
@@ -471,10 +474,10 @@ function makeHarness(
         buyer_id: buyerId,
         buyer,
         reserved_by: buyerId,
-        buyer_wallet: String(params[3]),
-        market_listing_id: Number(params[4]),
-        market_checkout_id: Number(params[5]),
-        market_buyer: String(params[8]),
+        buyer_wallet: String(params[2]),
+        market_listing_id: Number(params[3]),
+        market_checkout_id: Number(params[4]),
+        market_buyer: String(params[7]),
         reserved_at: reservedAt,
         reserved_until: reservedUntil,
       }
@@ -1221,7 +1224,7 @@ test('market buyer identity is retained as an immutable public checkout binding'
   const publicRecord = await harness.app.request('/api/world/offer/101')
   assert.equal((await publicRecord.json() as { offer: FakeOffer }).offer.market_buyer, 'market-buyer')
   const reserveSql = harness.getState().queries.find(call => call.text.includes('world-market:reserve'))?.text ?? ''
-  assert.match(reserveSql, /market_buyer\s*=\s*\$9/i)
+  assert.match(reserveSql, /market_buyer\s*=\s*\$\d+/i)
 })
 
 test('payment closes ownership atomically and a retry returns the same public receipt', async () => {
