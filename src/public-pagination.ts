@@ -4,6 +4,7 @@ import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.t
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
+// Coupled to GAZETTE_ENTRY_PAGE_LIMIT; guarded in test/gazette-window-client-budget-shape.test.ts.
 export const PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES =
   PUBLIC_PAGE_DEFAULT * PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES
 const POSTGRES_INTEGER_MAX = 2_147_483_647

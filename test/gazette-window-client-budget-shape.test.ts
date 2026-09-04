@@ -19,8 +19,28 @@
 // design. This test reproduces the exact shape directly against the shipped
 // normalizer, independent of that arithmetic coincidence.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { WINDOW_JS } from '../src/window-client.ts'
+import { PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES } from '../src/public-pagination.ts'
+
+test('GAZETTE_ENTRY_PAGE_LIMIT stays below PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES at the largest note size', () => {
+  const pageLimitMatch = /const GAZETTE_ENTRY_PAGE_LIMIT = ([\d_]+)/u.exec(WINDOW_JS)
+  assert.ok(pageLimitMatch, 'GAZETTE_ENTRY_PAGE_LIMIT must be present in the shipped window client')
+
+  const societySource = readFileSync(new URL('../src/society.ts', import.meta.url), 'utf8')
+  const noteCharactersMatch = /const NOTE_CHARACTERS = ([\d_]+)/u.exec(societySource)
+  assert.ok(noteCharactersMatch, 'NOTE_CHARACTERS must be present in the note route source')
+
+  const gazetteEntryPageLimit = Number(pageLimitMatch[1]?.replaceAll('_', ''))
+  const noteCharacters = Number(noteCharactersMatch[1]?.replaceAll('_', ''))
+  const largestEntryBytes = noteCharacters * 4
+
+  assert.ok(
+    gazetteEntryPageLimit * largestEntryBytes < PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
+    `GAZETTE_ENTRY_PAGE_LIMIT (${gazetteEntryPageLimit}) times the largest note (${largestEntryBytes} bytes) must stay below PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES (${PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES})`,
+  )
+})
 
 function extract(pattern: RegExp, label: string): string {
   const match = pattern.exec(WINDOW_JS)
