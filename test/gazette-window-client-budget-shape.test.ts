@@ -229,8 +229,16 @@ function fakeElement(tagName: string): FakeNode {
   return node
 }
 
-function fakeDocument(): { createElement(tagName: string): FakeNode } {
-  return { createElement: (tagName: string) => fakeElement(tagName) }
+type FakeTextNode = { nodeType: 3, textContent: string }
+
+function fakeDocument(): {
+  createElement(tagName: string): FakeNode
+  createTextNode(text: string): FakeTextNode
+} {
+  return {
+    createElement: (tagName: string) => fakeElement(tagName),
+    createTextNode: (text: string) => ({ nodeType: 3, textContent: text }),
+  }
 }
 
 function buildGazetteRenderFunctions(): (
@@ -240,7 +248,11 @@ function buildGazetteRenderFunctions(): (
 ) => Readonly<{
   renderGazetteIssue: (gazette: Record<string, unknown>) => void
   gazetteIssueLink: (issue: Record<string, unknown>) => FakeNode
-  gazetteBudgetCutMessage: (issue: Record<string, unknown>, budgetCut: Record<string, unknown>) => string
+  gazetteBudgetCutMessage: (
+    issue: Record<string, unknown>,
+    budgetCut: Record<string, unknown>,
+    hasLoadedEntries?: boolean,
+  ) => string
 }> {
   const parts = [
     extract(/function element\(tagName, className, text\) \{[\s\S]*?\n  \}/u, 'element'),
@@ -249,12 +261,21 @@ function buildGazetteRenderFunctions(): (
       'gazetteDateLabel',
     ),
     extract(/function gazetteIssueLink\(issue\) \{[\s\S]*?\n  \}/u, 'gazetteIssueLink'),
+    // residentNode short-circuits to `element('span', className, handle)`
+    // whenever state.snapshot is falsy (the fake state below never sets
+    // one), so its portraitNode/residentReference/chooseResident
+    // dependencies are never reached at runtime and do not need stubs here.
+    extract(
+      /function residentNode\(handle, className, focusKey\) \{[\s\S]*?\n  \}/u,
+      'residentNode',
+    ),
+    extract(/function gazetteEntryCard\(entry\) \{[\s\S]*?\n  \}/u, 'gazetteEntryCard'),
     extract(
       /function renderGazetteEntriesPage\(gazette\) \{[\s\S]*?\n  \}/u,
       'renderGazetteEntriesPage',
     ),
     extract(
-      /function gazetteBudgetCutMessage\(issue, budgetCut\) \{[\s\S]*?\n  \}/u,
+      /function gazetteBudgetCutMessage\(issue, budgetCut, hasLoadedEntries = false\) \{[\s\S]*?\n  \}/u,
       'gazetteBudgetCutMessage',
     ),
     extract(/function renderGazetteIssue\(gazette\) \{[\s\S]*?\n  \}/u, 'renderGazetteIssue'),
@@ -267,7 +288,11 @@ function buildGazetteRenderFunctions(): (
   ) => Readonly<{
     renderGazetteIssue: (gazette: Record<string, unknown>) => void
     gazetteIssueLink: (issue: Record<string, unknown>) => FakeNode
-    gazetteBudgetCutMessage: (issue: Record<string, unknown>, budgetCut: Record<string, unknown>) => string
+    gazetteBudgetCutMessage: (
+      issue: Record<string, unknown>,
+      budgetCut: Record<string, unknown>,
+      hasLoadedEntries?: boolean,
+    ) => string
   }>
 }
 
@@ -363,4 +388,95 @@ test('a genuinely empty issue still gets the honest empty-issue sentence, unchan
   const detailMessage = nodes.gazetteIssue.children.at(-1)?.textContent ?? ''
 
   assert.match(detailMessage, /printed with no submissions/iu)
+})
+
+// Round 5 review finding 1 (issue #71), the gap this fix closes: round 4's
+// honest budget-cut notice only rendered when the entry list was still
+// empty. renderGazetteIssue tested gazette.entries.length FIRST and only
+// fell to the budget-cut branch when the list was empty, so a Load more
+// request that admits nothing after earlier entries already loaded left the
+// window showing a truncated issue with no notice and no Load more control,
+// as if the issue had simply ended. These tests prove the notice now
+// appears alongside already-loaded entries, worded for a continuation page,
+// and that a genuinely full page (no budget cut at all) still renders
+// exactly as before.
+function loadedGazetteEntry(ordinal: number, noteId: number): Record<string, unknown> {
+  return {
+    ordinal,
+    noteId,
+    author: 'leafwalker',
+    body: 'an earlier entry that already loaded fine',
+    createdAt: new Date('2026-11-16T15:55:00.000Z'),
+  }
+}
+
+test('the Gazette detail pane keeps the reader informed when a Load more request admits nothing, instead of silently ending the issue', () => {
+  const document = fakeDocument()
+  const nodes = { gazetteIssue: fakeElement('div'), gazetteEntriesPage: fakeElement('div') }
+  const state = { gazetteIssueId: 11 }
+  const build = buildGazetteRenderFunctions()
+  const { renderGazetteIssue } = build(document, nodes, state)
+  const issue = loadedGazetteIssue()
+
+  // The first page already admitted one entry; a subsequent Load more
+  // request hit the byte ceiling before admitting another (entries stays
+  // whatever the first page had, hasMoreEntries forced false, budgetCut
+  // set), exactly the merged state loadGazetteIssue produces for this
+  // server shape.
+  renderGazetteIssue({
+    detailLoading: false,
+    detailError: null,
+    issue,
+    entries: [loadedGazetteEntry(1, 701)],
+    detailBudgetCut: { nextItemNoteId: 9101, nextItemTextBytes: 700000 },
+    hasMoreEntries: false,
+    nextAfterOrdinal: null,
+  })
+
+  // The already-loaded entry must not be dropped: the entries list is still
+  // one of the rendered children.
+  const entriesNode = nodes.gazetteIssue.children.find(child => child.className === 'gazette-entries')
+  assert.ok(entriesNode, 'the already-loaded entry must still render, not be replaced by the notice')
+  assert.equal(entriesNode?.children.length, 1)
+
+  // The honest notice must also render, naming the entry that did not fit
+  // and matching the card's true count, worded for a continuation page
+  // rather than falsely saying the FIRST entry did not fit.
+  const detailMessage = nodes.gazetteIssue.children.at(-1)?.textContent ?? ''
+  assert.notEqual(detailMessage, entriesNode?.textContent, 'the notice must be its own node, not folded into the entries')
+  assert.match(detailMessage, /25 submissions/u)
+  assert.match(detailMessage, /size limit/iu)
+  assert.match(detailMessage, /note #9101/u)
+  assert.match(detailMessage, /700000 bytes/u)
+  assert.doesNotMatch(detailMessage, /printed with no submissions/iu)
+  // "the first entry fit" would be false once an entry already loaded; the
+  // continuation wording must not claim it.
+  assert.doesNotMatch(detailMessage, /first entry fit/iu)
+})
+
+test('a fully admitted continuation page (no budget cut) renders entries alone, unchanged', () => {
+  // Regression guard: an ordinary "Load more" page that admits everything
+  // requested (detailBudgetCut null) must not grow a notice it was never given.
+  const document = fakeDocument()
+  const nodes = { gazetteIssue: fakeElement('div'), gazetteEntriesPage: fakeElement('div') }
+  const state = { gazetteIssueId: 11 }
+  const build = buildGazetteRenderFunctions()
+  const { renderGazetteIssue } = build(document, nodes, state)
+
+  renderGazetteIssue({
+    detailLoading: false,
+    detailError: null,
+    issue: loadedGazetteIssue(),
+    entries: [loadedGazetteEntry(1, 701), loadedGazetteEntry(2, 702)],
+    detailBudgetCut: null,
+    hasMoreEntries: false,
+    nextAfterOrdinal: null,
+  })
+
+  const children = nodes.gazetteIssue.children
+  const entriesNode = children.find(child => child.className === 'gazette-entries')
+  assert.ok(entriesNode)
+  assert.equal(entriesNode?.children.length, 2)
+  // No trailing notice paragraph beyond heading/printTime/provenance/entries.
+  assert.equal(children.length, 4)
 })
