@@ -670,6 +670,58 @@ export function windowLiveVisiblePlotIds(
   )])
 }
 
+// Step 3 ruling: a place's own drawing tiles its floor across the whole
+// plot; this derives exact, stable tile column/row counts from the plot's
+// real pixel size and a tile size, rounding up so the tiled ground never
+// leaves a gap at the plot's far edge. Append-stable plot sizes make this
+// deterministic across renders -- it never returns zero or a fraction.
+export function windowLiveFloorTiling(
+  plotWidth: number,
+  plotHeight: number,
+  tileSize: number,
+): Readonly<{ columns: number; rows: number }> {
+  const safeTile = Number.isFinite(tileSize) && tileSize > 0 ? tileSize : 1
+  const safeWidth = Number.isFinite(plotWidth) && plotWidth > 0 ? plotWidth : safeTile
+  const safeHeight = Number.isFinite(plotHeight) && plotHeight > 0 ? plotHeight : safeTile
+  return Object.freeze({
+    columns: Math.max(1, Math.ceil(safeWidth / safeTile)),
+    rows: Math.max(1, Math.ceil(safeHeight / safeTile)),
+  })
+}
+
+export type WindowLiveFloorDrawingEntry = WindowDrawingSource & Readonly<{
+  state: WindowDrawingState
+  drawing: WindowDrawing | null
+}>
+
+// Round-1 review finding 1: deleting the JSON drawing node (step 3) took its
+// role="img" accessible name with it, leaving only the generic "Drawing
+// tiled inside <name>" on the outer terrain div. This rebuilds the same
+// name/state/source shape the old drawingNode gave (see the deleted
+// drawingAccessibleLabel) from data that is already in hand on each path --
+// never a new fetch, which would undo step 3's whole point. The non-proof
+// path only ever knows the drawn/undrawn binary the thumb probe resolves
+// (the same collapse '.live-plot[data-undrawn]' already applies across
+// Refused, missing, withdrawn, and moderated presentations); a place's own
+// floor is always its own drawing -- places have no kind to inherit a
+// drawing from -- so 'Own drawing' there is a structural fact, not a guess.
+// The proof path already holds the full synthetic drawing entry, so it
+// reuses windowDrawingStateLabel/windowDrawingSourceLabel directly, exactly
+// as the deleted drawingNode did.
+export function windowLiveFloorAccessibleLabel(
+  placeName: string,
+  undrawn: boolean,
+  proofEntry: WindowLiveFloorDrawingEntry | null = null,
+): string {
+  if (proofEntry) {
+    const stateLabel = windowDrawingStateLabel(proofEntry.state, proofEntry.drawing)
+    const sourceLabel = windowDrawingSourceLabel(proofEntry)
+    return placeName + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
+  }
+  return placeName + ' · ' + (undrawn ? 'Undrawn' : 'Complete') +
+    (undrawn ? '' : ' · Own drawing')
+}
+
 export function windowLiveDirectGroundWidth(
   stageWidth: number,
   readableWidth: number,
@@ -1272,6 +1324,8 @@ const WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS =
   windowLiveThingPointsAroundResidents.toString()
 const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
 const WINDOW_LIVE_VISIBLE_PLOT_IDS_JS = windowLiveVisiblePlotIds.toString()
+const WINDOW_LIVE_FLOOR_TILING_JS = windowLiveFloorTiling.toString()
+const WINDOW_LIVE_FLOOR_ACCESSIBLE_LABEL_JS = windowLiveFloorAccessibleLabel.toString()
 const WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS = windowLiveDirectGroundWidth.toString()
 const WINDOW_LIVE_CAPACITY_SELECTION_JS = windowLiveCapacitySelection.toString()
 const WINDOW_LIVE_POLL_DELAY_JS = windowLivePollDelay.toString()
@@ -1308,8 +1362,11 @@ export const WINDOW_JS = `(() => {
   const LIVE_NOTE_REPLAY_MS = 650
   const LIVE_NOTE_FETCH_CONCURRENCY = 4
   const LIVE_NOTE_QUEUE_LIMIT = 16
-  const LIVE_DRAWING_FETCH_CONCURRENCY = 4
-  const LIVE_DRAWING_QUEUE_LIMIT = 32
+  // The thumb route's native size: an 8x8 grid at 4x nearest-neighbour
+  // scaling (docs/DRAWING_AND_LIVE_VIEW.md). Floor tiles repeat this exact
+  // cached PNG rather than reading the full JSON drawing and painting a
+  // canvas.
+  const LIVE_FLOOR_TILE_SIZE = 32
   const LIVE_OPENING_PAGE_LIMIT = 200
   const LIVE_REPLAY_BACKLOG_LIMIT = LIVE_OPENING_PAGE_LIMIT
   const LIVE_PORTRAIT_LIMIT = 6
@@ -1386,6 +1443,8 @@ export const WINDOW_JS = `(() => {
     ${WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS}
   const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
   const windowLiveVisiblePlotIds = ${WINDOW_LIVE_VISIBLE_PLOT_IDS_JS}
+  const windowLiveFloorTiling = ${WINDOW_LIVE_FLOOR_TILING_JS}
+  const windowLiveFloorAccessibleLabel = ${WINDOW_LIVE_FLOOR_ACCESSIBLE_LABEL_JS}
   const windowLiveDirectGroundWidth = ${WINDOW_LIVE_DIRECT_GROUND_WIDTH_JS}
   const windowLiveCapacitySelection = ${WINDOW_LIVE_CAPACITY_SELECTION_JS}
   const windowLivePollDelay = ${WINDOW_LIVE_POLL_DELAY_JS}
@@ -1614,8 +1673,6 @@ export const WINDOW_JS = `(() => {
   let livePendingRevealTarget = null
   let liveNoteQueue = Object.freeze([])
   let liveNoteFetches = 0
-  let liveDrawingQueue = Object.freeze([])
-  let liveDrawingFetches = 0
   const LIVE_PROOF_ROOT_ID = 9101
   const LIVE_PROOF_GARDEN_ID = 9102
   const LIVE_PROOF_WORKSHOP_ID = 9103
@@ -1855,11 +1912,16 @@ export const WINDOW_JS = `(() => {
     const gardenId = LIVE_PROOF_GARDEN_ID
     const workshopId = LIVE_PROOF_WORKSHOP_ID
     const retryRoomId = LIVE_PROOF_RETRY_ROOM_ID
-    const residents = Array.from({ length: 7 }, (_, index) => ({
+    const residents = Array.from({ length: 8 }, (_, index) => ({
       id: 9201 + index,
       handle: ['proof-alex', 'proof-bea', 'proof-cato', 'proof-dara',
-        'proof-eli', 'proof-fia', 'proof-gus'][index],
-      current_place_id: workshopId,
+        'proof-eli', 'proof-fia', 'proof-gus', 'proof-hana'][index],
+      // Step 3 proof: hana (7) stands in the movement garden, undrawn on
+      // its plain paper ground -- the same undrawn neutral-marker sprite
+      // as dara (3), who stands in the workshop on its own bold tiled
+      // floor, so the owner can compare floor readability at the same
+      // zoom with the sprite held constant.
+      current_place_id: index === 7 ? gardenId : workshopId,
       joined_at: new Date(now - 86_400_000 - index * 1_000).toISOString(),
       asleep: false,
       // Step 2 proof: alex (0) carries a genuinely transparent portrait over
@@ -2690,8 +2752,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
         unmountLivePlaceDetail(node)
       }
     }
-    refillLiveDrawingQueue()
-    drainLiveDrawingQueue()
   }
 
   function commitLiveCamera() {
@@ -4810,146 +4870,16 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return lookup.resolve(placeId)
   }
 
+  // Step 3 removed the per-plot JSON-drawing fetch queue that used to back
+  // this key (fetchLiveDrawing/loadLiveDrawing/drainLiveDrawingQueue/
+  // refillLiveDrawingQueue/refreshLiveDrawingNodes/drawingNode). Floor tiles
+  // now read the same cacheable thumb.png the resident/thing sprites already
+  // use (see liveTiledDrawing), so a plate with 40 plots costs 40 cached
+  // image requests and zero JSON reads. This key survives only to address
+  // the deterministic preview proof scene's synthetic fixture pixels, which
+  // have no real backend record for the thumb route to serve.
   function liveDrawingKey(type, id) {
     return type + ':' + String(id)
-  }
-
-  async function fetchLiveDrawing(type, id) {
-    const key = liveDrawingKey(type, id)
-    const held = state.live.drawings[key]
-    if (held?.loading || held?.loaded) return
-    const loading = Object.freeze({ loading: true, loaded: false, error: false })
-    state = {
-      ...state,
-      live: {
-        ...state.live,
-        drawings: { ...state.live.drawings, [key]: loading },
-      },
-    }
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    let settled = false
-    try {
-      const url = new URL('/api/drawing/' + type + '/' + String(id), window.location.origin)
-      const response = await fetch(url.pathname, {
-        credentials: 'omit', headers: { Accept: 'application/json' }, mode: 'same-origin',
-        redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal,
-      })
-      if (!response.ok) throw new Error('drawing unavailable')
-      const payload = await response.json()
-      const drawing = normalizeDrawingRead(type, id, payload)
-      if (!drawing) throw new Error('invalid drawing')
-      if (state.live.drawings[key] !== loading) return
-      state = {
-        ...state,
-        live: {
-          ...state.live,
-          drawings: {
-            ...state.live.drawings,
-            [key]: Object.freeze({ loading: false, loaded: true, error: false, ...drawing }),
-          },
-        },
-      }
-      settled = true
-    } catch {
-      if (state.live.drawings[key] !== loading) return
-      state = {
-        ...state,
-        live: {
-          ...state.live,
-          drawings: {
-            ...state.live.drawings,
-            [key]: Object.freeze({ loading: false, loaded: false, error: true }),
-          },
-        },
-      }
-      settled = true
-    } finally {
-      window.clearTimeout(timeout)
-      if (settled && state.view === 'live') refreshLiveDrawingNodes(type, id)
-    }
-  }
-
-  function drainLiveDrawingQueue() {
-    if (state.view !== 'live' || document.hidden ||
-        liveDrawingFetches >= LIVE_DRAWING_FETCH_CONCURRENCY || !liveDrawingQueue.length) return
-    const [request, ...remaining] = liveDrawingQueue
-    liveDrawingQueue = Object.freeze(remaining)
-    if (state.live.drawings[request.key]) {
-      drainLiveDrawingQueue()
-      return
-    }
-    liveDrawingFetches += 1
-    void fetchLiveDrawing(request.type, request.id).finally(() => {
-      liveDrawingFetches = Math.max(0, liveDrawingFetches - 1)
-      refillLiveDrawingQueue()
-      drainLiveDrawingQueue()
-    })
-    drainLiveDrawingQueue()
-  }
-
-  function refillLiveDrawingQueue() {
-    if (state.view !== 'live') {
-      liveDrawingQueue = Object.freeze([])
-      return
-    }
-    const queuedKeys = new Set()
-    const requests = []
-    for (const held of document.querySelectorAll(
-      '#live-panel [data-live-drawing-type][data-live-drawing-id]')) {
-      if (requests.length >= LIVE_DRAWING_QUEUE_LIMIT) break
-      const plot = held.closest('.live-plot')
-      if (plot?.dataset.liveDetail === 'false') continue
-      const type = held.dataset.liveDrawingType
-      const id = safeId(held.dataset.liveDrawingId)
-      if (!['place', 'resident', 'thing'].includes(type) || !id) continue
-      const key = liveDrawingKey(type, id)
-      if (state.live.drawings[key] || queuedKeys.has(key)) continue
-      queuedKeys.add(key)
-      requests.push(Object.freeze({ type, id, key }))
-    }
-    liveDrawingQueue = Object.freeze(requests)
-  }
-
-  function loadLiveDrawing(type, id) {
-    const key = liveDrawingKey(type, id)
-    if (state.live.drawings[key] || liveDrawingQueue.some(request => request.key === key)) return
-    if (liveDrawingQueue.length < LIVE_DRAWING_QUEUE_LIMIT) {
-      liveDrawingQueue = Object.freeze([
-        ...liveDrawingQueue,
-        Object.freeze({ type, id, key }),
-      ])
-    }
-    drainLiveDrawingQueue()
-  }
-
-  function refreshLiveDrawingNodes(type, id) {
-    const key = liveDrawingKey(type, id)
-    for (const held of document.querySelectorAll('[data-live-drawing-key="' + key + '"]')) {
-      const replacement = drawingNode(
-        type,
-        id,
-        held.dataset.liveDrawingLabel || type,
-        Number(held.dataset.liveDrawingColumns) || 1,
-        Number(held.dataset.liveDrawingRows) || 1,
-      )
-      for (const className of held.classList) {
-        if (className.startsWith('live-')) replacement.classList.add(className)
-      }
-      replacement.style.width = held.style.width
-      replacement.style.height = held.style.height
-      if (held.hasAttribute('aria-hidden')) {
-        replacement.setAttribute('aria-hidden', held.getAttribute('aria-hidden'))
-      }
-      held.replaceWith(replacement)
-    }
-    if (type !== 'place') return
-    const entry = state.live.drawings[key]
-    const undrawn = Boolean(entry?.loaded && entry.state === 'undrawn')
-    for (const card of nodes.livePlates?.querySelectorAll(
-      '.live-plot[data-place-id="' + String(id) + '"]') || []) {
-      card.dataset.undrawn = String(undrawn)
-    }
   }
 
   function paintedDrawingNode(drawing, columns, rows) {
@@ -4985,81 +4915,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     if (entry.kind_name) node.dataset.drawingKindName = entry.kind_name
     if (entry.revision) node.dataset.drawingRevision = String(entry.revision)
     if (entry.variant_name) node.dataset.drawingVariantName = entry.variant_name
-  }
-
-  function drawingAccessibleLabel(label, entry) {
-    const stateLabel = windowDrawingStateLabel(entry.state, entry.drawing)
-    const sourceLabel = windowDrawingSourceLabel(entry)
-    return label + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
-  }
-
-  function drawingNode(type, id, label, columns = 1, rows = 1) {
-    const key = liveDrawingKey(type, id)
-    const entry = state.live.drawings[key]
-    if (!entry) void loadLiveDrawing(type, id)
-    const safeColumns = Number.isSafeInteger(columns) && columns > 0
-      ? Math.min(2_048, columns)
-      : 1
-    const safeRows = Number.isSafeInteger(rows) && rows > 0
-      ? Math.min(2_048, rows)
-      : 1
-    const identify = node => {
-      node.dataset.liveDrawingKey = key
-      node.dataset.liveDrawingType = type
-      node.dataset.liveDrawingId = String(id)
-      node.dataset.liveDrawingLabel = label
-      node.dataset.liveDrawingColumns = String(safeColumns)
-      node.dataset.liveDrawingRows = String(safeRows)
-      return node
-    }
-    // Step 2 ruling: the Live surface shows the drawing alone, never a
-    // COMPLETE / IN PROGRESS / "Own drawing" state chip or provenance chip.
-    // State and source stay attached as data attributes and the accessible
-    // name (role="img" + aria-label / title) -- reachable to assistive tech
-    // and to the unchanged drawing-detail button -- just never painted as a
-    // visible label over the art.
-    if (entry?.error) {
-      const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
-      unavailable.setAttribute('role', 'img')
-      unavailable.title = label + ' drawing could not be read'
-      unavailable.setAttribute('aria-label', unavailable.title)
-      return identify(unavailable)
-    }
-    if (!entry?.loaded) {
-      const loading = element('span', 'drawing-grid drawing-undrawn drawing-loading')
-      loading.setAttribute('role', 'img')
-      loading.title = 'Reading ' + label + ' drawing'
-      loading.setAttribute('aria-label', loading.title)
-      return identify(loading)
-    }
-    if (entry.drawing === null) {
-      const standIn = element('span',
-        'drawing-grid drawing-undrawn drawing-' + entry.presentation_state)
-      standIn.setAttribute('role', 'img')
-      standIn.title = drawingAccessibleLabel(label, entry)
-      standIn.setAttribute('aria-label', standIn.title)
-      applyDrawingData(standIn, entry)
-      return identify(standIn)
-    }
-    const drawing = entry.drawing
-    const sprite = paintedDrawingNode(drawing, safeColumns, safeRows)
-    if (!sprite) {
-      const unavailable = element('span', 'drawing-grid drawing-undrawn drawing-unavailable')
-      unavailable.setAttribute('role', 'img')
-      unavailable.title = label + ' drawing could not be painted'
-      unavailable.setAttribute('aria-label', unavailable.title)
-      return identify(unavailable)
-    }
-    const shell = element('span',
-      'drawing-grid drawing-authored-shell drawing-' + entry.presentation_state)
-    shell.setAttribute('role', 'img')
-    shell.title = drawingAccessibleLabel(label, entry)
-    shell.setAttribute('aria-label', shell.title)
-    applyDrawingData(shell, entry)
-    applyDrawingData(sprite, entry)
-    sprite.setAttribute('aria-hidden', 'true')
-    shell.append(sprite)
-    return identify(shell)
   }
 
   async function fetchLiveNote(noteId) {
@@ -7926,16 +7781,94 @@ ${WINDOW_CLIENT_SAFETY_JS}
     return grid
   }
 
-  function liveTiledDrawing(place, className, columns, rows, tileSize = null) {
+  // Step 3 ruling: a place's own drawing tiles its floor across the whole
+  // plot at reduced opacity ('--live-floor-opacity', applied in CSS) so
+  // sprites read clearly on top; an undrawn place gets plain paper ground.
+  // Ordinary operation reads the same cacheable 32x32 alpha PNG the thumb
+  // route already serves for resident and thing sprites ('portraitUrl'),
+  // repeated by the compositor via CSS 'background-repeat' -- a plate with
+  // 40 plots costs 40 cached image requests, never a JSON read plus a
+  // canvas paint. The thumb route 404s only for Undrawn, Refused, missing,
+  // withdrawn, or moderated presentations (a Blank Complete drawing is a
+  // real, if fully transparent, PNG), so a failed probe is what marks
+  // 'undrawnTarget' (usually the '.live-plot' card) as undrawn for CSS. The
+  // one exception is the deterministic preview proof scene: its synthetic
+  // place ids have no real backend record for the thumb route to serve, so
+  // it paints the same fixture pixels it always has via the existing
+  // canvas path instead of probing the network.
+  //
+  // Round-1 review finding 2: an unresolved floor must lean paper, never
+  // the dark plot card, until the probe's own 'load' event actually fires
+  // -- a moderated place, a slow connection, or a cold cache must never
+  // paint the dark card for even one round trip while a real thumbnail is
+  // still in flight. setUndrawn(true) runs before the probe's src is even
+  // set, and only 'load' flips it to false; 'error' (including a 404)
+  // leaves it exactly where it already leaned.
+  function liveTiledDrawing(
+    place, className, pixelBox = null, undrawnTarget = null, tileSize = LIVE_FLOOR_TILE_SIZE,
+  ) {
     const terrain = element('div', className)
-    terrain.setAttribute('aria-label', 'Drawing tiled inside ' + place.name)
-    const tile = drawingNode('place', place.id, place.name, columns, rows)
-    tile.classList.add('live-tiled-drawing')
-    if (tileSize) {
-      tile.style.width = String(columns * tileSize) + 'px'
-      tile.style.height = String(rows * tileSize) + 'px'
+    terrain.setAttribute('role', 'img')
+    const proofKey = liveDrawingKey('place', place.id)
+    const proofEntry = state.live.proofScene ? state.live.drawings[proofKey] : undefined
+    // Round-1 review finding 1: the JSON drawing node's role="img" +
+    // name/state/source accessible name went away with the JSON fetch it
+    // was built from. Rebuild the same shape from data already in hand on
+    // each path -- never a new fetch -- so a screen-reader user still
+    // hears the place name, its drawn/undrawn state, and its drawing
+    // source; the click-through drawing-detail button remains the exact
+    // reachable path for everything else the deleted node carried.
+    const setUndrawn = value => {
+      terrain.dataset.undrawn = String(value)
+      if (undrawnTarget) undrawnTarget.dataset.undrawn = String(value)
+      terrain.setAttribute(
+        'aria-label',
+        windowLiveFloorAccessibleLabel(place.name, value, proofEntry ?? null),
+      )
     }
-    terrain.append(tile)
+    const sizeToBox = () => {
+      if (!pixelBox) return
+      const { columns, rows } = windowLiveFloorTiling(pixelBox.width, pixelBox.height, tileSize)
+      terrain.style.width = String(columns * tileSize) + 'px'
+      terrain.style.height = String(rows * tileSize) + 'px'
+    }
+    if (proofEntry !== undefined) {
+      const undrawn = !proofEntry?.loaded || !proofEntry.drawing
+      setUndrawn(undrawn)
+      if (!undrawn) {
+        // A plot has no real pixel geometry to derive a tile count from
+        // here (unlike the world ground's pixelBox), so the proof canvas
+        // uses the same fixed density the shipped view always painted --
+        // enough repeats to read as tiled once CSS stretches it to fill
+        // the plot. The terrain's own role="img" + aria-label above already
+        // carries the accessible name, so this painted canvas is purely
+        // decorative to assistive tech.
+        const { columns, rows } = pixelBox
+          ? windowLiveFloorTiling(pixelBox.width, pixelBox.height, tileSize)
+          : Object.freeze({ columns: 8, rows: 5 })
+        const tile = paintedDrawingNode(proofEntry.drawing, columns, rows)
+        if (tile) {
+          tile.classList.add('live-tiled-drawing')
+          tile.setAttribute('aria-hidden', 'true')
+          tile.style.width = '100%'
+          tile.style.height = '100%'
+          terrain.append(tile)
+        }
+        sizeToBox()
+      }
+      return terrain
+    }
+    setUndrawn(true)
+    const url = portraitUrl('place', place.id)
+    terrain.style.backgroundImage = 'url(' + url + ')'
+    terrain.style.backgroundRepeat = 'repeat'
+    terrain.style.backgroundSize = String(tileSize) + 'px ' + String(tileSize) + 'px'
+    sizeToBox()
+    const probe = new Image()
+    probe.decoding = 'async'
+    probe.addEventListener('load', () => setUndrawn(false))
+    probe.addEventListener('error', () => setUndrawn(true))
+    probe.src = url
     return terrain
   }
 
@@ -8259,10 +8192,7 @@ ${WINDOW_CLIENT_SAFETY_JS}
     const { snapshot, focus, bubbles, records, interactionThings } = renderContext
     const open = card.querySelector(':scope > .live-plot-open')
     if (!open) return
-    const drawing = state.live.drawings[liveDrawingKey('place', place.id)]
-    const undrawn = drawing?.loaded && drawing.drawing === null
-    card.dataset.undrawn = String(Boolean(undrawn))
-    const terrain = liveTiledDrawing(place, 'live-plot-terrain', 8, 5)
+    const terrain = liveTiledDrawing(place, 'live-plot-terrain', null, card)
     card.prepend(terrain)
     const drawingDetail = openDrawingDetailButton(
       'place',
@@ -9937,15 +9867,14 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
 
     if (nodes.liveWorldGround) {
-      const tileSize = 56
       const tiled = liveTiledDrawing(
         focus,
         'live-world-ground-tiles',
-        Math.ceil(survey.width / tileSize),
-        Math.ceil(survey.height / tileSize),
-        tileSize,
+        Object.freeze({ width: survey.width, height: survey.height }),
+        null,
+        56,
       )
-      nodes.liveWorldGround.replaceChildren(...tiled.children)
+      nodes.liveWorldGround.replaceChildren(tiled)
       nodes.liveWorldGround.title = focus.name + ' authored ground'
     }
 
@@ -10013,8 +9942,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
     }
     renderLiveLedger(snapshot, focus, children, records)
     renderLiveRoster(snapshot, focus, records, interactionThings)
-    refillLiveDrawingQueue()
-    drainLiveDrawingQueue()
     renderLiveHistoryStatus()
     scheduleLiveClock()
     restoreFocus(focusKey, null, null)
@@ -13250,7 +13177,6 @@ ${WINDOW_CLIENT_SAFETY_JS}
       } }
       renderLiveClock()
     } else {
-      drainLiveDrawingQueue()
       drainLiveNoteQueue()
       if (state.view === 'live' && state.snapshot) {
         renderLive(state.snapshot)

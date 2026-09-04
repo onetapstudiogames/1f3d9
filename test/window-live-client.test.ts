@@ -7,6 +7,8 @@ import {
   normalizeWindowDrawing,
   windowLiveClampZoomScale,
   windowLiveExpandedGroundLayout,
+  windowLiveFloorAccessibleLabel,
+  windowLiveFloorTiling,
   windowLivePlateChildren,
   windowLivePollDelay,
   windowLiveReplayDuration,
@@ -1202,6 +1204,77 @@ test('Live uses the locked empty-room sentence on every empty-room surface', () 
   assert.doesNotMatch(
     windowClientModule.WINDOW_JS,
     /Nobody is here right now\. The fixed ground stays ready\./u,
+  )
+})
+
+test('floor tiling derives exact, stable column and row counts from a plot\'s real size', () => {
+  assert.deepEqual(windowLiveFloorTiling(320, 200, 32), { columns: 10, rows: 7 })
+  // Not an exact multiple of the tile size: rounds up so the tiled ground
+  // never leaves a gap at the plot's far edge.
+  assert.deepEqual(windowLiveFloorTiling(321, 201, 32), { columns: 11, rows: 7 })
+  // Append-stable plot sizes across many different, non-round dimensions
+  // stay deterministic, integer, and never zero.
+  const sizes: readonly (readonly [number, number])[] =
+    [[1, 1], [8_192, 6_144], [97, 53], [56, 56]]
+  for (const [width, height] of sizes) {
+    const tiling = windowLiveFloorTiling(width, height, 32)
+    assert.ok(Number.isInteger(tiling.columns) && tiling.columns > 0)
+    assert.ok(Number.isInteger(tiling.rows) && tiling.rows > 0)
+  }
+  // Malformed input never produces zero or a fraction either.
+  for (const bad of [0, -5, NaN, Infinity]) {
+    const tiling = windowLiveFloorTiling(bad, bad, 32)
+    assert.ok(Number.isInteger(tiling.columns) && tiling.columns > 0)
+    assert.ok(Number.isInteger(tiling.rows) && tiling.rows > 0)
+  }
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveFloorTiling = function windowLiveFloorTiling/u,
+  )
+})
+
+test('a place floor keeps an accessible name carrying its name, drawn state, and source', () => {
+  // Round-1 review finding 1: the JSON drawing node's role="img" name
+  // (name, state, maker/source) went away with the JSON fetch it was
+  // built from. The non-proof path never re-adds that fetch -- state 3's
+  // whole point -- so it only ever knows the drawn/undrawn binary the
+  // thumb probe resolves; a place's own floor is always its own drawing.
+  assert.equal(
+    windowLiveFloorAccessibleLabel('Cinder lane', false),
+    'Cinder lane · Complete · Own drawing',
+  )
+  assert.equal(
+    windowLiveFloorAccessibleLabel('Harbor room', true),
+    'Harbor room · Undrawn',
+  )
+  // The proof path already holds the full synthetic drawing entry, so it
+  // reuses the exact state/source vocabulary the deleted drawingNode did,
+  // including a case the binary non-proof path cannot distinguish (Blank).
+  assert.equal(
+    windowLiveFloorAccessibleLabel('workshop', false, Object.freeze({
+      state: 'complete',
+      drawing: Object.freeze({
+        palette: Object.freeze(['#102030']),
+        indices: Object.freeze(Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null)),
+      }),
+      source: 'place',
+    })),
+    'workshop · Complete · Own drawing',
+  )
+  assert.equal(
+    windowLiveFloorAccessibleLabel('garden', true, Object.freeze({
+      state: 'complete',
+      drawing: Object.freeze({
+        palette: Object.freeze([]),
+        indices: Object.freeze(Array(64).fill(null) as null[]),
+      }),
+      source: 'place',
+    })),
+    'garden · Blank · Own drawing',
+  )
+  assert.match(
+    windowClientModule.WINDOW_JS,
+    /const windowLiveFloorAccessibleLabel = function windowLiveFloorAccessibleLabel/u,
   )
 })
 

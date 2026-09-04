@@ -397,7 +397,11 @@ test('the live plate states its honest timing and drawing rules in shipped code'
   assert.doesNotMatch(WINDOW_JS, /cacheRevision/u)
   assert.match(WINDOW_JS, /function invalidateLiveCaches/u)
   assert.match(WINDOW_JS, /resident_edited[\s\S]{0,180}resident:/u)
-  assert.match(WINDOW_JS, /state\.live\.drawings\[key\]\s*!==\s+loading/u)
+  // Step 3: a place's Live floor is the same cacheable thumb.png the
+  // resident/thing sprites already read, repeated by the compositor, never
+  // a per-plot JSON drawing fetch with its own loading-state guard.
+  assert.match(WINDOW_JS, /thumb\.png/u)
+  assert.match(WINDOW_JS, /backgroundRepeat\s*=\s*'repeat'/u)
   assert.match(WINDOW_JS, /cache:\s*force\s*\?\s*'reload'\s*:\s*'default'/u)
   assert.match(WINDOW_JS, /loadDirectory\(true, false\), 31_000/u)
   assert.match(
@@ -464,10 +468,12 @@ test('Live sprites carry the drawing alone, with a neutral marker and a shadowed
   assert.match(WINDOW_JS, /'live-resident-tag live-item-name'/u)
   assert.match(WINDOW_JS, /'live-thing-name live-item-name'/u)
 
-  // State and provenance stay a public fact -- reachable via the accessible
-  // name / title and the unchanged drawing-detail click-through -- they are
-  // only no longer painted as a visible chip on the plate.
-  assert.match(WINDOW_JS, /drawingAccessibleLabel\(label, entry\)/u)
+  // State and provenance stay a public fact -- reachable via the unchanged
+  // drawing-detail click-through, the drawing record, and the readback --
+  // they are only no longer painted as a visible chip on the plate. (Step
+  // 3 moved place-floor tiling off the per-plot JSON read that used to back
+  // a state-carrying title, so that title moved with it; state and
+  // provenance were never painted on the plate to begin with.)
   assert.match(WINDOW_JS, /function openDrawingDetailButton/u)
 })
 
@@ -495,13 +501,19 @@ test('drawing presentation and details expose the complete authored contract wit
   assert.match(WINDOW_JS, /searchParams\.set\('limit'/u)
   assert.match(WINDOW_JS, /searchParams\.set\('before'/u)
 
-  const liveRead = /async function fetchLiveDrawing[\s\S]*?\n  function drainLiveDrawingQueue/u
+  // Step 3 removed the per-plot JSON drawing read entirely: a place's Live
+  // floor now reads the same cacheable thumb.png the resident/thing sprites
+  // already use, never the JSON route or its history, and the deliberate
+  // detail page keeps its own separate, still-history-free read.
+  const liveFloorRead = /function liveTiledDrawing[\s\S]*?\n  function liveThingFilters/u
     .exec(WINDOW_JS)?.[0] ?? ''
   const ordinaryDetailRead = /async function ensureDetail[\s\S]*?\n  function renderDetail/u
     .exec(WINDOW_JS)?.[0] ?? ''
-  assert.ok(liveRead)
+  assert.ok(liveFloorRead)
   assert.ok(ordinaryDetailRead)
-  assert.doesNotMatch(liveRead, /\/history/u)
+  assert.doesNotMatch(liveFloorRead, /\/history/u)
+  assert.doesNotMatch(liveFloorRead, /await fetch\(/u)
+  assert.match(liveFloorRead, /portraitUrl\('place', place\.id\)/u)
   assert.doesNotMatch(ordinaryDetailRead, /\/history/u)
   assert.doesNotMatch(WINDOW_HTML, /drawing history|canonical rows|palette indices/iu)
 })

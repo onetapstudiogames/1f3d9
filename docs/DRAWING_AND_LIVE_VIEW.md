@@ -237,8 +237,10 @@ pixels and Complete Blank drawings show the page ground instead of a box. Gazett
 pages use same-origin `<object>` elements so a missing portrait has an empty no-JS
 fallback rather than a broken-image mark. Browsers do not defer `<object>` loading, so
 Gazette portraits are not described as lazy; that fallback is why the issue-page CSP
-allows `object-src 'self'`. Selected-place terrain and drawing details still use the exact
-current JSON read, and history still starts only after a deliberate request.
+allows `object-src 'self'`. A selected place's Live floor tiles the same cacheable
+thumbnail, repeated by the compositor rather than read as JSON and canvas-painted;
+drawing details (the click-through drawing-detail panel) still use the exact current
+JSON read, and history still starts only after a deliberate request.
 
 Dated public snapshots are the deliberate full export and do include drawings.
 They carry resident, place, and current kind-revision drawings; a thing carries
@@ -287,9 +289,16 @@ not a simulation of the present.
 ### Plates and navigation
 
 - The selected focus place supplies one bounded surveyed ground. Its stored
-  drawing tiles that ground; an ordinary unset place uses the existing diagonal
-  hatch and an `undrawn` label. The immutable world root uses its stored,
-  founder-authored drawing. Deliberately blank remains blank.
+  drawing tiles that ground at reduced opacity so residents and things standing
+  on it read clearly on top; an ordinary unset place gets plain paper ground
+  instead, never a dashed box, a dark card, or a hatched square. A floor whose
+  drawn state has not yet resolved leans paper too, never the dark card, until
+  the tile's own load event confirms it drew; a failed or 404 load settles on
+  the same paper ground. The immutable world root uses its stored,
+  founder-authored drawing, tiled the same way. Deliberately blank remains
+  blank. The floor keeps its own accessible name -- place name, drawn/undrawn
+  state, and drawing source -- independent of the click-through drawing-detail
+  button that still carries the exact current JSON record.
 - Live completes the lightweight public directory before allocating the focus
   place's direct children. Their natural, non-grid rectangular plots follow
   creation-ID order. Allocation is append-stable: a newly created later child

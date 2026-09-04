@@ -737,19 +737,27 @@ button { color: inherit; }
   inset: 0;
   display: block;
   overflow: hidden;
-  background-color: var(--night);
+  /* Step 3 ruling: the world's own drawing tiles this ground at the same
+     reduced opacity as a child plot's floor, so direct residents and
+     things standing on it read clearly on top; there is no undrawn case
+     here (decision #58: the immutable world always has its own stored,
+     founder-authored drawing). */
+  opacity: var(--live-floor-opacity, 0.4);
   background-image:
     linear-gradient(rgba(148, 199, 188, 0.08) 1px, transparent 1px),
     linear-gradient(90deg, rgba(148, 199, 188, 0.08) 1px, transparent 1px);
   background-size: var(--live-world-tile, 3.5rem) var(--live-world-tile, 3.5rem);
   image-rendering: pixelated;
 }
-.live-world-ground > .drawing-grid {
+.live-world-ground-tiles {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  image-rendering: pixelated;
+}
+.live-world-ground-tiles > .live-tiled-drawing {
   width: 100%;
   height: 100%;
-  aspect-ratio: auto;
 }
 .live-plates {
   position: absolute;
@@ -961,7 +969,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   opacity: 0.55;
   transform: rotate(45deg);
 }
-.drawing-loading { opacity: 0.72; }
 .drawing-unavailable { border-style: solid; }
 .live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
 .live-portrait-wrap {
@@ -1207,24 +1214,28 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border-width: 4px;
   box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.5);
 }
-.live-plot[data-undrawn="true"] { background: transparent; border-style: dashed; box-shadow: none; }
+/* Step 3 ruling: an undrawn place gets plain paper ground, never a dashed
+   empty box, a dark card, or a hatched square. The plot keeps its normal
+   size, border and shadow (ruling 1) -- only the ground changes. */
+.live-plot[data-undrawn="true"] { background: var(--paper); }
 .live-plot-terrain {
   position: absolute;
   z-index: 0;
   inset: 0;
   display: block;
   overflow: hidden;
-  background-color: #20423a;
+  /* The place's own drawing tiles this ground at reduced opacity so
+     sprites standing on it read clearly on top; the underlying .live-plot
+     background shows through wherever the drawing is transparent. */
+  opacity: var(--live-floor-opacity, 0.4);
   image-rendering: pixelated;
 }
-.live-plot-terrain > .drawing-grid {
+.live-plot-terrain > .live-tiled-drawing {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  aspect-ratio: auto;
 }
-.live-plot-terrain > canvas.drawing-grid { height: auto; }
 .drawing-detail-open {
   display: inline-flex;
   align-items: center;

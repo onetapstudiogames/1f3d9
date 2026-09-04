@@ -355,28 +355,46 @@ const exactDrawingRows = Object.freeze(Array.from({ length: 8 }, (_, row) => (
 
 async function expectProofDrawingContract(page: Page): Promise<void> {
   const proof = page.locator('#live-panel[data-live-proof="true"]')
-  const cases = [
-    { state: 'undrawn', presentation: 'undrawn', label: 'Undrawn' },
-    { state: 'refused', presentation: 'refused', label: 'Refused' },
-    { state: 'in_progress', presentation: 'in_progress', label: 'In progress' },
-    { state: 'complete', presentation: 'blank', label: 'Blank' },
-  ] as const
-  for (const drawingCase of cases) {
-    const drawing = proof.locator(
-      `[data-drawing-state="${drawingCase.state}"]` +
-      `[data-drawing-presentation-state="${drawingCase.presentation}"]`,
-    ).first()
-    await expect(drawing).toBeVisible()
-    await expect(drawing).toHaveAttribute('aria-label', new RegExp(drawingCase.label, 'u'))
-  }
-  const canvas = proof.locator(
-    'canvas[data-drawing-presentation-state="in_progress"]',
-  ).first()
-  await expect(canvas).toBeVisible()
-  expect(await canvas.evaluate(node => {
+  // Step 3 ruling: a place's own drawing tiles its floor at reduced
+  // opacity; an undrawn place (root, undrawn; garden, refused -- both
+  // collapse to the same honest "no real pixels" ground) gets plain paper
+  // instead. State and provenance no longer paint onto the floor itself
+  // (they stay in the drawing record, the readback, and the still-exact
+  // drawing-detail panel), so the proof demonstrates the floor contract by
+  // data-undrawn and the tiled canvas the deterministic proof fixture
+  // paints, not by a state-carrying chip.
+  await expect(proof.locator('.live-world-ground-tiles')).toHaveAttribute('data-undrawn', 'true')
+  const gardenTerrain = proof.locator('.live-plot[data-place-id="9102"] .live-plot-terrain')
+  await expect(gardenTerrain).toHaveAttribute('data-undrawn', 'true')
+  await expect(gardenTerrain.locator('.live-tiled-drawing')).toHaveCount(0)
+
+  // Step 3 proof: the workshop's own bold, fully opaque floor -- the
+  // "strongly patterned floor" the proof promises so the owner can judge
+  // 40% opacity readability side by side with the garden's plain paper.
+  const workshopTerrain = proof.locator('.live-plot[data-place-id="9103"] .live-plot-terrain')
+  await expect(workshopTerrain).toHaveAttribute('data-undrawn', 'false')
+  const workshopCanvas = workshopTerrain.locator('canvas.live-tiled-drawing').first()
+  await expect(workshopCanvas).toBeVisible()
+  const workshopPixel = await workshopCanvas.evaluate(node => {
     const context = (node as HTMLCanvasElement).getContext('2d')
     return context ? [...context.getImageData(0, 0, 1, 1).data] : []
-  })).toHaveLength(4)
+  })
+  expect(workshopPixel).toHaveLength(4)
+  expect(workshopPixel[3]).toBe(255)
+
+  // A Complete Blank floor is technically drawn (data-undrawn="false"),
+  // never the paper "no real pixels" ground -- it just paints nothing,
+  // which the fully transparent canvas pixel proves.
+  const retryTerrain = proof.locator('.live-plot[data-place-id="9104"] .live-plot-terrain')
+  await expect(retryTerrain).toHaveAttribute('data-undrawn', 'false')
+  const retryCanvas = retryTerrain.locator('canvas.live-tiled-drawing').first()
+  await expect(retryCanvas).toBeVisible()
+  const retryPixel = await retryCanvas.evaluate(node => {
+    const context = (node as HTMLCanvasElement).getContext('2d')
+    return context ? [...context.getImageData(0, 0, 1, 1).data] : []
+  })
+  expect(retryPixel).toHaveLength(4)
+  expect(retryPixel[3]).toBe(0)
   for (const portrait of [
     { type: 'resident', id: 9201 },
     { type: 'thing', id: 9401 },
@@ -566,6 +584,8 @@ async function installReplayRoutes(
   let maximumDrawingRequests = 0
   let drawingRequests = 0
   let thumbnailRequests = 0
+  let activeThumbnailRequests = 0
+  let maximumThumbnailRequests = 0
   let focusedPlaceRequests = 0
   let focusedPlaceFailuresRemaining = controls.focusedPlaceFailures ?? 0
   const drawingRequestPaths: string[] = []
@@ -1130,15 +1150,28 @@ async function installReplayRoutes(
     if (thumbnailMatch) {
       thumbnailRequests += 1
       thumbnailRequestPaths.push(url.pathname + url.search)
-      await route.fulfill({
-        status: 200,
-        contentType: 'image/png',
-        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
-        body: Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
-          'base64',
-        ),
-      })
+      activeThumbnailRequests += 1
+      maximumThumbnailRequests = Math.max(maximumThumbnailRequests, activeThumbnailRequests)
+      try {
+        // Step 3: a place's Live floor now reads this same cacheable thumb
+        // route instead of the JSON drawing route, so a fixture that wants
+        // to observe an in-flight, camera-bounded load (rather than every
+        // request resolving before the test can look) delays here too.
+        if (controls.drawingDelayMs) {
+          await new Promise(resolve => setTimeout(resolve, controls.drawingDelayMs))
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'image/png',
+          headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+          body: Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+            'base64',
+          ),
+        })
+      } finally {
+        activeThumbnailRequests -= 1
+      }
       return
     }
     const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(url.pathname)
@@ -1192,6 +1225,8 @@ async function installReplayRoutes(
     drawingRequestPaths: () => [...drawingRequestPaths],
     thumbnailRequests: () => thumbnailRequests,
     thumbnailRequestPaths: () => [...thumbnailRequestPaths],
+    activeThumbnailRequests: () => activeThumbnailRequests,
+    maximumThumbnailRequests: () => maximumThumbnailRequests,
     focusedPlaceRequests: () => focusedPlaceRequests,
     holdNextEmptyChange: () => {
       heldEmptyChangeGate = new Promise<void>(resolve => {
@@ -2805,7 +2840,12 @@ test('an undrawn resident renders exactly a neutral marker plus a shadowed name,
   await expect(page.locator('.live-plot-owner')).toHaveCount(0)
 })
 
-test('Live opens a 40-resident fixture with 3 full drawing reads and 10 thumbnails', async ({ page }) => {
+test('Live opens a 40-resident fixture with zero full drawing reads and 13 thumbnails', async ({ page }) => {
+  // Step 3: the 3 full JSON drawing reads this test used to pin (one per
+  // visible place's floor) are gone -- floors now read the same cacheable
+  // thumb.png the resident sprites already use, so those 3 places' floors
+  // are folded into the thumbnail count instead (3 floors + up to 10
+  // portrait sprites = 13).
   const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
     crowdPlaceId: 2,
     residentCrowdSize: 40,
@@ -2816,16 +2856,16 @@ test('Live opens a 40-resident fixture with 3 full drawing reads and 10 thumbnai
   const roster = page.locator('#live-roster .resident-row')
   await expect(roster).toHaveCount(41)
   await roster.nth(11).scrollIntoViewIfNeeded()
-  await expect.poll(fixture.thumbnailRequests).toBe(8)
-  for (let step = 0; step < 100 && fixture.thumbnailRequests() < 10; step += 1) {
+  await expect.poll(fixture.thumbnailRequests).toBe(11)
+  for (let step = 0; step < 100 && fixture.thumbnailRequests() < 13; step += 1) {
     await page.evaluate(() => window.scrollBy(0, 8))
     await page.waitForTimeout(16)
   }
-  await expect.poll(fixture.thumbnailRequests).toBe(10)
+  await expect.poll(fixture.thumbnailRequests).toBe(13)
   await expect.poll(fixture.activeDrawingRequests).toBe(0)
 
-  expect(fixture.drawingRequests()).toBe(3)
-  expect(fixture.thumbnailRequests()).toBe(10)
+  expect(fixture.drawingRequests()).toBe(0)
+  expect(fixture.thumbnailRequests()).toBe(13)
 })
 
 test('Live renders nearby detail and reachable distant markers without drawing the whole world', async ({ page }) => {
@@ -2835,13 +2875,13 @@ test('Live renders nearby detail and reachable distant markers without drawing t
   })
   await page.goto('/window#view=live')
 
-  await expect.poll(fixture.maximumDrawingRequests).toBeGreaterThan(0)
-  await expect.poll(() => page.locator(
-    '.live-plot[data-live-detail="true"] .drawing-loading, ' +
-    '.live-world-ground .drawing-loading, .live-root-walkers .drawing-loading, ' +
-    '.live-root-thing-shelf .drawing-loading',
-  ).count(), { timeout: 15_000 }).toBe(0)
-  await expect.poll(fixture.activeDrawingRequests).toBe(0)
+  // Step 3: a place's floor now reads the same cacheable thumb.png route
+  // the resident/thing sprites already use -- mounted per camera-visible
+  // plot, never fed through the deleted JSON drawing queue -- so what used
+  // to be a JSON drawing request, and its own loading-state class, is a
+  // thumbnail request (and the image element's own load state) here.
+  await expect.poll(fixture.maximumThumbnailRequests).toBeGreaterThan(0)
+  await expect.poll(fixture.activeThumbnailRequests, { timeout: 15_000 }).toBe(0)
   await expect(page.locator('.live-plot[data-live-detail="true"]')).not.toHaveCount(0)
   const distantPlots = page.locator('.live-plot[data-live-detail="false"]')
   await expect(distantPlots).not.toHaveCount(0)
@@ -2860,9 +2900,13 @@ test('Live renders nearby detail and reachable distant markers without drawing t
   expect(initialDetailBudget.mountedDetailNodes).toBeLessThanOrEqual(
     initialDetailBudget.detailedPlots * 4,
   )
-  expect(fixture.drawingRequests()).toBeGreaterThan(0)
-  expect(fixture.drawingRequests()).toBeLessThan(80)
-  expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
+  // Only camera-bounded, detail-mounted plots (plus the focus place's own
+  // world ground) ever request a floor thumbnail -- never all 80 places at
+  // once. There is no longer an application-level fetch queue to cap
+  // concurrency (step 3 deleted it along with the JSON drawing route it
+  // served); boundedness now comes entirely from which plots are mounted.
+  expect(fixture.thumbnailRequests()).toBeGreaterThan(0)
+  expect(fixture.thumbnailRequests()).toBeLessThan(80)
 
   const markerPlaceId = await distantPlots.first().getAttribute('data-place-id')
   expect(markerPlaceId).not.toBeNull()
@@ -2914,16 +2958,30 @@ test('Live drops queued drawings from the old plate before reading a newly opene
     drawingPlaceCount: 80,
   })
   await page.goto('/window#view=live')
-  await expect.poll(fixture.activeDrawingRequests).toBe(4)
+  // Step 3: place floors read the same cacheable thumb.png route the
+  // resident/thing sprites already use, mounted per camera-visible plot
+  // rather than fed through an application-level fetch queue -- so what
+  // used to be a JSON drawing request is a thumbnail request here.
+  await expect.poll(fixture.activeThumbnailRequests).toBeGreaterThan(0)
+  const requestsBeforeNavigate = fixture.thumbnailRequestPaths().length
 
   await page.locator('.live-plot[data-place-id="179"] .live-plot-open')
     .evaluate(node => (node as HTMLButtonElement).click())
   await expect(page).toHaveURL(/\/window\/live\?place=179$/u)
   await expect.poll(
-    () => fixture.drawingRequestPaths().includes('/api/drawing/place/179'),
-    { timeout: 3_000 },
+    () => fixture.thumbnailRequestPaths().some(
+      path => path.startsWith('/api/drawing/place/179/thumb.png'),
+    ),
+    { timeout: 5_000 },
   ).toBe(true)
-  expect(fixture.maximumDrawingRequests()).toBeLessThanOrEqual(4)
+  // Drilling into place 179 unmounts every plot outside it, so navigation
+  // does not keep piling up floor requests for the plate that is no longer
+  // shown: the newly opened place's own floor is the only new terrain
+  // request this drill-down needs.
+  await page.waitForTimeout(200)
+  const newRequests = fixture.thumbnailRequestPaths().slice(requestsBeforeNavigate)
+    .filter(path => !path.startsWith('/api/drawing/place/179/thumb.png'))
+  expect(newRequests).toEqual([])
 })
 
 test('discoverable preview proof scene visibly demonstrates every Live behavior and Retry', async ({ page }) => {
@@ -2954,7 +3012,10 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await residentMore.click()
   await thingMore.click()
   await expect(proofPanel.getByRole('dialog')).toHaveCount(0)
-  await expect(proofPanel.locator('.live-walker')).toHaveCount(7)
+  // Step 3 added an 8th proof resident (hana) standing undrawn in the
+  // movement garden, alongside the workshop's original 7, so the owner can
+  // compare floor readability with the sprite held constant.
+  await expect(proofPanel.locator('.live-walker')).toHaveCount(8)
   await expect(proofPanel.locator('.live-thing-specimen')).toHaveCount(7)
 
   const replays = proofPanel.locator('.live-replay-portrait')
@@ -3118,18 +3179,27 @@ test('proof: sprites on the ground, no chips', async ({ page }) => {
     })).toEqual({ shellBackground: 'rgba(0, 0, 0, 0)', placeholderBackground: 'rgba(0, 0, 0, 0)' })
   }
 
-  // Every undrawn resident (bea, dara, eli, fia, gus -- 5 of the 7) renders
-  // exactly a neutral marker, never nothing and never a chip.
-  await expect(proofPanel.locator('.live-walker .live-neutral-marker')).toHaveCount(5)
+  // Every undrawn resident (bea, dara, eli, fia, gus in the workshop, plus
+  // hana in the garden -- 6 of the 8) renders exactly a neutral marker,
+  // never nothing and never a chip.
+  await expect(proofPanel.locator('.live-walker .live-neutral-marker')).toHaveCount(6)
 
   // The floor those sprites stand on is the workshop's own in-progress
-  // drawing, tiled -- the "strongly patterned floor tile" the proof asks
-  // for -- and the walkers share that same plot.
-  const workshopPlot = proofPanel.locator('.live-plot').filter({
-    has: page.locator('canvas[data-drawing-presentation-state="in_progress"]'),
-  })
-  await expect(workshopPlot).toHaveCount(1)
+  // drawing, tiled at reduced opacity -- the "strongly patterned floor
+  // tile" the proof asks for -- and the walkers share that same plot.
+  const workshopPlot = proofPanel.locator('.live-plot[data-place-id="9103"]')
+  await expect(workshopPlot).toHaveAttribute('data-undrawn', 'false')
+  await expect(workshopPlot.locator('.live-plot-terrain canvas.live-tiled-drawing'))
+    .toHaveCount(1)
   await expect(workshopPlot.locator('.live-walker')).not.toHaveCount(0)
+
+  // Step 3 proof: the garden plot stands undrawn on plain paper -- the
+  // sprite (hana, a neutral marker like every other undrawn resident) is
+  // held constant against the workshop's bold tiled floor so the owner can
+  // compare floor readability at the same zoom.
+  const gardenPlot = proofPanel.locator('.live-plot[data-place-id="9102"]')
+  await expect(gardenPlot).toHaveAttribute('data-undrawn', 'true')
+  await expect(gardenPlot.locator('.live-walker .live-neutral-marker')).toHaveCount(1)
 })
 
 test('drawing details reveal exact authored readback and fetch bounded history only on request', async ({ page }) => {
@@ -4163,8 +4233,12 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
 
   const stage = page.locator('#live-stage')
   await expect(stage).toHaveAttribute('data-live-label-mode', 'far')
-  await expect(page.locator('.live-world-ground > .drawing-grid')).toHaveCount(1)
-  await expect(page.locator('.live-plot-terrain > .drawing-grid')).toHaveCount(2)
+  // Step 3: the world's own drawing tiles as one cacheable background-image
+  // layer (never a nested canvas-painted .drawing-grid), and every
+  // detail-mounted plot always gets a .live-plot-terrain -- drawn or
+  // undrawn -- so this counts detail-mounted plots, not only drawn ones.
+  await expect(page.locator('.live-world-ground-tiles')).toHaveCount(1)
+  await expect(page.locator('.live-plot-terrain')).toHaveCount(2)
 
   const focusedWalker = page.locator(
     `#live-plates [data-live-resident-handle="${maximumReplayHandle}"]`,
@@ -5143,7 +5217,31 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   })
   await page.route('**/api/drawing/**', async route => {
     const pathname = new URL(route.request().url()).pathname
-    if (pathname === '/api/drawing/place/1') worldDrawingRequests.push(pathname)
+    // Step 3: Live floors read the thumb route, not the JSON route -- the
+    // world ground's tile is exactly one cached thumb.png fetch for place 1.
+    const thumbMatch = /^\/api\/drawing\/(place|resident|thing)\/(\d+)\/thumb\.png$/u
+      .exec(pathname)
+    if (thumbMatch) {
+      const thumbType = thumbMatch[1]
+      const thumbId = Number(thumbMatch[2])
+      const thumbAuthored = (thumbType === 'place' && (thumbId === 1 || thumbId === 2)) ||
+        thumbType === 'thing'
+      if (!thumbAuthored || (moderationPublished && thumbType === 'place' && thumbId === 2)) {
+        await route.fulfill({ status: 404, json: { error: 'drawing not found' } })
+        return
+      }
+      if (thumbType === 'place' && thumbId === 1) worldDrawingRequests.push(pathname)
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAGklEQVR42u3BAQEAAACCIP+vbkhAAQAAAO8GECAAAcm1w7EAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      })
+      return
+    }
     const match = /^\/api\/drawing\/(place|resident|thing)\/(\d+)$/u.exec(pathname)
     if (!match) {
       await route.fulfill({ status: 404, json: { error: 'drawing not found' } })
@@ -5206,32 +5304,35 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await expect(page.locator('#live-ledger')).toContainText('moved: Cinder lane → Harbor room')
   await expect(page.locator('#live-ledger')).toContainText('used thing #9 in Harbor room')
   await expect(page.locator('#live-ledger')).not.toContainText('used thing #9 in Cinder lane')
-  const worldDrawing = page.locator('.live-world-ground .drawing-authored').first()
-  await expect(worldDrawing).toBeVisible()
-  await expect(page.locator('.live-world-ground > .drawing-grid')).toHaveCount(1)
-  const worldPixels = await worldDrawing.evaluate(node => {
-    const canvas = node as HTMLCanvasElement
-    const stage = canvas.closest('#live-stage') as HTMLElement
-    return {
-      tag: canvas.tagName,
-      width: canvas.width,
-      height: canvas.height,
-      stageWidth: Number(stage.dataset.liveStageWidth),
-      stageHeight: Number(stage.dataset.liveStageHeight),
-      first: [...canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data],
-    }
-  })
-  expect(worldPixels).toEqual({
-    tag: 'CANVAS',
-    width: Math.ceil(worldPixels.stageWidth / 56) * 8,
-    height: Math.ceil(worldPixels.stageHeight / 56) * 8,
-    stageWidth: worldPixels.stageWidth,
-    stageHeight: worldPixels.stageHeight,
-    first: [23, 77, 60, 255],
-  })
+  // Step 3: the world's own drawing tiles its ground as a cached
+  // background-image (the same thumb.png the resident/thing sprites read),
+  // repeated by the compositor, at the shared reduced-opacity token -- not
+  // a per-render canvas paint from a full JSON read.
+  const worldGround = page.locator('.live-world-ground')
+  const worldTiles = worldGround.locator('> .live-world-ground-tiles')
+  await expect(worldTiles).toHaveCount(1)
+  await expect(worldTiles).toHaveAttribute('data-undrawn', 'false')
+  const worldFloor = await worldTiles.evaluate(node => ({
+    backgroundImage: getComputedStyle(node).backgroundImage,
+    backgroundRepeat: getComputedStyle(node).backgroundRepeat,
+    groundOpacity: getComputedStyle(node.closest('.live-world-ground')!).opacity,
+  }))
+  expect(worldFloor.backgroundImage).toContain('/api/drawing/place/1/thumb.png')
+  expect(worldFloor.backgroundRepeat).toBe('repeat')
+  expect(Number(worldFloor.groundOpacity)).toBeCloseTo(0.4, 2)
   const harbor = page.locator('.live-plot[data-place-id="3"]')
+  // Step 3 ruling: an undrawn place gets plain paper ground, never a
+  // dashed empty box -- the plot keeps its normal border and shadow.
   await expect(harbor).toHaveAttribute('data-undrawn', 'true')
   await expect(harbor).toHaveAttribute('data-place-kind', 'continent')
+  const harborGround = await harbor.evaluate(node => ({
+    background: getComputedStyle(node).backgroundColor,
+    borderStyle: getComputedStyle(node).borderStyle,
+    boxShadow: getComputedStyle(node).boxShadow,
+  }))
+  expect(harborGround.background).not.toBe('rgba(0, 0, 0, 0)')
+  expect(harborGround.borderStyle).toBe('solid')
+  expect(harborGround.boxShadow).not.toBe('none')
   // Step 2 ruling: no "kept by" owner line renders on the plate. The same
   // fact stays reachable through the plot's unchanged drawing-detail button.
   await expect(harbor.locator('.live-plot-owner')).toHaveCount(0)
@@ -5239,13 +5340,27 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     'aria-label', 'Open current drawing for Harbor room',
   )
   const cinderTerrain = page.locator('.live-plot[data-place-id="2"] .live-plot-terrain')
-  await expect(cinderTerrain.locator('.drawing-authored').first()).toBeVisible()
-  await expect(cinderTerrain.locator('canvas.drawing-authored')).toHaveAttribute('width', '64')
-  await expect(cinderTerrain.locator('canvas.drawing-authored')).toHaveAttribute('height', '40')
+  await expect(cinderTerrain).toHaveAttribute('data-undrawn', 'false')
+  const cinderFloor = await cinderTerrain.evaluate(node => ({
+    backgroundImage: getComputedStyle(node).backgroundImage,
+    opacity: getComputedStyle(node).opacity,
+  }))
+  expect(cinderFloor.backgroundImage).toContain('/api/drawing/place/2/thumb.png')
+  expect(Number(cinderFloor.opacity)).toBeCloseTo(0.4, 2)
   expect(changeCursors.slice(0, 3)).toEqual([null, '10', '11'])
   expect(eventWindows).toEqual(['1800'])
   await expect.poll(() => snapshotMarkers).toContain('13')
-  expect(worldDrawingRequests).toEqual(['/api/drawing/place/1'])
+  // Step 3 ruling: the floor tile keeps the marker-covered rev so a
+  // redrawn floor updates. portraitUrl ties the thumb request to
+  // state.changeMarker, so the world ground genuinely re-fetches (a new
+  // cache key, not a stale one) each time the change marker advances --
+  // here once at first paint (rev=10) and once after the first change
+  // page settles (rev=13). This is two honestly distinct requests, not a
+  // duplicate fetch of the same resource.
+  expect(worldDrawingRequests).toEqual([
+    '/api/drawing/place/1/thumb.png',
+    '/api/drawing/place/1/thumb.png',
+  ])
 
   const originalPlots = await page.locator('.live-plot').evaluateAll(plots => plots.map(plot => ({
     id: plot.getAttribute('data-place-id'),
@@ -5276,8 +5391,14 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
 
   moderationPublished = true
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-  await expect(cinderTerrain.locator('.drawing-authored')).toHaveCount(0)
-  await expect(cinderTerrain.locator('.drawing-unavailable').first()).toBeVisible()
+  // Step 3: a moderated place's floor thumb 404s, and the tile's own error
+  // handler marks it undrawn -- the same honest plain-paper ground an
+  // ordinary unset place gets, never the deleted "drawing-unavailable"
+  // hatch/label presentation.
+  await expect(page.locator('.live-plot[data-place-id="2"]')).toHaveAttribute(
+    'data-undrawn', 'true',
+  )
+  await expect(cinderTerrain).toHaveAttribute('data-undrawn', 'true')
   await expect(page.locator('#live-ledger')).toContainText("map-walker's note #77 could not be read.")
   await expect(page.locator('#live-ledger')).not.toContainText('A bell answers')
   await expect(page.locator('#live-plates .live-plot')).toHaveCount(3)
@@ -5418,6 +5539,58 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   await page.setViewportSize({ width: 701, height: 900 })
   await expect(thingSpecimen).toBeFocused()
   expect(writes).toEqual([])
+})
+
+test('an unresolved floor leans paper until the thumbnail actually loads, and a 404 settles there too', async ({ page }) => {
+  // Round-1 review finding 2: setUndrawn(false) used to run synchronously
+  // before the probe even had a src, so a moderated place, a slow
+  // connection, or a cold cache painted the dark plot card for one round
+  // trip. drawingDelayMs holds every ordinary thumbnail response so this
+  // test can observe that pending window directly, and Cinder lane's own
+  // route is overridden to 404 outright (the moderated/missing/withdrawn
+  // case) so both settle-on-paper paths are proven together.
+  const fixture = await installReplayRoutes(page, Date.now(), 'complete', 0, {
+    drawingDelayMs: 1_500,
+  })
+  await page.route('**/api/drawing/place/2/thumb.png', route => route.fulfill({
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'drawing not found' }),
+  }))
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-plates .live-plot')).toHaveCount(2)
+
+  const paperBackground = 'rgb(233, 224, 197)'
+  const darkCardBackground = 'rgb(32, 66, 58)'
+  const cinderPlot = page.locator('.live-plot[data-place-id="2"]')
+  const harborPlot = page.locator('.live-plot[data-place-id="3"]')
+
+  // Harbor room's own thumbnail is still in flight -- check this before it
+  // resolves so the assertion actually exercises the pending window, not
+  // just its eventual settled state.
+  await expect.poll(fixture.activeThumbnailRequests).toBeGreaterThan(0)
+  await expect(harborPlot).toHaveAttribute('data-undrawn', 'true')
+  expect(await harborPlot.evaluate(node => getComputedStyle(node).backgroundColor))
+    .toBe(paperBackground)
+
+  // Cinder lane's 404 is not held by drawingDelayMs and resolves quickly,
+  // settling on the same paper ground -- never the dark card, even briefly.
+  await expect(cinderPlot).toHaveAttribute('data-undrawn', 'true')
+  const cinderBackground = await cinderPlot.evaluate(node => getComputedStyle(node).backgroundColor)
+  expect(cinderBackground).toBe(paperBackground)
+  expect(cinderBackground).not.toBe(darkCardBackground)
+  await expect(cinderPlot.locator('.live-plot-terrain')).toHaveAttribute(
+    'aria-label', 'Cinder lane · Undrawn',
+  )
+
+  // Once Harbor room's own thumbnail actually loads, the floor tiles and
+  // the accessible name updates to say so -- the same name/state/source
+  // shape the deleted JSON drawing node gave.
+  await expect.poll(fixture.activeThumbnailRequests, { timeout: 15_000 }).toBe(0)
+  await expect(harborPlot).toHaveAttribute('data-undrawn', 'false')
+  await expect(harborPlot.locator('.live-plot-terrain')).toHaveAttribute(
+    'aria-label', 'Harbor room · Complete · Own drawing',
+  )
 })
 
 test('drilling into a quiet room in Live withholds its residents and things everywhere on the plate', async ({ page }) => {
