@@ -1858,6 +1858,45 @@ test('an active reservation blocks world cancellation even after market withdraw
   assert.equal(harness.getState().thingLocked, true)
 })
 
+test('expired x402 evidence keeps the world thing locked until market-first cancellation', async () => {
+  // The third market no-sale phase, payment_expired, drives the same stale listing shape.
+  const expired = openOffer({
+    buyer_id: 8,
+    buyer: 'neighbor',
+    reserved_by: 8,
+    buyer_wallet: BUYER_WALLET,
+    market_listing_id: 91,
+    market_checkout_id: 81,
+    pending_x402_tx_hash: TX,
+    pending_x402_payer: BUYER_WALLET,
+    pending_x402_at: NOW.toISOString(),
+    x402_evidence_state: 'expired',
+    reserved_at: NOW.toISOString(),
+    reserved_until: new Date(NOW.getTime() + 300_000).toISOString(),
+  })
+  const active = makeHarness({
+    offer: expired,
+    thingLocked: true,
+    listing: listing({ state: 'active', world_state: 'active' }),
+  })
+  const blocked = await active.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(blocked.status, 409)
+  assert.equal(active.getState().thingLocked, true)
+
+  const ended = makeHarness({
+    offer: expired,
+    thingLocked: true,
+    listing: listing({ state: 'stale', world_state: 'stale' }),
+  })
+  const canceled = await ended.app.request('/api/world/offer/101/cancel', {
+    method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
+  })
+  assert.equal(canceled.status, 200, await canceled.clone().text())
+  assert.equal(ended.getState().thingLocked, false)
+})
+
 test('founder-review evidence keeps the world thing locked until market-first cancellation', async () => {
   const reviewed = openOffer({
     buyer_id: 8,
