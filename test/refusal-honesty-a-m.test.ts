@@ -71,6 +71,8 @@ test('timer and action refusals name a retry or accepted bound', () => {
   expects('engine.ts', [
     'action is invalid; use talk, move, use, give, consume, make, or go_home',
     'carry_thing_id has an open sale offer or market lock; cancel the offer, wait for the lock to clear, or carry another owned thing',
+    'database returned an invalid ${field}; retry once, then contact the city operator',
+    'database returned an invalid result; retry once, then contact the city operator',
     'payload exceeds ${MAX_JSON_BYTES} UTF-8 bytes; send a smaller payload',
     'resident has no current place; reconnect with the current resident key and retry, then contact the city operator',
     'thing_id has an open sale offer; cancel the offer or use another active thing',
