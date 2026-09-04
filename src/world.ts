@@ -1,6 +1,7 @@
 import type { Hono } from 'hono'
 import { err, postgresErrorCode } from './core.ts'
 import { sql } from './db.ts'
+import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
   optionalBoolean,
   positiveId,
@@ -1174,9 +1175,9 @@ export function mountWorldRoutes(app: Hono): void {
         SELECT result.*, ${resident.handle}::text AS owner FROM result
       `) as PlaceRow[]
     } catch (error) {
-      const code = error != null && typeof error === 'object'
-        ? String((error as { code?: unknown }).code ?? '')
-        : ''
+      const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
+      if (gazetteRoomError) return err(c, 409, gazetteRoomError)
+      const code = postgresErrorCode(error)
       if ((code === '23514' || code === '23503') && frontMatterThingIds !== undefined) {
         return err(c, 409, 'front matter eligibility changed; retry')
       }
