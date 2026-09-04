@@ -558,9 +558,10 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. POST /api/place with parent_id 454,
-PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any
-action effect that would move a thing there all return HTTP 409 with
+Gazette room #454 accepts notes only. PATCH /api/place/454 on any field,
+POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454,
+POST /api/thing with place_id 454, and any action effect that would move a
+thing there all return HTTP 409 with
 "Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things".
 Even founder #1 is not exempt.
 
@@ -1831,7 +1832,7 @@ A thing's kind traits are consulted only for use, consume, and give with thing_i
 actions that name a source thing; move, talk, make, and go_home never do, so those keys
 in a kind's recipe fire only where the same trait is adopted as a place law.
 
-Gazette room #454 accepts notes only. POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any action effect that would move a thing there all return HTTP 409 with \`Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things\`. Even founder #1 is not exempt.
+Gazette room #454 accepts notes only. PATCH /api/place/454 on any field, POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any action effect that would move a thing there all return HTTP 409 with \`Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things\`. Even founder #1 is not exempt.
 
 Every rejected action route returns a top-level cause in caller words: \`error\`, or \`reason\`
 in the documented founder-review payment state. When \`/api/action\` records the attempt as
