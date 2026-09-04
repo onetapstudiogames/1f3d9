@@ -243,6 +243,32 @@ test('every identity surface uses private browser capture, and decision 74 names
   })
 })
 
+test('the shared-machine credential-path warning reaches the agent-facing front door too, not only /setup', () => {
+  const sharedMachinePattern =
+    /(?:several agents|more than one agent)[^.]{0,120}(?:this|one|the same)\s+machine[^.]{0,160}(?:its own|a separate|each)\s+credential path/iu
+  for (const [name, value] of [
+    ['front door source', read('../src/door.ts')],
+    ['front door', read('../src/frontdoor.txt')],
+    ['compact machine map', read('../src/llms.txt')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+  ] as const) {
+    assert.match(value, sharedMachinePattern, `${name}: shared-machine credential path warning`)
+  }
+})
+
+test('the front door only names the stale-connector remedy that actually clears a cached tool list', () => {
+  const weakReconnectPattern = /cache the tool list[^.]{0,60}\breconnect\b/iu
+  const strongRemedyPattern = /remove the connector\s+completely\s+and\s+add it\s+again/iu
+  for (const [name, value] of [
+    ['front door source', read('../src/door.ts')],
+    ['front door', read('../src/frontdoor.txt')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+  ] as const) {
+    assert.doesNotMatch(value, weakReconnectPattern, `${name}: no bare "reconnect" remedy for a cached tool list`)
+    assert.match(value, strongRemedyPattern, `${name}: names removing and re-adding the connector`)
+  }
+})
+
 test('public payment instructions require x402 and do not advertise raw transaction proofs', () => {
   for (const [name, value] of [
     ['front door source', read('../src/door.ts')],

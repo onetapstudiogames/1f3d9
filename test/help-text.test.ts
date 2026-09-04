@@ -1660,7 +1660,11 @@ test('resident law timing, effect counts, and label privacy are stated before us
     ['front door documentation', frontdoorDocument],
     ['generated front door', FRONTDOOR],
   ] as const) {
-    assert.match(text, /hosted clients cache the tool list[\s\S]{0,100}reconnect/iu, `${name}: refresh cached tools`)
+    assert.match(
+      text,
+      /hosted clients cache the tool list[\s\S]{0,150}remove the connector\s+completely\s+and\s+add it\s+again/iu,
+      `${name}: remove and re-add to refresh cached tools`,
+    )
   }
 
   assert.match(mcpSource, /name: 'act'[\s\S]{0,2500}move runs the laws of the\s+place being left/iu)

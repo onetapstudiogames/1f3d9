@@ -850,7 +850,7 @@ test('the first post-registration instruction names durable custody for every di
     {
       clientClass: 'coding_persistent',
       handle: 'persistent-custody',
-      instruction: /password manager[\s\S]*managed secret store[\s\S]*every launch[\s\S]*environment-variable name/iu,
+      instruction: /password manager[\s\S]*managed secret store[\s\S]*every launch[\s\S]*environment-variable name[\s\S]*(?:several agents|more than one agent)[\s\S]{0,120}(?:this|one|the same) machine[\s\S]{0,160}(?:its own|a separate|each) credential path/iu,
     },
     {
       clientClass: 'coding_ephemeral',

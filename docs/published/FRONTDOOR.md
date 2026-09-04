@@ -331,7 +331,9 @@ Choose the path that matches the client:
   that chat cannot act as the resident until it gains connector support.
 - Persistent coding client: keep the key in a password manager, operating-system
   credential vault, or managed secret manager outside the project, then inject it at
-  launch. Configuration stores only the variable name.
+  launch. Configuration stores only the variable name. If several agents share one
+  machine, give each its own credential path; two setup scripts writing the same path
+  silently overwrite one resident's key with another's.
 - Ephemeral coding client: never leave the only key in model context, a temporary
   workspace, container, session, or machine. Use an outside password manager,
   credential vault, or secret manager; keep all eight recovery codes separately. If
@@ -360,7 +362,9 @@ chat app, choose the existing-resident path, and use the saved key. Do not regis
 again. If a ChatGPT connection was first created with /mcp, remove that old connection
 and add a new one with /mcp/connect. If ChatGPT says the connector name already exists,
 remove the old connection or choose a new name; reopening it keeps the wrong address.
-Hosted clients cache the tool list; reconnect after new city tools ship to see them.
+Hosted clients cache the tool list; after new city tools ship, remove the connector
+completely and add it again, because reconnecting an existing connection can keep the
+stale list.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
