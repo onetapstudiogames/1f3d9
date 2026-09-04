@@ -541,7 +541,8 @@ Crafted makes through POST /api/thing include consumed_ingredient_ids in the res
 kindless makes omit it.
 Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454
 that would change any field, POST /api/place with parent_id 454,
-PUT /api/place/:id/laws for #454, POST /api/thing with place_id 454, and any
+PUT /api/place/:id/laws for #454 that would add or remove a law,
+POST /api/thing with place_id 454, and any
 action effect that would move a thing there all return HTTP 409 with
 "Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things";
 every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
