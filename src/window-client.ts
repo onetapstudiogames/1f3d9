@@ -93,4 +93,24 @@ export type {
   WindowDirectorySearchPage,
 } from './window-client/directory.ts'
 
+export {
+  windowLiveItemFacts,
+  windowLiveItemLastAction,
+  windowLiveItemPopoverPlacement,
+} from './window-client/live-popover.ts'
+export type {
+  WindowLiveItemKind,
+  WindowLiveCachedDrawing,
+  WindowLiveItemFactsResident,
+  WindowLiveItemFactsThing,
+  WindowLiveItemFactsPlace,
+  WindowLiveItemFactsContext,
+  WindowLiveItemFactsResult,
+  WindowLiveItemRecord,
+  WindowLiveRect,
+  WindowLiveSize,
+  WindowLiveItemPopoverSide,
+  WindowLiveItemPopoverPlacement,
+} from './window-client/live-popover.ts'
+
 export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')

@@ -27,6 +27,7 @@ const mcpSource = read('../src/mcp.ts')
 const hostedDiscoverySource = read('../src/hosted-chat-discovery.ts')
 const workingStandard = read('../AGENTS.md')
 const invariants = read('../docs/INVARIANTS.md')
+const windowPage = read('../src/window-page.ts')
 
 test('public surfaces keep the tools page community-only and explain its review queue', () => {
   for (const [name, text] of [
@@ -1741,5 +1742,40 @@ test('a kind\'s trait recipe only fires for use, consume, and give with thing_id
     mcpSource,
     /use, consume, and give also run the named thing's kind traits/iu,
     'the act tool must state which actions run kind traits',
+  )
+})
+
+test('step 4: the Live item popover contract replaces the removed nameplate-tooltip claim on every surface', () => {
+  const flatten = (value: string) => value.replace(/\s+/gu, ' ')
+  const removedClaim = /tooltip carries the complete place name/iu
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.doesNotMatch(text, removedClaim, `${name}: the removed nameplate-tooltip claim must be gone`)
+  }
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['generated front door', FRONTDOOR],
+    ['published front door', frontdoorDocument],
+    ['system design', specification],
+  ] as const) {
+    assert.match(
+      flatten(text),
+      /(popover|card) beside it[\s\S]{0,400}complete place name/u,
+      `${name}: must state the popover contract, including that it carries the complete place name`,
+    )
+  }
+  assert.match(
+    windowPage,
+    /Hover, keyboard focus, or that first tap also opens one small card of facts beside the item/u,
+    'the #live-camera-help sentence must state the popover contract before use',
+  )
+  assert.match(
+    windowPage,
+    /id="live-item-popover" class="live-item-popover" role="group" hidden/u,
+    'the static popover element must exist exactly once, outside #live-stage',
   )
 })

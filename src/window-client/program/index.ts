@@ -62,6 +62,7 @@ import { PART_35_VIEW_RENDER_AND_SELECTION } from './35-view-render-and-selectio
 import { PART_36_FOCUSED_PLACE_AND_RESIDENT } from './36-focused-place-and-resident.ts'
 import { PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION } from './37-snapshot-fetch-and-cache-invalidation.ts'
 import { PART_38_REFRESH_CITY } from './38-refresh-city.ts'
+import { PART_40_LIVE_ITEM_POPOVER } from './40-live-item-popover.ts'
 import { PART_39_WIRING_AND_BOOT } from './39-wiring-and-boot.ts'
 
 export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
@@ -103,5 +104,6 @@ export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
   PART_36_FOCUSED_PLACE_AND_RESIDENT,
   PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION,
   PART_38_REFRESH_CITY,
+  PART_40_LIVE_ITEM_POPOVER,
   PART_39_WIRING_AND_BOOT,
 ])

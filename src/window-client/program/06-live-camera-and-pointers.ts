@@ -66,6 +66,7 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
     nodes.liveStage.dataset.liveLabelMode = labelMode
     syncLivePlotVisibility()
     scheduleLiveResidentLabels(previousLabelMode !== labelMode)
+    if (liveItemPopoverIsOpen()) positionLiveItemPopover()
   }
 
   function applyLiveCamera(next) {

@@ -78,7 +78,6 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
     if (!hasDrawing) return document.createDocumentFragment()
     const shell = element('span', 'entity-portrait' + (className ? ' ' + className : ''))
     shell.setAttribute('aria-hidden', 'true')
-    shell.title = label + ' drawing'
     shell.dataset.portraitType = type
     shell.dataset.portraitId = String(id)
     shell.append(element('span', 'entity-portrait-placeholder'))
@@ -89,8 +88,12 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
   // Decision #62 / step 2 ruling: the sprite on the ground is the drawing
   // alone -- an authored thumbnail when one exists, or a small neutral
   // marker when it does not. No state or provenance chip renders here;
-  // that stays reachable through the title attribute and the unchanged
-  // drawing-detail button (see mountLivePlaceDetail, openDrawingDetailButton).
+  // step 4 makes that state and provenance reachable through the single
+  // Live item popover (hover, keyboard focus, or the first touch tap) and
+  // the unchanged drawing-detail button, not through a title attribute --
+  // the shell above is aria-hidden and the marker below was reachable only
+  // by mouse hover, so a title never actually carried this to keyboard or
+  // touch users.
   function liveSpriteNode(type, id, label, hasDrawing) {
     if (hasDrawing) {
       return portraitNode(type, id, label, true, 'live-entity-portrait')
@@ -98,8 +101,7 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
     const marker = element('span',
       'drawing-grid drawing-undrawn live-neutral-marker live-entity-portrait')
     marker.setAttribute('role', 'img')
-    marker.title = label + ' has no drawing'
-    marker.setAttribute('aria-label', marker.title)
+    marker.setAttribute('aria-label', label + ' has no drawing')
     return marker
   }
 

@@ -76,6 +76,11 @@ import {
   searchWindowDirectory,
   pageWindowDirectorySearch,
 } from '../directory.ts'
+import {
+  windowLiveItemFacts,
+  windowLiveItemLastAction,
+  windowLiveItemPopoverPlacement,
+} from '../live-popover.ts'
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -132,6 +137,9 @@ const WINDOW_LIVE_REPLAY_START_OFFSETS_JS = windowLiveReplayStartOffsets.toStrin
 const WINDOW_LIVE_REPLAY_ORDER_JS = windowLiveReplayOrder.toString()
 const WINDOW_LIVE_SPEECH_LINE_JS = windowLiveSpeechLine.toString()
 const WINDOW_LIVE_TOUCH_ACTIVATION_JS = windowLiveTouchActivation.toString()
+const WINDOW_LIVE_ITEM_FACTS_JS = windowLiveItemFacts.toString()
+const WINDOW_LIVE_ITEM_LAST_ACTION_JS = windowLiveItemLastAction.toString()
+const WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS = windowLiveItemPopoverPlacement.toString()
 const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
 )
@@ -177,6 +185,10 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze(
     ${WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON})
   const LIVE_TRAIL_DOM_LIMIT = 96
+  // Step 4: the single reusable Live item popover's clear space from the
+  // sprite it describes, and its minimum inset from the live viewport edge.
+  const LIVE_ITEM_POPOVER_GAP = 10
+  const LIVE_ITEM_POPOVER_MARGIN = 8
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
   const MAX_AUTO_HISTORY_PAGES = 8
@@ -251,5 +263,8 @@ export const PART_01_PRELUDE = `(() => {
   const windowLiveReplayOrder = ${WINDOW_LIVE_REPLAY_ORDER_JS}
   const windowLiveSpeechLine = ${WINDOW_LIVE_SPEECH_LINE_JS}
   const windowLiveTouchActivation = ${WINDOW_LIVE_TOUCH_ACTIVATION_JS}
+  const windowLiveItemFacts = ${WINDOW_LIVE_ITEM_FACTS_JS}
+  const windowLiveItemLastAction = ${WINDOW_LIVE_ITEM_LAST_ACTION_JS}
+  const windowLiveItemPopoverPlacement = ${WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS}
 
 `

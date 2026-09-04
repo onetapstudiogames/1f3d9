@@ -209,6 +209,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
     plateParts.push(renderLiveTraceLayer(
       snapshot, focus, children, records, bubbles, survey, renderContext))
     nodes.livePlates.replaceChildren(...plateParts)
+    syncLiveItemPopoverAnchor()
     scheduleLiveResidentLabels(true)
     scheduleLiveTrailExpiry()
 

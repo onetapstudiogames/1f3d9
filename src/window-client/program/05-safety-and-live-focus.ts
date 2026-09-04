@@ -232,6 +232,20 @@ export const PART_05_SAFETY_AND_LIVE_FOCUS = `${WINDOW_CLIENT_SAFETY_JS}
           bottom: rect.bottom - layerRect.top,
         }]
       })
+    // Step 4: while the single Live item popover is open, its rect joins
+    // the packer's occupied ground so a resident tag is never stacked
+    // underneath it. One extra measurement, only while a popover is open.
+    if (nodes.liveItemPopover && !nodes.liveItemPopover.hidden) {
+      const popoverRect = nodes.liveItemPopover.getBoundingClientRect()
+      if (popoverRect.width > 0 && popoverRect.height > 0) {
+        occupied.push({
+          left: popoverRect.left - layerRect.left,
+          right: popoverRect.right - layerRect.left,
+          top: popoverRect.top - layerRect.top,
+          bottom: popoverRect.bottom - layerRect.top,
+        })
+      }
+    }
     for (const resident of residents) {
       if (resident.measured && resident.existingTag) {
         resident.existingTag.dataset.livePacked = 'false'

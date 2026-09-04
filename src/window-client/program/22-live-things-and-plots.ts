@@ -228,7 +228,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     for (const thing of visibleThings) {
       const specimen = element('a', 'live-thing-specimen')
       specimen.href = '/api/thing/' + String(thing.id)
-      specimen.title = 'Read ' + thing.name
+      specimen.setAttribute('aria-label', 'Read ' + thing.name)
       specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
       specimen.dataset.liveThingId = String(thing.id)
       specimen.dataset.liveThingPlaceId = String(thing.place_id)
@@ -252,6 +252,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
         element('span', 'live-thing-name live-item-name', thing.name),
       )
       bindLiveActivation(specimen, specimen, itemKey, null)
+      bindLiveItemPopover(specimen, itemKey, 'thing', () => thing)
       shelf.append(specimen)
     }
     const overflowCount = selection.overflowCount + selection.visible.length - visibleThings.length
@@ -391,9 +392,10 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     const open = element('button', 'live-plot-open')
     open.type = 'button'
     open.dataset.focusKey = 'live-place:' + String(place.id)
-    open.title = 'Open the live plate for ' + place.name
+    open.setAttribute('aria-label', 'Open the live plate for ' + place.name)
     bindLiveActivation(open, card, itemKey,
       () => navigate({ view: 'live', placeId: place.id }))
+    bindLiveItemPopover(open, itemKey, 'place', () => place)
     open.append(element('span', 'live-plot-name', place.name),
       element('span', 'live-plot-number', '#' + String(place.id)))
     card.dataset.undrawn = 'false'

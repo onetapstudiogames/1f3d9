@@ -205,7 +205,9 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   })
   nodes.liveViewport?.addEventListener('pointerdown', event => {
     if (event.target instanceof Element &&
-        event.target.closest('button, a, input, select, textarea, [role="button"]')) return
+        event.target.closest(
+          'button, a, input, select, textarea, [role="button"], .live-item-popover',
+        )) return
     event.preventDefault()
     nodes.liveViewport.dataset.liveDragging = 'true'
     beginLivePointer(event)
@@ -314,6 +316,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     ...initialLocationState,
     live: { ...state.live, focusResident: initialFocusResident },
   }
+  wireLiveItemPopover()
   syncArchiveControls()
   renderView()
   writeLocation(false)
