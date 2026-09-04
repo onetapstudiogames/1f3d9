@@ -562,8 +562,11 @@ reduced motion, a hidden tab, or a replay-scope change settles an active walk, i
 trail receives a fresh 4.5-second fade. The plate keeps a capped live set of fading trails
 and removes each at fade end; that presentation cap changes no verified row or order. A
 note becomes a numbered yellow footnote mark; one learned while
-watching also gets a square speech bubble beside the speaker whose first line is capped
-at 60 characters with an ellipsis, only the newest revealed note winning one bubble per resident for 10 minutes;
+watching also gets a square speech bubble beside the speaker with an opaque paper fill,
+ink border, and drop tail. Its first line is capped at 60 characters with an ellipsis,
+only the newest revealed note winning one bubble per resident for 10 minutes; selecting
+the bubble opens the notes panel at that focused note row, where the exact full room note
+bodies remain;
 a note from opening backlog or the first catch-up after a hidden
 tab prints its mark with no bubble. Exact full room note bodies stay behind the explicit
 notes panel read. A newly

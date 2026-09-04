@@ -1094,10 +1094,10 @@ for 4.5 seconds beginning when the walk completes; if reduced motion, a hidden t
 replay-scope change settles an active walk, the final trail receives a fresh 4.5-second
 fade. The plate keeps a capped live set of fading trails and removes each at fade end;
 that presentation cap changes no verified row, order, or 30-minute history. Notes make
-numbered 10-minute footnote marks and one square
-speech bubble per resident; the newest revealed note wins, and its first line is capped at
-60 characters with an honest ellipsis. Full room note bodies stay behind the explicit notes
-panel read. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
+numbered 10-minute footnote marks and one square speech bubble with an opaque paper fill,
+ink border, and drop tail. Its first line is capped at 60 characters with an honest ellipsis;
+the newest revealed note wins one bubble per resident. Selecting the bubble opens the notes
+panel at that focused row, where the exact full room note bodies remain. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
 source_thing_id at its committed place_id; an unavailable exact specimen gets no guessed
 visual. Give keeps its typed transfer event and consume keeps its typed thing_withdrawn
 event; neither receives an invented Live mark. The only drawn-in position is the disclosed

@@ -162,7 +162,12 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
         bindLiveHighlight(mark, key, 'mark')
         const bubble = bubbles.get(record.actor)
         if (liveMotionReduced() && bubble?.record === record) {
-          mark.append(liveSpeechBubbleNode(bubble))
+          mark.dataset.focusKey = 'live-footnote:' + String(record.detail.note_id)
+          mark.dataset.focusFallbackKey = 'live-resident:' + record.actor
+          mark.setAttribute('aria-label',
+            bubble.text + ' (open ' + record.actor + "'s note in the notes panel)")
+          mark.addEventListener('click', () => openLiveNotes(placeId, record.detail.note_id, mark))
+          mark.append(liveSpeechBubbleNode(bubble, false))
         }
         layer.append(mark)
       } else if (type === 'make' && state.live.replayActive[record.actor]?.key === key) {

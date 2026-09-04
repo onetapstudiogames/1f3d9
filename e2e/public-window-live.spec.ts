@@ -3125,17 +3125,31 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
       (node as HTMLElement).dataset.liveReplayKey))
     return new Set(concurrentReplayKeys).size
   }).toBe(2)
-
-  let sawSpeech = false
   let sawUse = false
   for (let elapsed = 0; elapsed < 24_000; elapsed += 500) {
     await page.clock.runFor(500)
-    sawSpeech ||= await page.locator('.live-speech-bubble').count() > 0
     sawUse ||= await page.locator('.live-thing-specimen.live-pulse').count() > 0
   }
-  expect(sawSpeech).toBe(true)
   expect(sawUse).toBe(true)
   await expect(replays).toHaveCount(0)
+
+  await page.locator('#place-filter').selectOption('9103')
+  await expect(proofPanel.locator('.live-world-ground-tiles')).toHaveAttribute(
+    'data-undrawn', 'false',
+  )
+  const scriptedBubble = page.locator('.live-speech-bubble')
+  await expect(scriptedBubble).toHaveText('The workshop bell rings above the busy floor.')
+  await expect(scriptedBubble).toHaveAttribute(
+    'aria-label', "The workshop bell rings above the busy floor. (open proof-dara's note)",
+  )
+  await scriptedBubble.click()
+  const scriptedNote = proofPanel.locator('.live-note-row[data-live-note-id="9352"]')
+  await expect(scriptedNote).toBeFocused()
+  await expect(scriptedNote).toContainText('The workshop bell rings above the busy floor.')
+  await proofPanel.locator('#live-notes-close').click()
+  // Closing returns focus to the bubble that opened the panel, the same
+  // opener contract every other control on the plate keeps.
+  await expect(page.locator('.live-speech-bubble')).toBeFocused()
 
   await proofButton.click()
   await expect(proofPanel).toBeVisible()
@@ -3222,12 +3236,18 @@ test('proof: quiet opening, no arrows', async ({ page }) => {
   await expect(proofPanel.locator(
     '.live-trail[data-live-key="change:9506"]',
   )).toHaveCount(0)
+  await expect(proofPanel.locator(
+    '.live-footnote-mark[data-live-key="change:9507"]',
+  )).toHaveCount(0)
 
   // A scripted move fires shortly after entry and animates and draws a
   // trail exactly like a move actually watched happen.
   await page.clock.fastForward(5_001)
   await expect(proofPanel.locator(
     '.live-trail[data-live-key="change:9506"]',
+  )).toHaveCount(1)
+  await expect(proofPanel.locator(
+    '.live-footnote-mark[data-live-key="change:9507"]',
   )).toHaveCount(1)
   await expect(proofPanel.locator('#live-trace-arrow')).toHaveCount(0)
 })
@@ -4270,7 +4290,7 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
 test('a speech bubble the viewer watched appear stays within the live viewport', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
-  const fixture = await installReplayRoutes(page, now)
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, { liveNotesCount: 78 })
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
@@ -4312,9 +4332,51 @@ test('a speech bubble the viewer watched appear stays within the live viewport',
   await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
 
   await page.setViewportSize({ width: 375, height: 812 })
-  await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+  const bubble = page.locator('.live-speech-bubble')
+  await expect(bubble).toHaveText('Earlier line')
   await panLiveTargetIntoView(page, replay, 64)
   await expect.poll(bubbleWithinViewport).toEqual(allBoundsHold)
+
+  // Step 7 deliberately reverses PR #172's final transparent, borderless
+  // assertion: the bubble is opaque paper with visible ink around it.
+  const bubbleStyle = await bubble.evaluate(node => {
+    const style = getComputedStyle(node)
+    const alpha = style.backgroundColor.match(/[\d.]+/gu)?.map(Number)[3] ?? 1
+    return { backgroundColor: style.backgroundColor, borderWidth: style.borderTopWidth, alpha }
+  })
+  await expect(bubble).toHaveAttribute('data-live-note-place-id', '3')
+  expect(bubbleStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(bubbleStyle.alpha).toBe(1)
+  expect(Number.parseFloat(bubbleStyle.borderWidth)).toBeGreaterThan(0)
+  const tiledFloor = page.locator('.live-plot[data-place-id="3"] .live-plot-terrain')
+  await expect(tiledFloor).toBeVisible()
+  await expect(tiledFloor).toHaveCSS('background-repeat', 'repeat')
+  expect(await tiledFloor.evaluate(node => getComputedStyle(node).backgroundImage)).not.toBe('none')
+  const contrast = await bubble.evaluate(node => {
+    const rgb = (value: string) => value.match(/[\d.]+/gu)!.slice(0, 3).map(Number)
+    const luminance = (value: string) => {
+      const channels = rgb(value).map(channel => {
+        const scaled = channel / 255
+        return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!
+    }
+    const style = getComputedStyle(node)
+    const light = Math.max(luminance(style.color), luminance(style.backgroundColor))
+    const dark = Math.min(luminance(style.color), luminance(style.backgroundColor))
+    return (light + 0.05) / (dark + 0.05)
+  })
+  expect(contrast).toBeGreaterThanOrEqual(4.5)
+
+  await bubble.click()
+  await expect(page).toHaveURL(/\/window\/live\?place=3&notes=open$/u)
+  const noteRow = page.locator('.live-note-row[data-live-note-id="77"]')
+  await expect(noteRow).toBeFocused()
+  expect(await noteRow.evaluate(node => {
+    const row = node.getBoundingClientRect()
+    const list = node.closest('.live-notes-list')!.getBoundingClientRect()
+    return row.top >= list.top && row.bottom <= list.bottom
+  })).toBe(true)
 })
 
 test('resident tags follow zoom and intent while terrain and camera writes stay bounded', async ({ page }) => {
@@ -4693,7 +4755,9 @@ test('reduced motion shows new records statically without replay animation', asy
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   const latestNoteMark = page.locator('.live-footnote-mark[data-live-key="change:13"]')
   await expect(latestNoteMark).toBeVisible()
-  await expect(latestNoteMark).toHaveAccessibleName("Show map-walker's note in the plate ledger")
+  await expect(latestNoteMark).toHaveAccessibleName(
+    'L'.repeat(59) + "… (open map-walker's note in the notes panel)",
+  )
   const bubble = latestNoteMark.locator('.live-speech-bubble')
   await expect(bubble).toBeVisible()
   await expect(bubble).toHaveText('L'.repeat(59) + '…')

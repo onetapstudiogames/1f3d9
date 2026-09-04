@@ -44,8 +44,12 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     const notes = Object.freeze(Array.from({ length: 52 }, (_, index) => Object.freeze({
       id: 9352 - index,
       place_id: workshopId,
-      author: index % 2 ? 'proof-bea' : 'proof-alex',
-      body: 'Proof room note ' + String(52 - index) + ' of 52.',
+      author: index === 0 ? 'proof-dara' : index === 1 ? 'proof-eli'
+        : index % 2 ? 'proof-bea' : 'proof-alex',
+      body: index === 0
+        ? 'The workshop bell rings above the busy floor.'
+        : index === 1 ? 'A second proof note fires while the scene runs.'
+        : 'Proof room note ' + String(52 - index) + ' of 52.',
       created_at: new Date(now - index * 1_000),
       moderated: false,
       truncated: false,
@@ -120,7 +124,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         detail: { action: 'move', status: 'applied',
           from_place_id: gardenId, to_place_id: workshopId } },
       { change_id: '9503', created_at: new Date(now - 50).toISOString(), kind: 'note',
-        actor: 'proof-alex', detail: { place_id: workshopId, note_id: 9301 } },
+        actor: 'proof-dara', detail: { place_id: workshopId, note_id: 9352 } },
       { change_id: '9504', created_at: new Date(now - 25).toISOString(), kind: 'action',
         actor: 'proof-alex', detail: { action: 'use', status: 'applied',
           place_id: workshopId, source_thing_id: things[0].id } },
@@ -307,10 +311,15 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         changes,
         drawings: liveProofDrawings(proof),
         noteBodies: Object.freeze({
-          '9301': Object.freeze({
+          '9352': Object.freeze({
             loading: false,
             error: false,
-            body: 'spoke: two residents move together while this message appears.',
+            body: 'The workshop bell rings above the busy floor.',
+          }),
+          '9351': Object.freeze({
+            loading: false,
+            error: false,
+            body: 'A second proof note fires while the scene runs.',
           }),
         }),
         highlightedKey: null,
@@ -355,7 +364,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     liveProofScriptedMoveTimer = window.setTimeout(() => {
       liveProofScriptedMoveTimer = 0
       if (!state.live.proofScene) return
-      const scriptedChange = normalizeLiveChanges([{
+      const scriptedChanges = normalizeLiveChanges([{
         change_id: '9506',
         created_at: new Date().toISOString(),
         kind: 'action',
@@ -364,12 +373,18 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
           action: 'move', status: 'applied',
           from_place_id: LIVE_PROOF_GARDEN_ID, to_place_id: LIVE_PROOF_WORKSHOP_ID,
         },
-      }])[0]
+      }, {
+        change_id: '9507',
+        created_at: new Date().toISOString(),
+        kind: 'note',
+        actor: 'proof-eli',
+        detail: { place_id: LIVE_PROOF_WORKSHOP_ID, note_id: 9351 },
+      }])
       state = { ...state, live: {
         ...state.live,
-        changes: Object.freeze([...state.live.changes, scriptedChange]),
+        changes: Object.freeze([...state.live.changes, ...scriptedChanges]),
       } }
-      queueLiveReplays([scriptedChange], true)
+      queueLiveReplays(scriptedChanges, true)
       if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
     }, LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS)
   }

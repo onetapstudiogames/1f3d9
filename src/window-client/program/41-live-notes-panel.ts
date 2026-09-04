@@ -21,18 +21,20 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     control.addEventListener('click', event => {
       event.preventDefault()
       event.stopPropagation()
-      openLiveNotes(place.id, control)
+      openLiveNotes(place.id, null, control)
     })
     return control
   }
 
-  function openLiveNotes(placeId, opener = null) {
+  function openLiveNotes(placeId, noteId = null, opener = null) {
     const id = safeId(placeId)
     if (!id || !state.snapshot) return
     const total = liveSurveyNoteTotal(state.snapshot, id)
     if (total === null) return
+    liveNotesTargetId = safeId(noteId)
     liveNotesReturnFocus = Object.freeze({
       focusKey: opener?.dataset?.focusKey || document.activeElement?.dataset?.focusKey || null,
+      fallbackKey: opener?.dataset?.focusFallbackKey || null,
       placeId: id,
     })
     liveNotesRequestRevision += 1
@@ -48,7 +50,7 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     // closeLiveNotes returning focus to the opener; the close control is the
     // first thing a keyboard or screen-reader user needs.
     window.queueMicrotask(() => {
-      const target = nodes.liveNotesClose
+      const target = liveNotesTargetId ? null : nodes.liveNotesClose
       if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true })
     })
   }
@@ -61,14 +63,22 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     liveNotesRequestRevision += 1
     liveNotesController?.abort()
     liveNotesController = null
+    liveNotesTargetId = null
     liveNotesReturnFocus = null
     navigate({ liveNotesOpen: false })
     window.queueMicrotask(() => {
-      const key = returnFocus.focusKey || 'live-notes:' + String(returnFocus.placeId || '')
-      const target = key
-        ? document.querySelector('[data-focus-key="' + CSS.escape(key) + '"]')
-        : null
-      if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true })
+      // The opener first (a bubble, a footnote mark, or the room's notes
+      // control), then the speaker's sprite if the bubble has since faded,
+      // then the room's notes control, then the viewport.
+      const keys = [
+        returnFocus.focusKey,
+        returnFocus.fallbackKey,
+        'live-notes:' + String(returnFocus.placeId || ''),
+      ].filter(Boolean)
+      const target = keys
+        .map(key => document.querySelector('[data-focus-key="' + CSS.escape(key) + '"]'))
+        .find(node => node && !node.closest('[hidden]'))
+      if (target) target.focus({ preventScroll: true })
       else nodes.liveViewport?.focus({ preventScroll: true })
     })
   }
@@ -77,6 +87,8 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     if (isQuietPlace(place)) return quietRoomNotice(place)
     const row = element('li', 'live-note-row')
     row.dataset.liveNoteId = String(note.id)
+    row.dataset.focusKey = 'live-note:' + String(place.id) + ':' + String(note.id)
+    row.tabIndex = -1
     const meta = element('p', 'live-note-meta')
     meta.append(
       element('strong', '', note.author),
@@ -129,6 +141,19 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
           entry.loading ? 'Reading room notes…' : entry.error
             ? 'No note page is available yet.'
             : entry.initialized ? 'No public notes are in this room.' : 'Preparing room notes…')]))
+    if (liveNotesTargetId) {
+      const target = nodes.liveNotesList.querySelector(
+        '[data-live-note-id="' + String(liveNotesTargetId) + '"]')
+      if (target) {
+        liveNotesTargetId = null
+        target.scrollIntoView({ block: 'nearest' })
+        target.focus({ preventScroll: true })
+      } else if (entry.initialized && !entry.loading) {
+        liveNotesTargetId = null
+        nodes.liveNotesList.scrollTop = 0
+        nodes.liveNotesClose?.focus({ preventScroll: true })
+      }
+    }
     const focusedKey = nodes.liveNotesPage.contains(document.activeElement)
       ? document.activeElement?.dataset?.focusKey || null
       : null
