@@ -1869,6 +1869,98 @@ test('windowLiveItemPopoverPlacement keeps the popover fully inside the viewport
   assert.ok(phonePlacement.left + phoneSize.width <= 375)
 })
 
+// Round 1 review, finding #1 (HIGH): windowLiveItemPopoverPlacement could
+// render the popover entirely outside #live-viewport for an anchor the
+// camera has left off-screen -- reproduced live on the deployed preview at
+// 375x812 by hovering/focusing a resident not currently framed by the
+// camera, which is the normal state for most residents on any plate wider
+// than the viewport. Pinned here with the exact shape of that reproduction
+// (anchor.left far past viewport.right) and with the containment invariant
+// checked explicitly rather than only the never-covers-anchor one, since a
+// null primary axis passed that check while still rendering off-screen.
+test('windowLiveItemPopoverPlacement stays fully inside the viewport for an anchor the camera has left entirely off-screen', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 349, bottom: 812 })
+  const size = Object.freeze({ width: 260, height: 96 })
+  const offCameraAnchors = [
+    Object.freeze({ left: 608, top: 300, right: 706, bottom: 320 }), // right of viewport
+    Object.freeze({ left: -700, top: 300, right: -600, bottom: 320 }), // left of viewport
+    Object.freeze({ left: 100, top: -900, right: 120, bottom: -880 }), // above viewport
+    Object.freeze({ left: 100, top: 1800, right: 120, bottom: 1820 }), // below viewport
+    Object.freeze({ left: -700, top: -900, right: -680, bottom: -880 }), // above-left, diagonal
+  ]
+  for (const anchor of offCameraAnchors) {
+    const placement = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+    assert.ok(placement, JSON.stringify(anchor))
+    assert.ok(placement!.left >= 8, JSON.stringify(anchor))
+    assert.ok(placement!.left + size.width <= 349 - 8, JSON.stringify(anchor))
+    assert.ok(placement!.top >= 8, JSON.stringify(anchor))
+    assert.ok(placement!.top + size.height <= 812 - 8, JSON.stringify(anchor))
+    // An anchor entirely outside the viewport can never be reached by a
+    // placement fully contained inside it, so containment and
+    // never-covers-anchor both hold at once here, not just containment.
+    const absoluteLeft = placement!.left + viewport.left
+    const absoluteTop = placement!.top + viewport.top
+    const intersects = absoluteLeft < anchor.right && absoluteLeft + size.width > anchor.left &&
+      absoluteTop < anchor.bottom && absoluteTop + size.height > anchor.top
+    assert.equal(intersects, false, JSON.stringify(anchor))
+  }
+})
+
+test('windowLiveItemPopoverPlacement keeps a 320px popover inside a 375x812 viewport for anchors at every corner and edge, on camera and off', () => {
+  const viewport = Object.freeze({ left: 0, top: 0, right: 375, bottom: 812 })
+  const size = Object.freeze({ width: 320, height: 160 })
+  const anchors = [
+    Object.freeze({ left: 0, top: 0, right: 20, bottom: 20 }), // top-left
+    Object.freeze({ left: 355, top: 0, right: 375, bottom: 20 }), // top-right
+    Object.freeze({ left: 0, top: 792, right: 20, bottom: 812 }), // bottom-left
+    Object.freeze({ left: 355, top: 792, right: 375, bottom: 812 }), // bottom-right
+    Object.freeze({ left: 177, top: 396, right: 197, bottom: 416 }), // centre
+    Object.freeze({ left: 175, top: 0, right: 195, bottom: 20 }), // top edge, mid
+    Object.freeze({ left: 175, top: 792, right: 195, bottom: 812 }), // bottom edge, mid
+    Object.freeze({ left: -600, top: -600, right: -580, bottom: -580 }), // off top-left
+    Object.freeze({ left: 900, top: -600, right: 920, bottom: -580 }), // off top-right
+    Object.freeze({ left: -600, top: 1400, right: -580, bottom: 1420 }), // off bottom-left
+    Object.freeze({ left: 900, top: 1400, right: 920, bottom: 1420 }), // off bottom-right
+  ]
+  for (const anchor of anchors) {
+    const placement = windowLiveItemPopoverPlacement(anchor, size, viewport, 10, 8)
+    assert.ok(placement, JSON.stringify(anchor))
+    assert.ok(placement!.left >= 8, JSON.stringify(anchor))
+    assert.ok(placement!.left + size.width <= 375 - 8, JSON.stringify(anchor))
+    assert.ok(placement!.top >= 8, JSON.stringify(anchor))
+    assert.ok(placement!.top + size.height <= 812 - 8, JSON.stringify(anchor))
+  }
+})
+
+test('windowLiveItemPopoverPlacement prefers containment over avoiding the anchor when both cannot hold, and never returns NaN', () => {
+  // A tiny viewport almost entirely covered by its own anchor leaves no
+  // position that is both fully contained and anchor-free. The rule
+  // documented on the function is that containment wins: the placement
+  // must still land inside the viewport even though it may then overlap
+  // the anchor a little.
+  const viewport = Object.freeze({ left: 0, top: 0, right: 100, bottom: 100 })
+  const size = Object.freeze({ width: 60, height: 60 })
+  const anchor = Object.freeze({ left: 10, top: 10, right: 90, bottom: 90 })
+  const placement = windowLiveItemPopoverPlacement(anchor, size, viewport, 5, 2)
+  assert.ok(placement)
+  assert.ok(placement!.left >= 2)
+  assert.ok(placement!.left + size.width <= 100 - 2)
+  assert.ok(placement!.top >= 2)
+  assert.ok(placement!.top + size.height <= 100 - 2)
+
+  // A popover wider than the whole viewport is a degenerate but valid
+  // input (never non-finite, never zero-area) -- it must still fail closed
+  // to a deterministic, finite position rather than throwing or landing at
+  // NaN.
+  const wideSize = Object.freeze({ width: 500, height: 160 })
+  const narrowViewport = Object.freeze({ left: 0, top: 0, right: 375, bottom: 812 })
+  const smallAnchor = Object.freeze({ left: 150, top: 300, right: 170, bottom: 320 })
+  const widePlacement = windowLiveItemPopoverPlacement(smallAnchor, wideSize, narrowViewport, 10, 8)
+  assert.ok(widePlacement)
+  assert.ok(Number.isFinite(widePlacement!.left))
+  assert.ok(Number.isFinite(widePlacement!.top))
+})
+
 test('windowLiveItemPopoverPlacement is deterministic and fails closed on invalid input', () => {
   const viewport = Object.freeze({ left: 0, top: 0, right: 800, bottom: 600 })
   const size = Object.freeze({ width: 200, height: 100 })

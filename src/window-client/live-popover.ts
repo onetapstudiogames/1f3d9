@@ -237,6 +237,23 @@ export type WindowLiveItemPopoverPlacement = Readonly<{
 // positioned inside that viewport element), or null when nothing safe can
 // be computed — a non-finite input, or a zero-area anchor/viewport/size,
 // refuses to open rather than painting at NaN.
+//
+// PRIORITY RULE (round-1 review finding #1, reproduced live on the deployed
+// preview: an off-camera anchor could return a placement rendered entirely
+// outside #live-viewport): containment inside the viewport always wins over
+// never touching the anchor. The two invariants both hold in the common
+// case (a side that fits without clamping, handled first below) and they
+// also both hold whenever the anchor sits entirely outside the viewport --
+// the normal state for any resident/thing/place the camera has not framed
+// -- because a placement clamped fully inside the viewport then cannot
+// reach an anchor that is not in the viewport at all. They only truly
+// conflict when the anchor itself crowds the viewport closely enough that
+// no fully-contained position can avoid it (the popover is wider/taller
+// than the viewport, or the anchor fills most of a small one); only then
+// do we return the contained candidate with the least overlap instead of
+// refusing to open. A caller never has to special-case an off-camera
+// anchor: this function is always safe to call with the anchor's real
+// (possibly far outside the viewport) rect.
 export function windowLiveItemPopoverPlacement(
   anchorRect: WindowLiveRect,
   popoverSize: WindowLiveSize,
@@ -284,38 +301,53 @@ export function windowLiveItemPopoverPlacement(
   const insetRight = viewportRect.right - margin
   const insetTop = viewportRect.top + margin
   const insetBottom = viewportRect.bottom - margin
-  const fits = (candidate: { left: number; top: number }): boolean =>
+  const fitsUnclamped = (candidate: { left: number; top: number }): boolean =>
     candidate.left >= insetLeft && candidate.left + popoverSize.width <= insetRight &&
     candidate.top >= insetTop && candidate.top + popoverSize.height <= insetBottom
-  const room = (candidate: { left: number; top: number }): number => Math.min(
-    candidate.left - insetLeft,
-    insetRight - (candidate.left + popoverSize.width),
-    candidate.top - insetTop,
-    insetBottom - (candidate.top + popoverSize.height),
-  )
-  const fitting = candidates.find(fits)
-  // When no side fits fully, clamp only the CROSS axis of the side with
-  // the most room -- for above/below that is left, for left/right that is
-  // top. The PRIMARY axis (the one carrying the gap that keeps the
-  // popover off the anchor) is never clamped inward, because doing so is
-  // exactly what would push a clamped 'left' or 'above' placement back
-  // onto the anchor it was chosen to avoid.
-  const chosen = fitting || candidates.reduce(
-    (best, candidate) => room(candidate) > room(best) ? candidate : best,
-  )
-  const clampedLeft = fitting || chosen.side === 'left' || chosen.side === 'right'
-    ? chosen.left
-    : Math.min(Math.max(chosen.left, insetLeft), insetRight - popoverSize.width)
-  const clampedTop = fitting || chosen.side === 'above' || chosen.side === 'below'
-    ? chosen.top
-    : Math.min(Math.max(chosen.top, insetTop), insetBottom - popoverSize.height)
-  const intersectsAnchor =
-    clampedLeft < anchorRect.right + gap && clampedLeft + popoverSize.width > anchorRect.left - gap &&
-    clampedTop < anchorRect.bottom + gap && clampedTop + popoverSize.height > anchorRect.top - gap
-  if (intersectsAnchor) return null
+  // Side preference: above, below, right, left -- first side where the
+  // popover fits entirely inside the viewport with the gap and margin
+  // honoured, with no clamping needed at all.
+  const unclampedFit = candidates.find(fitsUnclamped)
+  if (unclampedFit) {
+    return Object.freeze({
+      left: unclampedFit.left - viewportRect.left,
+      top: unclampedFit.top - viewportRect.top,
+      side: unclampedFit.side,
+    })
+  }
+  // No side fits without clamping. Clamp EVERY candidate on BOTH axes to
+  // the viewport inset -- this is the fix: the old code clamped only the
+  // cross axis and left the primary axis (the one carrying the gap) alone,
+  // reasoning that clamping it would push the popover onto the anchor --
+  // true only when the anchor is itself near the viewport, and false (and
+  // silently unchecked) for any anchor the camera has left off-screen.
+  const clampBoth = (
+    candidate: { side: WindowLiveItemPopoverSide; left: number; top: number },
+  ): Readonly<{ side: WindowLiveItemPopoverSide; left: number; top: number }> => Object.freeze({
+    side: candidate.side,
+    left: Math.min(Math.max(candidate.left, insetLeft), insetRight - popoverSize.width),
+    top: Math.min(Math.max(candidate.top, insetTop), insetBottom - popoverSize.height),
+  })
+  const intersectsAnchorAt = (left: number, top: number): boolean =>
+    left < anchorRect.right + gap && left + popoverSize.width > anchorRect.left - gap &&
+    top < anchorRect.bottom + gap && top + popoverSize.height > anchorRect.top - gap
+  // Only used to rank candidates when every contained position must
+  // overlap the anchor at least a little (the genuine-conflict case) --
+  // the gap-expanded overlap area, smallest wins.
+  const overlapArea = (left: number, top: number): number => {
+    const overlapWidth = Math.min(left + popoverSize.width, anchorRect.right + gap) -
+      Math.max(left, anchorRect.left - gap)
+    const overlapHeight = Math.min(top + popoverSize.height, anchorRect.bottom + gap) -
+      Math.max(top, anchorRect.top - gap)
+    return Math.max(0, overlapWidth) * Math.max(0, overlapHeight)
+  }
+  const clamped = candidates.map(clampBoth)
+  const clear = clamped.find(candidate => !intersectsAnchorAt(candidate.left, candidate.top))
+  const chosen = clear || clamped.reduce((best, candidate) =>
+    overlapArea(candidate.left, candidate.top) < overlapArea(best.left, best.top) ? candidate : best)
   return Object.freeze({
-    left: clampedLeft - viewportRect.left,
-    top: clampedTop - viewportRect.top,
+    left: chosen.left - viewportRect.left,
+    top: chosen.top - viewportRect.top,
     side: chosen.side,
   })
 }
