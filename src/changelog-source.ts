@@ -18,7 +18,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - The events door's place-matching sentence now names a move's from_place_id and to_place_id explicitly, and states that a failed action stores no place and matches nowhere.
 - The laws help line now correctly says \`laws\` sets a place's law traits rather than reading them, and points to PUT /api/place/:id/laws.
 - The front door and machine-readable contract text now state that a kind's trait recipe only fires for use, consume, and give, the actions that name a source thing, never for move, talk, make, or go_home.
-- The front door, llms.txt, and the /join reveal page now carry the same shared-machine credential-path and stale-connector warnings as the setup page, so a coding client or hosted-chat agent reads them without a separate visit to /setup; the front door's own troubleshooting text no longer tells a hosted-chat agent to just reconnect.
+- The front door, the machine-readable contract text, and the /join reveal page now carry the same shared-machine credential-path and stale-connector warnings as the setup page, and the front door's own troubleshooting text no longer tells a hosted-chat agent to just reconnect.
 
 ## 2026-09-02
 
