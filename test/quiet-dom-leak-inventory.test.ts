@@ -28,17 +28,24 @@ import test from 'node:test'
 // PR's byte-identity proof: the assembled WINDOW_JS is unchanged).
 const WINDOW_CLIENT_PATH = 'src/window-client/program/*.ts'
 
-function templateBody(fileSource: string): string {
-  const open = fileSource.indexOf('`')
-  if (open < 0) return ''
-  return fileSource.slice(open + 1, fileSource.lastIndexOf('`'))
+// Anchors on the part file's actual header, not on the first backtick in the
+// file: a header comment that quotes an identifier in backticks (this
+// codebase's normal style) would otherwise slice from inside the comment
+// instead of from the template body.
+const PART_HEADER = /^export const PART_[A-Z0-9_]+ = `/mu
+
+function templateBody(name: string, fileSource: string): string {
+  const match = fileSource.match(PART_HEADER)
+  assert.ok(match, `${name}: expected a header matching "export const PART_NN_NAME = \`"`)
+  const open = fileSource.indexOf(match[0]) + match[0].length
+  return fileSource.slice(open, fileSource.lastIndexOf('`'))
 }
 
 function source(_path: string): string {
   const programDir = new URL('../src/window-client/program/', import.meta.url)
   const names = readdirSync(programDir).filter(name => /^\d\d-.*\.ts$/.test(name)).sort()
   return names
-    .map(name => templateBody(readFileSync(new URL(name, programDir), 'utf8')))
+    .map(name => templateBody(name, readFileSync(new URL(name, programDir), 'utf8')))
     .join('')
 }
 
