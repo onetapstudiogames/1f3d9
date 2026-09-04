@@ -24,6 +24,7 @@ const BASE_STATE: WindowShareState = Object.freeze({
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
   gazetteIssueId: null,
   detail: null,
+  notesOpen: false,
 })
 
 function gazetteShareState(issue: number | null): WindowShareState {
@@ -75,6 +76,17 @@ test('window share paths are clean, stable, and preserve the reproducible public
   assert.equal(windowSharePath(BASE_STATE), '/window/map')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'live', placeId: 310 }),
     '/window/live?place=310')
+  const liveNotesPath = windowSharePath({
+    ...BASE_STATE,
+    view: 'live',
+    placeId: 422,
+    notesOpen: true,
+  })
+  assert.equal(liveNotesPath, '/window/live?place=422&notes=open')
+  const liveNotes = parseWindowShareRequest('/window/live', '?place=422&notes=open')
+  assert.equal(liveNotes?.canonicalPath, liveNotesPath)
+  assert.equal(liveNotes?.state.placeId, 422)
+  assert.equal(liveNotes?.state.notesOpen, true)
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things' }), '/window/things')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things', placeId: 310 }),
     '/window/things?place=310')

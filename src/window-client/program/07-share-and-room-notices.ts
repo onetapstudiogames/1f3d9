@@ -150,9 +150,6 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
       nodes.agreements]) {
       renderEmpty(target, 'error-row', message)
     }
-    if (nodes.liveLedger) {
-      nodes.liveLedger.replaceChildren(element('li', 'error-row', message))
-    }
     if (nodes.activity) {
       nodes.activity.replaceChildren(element('li', 'error-row', message))
     }

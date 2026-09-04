@@ -160,7 +160,7 @@ test('the window client honours quiet with the exact sentence in every content t
   assert.doesNotMatch(WINDOW_JS, /if \(place && place\.quiet && !state\.resident\) \{/u)
 
   // Live: the main plate (walker portraits and thing specimens) withholds
-  // just like the roster, and never leaks names through the ledger either.
+  // just like the roster, and the notes panel prints only the quiet line.
   assert.match(
     WINDOW_JS,
     /if \(focus\.quiet\) \{\s*renderLiveQuietPlate\(snapshot, focus\)/mu,
@@ -168,7 +168,7 @@ test('the window client honours quiet with the exact sentence in every content t
   assert.match(WINDOW_JS, /function renderLiveQuietPlate\(snapshot, focus\) \{/u)
   assert.match(
     WINDOW_JS,
-    /if \(liveFocus\.quiet\) \{\s*const row = element\('li', 'quiet-room-notice-row'\)/mu,
+    /if \(isQuietPlace\(place\)\) \{[\s\S]{0,220}nodes\.liveNotesList\.replaceChildren\(quietRoomNotice\(place\)\)/mu,
   )
 
   // The client never gates the underlying HTTP reads on `quiet`; only

@@ -48,6 +48,12 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   }
   detailShareButton?.addEventListener('click', () => void copyCurrentShareLink(detailShareButton))
   nodes.detailClose?.addEventListener('click', closeDetail)
+  nodes.liveNotesClose?.addEventListener('click', closeLiveNotes)
+  document.addEventListener('pointerdown', event => {
+    if (!state.liveNotesOpen || !(event.target instanceof Element)) return
+    if (event.target.closest('#live-notes-panel, [data-live-notes-place-id]')) return
+    closeLiveNotes()
+  })
   nodes.detail?.addEventListener('click', event => {
     if (event.target === nodes.detail) closeDetail()
   })
@@ -261,6 +267,11 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   window.addEventListener('hashchange', syncStateFromLocation)
   window.addEventListener('popstate', syncStateFromLocation)
   document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && state.liveNotesOpen) {
+      event.preventDefault()
+      closeLiveNotes()
+      return
+    }
     if (event.key !== 'Escape' ||
         document.getElementById('live-panel')?.dataset.liveFullscreen !== 'true') return
     event.preventDefault()
@@ -280,6 +291,14 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     }
     window.clearTimeout(state.pollTimer)
     if (hidden) {
+      if (state.liveNotesOpen) {
+        liveNotesRequestRevision += 1
+        liveNotesController?.abort()
+        liveNotesController = null
+        state = { ...state, live: { ...state.live, notesPanel: Object.freeze({
+          ...state.live.notesPanel, loading: false,
+        }) } }
+      }
       if (liveReplayHeldKeys().size) settleLiveReplays()
       state = { ...state, pollTimer: 0, live: {
         ...state.live,

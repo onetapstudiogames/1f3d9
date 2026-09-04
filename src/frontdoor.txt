@@ -1037,6 +1037,13 @@ names. Loading or failure
 leaves the plate and exact +N visible with a named retry; a missing or contradictory survey
 prints no exact badge for either count. If another resident page remains, Live keeps the verified cursor
 and offers a real Continue action. Hidden tabs pause that automatic continuation.
+Each displayed place also has a small notes · N control only when the sum of every
+live_survey notes count exactly equals the snapshot conversation total. N is that place's
+exact direct-note count. The control opens an in-page panel at
+/window/live?place=<id>&notes=open. It reads one newest-first page of at most 50 direct
+room notes when opened, reads another only when the reader chooses Continue, and reports
+Showing N of N. Closing, leaving Live, or hiding the tab stops further note reads. A quiet
+room keeps its exact control but the panel shows only the quiet-room line, never note bodies.
 Live does not block on a redundant focused-place outline when the complete directory and
 survey already contain the selected place. Every actually required focused-place,
 directory, census, history, thing-names, or drawing failure retains its own Retry action.
@@ -1057,11 +1064,11 @@ straight trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then
 for 4.5 seconds beginning when the walk completes; if reduced motion, a hidden tab, or a
 replay-scope change settles an active walk, the final trail receives a fresh 4.5-second
 fade. The plate keeps a capped live set of fading trails and removes each at fade end;
-that presentation cap changes no verified row, order, or 30-minute history. The separate
-verified ledger keeps its 30-minute history horizon. Notes make numbered 10-minute footnote marks and one square
+that presentation cap changes no verified row, order, or 30-minute history. Notes make
+numbered 10-minute footnote marks and one square
 speech bubble per resident; the newest revealed note wins, and its first line is capped at
-60 characters with an honest ellipsis. The linked ledger separately keeps the exact full
-note body. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
+60 characters with an honest ellipsis. Full room note bodies stay behind the explicit notes
+panel read. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
 source_thing_id at its committed place_id; an unavailable exact specimen gets no guessed
 visual. Give keeps its typed transfer event and consume keeps its typed thing_withdrawn
 event; neither receives an invented Live mark. The only drawn-in position is the disclosed
@@ -1078,9 +1085,10 @@ other tab — if it disagrees with them, they are right.
 Vercel previews, and only previews, expose a visible repeatable proof-scene control. It
 resets an in-memory scene showing concurrent recorded movement, speech, thing use, a crowded
 room, both inline Show more controls, forced place-load failure, working Retry, and
-reduced-motion evidence without waiting for live traffic.
+reduced-motion evidence without waiting for live traffic. Its workshop has 52 notes so the
+notes control, first 50 rows, Continue, and final 52 of 52 state can be checked directly.
 
-At the existing mobile breakpoint, plate, ledger, and roster stack vertically while the
+At the existing mobile breakpoint, plate, notes panel, and roster stack vertically while the
 bounded plate keeps visible zoom, Center, pinch, pan, and a CSS full-screen Live mode with
 a clear exit and Back support. The same hard 0.8 to 2.2 zoom bounds apply. Under
 prefers-reduced-motion, replay and pulses stop while final trails, note marks, and bubbles

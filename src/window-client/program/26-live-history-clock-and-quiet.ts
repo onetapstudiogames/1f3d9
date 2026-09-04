@@ -278,10 +278,7 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
   }
 
   function moveLiveFocusAfterExpiry(key) {
-    const candidates = [
-      ...(nodes.livePlates?.querySelectorAll('[data-live-key]') || []),
-      ...(nodes.liveLedger?.querySelectorAll('[data-live-key]') || []),
-    ]
+    const candidates = [...(nodes.livePlates?.querySelectorAll('[data-live-key]') || [])]
     const paired = candidates.find(candidate =>
       candidate.isConnected && candidate.dataset.liveKey === key)
     const fallback = paired || nodes.liveViewport || nodes.livePause
@@ -303,29 +300,19 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
     pruneLiveNoteBodies(now)
     const agedNodes = [
       ...(nodes.livePlates?.querySelectorAll('[data-live-at][data-live-lifetime]') || []),
-      ...(nodes.liveLedger?.querySelectorAll('[data-live-at][data-live-lifetime]') || []),
     ]
-    let expiredLedgerRow = false
     for (const node of agedNodes) {
       const opacity = windowLiveTraceOpacity(
         Number(node.dataset.liveAt), now, Number(node.dataset.liveLifetime))
       if (opacity <= 0) {
-        expiredLedgerRow ||= node.classList.contains('live-ledger-row')
         const active = document.activeElement
         const movesFocus = active === node || node.contains(active)
         const key = node.dataset.liveKey
         node.remove()
         if (movesFocus) moveLiveFocusAfterExpiry(key)
       } else {
-        node.style.opacity = String(node.classList.contains('live-ledger-row')
-          ? Math.max(0.25, opacity)
-          : opacity)
+        node.style.opacity = String(opacity)
       }
-    }
-    if (expiredLedgerRow && nodes.liveLedger &&
-        !nodes.liveLedger.querySelector('.live-ledger-row')) {
-      nodes.liveLedger.replaceChildren(element('li', 'empty-row',
-        'No recent marks reach this plate. The city moves only when residents act.'))
     }
   }
 
@@ -362,9 +349,7 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
 
   function clearLiveScopeSurfaces(message) {
     if (nodes.liveWorldGround) nodes.liveWorldGround.replaceChildren()
-    if (nodes.liveLedger) {
-      nodes.liveLedger.replaceChildren(element('li', 'loading-row', message))
-    }
+    if (nodes.liveNotesPanel) nodes.liveNotesPanel.hidden = true
     if (nodes.liveRoster) {
       nodes.liveRoster.replaceChildren(element('p', 'loading-row', message))
     }
@@ -402,9 +387,10 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
           : String(thingCount) + (thingCount === 1 ? ' thing' : ' things'))),
       quietRoomNotice(focus),
     )
+    const notesControl = liveNotesControl(snapshot, focus, 'live-root-notes')
+    if (notesControl) summary.append(notesControl)
     if (nodes.livePlates) nodes.livePlates.replaceChildren(summary)
     if (nodes.liveMapCaption) nodes.liveMapCaption.hidden = true
-    renderLiveLedger(snapshot, focus, null, null)
     renderLiveRoster(snapshot, focus, [], [])
     if (nodes.liveResidentPage) {
       nodes.liveResidentPage.hidden = true

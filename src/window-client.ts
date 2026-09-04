@@ -113,4 +113,7 @@ export type {
   WindowLiveItemPopoverPlacement,
 } from './window-client/live-popover.ts'
 
+export { normalizeLiveNotesPage } from './window-client/live-notes.ts'
+export type { WindowLiveNote, WindowLiveNotesPage } from './window-client/live-notes.ts'
+
 export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')

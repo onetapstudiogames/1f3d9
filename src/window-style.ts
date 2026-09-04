@@ -973,8 +973,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .front-matter-title,
 .thing-index-title,
 .place-card-thing,
-.activity-thing-reference,
-.live-ledger-thing-reference {
+.activity-thing-reference {
   display: inline-flex;
   gap: 0.35rem;
   align-items: center;
@@ -1127,33 +1126,59 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 [data-live-key][data-highlighted="true"] { outline: 4px solid var(--signal); outline-offset: 2px; }
 .live-trail[data-highlighted="true"] { stroke: var(--signal); stroke-width: 2; }
 .live-pulse { animation: live-print-pulse 600ms steps(2, end) 1; }
-.live-ledger-panel {
+.live-notes-panel {
+  width: 100%;
+  max-width: 100%;
   padding: 1rem clamp(0.8rem, 2.5vw, 1.25rem) 1.25rem;
   color: var(--paper-light);
-  background: var(--forest-deep);
-  border-top: 4px solid var(--line);
+  background: var(--night);
+  border: 3px solid var(--line);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.4);
+  overflow: hidden;
 }
-.live-ledger-panel h3 {
+.live-notes-panel[hidden] { display: none; }
+.live-notes-heading { display: flex; justify-content: space-between; gap: 0.75rem; align-items: start; }
+.live-notes-panel h3 {
   margin: 0.35rem 0 0.75rem;
   font-family: "Arial Narrow", "Aptos Narrow", system-ui, sans-serif;
   font-size: 1.45rem;
   text-transform: uppercase;
 }
-.live-ledger { display: grid; gap: 0; padding: 0; margin: 0; list-style: none; }
-.live-ledger-row {
-  display: grid;
-  grid-template-columns: 2.3rem minmax(0, 1fr) auto;
-  gap: 0.65rem;
-  align-items: baseline;
-  min-height: 44px;
-  padding: 0.65rem 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.25);
-  cursor: default;
+.live-notes-close, .live-notes-continue {
+  min-height: 2.75rem;
+  padding: 0.45rem 0.7rem;
+  color: var(--night);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font: 800 0.72rem/1.2 ui-monospace, monospace;
 }
-.live-ledger-number { color: var(--signal); font: 900 0.68rem ui-monospace, monospace; }
-.live-ledger-copy { margin: 0; unicode-bidi: plaintext; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.72rem; line-height: 1.5; }
-.live-ledger-time { color: var(--sky); font: 0.58rem ui-monospace, monospace; white-space: nowrap; }
-.live-ledger-thing-reference { grid-column: 2; justify-self: start; color: var(--paper-light); }
+.live-notes-list { display: grid; gap: 0; max-height: 32rem; padding: 0; margin: 0; overflow-y: auto; list-style: none; }
+.live-note-row {
+  min-width: 0;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+.live-note-meta, .live-note-body, .live-notes-status { margin: 0; overflow-wrap: anywhere; }
+.live-note-meta { color: var(--sky); font: 750 0.66rem/1.4 ui-monospace, monospace; }
+.live-note-body { margin-top: 0.3rem; unicode-bidi: plaintext; white-space: pre-wrap; font-size: 0.78rem; line-height: 1.5; }
+.live-notes-status { margin-bottom: 0.6rem; font-size: 0.72rem; }
+.live-notes-page { padding-top: 0.75rem; }
+.live-place-notes {
+  position: absolute;
+  z-index: 70;
+  inset: 0.45rem 0.45rem auto auto;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.5rem;
+  color: var(--night);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  cursor: pointer;
+  font: 900 0.64rem/1 ui-monospace, monospace;
+}
+.live-root-notes { position: absolute; inset: 0.65rem 0.65rem auto auto; pointer-events: auto; }
+.live-place-notes:focus-visible, .live-notes-close:focus-visible,
+.live-notes-continue:focus-visible { outline: 4px solid var(--focus); outline-offset: 2px; }
 .live-roster-board .drawing-grid { flex: 0 0 2.4rem; width: 2.4rem; border: 1px solid var(--paper-line); }
 .live-roster-list .resident-row { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: normal; align-items: center; }
 .live-roster-list .resident-row:has(> .entity-portrait) { grid-template-columns: 2rem minmax(0, 1fr); }
@@ -1242,7 +1267,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   border-style: solid;
   box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.48);
 }
-.live-plot[data-live-detail="false"] > :not(.live-plot-open) { display: none; }
+.live-plot[data-live-detail="false"] > :not(.live-plot-open):not(.live-place-notes) { display: none; }
 .live-plot[data-live-detail="false"] > .live-plot-open {
   inset: 0;
   justify-content: center;
@@ -2380,8 +2405,9 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-stage-shell { padding: 0.38rem; }
   .live-viewport { height: min(64vh, 32rem); min-height: 22rem; }
   .live-stage-readout { padding-inline: 0.25rem; }
-  .live-ledger-row { grid-template-columns: 2rem minmax(0, 1fr); }
-  .live-ledger-time { grid-column: 2; }
+  .live-notes-panel { padding: 0.75rem; }
+  .live-notes-heading { align-items: stretch; flex-direction: column; }
+  .live-notes-close, .live-notes-continue { width: 100%; }
   .conversation-mode { align-items: stretch; }
   .conversation-choices { width: 100%; }
   .conversation-mode-button { flex: 1 1 12rem; }
@@ -2435,19 +2461,20 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-walker, .live-replay-portrait, .live-overflow-absorbing,
   .live-speech-bubble { animation: none !important; transition: none !important; }
   .live-trail, .live-trail-inking { animation: none !important; transition: none !important; }
-  .live-item-popover { transition: none !important; }
+  .live-item-popover, .live-notes-panel { transition: none !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
   .note-card, .agreement-card, .gazette-entry, .gazette-issue-summary, .live-stage-shell,
   .live-viewport, .live-plot, .live-portrait, .live-speech-bubble,
   .live-resident-more, .live-thing-more, .live-control-button,
-  .drawing-grid, .live-resident-tag, .live-item-popover { border-color: CanvasText; box-shadow: none; }
+  .drawing-grid, .live-resident-tag, .live-item-popover, .live-notes-panel { border-color: CanvasText; box-shadow: none; }
   .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
   .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }
   .live-footnote-mark, .live-action-mark, .live-resident-more,
-  .live-thing-more, .live-control-button, .live-item-popover-open {
+  .live-thing-more, .live-control-button, .live-item-popover-open,
+  .live-place-notes, .live-notes-close, .live-notes-continue {
     color: ButtonText; background: ButtonFace;
   }
   .live-speech-bubble { color: CanvasText; background: Canvas; }

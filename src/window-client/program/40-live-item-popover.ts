@@ -56,10 +56,10 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     return windowLiveItemFacts('place', item, { exactThingTotal, floorDrawn })
   }
 
-  // Body-free by construction: never calls liveLedgerText, which lazily
-  // fires loadLiveNote(noteId) and would turn a hover into a network read.
-  // A named place is resolved through the same quiet rule liveLedgerQuietPlace
-  // applies, so a quiet room is never named in the phrase.
+  // Body-free by construction: never calls loadLiveNote(noteId), which would
+  // turn a hover into a network read.
+  // A named place follows the same quiet rule as liveLedgerQuietPlace, so a
+  // quiet room is never named in the phrase.
   function liveItemPopoverLastAction(kind, item) {
     if (kind === 'place') return null
     const key = kind === 'resident' ? item.handle : item.id

@@ -1432,7 +1432,11 @@ test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
     assert.match(text, /(?:3[.]2\s+(?:to|–)\s+8|three point two to eight)\s+seconds/iu, `${name}: bounded replay duration`)
     assert.match(text, /(?:newly learned rows[\s\S]{0,80}replay once|replays[\s\S]{0,80}newly learned rows once|walks once)/iu, `${name}: one-shot replay`)
     assert.match(text, /speech bubble[\s\S]{0,180}(?:60|sixty)[\s\S]{0,220}(?:newest|one per resident)/iu, `${name}: speech bubble contract`)
-    assert.match(text, /ledger[\s\S]{0,120}(?:full|complete|exact) (?:note )?(?:body|text)/iu, `${name}: full note ledger`)
+    assert.match(
+      text,
+      /notes panel[\s\S]{0,180}full room (?:note )?bod(?:y|ies)|full room (?:note )?bod(?:y|ies)[\s\S]{0,180}notes panel/iu,
+      `${name}: full note panel`,
+    )
     assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
   }
 
@@ -1852,4 +1856,22 @@ test('step 4: the Live item popover contract replaces the removed nameplate-tool
     /id="live-item-popover" class="live-item-popover" role="group" hidden/u,
     'the static popover element must exist exactly once, outside #live-stage',
   )
+})
+
+test('step 6: Live notes are exact, explicit, and in-page on every surface', () => {
+  for (const [name, text] of [
+    ['front door source', frontdoor],
+    ['compact machine map source', llms],
+    ['system design', specification],
+    ['drawing and Live design', drawingDesign],
+  ] as const) {
+    assert.match(text, /notes · N/iu, `${name}: exact corner control`)
+    assert.match(text, /50/iu, `${name}: bounded page size`)
+    assert.match(text, /Continue/iu, `${name}: explicit continuation`)
+    assert.match(text, /notes=open/iu, `${name}: sparse deep link`)
+    assert.match(text, /quiet/iu, `${name}: quiet-room rule`)
+  }
+  assert.match(windowPage, /Each notes · N control opens that room's notes below the plate, 50 at a time/u)
+  assert.match(windowPage, /id="live-notes-panel"[^>]*aria-labelledby="live-notes-title"[^>]*hidden/u)
+  assert.doesNotMatch(windowPage, /id="live-ledger"/u)
 })

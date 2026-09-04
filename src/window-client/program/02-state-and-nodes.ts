@@ -21,7 +21,12 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     liveFocusStatus: document.getElementById('live-focus-status'),
     liveMapCaption: document.getElementById('live-map-caption'),
     livePlates: document.getElementById('live-plates'),
-    liveLedger: document.getElementById('live-ledger'),
+    liveNotesPanel: document.getElementById('live-notes-panel'),
+    liveNotesTitle: document.getElementById('live-notes-title'),
+    liveNotesStatus: document.getElementById('live-notes-status'),
+    liveNotesList: document.getElementById('live-notes-list'),
+    liveNotesPage: document.getElementById('live-notes-page'),
+    liveNotesClose: document.getElementById('live-notes-close'),
     liveRoster: document.getElementById('live-roster'),
     liveResidentPage: document.getElementById('live-resident-page'),
     map: document.getElementById('place-map'),
@@ -99,6 +104,9 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let detailDrawingRequestRevision = 0
   let detailDrawingHistoryRequestRevision = 0
   let shareFeedbackRevision = 0
+  let liveNotesRequestRevision = 0
+  let liveNotesController = null
+  let liveNotesReturnFocus = null
   let state = {
     failures: 0,
     refreshing: false,
@@ -164,6 +172,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     placeId: null,
     resident: null,
     conversationContext: false,
+    liveNotesOpen: false,
     live: {
       openingMarker: null, openingEvents: [], openingLoaded: false, openingLoading: false,
       openingComplete: false, openingPaused: false, openingError: false,
@@ -180,6 +189,11 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
       focusRestoreKey: null, focusRestoreFallbackId: null,
       suppressReplayOnNextRead: false,
       proofScene: false, proofFailure: false, proofRetrySucceeded: false,
+      notesPanel: Object.freeze({
+        placeId: null, rows: Object.freeze([]), total: 0, nextBeforeId: null,
+        hasMore: false, initialized: false, loading: false, error: false,
+      }),
+      proofNotesByPlaceId: Object.freeze({}),
     },
   }
   let liveCamera = Object.freeze({

@@ -458,7 +458,7 @@ No migration in this branch is run against production.
 Live is the canonical `/window/live` tab inside the existing `/window` observatory; Map
 remains unchanged. It
 uses the city-sign header, console strip, bordered cream frame, hard shadow, mono caption
-and ledger language, footer, and read-only contract. The subject is the verified recent
+and public-record language, footer, and read-only contract. The subject is the verified recent
 past. This is a cartographic plate, not a game viewport or simulated present.
 
 The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
@@ -524,6 +524,13 @@ without a viewer request or treats those specimens as the count. `Show more` may
 retained cursor to reveal requested names. Loading or failure leaves the plate and exact
 `+N` visible with a retry for names; a missing or contradictory survey prints no exact badge
 for either count.
+Every displayed place gets a `notes · N` control only when the direct `notes` counts across
+the whole survey sum exactly to `snapshot.totals.conversations`. N is that place's exact
+direct-note count. Activating it opens an in-page panel and writes sparse state as
+`/window/live?place=<id>&notes=open`. The panel reads one newest-first page of at most 50
+notes for that exact place, and only a real Continue control reads the next page. Its status
+reports `N of N`; closing it, leaving Live, or hiding the tab starts no further note read.
+A quiet room keeps the count control but replaces note bodies with its quiet-room line.
 Live does not block on a redundant focused-place outline when the complete directory and
 marker-covered survey already contain the chosen place. Every actually required directory,
 census, focused-place, history, names, or drawing failure retains a visible retry that starts
@@ -553,14 +560,13 @@ portrait walks along that exact straight trail for a distance-scaled 3.2 to 8 se
 once. Presentation ink then fades for 4.5 seconds beginning when the walk completes; if
 reduced motion, a hidden tab, or a replay-scope change settles an active walk, its final
 trail receives a fresh 4.5-second fade. The plate keeps a capped live set of fading trails
-and removes each at fade end; that presentation cap changes no verified row, order, or
-30-minute history. The separate recent ledger retains the verified record for its full
-30-minute horizon. A note becomes a numbered yellow footnote mark; one learned while
+and removes each at fade end; that presentation cap changes no verified row or order. A
+note becomes a numbered yellow footnote mark; one learned while
 watching also gets a square speech bubble beside the speaker whose first line is capped
 at 60 characters with an ellipsis, only the newest revealed note winning one bubble per resident for 10 minutes;
 a note from opening backlog or the first catch-up after a hidden
-tab prints its mark with no bubble.
-The linked ledger's separate `GET /api/note/:id` read keeps the exact full note body. A newly
+tab prints its mark with no bubble. Exact full room note bodies stay behind the explicit
+notes panel read. A newly
 observed `make` gets one 600 ms place pulse. A newly observed `use` pulses only the exact
 displayed `source_thing_id` at its committed `place_id`; absent specimens receive no
 invented substitute. Give emits its typed `transfer` event, and consume emits its typed
@@ -580,7 +586,7 @@ Before printing exact resident overflow, Live completes marker-safe public resid
 presence, including any viewer-requested continuation. Exact thing overflow uses only the
 validated marker-covered `live_survey`, not named-card page completeness. A failed names
 page leaves a named retry without clearing the plate or exact `+N`. Below the existing 54rem
-breakpoint, plate, ledger, and roster stack vertically;
+breakpoint, plate, notes panel, and roster stack vertically;
 viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, visible zoom controls, and
 `Center`/`0` remain between 0.8 and 2.2 on the bounded plate. Phone Live has a CSS full-screen
 mode with a visible exit; Escape or browser Back exits that mode before navigating away.

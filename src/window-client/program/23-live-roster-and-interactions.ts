@@ -97,8 +97,8 @@ export const PART_23_LIVE_ROSTER_AND_INTERACTIONS = `  function renderLiveReside
       const recordedPlace = placeReference(snapshot, thing.recorded_place_id)
       // Third review pass: a thing currently sitting in a quiet place, or
       // whose interaction was recorded in one, must collapse the same way
-      // liveLedgerQuietPlace collapses a ledger row — never print the thing's
-      // name or either place's name once either resolved place is quiet.
+      // the trace gate does — never print the thing's name or either place's
+      // name once either resolved place is quiet.
       const quietPlace = isQuietPlace(place) ? place : isQuietPlace(recordedPlace) ? recordedPlace : null
       if (quietPlace) {
         const quietCard = element('div', 'live-focus-thing-card live-focus-thing-card-quiet')

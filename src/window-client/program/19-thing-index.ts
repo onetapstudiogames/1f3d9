@@ -27,6 +27,25 @@ export const PART_19_THING_INDEX = `  function livePlaceRows(snapshot) {
       placeIds.has(place.id) ? total + place.things : total, 0)
   }
 
+  function liveSurveyNotesAreComplete(snapshot) {
+    if (!state.directory.loaded || !snapshot.liveSurvey?.length ||
+        snapshot.liveSurvey.length !== state.directory.places.length) return false
+    const directoryById = new Map(state.directory.places.map(place => [place.id, place]))
+    const topologyMatches = snapshot.liveSurvey.every(place => {
+      const directoryPlace = directoryById.get(place.id)
+      return directoryPlace && directoryPlace.parent_id === place.parent_id
+    })
+    const surveyedNotes = snapshot.liveSurvey.reduce((total, place) => total + place.notes, 0)
+    return topologyMatches && Number.isSafeInteger(surveyedNotes) &&
+      surveyedNotes === snapshot.totals.conversations
+  }
+
+  function liveSurveyNoteTotal(snapshot, placeId) {
+    if (!liveSurveyNotesAreComplete(snapshot)) return null
+    const place = snapshot.liveSurvey.find(candidate => candidate.id === placeId)
+    return place ? place.notes : null
+  }
+
   function liveExactThingTotal(snapshot, placeId, loadedCount, includeDescendants) {
     const surveyedTotal = liveSurveyThingTotal(snapshot, placeId, includeDescendants)
     return surveyedTotal !== null && surveyedTotal >= loadedCount ? surveyedTotal : null

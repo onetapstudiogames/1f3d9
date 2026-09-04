@@ -138,6 +138,11 @@ const SNAPSHOT = Object.freeze({
   }],
   agreements: [],
   events: [],
+  live_survey: [
+    { id: ROOT_PLACE_ID, parent_id: null, things: 0, notes: 0 },
+    { id: CHILD_PLACE_ID, parent_id: ROOT_PLACE_ID, things: 0, notes: 0 },
+    { id: QUIET_PLACE_ID, parent_id: CHILD_PLACE_ID, things: 1, notes: 1 },
+  ],
   totals: { places: 3, residents: 2, conversations: 1, things: 1, agreements: 0, events: 0 },
   shown: { places: 3, residents: 2, conversations: 1, things: 1, agreements: 0, events: 0 },
   limits: { places: 10, residents: 25, conversations: 10, things: 10, agreements: 10, events: 10 },
@@ -348,6 +353,17 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
     'archivist prefers to keep this room private.',
   )
   await assertNoLeak(page, 'Live item popover on the quiet grandchild plot')
+  await page.keyboard.press('Escape')
+
+  // Step 6: the exact count remains public, but opening the quiet room's
+  // notes panel must show only the locked quiet sentence and no note body.
+  await quietPlot.getByRole('button', { name: 'Open 1 notes in hushed_cellar' }).click()
+  await expect(page.locator('#live-notes-panel')).toBeVisible()
+  await expect(page.locator('#live-notes-panel .quiet-room-notice')).toContainText(
+    'archivist prefers to keep this room private.',
+  )
+  await expect(page.locator('#live-notes-panel .live-note-body')).toHaveCount(0)
+  await assertNoLeak(page, 'Live notes panel on the quiet grandchild plot')
   await page.keyboard.press('Escape')
 
   // Things tab: the city-wide heading list (renderThingIndex) and its own

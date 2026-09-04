@@ -414,22 +414,19 @@ sequence that may be missing an earlier step.
   trail receives a fresh 4.5-second fade from that settlement. The plate
   keeps only a capped live set of this fading ink and removes each trail when
   its fade ends. That visual cap never truncates, reorders, or removes the
-  verified history. The
-  verified record remains in the separate recent ledger for the full 30-minute
-  history horizon.
+  verified public record.
 - Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
   note's replay step, a square 2px-ink speech bubble appears beside the speaker
   with the first line capped at 60 characters, including an honest ellipsis --
   but only for a note the viewer watched happen; opening backlog and the first
   catch-up after a hidden tab print no bubble. Only the newest revealed note
   supplies one bubble per resident. Bubble and mark fade on the same 10-minute
-  record clock. The synchronized ledger separately fetches and keeps the exact
-  full note body; highlighting still links both sides.
+  record clock. Exact full room bodies remain available through the explicit
+  notes panel.
 - A newly observed `make` receives one 600 ms place mark. A newly observed `use`
   pulses only the displayed `source_thing_id` specimen at the record's committed
   `place_id`; if that exact specimen is unavailable, the page skips the visual
-  instead of guessing. Each then becomes still while its truthful ledger row
-  remains in the 30-minute recent record.
+  instead of guessing. Each then becomes still.
 - `give` remains a typed `transfer` event and `consume` a typed
   `thing_withdrawn` event in the public event ledger. The Live plate does not
   invent a mark, path, or animation for either.
@@ -459,7 +456,7 @@ drawing fact for a resident; kind, maker, owner, body size (or its honest
 truncated-continuation phrase), and open-to-use for a thing; owner,
 owner-written purpose, and both exact counts for a place -- plus a
 body-free last-recorded-action phrase built only from records already in
-memory (never `liveLedgerText`, which lazily fetches a note body) and one
+memory (never `loadLiveNote`, which would fetch a note body) and one
 control that opens the item's record. A quiet place (decision #75) keeps
 its name, owner, and counts in the popover and replaces every other fact
 with the same `quietRoomNotice` sentence every other tab uses. The popover
@@ -467,6 +464,17 @@ never covers the item it describes, stays fully inside the live viewport,
 and closes on Escape, a press outside it, its item leaving the plate, or
 the plate re-rendering without that item. Opening, moving, or closing it
 issues no request and schedules no plate render.
+
+Each displayed place carries a small `notes · N` corner control only when the
+sum of all direct note counts in `live_survey` exactly equals the snapshot's
+conversation total. N is the exact direct-note count for that place. Activating
+the control opens an in-page panel and records sparse share state as
+`/window/live?place=<id>&notes=open`. The panel reads notes newest-first, 50 at
+a time, and only an explicit Continue reads another page. It states `N of N`,
+starts no read while closed, pauses while hidden, closes with Escape and the
+plate's existing close rules, and remains in ordinary keyboard order without a
+focus trap. A quiet room retains its exact control but the panel shows only the
+quiet-room line. The old recent ledger strip is gone.
 
 ### Cadence and honesty clock
 
@@ -492,11 +500,9 @@ There is no ribbon, watermark, repeated panel badge, rounded pill, or gradient.
 ### Empty, mobile, and accessibility states
 
 Empty rooms keep their ground and say: `Nobody is here right now. The room keeps
-its things.` An empty ledger says: `No recent marks reach this plate. The city
-moves only when residents act.` There is no infinite spinner or invented decay
-theatre.
+its things.` There is no infinite spinner or invented decay theatre.
 
-At the existing 54rem breakpoint, the plate, ledger, and occupancy board stack
+At the existing 54rem breakpoint, the plate, notes panel, and occupancy board stack
 vertically. The bounded plate remains inside the observatory frame on a phone;
 pinch zoom, one-pointer pan, visible zoom controls, and `Center` remain between
 0.8 and 2.2 and never change the shared city or URL. Phone Live also has a CSS
@@ -507,6 +513,8 @@ On Vercel preview builds only, a visible `Run proof scene` control starts the
 same repeatable in-memory crowded plate every time. It demonstrates concurrent
 recorded movement, speech, thing use, inline resident and thing Show more, a
 forced room-load failure, and a working Retry without waiting for live traffic.
+Its workshop includes 52 in-memory notes so the exact control, first 50 rows,
+Continue, and final 52 of 52 state can be checked without live traffic.
 Production omits this control. Reduced motion presents the same final evidence
 without animated replay.
 
