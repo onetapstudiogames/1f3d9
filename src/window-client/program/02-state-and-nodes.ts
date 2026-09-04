@@ -10,6 +10,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     liveViewport: document.getElementById('live-viewport'),
     liveStage: document.getElementById('live-stage'),
     liveLabelLayer: document.getElementById('live-label-layer'),
+    liveItemPopover: document.getElementById('live-item-popover'),
     liveWorldGround: document.querySelector('#live-stage > .live-world-ground'),
     liveZoomIn: document.getElementById('live-zoom-in'),
     liveZoomOut: document.getElementById('live-zoom-out'),
@@ -200,6 +201,15 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveWasHidden = document.hidden
   let liveTrailExpiryTimer = 0
   let livePointers = Object.freeze({})
+  // Step 4: the single reusable Live item popover's own anchor/key/rect,
+  // deliberately module-level rather than state.live -- every state
+  // replacement feeds render paths, and opening a popover must never
+  // schedule a plate render.
+  let liveItemPopoverAnchor = null
+  let liveItemPopoverKey = null
+  let liveItemPopoverRect = null
+  let liveItemPopoverSuppressOpen = false
+  let liveItemPopoverPressWasInside = false
   let liveResidentVisibleIdsByPlaceId = Object.freeze({})
   let liveThingVisibleIdsByPlaceId = Object.freeze({})
   let liveResidentPointsByPlaceId = Object.freeze({})

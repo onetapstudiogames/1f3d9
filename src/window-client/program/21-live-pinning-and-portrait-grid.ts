@@ -235,10 +235,9 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       portrait.type = 'button'
       portrait.dataset.focusKey = 'live-resident:' + resident.handle
       portrait.dataset.liveResidentHandle = resident.handle
-      portrait.title = state.live.focusResident === resident.handle
+      portrait.setAttribute('aria-label', state.live.focusResident === resident.handle
         ? 'Clear focus from ' + resident.handle
-        : 'Focus on ' + resident.handle
-      portrait.setAttribute('aria-label', portrait.title)
+        : 'Focus on ' + resident.handle)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
       portrait.append(liveSpriteNode(
         'resident', resident.id, resident.handle, resident.has_drawing,
@@ -260,6 +259,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       }
       bindLiveActivation(portrait, shell, itemKey,
         () => toggleLiveFocusResident(resident.handle))
+      bindLiveItemPopover(portrait, itemKey, 'resident', () => resident)
       grid.append(shell)
     })
     const visibleOverflowActors = layout.hidden.filter(resident =>

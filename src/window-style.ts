@@ -704,6 +704,58 @@ button { color: inherit; }
   overflow: hidden;
   pointer-events: none;
 }
+/* Step 4: the single reusable Live item popover. Lives outside #live-stage
+   (which carries a CSS transform and isolates its own stacking context),
+   so its position is unscaled by the camera and unclipped by plot overflow;
+   z-index only needs to clear .live-label-layer's 50, since #live-stage's
+   own internal z-index values never escape its isolated context. */
+.live-item-popover {
+  position: absolute;
+  z-index: 90;
+  max-width: min(20rem, calc(100% - 2 * var(--live-item-popover-margin, 0.5rem)));
+  padding: 0.65rem 0.75rem;
+  color: var(--paper-light);
+  background: var(--night);
+  border: 3px solid var(--line);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  user-select: text;
+  opacity: 1;
+  transition: opacity 120ms ease-out;
+}
+.live-item-popover[hidden] { display: none; }
+.live-item-popover-title {
+  margin: 0 0 0.35rem;
+  font-weight: 850;
+  font-size: 0.85rem;
+}
+.live-item-popover-facts {
+  margin: 0 0 0.35rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+}
+.live-item-popover-last-action {
+  margin: 0 0 0.5rem;
+  color: var(--paper);
+  font-size: 0.74rem;
+  font-style: italic;
+}
+.live-item-popover .quiet-room-notice { margin: 0 0 0.5rem; font-size: 0.78rem; }
+.live-item-popover-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.7rem;
+  color: var(--night);
+  background: var(--signal);
+  border: 2px solid var(--line);
+  font-weight: 800;
+  cursor: pointer;
+}
 .live-resident-tag {
   position: absolute;
   z-index: 1;
@@ -2383,18 +2435,21 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-walker, .live-replay-portrait, .live-overflow-absorbing,
   .live-speech-bubble { animation: none !important; transition: none !important; }
   .live-trail, .live-trail-inking { animation: none !important; transition: none !important; }
+  .live-item-popover { transition: none !important; }
 }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
   .note-card, .agreement-card, .gazette-entry, .gazette-issue-summary, .live-stage-shell,
   .live-viewport, .live-plot, .live-portrait, .live-speech-bubble,
   .live-resident-more, .live-thing-more, .live-control-button,
-  .drawing-grid, .live-resident-tag { border-color: CanvasText; box-shadow: none; }
+  .drawing-grid, .live-resident-tag, .live-item-popover { border-color: CanvasText; box-shadow: none; }
   .live-world-ground, .live-plot-terrain { forced-color-adjust: none; }
   .live-plot-open, .live-focus-clear { color: LinkText; }
   .live-trail { stroke: LinkText; }
   .live-footnote-mark, .live-action-mark, .live-resident-more,
-  .live-thing-more, .live-control-button { color: ButtonText; background: ButtonFace; }
+  .live-thing-more, .live-control-button, .live-item-popover-open {
+    color: ButtonText; background: ButtonFace;
+  }
   .live-speech-bubble { color: CanvasText; background: Canvas; }
 }
 `

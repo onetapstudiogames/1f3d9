@@ -152,9 +152,10 @@ export const WINDOW_HTML = `<!doctype html>
               </div>
             </div>
             <div id="live-label-layer" class="live-label-layer" aria-hidden="true"></div>
+            <div id="live-item-popover" class="live-item-popover" role="group" hidden></div>
           </div>
           <div class="live-stage-readout">
-            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Center or 0 returns to a readable view around the current place or focused item; it never shrinks the whole place to fit. Distant places stay as reachable markers until they approach the camera. Hover or keyboard focus brings a complete item and label forward. On touch, tap once to bring a covered item forward and again to open it. Show more reveals people or things on the live ground without a window.</p>
+            <p id="live-camera-help" class="live-camera-help">Drag or use arrow keys to pan. Scroll, pinch, or use +/− to zoom. Center or 0 returns to a readable view around the current place or focused item; it never shrinks the whole place to fit. Distant places stay as reachable markers until they approach the camera. Hover or keyboard focus brings a complete item and label forward. On touch, tap once to bring a covered item forward and again to open it. Hover, keyboard focus, or that first tap also opens one small card of facts beside the item; Escape or a tap elsewhere closes it, and its one control opens that item's record. Show more reveals people or things on the live ground without a window.</p>
             <p id="live-focus-status" class="live-focus-status" role="status" aria-live="polite">No resident focused. Choose a resident on the plate to keep them in view.</p>
           </div>
           <aside class="live-ledger-panel" aria-labelledby="live-ledger-title">
