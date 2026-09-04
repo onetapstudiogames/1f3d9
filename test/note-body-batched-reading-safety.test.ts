@@ -246,6 +246,22 @@ test('the MCP browse tool description names the Gazette default-read gap and its
     /rather than a picked subset/iu,
     'browse tool description: corrects the near-zero-limit mitigation',
   )
+  // Round 4 finding: browse forwards limit straight through to the issue
+  // route (src/mcp.ts issueDetail/browsePath), so a caller who raises limit
+  // above PUBLIC_PAGE_DEFAULT reaches the same automatic
+  // PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES ceiling the look tool already
+  // discloses for place reads (src/mcp.ts look description). This surface
+  // must say so too, not just the six door/llms/SYSTEM_DESIGN mirrors.
+  assert.match(
+    compact,
+    /safety ceiling/iu,
+    'browse tool description: names the automatic above-10 safety ceiling',
+  )
+  assert.match(
+    compact,
+    /server_text_limit_applied/iu,
+    'browse tool description: names the server_text_limit_applied field',
+  )
 })
 
 // Round 3 finding: five of the eight mirror surfaces still published the
