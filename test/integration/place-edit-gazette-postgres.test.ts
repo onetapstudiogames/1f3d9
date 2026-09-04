@@ -153,10 +153,23 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
   database = postgres.client
   try {
     const { Hono } = await import('hono')
+    const { err } = await import('../../src/core.ts')
     const { mountWorldRoutes } = await import('../../src/world.ts')
-    const { GAZETTE_ROOM_PROTECTED_ERROR } = await import('../../src/gazette-room.ts')
+    const { GAZETTE_ROOM_PROTECTED_ERROR, gazetteRoomLifecycleRefusal } =
+      await import('../../src/gazette-room.ts')
     const app = new Hono()
     mountWorldRoutes(app)
+    // Mirror src/index.ts:441-447's global onError fallback for the Gazette
+    // constraint. Production always has this net under every route, so a
+    // bare-Hono harness without it would report 500 for a case production
+    // never actually surfaces that way -- see issue #177 round-2 review
+    // finding 3. With this installed, a 500 here means a route rethrew past
+    // both its own catch and this fallback, i.e. a real production 500.
+    app.onError((error, c) => {
+      const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
+      if (gazetteRoomError) return err(c, 409, gazetteRoomError)
+      throw error
+    })
 
     const bodies: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
       ['description', { description: 'a forbidden Gazette description' }],
@@ -188,6 +201,37 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
         assert.deepEqual(after.rows, before.rows, 'the room must be completely unchanged')
       })
     }
+
+    // Issue #177 round-2 review finding 2: the door text used to claim PATCH
+    // /api/place/454 refuses "on any field", which is false -- a
+    // value-identical edit never reaches the UPDATE's WHERE clause (it
+    // requires an IS DISTINCT FROM change; see src/world.ts around the
+    // `editable` CTE), so it short-circuits to the ordinary 200 no-op before
+    // the protection trigger is ever consulted. This pins the corrected
+    // "that would change any field" wording in both directions: refuses a
+    // real change, but a no-op on the room's exact seeded values stays 200.
+    await t.test('a value-identical edit is an ordinary 200 no-op, not a refusal', async () => {
+      await resetDatabase()
+      const before = await connectedDatabase().query(
+        'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
+      )
+      const response = await app.request('/api/place/454', {
+        method: 'PATCH',
+        headers: bearer(ownerSecret),
+        body: JSON.stringify({
+          description: GAZETTE_ROOM_CLOSED_DESCRIPTION,
+          purpose: '',
+          quiet: false,
+          front_matter_thing_ids: [],
+        }),
+      })
+      const text = await response.clone().text()
+      assert.equal(response.status, 200, text)
+      const after = await connectedDatabase().query(
+        'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
+      )
+      assert.deepEqual(after.rows, before.rows, 'a value-identical edit must change nothing')
+    })
 
     await t.test('the underlying trigger really is what fires (23514 / gazette_submission_room_lifecycle)', async () => {
       await resetDatabase()
