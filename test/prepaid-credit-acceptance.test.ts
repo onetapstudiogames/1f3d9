@@ -1,29 +1,16 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { splitSqlStatements } from '../scripts/migrate.ts'
+import { readDirTree as readDirTreeFrom } from './helpers/read-dir-tree.ts'
 
 const read = (relativePath: string) => readFileSync(
   new URL(relativePath, import.meta.url),
   'utf8',
 )
 
-// Phase 1 of issue #79 split the window client's runtime body out of
-// src/window-client.ts into src/window-client/**.ts (helper modules and
-// ordered program parts). Reads every .ts file in that directory so the
-// private-field scan below keeps covering the whole client, not just the
-// now-tiny facade.
-const readDirTree = (relativeDir: string): string => {
-  const dir = relativeDir.replace(/\/?$/, '/')
-  const base = new URL(dir, import.meta.url)
-  const names = readdirSync(base).sort()
-  return names.map(name => {
-    const full = new URL(dir + name, import.meta.url)
-    if (statSync(full).isDirectory()) return readDirTree(dir + name)
-    return readFileSync(full, 'utf8')
-  }).join('\n')
-}
+const readDirTree = (relativeDir: string): string => readDirTreeFrom(relativeDir, import.meta.url)
 
 const readIfPresent = (relativePath: string): string => {
   try {
