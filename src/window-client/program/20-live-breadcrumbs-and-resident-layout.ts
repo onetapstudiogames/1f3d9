@@ -82,7 +82,11 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
     }
     node.setAttribute('role', 'button')
     node.tabIndex = 0
-    node.setAttribute('aria-label', 'Open ' + bubble.record.actor + "'s note")
+    node.dataset.focusKey = 'live-bubble:' + String(bubble.record.detail.note_id)
+    node.dataset.focusFallbackKey = 'live-resident:' + bubble.record.actor
+    // The accessible name keeps the spoken line: a screen reader must hear
+    // what was said, not only that a note can be opened.
+    node.setAttribute('aria-label', bubble.text + ' (open ' + bubble.record.actor + "'s note)")
     const open = event => {
       event.preventDefault()
       event.stopPropagation()

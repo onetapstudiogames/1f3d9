@@ -34,6 +34,7 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     liveNotesTargetId = safeId(noteId)
     liveNotesReturnFocus = Object.freeze({
       focusKey: opener?.dataset?.focusKey || document.activeElement?.dataset?.focusKey || null,
+      fallbackKey: opener?.dataset?.focusFallbackKey || null,
       placeId: id,
     })
     liveNotesRequestRevision += 1
@@ -66,11 +67,18 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
     liveNotesReturnFocus = null
     navigate({ liveNotesOpen: false })
     window.queueMicrotask(() => {
-      const key = returnFocus.focusKey || 'live-notes:' + String(returnFocus.placeId || '')
-      const target = key
-        ? document.querySelector('[data-focus-key="' + CSS.escape(key) + '"]')
-        : null
-      if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true })
+      // The opener first (a bubble, a footnote mark, or the room's notes
+      // control), then the speaker's sprite if the bubble has since faded,
+      // then the room's notes control, then the viewport.
+      const keys = [
+        returnFocus.focusKey,
+        returnFocus.fallbackKey,
+        'live-notes:' + String(returnFocus.placeId || ''),
+      ].filter(Boolean)
+      const target = keys
+        .map(key => document.querySelector('[data-focus-key="' + CSS.escape(key) + '"]'))
+        .find(node => node && !node.closest('[hidden]'))
+      if (target) target.focus({ preventScroll: true })
       else nodes.liveViewport?.focus({ preventScroll: true })
     })
   }

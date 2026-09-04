@@ -3139,11 +3139,17 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   )
   const scriptedBubble = page.locator('.live-speech-bubble')
   await expect(scriptedBubble).toHaveText('The workshop bell rings above the busy floor.')
+  await expect(scriptedBubble).toHaveAttribute(
+    'aria-label', "The workshop bell rings above the busy floor. (open proof-dara's note)",
+  )
   await scriptedBubble.click()
   const scriptedNote = proofPanel.locator('.live-note-row[data-live-note-id="9352"]')
   await expect(scriptedNote).toBeFocused()
   await expect(scriptedNote).toContainText('The workshop bell rings above the busy floor.')
   await proofPanel.locator('#live-notes-close').click()
+  // Closing returns focus to the bubble that opened the panel, the same
+  // opener contract every other control on the plate keeps.
+  await expect(page.locator('.live-speech-bubble')).toBeFocused()
 
   await proofButton.click()
   await expect(proofPanel).toBeVisible()
@@ -4749,7 +4755,9 @@ test('reduced motion shows new records statically without replay animation', asy
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
   const latestNoteMark = page.locator('.live-footnote-mark[data-live-key="change:13"]')
   await expect(latestNoteMark).toBeVisible()
-  await expect(latestNoteMark).toHaveAccessibleName("Open map-walker's note in the notes panel")
+  await expect(latestNoteMark).toHaveAccessibleName(
+    'L'.repeat(59) + "… (open map-walker's note in the notes panel)",
+  )
   const bubble = latestNoteMark.locator('.live-speech-bubble')
   await expect(bubble).toBeVisible()
   await expect(bubble).toHaveText('L'.repeat(59) + '…')
