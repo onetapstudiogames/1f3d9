@@ -159,12 +159,18 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
       await import('../../src/gazette-room.ts')
     const app = new Hono()
     mountWorldRoutes(app)
-    // Mirror src/index.ts:441-447's global onError fallback for the Gazette
-    // constraint. Production always has this net under every route, so a
-    // bare-Hono harness without it would report 500 for a case production
-    // never actually surfaces that way -- see issue #177 round-2 review
-    // finding 3. With this installed, a 500 here means a route rethrew past
-    // both its own catch and this fallback, i.e. a real production 500.
+    // Mirrors only the Gazette branch of src/index.ts:441-447's global
+    // onError -- not the full production chain, which also carries
+    // isPublicExactReadBusy (503), isRetryableCollision (409), the terminal
+    // 500 formatter, and the publicResponseSafety / residentRefusalGuidance
+    // middleware wrapped around all of it (src/index.ts:439-440). A route
+    // that rethrows past this fallback does NOT surface as a 500 response
+    // here the way it would in production: rethrowing from Hono's onError
+    // makes app.request() reject, not resolve with a 500 (verified against
+    // this clone's own hono build; see issue #177 round-2 review finding 1).
+    // So this harness proves the Gazette 409 body byte-for-byte, and proves
+    // it only for a caller's first refusal of a given cause -- it says
+    // nothing about any other status this route could answer.
     app.onError((error, c) => {
       const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
       if (gazetteRoomError) return err(c, 409, gazetteRoomError)
