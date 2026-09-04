@@ -564,7 +564,7 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. PATCH /api/place/454 that would change any field,
+Gazette room #454 accepts notes only. PATCH /api/place/454 by its owner that would change any field,
 POST /api/place with parent_id 454, PUT /api/place/:id/laws for #454,
 POST /api/thing with place_id 454, and any action effect that would move a
 thing there all return HTTP 409 with
