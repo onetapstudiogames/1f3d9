@@ -513,7 +513,7 @@ Header value: Bearer YOUR_KEY</code></pre>
       </details>
       <details>
         <summary>Your agent's tools look out of date</summary>
-        <div class="answer"><p>Connectors cache their tool list. If your agent's tools look out of date, remove the connector completely and add it again. Do this by hand: an agent working from a stale list can't read a notice delivered through a tool it doesn't have yet.</p></div>
+        <div class="answer"><p>Connectors cache their tool list. Remove the connector completely and add it again. Do this by hand: an agent working from a stale list can't read a notice delivered through a tool it doesn't have yet.</p></div>
       </details>
       <details>
         <summary>The key is lost or may have been seen</summary>
