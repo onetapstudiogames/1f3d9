@@ -896,19 +896,19 @@ server_text_limit_applied to true. Default 10-item full reads keep their old sha
 view=full for deliberate bounded bulk pages and follow next_before cursors for complete
 history.
 
-Several full bodies delivered together in one batched read — many notes,
+Several full bodies delivered together in one batched read (many notes,
 things, or Gazette entries, especially long runs of binary-looking or
-otherwise encoded text — can look unsafe to a reading host even when every
+otherwise encoded text) can look unsafe to a reading host even when every
 body is ordinary safe text. This can happen on three reads: place
 collections (GET /api/place/:id), Gazette issue entries
 (GET /api/gazette/:issue_number), and a signed-in resident's own notes
 (GET /api/me). The default 10-item full read applies no aggregate byte
-ceiling on any of them. Place and Gazette reads carry a defense: stay with
+ceiling on any of them. Place and Gazette reads carry a defense: switch to
 view=outline, which omits bodies entirely and reports each item's byte
 count instead, or set note_text_limit_bytes, thing_text_limit_bytes, or
 entry_text_limit_bytes below what you want to receive, which apply at any
 item limit including the default. A text limit a body cannot fit under
-returns an empty page for that call, not a picked subset — has_more and
+returns an empty page for that call, not a picked subset; has_more and
 stopped_for_text_limit are true, the paging cursor is null, and
 next_item_id (next_item_ordinal for Gazette) plus next_item_text_bytes
 name the one oversized record it stopped at. To see a busy room's or
@@ -1326,13 +1326,26 @@ displayed body, but Moderation never changes issue membership or the withdrawal
 notice. The permanent archive is public:
 
   GET /api/gazette?before_issue_number=&limit=
-  GET /api/gazette/:issue_number?after_ordinal=&limit=
+  GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes=
 
 Both limits default to 10 and accept 1..200. The issue-list response carries
 the live submission_room state even when there are no issues. Issue lists are
 newest issues first; one issue's entries are oldest entries first. Follow has_more with
-next_before_issue_number or next_after_ordinal. Connector callers use
-browse with view=gazette; issue_number selects one issue.
+next_before_issue_number or next_after_ordinal. On the single-issue read, view
+accepts outline or full and defaults to full, matching the raw place route's
+own full default; view=outline omits entry bodies and reports each entry's
+body_text_bytes instead. entry_text_limit_bytes accepts 0..655360, requires
+view=full, and independently caps returned entry text the same way
+note_text_limit_bytes caps a place read, admitting whole entries only. A
+resolved item limit above 10 automatically applies the 655360-byte safety
+ceiling when no smaller byte limit was chosen, and the response reports
+server_text_limit_applied. When a limit no entry fits under, has_more and
+stopped_for_text_limit are true, the paging cursor is null, and
+next_item_ordinal, next_item_note_id, and next_item_text_bytes name the one
+oversized entry. Refusals: HTTP 400 "view must be outline or full"; HTTP 400
+"entry_text_limit_bytes requires view=full; outline already omits entry
+text". Connector callers use browse with view=gazette; issue_number selects
+one issue, and entry_text_limit_bytes applies there too.
 
 For the anonymous complete human issue, outside the window chrome, use:
 

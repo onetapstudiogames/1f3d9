@@ -24,6 +24,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 const frontdoor = read('../src/frontdoor.txt')
 const published = read('../docs/published/FRONTDOOR.md')
 const llms = read('../src/llms.txt')
+const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const mcpSource = read('../src/mcp.ts')
 
 // The look tool's own description, isolated from the rest of src/mcp.ts, so
@@ -33,6 +34,15 @@ const lookToolMatch = /name:\s*'look'[\s\S]{0,400}?description:\s*`([\s\S]*?)`,\
   .exec(mcpSource)
 assert.ok(lookToolMatch, 'src/mcp.ts must define a look tool with a description before inputSchema')
 const lookToolDescription = lookToolMatch[1]!
+
+// The browse tool's own description, isolated the same way, so a drift in
+// its Gazette-specific caution (round 3 of this fix: this surface's own
+// sentence about entry_text_limit_bytes was shipped with no test) fails
+// here instead of silently regressing.
+const browseToolMatch = /name:\s*'browse'[\s\S]{0,400}?description:\s*\n?\s*`([\s\S]*?)`,\n\s*inputSchema:/u
+  .exec(mcpSource)
+assert.ok(browseToolMatch, 'src/mcp.ts must define a browse tool with a description before inputSchema')
+const browseToolDescription = browseToolMatch[1]!
 
 const publicSurfaces = [
   ['front door', frontdoor],
@@ -212,4 +222,50 @@ test('the aggregate-safety caution and its corrected mitigation are stated on ev
 
 test('the MCP look tool description (AGENTS.md rule 5 mirror surface) carries the same caution', () => {
   assertCarriesCaution('MCP look tool', lookToolDescription)
+})
+
+// Round 3 finding: the browse tool description gained its own new sentence
+// about the Gazette gap and entry_text_limit_bytes, and nothing pinned it.
+// This does not use assertCarriesCaution because browse's caution is
+// Gazette-specific prose, not the shared place/Gazette paragraph the other
+// surfaces carry.
+test('the MCP browse tool description names the Gazette default-read gap and its entry_text_limit_bytes mitigation', () => {
+  const compact = browseToolDescription.replace(/\s+/gu, ' ')
+  assert.match(
+    compact,
+    /issue read applies no aggregate byte ceiling/iu,
+    'browse tool description: discloses the unprotected default Gazette issue read',
+  )
+  assert.match(
+    compact,
+    /entry_text_limit_bytes/iu,
+    'browse tool description: names the Gazette mitigation',
+  )
+  assert.match(
+    compact,
+    /rather than a picked subset/iu,
+    'browse tool description: corrects the near-zero-limit mitigation',
+  )
+})
+
+// Round 3 finding: five of the eight mirror surfaces still published the
+// Gazette single-issue route's old accepted shape after view and
+// entry_text_limit_bytes shipped, and docs/SYSTEM_DESIGN.md (authoritative
+// per CLAUDE.md when it disagrees with other docs) was one of them. This
+// pins the route's own accepted-shape line literally, on every mirror, so
+// the contract block cannot drift out of sync again.
+test('the Gazette single-issue route\'s own accepted-shape line names its query options on every mirror surface', () => {
+  const routeLine = 'GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes='
+  const routeLineSurfaces = [
+    ...publicSurfaces,
+    ['SYSTEM_DESIGN.md', systemDesign],
+  ] as const
+  for (const [name, text] of routeLineSurfaces) {
+    const compact = text.replace(/\s+/gu, ' ')
+    assert.match(
+      compact,
+      new RegExp(routeLine.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'),
+      `${name}: the Gazette single-issue route's accepted-shape line must publish view= and entry_text_limit_bytes=`,
+    )
+  }
 })
