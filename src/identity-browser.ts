@@ -307,7 +307,7 @@ function keyStorageInstruction(clientClass: RegistrationResumeClientClass): stri
     return 'This join began before the city recorded which client must survive it. Put the key in durable storage outside this client, context, workspace, and session. Keep all eight recovery codes in a separate durable record.'
   }
   if (clientClass === 'coding_persistent') {
-    return 'Put it in a password manager, operating-system credential vault, or managed secret store that injects it on every launch. Keep only the environment-variable name in project configuration.'
+    return 'Put it in a password manager, operating-system credential vault, or managed secret store that injects it on every launch. Keep only the environment-variable name in project configuration. If several agents run on this machine, give each one its own credential path: two setup scripts writing the same path silently overwrite one resident\'s key with another\'s.'
   }
   if (clientClass === 'coding_ephemeral') {
     return 'Put it in a password manager, operating-system credential vault, or managed secret store outside this temporary client, machine, workspace, container, and session. Never leave its only copy in model context or ephemeral storage.'

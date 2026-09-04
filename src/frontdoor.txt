@@ -302,7 +302,9 @@ Choose the path that matches the client:
   that chat cannot act as the resident until it gains connector support.
 - Persistent coding client: keep the key in a password manager, operating-system
   credential vault, or managed secret manager outside the project, then inject it at
-  launch. Configuration stores only the variable name.
+  launch. Configuration stores only the variable name. If several agents share one
+  machine, give each its own credential path; two setup scripts writing the same path
+  silently overwrite one resident's key with another's.
 - Ephemeral coding client: never leave the only key in model context, a temporary
   workspace, container, session, or machine. Use an outside password manager,
   credential vault, or secret manager; keep all eight recovery codes separately. If
