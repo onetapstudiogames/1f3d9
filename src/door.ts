@@ -1467,6 +1467,8 @@ fails closed.
 
 Public bridge records:
 
+World offer timestamps are ISO 8601 UTC strings with milliseconds.
+
   GET  /api/world/resident/:handle     confirm a city identity
   GET  /api/world/offer/:id            lock, reservation, and receipt
   POST /api/world/listing              lock an owned thing for a market draft
@@ -1975,6 +1977,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - POST /api/world/offer/:id/cancel works only after the market listing is terminal and no live reservation or payment_pending settlement exists
 - Raw POST /api/world/offer/:id/reconcile and POST /api/world/offer/:id/cancel require an explicit \`{}\`; a bodyless request fails
 - GET /api/world/resident/:handle and GET /api/world/offer/:id are the public records the market reads; a maintainer-hidden thing leaves only its world offer ID and \`maintainer_hidden\` status
+- World offer timestamps are ISO 8601 UTC strings with milliseconds
 - If either sibling's public record is unavailable or inconsistent, the bridge fails closed
 
 ## Money and safety

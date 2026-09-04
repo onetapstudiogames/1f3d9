@@ -25,6 +25,7 @@ import {
 } from './payment-sale-operations.ts'
 import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
+import { isoTimestamp } from './timestamp.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -349,7 +350,7 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
   const marketBuyer = row.market_buyer == null ? null : publicLabel(row.market_buyer, 120)
   const evidenceState = String(row.x402_evidence_state ?? 'none')
   const invalidReason = nullableString(row.x402_invalid_reason)
-  const invalidAt = nullableString(row.x402_invalid_at)
+  const invalidAt = isoTimestamp(row.x402_invalid_at)
   const terminalEvidence = evidenceState === 'expired' || evidenceState === 'founder_review'
   const evidenceConsistent = evidenceState === 'none'
     ? pendingHash == null && pendingPayer == null && row.pending_x402_at == null &&
@@ -406,21 +407,21 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     pending_payment_attempt_id: pendingAttemptId,
     pending_x402_tx_hash: pendingHash,
     pending_x402_payer: pendingPayer,
-    pending_x402_at: nullableString(row.pending_x402_at),
+    pending_x402_at: isoTimestamp(row.pending_x402_at),
     x402_evidence_state: evidenceState as OfferRecord['x402_evidence_state'],
     x402_invalid_reason: invalidReason,
     x402_invalid_at: invalidAt,
-    reserved_at: nullableString(row.reserved_at),
-    reserved_until: nullableString(row.reserved_until),
-    created_at: String(row.created_at ?? ''),
-    claimed_at: nullableString(row.claimed_at),
-    canceled_at: nullableString(row.canceled_at),
+    reserved_at: isoTimestamp(row.reserved_at),
+    reserved_until: isoTimestamp(row.reserved_until),
+    created_at: isoTimestamp(row.created_at) ?? '',
+    claimed_at: isoTimestamp(row.claimed_at),
+    canceled_at: isoTimestamp(row.canceled_at),
     locked: row.locked === true,
     tx_hash: nullableString(row.tx_hash),
     verified_via: row.verified_via == null
       ? null
       : String(row.verified_via) as OfferRecord['verified_via'],
-    block_time: nullableString(row.block_time),
+    block_time: isoTimestamp(row.block_time),
     from,
     to,
   }

@@ -109,6 +109,7 @@ interface FakeState {
   directBlockTime: string
   facilitatorSettlements: number
   paymentAttempt: PaymentAttemptRecord | null
+  databaseReturnsTimestampDates: boolean
   now: string
   queries: Array<{ text: string; params: readonly unknown[] }>
 }
@@ -229,6 +230,7 @@ function initialState(patch: Partial<FakeState> = {}): FakeState {
     directBlockTime: NOW.toISOString(),
     facilitatorSettlements: 0,
     paymentAttempt: null,
+    databaseReturnsTimestampDates: false,
     now: NOW.toISOString(),
     queries: [],
     ...patch,
@@ -307,6 +309,7 @@ function makeHarness(
   suppliedMarketGet?: WorldMarketDependencies['marketGet'],
 ) {
   let state = initialState(patch)
+  const runPaymentInputs: Parameters<WorldMarketDependencies['runPayment']>[0][] = []
   if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
     const attempt = fakePaymentAttempt(state.now)
     const request = worldRequestForOffer(state.offer)
@@ -453,7 +456,22 @@ function makeHarness(
       state = { ...state, offer, thingLocked: true }
       return [offer]
     }
-    if (text.includes('world-market:read-offer')) return state.offer ? [{ ...state.offer }] : []
+    if (text.includes('world-market:read-offer')) {
+      if (!state.offer) return []
+      return [{
+        ...state.offer,
+        ...(state.databaseReturnsTimestampDates
+          ? {
+              reserved_at: state.offer.reserved_at == null
+                ? null
+                : new Date(state.offer.reserved_at),
+              reserved_until: state.offer.reserved_until == null
+                ? null
+                : new Date(state.offer.reserved_until),
+            }
+          : {}),
+      }]
+    }
     if (text.includes('world-market:public-moderation')) {
       return state.thingModerated ? [{ action: 'remove' }] : []
     }
@@ -700,7 +718,8 @@ function makeHarness(
       throw new Error(`unexpected market path: ${path}`)
     }),
     findPayment: async () => state.paymentAttempt,
-    runPayment: async () => {
+    runPayment: async input => {
+      runPaymentInputs.push(input)
       if (state.paymentAttempt?.status === 'completed' && state.paymentAttempt.response) {
         return {
           state: 'completed',
@@ -860,6 +879,7 @@ function makeHarness(
   return {
     app,
     getState: () => state,
+    getRunPaymentInputs: () => [...runPaymentInputs],
     setState: (patcher: (current: FakeState) => FakeState) => { state = patcher(state) },
   }
 }
@@ -1077,6 +1097,43 @@ test('public resident and offer records expose no bearer material', async () => 
   assert.deepEqual(await hidden.json(), {
     offer: { id: 101, status: 'maintainer_hidden' },
   })
+})
+
+test('PostgreSQL Date offer timestamps stay ISO UTC with milliseconds through public read and payment', async () => {
+  const reservedAt = '2026-08-12T12:00:00.106Z'
+  const reservedUntil = '2026-08-12T12:05:00.106Z'
+  const harness = makeHarness({
+    databaseReturnsTimestampDates: true,
+    now: '2026-08-12T12:00:01.000Z',
+    directBlockTime: '2026-08-12T12:00:02.000Z',
+    thingLocked: true,
+    offer: openOffer({
+      buyer_id: 8,
+      buyer: 'neighbor',
+      reserved_by: 8,
+      buyer_wallet: BUYER_WALLET,
+      market_listing_id: 91,
+      market_checkout_id: 81,
+      reserved_at: reservedAt,
+      reserved_until: reservedUntil,
+    }),
+  })
+
+  const publicResponse = await harness.app.request('/api/world/offer/101')
+  assert.equal(publicResponse.status, 200)
+  const publicOffer = (await publicResponse.json() as { offer: FakeOffer }).offer
+  assert.equal(publicOffer.reserved_at, reservedAt)
+  assert.equal(publicOffer.reserved_until, reservedUntil)
+
+  const paidClaim = await harness.app.request('/api/world/offer/101/claim', {
+    method: 'POST',
+    headers: { ...jsonHeaders(BUYER_SECRET), 'x-payment': X_PAYMENT_NO_ID },
+    body: '{}',
+  })
+  assert.equal(paidClaim.status, 200, await paidClaim.clone().text())
+  const paymentInput = harness.getRunPaymentInputs()[0]
+  assert.equal(paymentInput?.notBefore?.toISOString(), reservedAt)
+  assert.equal(paymentInput?.notAfter?.toISOString(), reservedUntil)
 })
 
 test('a buyer must already be a resident and cannot pay before reserving', async () => {

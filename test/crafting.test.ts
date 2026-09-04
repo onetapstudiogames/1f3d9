@@ -84,7 +84,7 @@ function makeSql(options: FakeOptions = {}): {
       kind_id: 9,
       birth_revision: 3,
       current_revision: 3,
-      created_at: '2026-08-11T12:00:00.000Z',
+      created_at: new Date('2026-08-11T12:00:00.106Z'),
       withdrawn_at: null,
       kind: 'rope',
     }],
@@ -279,6 +279,7 @@ test('crafting atomically withdraws ingredients, spends quota, writes history, a
   assert.equal(result.thing.birth_revision, 3)
   assert.equal(result.thing.current_revision, 3)
   assert.equal(result.thing.open_to_use, false)
+  assert.equal(result.thing.created_at, '2026-08-11T12:00:00.106Z')
   assert.deepEqual({
     maker_id: result.thing.maker_id,
     made_by: result.thing.made_by,

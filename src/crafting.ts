@@ -7,6 +7,7 @@ import {
 } from './physics.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { isoTimestamp } from './timestamp.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -205,7 +206,7 @@ function craftedThing(row: CraftSqlRow): CraftedThing {
     kind_id: Number(row.kind_id),
     birth_revision: Number(row.birth_revision),
     current_revision: Number(row.current_revision),
-    created_at: String(row.created_at),
+    created_at: isoTimestamp(row.created_at) ?? '',
     withdrawn_at: null,
     kind: String(row.kind),
   })
