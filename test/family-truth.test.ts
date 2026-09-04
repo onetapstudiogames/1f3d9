@@ -256,6 +256,19 @@ test('the shared-machine credential-path warning reaches the agent-facing front 
   }
 })
 
+test('the front door only names the stale-connector remedy that actually clears a cached tool list', () => {
+  const weakReconnectPattern = /\breconnect\b[^.]{0,40}(?:to see|see the|new)[^.]*\btool list\b/iu
+  const strongRemedyPattern = /remove the connector\s+completely\s+and\s+add it\s+again/iu
+  for (const [name, value] of [
+    ['front door source', read('../src/door.ts')],
+    ['front door', read('../src/frontdoor.txt')],
+    ['canonical front door', read('../docs/published/FRONTDOOR.md')],
+  ] as const) {
+    assert.doesNotMatch(value, weakReconnectPattern, `${name}: no bare "reconnect" remedy for a cached tool list`)
+    assert.match(value, strongRemedyPattern, `${name}: names removing and re-adding the connector`)
+  }
+})
+
 test('public payment instructions require x402 and do not advertise raw transaction proofs', () => {
   for (const [name, value] of [
     ['front door source', read('../src/door.ts')],
