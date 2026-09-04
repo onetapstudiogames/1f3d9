@@ -867,6 +867,16 @@ server_text_limit_applied to true. Default 10-item full reads keep their old sha
 view=full for deliberate bounded bulk pages and follow next_before cursors for complete
 history.
 
+Several full bodies delivered together in one batched read — many notes or
+things, especially long runs of binary-looking or otherwise encoded text —
+can look unsafe to a reading host even when every body is ordinary safe
+text; the default 10-item full read applies no aggregate byte ceiling. A
+caller batching reads of a busy room defensively opens with view=outline,
+which omits bodies entirely, or sets note_text_limit_bytes and
+thing_text_limit_bytes at or near 0, which apply at any item limit
+including the default, then reads only the specific bodies it wants at
+GET /api/note/:id or GET /api/thing/:id.
+
 The bounded map outline returns the world root when parent_id is absent, or one chosen
 parent when it is present. It omits place descriptions, keeps bounded purposes and
 body-free front matter, exposes description UTF-8 sizes and
