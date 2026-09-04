@@ -441,6 +441,20 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
         'live-portrait-wrap live-replay-portrait',
       )
       shell.dataset.liveReplayKey = held?.key || ''
+      // Round-1 review finding #2: this walking portrait was never wired
+      // to bindLiveItemPopover, so a resident's facts went unreachable for
+      // the whole 3.2-8s walk. The item key matches the settled
+      // .live-walker's own key ('resident:<handle>', set in
+      // 21-live-pinning-and-portrait-grid.ts), so the popover binds once
+      // on open/focus and needs no per-frame work: positionLiveItemPopover
+      // only reruns on the already-rAF-batched camera commit, and when the
+      // walk ends the next render swaps this replay portrait for the
+      // settled walker under the identical key, so syncLiveItemPopoverAnchor
+      // (27-live-render.ts) re-binds the same open popover to it rather
+      // than closing it -- and closes it as usual (C5) if the resident
+      // instead leaves the plate entirely.
+      const itemKey = 'resident:' + actor
+      shell.dataset.liveItemKey = itemKey
       if (state.live.focusResident === actor) {
         shell.setAttribute('data-live-focus-resident', actor)
       }
@@ -459,6 +473,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
         shell.dataset.replayDuration = String(held.duration)
       }
       portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
+      bindLiveItemPopover(portrait, itemKey, 'resident', () => resident)
       portrait.append(portraitNode(
         'resident', resident.id, actor, resident.has_drawing, 'live-entity-portrait',
       ))
