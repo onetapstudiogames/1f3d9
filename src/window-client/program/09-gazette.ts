@@ -324,20 +324,31 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     nodes.gazetteEntriesPage.replaceChildren(load)
   }
 
-  function gazetteBudgetCutMessage(issue, budgetCut) {
+  function gazetteBudgetCutMessage(issue, budgetCut, hasLoadedEntries = false) {
     // Round 4 review finding 2 (issue #71): match what gazetteIssueLink
     // already shows for the same issue (issue.entryCount, the true count
     // from the issue summary, not the size of this loaded page) so the card
     // and the detail pane never disagree about whether entries exist.
+    //
+    // Round 5 review finding 1 (issue #71): this message must also appear
+    // on a continuation page, when a Load more request admits nothing after
+    // earlier entries already loaded, not only when the entry list is still
+    // empty. hasLoadedEntries keeps the wording honest either way: the size
+    // limit cut the FIRST entry only on a first page; on a continuation it
+    // stopped ANOTHER entry after some were already shown.
     const count = String(issue.entryCount) + (issue.entryCount === 1 ? ' submission' : ' submissions')
     const size = budgetCut.nextItemTextBytes
       ? ' (about ' + String(budgetCut.nextItemTextBytes) + ' bytes)'
       : ''
     const named = budgetCut.nextItemNoteId
-      ? ' The first one, note #' + String(budgetCut.nextItemNoteId) + size + ', did not fit.'
+      ? ' ' + (hasLoadedEntries ? 'The next one, note #' : 'The first one, note #') +
+        String(budgetCut.nextItemNoteId) + size + ', did not fit.'
       : ''
-    return 'This issue has ' + count + ', but the automatic size limit cut this page before ' +
-      'the first entry fit.' + named + ' Use the Read issue link above to see the full issue.'
+    const stopped = hasLoadedEntries
+      ? 'the automatic size limit stopped this page before another entry fit'
+      : 'the automatic size limit cut this page before the first entry fit'
+    return 'This issue has ' + count + ', but ' + stopped + '.' + named +
+      ' Use the Read issue link above to see the full issue.'
   }
 
   function renderGazetteIssue(gazette) {
@@ -379,25 +390,27 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       'Weekly print for ' + gazetteDateLabel(gazette.issue.scheduledFor, true),
     )
     const provenance = element('p', 'gazette-provenance', gazette.issue.header)
-    const entries = element('ol', 'gazette-entries')
-    if (gazette.entries.length) {
-      entries.append(...gazette.entries.map(gazetteEntryCard))
-      nodes.gazetteIssue.replaceChildren(heading, printTime, provenance, entries)
-    } else if (gazette.detailBudgetCut) {
-      nodes.gazetteIssue.replaceChildren(
-        heading,
-        printTime,
-        provenance,
-        element('p', 'empty-row', gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut)),
-      )
-    } else {
-      nodes.gazetteIssue.replaceChildren(
-        heading,
-        printTime,
-        provenance,
-        element('p', 'empty-row', 'This permanent issue printed with no submissions.'),
-      )
-    }
+    // Round 5 review finding 1 (issue #71): detailBudgetCut can be set
+    // whether or not entries already loaded (a Load more request that
+    // admits nothing still carries it), so its notice is composed
+    // independently of the entries node below, not only in its absence.
+    // Without this, a continuation page silently drops both the notice and
+    // the Load more control, looking exactly like the issue simply ended.
+    const entriesNode = gazette.entries.length ? element('ol', 'gazette-entries') : null
+    if (entriesNode) entriesNode.append(...gazette.entries.map(gazetteEntryCard))
+    const emptyIssueNotice = !gazette.entries.length && !gazette.detailBudgetCut
+      ? element('p', 'empty-row', 'This permanent issue printed with no submissions.')
+      : null
+    const budgetCutNotice = gazette.detailBudgetCut
+      ? element(
+          'p',
+          'empty-row',
+          gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut, gazette.entries.length > 0),
+        )
+      : null
+    nodes.gazetteIssue.replaceChildren(
+      ...[heading, printTime, provenance, entriesNode, emptyIssueNotice, budgetCutNotice].filter(Boolean),
+    )
     renderGazetteEntriesPage(gazette)
   }
 
