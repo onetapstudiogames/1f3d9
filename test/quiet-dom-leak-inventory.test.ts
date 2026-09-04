@@ -16,13 +16,30 @@
 // up as a stale allow-list entry (listed, but no longer matched) — either way
 // this test fails instead of shipping silently.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const WINDOW_CLIENT_PATH = 'src/window-client.ts'
+// Phase 1 of issue #79 (see docs/DRAWING_AND_LIVE_VIEW.md) split the window
+// client's runtime body out of src/window-client.ts into ordered program
+// parts under src/window-client/program/. Each part file is
+// `export const PART_NN_NAME = \`<source>\`` — stripping that header/footer
+// and joining the parts in filename order reproduces exactly the same
+// client source text this scanner watched before the split (proven by the
+// PR's byte-identity proof: the assembled WINDOW_JS is unchanged).
+const WINDOW_CLIENT_PATH = 'src/window-client/program/*.ts'
 
-function source(path: string): string {
-  return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
+function templateBody(fileSource: string): string {
+  const open = fileSource.indexOf('`')
+  if (open < 0) return ''
+  return fileSource.slice(open + 1, fileSource.lastIndexOf('`'))
+}
+
+function source(_path: string): string {
+  const programDir = new URL('../src/window-client/program/', import.meta.url)
+  const names = readdirSync(programDir).filter(name => /^\d\d-.*\.ts$/.test(name)).sort()
+  return names
+    .map(name => templateBody(readFileSync(new URL(name, programDir), 'utf8')))
+    .join('')
 }
 
 type ClientFunction = Readonly<{

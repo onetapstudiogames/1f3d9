@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import test from 'node:test'
 import { splitSqlStatements } from '../scripts/migrate.ts'
 
@@ -8,6 +8,22 @@ const read = (relativePath: string) => readFileSync(
   new URL(relativePath, import.meta.url),
   'utf8',
 )
+
+// Phase 1 of issue #79 split the window client's runtime body out of
+// src/window-client.ts into src/window-client/**.ts (helper modules and
+// ordered program parts). Reads every .ts file in that directory so the
+// private-field scan below keeps covering the whole client, not just the
+// now-tiny facade.
+const readDirTree = (relativeDir: string): string => {
+  const dir = relativeDir.replace(/\/?$/, '/')
+  const base = new URL(dir, import.meta.url)
+  const names = readdirSync(base).sort()
+  return names.map(name => {
+    const full = new URL(dir + name, import.meta.url)
+    if (statSync(full).isDirectory()) return readDirTree(dir + name)
+    return readFileSync(full, 'utf8')
+  }).join('\n')
+}
 
 const readIfPresent = (relativePath: string): string => {
   try {
@@ -202,7 +218,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
     '../src/public-snapshot-format.ts',
     '../src/window.ts',
     '../src/window-client.ts',
-  ].map(read).join('\n')
+  ].map(read).join('\n') + '\n' + readDirTree('../src/window-client')
   assert.doesNotMatch(
     publicSources,
     /claim_token_hash|buyer_handle|payer_email|pending_gifts|city_credit_gifts/iu,
