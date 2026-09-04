@@ -19,6 +19,9 @@ export declare function runWorldBuy(options: Readonly<{
   marketOrigin?: string
   stateDirectory?: string
   syncDelayMs?: number
+  paidClaimTimeoutMs?: number
+  reconcileRetryDelayMs?: number
+  reconcileAttempts?: number
   stdout?: (message: string) => void
   stderr?: (message: string) => void
 }>): Promise<number>

@@ -21,6 +21,14 @@ const CITY_ORIGIN = 'https://1f3d9.com'
 const MARKET_ORIGIN = 'https://1f3ea.com'
 const BASE_CHAIN_ID = 8453
 const DEFAULT_SYNC_DELAY_MS = 60_000
+// The paid claim makes the city verify and settle through the facilitator, each
+// call budgeted at several seconds server-side, so the client waits longer than
+// an ordinary read. A claim that times out is never re-signed: the persisted
+// nonce sends the run to reconcile, which may need a few tries while the city
+// finishes the payment it already received.
+const PAID_CLAIM_TIMEOUT_MS = 45_000
+const RECONCILE_RETRY_DELAY_MS = 10_000
+const RECONCILE_ATTEMPTS = 4
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/u
 const PRIVATE_KEY_RE = /^0x[0-9a-fA-F]{64}$/u
 const NONCE_RE = /^0x[0-9a-fA-F]{64}$/u
@@ -138,6 +146,7 @@ async function requestJson({
   headers = {},
   secrets,
   acceptPaymentRequired = false,
+  timeoutMs = 15_000,
 }) {
   let response
   try {
@@ -151,10 +160,12 @@ async function requestJson({
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch {
-    throw new WorldBuyError(step, `Could not reach ${new URL(url).origin}. Check the connection and retry this same command.`)
+    const unreachable = new WorldBuyError(step, `Could not reach ${new URL(url).origin}. Check the connection and retry this same command.`)
+    unreachable.transient = true
+    throw unreachable
   }
 
   let text
@@ -333,6 +344,9 @@ export async function runWorldBuy(options) {
     marketOrigin = MARKET_ORIGIN,
     stateDirectory = tmpdir(),
     syncDelayMs = DEFAULT_SYNC_DELAY_MS,
+    paidClaimTimeoutMs = PAID_CLAIM_TIMEOUT_MS,
+    reconcileRetryDelayMs = RECONCILE_RETRY_DELAY_MS,
+    reconcileAttempts = RECONCILE_ATTEMPTS,
     stdout = message => process.stdout.write(message),
     stderr = message => process.stderr.write(message),
   } = options
@@ -372,19 +386,49 @@ export async function runWorldBuy(options) {
       const checkoutId = checkoutIdFrom(checkout.body)
       if (!checkoutId) throw new WorldBuyError(2, 'The market did not return a checkout id. Retry after checking the listing.')
       state = { version: 1, listing_id: listingId, offer_id: offerId, checkout_id: checkoutId }
-      await writeState(statePath, state, 2)
+      try {
+        await writeState(statePath, state, 2)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'unknown reason'
+        throw new WorldBuyError(2,
+          `The market created checkout ${checkoutId} but it could not be saved locally (${reason}). ` +
+          'The market allows one active checkout per buyer and listing; wait ten minutes for it to expire, then run this same command again.')
+      }
+    }
+
+    const reconcileWithPatience = async () => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          return await requestJson({
+            step: 4,
+            url: `${cityOrigin}/api/world/offer/${offerId}/reconcile`,
+            method: 'POST',
+            key: cityKey,
+            body: {},
+            secrets,
+            timeoutMs: paidClaimTimeoutMs,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : ''
+          const notYet = message.includes('no durable payment') || (error instanceof WorldBuyError && error.transient)
+          if (!notYet || attempt >= reconcileAttempts) {
+            if (notYet) {
+              throw new WorldBuyError(4,
+                'The city has not recorded a payment for this claim yet; that is normal for up to a minute after a slow payment. ' +
+                'Wait 30 seconds and run this same command again; it will not pay again.')
+            }
+            throw error
+          }
+          stderr(`Step 4: the city has not recorded the payment yet; asking again in ${Math.round(reconcileRetryDelayMs / 1000)} seconds without paying again.
+`)
+          await new Promise(resolveWait => setTimeout(resolveWait, reconcileRetryDelayMs))
+        }
+      }
     }
 
     let cityResult
     if (state.nonce || state.payment_pending) {
-      cityResult = await requestJson({
-        step: 4,
-        url: `${cityOrigin}/api/world/offer/${offerId}/reconcile`,
-        method: 'POST',
-        key: cityKey,
-        body: {},
-        secrets,
-      })
+      cityResult = await reconcileWithPatience()
     } else {
       const claimBody = { market_checkout_id: state.checkout_id, buyer_wallet: wallet }
       const claimUrl = `${cityOrigin}/api/world/offer/${offerId}/claim`
@@ -423,15 +467,23 @@ export async function runWorldBuy(options) {
         } catch {
           throw new WorldBuyError(3, 'Could not sign the payment authorization. Check the wallet private key and retry this same command.')
         }
-        cityResult = await requestJson({
-          step: 4,
-          url: claimUrl,
-          method: 'POST',
-          key: cityKey,
-          body: claimBody,
-          headers: { 'x-payment': paymentHeader },
-          secrets: [...secrets, paymentHeader],
-        })
+        try {
+          cityResult = await requestJson({
+            step: 4,
+            url: claimUrl,
+            method: 'POST',
+            key: cityKey,
+            body: claimBody,
+            headers: { 'x-payment': paymentHeader },
+            secrets: [...secrets, paymentHeader],
+            timeoutMs: paidClaimTimeoutMs,
+          })
+        } catch (error) {
+          if (!(error instanceof WorldBuyError && error.transient)) throw error
+          stderr(`Step 4: the paid claim did not answer in time; asking the city to reconcile instead, without paying again.
+`)
+          cityResult = await reconcileWithPatience()
+        }
       }
     }
 
