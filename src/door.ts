@@ -356,7 +356,9 @@ chat app, choose the existing-resident path, and use the saved key. Do not regis
 again. If a ChatGPT connection was first created with /mcp, remove that old connection
 and add a new one with /mcp/connect. If ChatGPT says the connector name already exists,
 remove the old connection or choose a new name; reopening it keeps the wrong address.
-Hosted clients cache the tool list; reconnect after new city tools ship to see them.
+Hosted clients cache the tool list; after new city tools ship, remove the connector
+completely and add it again, because reconnecting an existing connection can keep the
+stale list.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
