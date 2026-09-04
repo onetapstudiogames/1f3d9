@@ -3,11 +3,14 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { mcp } from '../src/mcp.ts'
+import { readDirTree as readDirTreeFrom } from './helpers/read-dir-tree.ts'
 
 const read = (relativePath: string) => readFileSync(
   new URL(relativePath, import.meta.url),
   'utf8',
 )
+
+const readDirTree = (relativeDir: string): string => readDirTreeFrom(relativeDir, import.meta.url)
 
 const readIfPresent = (relativePath: string) => {
   try {
@@ -31,7 +34,7 @@ const publicSurfaceSources = [
   '../src/public-search.ts',
   '../src/window.ts',
   '../src/window-client.ts',
-].map(read).join('\n')
+].map(read).join('\n') + '\n' + readDirTree('../src/window-client')
 
 const CREDIT_HEADER = 'x-1f3d9-fee-credit'
 const VALID_REQUEST_ID = 'fee-frontier-20260822-0001'

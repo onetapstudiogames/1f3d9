@@ -3,11 +3,14 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { splitSqlStatements } from '../scripts/migrate.ts'
+import { readDirTree as readDirTreeFrom } from './helpers/read-dir-tree.ts'
 
 const read = (relativePath: string) => readFileSync(
   new URL(relativePath, import.meta.url),
   'utf8',
 )
+
+const readDirTree = (relativeDir: string): string => readDirTreeFrom(relativeDir, import.meta.url)
 
 const readIfPresent = (relativePath: string): string => {
   try {
@@ -202,7 +205,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
     '../src/public-snapshot-format.ts',
     '../src/window.ts',
     '../src/window-client.ts',
-  ].map(read).join('\n')
+  ].map(read).join('\n') + '\n' + readDirTree('../src/window-client')
   assert.doesNotMatch(
     publicSources,
     /claim_token_hash|buyer_handle|payer_email|pending_gifts|city_credit_gifts/iu,
