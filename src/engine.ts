@@ -898,7 +898,10 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   if (gazetteRoomError) return new EngineError(409, gazetteRoomError)
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedExecutionFailure('action', actionId, error)
-  return new EngineError(500, 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying')
+  return new EngineError(
+    500,
+    'the city hit an internal failure running this action; that failure is not something you did, so retry once, then contact the city operator if it keeps failing',
+  )
 }
 
 async function recordFailedExecution(
