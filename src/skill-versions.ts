@@ -17,6 +17,6 @@
  * constraints and src/changelog-source.ts for the same reasoning.
  */
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.5.1',
+  city: '1.5.2',
   market: '2.4.1',
 })
