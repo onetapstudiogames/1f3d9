@@ -3767,7 +3767,8 @@ test('Live opens place and resident current drawings from secondary affordances 
   const leafCaptionDrawing = page.locator('#live-map-caption')
     .getByRole('button', { name: 'Open current drawing for Cinder lane' })
   await expectTargetCenterExposed(leafCaptionDrawing)
-  expect((await leafCaptionDrawing.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44)
+  // The caption collapses for one or two frames during a plate drill; wait for the settled box.
+  await expect.poll(() => leafCaptionDrawing.boundingBox().then(box => box?.height ?? 0)).toBeGreaterThanOrEqual(44)
   const outsideFocus = page.locator(
     '#live-focus-interactions [data-live-focus-resident="map-walker"]' +
     '[data-live-resident-scope="outside"]',
@@ -5005,6 +5006,9 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
       liveCompletionObserver?: MutationObserver
     }
     heldWindow.liveCompletionMutations = 0
+    // Count only childList records that net-remove replay portraits: runFor also drives ordinary
+    // motion repaints of #live-plates (7 to 8 records) that are not completions. A per-completion
+    // paint would still net-remove one portrait each, so 64 unbatched completions would still count 64.
     heldWindow.liveCompletionObserver = new MutationObserver(records => {
       const replayCount = (nodes: NodeList) => [...nodes].reduce((count, node) => {
         if (!(node instanceof Element)) return count
