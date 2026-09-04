@@ -276,7 +276,18 @@ test('setup advertises the hosted connector only while that door is ready', asyn
 
 test('setup names the likely failures, including the public look trap', async () => {
   const response = await readyHumanPage('/setup')
-  const text = visibleText(await response.text())
+  const html = await response.text()
+  const text = visibleText(html)
+
+  const staleToolsAnswer = html.match(
+    /Your agent's tools look out of date<\/summary>\s*<div class="answer"><p>([\s\S]*?)<\/p><\/div>/u,
+  )?.[1]
+  assert.ok(staleToolsAnswer, 'stale-tools answer body found')
+  assert.doesNotMatch(
+    staleToolsAnswer!,
+    /tools look[^.]{0,80}(?:out of date|stale|outdated)/iu,
+    'stale-tools answer does not restate its own summary',
+  )
 
   assert.match(text, /\blook\b[^.]{0,120}(?:is public|public)[^.]{0,160}(?:does not|doesn't|won't|never)[^.]{0,100}prove[^.]{0,100}key/iu)
   assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
@@ -284,7 +295,7 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
   assert.match(
     text,
-    /tools look[^.]{0,120}(?:out of date|stale|outdated)[^.]{0,240}remove the connector completely[^.]{0,160}add it again/iu,
+    /tools look[^.]{0,120}(?:out of date|stale|outdated)[\s\S]{0,260}remove the connector completely[^.]{0,160}add it again/iu,
     'stale connector tool-list guidance',
   )
   assert.match(text, /resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key/iu)
