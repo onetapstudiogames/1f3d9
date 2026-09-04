@@ -481,8 +481,15 @@ breadcrumbs. Far zoom shows resident sprites without name tags. At a readable zo
 pointer hover or keyboard focus brings the complete item and its complete label above peers.
 On touch screens, the first tap brings an item forward and the second tap opens it. A shown
 tag contains the complete untruncated handle. The focused resident is always labelled and
-lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis
-and their tooltip carries the complete place name. Detailed plots are drawn only in and just
+lifted above neighbouring marks. Plot nameplates keep a single-line ellipsis. Step 4 (this
+document's Live-view section; docs/DRAWING_AND_LIVE_VIEW.md) replaces every per-sprite
+title attribute with one reusable popover for the whole plate: hovering, keyboard-focusing,
+or the first touch tap on a resident, thing, or plot nameplate opens one small card beside
+it carrying that item's public facts — including the complete place name a nameplate
+ellipsis truncates — plus one control that opens its record. It never covers the item it
+describes, stays inside the viewer's plate, and closes on Escape, a press elsewhere, when
+its item leaves the plate, or when the plate re-renders without that item; opening, moving,
+or closing it issues no request. Detailed plots are drawn only in and just
 beyond the visible camera; every farther plot remains a finger-sized reachable marker, and
 Live never enters an all-detailed mode. Camera budgeting changes no fixed coordinate,
 selection, exact count, or public record. An unoverflowed place shows up to six residents

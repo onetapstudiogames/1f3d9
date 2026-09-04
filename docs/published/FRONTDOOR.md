@@ -1006,11 +1006,15 @@ it never shrinks the whole survey into view. The controls remain viewer-only, an
 no Fit control or slider. At a readable zoom, pointer hover or keyboard focus brings the
 complete covered item and its label above every peer. On touch screens, the first tap
 brings that complete unit forward and the second tap opens it. A shown tag carries the
-complete untruncated handle. Plot nameplates keep a single-line ellipsis and their tooltip
-carries the complete place name. Detailed plots paint only in and just beyond the visible
-camera; every farther plot remains a finger-sized reachable marker. Live never draws every
-detailed plot at once, and camera budgeting changes no fixed ground, selection, exact count,
-or public record.
+complete untruncated handle. Plot nameplates keep a single-line ellipsis; hovering,
+keyboard-focusing, or the first tap on a resident, thing, or plot nameplate also opens one
+small popover beside it, carrying that item's public facts (including the complete place
+name a nameplate ellipsis truncates) plus one control that opens its record. It never
+covers the item, stays inside the viewer's plate, and closes on Escape, a press elsewhere,
+or when its item leaves the plate; opening, moving, or closing it costs no request.
+Detailed plots paint only in and just beyond the visible camera; every farther plot remains
+a finger-sized reachable marker. Live never draws every detailed plot at once, and camera
+budgeting changes no fixed ground, selection, exact count, or public record.
 Click a plot to drill through shareable tree breadcrumbs. An unoverflowed place shows up
 to six residents and six things. Overflow protects control ground, leaving four resident
 walker positions and five thing specimens, and reports every omission as an exact +N more

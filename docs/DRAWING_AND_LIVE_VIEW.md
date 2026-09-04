@@ -336,8 +336,10 @@ not a simulation of the present.
   item forward and the second opens it. At a readable zoom, or while a resident has
   pointer hover, tap, keyboard focus, or browser-local Focus, its tag shows the
   full handle without truncation. A focused resident is always labelled and
-  lifted above neighbouring marks. Plot nameplates remain single-line ellipses
-  while their tooltip carries the complete place name.
+  lifted above neighbouring marks. Plot nameplates remain single-line ellipses;
+  step 4's single Live item popover (see below) carries the complete place
+  name a nameplate ellipsis truncates, along with the item's other public
+  facts.
 - A plot outside the visible camera may skip painting until the viewer pans it
   back into view. Detailed plots are drawn only in and just beyond the visible
   camera; every farther plot remains a finger-sized reachable marker. Live never
@@ -436,6 +438,35 @@ There is no idle bobbing, blinking, particle field, breathing terrain, looping
 sprite walk, or invented route between polls. Only a newly learned committed
 move receives the disclosed endpoint-to-endpoint glide. Stillness returns after
 each resident's finite queue and remains a truthful state.
+
+### The Live item popover (step 4)
+
+Steps 2 and 3 removed every drawn chip and card from the plate, leaving each
+sprite's state, provenance, and a plot nameplate's complete name reachable
+only through a title attribute -- invisible to keyboard and touch. Step 4
+gives that same information one reachable home: a single `#live-item-popover`
+element, created once and reused for every resident, thing, and place
+anchor on the plate, never re-created or cloned. It lives inside
+`#live-viewport` as the next sibling of `#live-label-layer`, outside
+`#live-stage`'s own CSS transform and isolated stacking context, so its
+position is never scaled by the camera or clipped by a plot's overflow.
+
+Hovering, keyboard-focusing, or the first touch tap on a resident portrait,
+a thing specimen, or a plot's open nameplate opens the popover beside that
+anchor with the item's complete name and stable id, then the public facts
+already held in client state -- location, sleep, and the honest two-tier
+drawing fact for a resident; kind, maker, owner, body size (or its honest
+truncated-continuation phrase), and open-to-use for a thing; owner,
+owner-written purpose, and both exact counts for a place -- plus a
+body-free last-recorded-action phrase built only from records already in
+memory (never `liveLedgerText`, which lazily fetches a note body) and one
+control that opens the item's record. A quiet place (decision #75) keeps
+its name, owner, and counts in the popover and replaces every other fact
+with the same `quietRoomNotice` sentence every other tab uses. The popover
+never covers the item it describes, stays fully inside the live viewport,
+and closes on Escape, a press outside it, its item leaving the plate, or
+the plate re-rendering without that item. Opening, moving, or closing it
+issues no request and schedules no plate render.
 
 ### Cadence and honesty clock
 
@@ -550,13 +581,19 @@ after the split.
   (`drawing.ts`, `live-ground.ts`, `live-scatter.ts`, `live-visibility.ts`,
   `live-camera.ts`, `live-replay.ts`, `rows.ts`, `directory.ts`): the
   functions and types the facade re-exports.
-- `src/window-client/program/NN-*.ts` holds the 39 ordered client-JS
+- `src/window-client/program/NN-*.ts` holds the ordered client-JS
   fragments that make up the client's own JavaScript. Each part file is
   exactly `export const PART_NN_NAME = \`<source lines>\``, copied
   line-for-line out of the original file with no reformatting, renaming, or
   reordering. The `NN-` filename prefix is only for `ls` to show ship order;
   `src/window-client/program/index.ts` imports every part and assembles
-  `WINDOW_CLIENT_PARTS` in the array order, which is the real authority.
+  `WINDOW_CLIENT_PARTS` in the array order, which is the real authority. A
+  step 4 addition, `40-live-item-popover.ts`, ships in that array **before**
+  `39-wiring-and-boot.ts` even though its filename sorts after it --
+  `39-wiring-and-boot.ts`'s template body closes the client IIFE with
+  `})()`, so any part appended after it in the real array would emit past
+  the end of the function. `ls` order and ship order are allowed to diverge
+  for exactly this reason; index.ts is what settles it.
 
 **Why fragments, not modules.** A fragment is a byte range, not a JavaScript
 module: every fragment shares one lexical scope inside the shipped IIFE, and
