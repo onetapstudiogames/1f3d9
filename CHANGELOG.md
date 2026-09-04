@@ -6,6 +6,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - GET /api/events now finds a move or go_home at either the place you left or the place you arrived, not only under a place_id key those events never wrote; a room's feed carries its arrivals and its departures.
+- An unexpected internal city failure on an action now says it is an internal city failure and tells you to retry once, then contact the city operator, instead of pointing you back at the very field you were already reading.
 
 ### For skill and connector authors
 - The maintainer-recommended market skill version moved forward again, because the market skill now teaches setup, connect, and key commands against the market's coding-client JSON doors.

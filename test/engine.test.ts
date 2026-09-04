@@ -2308,7 +2308,7 @@ test('a recognized internal engine failure is generic in the public record', asy
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  const expectedError = 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying'
+  const expectedError = 'the city could not complete the action because of an internal failure; retry once, then contact the city operator if it keeps failing'
   assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.deepEqual(logged[0]?.[1], {
@@ -2362,7 +2362,7 @@ test('an unknown action failure is generic in the public record but useful in se
 
   assert.equal(result.status, 'failed')
   assert.equal(result.httpStatus, 500)
-  const expectedError = 'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying'
+  const expectedError = 'the city could not complete the action because of an internal failure; retry once, then contact the city operator if it keeps failing'
   assert.equal(result.error, expectedError)
   assert.equal(logged.length, 1)
   assert.equal(logged[0]?.[0], 'unrecognized action execution failure')
@@ -2384,6 +2384,44 @@ test('an unknown action failure is generic in the public record but useful in se
   assert.doesNotMatch(
     String(resolution.values.at(-2)),
     /private authored text|private SQL parameters|column reference/iu,
+  )
+})
+
+test('an internal engine failure does not tell the caller to read action.error', async t => {
+  const logged: unknown[][] = []
+  t.mock.method(console, 'error', (...values: unknown[]) => {
+    logged.push(values)
+  })
+  const { db } = fakeSql(({ text }) => {
+    if (/FROM resident_presence/.test(text)) {
+      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+    }
+    if (/INSERT INTO action_runs/.test(text)) return [{ id: 118 }]
+    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 218 }]
+    return []
+  })
+
+  const result = await runAction({
+    actorId: 7,
+    actorHandle: 'tiny-lantern',
+    action: 'make',
+    placeId: 2,
+    primitiveHandledByCaller: true,
+    performPrimitive: async () => {
+      throw new EngineError(500, 'database returned an invalid private result')
+    },
+  }, db)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.httpStatus, 500)
+  assert.ok(result.error)
+  // The recorded action.error must not send the caller back to the very
+  // field it is reading, and must not repeat the old circular sentence.
+  assert.doesNotMatch(result.error ?? '', /action\.error/u)
+  assert.notEqual(
+    result.error,
+    'the city could not complete this action because its primitive failed; correct the primitive refusal shown in action.error before retrying',
   )
 })
 
