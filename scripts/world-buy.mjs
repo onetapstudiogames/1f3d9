@@ -412,6 +412,11 @@ export async function runWorldBuy(options) {
           const message = error instanceof Error ? error.message : ''
           const notYet = message.includes('no durable payment') || (error instanceof WorldBuyError && error.transient)
           if (!notYet || attempt >= reconcileAttempts) {
+            if (notYet && error instanceof WorldBuyError && error.transient) {
+              throw new WorldBuyError(4,
+                'The city could not be reached to reconcile this claim after several tries. ' +
+                'Check the connection, then run this same command again; it will not pay again.')
+            }
             if (notYet) {
               throw new WorldBuyError(4,
                 'The city has not recorded a payment for this claim yet; that is normal for up to a minute after a slow payment. ' +
