@@ -512,6 +512,50 @@ test('every dependency action states room #454 refusal before use', () => {
   }
 })
 
+test('the compact route-reference table agrees with the corrected Gazette paragraph, not an unconditional 409', () => {
+  for (const [name, text] of [
+    ['front door', frontdoor],
+    ['compact machine map', llms],
+  ] as const) {
+    // The Gazette paragraph is the source of truth for who gets what on #454:
+    // HTTP 409 only for the room's owner attempting a real change, HTTP 401 with
+    // no sign-in, HTTP 403 for a signed-in non-owner, and (laws only) HTTP 200
+    // on an empty-traits no-op. Pin that same shape onto each compact table row
+    // so the table can never again promise an unconditional 409 the paragraph
+    // itself does not.
+    const paragraph = text.match(
+      /Gazette room #454 accepts notes only\.[\s\S]{0,700}?[Ee]ven founder #1 is not exempt\./u,
+    )?.[0]
+    assert.ok(paragraph, `${name}: corrected Gazette paragraph not found`)
+    assert.match(
+      paragraph!,
+      /every other caller is turned away earlier, at 401 or 403/iu,
+      `${name}: paragraph must state the 401/403 caller-gating clause`,
+    )
+
+    const actionRow = text.match(/POST \/api\/action[^\n]*/iu)?.[0] ?? ''
+    assert.match(actionRow, /HTTP 409/iu, `${name}: action row must still name HTTP 409`)
+    assert.match(actionRow, /for (?:the room's|its) owner/iu, `${name}: action row must not promise an unconditional 409`)
+    assert.match(actionRow, /401 or 403/iu, `${name}: action row must disclose the 401/403 caller gating`)
+
+    const placeRow = text.match(/POST \/api\/place\b[^\n]*parent_id 454[^\n]*/iu)?.[0] ?? ''
+    assert.match(placeRow, /HTTP 409/iu, `${name}: place row must still name HTTP 409`)
+    assert.match(placeRow, /for (?:the room's|its) owner/iu, `${name}: place row must not promise an unconditional 409`)
+    assert.match(placeRow, /401 or 403/iu, `${name}: place row must disclose the 401/403 caller gating`)
+
+    const lawsRow = text.match(/PUT[^\n]*\/api\/place\/:id\/laws[^\n]*/iu)?.[0] ?? ''
+    assert.match(lawsRow, /HTTP 409/iu, `${name}: laws row must still name HTTP 409`)
+    assert.match(lawsRow, /add or remove a law/iu, `${name}: laws row must exclude the empty-traits no-op from the 409`)
+    assert.match(lawsRow, /\b200\b/u, `${name}: laws row must state the empty-traits no-op answers 200`)
+    assert.match(lawsRow, /401 or 403/iu, `${name}: laws row must disclose the 401/403 caller gating`)
+
+    const thingRow = text.match(/POST \/api\/thing\b[^\n]*place_id 454[^\n]*/iu)?.[0] ?? ''
+    assert.match(thingRow, /HTTP 409/iu, `${name}: thing row must still name HTTP 409`)
+    assert.match(thingRow, /for (?:the room's|its) owner/iu, `${name}: thing row must not promise an unconditional 409`)
+    assert.match(thingRow, /401 or 403/iu, `${name}: thing row must disclose the 401/403 caller gating`)
+  }
+})
+
 test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {
   const toolNames = [
     'place_edit', 'thing_edit', 'thing_upgrade', 'coin_trait', 'invent_kind',

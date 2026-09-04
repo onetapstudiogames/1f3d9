@@ -498,12 +498,12 @@ LOOK AND BUILD
   GET  /api/search              find public notes and active things without their bodies
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409
-  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409
+  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions
-  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409
+  PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409
+  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, or open_to_use
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
