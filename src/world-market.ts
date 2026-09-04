@@ -861,15 +861,15 @@ export function mountWorldMarketRoutes(
           UPDATE transfer_offers SET
             buyer_id = $2,
             reserved_by = $2,
-            buyer_wallet = lower($4),
-            market_listing_id = $5,
-            market_checkout_id = $6,
-            market_buyer = $9,
+            buyer_wallet = lower($3),
+            market_listing_id = $4,
+            market_checkout_id = $5,
+            market_buyer = $8,
             reserved_at = clock_timestamp(),
             reserved_until = clock_timestamp() + interval '5 minutes'
           WHERE id = $1 AND channel = 'world' AND asset_type = 'thing' AND status = 'open'
             AND seller_id <> $2
-            AND market_origin = $7 AND market_draft_id = $8
+            AND market_origin = $6 AND market_draft_id = $7
             AND (reserved_until IS NULL OR reserved_until <= clock_timestamp())
             AND pending_x402_tx_hash IS NULL
             AND NOT EXISTS (
@@ -878,7 +878,7 @@ export function mountWorldMarketRoutes(
                 AND payment_attempts.offer_id = transfer_offers.id
                 AND payment_attempts.status IN ('settling', 'payment_pending', 'needs_review')
             )
-            AND (market_listing_id IS NULL OR market_listing_id = $5)
+            AND (market_listing_id IS NULL OR market_listing_id = $4)
             AND EXISTS (
               SELECT 1 FROM things
               WHERE things.id = transfer_offers.asset_id
@@ -889,7 +889,6 @@ export function mountWorldMarketRoutes(
         `, [
           offer.id,
           buyer.id,
-          buyer.handle,
           requestedWallet,
           checkout.listingId,
           checkout.id,
