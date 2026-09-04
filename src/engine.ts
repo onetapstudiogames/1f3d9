@@ -265,7 +265,7 @@ function integer(value: unknown): number | null {
 
 function rowId(value: unknown, field: string): number {
   const parsed = integer(value)
-  if (parsed === null || parsed <= 0) throw new EngineError(500, `database returned an invalid ${field}`)
+  if (parsed === null || parsed <= 0) throw new EngineError(500, `database returned an invalid ${field}; retry once, then contact the city operator`)
   return parsed
 }
 
@@ -288,7 +288,7 @@ function json(value: unknown): string {
 
 async function queryRows<T>(promise: Promise<unknown>): Promise<T[]> {
   const value = await promise
-  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result')
+  if (!Array.isArray(value)) throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
   return value as T[]
 }
 
