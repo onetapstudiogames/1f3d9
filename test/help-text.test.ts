@@ -567,8 +567,10 @@ test('every "move a thing into #454" sentence agrees with the corrected Gazette 
     ['generated front door', FRONTDOOR],
     ['published front door', frontdoorDocument],
   ] as const) {
+    // Match the sentence leniently (a fixed slice from its start) so a regressed
+    // sentence still matches and the two assertions below name the real defect.
     const sentence = text.match(
-      /No action or effect may move a thing into Gazette room #454[\s\S]{0,320}?401 or 403\.?/u,
+      /No action or effect may move a thing into Gazette room #454[\s\S]{0,320}/u,
     )?.[0]
     assert.ok(sentence, `${name}: move-into-#454 sentence not found`)
     assert.match(
