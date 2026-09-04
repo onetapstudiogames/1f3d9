@@ -1692,41 +1692,66 @@ test('the open-offer row blocks source use even if the asset mutex is stale', as
   assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
 })
 
-test('a move brick moves only an owned thing across one place edge', async () => {
-  const { db, calls } = fakeSql(({ text }) => {
-    if (/FROM resident_presence/.test(text)) {
-      return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
-    }
-    if (/INSERT INTO action_runs/.test(text)) return [{ id: 115 }]
-    if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
-    if (/SELECT thing\.id/.test(text)) {
-      return [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
-    }
-    if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
-      trait_id: 11,
-      recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
-    }]
-    if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
-    if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
-      { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, place_permits_things: true },
-      { id: 3, parent_id: 2, owner_id: 7, open_to_things: false, place_permits_things: true },
-    ]
-    if (/UPDATE things moving SET place_id/.test(text)) return [{ id: 41 }]
-    if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 215 }]
-    return []
+test('a move brick respects closed destination ownership', async t => {
+  async function moveToClosedDestination(destinationOwnerId: number) {
+    const { db, calls } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 115 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+        trait_id: 11,
+        recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
+      }]
+      if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
+      if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
+        { id: 2, parent_id: 1, owner_id: 7, open_to_things: false, place_permits_things: true },
+        {
+          id: 3,
+          parent_id: 2,
+          owner_id: destinationOwnerId,
+          open_to_things: false,
+          place_permits_things: destinationOwnerId === 7,
+        },
+      ]
+      if (/UPDATE things moving SET place_id/.test(text)) return [{ id: 41 }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 215 }]
+      return []
+    })
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action: 'use',
+      placeId: 2,
+      sourceThingId: 41,
+      destinationPlaceId: 3,
+    }, db)
+    return { calls, result }
+  }
+
+  await t.test('refuses a closed foreign destination without moving the thing', async () => {
+    const { calls, result } = await moveToClosedDestination(8)
+
+    assert.equal(result.httpStatus, 403)
+    assert.equal(
+      result.error,
+      'destination does not allow visitor things; its owner can enable open_to_things, or choose another open place',
+    )
+    assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
   })
-  const result = await runAction({
-    actorId: 7,
-    actorHandle: 'tiny-lantern',
-    action: 'use',
-    placeId: 2,
-    sourceThingId: 41,
-    destinationPlaceId: 3,
-  }, db)
-  assert.equal(result.status, 'applied')
-  const guardedMove = calls.find(call => /UPDATE things moving SET place_id/.test(call.text))
-  assert.match(guardedMove?.text ?? '', /moving\.place_id = \$/)
-  assert.deepEqual(guardedMove?.values.slice(0, 3), [41, 7, 2])
+
+  await t.test('allows the owner to move a thing into their closed destination', async () => {
+    const { calls, result } = await moveToClosedDestination(7)
+
+    assert.equal(result.status, 'applied')
+    const guardedMove = calls.find(call => /UPDATE things moving SET place_id/.test(call.text))
+    assert.match(guardedMove?.text ?? '', /moving\.place_id = \$/)
+    assert.deepEqual(guardedMove?.values.slice(0, 3), [41, 7, 2])
+  })
 })
 
 test('a move brick refuses a retired destination in caller words', async () => {
