@@ -324,7 +324,8 @@ test('world-buy recovers from a paid claim that answers too slowly by reconcilin
 
   const market = await listen((request, response) => {
     if (request.method === 'POST' && request.url === '/api/world/checkout/23') {
-      sendJson(response, 201, { checkout: { id: 78 } })
+      // The market's real answer carries checkout_id at the top level.
+      sendJson(response, 201, { checkout_id: 78, url: 'https://market.test/api/world/checkout/78' })
       return
     }
     if (request.method === 'POST' && request.url === '/api/world/sync/23') {

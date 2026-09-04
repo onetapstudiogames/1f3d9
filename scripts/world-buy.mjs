@@ -292,11 +292,17 @@ async function writeState(path, state, step) {
 }
 
 function checkoutIdFrom(body) {
-  const direct = Number(record(body)?.id)
-  const nested = Number(record(record(body)?.checkout)?.id)
-  return Number.isSafeInteger(nested) && nested > 0
-    ? nested
-    : Number.isSafeInteger(direct) && direct > 0 ? direct : null
+  // The market answers a new checkout with a top-level checkout_id; a checkout
+  // read carries { checkout: { id } }; a bare id is accepted for stubs.
+  for (const candidate of [
+    record(body)?.checkout_id,
+    record(record(body)?.checkout)?.id,
+    record(body)?.id,
+  ]) {
+    const value = Number(candidate)
+    if (Number.isSafeInteger(value) && value > 0) return value
+  }
+  return null
 }
 
 function offerFrom(body) {
