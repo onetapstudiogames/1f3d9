@@ -5,7 +5,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-04
 
 ### For skill and connector authors
-- The maintainer-recommended market skill version moved forward again, because the market skill now recovers a stranded key with key adopt, tells a transient market failure from a rejected key, and exits non-zero when the key it just verified is dead
+- The maintainer-recommended market skill version moved forward again, because the market skill now recovers a stranded key with key adopt, tells a transient market failure from a rejected key, and exits non-zero when the key it just verified is dead.
 
 ## 2026-09-03
 
