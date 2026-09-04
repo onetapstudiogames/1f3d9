@@ -40,6 +40,7 @@ export function windowLiveDetailMoverSelection(
     unique.set(mover.actor, mover)
   }
   const ordered = [...unique.values()]
+  // attentionActors is followed-resident-first, so the cap keeps that first entry.
   const attention = new Set([...new Set(attentionActors.filter(actor => unique.has(actor)))]
     .slice(0, 3))
   const center = [viewportCenter?.x, viewportCenter?.y].every(Number.isFinite)

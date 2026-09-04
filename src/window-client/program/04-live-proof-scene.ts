@@ -432,6 +432,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     if (liveProofFrame) window.cancelAnimationFrame(liveProofFrame)
     liveProofFrame = 0
     liveProofFrameTimes = Object.freeze([])
+    liveProofFloorTiles.clear()
     if (liveReplayHeldKeys().size) settleLiveReplays()
     window.clearTimeout(state.pollTimer)
     window.clearTimeout(state.live.clockTimer)

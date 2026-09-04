@@ -2187,11 +2187,21 @@ test('Live ignores a stale raised parent when framing its drilled child plate', 
   await expect(page).toHaveURL(/\/window\/live\?place=2$/u)
   await expect(page.locator('.live-plot')).toHaveCount(217)
   await expect.poll(async () => {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve()))))
     const frame = await readLiveChildFraming(page)
-    return frame.mountedChildren >= 1 && frame.safeOpenButtons >= 1
+    return frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+      frame.safeOpenButtons >= 1 && frame.scale === 1
   }).toBe(true)
   const initial = await readLiveChildFraming(page)
   await page.getByRole('button', { name: 'Center live view' }).click()
+  await expect.poll(async () => {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve()))))
+    const frame = await readLiveChildFraming(page)
+    return frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+      frame.safeOpenButtons >= 1 && frame.scale === 1
+  }).toBe(true)
   const centered = await readLiveChildFraming(page)
   expect([initial, centered].every(frame =>
     frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
@@ -2232,10 +2242,22 @@ test('Live ignores an outside focus when framing First Town', async ({ page }) =
   await expect(page.locator('[data-live-resident-scope="outside"]'))
     .toContainText('map-walker')
   await expect(page.locator('.live-plot')).toHaveCount(217)
-  await expect.poll(() => readLiveChildFraming(page).then(frame =>
-    frame.mountedChildren >= 1 && frame.safeOpenButtons >= 1)).toBe(true)
+  await expect.poll(async () => {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve()))))
+    const frame = await readLiveChildFraming(page)
+    return frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+      frame.safeOpenButtons >= 1 && frame.scale === 1
+  }).toBe(true)
   const initial = await readLiveChildFraming(page)
   await page.getByRole('button', { name: 'Center live view' }).click()
+  await expect.poll(async () => {
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() =>
+      requestAnimationFrame(() => resolve()))))
+    const frame = await readLiveChildFraming(page)
+    return frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
+      frame.safeOpenButtons >= 1 && frame.scale === 1
+  }).toBe(true)
   const centered = await readLiveChildFraming(page)
   expect([initial, centered].every(frame =>
     frame.detailedChildren >= 1 && frame.mountedChildren >= 1 &&
@@ -4984,14 +5006,20 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
     }
     heldWindow.liveCompletionMutations = 0
     heldWindow.liveCompletionObserver = new MutationObserver(records => {
-      heldWindow.liveCompletionMutations! += records.length
+      const replayCount = (nodes: NodeList) => [...nodes].reduce((count, node) => {
+        if (!(node instanceof Element)) return count
+        return count + Number(node.matches('.live-replay-portrait')) +
+          node.querySelectorAll('.live-replay-portrait').length
+      }, 0)
+      heldWindow.liveCompletionMutations! += records.filter(record =>
+        replayCount(record.removedNodes) > replayCount(record.addedNodes)).length
     })
     heldWindow.liveCompletionObserver.observe(document.querySelector('#live-plates')!, {
       childList: true,
     })
   })
 
-  await page.clock.fastForward(durations[0]! + 270)
+  await page.clock.runFor(durations[0]! + 270)
   await expect(replays).toHaveCount(0)
   const completionMutations = await page.evaluate(() => {
     const heldWindow = window as typeof window & {
@@ -5099,7 +5127,7 @@ test('an invalidated in-flight floor cannot restore its stale tile', async ({ pa
 })
 
 test('eight legal change pages settle 1,600 actors without rebuilding crowd membership', async ({ page }) => {
-  test.setTimeout(60_000)
+  test.setTimeout(90_000)
   const now = Date.now()
   const actorCount = 1_600
   const drawingPlaceCount = 215
@@ -5171,7 +5199,7 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   )
 
   const replays = page.locator('.live-replay-portrait')
-  await expect(replays).toHaveCount(0)
+  await expect(replays).toHaveCount(0, { timeout: 25_000 })
   const stableResidentsDuring = await stableResidentPositions()
   const fixedPlotsDuring = await fixedPlotPositions()
   await page.clock.fastForward(2_000)

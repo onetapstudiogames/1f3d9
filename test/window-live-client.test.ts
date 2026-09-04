@@ -1506,6 +1506,23 @@ test('detail budget caps oversized attention so footsteps stay within 18 marks',
   assert.equal(selected.detailed.length * 2, 18)
 })
 
+test('detail budget keeps the followed resident when attention is oversized', () => {
+  const movers = Object.freeze(Array.from({ length: 5 }, (_, index) => Object.freeze({
+    actor: `attention-${String(index + 1)}`,
+    x: index,
+    y: 0,
+    order: index,
+  })))
+  const selected = windowLiveDetailMoverSelection(
+    movers,
+    Object.freeze(movers.map(mover => mover.actor)),
+    Object.freeze({ x: 0, y: 0 }),
+    0,
+  )
+
+  assert.equal(selected.detailed.includes('attention-1'), true)
+})
+
 test('redraw gate schedules changed visible input and stays idle when identical or hidden', () => {
   const visibleChange = Object.freeze({
     liveViewActive: true,
