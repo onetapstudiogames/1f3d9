@@ -41,6 +41,7 @@ import {
   defaultDiagnostics,
   recordFailure as recordDiagnosticFailure,
   traceForClient,
+  type OAuthDiagnosticRecord,
   type OAuthDiagnosticSink,
   type OAuthFailureStage,
   type OAuthRequestTrace,
@@ -83,6 +84,7 @@ const MAX_UI_LOCALES = 256
 const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
 const ACCESS_TOKEN_SECONDS = 10 * 60
 const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
+const PAIRING_CODE_REJECTION_MESSAGE = 'Pairing codes work once and expire ten minutes after your coding agent creates them; this rejected code will not work again, so ask your coding agent for a fresh code and paste it here.'
 const REFRESH_ATTEMPTS_PER_CONNECTION_PER_HOUR = 120
 const JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR = 120
 type OAuthStore = typeof postgresOAuthStore
@@ -121,8 +123,9 @@ function recordFailure(
   stage: OAuthFailureStage,
   errorClass: string,
   status: number,
+  failedCheck?: OAuthDiagnosticRecord['failed_check'],
 ): void {
-  recordDiagnosticFailure(oauth.diagnostics, trace, stage, errorClass, status)
+  recordDiagnosticFailure(oauth.diagnostics, trace, stage, errorClass, status, failedCheck)
 }
 
 function opaque(prefix = ''): string {
@@ -274,7 +277,7 @@ function pairingCodeRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
-<button type="submit">Try this pairing code</button></form>`
+<button type="submit">Paste a fresh pairing code</button></form>`
 }
 
 /**
@@ -288,7 +291,7 @@ function pairingCodeRetryForm(csrf: string): string {
  */
 function pairingConfirmPage(handle: string, pairingCode: string, csrf: string): string {
   return `<h1>Connect this pairing code?</h1>
-<p>This pairing code connects the resident <strong>${escapeHtml(handle)}</strong>. Approve?</p>
+<p>This pairing code works once and expires ten minutes after the coding agent created it; it connects the resident <strong>${escapeHtml(handle)}</strong>. Approve?</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair_confirm">
 <input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -321,11 +324,12 @@ async function form(c: Context): Promise<URLSearchParams | null> {
   return new URLSearchParams(raw)
 }
 
-function one(params: URLSearchParams, name: string, maximum = 4_096): string | null {
+function one(params: URLSearchParams, name: string, maximum = 4_096, trim = false): string | null {
   const values = params.getAll(name)
   if (values.length !== 1 || !values[0] || values[0]!.length > maximum) return null
-  if (/[\u0000-\u001f\u007f]/u.test(values[0]!)) return null
-  return values[0]!
+  const value = trim ? values[0]!.trim() : values[0]!
+  if (!value || /[\u0000-\u001f\u007f]/u.test(value)) return null
+  return value
 }
 
 function hasExactlyKnownFields(params: URLSearchParams, allowed: readonly string[]): boolean {
@@ -362,7 +366,7 @@ function consentPage(request: {
   const csrf = escapeHtml(request.csrf)
   const pairingFieldset = request.pairingEnabled
     ? `<fieldset><legend><strong>Have a pairing code instead</strong></legend>
-<p class="muted">Its resident asked its coding client to mint this with POST /api/pair. It expires ten minutes after minting and works once; it never reveals the resident key.</p>
+<p class="muted">Pairing codes work once and expire ten minutes after the coding agent creates them with POST /api/pair; they never reveal the resident key.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
 <label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
@@ -372,7 +376,7 @@ function consentPage(request: {
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
 <p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
-<p class="muted">This sign-in request expires after 15 minutes; the one-time authorization code issued after approval expires after 5 minutes. There are 60 sign-ins per IP and client per UTC hour and 10 link attempts per IP and client per UTC hour. New-resident signup allows 3 starts per IP per UTC hour, 300 total and 300 per client per UTC hour, and 10 confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
+<p class="muted">This sign-in request expires after 15 minutes; the one-time authorization code issued after approval expires after 5 minutes. There are 60 sign-ins per IP and client per UTC hour and 10 shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows 3 starts per IP per UTC hour, 300 total and 300 per client per UTC hour, and 10 confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
 <fieldset><legend><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
@@ -816,8 +820,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       message: string,
       nextStepHtml?: string,
       callbackOrigin?: string,
+      failedCheck?: OAuthDiagnosticRecord['failed_check'],
     ) => {
-      recordFailure(oauth, trace, 'browser_approval', errorClass, status)
+      recordFailure(oauth, trace, 'browser_approval', errorClass, status, failedCheck)
       return browserError(c, status, errorClass, message, nextStepHtml, callbackOrigin)
     }
 
@@ -917,7 +922,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
 
       if (action === 'confirm') {
-        const residentKey = one(values, 'resident_key', 80)
+        const residentKey = one(values, 'resident_key', 80, true)
         if (
           request.intent !== 'new' ||
           request.resident_id !== null || request.new_handle === null ||
@@ -999,7 +1004,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
 
       if (action === 'link') {
-        const residentKey = one(values, 'resident_key', 80)
+        const residentKey = one(values, 'resident_key', 80, true)
         if (!residentKey || !/^1f3d9_sk_[0-9a-f]{48}$/.test(residentKey)) {
           return fail(
             403,
@@ -1053,14 +1058,15 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
 
       if (action === 'pair') {
-        const pairingCode = one(values, 'pairing_code', 90)
+        const pairingCode = one(values, 'pairing_code', 90, true)
         if (!pairingCode || !PAIRING_CODE_RE.test(pairingCode)) {
           return fail(
             403,
             'pairing_code_rejected',
-            'That pairing code could not be verified. Check it and try again on this page.',
+            PAIRING_CODE_REJECTION_MESSAGE,
             pairingCodeRetryForm(csrf),
             callbackOrigin,
+            'not_a_code',
           )
         }
         if (!(await admitted(
@@ -1072,7 +1078,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             429,
             'rate_limited',
-            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            'Too many pairing-code or resident-key attempts. This sign-in will expire before the one-hour wait ends.',
             returnToChatAppAfterHour(),
             callbackOrigin,
           )
@@ -1085,23 +1091,25 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             403,
             'pairing_code_rejected',
-            'That pairing code could not be verified. Check it and try again on this page.',
+            PAIRING_CODE_REJECTION_MESSAGE,
             pairingCodeRetryForm(csrf),
             callbackOrigin,
+            'code_not_accepted',
           )
         }
         return html(c, 200, 'Connect this pairing code?', pairingConfirmPage(peeked.handle, pairingCode, csrf), callbackOrigin)
       }
 
       if (action === 'pair_confirm') {
-        const pairingCode = one(values, 'pairing_code', 90)
+        const pairingCode = one(values, 'pairing_code', 90, true)
         if (!pairingCode || !PAIRING_CODE_RE.test(pairingCode)) {
           return fail(
             403,
             'pairing_code_rejected',
-            'That pairing code could not be verified. Check it and try again on this page.',
+            PAIRING_CODE_REJECTION_MESSAGE,
             pairingCodeRetryForm(csrf),
             callbackOrigin,
+            'not_a_code',
           )
         }
         if (!(await admitted(
@@ -1113,7 +1121,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             429,
             'rate_limited',
-            'Too many key attempts. This sign-in will expire before the one-hour wait ends.',
+            'Too many pairing-code or resident-key attempts. This sign-in will expire before the one-hour wait ends.',
             returnToChatAppAfterHour(),
             callbackOrigin,
           )
@@ -1139,9 +1147,10 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           return fail(
             403,
             'pairing_code_rejected',
-            'That pairing code could not be verified. Check it and try again on this page.',
+            PAIRING_CODE_REJECTION_MESSAGE,
             pairingCodeRetryForm(csrf),
             callbackOrigin,
+            'code_not_accepted',
           )
         }
         return redirectWithCode(c, redirect, authorizationCode)

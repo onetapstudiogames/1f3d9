@@ -1578,7 +1578,7 @@ test('hosted sign-in states its expiry, attempt caps, and reserved-name rule bef
   assert.match(session.html, /sign-in request[^.]*expires after 15 minutes/iu)
   assert.match(session.html, /authorization code[^.]*expires after 5 minutes/iu)
   assert.match(session.html, /60[^.]*sign-ins[^.]*per IP and client[^.]*UTC hour/iu)
-  assert.match(session.html, /10[^.]*link[^.]*per IP and client[^.]*UTC hour/iu)
+  assert.match(session.html, /10[^.]*pairing-code[^.]*resident-key[^.]*per IP and client[^.]*UTC hour/iu)
   assert.match(session.html, /new-resident[^.]*3 starts[^.]*per IP[^.]*UTC hour/iu)
   assert.match(session.html, /300[^.]*total[^.]*300[^.]*per client[^.]*UTC hour/iu)
   assert.match(session.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
@@ -2576,7 +2576,9 @@ test('the consent page offers a pairing-code fieldset that never asks for the re
   assert.match(session.html, /name="pairing_code"[^>]*type="password"/iu)
   assert.match(session.html, new RegExp(`name="action" value="pair"`, 'u'))
   assert.match(session.html, /POST \/api\/pair/u)
-  assert.match(session.html, /never reveals the resident key/iu)
+  assert.match(session.html, /Pairing codes work once and expire ten minutes after the coding agent creates them/iu)
+  assert.match(session.html, /10 shared pairing-code or resident-key attempts per IP and client per UTC hour/iu)
+  assert.match(session.html, /never reveal the resident key/iu)
 })
 
 test('entering a pairing code first names the resident it connects and asks for one click, without consuming it', async () => {
@@ -2588,7 +2590,8 @@ test('entering a pairing code first names the resident it connects and asks for 
   })
   assert.equal(response.status, 200)
   const body = await response.text()
-  assert.match(body, /This pairing code connects the resident <strong>chatty<\/strong>\. Approve\?/iu)
+  assert.match(body, /it connects the resident <strong>chatty<\/strong>\. Approve\?/iu)
+  assert.match(body, /works once and expires ten minutes after the coding agent created it/iu)
   assert.match(body, /name="action" value="pair_confirm"/u)
   assert.match(body, new RegExp(`name="pairing_code" value="${pairingCode}"`, 'u'))
   assert.doesNotMatch(body, /1f3d9_sk_/i)
@@ -2602,8 +2605,26 @@ test('entering a pairing code first names the resident it connects and asks for 
   assert.ok(pair.access_token)
 })
 
+test('pairing codes and resident keys forgive surrounding pasted whitespace', async () => {
+  const { app, memory } = fixture()
+  const pairingCode = await mintedPairingCode(memory)
+  const pairingSession = await begin(app)
+  const pairingResponse = await browserPost(app, pairingSession, {
+    action: 'pair', csrf: pairingSession.csrf, pairing_code: ` \r\n${pairingCode}\r\n `,
+  })
+  assert.equal(pairingResponse.status, 200)
+
+  const keySession = await begin(app)
+  const keyResponse = await browserPost(app, keySession, {
+    action: 'link', csrf: keySession.csrf, resident_key: `  ${EXISTING_KEY}  `,
+  })
+  authorizationCode(keyResponse)
+})
+
 test('an unrecognized pairing code is refused as pairing_code_rejected with a retry form, at either step', async () => {
-  const { app } = fixture()
+  const memory = new MemoryOAuthStore()
+  const diagnostics: OAuthDiagnosticRecord[] = []
+  const app = appFor(memory, record => diagnostics.push(record))
   for (const action of ['pair', 'pair_confirm'] as const) {
     const session = await begin(app)
     const response = await browserPost(app, session, {
@@ -2612,10 +2633,50 @@ test('an unrecognized pairing code is refused as pairing_code_rejected with a re
     assert.equal(response.status, 403)
     assert.equal(response.headers.get('x-1f3d9-reason'), 'pairing_code_rejected')
     const body = await response.text()
-    assert.match(body, /pairing code could not be verified/iu)
+    assert.match(body, /Pairing codes work once and expire ten minutes after your coding agent creates them; this rejected code will not work again, so ask your coding agent for a fresh code and paste it here\./u)
     assert.match(body, /name="action" value="pair"/u)
     assert.match(body, /name="pairing_code"[^>]*type="password"/iu)
+    assert.match(body, /Paste a fresh pairing code/u)
+    assert.doesNotMatch(body, /Try this pairing code/u)
   }
+  assert.deepEqual(diagnostics.map(record => record.failed_check), ['code_not_accepted', 'code_not_accepted'])
+})
+
+test('a malformed pairing value records the failed format check at either step without changing the human sentence', async () => {
+  for (const action of ['pair', 'pair_confirm'] as const) {
+    const memory = new MemoryOAuthStore()
+    const diagnostics: OAuthDiagnosticRecord[] = []
+    const app = appFor(memory, record => diagnostics.push(record))
+    const session = await begin(app)
+    const response = await browserPost(app, session, {
+      action, csrf: session.csrf, pairing_code: 'not-a-pairing-code',
+    })
+    assert.equal(response.status, 403, action)
+    assert.match(await response.text(), /Pairing codes work once and expire ten minutes/iu, action)
+    assert.equal(diagnostics[0]?.failed_check, 'not_a_code', action)
+  }
+})
+
+test('pairing exhausts the shared ten-attempt budget with a pairing-specific message', async () => {
+  const { app, memory } = fixture()
+  const session = await begin(app)
+  const attempts = new Map<string, number>()
+  memory.api.consumeOAuthRateLimit = async input => {
+    assert.equal(input.attemptKind, 'resident_key')
+    assert.equal(input.maximum, 10)
+    const count = (attempts.get(input.bucketHash) ?? 0) + 1
+    attempts.set(input.bucketHash, count)
+    return rateLimitResult(count <= 10)
+  }
+  const fields = {
+    action: 'pair', csrf: session.csrf, pairing_code: PAIRING_CODE_PREFIX + '22'.repeat(32),
+  }
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    assert.equal((await browserPost(app, session, fields)).status, 403)
+  }
+  const exhausted = await browserPost(app, session, fields)
+  assert.equal(exhausted.status, 429)
+  assert.match(await exhausted.text(), /Too many pairing-code or resident-key attempts/iu)
 })
 
 test('an expired pairing code is refused the same as an unknown one, at either step', async () => {

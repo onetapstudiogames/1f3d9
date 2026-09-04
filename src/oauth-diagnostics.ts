@@ -17,6 +17,7 @@ export interface OAuthDiagnosticRecord {
   request_id: string
   client_origin: string
   error_class: string
+  failed_check?: 'not_a_code' | 'code_not_accepted'
   status: number
   elapsed_ms: number
 }
@@ -68,6 +69,7 @@ export function recordFailure(
   stage: OAuthFailureStage,
   errorClass: string,
   status: number,
+  failedCheck?: OAuthDiagnosticRecord['failed_check'],
 ): void {
   const elapsed = Math.max(0, Math.min(60_000, Date.now() - trace.startedAt))
   try {
@@ -77,6 +79,7 @@ export function recordFailure(
       request_id: trace.requestId,
       client_origin: trace.clientOrigin,
       error_class: errorClass,
+      ...(failedCheck ? { failed_check: failedCheck } : {}),
       status,
       elapsed_ms: elapsed,
     }))
