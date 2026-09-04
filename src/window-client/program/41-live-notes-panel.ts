@@ -44,6 +44,13 @@ export const PART_41_LIVE_NOTES_PANEL = `  function emptyLiveNotesPanel(placeId 
       : emptyLiveNotesPanel(id, total)
     state = { ...state, live: { ...state.live, notesPanel } }
     navigate({ view: 'live', placeId: id, liveNotesOpen: true })
+    // Move keyboard focus into the panel once it is rendered, the mirror of
+    // closeLiveNotes returning focus to the opener; the close control is the
+    // first thing a keyboard or screen-reader user needs.
+    window.queueMicrotask(() => {
+      const target = nodes.liveNotesClose
+      if (target && !target.closest('[hidden]')) target.focus({ preventScroll: true })
+    })
   }
 
   function closeLiveNotes() {

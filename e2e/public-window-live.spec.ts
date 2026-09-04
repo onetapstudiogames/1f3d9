@@ -1530,6 +1530,9 @@ test('Live notes open, page, share, close, and stay inside a 375px viewport', as
 
   const panel = page.locator('#live-notes-panel')
   await expect(panel).toBeVisible()
+  // Opening moves keyboard focus into the panel (the close control), the
+  // mirror of Escape returning it to the opener below.
+  await expect(page.locator('#live-notes-close')).toBeFocused()
   await expect(panel.locator('.live-note-row')).toHaveCount(50)
   await expect.poll(fixture.liveNotesPageRequests).toBe(1)
   const more = panel.getByRole('button', { name: 'Continue' })
