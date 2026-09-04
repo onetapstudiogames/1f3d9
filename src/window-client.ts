@@ -17,1274 +17,153 @@ import {
 } from './window-sharing.ts'
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
-
-export type WindowDrawing = Readonly<{
-  palette: readonly string[]
-  indices: readonly (number | null)[]
-}>
-
-export type WindowDrawingState = 'undrawn' | 'refused' | 'in_progress' | 'complete'
-
-export type WindowDrawingSource = Readonly<{
-  source: 'none' | 'resident' | 'place' | 'thing' | 'kind_base' | 'kind_variant'
-  kind_id?: number
-  kind_name?: string
-  revision?: number
-  variant_name?: string
-}>
-
-export function normalizeWindowDrawing(value: unknown): WindowDrawing | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const candidate = value as Record<string, unknown>
-  const fields = Object.keys(candidate).sort()
-  if (fields.length !== 2 || fields[0] !== 'indices' || fields[1] !== 'palette') return null
-  if (!Array.isArray(candidate.palette) || candidate.palette.length > 64 ||
-      !candidate.palette.every(colour => typeof colour === 'string' && /^#[0-9a-f]{6}$/u.test(colour))) {
-    return null
-  }
-  if (!Array.isArray(candidate.indices) || candidate.indices.length !== 64 ||
-      !candidate.indices.every(index => index === null || (
-        typeof index === 'number' && Number.isInteger(index) && index >= 0 &&
-        index < (candidate.palette as unknown[]).length
-      ))) return null
-  try {
-    if (new TextEncoder().encode(JSON.stringify(candidate)).byteLength > 2_048) return null
-  } catch {
-    return null
-  }
-  return Object.freeze({
-    palette: Object.freeze([...(candidate.palette as string[])]),
-    indices: Object.freeze([...(candidate.indices as Array<number | null>)]),
-  })
-}
-
-export function windowDrawingStateLabel(
-  state: WindowDrawingState,
-  drawing: WindowDrawing | null,
-): 'Undrawn' | 'Refused' | 'In progress' | 'Blank' | 'Complete' {
-  if (state === 'undrawn') return 'Undrawn'
-  if (state === 'refused') return 'Refused'
-  if (state === 'in_progress') return 'In progress'
-  return drawing?.indices.every(index => index === null) ? 'Blank' : 'Complete'
-}
-
-export function windowDrawingSourceLabel(source: WindowDrawingSource | null): string {
-  if (!source || source.source === 'none') return ''
-  if (['resident', 'place', 'thing'].includes(source.source)) return 'Own drawing'
-  if (!source.kind_name || !Number.isSafeInteger(source.revision) ||
-      (source.revision ?? 0) <= 0) return ''
-  const prefix = `Kind ${source.kind_name} · revision ${String(source.revision)} · `
-  if (source.source === 'kind_base') return prefix + 'base'
-  return source.variant_name ? prefix + `variant ${source.variant_name}` : ''
-}
-
-export function windowLivePlateChildren<T extends Readonly<{
-  id: number
-  parent_id: number | null
-}>>(values: readonly T[], parentId: number): T[] {
-  return values.filter(value => value.parent_id === parentId)
-    .sort((left, right) => left.id - right.id)
-}
-
-export const WINDOW_LIVE_DIRECT_COMMONS_WIDTH = 1_100
-export const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT = 680
-export const WINDOW_LIVE_CHILD_GROUND_GAP = 80
-
-export function windowLiveSurveyedPlots<T extends Readonly<{
-  id: number
-  parent_id: number | null
-}>>(values: readonly T[], parentId: number): ReadonlyArray<Readonly<{
-  id: number
-  x: number
-  y: number
-  width: number
-  height: number
-}>> {
-  // One fixed ordinary footprint holds both declared six-item visible caps.
-  // Fixed dimensions keep existing places still when later occupants arrive.
-  const width = 440
-  const height = 280
-  const gap = 80
-  const childGroundLeft = WINDOW_LIVE_DIRECT_COMMONS_WIDTH + WINDOW_LIVE_CHILD_GROUND_GAP
-  const placed: Array<Readonly<{
-    id: number
-    x: number
-    y: number
-    width: number
-    height: number
-  }>> = []
-  const randomUnit = (seed: number): number => {
-    let value = seed >>> 0
-    value ^= value << 13
-    value ^= value >>> 17
-    value ^= value << 5
-    return (value >>> 0) / 4_294_967_296
-  }
-  const overlaps = (left: Readonly<{ x: number; y: number; width: number; height: number }>,
-    right: Readonly<{ x: number; y: number; width: number; height: number }>): boolean =>
-    left.x < right.x + right.width + gap && left.x + left.width + gap > right.x &&
-    left.y < right.y + right.height + gap && left.y + left.height + gap > right.y
-
-  for (const place of windowLivePlateChildren(values, parentId)) {
-    let foundOpenGround = false
-    let candidate: Readonly<{
-      id: number
-      x: number
-      y: number
-      width: number
-      height: number
-    }> = Object.freeze({ id: place.id, x: childGroundLeft, y: 184, width, height })
-    for (let attempt = 0; attempt < 10_000; attempt += 1) {
-      const band = Math.floor(attempt / 24)
-      const availableWidth = 860 + band * 420
-      const availableHeight = 420 + band * 260
-      const xSeed = Math.imul(place.id ^ 0x9e3779b9, 0x85ebca6b) + attempt * 0x27d4eb2d
-      const ySeed = Math.imul(place.id ^ 0xc2b2ae35, 0x165667b1) + attempt * 0x9e3779b1
-      candidate = Object.freeze({
-        id: place.id,
-        x: Math.round(childGroundLeft + randomUnit(xSeed) * Math.max(1, availableWidth - width)),
-        y: Math.round(184 + randomUnit(ySeed) * Math.max(1, availableHeight - height)),
-        width,
-        height,
-      })
-      if (!placed.some(existing => overlaps(candidate, existing))) {
-        foundOpenGround = true
-        break
-      }
-    }
-    if (!foundOpenGround) {
-      candidate = Object.freeze({
-        id: place.id,
-        x: childGroundLeft,
-        y: placed.reduce((bottom, existing) =>
-          Math.max(bottom, existing.y + existing.height), 184) + gap,
-        width,
-        height,
-      })
-    }
-    placed.push(candidate)
-  }
-  return Object.freeze(placed)
-}
-
-export function windowLiveExpandedGroundLayout(
-  plots: readonly Readonly<{
-    id: number
-    x: number
-    y: number
-    width: number
-    height: number
-  }>[],
-  expansions: readonly Readonly<{
-    id: number
-    residentHeight: number
-    thingHeight: number
-  }>[],
-  groundWidth = 480,
-  gap = 16,
-  controlRailDepth = 64,
-): Readonly<{
-  grounds: Readonly<Record<string, Readonly<{
-    x: number
-    residentTop: number | null
-    thingTop: number | null
-    width: number
-    bottom: number
-  }>>>
-  width: number
-  height: number
-}> {
-  const safeGroundWidth = Number.isFinite(groundWidth) && groundWidth > 0
-    ? groundWidth
-    : 480
-  const safeGap = Number.isFinite(gap) && gap >= 0 ? gap : 16
-  const safeRailDepth = Number.isFinite(controlRailDepth) && controlRailDepth >= 0
-    ? controlRailDepth
-    : 64
-  const plotById = new Map(plots.filter(plot =>
-    [plot.id, plot.x, plot.y, plot.width, plot.height].every(Number.isFinite) &&
-      Number.isSafeInteger(plot.id) && plot.id > 0 && plot.width > 0 && plot.height > 0)
-    .map(plot => [plot.id, plot]))
-  const fixed = [...plotById.values()].map(plot => Object.freeze({
-    x: plot.x,
-    y: plot.y,
-    width: plot.width,
-    height: plot.height + safeRailDepth,
-  }))
-  const obstacles = [...fixed]
-  const grounds: Record<string, Readonly<{
-    x: number
-    residentTop: number | null
-    thingTop: number | null
-    width: number
-    bottom: number
-  }>> = {}
-  const ordered = expansions.filter(expansion =>
-    plotById.has(expansion.id) &&
-      [expansion.residentHeight, expansion.thingHeight].every(Number.isFinite) &&
-      expansion.residentHeight >= 0 && expansion.thingHeight >= 0 &&
-      (expansion.residentHeight > 0 || expansion.thingHeight > 0))
-    .sort((left, right) => {
-      const leftPlot = plotById.get(left.id)!
-      const rightPlot = plotById.get(right.id)!
-      return leftPlot.y - rightPlot.y || leftPlot.x - rightPlot.x || left.id - right.id
-    })
-  for (const expansion of ordered) {
-    const plot = plotById.get(expansion.id)!
-    const totalHeight = expansion.residentHeight + expansion.thingHeight +
-      (expansion.residentHeight > 0 && expansion.thingHeight > 0 ? safeGap : 0)
-    let top = plot.y + plot.height + safeRailDepth + safeGap
-    while (true) {
-      const overlapping = obstacles.filter(obstacle =>
-        plot.x < obstacle.x + obstacle.width + safeGap &&
-        plot.x + safeGroundWidth + safeGap > obstacle.x &&
-        top < obstacle.y + obstacle.height + safeGap &&
-        top + totalHeight + safeGap > obstacle.y)
-      if (!overlapping.length) break
-      top = Math.max(...overlapping.map(obstacle => obstacle.y + obstacle.height + safeGap))
-    }
-    const residentTop = expansion.residentHeight > 0 ? top : null
-    const thingTop = expansion.thingHeight > 0
-      ? top + expansion.residentHeight +
-        (expansion.residentHeight > 0 ? safeGap : 0)
-      : null
-    const ground = Object.freeze({
-      x: plot.x,
-      residentTop,
-      thingTop,
-      width: safeGroundWidth,
-      bottom: top + totalHeight,
-    })
-    grounds[String(expansion.id)] = ground
-    obstacles.push(Object.freeze({ x: ground.x, y: top, width: ground.width, height: totalHeight }))
-  }
-  return Object.freeze({
-    grounds: Object.freeze(grounds),
-    width: Math.max(0, ...fixed.map(area => area.x + area.width),
-      ...Object.values(grounds).map(ground => ground.x + ground.width)),
-    height: Math.max(0, ...fixed.map(area => area.y + area.height),
-      ...Object.values(grounds).map(ground => ground.bottom)),
-  })
-}
-
-export function windowLiveScatteredPoint(
-  key: number,
-  width: number,
-  height: number,
-  seed: number,
-  margin: number,
-): Readonly<{ x: number; y: number }> {
-  if (![key, width, height, seed, margin].every(Number.isFinite) ||
-      width <= margin * 2 || height <= margin * 2 || margin < 0) {
-    return Object.freeze({ x: 0, y: 0 })
-  }
-  const radicalInverse = (value: number, base: number): number => {
-    let fraction = 1 / base
-    let result = 0
-    let remaining = Math.max(1, Math.floor(value))
-    while (remaining > 0) {
-      result += (remaining % base) * fraction
-      remaining = Math.floor(remaining / base)
-      fraction /= base
-    }
-    return result
-  }
-  const offset = Math.abs(Math.floor(seed)) % 65_521
-  const pointKey = offset + Math.abs(Math.floor(key)) + 1
-  return Object.freeze({
-    x: Math.round(margin + radicalInverse(pointKey, 2) * (width - margin * 2)),
-    y: Math.round(margin + radicalInverse(pointKey, 3) * (height - margin * 2)),
-  })
-}
-
-export function windowLiveScatteredPoints(
-  count: number,
-  width: number,
-  height: number,
-  seed: number,
-  margin: number,
-): ReadonlyArray<Readonly<{ x: number; y: number }>> {
-  if (![count, width, height, seed, margin].every(Number.isFinite) || count <= 0) {
-    return Object.freeze([])
-  }
-  const limit = Math.max(0, Math.floor(count))
-  return Object.freeze(Array.from({ length: limit }, (_, index) =>
-    windowLiveScatteredPoint(index, width, height, seed, margin)))
-}
-
-export function windowLiveScatterSurfaceHeight(
-  occupiedHeight: number,
-  width: number,
-  count: number,
-  itemWidth: number,
-  itemHeight: number,
-  margin: number,
-  reserveOverflowControl = false,
-): number {
-  const numbers = [occupiedHeight, width, count, itemWidth, itemHeight, margin]
-  if (!numbers.every(Number.isFinite) || occupiedHeight < 0 || width <= 0 || count < 0 ||
-      itemWidth <= 0 || itemHeight <= 0 || margin < 0) {
-    return Math.max(0, Number.isFinite(occupiedHeight) ? Math.floor(occupiedHeight) : 0)
-  }
-  const gap = 6
-  const usableWidth = width - margin * 2
-  const columns = Math.max(1, Math.floor((usableWidth + gap) / (itemWidth + gap)))
-  const blockedRows = occupiedHeight > 0
-    ? Math.ceil((occupiedHeight + gap) / (itemHeight + gap))
-    : 0
-  const controlRows = reserveOverflowControl
-    ? Math.ceil((52 + gap) / (itemHeight + gap)) + 1
-    : 0
-  const contentRows = Math.ceil(Math.max(0, Math.floor(count)) / columns)
-  if (!contentRows && !controlRows) return Math.ceil(occupiedHeight)
-  const rows = blockedRows + contentRows + controlRows
-  return Math.ceil(margin * 2 + rows * (itemHeight + gap))
-}
-
-export function windowLiveSeparatedPoints(
-  keys: readonly number[],
-  width: number,
-  height: number,
-  seed: number,
-  itemWidth: number,
-  itemHeight: number,
-  margin: number,
-  anchorY: number,
-  reserved: readonly Readonly<{ x: number; y: number; width: number; height: number }>[] = [],
-  previous: Readonly<Record<string, Readonly<{ x: number; y: number }>>> = {},
-): Readonly<Record<string, Readonly<{ x: number; y: number }>>> {
-  const numbers = [width, height, seed, itemWidth, itemHeight, margin, anchorY]
-  if (!numbers.every(Number.isFinite) || width <= 0 || height <= 0 ||
-      itemWidth <= 0 || itemHeight <= 0 || margin < 0 || anchorY < 0 || anchorY > 1) {
-    return Object.freeze({})
-  }
-  const uniqueKeys = [...new Set(keys.filter(key => Number.isSafeInteger(key) && key >= 0))]
-    .sort((left, right) => left - right)
-  if (!uniqueKeys.length) return Object.freeze({})
-
-  const gap = 6
-  const usableWidth = width - margin * 2
-  const usableHeight = height - margin * 2
-  const columns = Math.max(1, Math.floor((usableWidth + gap) / (itemWidth + gap)))
-  const rows = Math.max(1, Math.floor((usableHeight + gap) / (itemHeight + gap)))
-  const cellWidth = usableWidth / columns
-  const cellHeight = usableHeight / rows
-  const rectangle = (point: Readonly<{ x: number; y: number }>) => Object.freeze({
-    x: point.x - itemWidth / 2,
-    y: point.y - itemHeight * anchorY,
-    width: itemWidth,
-    height: itemHeight,
-  })
-  const overlaps = (
-    left: Readonly<{ x: number; y: number; width: number; height: number }>,
-    right: Readonly<{ x: number; y: number; width: number; height: number }>,
-    clearance = 0,
-  ): boolean => left.x < right.x + right.width + clearance &&
-    left.x + left.width + clearance > right.x &&
-    left.y < right.y + right.height + clearance &&
-    left.y + left.height + clearance > right.y
-  const validReserved = reserved.filter(area =>
-    [area.x, area.y, area.width, area.height].every(Number.isFinite) &&
-    area.width >= 0 && area.height >= 0)
-  const inside = (point: Readonly<{ x: number; y: number }>): boolean => {
-    const area = rectangle(point)
-    return area.x >= margin && area.y >= margin &&
-      area.x + area.width <= width - margin &&
-      area.y + area.height <= height - margin &&
-      !validReserved.some(block => overlaps(area, block, gap))
-  }
-  const hashUnit = (value: number): number => {
-    let held = value >>> 0
-    held ^= held << 13
-    held ^= held >>> 17
-    held ^= held << 5
-    return (held >>> 0) / 4_294_967_296
-  }
-  const candidates: Array<Readonly<{ x: number; y: number }>> = []
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const slot = row * columns + column
-      const horizontalSlack = Math.max(0, cellWidth - itemWidth - gap)
-      const verticalSlack = Math.max(0, cellHeight - itemHeight - gap)
-      const top = margin + row * cellHeight
-      const point = Object.freeze({
-        x: Math.round((margin + (column + 0.5) * cellWidth +
-          (hashUnit(Math.imul(slot + 1, 0x9e3779b1) ^ Math.floor(seed)) - 0.5) *
-          horizontalSlack) * 10) / 10,
-        y: Math.round((top + (cellHeight - itemHeight) / 2 + itemHeight * anchorY +
-          (hashUnit(Math.imul(slot + 1, 0x85ebca6b) ^ Math.floor(seed * 17)) - 0.5) *
-          verticalSlack) * 10) / 10,
-      })
-      if (inside(point)) candidates.push(point)
-    }
-  }
-  candidates.sort((left, right) => {
-    const leftHash = Math.imul(Math.round(left.x * 10) ^ Math.round(left.y * 10), 0x9e3779b1) ^
-      Math.floor(seed)
-    const rightHash = Math.imul(Math.round(right.x * 10) ^ Math.round(right.y * 10), 0x9e3779b1) ^
-      Math.floor(seed)
-    return (leftHash >>> 0) - (rightHash >>> 0)
-  })
-
-  const placed: Array<Readonly<{ x: number; y: number; width: number; height: number }>> = []
-  const result: Record<string, Readonly<{ x: number; y: number }>> = {}
-  const available = (point: Readonly<{ x: number; y: number }>): boolean => {
-    const area = rectangle(point)
-    return inside(point) && !placed.some(other => overlaps(area, other, gap))
-  }
-  for (const key of uniqueKeys.filter(key => Object.hasOwn(previous, String(key)))) {
-    const point = previous[String(key)]
-    if (!point || ![point.x, point.y].every(Number.isFinite) || !available(point)) continue
-    result[String(key)] = Object.freeze({ x: point.x, y: point.y })
-    placed.push(rectangle(point))
-  }
-  for (const key of uniqueKeys) {
-    if (Object.hasOwn(result, String(key))) continue
-    const offset = candidates.length
-      ? Math.abs(Math.imul(key ^ Math.floor(seed), 0x27d4eb2d)) % candidates.length
-      : 0
-    let point = null
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[(offset + index) % candidates.length]
-      if (candidate && available(candidate)) {
-        point = candidate
-        break
-      }
-    }
-    if (!point) {
-      const minX = Math.ceil(margin + itemWidth / 2)
-      const maxX = Math.floor(width - margin - itemWidth / 2)
-      const minY = Math.ceil(margin + itemHeight * anchorY)
-      const maxY = Math.floor(height - margin - itemHeight * (1 - anchorY))
-      const xCount = Math.max(0, maxX - minX + 1)
-      const yCount = Math.max(0, maxY - minY + 1)
-      const fineCount = xCount * yCount
-      const fineOffset = fineCount
-        ? (Math.imul(key ^ Math.floor(seed), 0x27d4eb2d) >>> 0) % fineCount
-        : 0
-      for (let attempt = 0; attempt < fineCount; attempt += 1) {
-        const index = (fineOffset + attempt) % fineCount
-        const candidate = Object.freeze({
-          x: minX + index % xCount,
-          y: minY + Math.floor(index / xCount),
-        })
-        if (available(candidate)) {
-          point = candidate
-          break
-        }
-      }
-    }
-    if (!point) continue
-    result[String(key)] = point
-    placed.push(rectangle(point))
-  }
-  return Object.freeze(result)
-}
-
-export const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze({
-  x: 6,
-  y: 286,
-  width: 128,
-  height: 44,
-})
-
-function windowLivePointFootprints(
-  points: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
-  itemWidth: number,
-  itemHeight: number,
-  anchorY: number,
-): readonly Readonly<{ x: number; y: number; width: number; height: number }>[] {
-  if (![itemWidth, itemHeight, anchorY].every(Number.isFinite) ||
-      itemWidth <= 0 || itemHeight <= 0 || anchorY < 0 || anchorY > 1) {
-    return Object.freeze([])
-  }
-  return Object.freeze(Object.values(points).flatMap(point =>
-    [point.x, point.y].every(Number.isFinite)
-      ? [Object.freeze({
-          x: point.x - itemWidth / 2,
-          y: point.y - itemHeight * anchorY,
-          width: itemWidth,
-          height: itemHeight,
-        })]
-      : []))
-}
-
-export function windowLiveRootReservations(
-  width: number,
-  height: number,
-): readonly Readonly<{ x: number; y: number; width: number; height: number }>[] {
-  if (![width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
-    return Object.freeze([])
-  }
-  const controlWidth = Math.min(116, width)
-  const controlHeight = Math.min(144, height)
-  return Object.freeze([Object.freeze({
-    x: width - controlWidth,
-    y: height - controlHeight,
-    width: controlWidth,
-    height: controlHeight,
-  })])
-}
-
-export function windowLiveResidentPointsAroundThings(
-  keys: readonly number[],
-  width: number,
-  height: number,
-  seed: number,
-  itemWidth: number,
-  itemHeight: number,
-  margin: number,
-  thingPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
-  thingItemWidth: number,
-  reserved: readonly Readonly<{ x: number; y: number; width: number; height: number }>[] = [],
-  previous: Readonly<Record<string, Readonly<{ x: number; y: number }>>> = {},
-  sharesThingSurface = true,
-): Readonly<Record<string, Readonly<{ x: number; y: number }>>> {
-  const thingFootprints = sharesThingSurface
-    ? windowLivePointFootprints(thingPoints, thingItemWidth, 56, 0.5)
-    : Object.freeze([])
-  return windowLiveSeparatedPoints(
-    keys,
-    width,
-    height,
-    seed,
-    itemWidth,
-    itemHeight,
-    margin,
-    1,
-    Object.freeze([...reserved, ...thingFootprints]),
-    previous,
-  )
-}
-
-export function windowLiveThingPointsAroundResidents(
-  keys: readonly number[],
-  width: number,
-  height: number,
-  seed: number,
-  itemWidth: number,
-  itemHeight: number,
-  margin: number,
-  residentPoints: Readonly<Record<string, Readonly<{ x: number; y: number }>>>,
-  reserved: readonly Readonly<{ x: number; y: number; width: number; height: number }>[] = [],
-  previous: Readonly<Record<string, Readonly<{ x: number; y: number }>>> = {},
-  sharesResidentSurface = true,
-): Readonly<Record<string, Readonly<{ x: number; y: number }>>> {
-  const residentFootprints = sharesResidentSurface
-    ? windowLivePointFootprints(residentPoints, 56, 56, 1)
-    : Object.freeze([])
-  return windowLiveSeparatedPoints(
-    keys,
-    width,
-    height,
-    seed,
-    itemWidth,
-    itemHeight,
-    margin,
-    0.5,
-    Object.freeze([...reserved, ...residentFootprints]),
-    previous,
-  )
-}
-
-export function windowLiveTouchActivation(
-  pointerType: string,
-  raisedKey: string | null,
-  itemKey: string,
-): 'bring-forward' | 'open' {
-  return pointerType === 'touch' && raisedKey !== itemKey ? 'bring-forward' : 'open'
-}
-
-export function windowLiveVisiblePlots<T extends Readonly<{
-  x: number
-  y: number
-  width: number
-  height: number
-}>>(
-  plots: readonly T[],
-  viewport: Readonly<{ left: number; top: number; right: number; bottom: number }>,
-  overscan: number,
-): readonly T[] {
-  if (![viewport.left, viewport.top, viewport.right, viewport.bottom, overscan]
-    .every(Number.isFinite) || viewport.right < viewport.left ||
-      viewport.bottom < viewport.top || overscan < 0) return Object.freeze([])
-  const left = viewport.left - overscan
-  const top = viewport.top - overscan
-  const right = viewport.right + overscan
-  const bottom = viewport.bottom + overscan
-  return Object.freeze(plots.filter(plot =>
-    [plot.x, plot.y, plot.width, plot.height].every(Number.isFinite) &&
-    plot.width > 0 && plot.height > 0 &&
-    plot.x + plot.width >= left && plot.x <= right &&
-    plot.y + plot.height >= top && plot.y <= bottom))
-}
-
-export function windowLiveVisiblePlotIds(
-  plots: readonly Readonly<{
-    id: number
-    x: number
-    y: number
-    width: number
-    height: number
-  }>[],
-  expandedGrounds: Readonly<Record<string, Readonly<{
-    x: number
-    residentTop: number | null
-    thingTop: number | null
-    width: number
-    bottom: number
-  }>>>,
-  viewport: Readonly<{ left: number; top: number; right: number; bottom: number }>,
-  overscan: number,
-  controlRailDepth = 64,
-): readonly number[] {
-  const safeRailDepth = Number.isFinite(controlRailDepth) && controlRailDepth >= 0
-    ? controlRailDepth
-    : 0
-  const regions = plots.flatMap(plot => {
-    if (!Number.isSafeInteger(plot.id) || plot.id <= 0) return []
-    const base = Object.freeze({
-      id: plot.id,
-      x: plot.x,
-      y: plot.y,
-      width: plot.width,
-      height: plot.height + safeRailDepth,
-    })
-    const ground = expandedGrounds[String(plot.id)]
-    if (!ground) return [base]
-    const tops = [ground.residentTop, ground.thingTop]
-      .filter((value): value is number => Number.isFinite(value))
-    const top = tops.length ? Math.min(...tops) : Number.NaN
-    if (![ground.x, top, ground.width, ground.bottom].every(Number.isFinite) ||
-        ground.width <= 0 || ground.bottom <= top) return [base]
-    return [base, Object.freeze({
-      id: plot.id,
-      x: ground.x,
-      y: top,
-      width: ground.width,
-      height: ground.bottom - top,
-    })]
-  })
-  return Object.freeze([...new Set(
-    windowLiveVisiblePlots(regions, viewport, overscan).map(region => region.id),
-  )])
-}
-
-// Step 3 ruling: a place's own drawing tiles its floor across the whole
-// plot; this derives exact, stable tile column/row counts from the plot's
-// real pixel size and a tile size, rounding up so the tiled ground never
-// leaves a gap at the plot's far edge. Append-stable plot sizes make this
-// deterministic across renders -- it never returns zero or a fraction.
-export function windowLiveFloorTiling(
-  plotWidth: number,
-  plotHeight: number,
-  tileSize: number,
-): Readonly<{ columns: number; rows: number }> {
-  const safeTile = Number.isFinite(tileSize) && tileSize > 0 ? tileSize : 1
-  const safeWidth = Number.isFinite(plotWidth) && plotWidth > 0 ? plotWidth : safeTile
-  const safeHeight = Number.isFinite(plotHeight) && plotHeight > 0 ? plotHeight : safeTile
-  return Object.freeze({
-    columns: Math.max(1, Math.ceil(safeWidth / safeTile)),
-    rows: Math.max(1, Math.ceil(safeHeight / safeTile)),
-  })
-}
-
-export type WindowLiveFloorDrawingEntry = WindowDrawingSource & Readonly<{
-  state: WindowDrawingState
-  drawing: WindowDrawing | null
-}>
-
-// Round-1 review finding 1: deleting the JSON drawing node (step 3) took its
-// role="img" accessible name with it, leaving only the generic "Drawing
-// tiled inside <name>" on the outer terrain div. This rebuilds the same
-// name/state/source shape the old drawingNode gave (see the deleted
-// drawingAccessibleLabel) from data that is already in hand on each path --
-// never a new fetch, which would undo step 3's whole point. The non-proof
-// path only ever knows the drawn/undrawn binary the thumb probe resolves
-// (the same collapse '.live-plot[data-undrawn]' already applies across
-// Refused, missing, withdrawn, and moderated presentations); a place's own
-// floor is always its own drawing -- places have no kind to inherit a
-// drawing from -- so 'Own drawing' there is a structural fact, not a guess.
-// The proof path already holds the full synthetic drawing entry, so it
-// reuses windowDrawingStateLabel/windowDrawingSourceLabel directly, exactly
-// as the deleted drawingNode did.
-export function windowLiveFloorAccessibleLabel(
-  placeName: string,
-  undrawn: boolean,
-  proofEntry: WindowLiveFloorDrawingEntry | null = null,
-): string {
-  if (proofEntry) {
-    const stateLabel = windowDrawingStateLabel(proofEntry.state, proofEntry.drawing)
-    const sourceLabel = windowDrawingSourceLabel(proofEntry)
-    return placeName + ' · ' + stateLabel + (sourceLabel ? ' · ' + sourceLabel : '')
-  }
-  return placeName + ' · ' + (undrawn ? 'Undrawn' : 'Complete') +
-    (undrawn ? '' : ' · Own drawing')
-}
-
-export function windowLiveDirectGroundWidth(
-  stageWidth: number,
-  readableWidth: number,
-): number {
-  if (![stageWidth, readableWidth].every(Number.isFinite) ||
-      stageWidth <= 0 || readableWidth <= 0) return 0
-  return Math.min(stageWidth, readableWidth)
-}
-
-export function windowLiveCapacitySelection<T extends Readonly<{ id: number }>>(
-  rows: readonly T[],
-  capacity: number,
-  pinnedIds: readonly number[],
-  exactTotal = rows.length,
-  preferredIds: readonly number[] = [],
-): Readonly<{ visible: readonly T[]; overflowCount: number }> {
-  const limit = Number.isFinite(capacity) ? Math.max(0, Math.floor(capacity)) : 0
-  const total = Number.isSafeInteger(exactTotal) && exactTotal >= rows.length
-    ? exactTotal
-    : rows.length
-  const availableIds = new Set(rows.map(row => row.id))
-  const selected = new Set<number>()
-  for (const id of pinnedIds) {
-    if (selected.size >= limit) break
-    if (availableIds.has(id)) selected.add(id)
-  }
-  for (const id of preferredIds) {
-    if (selected.size >= limit) break
-    if (availableIds.has(id)) selected.add(id)
-  }
-  for (const row of rows) {
-    if (selected.size >= limit) break
-    selected.add(row.id)
-  }
-  const visible = Object.freeze(rows.filter(row => selected.has(row.id)))
-  return Object.freeze({ visible, overflowCount: Math.max(0, total - visible.length) })
-}
-
-export function windowLivePollDelay(hadEvents: boolean, quietReads: number): number {
-  if (hadEvents) return 25000
-  return [60000, 120000, 240000, 300000][Math.min(3, Math.max(0, quietReads))]!
-}
-
-export function windowLiveTraceOpacity(at: number, now: number, lifetime: number): number {
-  if (!Number.isFinite(at) || !Number.isFinite(now) || !Number.isFinite(lifetime) || lifetime <= 0) {
-    return 0
-  }
-  return Math.max(0, Math.min(1, 1 - Math.max(0, now - at) / lifetime))
-}
-
-export function windowLiveCenterCamera(
-  viewportWidth: number,
-  viewportHeight: number,
-  targetX: number,
-  targetY: number,
-  preferredScale: number,
-  minimumScale: number,
-  maximumScale: number,
-): Readonly<{ scale: number; offsetX: number; offsetY: number }> | null {
-  if (![viewportWidth, viewportHeight, targetX, targetY, preferredScale,
-    minimumScale, maximumScale].every(Number.isFinite) ||
-      viewportWidth <= 0 || viewportHeight <= 0 || targetX < 0 || targetY < 0 ||
-      minimumScale <= 0 || maximumScale < minimumScale) return null
-  const scale = windowLiveClampZoomScale(preferredScale, minimumScale, maximumScale)
-  return Object.freeze({
-    scale,
-    offsetX: viewportWidth / 2 - targetX * scale,
-    offsetY: viewportHeight / 2 - targetY * scale,
-  })
-}
-
-export function windowLiveRevealCamera(
-  viewportWidth: number,
-  viewportHeight: number,
-  targetX: number,
-  targetY: number,
-  targetWidth: number,
-  targetHeight: number,
-  scale: number,
-  offsetX: number,
-  offsetY: number,
-  safeInset: number,
-): Readonly<{ scale: number; offsetX: number; offsetY: number }> | null {
-  if (![viewportWidth, viewportHeight, targetX, targetY, targetWidth, targetHeight,
-    scale, offsetX, offsetY, safeInset].every(Number.isFinite) ||
-      viewportWidth <= 0 || viewportHeight <= 0 || scale <= 0 ||
-      targetWidth < 0 || targetHeight < 0 || safeInset < 0 ||
-      safeInset * 2 >= viewportWidth || safeInset * 2 >= viewportHeight) return null
-  const safeCenter = (
-    current: number,
-    viewportSize: number,
-    scaledTargetSize: number,
-  ) => {
-    const half = scaledTargetSize / 2
-    const available = viewportSize - safeInset * 2
-    const canFit = scaledTargetSize <= available
-    const inwardGuard = canFit
-      ? Math.min(0.01, Math.max(0, available - scaledTargetSize) / 2)
-      : 0
-    const minimum = canFit ? safeInset + half + inwardGuard : safeInset
-    const maximum = canFit
-      ? viewportSize - safeInset - half - inwardGuard
-      : viewportSize - safeInset
-    return Math.max(minimum, Math.min(maximum, current))
-  }
-  const screenX = targetX * scale + offsetX
-  const screenY = targetY * scale + offsetY
-  const revealedX = safeCenter(screenX, viewportWidth, targetWidth * scale)
-  const revealedY = safeCenter(screenY, viewportHeight, targetHeight * scale)
-  return Object.freeze({
-    scale,
-    offsetX: revealedX - targetX * scale,
-    offsetY: revealedY - targetY * scale,
-  })
-}
-
-export function windowLiveClampZoomScale(
-  requestedScale: number,
-  minimumScale: number,
-  maximumScale: number,
-): number {
-  if (![minimumScale, maximumScale].every(Number.isFinite) ||
-      minimumScale <= 0 || maximumScale < minimumScale) return 1
-  if (!Number.isFinite(requestedScale)) return minimumScale
-  return Math.max(minimumScale, Math.min(maximumScale, requestedScale))
-}
-
-export function windowLiveResidentLabelMode(
-  scale: number,
-  readableThreshold: number,
-): 'far' | 'readable' {
-  if (!Number.isFinite(scale) || scale <= 0 ||
-      !Number.isFinite(readableThreshold) || readableThreshold <= 0) return 'far'
-  return scale >= readableThreshold ? 'readable' : 'far'
-}
-
-export function windowLivePruneTrailStarts(
-  starts: Readonly<Record<string, number>>,
-  now: number,
-  lifetime: number,
-  protectedKeys: readonly string[] = [],
-): Readonly<Record<string, number>> {
-  if (!Number.isFinite(now) || !Number.isFinite(lifetime) || lifetime <= 0) return starts
-  const protectedSet = new Set(protectedKeys)
-  const entries = Object.entries(starts).filter(([key, at]) =>
-    protectedSet.has(key) || windowLiveTraceOpacity(at, now, lifetime) > 0)
-  return entries.length === Object.keys(starts).length
-    ? starts
-    : Object.freeze(Object.fromEntries(entries))
-}
-
-export function windowLiveSelectTrailKeys(
-  keys: readonly string[],
-  capacity: number,
-  protectedKeys: readonly string[],
-): readonly string[] {
-  const limit = Number.isFinite(capacity) ? Math.max(0, Math.floor(capacity)) : 0
-  if (!limit || !keys.length) return Object.freeze([])
-  const uniqueKeys = [...new Set(keys)]
-  const availableKeys = new Set(uniqueKeys)
-  const protectedSet = new Set(protectedKeys.filter(key => availableKeys.has(key)))
-  const protectedInOrder = uniqueKeys.filter(key => protectedSet.has(key)).slice(0, limit)
-  const ordinaryLimit = Math.max(0, limit - protectedInOrder.length)
-  const selected = new Set([
-    ...uniqueKeys.filter(key => !protectedSet.has(key)).slice(0, ordinaryLimit),
-    ...protectedInOrder,
-  ])
-  return Object.freeze(uniqueKeys.filter(key => selected.has(key)).slice(0, limit))
-}
-
-export function windowLiveReplayDuration(
-  distance: number,
-  remainingLifetime = Number.POSITIVE_INFINITY,
-): number {
-  const duration = !Number.isFinite(distance)
-    ? 3_200
-    : Math.round(Math.min(8_000, Math.max(3_200, 3_200 + Math.max(0, distance) * 42)))
-  if (Number.isNaN(remainingLifetime) || remainingLifetime < 3_200) return 0
-  return Math.min(duration, Math.floor(remainingLifetime))
-}
-
-export function windowLiveReplayPace(
-  eventCount: number,
-  millisecondsUntilNextRead: number,
-): Readonly<{ startGapMs: number; actionDurationMs: number }> {
-  if (!Number.isFinite(eventCount) || eventCount <= 0 ||
-      !Number.isFinite(millisecondsUntilNextRead) || millisecondsUntilNextRead <= 0) {
-    return Object.freeze({ startGapMs: 0, actionDurationMs: 0 })
-  }
-  const count = Math.max(1, Math.floor(eventCount))
-  const available = Math.max(300, Math.floor(millisecondsUntilNextRead) - 500)
-  const busy = count > 12
-  const startGapMs = busy
-    ? Math.max(40, Math.min(300, Math.floor(available / (count * 2))))
-    : Math.max(1_000, Math.min(4_000, Math.floor(available / (count + 1))))
-  const actionDurationMs = busy
-    ? Math.max(120, Math.min(450, Math.floor(available / (count * 2))))
-    : Math.max(600, Math.min(3_200, Math.floor(startGapMs * 0.8)))
-  return Object.freeze({ startGapMs, actionDurationMs })
-}
-
-export function windowLiveReplayStartOffsets<T extends Readonly<{
-  actor: string
-  at: Date
-}>>(
-  records: readonly T[],
-  millisecondsUntilNextRead: number,
-): Readonly<Record<string, number>> {
-  if (!Number.isFinite(millisecondsUntilNextRead) || millisecondsUntilNextRead <= 0) {
-    return Object.freeze({})
-  }
-  const ordered = records.map((record, index) => Object.freeze({ record, index }))
-    .filter(entry => typeof entry.record.actor === 'string' && entry.record.actor.length > 0 &&
-      entry.record.at instanceof Date && Number.isFinite(entry.record.at.getTime()))
-    .sort((left, right) =>
-      left.record.at.getTime() - right.record.at.getTime() || left.index - right.index)
-  if (!ordered.length) return Object.freeze({})
-  const pace = windowLiveReplayPace(ordered.length, millisecondsUntilNextRead)
-  const result: Record<string, number> = {}
-  let groupIndex = -1
-  let groupTime = Number.NaN
-  for (const { record } of ordered) {
-    const recordedAt = record.at.getTime()
-    if (recordedAt !== groupTime) {
-      groupTime = recordedAt
-      groupIndex += 1
-    }
-    if (!Object.hasOwn(result, record.actor)) {
-      result[record.actor] = groupIndex * pace.startGapMs
-    }
-  }
-  return Object.freeze(result)
-}
-
-export function windowLiveReplayOrder<T extends Readonly<{
-  change_id?: string
-  id?: number
-  at: Date
-}>>(values: readonly T[], cutoff: number): T[] {
-  return values.filter(value => value.at.getTime() >= cutoff).sort((left, right) => {
-    const leftIsChange = left.change_id !== undefined
-    const rightIsChange = right.change_id !== undefined
-    if (leftIsChange !== rightIsChange) return leftIsChange ? 1 : -1
-    if (left.change_id !== undefined && right.change_id !== undefined) {
-      const leftMarker = BigInt(left.change_id)
-      const rightMarker = BigInt(right.change_id)
-      return leftMarker < rightMarker ? -1 : leftMarker > rightMarker ? 1 : 0
-    }
-    if (left.id !== undefined && right.id !== undefined) return left.id - right.id
-    return left.at.getTime() - right.at.getTime()
-  })
-}
-
-export function windowLiveSpeechLine(value: string, maximum = 60): string {
-  const [firstLine = ''] = value.split(/\r\n?|\n/u, 1)
-  const characters = Array.from(firstLine)
-  if (characters.length <= maximum) return firstLine
-  return characters.slice(0, Math.max(0, maximum - 1)).join('') + '…'
-}
-
-export function parseWindowSleeperPlaceIds(
-  value: string | null,
-  maximumLength = 8_192,
-): number[] {
-  if (typeof value !== 'string' || !value || value.length > maximumLength) return []
-  const ids: number[] = []
-  const seen = new Set<number>()
-  for (const token of value.split(',')) {
-    if (!/^[1-9]\d*$/u.test(token)) return []
-    const id = Number(token)
-    if (!Number.isSafeInteger(id) || id > 2_147_483_647) return []
-    if (!seen.has(id)) {
-      seen.add(id)
-      ids.push(id)
-    }
-  }
-  return ids
-}
-
-export function mergeWindowRows<T extends Readonly<{ id: number }>>(
-  current: readonly T[],
-  incoming: readonly T[],
-): T[] {
-  const rows = new Map<number, T>()
-  for (const row of current) rows.set(row.id, row)
-  for (const row of incoming) rows.set(row.id, row)
-  return [...rows.values()].sort((left, right) => right.id - left.id)
-}
-
-export function mergeResidentRows<
-  T extends Readonly<{ id: number, joined_at: Date }>,
->(
-  currentResidents: readonly T[],
-  incomingResidents: readonly T[],
-): T[] {
-  const residents = mergeWindowRows(currentResidents, incomingResidents)
-  return [...residents].sort((left, right) => {
-    const joinedDifference = right.joined_at.getTime() - left.joined_at.getTime()
-    return joinedDifference || right.id - left.id
-  })
-}
-
-export function windowPlaceLabel(
-  placeId: number | null,
-  place: Readonly<{ path: string }> | null,
-): string | null {
-  if (!placeId) return null
-  return place?.path ?? `Place #${placeId} · not currently loaded`
-}
-
-export type WindowDirectoryPlace = Readonly<{
-  id: number
-  parent_id: number | null
-  name: string
-  // Optional so every existing directory-shaped fixture in tests keeps
-  // compiling; normalizeDirectory always sets a definite boolean from the
-  // live API, so this is only ever missing on synthetic/test place rows.
-  quiet?: boolean
-}>
-
-export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
-  path: string
-}>
-
-export type WindowDirectoryPlaceOption = Readonly<{
-  id: number
-  depth: number
-  label: string
-}>
-
-export type WindowDirectoryResident = Readonly<{
-  id: number
-  handle: string
-  has_drawing?: boolean
-}>
-
-export type WindowDirectorySearchResult = Readonly<{
-  kind: 'place' | 'resident'
-  id: number
-  value: string
-  label: string
-  detail: string
-  hasDrawing?: boolean
-}>
-
-export type WindowDirectorySearchPage = Readonly<{
-  results: readonly WindowDirectorySearchResult[]
-  total: number
-  placeCount: number
-  residentCount: number
-  hasMore: boolean
-}>
-
-export function windowDirectoryPlaceScopeIds(
-  values: readonly WindowDirectoryPlace[],
-  placeId: number,
-): number[] {
-  const children = new Map<number, number[]>()
-  for (const value of values) {
-    if (value.parent_id === null) continue
-    const siblings = children.get(value.parent_id) ?? []
-    if (!siblings.includes(value.id)) children.set(value.parent_id, [...siblings, value.id])
-  }
-
-  const found: number[] = []
-  const seen = new Set<number>()
-  const queue = [placeId]
-  while (queue.length) {
-    const id = queue.shift()
-    if (id === undefined || seen.has(id)) continue
-    seen.add(id)
-    found.push(id)
-    queue.push(...(children.get(id) ?? []))
-  }
-  return found
-}
-
-export function deriveWindowDirectoryPlaces(
-  values: readonly WindowDirectoryPlace[],
-): WindowDirectoryPlaceWithPath[] {
-  const maximumPathDepth = 32
-  const counts = new Map<number, number>()
-  for (const value of values) counts.set(value.id, (counts.get(value.id) ?? 0) + 1)
-
-  const unique = new Map<number, WindowDirectoryPlace>()
-  for (const value of values) {
-    if (!unique.has(value.id)) unique.set(value.id, value)
-  }
-
-  const fallback = (value: WindowDirectoryPlace): string =>
-    `${value.name} · Place #${value.id}`
-  const pathFor = (value: WindowDirectoryPlace): string => {
-    if ((counts.get(value.id) ?? 0) !== 1) return fallback(value)
-    const names: string[] = []
-    const seen = new Set<number>()
-    let current: WindowDirectoryPlace | undefined = value
-    while (current) {
-      if (
-        names.length >= maximumPathDepth || seen.has(current.id) ||
-        (counts.get(current.id) ?? 0) !== 1
-      ) return fallback(value)
-      names.push(current.name)
-      seen.add(current.id)
-      if (current.parent_id === null) return names.reverse().join(' / ')
-      current = unique.get(current.parent_id)
-      if (!current) return fallback(value)
-    }
-    return fallback(value)
-  }
-
-  return [...unique.values()].map(value => ({ ...value, path: pathFor(value) }))
-}
-
-export function listWindowDirectoryPlaces(
-  values: readonly WindowDirectoryPlaceWithPath[],
-): WindowDirectoryPlaceOption[] {
-  const placesById = new Map(values.map(place => [place.id, place]))
-  const rootIds = new Set(values.filter(place => place.parent_id === null).map(place => place.id))
-  const continentFor = (place: WindowDirectoryPlaceWithPath) => {
-    if (place.parent_id === null) return null
-    const seen = new Set<number>()
-    let current: WindowDirectoryPlaceWithPath | undefined = place
-    while (current && current.parent_id !== null) {
-      if (seen.has(current.id)) return undefined
-      seen.add(current.id)
-      const parent = placesById.get(current.parent_id)
-      if (!parent) return undefined
-      if (rootIds.has(parent.id)) return current
-      current = parent
-    }
-    return undefined
-  }
-  type MutableGroup = {
-    wholePlaceId: number | null
-    options: Array<{ id: number, depth: number, label: string }>
-  }
-  const groups = new Map<string, MutableGroup>()
-  const ensureGroup = (key: string, wholePlaceId: number | null) => {
-    const existing = groups.get(key)
-    if (existing) return existing
-    const created: MutableGroup = { wholePlaceId, options: [] }
-    groups.set(key, created)
-    return created
-  }
-
-  for (const place of values) {
-    const parts = place.path.split(' / ').filter(Boolean)
-    if (place.parent_id === null) {
-      ensureGroup('root', null).options.push({
-        id: place.id,
-        depth: 0,
-        label: `${place.name} · Place #${place.id}`,
-      })
-      continue
-    }
-
-    const continent = continentFor(place)
-    if (!continent) {
-      ensureGroup('other', null).options.push({
-        id: place.id,
-        depth: 0,
-        label: `${place.name} · Place #${place.id}`,
-      })
-      continue
-    }
-    const parent = placesById.get(place.parent_id)
-    const depth = Math.max(0, parts.length - 2)
-    const shortLabel = `${place.name}${depth > 1 && parent ? ` — in ${parent.name}` : ''} · Place #${place.id}`
-    ensureGroup(`continent:${continent.id}`, continent.id).options.push({
-      id: place.id,
-      depth,
-      label: shortLabel,
-    })
-  }
-
-  return [...groups.values()].flatMap(group => [...group.options]
-    .sort((left, right) =>
-      Number(right.id === group.wholePlaceId) - Number(left.id === group.wholePlaceId))
-    .map(option => Object.freeze(option)))
-}
-
-export function searchWindowDirectory(
-  places: readonly WindowDirectoryPlaceWithPath[],
-  residents: readonly WindowDirectoryResident[],
-  query: string,
-  limit = 20,
-): WindowDirectorySearchResult[] {
-  const normalizedSearchText = (value: string): string => value.normalize('NFC').toLowerCase()
-  const normalizedQuery = normalizedSearchText(query.trim())
-  if (!normalizedQuery) return []
-  const safeLimit = Math.max(0, Math.floor(limit))
-  const score = (primary: string, searchText: string, id: number): number | null => {
-    const normalizedPrimary = normalizedSearchText(primary)
-    if (
-      normalizedQuery === normalizedPrimary || normalizedQuery === String(id) ||
-      normalizedQuery === `#${id}` || normalizedQuery === `place #${id}` ||
-      normalizedQuery === `resident #${id}`
-    ) return 0
-    if (normalizedPrimary.startsWith(normalizedQuery)) return 1
-    return normalizedSearchText(searchText).includes(normalizedQuery) ? 2 : null
-  }
-  const candidates = [
-    ...places.flatMap((place, order) => {
-      const matchScore = score(
-        place.name,
-        `${place.name}\n${place.path}\nplace #${place.id}\n#${place.id}`,
-        place.id,
-      )
-      return matchScore === null ? [] : [{
-        score: matchScore,
-        order,
-        result: Object.freeze({
-          kind: 'place' as const,
-          id: place.id,
-          value: String(place.id),
-          label: `${place.name} · Place #${place.id}`,
-          detail: place.path,
-        }),
-      }]
-    }),
-    ...residents.flatMap((resident, index) => {
-      const matchScore = score(
-        resident.handle,
-        `${resident.handle}\nresident #${resident.id}\n#${resident.id}`,
-        resident.id,
-      )
-      return matchScore === null ? [] : [{
-        score: matchScore,
-        order: places.length + index,
-        result: Object.freeze({
-          kind: 'resident' as const,
-          id: resident.id,
-          value: resident.handle,
-          label: `${resident.handle} · Resident #${resident.id}`,
-          detail: 'Resident',
-          hasDrawing: resident.has_drawing === true,
-        }),
-      }]
-    }),
-  ]
-  return candidates
-    .sort((left, right) => left.score - right.score || left.order - right.order)
-    .slice(0, safeLimit)
-    .map(candidate => candidate.result)
-}
-
-export function pageWindowDirectorySearch(
-  places: readonly WindowDirectoryPlaceWithPath[],
-  residents: readonly WindowDirectoryResident[],
-  query: string,
-  limit = 20,
-): WindowDirectorySearchPage {
-  const matches = searchWindowDirectory(places, residents, query, Number.MAX_SAFE_INTEGER)
-  const safeLimit = Math.max(0, Math.floor(limit))
-  const placeCount = matches.filter(result => result.kind === 'place').length
-  return Object.freeze({
-    results: Object.freeze(matches.slice(0, safeLimit)),
-    total: matches.length,
-    placeCount,
-    residentCount: matches.length - placeCount,
-    hasMore: matches.length > safeLimit,
-  })
-}
+import {
+  normalizeWindowDrawing,
+  windowDrawingStateLabel,
+  windowDrawingSourceLabel,
+} from './window-client/drawing.ts'
+import {
+  windowLivePlateChildren,
+  WINDOW_LIVE_DIRECT_COMMONS_WIDTH,
+  WINDOW_LIVE_DIRECT_COMMONS_HEIGHT,
+  WINDOW_LIVE_CHILD_GROUND_GAP,
+  windowLiveSurveyedPlots,
+  windowLiveExpandedGroundLayout,
+  windowLiveScatteredPoint,
+  windowLiveScatteredPoints,
+  windowLiveScatterSurfaceHeight,
+} from './window-client/live-ground.ts'
+import {
+  windowLiveSeparatedPoints,
+  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
+  windowLivePointFootprints,
+  windowLiveRootReservations,
+  windowLiveResidentPointsAroundThings,
+  windowLiveThingPointsAroundResidents,
+} from './window-client/live-scatter.ts'
+import {
+  windowLiveTouchActivation,
+  windowLiveVisiblePlots,
+  windowLiveVisiblePlotIds,
+  windowLiveFloorTiling,
+  windowLiveFloorAccessibleLabel,
+  windowLiveDirectGroundWidth,
+  windowLiveCapacitySelection,
+} from './window-client/live-visibility.ts'
+import {
+  windowLiveCenterCamera,
+  windowLiveRevealCamera,
+  windowLiveClampZoomScale,
+  windowLiveResidentLabelMode,
+} from './window-client/live-camera.ts'
+import {
+  windowLivePollDelay,
+  windowLiveTraceOpacity,
+  windowLivePruneTrailStarts,
+  windowLiveSelectTrailKeys,
+  windowLiveReplayDuration,
+  windowLiveReplayPace,
+  windowLiveReplayStartOffsets,
+  windowLiveReplayOrder,
+  windowLiveSpeechLine,
+} from './window-client/live-replay.ts'
+import {
+  parseWindowSleeperPlaceIds,
+  mergeWindowRows,
+  mergeResidentRows,
+  windowPlaceLabel,
+} from './window-client/rows.ts'
+import {
+  windowDirectoryPlaceScopeIds,
+  deriveWindowDirectoryPlaces,
+  listWindowDirectoryPlaces,
+  searchWindowDirectory,
+  pageWindowDirectorySearch,
+} from './window-client/directory.ts'
+
+export {
+  normalizeWindowDrawing,
+  windowDrawingStateLabel,
+  windowDrawingSourceLabel,
+} from './window-client/drawing.ts'
+export type {
+  WindowDrawing,
+  WindowDrawingState,
+  WindowDrawingSource,
+} from './window-client/drawing.ts'
+
+export {
+  windowLivePlateChildren,
+  WINDOW_LIVE_DIRECT_COMMONS_WIDTH,
+  WINDOW_LIVE_DIRECT_COMMONS_HEIGHT,
+  WINDOW_LIVE_CHILD_GROUND_GAP,
+  windowLiveSurveyedPlots,
+  windowLiveExpandedGroundLayout,
+  windowLiveScatteredPoint,
+  windowLiveScatteredPoints,
+  windowLiveScatterSurfaceHeight,
+} from './window-client/live-ground.ts'
+
+export {
+  windowLiveSeparatedPoints,
+  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
+  windowLiveRootReservations,
+  windowLiveResidentPointsAroundThings,
+  windowLiveThingPointsAroundResidents,
+} from './window-client/live-scatter.ts'
+
+export {
+  windowLiveTouchActivation,
+  windowLiveVisiblePlots,
+  windowLiveVisiblePlotIds,
+  windowLiveFloorTiling,
+  windowLiveFloorAccessibleLabel,
+  windowLiveDirectGroundWidth,
+  windowLiveCapacitySelection,
+} from './window-client/live-visibility.ts'
+export type { WindowLiveFloorDrawingEntry } from './window-client/live-visibility.ts'
+
+export {
+  windowLiveCenterCamera,
+  windowLiveRevealCamera,
+  windowLiveClampZoomScale,
+  windowLiveResidentLabelMode,
+} from './window-client/live-camera.ts'
+
+export {
+  windowLivePollDelay,
+  windowLiveTraceOpacity,
+  windowLivePruneTrailStarts,
+  windowLiveSelectTrailKeys,
+  windowLiveReplayDuration,
+  windowLiveReplayPace,
+  windowLiveReplayStartOffsets,
+  windowLiveReplayOrder,
+  windowLiveSpeechLine,
+} from './window-client/live-replay.ts'
+
+export {
+  parseWindowSleeperPlaceIds,
+  mergeWindowRows,
+  mergeResidentRows,
+  windowPlaceLabel,
+} from './window-client/rows.ts'
+
+export {
+  windowDirectoryPlaceScopeIds,
+  deriveWindowDirectoryPlaces,
+  listWindowDirectoryPlaces,
+  searchWindowDirectory,
+  pageWindowDirectorySearch,
+} from './window-client/directory.ts'
+export type {
+  WindowDirectoryPlace,
+  WindowDirectoryPlaceWithPath,
+  WindowDirectoryPlaceOption,
+  WindowDirectoryResident,
+  WindowDirectorySearchResult,
+  WindowDirectorySearchPage,
+} from './window-client/directory.ts'
 
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
