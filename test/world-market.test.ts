@@ -1137,8 +1137,10 @@ test('the pre-existing first-reservation behavior records market_listing_id and 
 
 for (const [name, marketDraft] of [
   ['pending draft with no listing', draft()],
+  ['withdrawn draft with an active listing', draft({ status: 'withdrawn', listing_id: 91, listing_state: 'active' })],
   ['active draft with a canceled listing', draft({ status: 'active', listing_id: 91, listing_state: 'canceled' })],
   ['active draft whose listing differs from checkout', draft({ status: 'active', listing_id: 92, listing_state: 'active' })],
+  ['active draft whose price differs from the offer', draft({ status: 'active', listing_id: 91, listing_state: 'active', price_usdc: 3 })],
 ] as const) {
   test(`claim rejects ${name}`, async () => {
     const harness = makeHarness({
@@ -1679,7 +1681,7 @@ test('conclusive invalid x402 receipt becomes durable payment_invalid and still 
   assert.equal(tooEarly.status, 409)
   harness.setState(current => ({
     ...current,
-    listing: listing({ state: 'canceled', world_state: 'stale' }),
+    listing: listing({ state: 'stale', world_state: 'stale' }),
   }))
   const cancel = await harness.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',
@@ -1885,7 +1887,7 @@ test('founder-review evidence keeps the world thing locked until market-first ca
   const ended = makeHarness({
     offer: reviewed,
     thingLocked: true,
-    listing: listing({ state: 'canceled', world_state: 'stale' }),
+    listing: listing({ state: 'stale', world_state: 'stale' }),
   })
   const canceled = await ended.app.request('/api/world/offer/101/cancel', {
     method: 'POST', headers: jsonHeaders(SELLER_SECRET), body: '{}',

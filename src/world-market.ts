@@ -1196,8 +1196,8 @@ export function mountWorldMarketRoutes(
         ) {
           return err(c, 502, 'the market returned an invalid public listing record; retry after 1F3EA returns the current listing')
         }
-        marketEnded = endedStates.has(listingState) && listingEndedStates.has(worldState)
-        endedListingAwaitingWorld = endedStates.has(listingState) && !listingEndedStates.has(worldState)
+        marketEnded = listingEndedStates.has(listingState) && listingEndedStates.has(worldState)
+        endedListingAwaitingWorld = listingEndedStates.has(listingState) && !listingEndedStates.has(worldState)
       }
     }
     if (marketEnded === undefined) {
