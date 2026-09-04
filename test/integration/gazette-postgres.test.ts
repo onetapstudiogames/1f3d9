@@ -71,12 +71,22 @@ type GazetteStoreRuntime = Readonly<{
   }>>
   readGazetteIssue?: (
     database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
-    input: Readonly<{ issueNumber: number; afterOrdinal: number | null; limit: number }>,
+    input: Readonly<{
+      issueNumber: number
+      afterOrdinal: number | null
+      limit: number
+      textLimitBytes?: number | null
+    }>,
   ) => Promise<Readonly<{
     issue: Record<string, unknown>
     entries: readonly Record<string, unknown>[]
     hasMore: boolean
     nextAfterOrdinal: number | null
+    returnedTextBytes: number
+    stoppedForTextLimit: boolean
+    nextItemOrdinal: number | null
+    nextItemNoteId: number | null
+    nextItemTextBytes: number | null
   }> | null>
   readCompleteGazetteIssue?: (
     database: Readonly<{ query(text: string, params?: readonly unknown[]): Promise<unknown> }>,
@@ -974,6 +984,12 @@ test('Gazette prints and weekly submissions hold under real PostgreSQL', async t
       ],
       hasMore: true,
       nextAfterOrdinal: 2,
+      returnedTextBytes: Buffer.byteLength('  lead\ntrail  ', 'utf8')
+        + Buffer.byteLength('Unicode 🏮\nunchanged', 'utf8'),
+      stoppedForTextLimit: false,
+      nextItemOrdinal: null,
+      nextItemNoteId: null,
+      nextItemTextBytes: null,
     })
     const completeIssue = await gazetteStoreRuntime.readCompleteGazetteIssue!(publicDatabase, 1)
     assert.deepEqual(

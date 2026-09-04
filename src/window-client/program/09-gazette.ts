@@ -120,9 +120,23 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       ? null
       : safeId(payload.next_after_ordinal)
     const lastOrdinal = entries.at(-1)?.ordinal ?? (requestedAfterOrdinal || 0)
+    // Issue #71 round 4: the server's automatic aggregate byte ceiling (any
+    // view=full read above the default item limit, which this fixed-size
+    // page always requests) can stop before even the first entry fits under
+    // the budget. That page reports has_more true with no next_after_ordinal
+    // cursor, since nothing was admitted to page after
+    // (src/gazette-store.ts readGazetteIssue: nextAfterOrdinal is null
+    // whenever entries.length is 0). That is not a protocol violation, it is
+    // what stopped_for_text_limit with zero admitted entries looks like, so
+    // it is treated as the end of what this page can show rather than an
+    // error. Only this exact shape is exempt: hasMore true, no cursor, and
+    // no entries at all. hasMore true with a missing cursor while entries
+    // were actually admitted still fails below, unchanged.
+    const budgetStoppedWithNothingAdmitted = hasMore && nextAfterOrdinal === null && !entries.length
     if (
-      hasMore !== Boolean(nextAfterOrdinal) || summary.entryCount < entries.length ||
-      (hasMore && (
+      (hasMore !== Boolean(nextAfterOrdinal) && !budgetStoppedWithNothingAdmitted) ||
+      summary.entryCount < entries.length ||
+      (hasMore && !budgetStoppedWithNothingAdmitted && (
         !entries.length || nextAfterOrdinal !== lastOrdinal ||
         nextAfterOrdinal >= summary.entryCount
       )) ||
@@ -130,11 +144,27 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     ) {
       throw new Error('invalid Gazette entry continuation')
     }
+    // Round 4 review finding 2 (issue #71): the exemption above turned a loud
+    // client error into a false statement, because the render layer could not
+    // tell "this page is genuinely empty" apart from "the size ceiling cut
+    // this page before the first entry fit". Surface that distinction here so
+    // the render layer can say what actually happened instead of claiming the
+    // issue printed with no submissions. next_item_note_id and
+    // next_item_text_bytes name the entry the budget could not fit, when the
+    // server reported one; either can come back malformed or absent without
+    // this shape becoming untrustworthy, so both are optional.
+    const budgetCut = budgetStoppedWithNothingAdmitted
+      ? Object.freeze({
+          nextItemNoteId: safeId(payload.next_item_note_id),
+          nextItemTextBytes: safeGazetteCount(payload.next_item_text_bytes),
+        })
+      : null
     return Object.freeze({
       issue,
       entries,
-      hasMore,
+      hasMore: budgetStoppedWithNothingAdmitted ? false : hasMore,
       nextAfterOrdinal,
+      budgetCut,
     })
   }
 
@@ -163,6 +193,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
         entries: [],
         nextAfterOrdinal: null,
         hasMoreEntries: false,
+        detailBudgetCut: null,
         detailLoading: false,
         detailInitialized: false,
         detailError: null,
@@ -293,6 +324,33 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     nodes.gazetteEntriesPage.replaceChildren(load)
   }
 
+  function gazetteBudgetCutMessage(issue, budgetCut, hasLoadedEntries = false) {
+    // Round 4 review finding 2 (issue #71): match what gazetteIssueLink
+    // already shows for the same issue (issue.entryCount, the true count
+    // from the issue summary, not the size of this loaded page) so the card
+    // and the detail pane never disagree about whether entries exist.
+    //
+    // Round 5 review finding 1 (issue #71): this message must also appear
+    // on a continuation page, when a Load more request admits nothing after
+    // earlier entries already loaded, not only when the entry list is still
+    // empty. hasLoadedEntries keeps the wording honest either way: the size
+    // limit cut the FIRST entry only on a first page; on a continuation it
+    // stopped ANOTHER entry after some were already shown.
+    const count = String(issue.entryCount) + (issue.entryCount === 1 ? ' submission' : ' submissions')
+    const size = budgetCut.nextItemTextBytes
+      ? ' (about ' + String(budgetCut.nextItemTextBytes) + ' bytes)'
+      : ''
+    const named = budgetCut.nextItemNoteId
+      ? ' ' + (hasLoadedEntries ? 'The next one, note #' : 'The first one, note #') +
+        String(budgetCut.nextItemNoteId) + size + ', did not fit.'
+      : ''
+    const stopped = hasLoadedEntries
+      ? 'the automatic size limit stopped this page before another entry fit'
+      : 'the automatic size limit cut this page before the first entry fit'
+    return 'This issue has ' + count + ', but ' + stopped + '.' + named +
+      ' Use the Read issue link above to see the full issue.'
+  }
+
   function renderGazetteIssue(gazette) {
     if (!nodes.gazetteIssue) return
     nodes.gazetteIssue.setAttribute('aria-busy', String(gazette.detailLoading))
@@ -332,18 +390,27 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       'Weekly print for ' + gazetteDateLabel(gazette.issue.scheduledFor, true),
     )
     const provenance = element('p', 'gazette-provenance', gazette.issue.header)
-    const entries = element('ol', 'gazette-entries')
-    if (gazette.entries.length) {
-      entries.append(...gazette.entries.map(gazetteEntryCard))
-      nodes.gazetteIssue.replaceChildren(heading, printTime, provenance, entries)
-    } else {
-      nodes.gazetteIssue.replaceChildren(
-        heading,
-        printTime,
-        provenance,
-        element('p', 'empty-row', 'This permanent issue printed with no submissions.'),
-      )
-    }
+    // Round 5 review finding 1 (issue #71): detailBudgetCut can be set
+    // whether or not entries already loaded (a Load more request that
+    // admits nothing still carries it), so its notice is composed
+    // independently of the entries node below, not only in its absence.
+    // Without this, a continuation page silently drops both the notice and
+    // the Load more control, looking exactly like the issue simply ended.
+    const entriesNode = gazette.entries.length ? element('ol', 'gazette-entries') : null
+    if (entriesNode) entriesNode.append(...gazette.entries.map(gazetteEntryCard))
+    const emptyIssueNotice = !gazette.entries.length && !gazette.detailBudgetCut
+      ? element('p', 'empty-row', 'This permanent issue printed with no submissions.')
+      : null
+    const budgetCutNotice = gazette.detailBudgetCut
+      ? element(
+          'p',
+          'empty-row',
+          gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut, gazette.entries.length > 0),
+        )
+      : null
+    nodes.gazetteIssue.replaceChildren(
+      ...[heading, printTime, provenance, entriesNode, emptyIssueNotice, budgetCutNotice].filter(Boolean),
+    )
     renderGazetteEntriesPage(gazette)
   }
 
@@ -571,6 +638,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
           entries: [...combined.values()].sort((left, right) => left.ordinal - right.ordinal),
           nextAfterOrdinal: page.nextAfterOrdinal,
           hasMoreEntries: page.hasMore && Boolean(page.nextAfterOrdinal),
+          detailBudgetCut: page.budgetCut,
           detailLoading: false,
           detailError: null,
         },

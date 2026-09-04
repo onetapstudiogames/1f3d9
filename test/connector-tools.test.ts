@@ -373,6 +373,10 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
         after_change_marker: {
           type: 'string', maxLength: 19, pattern: CHANGE_MARKER_PATTERN,
         },
+        entry_text_limit_bytes: {
+          type: 'integer', minimum: 0, maximum: 655_360,
+          description: 'with one Gazette issue_number, cap returned entry-body UTF-8 bytes at whole-record boundaries',
+        },
       },
       required: ['view'],
     },
@@ -891,6 +895,10 @@ test('browse rejects cross-view fields and impossible focused-resident paging be
     {
       args: { view: 'gazette', after_ordinal: 2 },
       message: /Browse Gazette after_ordinal requires issue_number/iu,
+    },
+    {
+      args: { view: 'gazette', entry_text_limit_bytes: 100 },
+      message: /Browse Gazette entry_text_limit_bytes requires issue_number/iu,
     },
     {
       args: { view: 'gazette', issue_number: 7, before_issue_number: 8 },
