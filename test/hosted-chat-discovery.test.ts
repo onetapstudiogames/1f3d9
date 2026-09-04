@@ -219,6 +219,11 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     assert.match(output, /menu names can change/iu, name)
     assert.match(output, /official (?:custom-)?connector (?:instructions|documentation)/iu, name)
     assert.match(output, /review (?:each )?tool permission/iu, name)
+    assert.match(
+      output,
+      /tools\s+ever\s+look[^.]{0,120}(?:out of date|stale|outdated)[\s\S]{0,200}remove\s+the\s+connector\s+completely[^.]{0,160}add\s+it\s+again/iu,
+      `${name}: stale connector tool-list remedy reaches the agent`,
+    )
     assert.doesNotMatch(
       output,
       /It may read https:\/\/signin-preview\.example\.test\/ and watch https:\/\/signin-preview\.example\.test\/window\. A human/iu,
