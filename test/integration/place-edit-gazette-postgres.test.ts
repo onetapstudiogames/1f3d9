@@ -239,6 +239,47 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
       assert.deepEqual(after.rows, before.rows, 'a value-identical edit must change nothing')
     })
 
+    // Round-4 review finding 1: the door sentence claims PUT
+    // /api/place/:id/laws for #454 always answers HTTP 409 for the owner,
+    // but src/laws.ts's `changes` CTE only inserts a place_law_changes row
+    // for a trait actually being added or removed -- an empty traits list
+    // against a room with no current laws inserts nothing, so the
+    // gazette_submission_room_reject_laws trigger (BEFORE INSERT OR UPDATE
+    // OR DELETE ON place_law_changes) is never reached and the route
+    // returns the ordinary 200 no-op instead. This pins the corrected
+    // "that would add or remove a law" wording in both directions: an
+    // empty request against the room's law-free seed stays 200, but a
+    // request naming a real trait still refuses 409.
+    await t.test('PUT /api/place/454/laws with an empty traits list is a 200 no-op, not a refusal', async () => {
+      await resetDatabase()
+      const response = await app.request('/api/place/454/laws', {
+        method: 'PUT', headers: bearer(ownerSecret), body: JSON.stringify({ traits: [] }),
+      })
+      const text = await response.clone().text()
+      assert.equal(response.status, 200, text)
+      assert.deepEqual(JSON.parse(text), { place_id: 454, laws: [] })
+    })
+
+    await t.test('PUT /api/place/454/laws naming a real trait still refuses cleanly', async () => {
+      await resetDatabase()
+      await connectedDatabase().query(
+        `INSERT INTO traits (name, coiner_id) VALUES ('probe-trait', 1)`,
+      )
+      const before = await connectedDatabase().query(
+        'SELECT count(*)::integer AS n FROM place_law_changes WHERE place_id = 454',
+      )
+      const response = await app.request('/api/place/454/laws', {
+        method: 'PUT', headers: bearer(ownerSecret), body: JSON.stringify({ traits: ['probe-trait'] }),
+      })
+      const text = await response.clone().text()
+      assert.equal(response.status, 409, text)
+      assert.deepEqual(JSON.parse(text), { error: GAZETTE_ROOM_PROTECTED_ERROR })
+      const after = await connectedDatabase().query(
+        'SELECT count(*)::integer AS n FROM place_law_changes WHERE place_id = 454',
+      )
+      assert.deepEqual(after.rows, before.rows, 'the refusal must add no law-change row')
+    })
+
     await t.test('the underlying trigger really is what fires (23514 / gazette_submission_room_lifecycle)', async () => {
       await resetDatabase()
       await assert.rejects(
