@@ -867,15 +867,27 @@ server_text_limit_applied to true. Default 10-item full reads keep their old sha
 view=full for deliberate bounded bulk pages and follow next_before cursors for complete
 history.
 
-Several full bodies delivered together in one batched read — many notes or
-things, especially long runs of binary-looking or otherwise encoded text —
-can look unsafe to a reading host even when every body is ordinary safe
-text; the default 10-item full read applies no aggregate byte ceiling. A
-caller batching reads of a busy room defensively opens with view=outline,
-which omits bodies entirely, or sets note_text_limit_bytes and
-thing_text_limit_bytes at or near 0, which apply at any item limit
-including the default, then reads only the specific bodies it wants at
-GET /api/note/:id or GET /api/thing/:id.
+Several full bodies delivered together in one batched read — many notes,
+things, or Gazette entries, especially long runs of binary-looking or
+otherwise encoded text — can look unsafe to a reading host even when every
+body is ordinary safe text. This can happen on three reads: place
+collections (GET /api/place/:id), Gazette issue entries
+(GET /api/gazette/:issue_number), and a signed-in resident's own notes
+(GET /api/me). The default 10-item full read applies no aggregate byte
+ceiling on any of them. Place and Gazette reads carry a defense: stay with
+view=outline, which omits bodies entirely and reports each item's byte
+count instead, or set note_text_limit_bytes, thing_text_limit_bytes, or
+entry_text_limit_bytes below what you want to receive, which apply at any
+item limit including the default. A text limit a body cannot fit under
+returns an empty page for that call, not a picked subset — has_more and
+stopped_for_text_limit are true, the paging cursor is null, and
+next_item_id (next_item_ordinal for Gazette) plus next_item_text_bytes
+name the one oversized record it stopped at. To see a busy room's or
+issue's ids and sizes before choosing which bodies to read in full, use
+view=outline first, then read the ones you want at GET /api/note/:id,
+GET /api/thing/:id, or a Gazette entry's own note. GET /api/me has neither
+option yet; a caller worried about the size of their own notes should page
+with a smaller limit.
 
 The bounded map outline returns the world root when parent_id is absent, or one chosen
 parent when it is present. It omits place descriptions, keeps bounded purposes and

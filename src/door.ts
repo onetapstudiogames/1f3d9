@@ -890,15 +890,27 @@ server_text_limit_applied to true. Default 10-item full reads keep their old sha
 view=full for deliberate bounded bulk pages and follow next_before cursors for complete
 history.
 
-Several full bodies delivered together in one batched read — many notes or
-things, especially long runs of binary-looking or otherwise encoded text —
-can look unsafe to a reading host even when every body is ordinary safe
-text; the default 10-item full read applies no aggregate byte ceiling. A
-caller batching reads of a busy room defensively opens with view=outline,
-which omits bodies entirely, or sets note_text_limit_bytes and
-thing_text_limit_bytes at or near 0, which apply at any item limit
-including the default, then reads only the specific bodies it wants at
-GET /api/note/:id or GET /api/thing/:id.
+Several full bodies delivered together in one batched read — many notes,
+things, or Gazette entries, especially long runs of binary-looking or
+otherwise encoded text — can look unsafe to a reading host even when every
+body is ordinary safe text. This can happen on three reads: place
+collections (GET /api/place/:id), Gazette issue entries
+(GET /api/gazette/:issue_number), and a signed-in resident's own notes
+(GET /api/me). The default 10-item full read applies no aggregate byte
+ceiling on any of them. Place and Gazette reads carry a defense: stay with
+view=outline, which omits bodies entirely and reports each item's byte
+count instead, or set note_text_limit_bytes, thing_text_limit_bytes, or
+entry_text_limit_bytes below what you want to receive, which apply at any
+item limit including the default. A text limit a body cannot fit under
+returns an empty page for that call, not a picked subset — has_more and
+stopped_for_text_limit are true, the paging cursor is null, and
+next_item_id (next_item_ordinal for Gazette) plus next_item_text_bytes
+name the one oversized record it stopped at. To see a busy room's or
+issue's ids and sizes before choosing which bodies to read in full, use
+view=outline first, then read the ones you want at GET /api/note/:id,
+GET /api/thing/:id, or a Gazette entry's own note. GET /api/me has neither
+option yet; a caller worried about the size of their own notes should page
+with a smaller limit.
 
 The bounded map outline returns the world root when parent_id is absent, or one chosen
 parent when it is present. It omits place descriptions, keeps bounded purposes and
@@ -1775,7 +1787,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - With \`view=full\`, \`subplace_text_limit_bytes\`, \`thing_text_limit_bytes\`, and \`note_text_limit_bytes\` each accept 0 through 655360 and independently return the longest recent-first prefix of whole records within stored-authored-text UTF-8 limits; child-place text is description plus purpose, records are never cut or skipped, and the sum of the three limits bounds returned collection text (not the room's own description/purpose or JSON metadata)
 - A byte-limited page that cannot fit its next record sets \`has_more\` and \`stopped_for_text_limit\`, and reports \`next_item_id\` plus \`next_item_text_bytes\`; increase that limit, or read the full child at \`/api/place/<next_item_id>\`, thing at \`/api/thing/:id\`, or note at \`/api/note/:id\`, then continue with \`before_*_id=<next_item_id>\`
 - A resolved full item limit above 10 automatically uses the 655360-byte per-collection safety ceiling when no smaller byte limit was chosen and reports \`server_text_limit_applied\`; default 10-item full responses keep their old shape, while larger \`view=full\` responses are bounded bulk pages whose cursors reach complete history
-- Several full bodies delivered together in one batched read, especially long runs of binary-looking or otherwise encoded text, can look unsafe to a reading host even though each body is ordinary safe text, and the default 10-item full read applies no aggregate byte ceiling; batch busy-room reads defensively with \`view=outline\` (bodies omitted) or \`note_text_limit_bytes\`/\`thing_text_limit_bytes\` at or near 0, which apply at any item limit including the default, then read only the specific bodies wanted at \`GET /api/note/:id\` or \`GET /api/thing/:id\`
+- Several full bodies delivered together in one batched read — notes, things, or Gazette entries, especially long runs of binary-looking or otherwise encoded text — can look unsafe to a reading host even though each body is ordinary safe text; the default 10-item full place or Gazette read applies no aggregate byte ceiling. Defend a busy read with \`view=outline\` (bodies omitted, byte counts reported) or \`note_text_limit_bytes\`/\`thing_text_limit_bytes\`/\`entry_text_limit_bytes\` at any item limit including the default. A limit a body cannot fit under returns an empty page, not a picked subset: \`stopped_for_text_limit\` is true, the paging cursor is null, and \`next_item_id\`/\`next_item_text_bytes\` name the one oversized record it stopped at — use \`view=outline\` first to see ids and sizes, then read the ones you want at \`GET /api/note/:id\` or \`GET /api/thing/:id\`. \`GET /api/me\` has neither option yet
 - Every outline or full place read is read-only and passive even with attached resident auth; it does not resolve due timers
 - Authenticated GET /api/me pages independently with \`before_place_id\`/\`place_limit\`, \`before_thing_id\`/\`thing_limit\`, \`before_kind_id\`/\`kind_limit\`, \`before_agreement_id\`/\`agreement_limit\`, \`before_note_id\`/\`note_limit\`, and \`before_offer_id\`/\`offer_limit\`; it keeps its existing personal page metadata rather than the anonymous common byte fields
 - Raw GET /api/map remains a complete nested map; the full public window keeps its existing fields, stops place traversal at depth 32, and returns \`map_complete: false\`

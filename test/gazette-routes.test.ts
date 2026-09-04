@@ -55,11 +55,17 @@ interface GazetteRouteDependencies {
     issueNumber: number
     afterOrdinal: number | null
     limit: number
+    textLimitBytes?: number | null
   }>): Promise<Readonly<{
     issue: IssueDetail
     entries: readonly IssueEntry[]
     hasMore: boolean
     nextAfterOrdinal: number | null
+    returnedTextBytes?: number
+    stoppedForTextLimit?: boolean
+    nextItemOrdinal?: number | null
+    nextItemNoteId?: number | null
+    nextItemTextBytes?: number | null
   }> | null>
   database: unknown
   printGazetteIssuesDue(database: unknown): Promise<unknown>
@@ -349,9 +355,161 @@ test('issue detail pages stay oldest-first with exact attribution and withdrawal
     next_after_ordinal: null,
   })
   assert.deepEqual(calls, [
-    { issueNumber: 7, afterOrdinal: null, limit: 2 },
-    { issueNumber: 7, afterOrdinal: 2, limit: 2 },
+    { issueNumber: 7, afterOrdinal: null, limit: 2, textLimitBytes: null },
+    { issueNumber: 7, afterOrdinal: 2, limit: 2, textLimitBytes: null },
   ])
+})
+
+// Issue #71's batched-body ambush (many full resident-authored bodies in one
+// response) reaches GET /api/gazette/:issue_number the same way it reaches
+// GET /api/place/:id: a default-limit read applies no aggregate byte
+// ceiling. These tests prove the route now carries the same two defenses
+// (view=outline, entry_text_limit_bytes) that place reads already had.
+test('a default-limit issue read requests no aggregate ceiling unless the caller opts in', async () => {
+  const calls: Array<Readonly<{ limit: number; textLimitBytes: number | null }>> = []
+  const issue = {
+    issue_number: 9,
+    scheduled_for: '2026-11-02T16:00:00.000Z',
+    printed_at: '2026-11-02T16:00:02.000Z',
+    header: 'THE GAZETTE — ISSUE 9',
+    entry_count: 10,
+  }
+  const app = createApp(dependencies({
+    readIssue: async input => {
+      calls.push({ limit: input.limit, textLimitBytes: input.textLimitBytes ?? null })
+      return { issue, entries: [], hasMore: false, nextAfterOrdinal: null }
+    },
+  }))
+
+  await app.request('/api/gazette/9')
+  // The default page size (10, PUBLIC_PAGE_DEFAULT) is not "more than 10",
+  // so the automatic per-collection ceiling never engages by itself — the
+  // exact unprotected shape issue #71 reports, now reproduced for Gazette.
+  assert.deepEqual(calls, [{ limit: 10, textLimitBytes: null }])
+
+  await app.request('/api/gazette/9?limit=50')
+  // A caller who does ask for more than the default gets the automatic
+  // safety ceiling even without naming a byte limit explicitly.
+  assert.equal(calls[1]?.limit, 50)
+  assert.ok((calls[1]?.textLimitBytes ?? 0) > 0)
+})
+
+test('entry_text_limit_bytes protects the default-size read and names the one item it could not skip past', async () => {
+  const calls: Array<Readonly<{ limit: number; textLimitBytes: number | null }>> = []
+  const issue = {
+    issue_number: 9,
+    scheduled_for: '2026-11-02T16:00:00.000Z',
+    printed_at: '2026-11-02T16:00:02.000Z',
+    header: 'THE GAZETTE — ISSUE 9',
+    entry_count: 10,
+  }
+  const app = createApp(dependencies({
+    readIssue: async input => {
+      calls.push({ limit: input.limit, textLimitBytes: input.textLimitBytes ?? null })
+      return {
+        issue,
+        entries: [],
+        hasMore: true,
+        nextAfterOrdinal: null,
+        returnedTextBytes: 0,
+        stoppedForTextLimit: true,
+        nextItemOrdinal: 1,
+        nextItemNoteId: 501,
+        nextItemTextBytes: 4_000,
+      }
+    },
+  }))
+
+  const response = await app.request('/api/gazette/9?entry_text_limit_bytes=0')
+  assert.equal(response.status, 200)
+  // The budget reaches the store exactly as requested (0) even though the
+  // item limit is the unenlarged default (10) — the same defense place
+  // reads have at the same default item count.
+  assert.deepEqual(calls, [{ limit: 10, textLimitBytes: 0 }])
+  const body = await response.json() as Record<string, unknown>
+  assert.deepEqual(body.entries, [])
+  assert.equal(body.has_more, true)
+  // A budget no body fits under returns an empty page and names the one
+  // oversized entry it stopped at, not a picked subset (mirrors the place
+  // read contract corrected elsewhere in this change).
+  assert.equal(body.stopped_for_text_limit, true)
+  assert.equal(body.next_item_ordinal, 1)
+  assert.equal(body.next_item_note_id, 501)
+  assert.equal(body.next_item_text_bytes, 4_000)
+  assert.equal(body.text_limit_bytes, 0)
+  assert.equal(body.returned_text_bytes, 0)
+})
+
+test('view=outline omits Gazette entry bodies and reports their byte counts instead', async () => {
+  const issue = {
+    issue_number: 9,
+    scheduled_for: '2026-11-02T16:00:00.000Z',
+    printed_at: '2026-11-02T16:00:02.000Z',
+    header: 'THE GAZETTE — ISSUE 9',
+    entry_count: 2,
+  }
+  const entries = [
+    {
+      ordinal: 1,
+      note_id: 501,
+      author: 'tiny-lantern',
+      body: 'a'.repeat(4_000),
+      created_at: '2026-10-27T00:00:00.000Z',
+      withdrawn: false,
+      withdrawal_note_id: null,
+      withdrawn_at: null,
+    },
+    {
+      ordinal: 2,
+      note_id: 502,
+      author: 'second-resident',
+      body: 'must never reach an outline caller',
+      created_at: '2026-10-28T00:00:00.000Z',
+      withdrawn: true,
+      withdrawal_note_id: 900,
+      withdrawn_at: '2026-11-01T00:00:00.000Z',
+    },
+  ] satisfies readonly IssueEntry[]
+  const app = createApp(dependencies({
+    readIssue: async () => ({ issue, entries, hasMore: false, nextAfterOrdinal: null }),
+  }))
+
+  const response = await app.request('/api/gazette/9?view=outline')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { view: string; entries: readonly Record<string, unknown>[] }
+  assert.equal(body.view, 'outline')
+  assert.deepEqual(body.entries, [
+    {
+      ordinal: 1, note_id: 501, author: 'tiny-lantern',
+      body_text_bytes: 4_000,
+      created_at: '2026-10-27T00:00:00.000Z',
+      withdrawn: false, withdrawal_note_id: null, withdrawn_at: null,
+    },
+    {
+      ordinal: 2, note_id: 502, author: 'second-resident',
+      body_text_bytes: Buffer.byteLength('note #502, withdrawn by its author before the tick', 'utf8'),
+      created_at: '2026-10-28T00:00:00.000Z',
+      withdrawn: true, withdrawal_note_id: 900, withdrawn_at: '2026-11-01T00:00:00.000Z',
+    },
+  ])
+  assert.doesNotMatch(JSON.stringify(body), /must never reach an outline caller/u)
+  assert.doesNotMatch(JSON.stringify(body), /"body"/u)
+})
+
+test('view=outline rejects an explicit entry_text_limit_bytes because outline already omits entry text', async () => {
+  const app = createApp(dependencies())
+  const response = await app.request('/api/gazette/9?view=outline&entry_text_limit_bytes=0')
+  assert.equal(response.status, 400)
+  const body = await response.json() as { error?: unknown }
+  assert.equal(body.error, 'entry_text_limit_bytes requires view=full; outline already omits entry text')
+})
+
+test('an issue detail read rejects a view value that is neither outline nor full', async () => {
+  const app = createApp(dependencies())
+  const response = await app.request('/api/gazette/9?view=bogus')
+  assert.equal(response.status, 400)
+  const body = await response.json() as { error?: unknown }
+  assert.equal(body.error, 'view must be outline or full')
 })
 
 test('list and detail reject ambiguous or invalid public inputs before reading', async () => {

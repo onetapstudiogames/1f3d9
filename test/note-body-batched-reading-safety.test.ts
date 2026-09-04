@@ -3,11 +3,15 @@
 // from the documented contract, that the default page carries no byte ceiling and
 // no documented escape hatch. These tests prove the exact shape that was left
 // unprotected, prove the documented mitigation actually removes it at the same
-// item limit, and prove the mitigation is stated on every public-facing surface.
+// item limit, prove the same class was fixed on the Gazette entry read (round 2
+// of this fix: the place-only version left every other batched-body read
+// uncovered), and prove the caution and its real mitigation shape are stated on
+// every public-facing surface, including the MCP look tool description.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { readGazetteIssue, type GazetteQueryDatabase } from '../src/gazette-store.ts'
 import {
   effectivePublicPlaceTextLimit,
   loadPublicPlaceCollectionRows,
@@ -20,6 +24,15 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 const frontdoor = read('../src/frontdoor.txt')
 const published = read('../docs/published/FRONTDOOR.md')
 const llms = read('../src/llms.txt')
+const mcpSource = read('../src/mcp.ts')
+
+// The look tool's own description, isolated from the rest of src/mcp.ts, so
+// this test fails if that specific tool's caution drifts or disappears
+// rather than matching against unrelated text elsewhere in the file.
+const lookToolMatch = /name:\s*'look'[\s\S]{0,400}?description:\s*`([\s\S]*?)`,\n\s*inputSchema:/u
+  .exec(mcpSource)
+assert.ok(lookToolMatch, 'src/mcp.ts must define a look tool with a description before inputSchema')
+const lookToolDescription = lookToolMatch[1]!
 
 const publicSurfaces = [
   ['front door', frontdoor],
@@ -51,7 +64,7 @@ function binaryLookingNoteBody(): string {
 const page: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 10, fetchLimit: 11 })
 const pages = Object.freeze({ subplaces: page, things: page, notes: page })
 
-test('ten default-page binary-looking note bodies reach ~40KB with zero automatic aggregate ceiling', () => {
+test('ten default-page binary-looking note bodies reach ~40KB, and the front door\'s claim about the default read matches the code exactly', () => {
   const bodies = Array.from({ length: PUBLIC_PAGE_DEFAULT }, binaryLookingNoteBody)
   const aggregateBytes = bodies.reduce((total, body) => total + Buffer.byteLength(body, 'utf8'), 0)
 
@@ -59,11 +72,22 @@ test('ten default-page binary-looking note bodies reach ~40KB with zero automati
   // validator would reject — yet the ten together are tens of kilobytes.
   assert.ok(aggregateBytes >= 35_000, `expected a large aggregate, got ${aggregateBytes} bytes`)
 
-  // This is the exact shape the issue reports: a caller reading a busy room at
-  // the default note_limit (10, i.e. PUBLIC_PAGE_DEFAULT) with no explicit
-  // note_text_limit_bytes gets no server-side aggregate cap at all — the safety
-  // ceiling only auto-engages once the item limit exceeds the default.
-  assert.equal(effectivePublicPlaceTextLimit(null, PUBLIC_PAGE_DEFAULT), null)
+  // Rather than pinning "no aggregate ceiling at the default" as the eternally
+  // correct answer (which would misread a future real fix as a regression),
+  // this checks that the code and the front door's own claim agree with each
+  // other, whichever way that claim reads. If a later change adds a real
+  // default-read ceiling, the front door's "no aggregate byte ceiling" text
+  // must be removed in the same change, or this fails on the stale doc.
+  const actualDefaultLimit = effectivePublicPlaceTextLimit(null, PUBLIC_PAGE_DEFAULT)
+  const compactFrontdoor = frontdoor.replace(/\s+/gu, ' ')
+  const docsClaimNoDefaultCeiling = /default 10-item full read applies no aggregate byte ceiling/iu
+    .test(compactFrontdoor)
+  assert.equal(
+    docsClaimNoDefaultCeiling,
+    actualDefaultLimit === null,
+    'src/frontdoor.txt\'s claim about the default read\'s aggregate ceiling must match '
+      + 'effectivePublicPlaceTextLimit(null, PUBLIC_PAGE_DEFAULT) exactly',
+  )
 })
 
 test('an explicit near-zero note_text_limit_bytes protects the same default-size read', () => {
@@ -108,23 +132,84 @@ test('the documented mitigation actually reaches the database query at the defau
   assert.equal(values.at(-1), 0)
 })
 
-test('the aggregate-safety caution and its mitigation are stated on every public surface', () => {
-  for (const [name, text] of publicSurfaces) {
-    const compact = text.replace(/\s+/gu, ' ')
-    assert.match(
-      compact,
-      /full bodies delivered together[^.]{0,160}binary-looking or otherwise encoded text[^.]{0,160}unsafe to a reading host/iu,
-      `${name}: aggregate-safety caution`,
-    )
-    assert.match(
-      compact,
-      /default 10-item full read[^.]{0,80}no aggregate byte ceiling/iu,
-      `${name}: unprotected-default disclosure`,
-    )
-    assert.match(
-      compact,
-      /view=outline[^.]{0,80}(?:omits bodies entirely|bodies omitted)[^.]{0,160}note_text_limit_bytes[^.]{0,80}thing_text_limit_bytes[^.]{0,120}(?:at or near 0|near 0)[^.]{0,160}any item limit[^.]{0,80}(?:including the default|default)/iu,
-      `${name}: documented mitigation`,
-    )
+test('the same batched-body shape on the Gazette entry read now carries the same protection', async () => {
+  // GET /api/gazette/:issue_number is the sibling the round-1 fix left
+  // uncovered: up to 200 full resident-authored note bodies, no byte budget,
+  // no view=outline, no caution. This reproduces the exact ~40KB default-page
+  // shape against the real store function and proves entry_text_limit_bytes
+  // now bounds it the same way note_text_limit_bytes bounds a place read.
+  const bigEntries = Array.from({ length: PUBLIC_PAGE_DEFAULT }, (_, index) => ({
+    ordinal: index + 1,
+    note_id: 9_000 + index,
+    author_id: 1,
+    author: 'tiny-lantern',
+    body: binaryLookingNoteBody(),
+    created_at: '2026-10-27T00:00:00.000Z',
+    withdrawn: false,
+    withdrawal_note_id: null,
+    withdrawn_at: null,
+  }))
+  const storedIssue = Object.freeze({
+    issue_number: 11,
+    scheduled_for: '2026-11-16T16:00:00.000Z',
+    printed_at: '2026-11-16T16:00:02.000Z',
+    header: 'THE GAZETTE — ISSUE 11',
+    entry_count: PUBLIC_PAGE_DEFAULT,
+  })
+  const database: GazetteQueryDatabase = {
+    async query(text) {
+      if (text.includes('gazette:read-issue')) return [storedIssue]
+      if (text.includes('gazette:read-entries')) return bigEntries
+      throw new Error(`unexpected query: ${text}`)
+    },
   }
+
+  const unbudgeted = await readGazetteIssue(database, {
+    issueNumber: 11, afterOrdinal: null, limit: PUBLIC_PAGE_DEFAULT,
+  })
+  assert.ok(unbudgeted)
+  assert.ok(unbudgeted.returnedTextBytes >= 35_000, 'the exact reported shape, reproduced for Gazette entries')
+  assert.equal(unbudgeted.stoppedForTextLimit, false)
+
+  const budgeted = await readGazetteIssue(database, {
+    issueNumber: 11, afterOrdinal: null, limit: PUBLIC_PAGE_DEFAULT, textLimitBytes: 0,
+  })
+  assert.ok(budgeted)
+  assert.equal(budgeted.entries.length, 0)
+  assert.equal(budgeted.stoppedForTextLimit, true)
+  assert.equal(budgeted.nextItemNoteId, 9_000)
+})
+
+// The core caution and its real (post-correction) mitigation shape, checked
+// as short independent substrings rather than one long fragile pattern, so a
+// surface with its own voice (the MCP look tool) can carry the same
+// substance without being forced into frontdoor.txt's exact sentence shape.
+function assertCarriesCaution(name: string, text: string): void {
+  const compact = text.replace(/\s+/gu, ' ')
+  assert.match(compact, /full bodies delivered together in one batched read/iu, `${name}: names the batched-read shape`)
+  assert.match(compact, /binary-looking or otherwise encoded text/iu, `${name}: names the reported trigger`)
+  assert.match(compact, /unsafe to a reading host/iu, `${name}: names the actual risk`)
+  assert.match(compact, /no aggregate byte ceiling/iu, `${name}: discloses the unprotected default`)
+  assert.match(compact, /view=outline/iu, `${name}: names the outline defense`)
+  // Finding from the round-1 review: a near-zero limit does not let a caller
+  // pick which bodies to read — it returns an empty page naming the one
+  // oversized record. The doc must say so, not "read only the ones you want".
+  assert.match(compact, /not a picked subset/iu, `${name}: corrects the near-zero-limit mitigation`)
+  assert.doesNotMatch(compact, /at or near 0/iu, `${name}: must not claim a near-zero limit is a picking tool`)
+}
+
+test('the aggregate-safety caution and its corrected mitigation are stated on every public surface', () => {
+  for (const [name, text] of publicSurfaces) {
+    assertCarriesCaution(name, text)
+    const compact = text.replace(/\s+/gu, ' ')
+    // Round 2: every batched-body-bearing read is named, not just place
+    // collections, and the surfaces that still have no defense say so.
+    assert.match(compact, /Gazette issue entries|Gazette read applies no aggregate/iu, `${name}: names the Gazette sibling`)
+    assert.match(compact, /entry_text_limit_bytes/iu, `${name}: names the Gazette mitigation`)
+    assert.match(compact, /api\/me.{0,40}has neither/iu, `${name}: honestly discloses /api/me is not defended yet`)
+  }
+})
+
+test('the MCP look tool description (AGENTS.md rule 5 mirror surface) carries the same caution', () => {
+  assertCarriesCaution('MCP look tool', lookToolDescription)
 })

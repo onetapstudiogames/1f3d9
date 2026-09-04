@@ -142,12 +142,23 @@ export async function readGazetteIssue(
     issueNumber: number
     afterOrdinal: number | null
     limit: number
+    // A caller-chosen aggregate byte budget across this page's entry bodies,
+    // mirroring note_text_limit_bytes on place reads (issue #71): the same
+    // batched-body-ambush shape applies here (many resident-authored Gazette
+    // entries in one response), so the same defense applies here. null (the
+    // default) applies no budget, matching every existing caller.
+    textLimitBytes?: number | null
   }>,
 ): Promise<Readonly<{
   issue: GazetteIssueDetail
   entries: readonly GazetteIssueEntry[]
   hasMore: boolean
   nextAfterOrdinal: number | null
+  returnedTextBytes: number
+  stoppedForTextLimit: boolean
+  nextItemOrdinal: number | null
+  nextItemNoteId: number | null
+  nextItemTextBytes: number | null
 }> | null> {
   const issueRows = await rows(database, `
     /* gazette:read-issue */
@@ -188,8 +199,8 @@ export async function readGazetteIssue(
     ORDER BY entry.ordinal
     LIMIT $3::integer
   `, [input.issueNumber, input.afterOrdinal, input.limit + 1, MODERATED_TEXT])
-  const hasMore = found.length > input.limit
-  const entries = Object.freeze(found.slice(0, input.limit).map(row => {
+  const itemLimitHasMore = found.length > input.limit
+  const pageRows = found.slice(0, input.limit).map(row => {
     if (typeof row.withdrawn !== 'boolean') {
       throw new Error('database returned an invalid Gazette withdrawal state')
     }
@@ -212,7 +223,37 @@ export async function readGazetteIssue(
       withdrawal_note_id: withdrawalNoteId,
       withdrawn_at: withdrawnAt,
     })
-  }))
+  })
+
+  // Same budgeted-page shape as effectivePublicPlaceTextLimit's SQL sibling
+  // in public-pagination.ts: walk entries in their returned order, admit an
+  // entry only while the running total stays at or under the budget, and
+  // never cut or skip a record to squeeze in an older one. Entries are
+  // already the exact bytes the caller receives (withdrawal notices and
+  // moderated placeholders are substituted above, before this walk runs).
+  const textLimitBytes = input.textLimitBytes ?? null
+  let cutoffIndex = pageRows.length
+  let stoppedForTextLimit = false
+  if (textLimitBytes != null) {
+    let cumulative = 0
+    for (const [index, row] of pageRows.entries()) {
+      const bytes = Buffer.byteLength(row.body, 'utf8')
+      if (cumulative + bytes > textLimitBytes) {
+        cutoffIndex = index
+        stoppedForTextLimit = true
+        break
+      }
+      cumulative += bytes
+    }
+  }
+  const entries = Object.freeze(pageRows.slice(0, cutoffIndex))
+  const nextItemRow = stoppedForTextLimit ? pageRows[cutoffIndex] ?? null : null
+  const hasMore = itemLimitHasMore || stoppedForTextLimit
+  const returnedTextBytes = entries.reduce(
+    (total, entry) => total + Buffer.byteLength(entry.body, 'utf8'),
+    0,
+  )
+
   const summary = issueSummary(storedIssue)
   return Object.freeze({
     issue: Object.freeze({
@@ -221,9 +262,14 @@ export async function readGazetteIssue(
     }),
     entries,
     hasMore,
-    nextAfterOrdinal: hasMore
+    nextAfterOrdinal: hasMore && entries.length > 0
       ? entries[entries.length - 1]?.ordinal ?? null
       : null,
+    returnedTextBytes,
+    stoppedForTextLimit,
+    nextItemOrdinal: nextItemRow?.ordinal ?? null,
+    nextItemNoteId: nextItemRow?.note_id ?? null,
+    nextItemTextBytes: nextItemRow == null ? null : Buffer.byteLength(nextItemRow.body, 'utf8'),
   })
 }
 
