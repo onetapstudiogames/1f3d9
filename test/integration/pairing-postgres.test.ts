@@ -395,6 +395,18 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
 
     await t.test('a used code is never re-invalidated and an expired code is left for its own cleanup', async () => {
       await resetDatabase()
+      const expiredCodeHash = sha256('recently-expired-code')
+      await oauthStore.mintPairingCode({ residentId: 1, codeHash: expiredCodeHash })
+      await database!.query(
+        "UPDATE pairing_codes SET expires_at = now() - interval '1 minute' WHERE code_hash = $1",
+        [expiredCodeHash],
+      )
+      assert.deepEqual(
+        await oauthStore.peekPairingCodeResident(expiredCodeHash),
+        { status: 'pairing_code_rejected' },
+        'the real PostgreSQL expiry predicate must reject a row whose expiry is in the past',
+      )
+
       const request = authorizationRequestInput('already-used')
       await oauthStore.createAuthorizationRequest(request)
       const usedCodeHash = sha256('already-used-code')
@@ -431,6 +443,11 @@ test('pairing codes bind to the credential generation at mint in real PostgreSQL
 
       const usedAfter = await pairingCodeRow(usedCodeHash)
       assert.deepEqual(usedAfter, usedBefore, 'an already-used code is never touched by rotation invalidation')
+      assert.deepEqual(await pairingCodeRow(expiredCodeHash), {
+        secret_hash_at_mint: sha256('resident-key-v1'),
+        invalidated_at: null,
+        used_at: null,
+      }, 'a recently expired code is left for its own cleanup')
     })
   } finally {
     database = null
