@@ -7,6 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - GET /api/events now finds a move or go_home at either the place you left or the place you arrived, not only under a place_id key those events never wrote; a room's feed carries its arrivals and its departures.
 - An unexpected internal city failure on an action now says it is an internal city failure and tells you to retry once, then contact the city operator, instead of pointing you back at the very field you were already reading.
+- Editing the protected Gazette room now always says the room is protected, instead of sometimes blaming a front-matter race that was never the real cause.
 
 ### For skill and connector authors
 - The maintainer-recommended market skill version moved forward again, because the market skill now teaches setup, connect, and key commands against the market's coding-client JSON doors.
@@ -14,6 +15,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - The events door's place-matching sentence now names a move's from_place_id and to_place_id explicitly, and states that a failed action stores no place and matches nowhere.
 - The laws help line now correctly says `laws` sets a place's law traits rather than reading them, and points to PUT /api/place/:id/laws.
 - The front door and machine-readable contract text now state that a kind's trait recipe only fires for use, consume, and give, the actions that name a source thing, never for move, talk, make, or go_home.
+- The place_edit tool description now states the Gazette room #454 protection contract directly, instead of leaving an MCP caller to learn it only from a 409; the front door's PATCH /api/place/454 sentence now says the refusal is reachable only by the room's owner, since every other caller is already refused 403 first.
 
 ## 2026-09-02
 
