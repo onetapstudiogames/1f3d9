@@ -22,6 +22,8 @@ export declare function runWorldBuy(options: Readonly<{
   paidClaimTimeoutMs?: number
   reconcileRetryDelayMs?: number
   reconcileAttempts?: number
+  checkoutBindingRetryDelayMs?: number
+  checkoutBindingRetries?: number
   stdout?: (message: string) => void
   stderr?: (message: string) => void
 }>): Promise<number>
