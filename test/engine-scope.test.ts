@@ -19,7 +19,12 @@ function scopedTargetDb(effect: Effect, target: RuntimeTarget) {
       return [{ current_place_id: 3 }]
     }
     if (/FROM resident_presence/u.test(text)) {
-      return [{ resident_id: 7, current_place_id: 2, home_place_id: 2, updated_at: 'now' }]
+      return [{
+        resident_id: 7,
+        current_place_id: 2,
+        home_place_id: 2,
+        updated_at: new Date('2026-08-11T00:00:00.000Z'),
+      }]
     }
     if (/INSERT INTO action_runs/u.test(text)) return [{ id: 120 }]
     if (/FROM active_blocks/u.test(text)) return [{ blocked: false }]

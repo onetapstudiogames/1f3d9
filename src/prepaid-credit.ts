@@ -6,6 +6,7 @@ import {
   parseCityCreditRequestId,
   type CityCreditDatabase,
 } from './city-credit.ts'
+import { isoTimestamp } from './timestamp.ts'
 
 const MAX_CREDIT_DOLLARS = 10_000n
 const GIFT_TOKEN_RE = /^gift_claim_[0-9a-f]{64}$/u
@@ -360,7 +361,7 @@ export async function readPendingCreditGifts(
       amount_units: units.toString(),
       source: 'purchase' as const,
       buyer: 'private' as const,
-      created_at: String(row.created_at),
+      created_at: isoTimestamp(row.created_at) ?? '',
       ...(status === 'frozen'
         ? {
             blocked_reason: 'A payment dispute is open on the purchase that funded this gift, or PayPal resolved it ambiguously and founder review is pending. It cannot be accepted or redirected while frozen; the recipient may still refuse it.',

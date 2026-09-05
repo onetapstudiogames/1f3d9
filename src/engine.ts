@@ -18,6 +18,7 @@ import {
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { isoTimestamp } from './timestamp.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -297,7 +298,7 @@ function presenceFromRow(row: Record<string, unknown>, residentId: number): Pres
     residentId,
     currentPlaceId: nullableRowId(row.current_place_id, 'current place id'),
     homePlaceId: nullableRowId(row.home_place_id, 'home place id'),
-    updatedAt: String(row.updated_at ?? ''),
+    updatedAt: isoTimestamp(row.updated_at) ?? '',
   }
 }
 

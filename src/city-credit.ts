@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
+import { isoTimestamp } from './timestamp.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
   CITY_FEE_CREDIT_USDC,
@@ -318,7 +319,7 @@ export async function issueCityFeeCredit(
     balance_usdc: formatUsdcUnits(BigInt(balanceUnits)),
     balance_units: balanceUnits,
     reason,
-    created_at: String(row.created_at),
+    created_at: isoTimestamp(row.created_at) ?? '',
   }
 }
 
@@ -708,7 +709,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
       ? null
       : idString(row.related_spend_id, 'related city credit spend id'),
     reason: row.reason == null ? null : String(row.reason),
-    created_at: String(row.created_at),
+    created_at: isoTimestamp(row.created_at) ?? '',
   }
 }
 

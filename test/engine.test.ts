@@ -23,6 +23,7 @@ import {
 import { COLLISION_CONFLICT_MESSAGE } from '../src/core.ts'
 import {
   executeEffects,
+  thingState,
   type EffectExecutionContext,
 } from '../src/engine-effects.ts'
 import { BLOCKABLE_ACTIONS } from '../src/physics.ts'
@@ -40,7 +41,12 @@ function fakeSql(responder: Responder): { db: TaggedSql; calls: Call[] } {
     const text = strings.join('$').replace(/\s+/g, ' ').trim()
     const call = { text, values }
     calls.push(call)
-    return responder(call)
+    const rows = await responder(call)
+    return rows.map(row => (
+      row && typeof row === 'object' && 'updated_at' in row && row.updated_at === 'now'
+        ? { ...row, updated_at: new Date('2026-08-11T00:00:00.000Z') }
+        : row
+    ))
   }) as TaggedSql
   return { db, calls }
 }
@@ -97,14 +103,14 @@ test('presence initializes current place and home from the resident first owned 
     resident_id: 7,
     current_place_id: 2,
     home_place_id: 2,
-    updated_at: '2026-08-11T00:00:00.000Z',
+    updated_at: new Date('2026-08-11T00:00:00.106Z'),
   }])
 
   assert.deepEqual(await ensurePresence(7, db), {
     residentId: 7,
     currentPlaceId: 2,
     homePlaceId: 2,
-    updatedAt: '2026-08-11T00:00:00.000Z',
+    updatedAt: '2026-08-11T00:00:00.106Z',
   })
   assert.match(calls[0]?.text ?? '', /ON CONFLICT \(resident_id\) DO UPDATE/i)
   assert.match(calls[0]?.text ?? '', /COALESCE/i)
@@ -1117,6 +1123,20 @@ test('traitless consume still withdraws the owned source thing', async () => {
   assert.equal(result.status, 'applied')
   assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), true)
   assert.equal(calls.some(call => /'thing_withdrawn'/.test(call.text)), true)
+})
+
+test('thing state preserves database Date milliseconds', async () => {
+  const { db } = fakeSql(() => [{
+    id: 41,
+    owner_id: 7,
+    place_id: 2,
+    withdrawn_at: new Date('2026-08-11T00:00:00.106Z'),
+    active_offer_id: null,
+    has_open_offer: false,
+    open_to_use: false,
+  }])
+
+  assert.equal((await thingState(41, db))?.withdrawnAt, '2026-08-11T00:00:00.106Z')
 })
 
 test('a visitor may use an active, co-located, unoffered open thing without owning it', async () => {
@@ -2573,9 +2593,9 @@ test('overdue repeats preserve the original logical clock while catching up', as
           effects: [],
           repeat_remaining: 1,
           repeat_seconds: 10,
-          logical_due_at: '2026-08-11T00:00:00.000Z',
+          logical_due_at: '2026-08-11T00:00:00.106Z',
         },
-        due_at: '2026-08-11T05:00:00.000Z',
+        due_at: new Date('2026-08-11T05:00:00.106Z'),
         generation: 0,
       }] : []
     }
@@ -2586,8 +2606,60 @@ test('overdue repeats preserve the original logical clock while catching up', as
   assert.deepEqual(await resolveDueEffects(2, db), { resolved: 1, failed: 0, capped: false })
   const repeated = calls.find(call => /INSERT INTO pending_effects/.test(call.text))
   assert.ok(repeated)
-  assert.match(String(repeated.values[10]), /"logical_due_at":"2026-08-11T00:00:10.000Z"/)
+  assert.match(String(repeated.values[10]), /"logical_due_at":"2026-08-11T00:00:10.106Z"/)
   assert.equal(repeated.values[12], 1)
+})
+
+test('missing or malformed stored effect timestamps are skipped closed', async () => {
+  let dueRead = 0
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM pending_effects pending/.test(text)) {
+      dueRead += 1
+      return dueRead === 1 ? [
+        {
+          id: 514,
+          action_id: 105,
+          parent_effect_id: null,
+          place_id: 2,
+          actor_id: 7,
+          source_trait_id: null,
+          source_thing_id: null,
+          target_type: null,
+          target_id: null,
+          destination_place_id: null,
+          recipient_id: null,
+          payload: { effects: [], repeat_remaining: 0 },
+          due_at: null,
+          generation: 0,
+        },
+        {
+          id: 515,
+          action_id: 106,
+          parent_effect_id: null,
+          place_id: 2,
+          actor_id: 7,
+          source_trait_id: null,
+          source_thing_id: null,
+          target_type: null,
+          target_id: null,
+          destination_place_id: null,
+          recipient_id: null,
+          payload: { effects: [], repeat_remaining: 0, logical_due_at: 'banana' },
+          due_at: '2026-08-11T05:00:00.106Z',
+          generation: 0,
+        },
+      ] : []
+    }
+    if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 716 }]
+    return []
+  })
+
+  assert.deepEqual(await resolveDueEffects(2, db), { resolved: 0, failed: 2, capped: false })
+  const resolutions = calls.filter(call => /INSERT INTO effect_resolutions/.test(call.text))
+  assert.equal(resolutions.length, 2)
+  for (const resolution of resolutions) {
+    assert.match(String(resolution.values[2]), /invalid stored effect payload/i)
+  }
 })
 
 test('generation eight resolves but cannot schedule another repeat', async () => {
