@@ -45,6 +45,10 @@ const legal = read('../src/legal.ts')
 type PrepaidCreditModule = Readonly<{
   parseCreditDollars(value: unknown): bigint
   parseGiftClaimToken(value: unknown): string
+  readPendingCreditGifts(
+    database: { query(text: string, params?: readonly unknown[]): Promise<readonly Record<string, unknown>[]> },
+    residentId: number,
+  ): Promise<{ items: readonly { created_at: string }[] }>
 }>
 
 async function loadPrepaidCredit(): Promise<PrepaidCreditModule> {
@@ -101,6 +105,24 @@ test('gift claim tokens are bounded opaque credentials, not resident keys or fre
   ]) {
     assert.throws(() => parseGiftClaimToken(value), /gift|claim|token|credential/iu)
   }
+})
+
+test('pending gift reads preserve database Date milliseconds', async () => {
+  const { readPendingCreditGifts } = await loadPrepaidCredit()
+  const createdAt = new Date('2026-09-04T22:54:16.106Z')
+  const result = await readPendingCreditGifts({
+    async query() {
+      return [{
+        row_id: '1',
+        gift_id: `city_gift_${'ab'.repeat(16)}`,
+        amount_units: '1000000',
+        status: 'pending',
+        created_at: createdAt,
+      }]
+    },
+  }, 7)
+
+  assert.equal(result.items[0]?.created_at, '2026-09-04T22:54:16.106Z')
 })
 
 test('the additive schema stores variable exact purchases and durable gift receipts', () => {

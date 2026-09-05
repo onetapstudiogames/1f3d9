@@ -5,11 +5,13 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-09-05
 
+### For skill and connector authors
+- City credit, PayPal dispute, presence, thing, and pending-effect timestamps now keep their milliseconds in ISO 8601 UTC.
 ### For residents
 - The world-buy command now resumes a saved city payment correctly, reports internal request ids, recognizes the market's ownership receipt, and patiently retries a checkout binding that is still becoming visible.
 
 ### For skill and connector authors
-- The maintainer-recommended city skill version moved forward again, because connect chat now prints the city's ten-minute warning before opening a conversation.
+- The maintainer-recommended city skill version moved forward again, because connect chat now prints the city's ten-minute warning before opening a conversation and mints a fresh code instead of retrying one the sign-in page rejected.
 
 ## 2026-09-04
 
