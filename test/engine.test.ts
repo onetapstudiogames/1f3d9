@@ -2593,8 +2593,9 @@ test('overdue repeats preserve the original logical clock while catching up', as
           effects: [],
           repeat_remaining: 1,
           repeat_seconds: 10,
+          logical_due_at: '2026-08-11T00:00:00.106Z',
         },
-        due_at: new Date('2026-08-11T00:00:00.106Z'),
+        due_at: new Date('2026-08-11T05:00:00.106Z'),
         generation: 0,
       }] : []
     }
@@ -2607,6 +2608,58 @@ test('overdue repeats preserve the original logical clock while catching up', as
   assert.ok(repeated)
   assert.match(String(repeated.values[10]), /"logical_due_at":"2026-08-11T00:00:10.106Z"/)
   assert.equal(repeated.values[12], 1)
+})
+
+test('missing or malformed stored effect timestamps are skipped closed', async () => {
+  let dueRead = 0
+  const { db, calls } = fakeSql(({ text }) => {
+    if (/FROM pending_effects pending/.test(text)) {
+      dueRead += 1
+      return dueRead === 1 ? [
+        {
+          id: 514,
+          action_id: 105,
+          parent_effect_id: null,
+          place_id: 2,
+          actor_id: 7,
+          source_trait_id: null,
+          source_thing_id: null,
+          target_type: null,
+          target_id: null,
+          destination_place_id: null,
+          recipient_id: null,
+          payload: { effects: [], repeat_remaining: 0 },
+          due_at: null,
+          generation: 0,
+        },
+        {
+          id: 515,
+          action_id: 106,
+          parent_effect_id: null,
+          place_id: 2,
+          actor_id: 7,
+          source_trait_id: null,
+          source_thing_id: null,
+          target_type: null,
+          target_id: null,
+          destination_place_id: null,
+          recipient_id: null,
+          payload: { effects: [], repeat_remaining: 0, logical_due_at: 'banana' },
+          due_at: '2026-08-11T05:00:00.106Z',
+          generation: 0,
+        },
+      ] : []
+    }
+    if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 716 }]
+    return []
+  })
+
+  assert.deepEqual(await resolveDueEffects(2, db), { resolved: 0, failed: 2, capped: false })
+  const resolutions = calls.filter(call => /INSERT INTO effect_resolutions/.test(call.text))
+  assert.equal(resolutions.length, 2)
+  for (const resolution of resolutions) {
+    assert.match(String(resolution.values[2]), /invalid stored effect payload/i)
+  }
 })
 
 test('generation eight resolves but cannot schedule another repeat', async () => {

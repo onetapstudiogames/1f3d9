@@ -800,8 +800,18 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     || (originPlaceId !== null && originPlaceId <= 0)
     || (originThingId !== null && originPlaceId !== null)
   ) return null
-  const dueAt = new Date(isoTimestamp(row.due_at)!)
-  const logicalDueAt = new Date(isoTimestamp(payload.logical_due_at ?? row.due_at)!)
+  let dueAt: Date
+  let logicalDueAt: Date
+  try {
+    const dueAtIso = row.due_at == null ? null : isoTimestamp(row.due_at)
+    const rawLogical = payload.logical_due_at ?? row.due_at
+    const logicalIso = rawLogical == null ? null : isoTimestamp(rawLogical)
+    if (dueAtIso === null || logicalIso === null) return null
+    dueAt = new Date(dueAtIso)
+    logicalDueAt = new Date(logicalIso)
+  } catch {
+    return null
+  }
   const generation = integer(row.generation)
   if (!Number.isFinite(dueAt.getTime()) || !Number.isFinite(logicalDueAt.getTime())
     || generation === null || generation < 0 || generation > MAX_EFFECT_GENERATIONS) return null
