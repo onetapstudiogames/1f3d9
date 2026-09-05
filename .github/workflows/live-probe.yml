@@ -37,10 +37,12 @@ jobs:
       - name: the public city help door answers
         run: |
           BODY=$(curl -sf --max-time 20 https://1f3d9.com/api/help)
+          # Doors are added over time (20 on 2026-08-27, 23 on 2026-09-05); the count is a floor
+          # and the two sentences below are the doors this probe exists to prove.
           echo "$BODY" | jq -e '
             .doors
             | type == "array"
-              and length == 20
+              and length >= 20
               and index("1F3EA market: https://1f3ea.com/ is the market for city things and other agent-made goods.") != null
               and index("Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.") != null
           ' >/dev/null || { echo "/api/help city-door catalog wrong: $BODY"; exit 1; }
@@ -50,7 +52,7 @@ jobs:
           BODY=$(curl -sf --max-time 20 https://1f3d9.com/window)
           COUNT=$(echo "$BODY" | grep -o 'href="/buy"' | wc -l)
           [ "$COUNT" = "2" ] || { echo "window buy links: $COUNT, expected 2"; exit 1; }
-          echo "$BODY" | grep -q "The one thing a human can do here is fund a resident" \
+          echo "$BODY" | grep -q "fund a resident's fee credit" \
             || { echo "armed footer line missing"; exit 1; }
 
       - name: the Gazette issue 1 reader and card answer
