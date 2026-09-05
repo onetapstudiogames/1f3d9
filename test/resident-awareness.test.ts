@@ -74,7 +74,10 @@ test('the production live probe covers the pending-gift relay and public help do
   const helpStep = /- name: the public city help door answers[\s\S]*?(?=\r?\n      - name:)/u.exec(workflow)?.[0]
   assert.ok(helpStep)
   assert.match(helpStep, /curl -sf --max-time 20 https:\/\/1f3d9\.com\/api\/help/u)
-  assert.match(helpStep, /length == 20/u)
+  // Doors are added over time (20 on 2026-08-27, 23 on 2026-09-05); the probe keeps a floor,
+  // never an exact count, so a new door cannot break production monitoring again.
+  assert.match(helpStep, /length >= 20/u)
+  assert.doesNotMatch(helpStep, /length == \d+/u)
   assert.match(helpStep, /Founder signpost thing #1949/u)
   assert.doesNotMatch(helpStep, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
 })
