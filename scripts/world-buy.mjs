@@ -8,7 +8,7 @@
 // Instead of the two agent-key environment variables, pass --city-key-file and/or
 // --market-key-file. The wallet private key is accepted only from
 // BUYER_WALLET_PRIVATE_KEY. A pending payment exits with code 2; run the same command
-// again so the client reconciles and syncs without signing or paying again.
+// again so the client resumes the saved payment, reconciling only a payment_pending offer.
 
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -24,11 +24,13 @@ const DEFAULT_SYNC_DELAY_MS = 60_000
 // The paid claim makes the city verify and settle through the facilitator, each
 // call budgeted at several seconds server-side, so the client waits longer than
 // an ordinary read. A claim that times out is never re-signed: the persisted
-// nonce sends the run to reconcile, which may need a few tries while the city
-// finishes the payment it already received.
+// nonce lets a rerun resume the city's existing attempt, while payment_pending
+// offers go to reconcile.
 const PAID_CLAIM_TIMEOUT_MS = 45_000
 const RECONCILE_RETRY_DELAY_MS = 10_000
 const RECONCILE_ATTEMPTS = 4
+const CHECKOUT_BINDING_RETRY_DELAY_MS = 15_000
+const CHECKOUT_BINDING_RETRIES = 5
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/u
 const PRIVATE_KEY_RE = /^0x[0-9a-fA-F]{64}$/u
 const NONCE_RE = /^0x[0-9a-fA-F]{64}$/u
@@ -187,7 +189,12 @@ async function requestJson({
   }
   if (!response.ok && !(acceptPaymentRequired && response.status === 402)) {
     const message = serverMessage(parsed, `${new URL(url).origin} returned HTTP ${response.status}.`)
-    throw new WorldBuyError(step, redact(message, secrets))
+    const requestId = response.status === 500 && typeof parsed.request_id === 'string' && parsed.request_id.trim()
+      ? ` Request ID: ${parsed.request_id.trim()}.`
+      : ''
+    const error = new WorldBuyError(step, redact(`${message}${requestId}`, secrets))
+    error.status = response.status
+    throw error
   }
   return { status: response.status, body: parsed, retryAfter: response.headers.get('retry-after') }
 }
@@ -330,6 +337,11 @@ function worldStateFrom(body) {
   return null
 }
 
+function hasMatchingOwnershipReceipt(body, offerId) {
+  const receipt = record(record(body)?.receipt)
+  return receipt?.delivery_kind === 'city_ownership' && receipt.city_offer_id === offerId
+}
+
 function retryDelay(response, configuredDelay) {
   if (configuredDelay !== DEFAULT_SYNC_DELAY_MS) return configuredDelay
   const seconds = Number(response.retryAfter)
@@ -353,6 +365,7 @@ export async function runWorldBuy(options) {
     paidClaimTimeoutMs = PAID_CLAIM_TIMEOUT_MS,
     reconcileRetryDelayMs = RECONCILE_RETRY_DELAY_MS,
     reconcileAttempts = RECONCILE_ATTEMPTS,
+    checkoutBindingRetryDelayMs = CHECKOUT_BINDING_RETRY_DELAY_MS,
     stdout = message => process.stdout.write(message),
     stderr = message => process.stderr.write(message),
   } = options
@@ -437,21 +450,37 @@ export async function runWorldBuy(options) {
       }
     }
 
+    const claimBody = { market_checkout_id: state.checkout_id, buyer_wallet: wallet }
+    const claimUrl = `${cityOrigin}/api/world/offer/${offerId}/claim`
+    const readCityOffer = async () => requestJson({
+      step: 4,
+      url: `${cityOrigin}/api/world/offer/${offerId}`,
+      secrets,
+    })
+    const claimWithoutPayment = async () => requestJson({
+      step: 3,
+      url: claimUrl,
+      method: 'POST',
+      key: cityKey,
+      body: claimBody,
+      secrets,
+      acceptPaymentRequired: true,
+    })
+
     let cityResult
+    let challenge
     if (state.nonce || state.payment_pending) {
-      cityResult = await reconcileWithPatience()
+      const offerRead = await readCityOffer()
+      if (offerFrom(offerRead.body)?.phase === 'payment_pending') {
+        cityResult = await reconcileWithPatience()
+      } else {
+        challenge = await claimWithoutPayment()
+      }
     } else {
-      const claimBody = { market_checkout_id: state.checkout_id, buyer_wallet: wallet }
-      const claimUrl = `${cityOrigin}/api/world/offer/${offerId}/claim`
-      const challenge = await requestJson({
-        step: 3,
-        url: claimUrl,
-        method: 'POST',
-        key: cityKey,
-        body: claimBody,
-        secrets,
-        acceptPaymentRequired: true,
-      })
+      challenge = await claimWithoutPayment()
+    }
+
+    if (!cityResult && challenge) {
       if (challenge.status !== 402) {
         cityResult = challenge
       } else {
@@ -463,9 +492,11 @@ export async function runWorldBuy(options) {
           accepted.find(value => record(value)?.scheme === 'exact' && record(value)?.network === 'base'),
           claimUrl,
         )
-        const nonce = `0x${randomBytes(32).toString('hex')}`
-        state = { ...state, nonce }
-        await writeState(statePath, state, 3)
+        const nonce = state.nonce ?? `0x${randomBytes(32).toString('hex')}`
+        if (!state.nonce) {
+          state = { ...state, nonce }
+          await writeState(statePath, state, 3)
+        }
         let paymentHeader
         try {
           paymentHeader = await buildX402PaymentHeader({
@@ -491,11 +522,21 @@ export async function runWorldBuy(options) {
           })
         } catch (error) {
           if (!(error instanceof WorldBuyError && error.transient)) throw error
-          stderr(`Step 4: the paid claim did not answer in time; asking the city to reconcile instead, without paying again.
+          const offerRead = await readCityOffer()
+          if (offerFrom(offerRead.body)?.phase !== 'payment_pending') {
+            throw new WorldBuyError(4,
+              'The paid claim did not answer in time and the offer is not payment_pending yet. ' +
+              'Run this same command again; it will resume with the saved nonce and will not make a new payment.')
+          }
+          stderr(`Step 4: the paid claim did not answer in time; the offer is payment_pending, so the city will reconcile it without paying again.
 `)
           cityResult = await reconcileWithPatience()
         }
       }
+    }
+
+    if (!cityResult) {
+      throw new WorldBuyError(4, 'The city did not return a claim result. Re-read the offer before retrying.')
     }
 
     let cityOffer = offerFrom(cityResult.body)
@@ -521,16 +562,31 @@ export async function runWorldBuy(options) {
 
     let syncResult
     let syncedState
+    let checkoutBindingRetries = 0
     while (true) {
-      syncResult = await requestJson({
-        step: 5,
-        url: `${marketOrigin}/api/world/sync/${listingId}`,
-        method: 'POST',
-        key: marketKey,
-        body: {},
-        secrets,
-      })
-      syncedState = worldStateFrom(syncResult.body)
+      try {
+        syncResult = await requestJson({
+          step: 5,
+          url: `${marketOrigin}/api/world/sync/${listingId}`,
+          method: 'POST',
+          key: marketKey,
+          body: {},
+          secrets,
+        })
+      } catch (error) {
+        const checkoutBindingPending = error instanceof WorldBuyError && error.status === 409 &&
+          error.message.includes('could not confirm this paid checkout binding') &&
+          error.message.includes('retry this same sync request')
+        if (!checkoutBindingPending || checkoutBindingRetries >= CHECKOUT_BINDING_RETRIES) throw error
+        checkoutBindingRetries += 1
+        stderr(`Step 5: the market could not confirm the paid checkout binding yet; retrying this same sync in ${Math.round(checkoutBindingRetryDelayMs / 1_000)} seconds without another payment.
+`)
+        await new Promise(resolveSleep => setTimeout(resolveSleep, checkoutBindingRetryDelayMs))
+        continue
+      }
+      syncedState = hasMatchingOwnershipReceipt(syncResult.body, offerId)
+        ? 'sold'
+        : worldStateFrom(syncResult.body)
       if (syncedState && TERMINAL_WORLD_STATES.has(syncedState)) break
       if (syncResult.status !== 202 && (!syncedState || !PENDING_WORLD_STATES.has(syncedState))) {
         throw new WorldBuyError(5, 'The market returned an unknown sync state. Re-read the listing and do not pay again.')
