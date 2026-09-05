@@ -87,8 +87,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
         ? new Set([focus.id])
         : placeScopeSet(anchorId, snapshot)
       return Object.freeze(residentIndex.residents.filter(candidate =>
-        placeIds.has(candidate.current_place_id) &&
-        (!state.resident || candidate.handle === state.resident)))
+        placeIds.has(candidate.current_place_id)))
     }
     const anchoredResidents = renderContext
       ? renderContext.remember(
@@ -223,9 +222,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       }
     }
     const pinned = new Set(pinnedIds || [])
-    const overlayHandles = state.live.proofScene
-      ? new Set()
-      : new Set(Object.keys(state.live.replayPositions))
+    const overlayHandles = new Set(Object.keys(state.live.replayPositions))
     layout.visible.forEach(entry => {
       const resident = entry.resident
       if (overlayHandles.has(resident.handle)) return
@@ -290,7 +287,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
             ...new Set([...state.live.expandedResidentPlaceIds, placeId]),
           ]),
         } }
-        if (state.snapshot) renderLive(state.snapshot)
+        if (state.snapshot) markLiveDirty()
       })
       grid.append(badge)
     }
@@ -323,6 +320,19 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
   function liveTiledDrawing(
     place, className, pixelBox = null, undrawnTarget = null, tileSize = LIVE_FLOOR_TILE_SIZE,
   ) {
+    const cacheKey = String(place.id) + ':' + className
+    const floorTiles = state.live.proofScene ? liveProofFloorTiles : liveFloorTiles
+    const cached = floorTiles.get(cacheKey)
+    if (cached) {
+      if (undrawnTarget) undrawnTarget.dataset.undrawn = cached.dataset.undrawn
+      if (pixelBox) {
+        const { columns, rows } = windowLiveFloorTiling(
+          pixelBox.width, pixelBox.height, tileSize)
+        cached.style.width = String(columns * tileSize) + 'px'
+        cached.style.height = String(rows * tileSize) + 'px'
+      }
+      return cached
+    }
     const terrain = element('div', className)
     terrain.setAttribute('role', 'img')
     const proofKey = liveDrawingKey('place', place.id)
@@ -372,6 +382,7 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
         }
         sizeToBox()
       }
+      floorTiles.set(cacheKey, terrain)
       return terrain
     }
     setUndrawn(true)
@@ -381,9 +392,20 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
     terrain.style.backgroundSize = String(tileSize) + 'px ' + String(tileSize) + 'px'
     sizeToBox()
     const probe = new Image()
+    const loadToken = Object.freeze({})
+    liveFloorTileLoads.set(cacheKey, loadToken)
     probe.decoding = 'async'
-    probe.addEventListener('load', () => setUndrawn(false))
-    probe.addEventListener('error', () => setUndrawn(true))
+    probe.addEventListener('load', () => {
+      if (liveFloorTileLoads.get(cacheKey) !== loadToken) return
+      liveFloorTileLoads.delete(cacheKey)
+      setUndrawn(false)
+      floorTiles.set(cacheKey, terrain)
+    })
+    probe.addEventListener('error', () => {
+      if (liveFloorTileLoads.get(cacheKey) !== loadToken) return
+      liveFloorTileLoads.delete(cacheKey)
+      setUndrawn(true)
+    })
     probe.src = url
     return terrain
   }

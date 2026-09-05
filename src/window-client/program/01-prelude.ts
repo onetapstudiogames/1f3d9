@@ -56,7 +56,10 @@ import {
   windowLivePollDelay,
   windowLiveTraceOpacity,
   windowLivePruneTrailStarts,
-  windowLiveSelectTrailKeys,
+  windowLiveDetailMoverSelection,
+  windowLiveRouteVisibilityIntervals,
+  windowLiveShouldScheduleRedraw,
+  windowLiveFootstepBeat,
   windowLiveReplayDuration,
   windowLiveReplayPace,
   windowLiveReplayStartOffsets,
@@ -131,7 +134,10 @@ const WINDOW_LIVE_REVEAL_CAMERA_JS = windowLiveRevealCamera.toString()
 const WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS = windowLiveClampZoomScale.toString()
 const WINDOW_LIVE_RESIDENT_LABEL_MODE_JS = windowLiveResidentLabelMode.toString()
 const WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS = windowLivePruneTrailStarts.toString()
-const WINDOW_LIVE_SELECT_TRAIL_KEYS_JS = windowLiveSelectTrailKeys.toString()
+const WINDOW_LIVE_DETAIL_MOVER_SELECTION_JS = windowLiveDetailMoverSelection.toString()
+const WINDOW_LIVE_ROUTE_VISIBILITY_INTERVALS_JS = windowLiveRouteVisibilityIntervals.toString()
+const WINDOW_LIVE_SHOULD_SCHEDULE_REDRAW_JS = windowLiveShouldScheduleRedraw.toString()
+const WINDOW_LIVE_FOOTSTEP_BEAT_JS = windowLiveFootstepBeat.toString()
 const WINDOW_LIVE_REPLAY_DURATION_JS = windowLiveReplayDuration.toString()
 const WINDOW_LIVE_REPLAY_PACE_JS = windowLiveReplayPace.toString()
 const WINDOW_LIVE_REPLAY_START_OFFSETS_JS = windowLiveReplayStartOffsets.toString()
@@ -156,7 +162,9 @@ export const PART_01_PRELUDE = `(() => {
   const MAX_REFRESH_MS = 300000
   const LIVE_MOVE_LIFETIME_MS = 1800000
   const LIVE_NOTE_LIFETIME_MS = 600000
-  const LIVE_TRAIL_LIFETIME_MS = 4_500
+  const LIVE_FOOTSTEP_LIFETIME_MS = 2_000
+  const LIVE_FOLLOW_TRAIL_LIFETIME_MS = 4_500
+  const LIVE_REPLAY_COMPLETION_BATCH_MS = 250
   const LIVE_ABSORPTION_MS = 900
   const LIVE_PULSE_MS = 600
   const LIVE_NOTE_REPLAY_MS = 650
@@ -171,6 +179,8 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_REPLAY_BACKLOG_LIMIT = LIVE_OPENING_PAGE_LIMIT
   const LIVE_PORTRAIT_LIMIT = 6
   const LIVE_THING_LIMIT = 6
+  const LIVE_DETAIL_MOVER_LIMIT = 6
+  const LIVE_FOOTSTEP_VISUAL_LIMIT = LIVE_DETAIL_MOVER_LIMIT * 3
   const LIVE_FOCUS_STORAGE_KEY = '1f3d9:window:live-focus'
   const LIVE_CAMERA_MIN_SCALE = 0.8
   const LIVE_CAMERA_CENTER_SCALE = 1
@@ -186,7 +196,6 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_PLOT_OVERSCAN = 160
   const LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze(
     ${WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON})
-  const LIVE_TRAIL_DOM_LIMIT = 96
   // Step 4: the single reusable Live item popover's clear space from the
   // sprite it describes, and its minimum inset from the live viewport edge.
   const LIVE_ITEM_POPOVER_GAP = 10
@@ -258,7 +267,10 @@ export const PART_01_PRELUDE = `(() => {
   const windowLiveClampZoomScale = ${WINDOW_LIVE_CLAMP_ZOOM_SCALE_JS}
   const windowLiveResidentLabelMode = ${WINDOW_LIVE_RESIDENT_LABEL_MODE_JS}
   const windowLivePruneTrailStarts = ${WINDOW_LIVE_PRUNE_TRAIL_STARTS_JS}
-  const windowLiveSelectTrailKeys = ${WINDOW_LIVE_SELECT_TRAIL_KEYS_JS}
+  const windowLiveDetailMoverSelection = ${WINDOW_LIVE_DETAIL_MOVER_SELECTION_JS}
+  const windowLiveRouteVisibilityIntervals = ${WINDOW_LIVE_ROUTE_VISIBILITY_INTERVALS_JS}
+  const windowLiveShouldScheduleRedraw = ${WINDOW_LIVE_SHOULD_SCHEDULE_REDRAW_JS}
+  const windowLiveFootstepBeat = ${WINDOW_LIVE_FOOTSTEP_BEAT_JS}
   const windowLiveReplayDuration = ${WINDOW_LIVE_REPLAY_DURATION_JS}
   const windowLiveReplayPace = ${WINDOW_LIVE_REPLAY_PACE_JS}
   const windowLiveReplayStartOffsets = ${WINDOW_LIVE_REPLAY_START_OFFSETS_JS}

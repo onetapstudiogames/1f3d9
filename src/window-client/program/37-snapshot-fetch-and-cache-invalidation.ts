@@ -118,6 +118,26 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     const filteredDrawings = clearAll
       ? {}
       : Object.fromEntries(Object.entries(drawings).filter(([key]) => !drawingKeys.has(key)))
+    if (clearAll) {
+      liveFloorTiles.clear()
+      liveProofFloorTiles.clear()
+      liveFloorTileLoads.clear()
+    } else {
+      for (const drawingKey of drawingKeys) {
+        if (!drawingKey.startsWith('place:')) continue
+        const placeId = drawingKey.slice('place:'.length)
+        for (const key of new Set([
+          ...liveFloorTiles.keys(),
+          ...liveProofFloorTiles.keys(),
+          ...liveFloorTileLoads.keys(),
+        ])) {
+          if (!key.startsWith(placeId + ':')) continue
+          liveFloorTiles.delete(key)
+          liveProofFloorTiles.delete(key)
+          liveFloorTileLoads.delete(key)
+        }
+      }
+    }
     return Object.freeze({
       drawings: clearAll || drawingKeys.size ? filteredDrawings : drawings,
       noteBodies: clearAll ? {} : noteBodies,
@@ -185,7 +205,7 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       queueLiveReplays(replayIncoming)
     }
     if ((incoming.length || hadStreamError) && state.view === 'live' && state.snapshot) {
-      renderLive(state.snapshot)
+      markLiveDirty()
     }
     return nextDelay
   }

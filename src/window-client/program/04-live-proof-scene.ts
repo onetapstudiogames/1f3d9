@@ -3,10 +3,11 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     const gardenId = LIVE_PROOF_GARDEN_ID
     const workshopId = LIVE_PROOF_WORKSHOP_ID
     const retryRoomId = LIVE_PROOF_RETRY_ROOM_ID
-    const residents = Array.from({ length: 8 }, (_, index) => ({
+    const proofHandles = ['proof-alex', 'proof-bea', 'proof-cato', 'proof-dara',
+      'proof-eli', 'proof-fia', 'proof-gus', 'proof-hana']
+    const residents = Array.from({ length: 152 }, (_, index) => ({
       id: 9201 + index,
-      handle: ['proof-alex', 'proof-bea', 'proof-cato', 'proof-dara',
-        'proof-eli', 'proof-fia', 'proof-gus', 'proof-hana'][index],
+      handle: proofHandles[index] || 'proof-crowd-' + String(index - 7).padStart(3, '0'),
       // Step 3 proof: hana (7) stands in the movement garden, undrawn on
       // its plain paper ground -- the same undrawn neutral-marker sprite
       // as dara (3), who stands in the workshop on its own bold tiled
@@ -100,7 +101,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         conversations: notes.length,
         things: things.length,
         agreements: 0,
-        events: 5,
+        events: 67,
       },
       pages: Object.fromEntries(['places', 'residents', 'notes', 'things',
         'agreements', 'events'].map(collection => [collection, { has_more: false }])),
@@ -116,6 +117,14 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
       refreshed_at: new Date(now).toISOString(),
     }
     const at = new Date(now - 100).toISOString()
+    const crowdMoves = residents.slice(8, 70).map((resident, index) => ({
+      change_id: String(9700 + index),
+      created_at: at,
+      kind: 'action',
+      actor: resident.handle,
+      detail: { action: 'move', status: 'applied',
+        from_place_id: gardenId, to_place_id: workshopId },
+    }))
     const changes = [
       { change_id: '9501', created_at: at, kind: 'action', actor: 'proof-alex',
         detail: { action: 'move', status: 'applied',
@@ -131,8 +140,35 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
       { change_id: '9505', created_at: new Date(now - 25).toISOString(), kind: 'action',
         actor: 'proof-bea', detail: { action: 'use', status: 'applied',
           place_id: workshopId, source_thing_id: things[1].id } },
+      ...crowdMoves,
     ]
     return Object.freeze({ rootId, snapshot, changes, residents, things, notes })
+  }
+
+  function scheduleLiveProofFrameReadout() {
+    if (liveProofFrame || !state.live.proofScene || state.view !== 'live' ||
+        document.hidden || !livePanelIsVisible()) return
+    let previous = performance.now()
+    const sample = now => {
+      liveProofFrame = 0
+      if (!state.live.proofScene || state.view !== 'live' ||
+          document.hidden || !livePanelIsVisible()) return
+      const elapsed = now - previous
+      previous = now
+      if (elapsed > 0) {
+        liveProofFrameTimes = Object.freeze([...liveProofFrameTimes, elapsed].slice(-120))
+        const ordered = [...liveProofFrameTimes].sort((left, right) => left - right)
+        const p95 = ordered[Math.min(ordered.length - 1, Math.floor(ordered.length * 0.95))]
+        const readout = document.querySelector('.live-proof-frame-time')
+        if (readout) readout.textContent = 'crowd proof · 152 residents · 64 movers · ' +
+          'frame time · p95 ' + p95.toFixed(1) + ' ms · max ' +
+          Math.max(...ordered).toFixed(1) + ' ms'
+      }
+      if (liveProofFrameTimes.length < 120) {
+        liveProofFrame = window.requestAnimationFrame(sample)
+      }
+    }
+    liveProofFrame = window.requestAnimationFrame(sample)
   }
 
   function liveProofDrawings(proof) {
@@ -385,7 +421,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         changes: Object.freeze([...state.live.changes, ...scriptedChanges]),
       } }
       queueLiveReplays(scriptedChanges, true)
-      if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      if (state.view === 'live' && state.snapshot) markLiveDirty()
     }, LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS)
   }
 
@@ -393,6 +429,10 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     if (!liveProofRestore) return
     window.clearTimeout(liveProofScriptedMoveTimer)
     liveProofScriptedMoveTimer = 0
+    if (liveProofFrame) window.cancelAnimationFrame(liveProofFrame)
+    liveProofFrame = 0
+    liveProofFrameTimes = Object.freeze([])
+    liveProofFloorTiles.clear()
     if (liveReplayHeldKeys().size) settleLiveReplays()
     window.clearTimeout(state.pollTimer)
     window.clearTimeout(state.live.clockTimer)
@@ -413,6 +453,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     if (panel) delete panel.dataset.liveProof
     if (state.snapshot) populateFilters(state.snapshot)
     renderAll()
+    window.requestAnimationFrame(() => nodes.liveProof?.focus({ preventScroll: true }))
     scheduleRefresh(0)
   }
 
@@ -445,7 +486,7 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
           proofRetrySucceeded: true,
         } }
         if (state.snapshot) {
-          renderLive(state.snapshot)
+          markLiveDirty()
           window.queueMicrotask(() =>
             revealLiveElements(liveRevealTargetsForPlace(LIVE_PROOF_WORKSHOP_ID)))
         }

@@ -240,7 +240,7 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
             visibilityRevisionAtStart === liveVisibilityRevision,
         )
       }
-      if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      if (state.view === 'live' && state.snapshot) markLiveDirty()
       if (state.view === 'live' && !document.hidden && heldMarker &&
           !markerCovers(state.changeMarker, heldMarker)) void refreshCity()
     }
@@ -291,7 +291,7 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
     const trailStarts = windowLivePruneTrailStarts(
       state.live.trailStarts,
       now,
-      LIVE_TRAIL_LIFETIME_MS,
+      LIVE_FOLLOW_TRAIL_LIFETIME_MS,
       [...liveReplayHeldKeys()],
     )
     if (trailStarts !== state.live.trailStarts) {

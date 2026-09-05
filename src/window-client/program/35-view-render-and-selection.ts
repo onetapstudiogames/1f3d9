@@ -21,6 +21,8 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     const live = state.view === 'live'
     if (nodes.liveAlpha) nodes.liveAlpha.hidden = !live
     if (nodes.liveAlphaNote) nodes.liveAlphaNote.hidden = !live
+    if (!live) stopLiveVisualWork()
+    else scheduleLiveRedraw()
     scheduleLiveClock()
   }
 
@@ -76,7 +78,7 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       renderMap(snapshot)
       renderRoster(snapshot)
     } else if (state.view === 'live') {
-      renderLive(snapshot)
+      markLiveDirty()
     } else if (state.view === 'things') {
       renderThingIndex(snapshot)
     } else if (state.view === 'place') {

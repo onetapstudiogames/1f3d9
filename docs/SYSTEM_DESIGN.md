@@ -552,20 +552,21 @@ Every returned opening event carries its commit-safe `change_id`, so opening row
 later `/api/changes` rows share one deduplicated recorded order. Opening rows paint
 their settled positions only: no dashed trail, no arrowhead, and no speech bubble for a
 record the viewer was not present to watch. After that baseline, each resident's newly learned rows replay once
-in ascending `change_id` order, trail and all, while the tab stays visible; the first
+in ascending `change_id` order while the tab stays visible; the first
 successful catch-up after a hidden tab settles the same quiet way opening history does,
 so hidden activity never returns as a converging web of stale trails. An incomplete
 opening read stays static because an earlier step may be missing. Different residents
 may replay concurrently. Normal activity is distributed across the time before the next
 read; when a batch is too busy to finish in that budget, repeated small actions are
 shortened or grouped while each resident's recorded order remains intact.
-An applied `move` or `go_home` draws a dashed brick trail (no arrowhead) only when its
-record supplies `from_place_id` and `to_place_id` and the viewer watched it happen; its
-portrait walks along that exact straight trail for a distance-scaled 3.2 to 8 seconds,
-once. Presentation ink then fades for 4.5 seconds beginning when the walk completes; if
-reduced motion, a hidden tab, or a replay-scope change settles an active walk, its final
-trail receives a fresh 4.5-second fade. The plate keeps a capped live set of fading trails
-and removes each at fade end; that presentation cap changes no verified row or order. A
+Every applied `move` or `go_home` learned while visible reaches its recorded endpoint.
+Each move keeps its distance-scaled duration of 3.2 to 8 seconds.
+The explicitly followed resident, hovered residents, and nearest six movers receive the
+door-aware route, two or three footsteps that fade over two seconds, and an eligible
+bubble. Every other mover uses a constant-rate glide with no route or bubble, and regains
+detail when capacity is free. Only the explicitly followed resident keeps a full route;
+it fades for 4.5 seconds after settlement, including a final fade when reduced motion or
+a hidden tab settles the walk. This presentation budget changes no verified row or order. A
 note becomes a numbered yellow footnote mark; one learned while
 watching also gets a square speech bubble beside the speaker with an opaque paper fill,
 ink border, and drop tail. Its first line is capped at 60 characters with an ellipsis,
@@ -585,7 +586,11 @@ missing event; only the disclosed drawn-in frame between recorded move endpoints
 
 The ordinary window interval is 60 seconds. While Live is visible, a read that finds an
 event schedules the next read in 25 seconds; quiet reads back off through 60, 120, 240,
-then 300 seconds. Reads pause while the browser tab is hidden. The visible clock says
+then 300 seconds. Reads pause while the browser tab is hidden. Changed visual state is
+batched into one animation frame and replay completions into 250 ms. Hidden tabs, hidden
+plates, and off-camera routes schedule no animation frames. Confirmed floor tile nodes and
+thumbnail URLs survive unrelated redraws and change only after place-specific invalidation.
+The visible clock says
 `last change 42s ago · next read in 18s`, or, after stillness, `The city has been still
 for 14 minutes. It moves only when residents act.` Exactly one square `ALPHA` chip appears
 with this sentence: “This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.”
@@ -598,14 +603,15 @@ breakpoint, plate, notes panel, and roster stack vertically;
 viewer-only wheel/pinch/keyboard zoom, pointer/arrow-key pan, visible zoom controls, and
 `Center`/`0` remain between 0.8 and 2.2 on the bounded plate. Phone Live has a CSS full-screen
 mode with a visible exit; Escape or browser Back exits that mode before navigating away.
-`prefers-reduced-motion` removes replay and pulses and
-leaves final trails, note marks, and speech bubbles; `forced-colors` keeps borders, trails,
+`prefers-reduced-motion` removes replay and pulses and leaves the followed resident's
+final route, note marks, and speech bubbles; `forced-colors` keeps borders, the followed route,
 marks, bubbles, hatches, focus, and labels distinct.
 Empty rooms say “Nobody is here right now. The room keeps its things.”
 
 Vercel preview builds, and only preview builds, expose a visible repeatable proof-scene
-control. Its in-memory plate demonstrates concurrent recorded movement, speech, thing use,
-a crowded room, inline resident and thing Show more, a forced place-load failure, and a
+control. Its in-memory plate has 152 residents, 64 movers, and a live p95/maximum frame-time
+readout. It demonstrates concurrent recorded movement, speech, thing use, inline resident
+and thing Show more, a forced place-load failure, and a
 working Retry without waiting for live traffic. Re-running resets the same scene. Reduced
 motion renders its final static evidence without replay.
 

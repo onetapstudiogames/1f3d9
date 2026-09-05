@@ -93,17 +93,18 @@ export const PART_11_LIVE_RECORDS_ANCHORS_AND_NOTES = `  function liveTraceKey(r
       recentKeys.has(key) || heldKeys.has(key)))
     // Every record that clears change_id/type/recency/seen is a candidate
     // for residue when this batch is backlog (animate === false), whether
-    // or not an active Follow then excludes it from 'additions' below --
+    // or not an active Follow then excludes its non-movement detail below --
     // otherwise clearing Follow later pops a stale opening-backlog bubble
     // for a record that never got its residue key recorded.
     const backlogKeys = new Set()
     const additions = windowLiveReplayOrder(records, Number.NEGATIVE_INFINITY).filter(record => {
       const key = liveTraceKey(record)
-      if (!record.change_id || !liveRecordType(record) || !liveRecordIsRecent(record, now) ||
+      const type = liveRecordType(record)
+      if (!record.change_id || !type || !liveRecordIsRecent(record, now) ||
           seen.has(key)) return false
       seen.add(key)
       if (!animate) backlogKeys.add(key)
-      if (state.resident && record.actor !== state.resident) {
+      if (type !== 'move' && state.resident && record.actor !== state.resident) {
         revealed.add(key)
         return false
       }
@@ -194,7 +195,10 @@ export const PART_11_LIVE_RECORDS_ANCHORS_AND_NOTES = `  function liveTraceKey(r
 
   function settleLiveReplays() {
     window.clearTimeout(liveReplayStartTimer)
+    window.clearTimeout(liveReplayCompletionTimer)
     liveReplayStartTimer = 0
+    liveReplayCompletionTimer = 0
+    liveReplayCompletionDeadlines = Object.freeze([])
     const heldRecords = [
       ...Object.values(state.live.replayQueues).flat(),
       ...Object.values(state.live.replayActive).map(active => active.record),
@@ -337,7 +341,7 @@ export const PART_11_LIVE_RECORDS_ANCHORS_AND_NOTES = `  function liveTraceKey(r
       settled = true
     } finally {
       window.clearTimeout(timeout)
-      if (settled && state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+      if (settled && state.view === 'live' && state.snapshot) markLiveDirty()
     }
   }
 

@@ -147,7 +147,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
         element('p', 'block-number', 'LIVE PLATE / PLACE #' + String(focus.id)),
         element('h3', 'live-plate-title', focus.name),
         element('p', 'live-plate-legend',
-          'brick dash = a move you watched happen, drawn-in and fading · brick pulse on a thing = recorded use · walkers move above fixed plots · +N more = an exact hidden crowd · click a resident to focus'),
+          'footsteps = detailed movement · a followed resident keeps a fading route · brick pulse on a thing = recorded use · walkers move above fixed plots · +N more = an exact hidden crowd · click a resident to focus'),
         openDrawingDetailButton(
           'place',
           focus.id,
@@ -157,6 +157,12 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       )
       const rootNotesControl = liveNotesControl(snapshot, focus, 'live-root-notes')
       if (rootNotesControl) nodes.liveMapCaption.append(rootNotesControl)
+      if (state.live.proofScene) {
+        nodes.liveMapCaption.append(element(
+          'p', 'live-proof-frame-time',
+          'crowd proof · 152 residents · 64 movers · frame time · sampling…'))
+        scheduleLiveProofFrameReadout()
+      }
     }
 
     if (nodes.liveWorldGround) {
@@ -209,6 +215,9 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
           ? 'No smaller public places are drawn inside this room.'
           : 'Nobody is here right now. The room keeps its things.'))
     }
+    liveTraceRenderContext = Object.freeze({
+      snapshot, focus, children, records, bubbles, survey, renderContext,
+    })
     plateParts.push(renderLiveTraceLayer(
       snapshot, focus, children, records, bubbles, survey, renderContext))
     nodes.livePlates.replaceChildren(...plateParts)

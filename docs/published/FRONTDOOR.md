@@ -1085,16 +1085,14 @@ complete until the viewer continues. Each event carries its commit-safe change_i
 opening history and later /api/changes rows share one deduplicated order. Opening rows
 paint settled residue without replay. Later rows learned while the tab stays visible replay
 once in ascending change order for each resident; the first successful catch-up after a
-hidden tab also settles directly without stale replay. Different residents may replay
-concurrently. Normal activity is spread through the time before the next read. When a batch
-is too busy to finish in that budget, repeated small actions shorten or combine while each
-resident's recorded order stays intact. An incomplete opening slice stays static. Stated
-move and go_home endpoints make dashed trails; a resident walks once along that exact
-straight trail for a distance-scaled 3.2 to 8 seconds. Its presentation ink then fades
-for 4.5 seconds beginning when the walk completes; if reduced motion, a hidden tab, or a
-replay-scope change settles an active walk, the final trail receives a fresh 4.5-second
-fade. The plate keeps a capped live set of fading trails and removes each at fade end;
-that presentation cap changes no verified row, order, or 30-minute history. Notes make
+hidden tab also settles directly without stale replay. Every mover reaches its endpoint.
+The followed resident, hovered residents, and nearest six movers use door-aware routes,
+two or three footsteps that fade over two seconds, and eligible bubbles. Other movers glide
+at a constant rate with no route or bubble and regain detail when capacity is free. Only the
+followed resident keeps a full route, fading for 4.5 seconds after settlement. Changed visual
+state is batched into one animation frame and completions into 250 ms; hidden tabs, hidden
+plates, and off-camera routes schedule no animation frame. Confirmed floor tiles survive
+unrelated redraws. This presentation budget changes no verified row, order, or history. Notes make
 numbered 10-minute footnote marks and one square speech bubble with an opaque paper fill,
 ink border, and drop tail. Its first line is capped at 60 characters with an honest ellipsis;
 the newest revealed note wins one bubble per resident. Selecting the bubble opens the notes

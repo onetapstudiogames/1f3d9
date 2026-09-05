@@ -30,7 +30,7 @@ export const PART_05_SAFETY_AND_LIVE_FOCUS = `${WINDOW_CLIENT_SAFETY_JS}
       navigate({ resident: null, conversationContext: false })
       return
     }
-    if (state.view === 'live' && state.snapshot) renderLive(state.snapshot)
+    if (state.view === 'live' && state.snapshot) markLiveDirty()
   }
 
   function toggleLiveFocusResident(handle) {

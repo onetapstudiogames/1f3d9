@@ -308,7 +308,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
         ...new Set([...state.live.expandedThingPlaceIds, placeId]),
       ]),
     } }
-    if (state.snapshot) renderLive(state.snapshot)
+    if (state.snapshot) markLiveDirty()
     const filters = liveThingFilters(focusId)
     const entry = historyEntry('things', filters)
     if (entry.hasMore && !entry.loading) await loadHistory('things', filters)

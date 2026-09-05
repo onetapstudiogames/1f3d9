@@ -348,7 +348,8 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /localStorage\.setItem\(LIVE_FOCUS_STORAGE_KEY/u)
   assert.match(WINDOW_JS, /data-live-focus-resident/u)
   assert.match(WINDOW_JS, /live-overflow-absorbing/u)
-  assert.match(WINDOW_JS, /LIVE_TRAIL_LIFETIME_MS\s*=\s*[3-8]_?\d{3}/u)
+  assert.match(WINDOW_JS, /LIVE_FOLLOW_TRAIL_LIFETIME_MS\s*=\s*4_?500/u)
+  assert.match(WINDOW_JS, /LIVE_FOOTSTEP_LIFETIME_MS\s*=\s*2_?000/u)
   assert.match(
     WINDOW_JS,
     /function renderLiveAging\(\)[\s\S]*?windowLivePruneTrailStarts\(\s*state\.live\.trailStarts/u,
@@ -369,13 +370,14 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
     /\.live-speech-bubble\s*\{[\s\S]*?background:\s*var\(--paper-light\)[\s\S]*?border:\s*2px solid var\(--line\)[\s\S]*?border-radius:\s*0/u,
   )
   assert.doesNotMatch(WINDOW_CSS, /live-speech-arrive/u)
-  assert.match(WINDOW_JS, /a move you watched happen[^\n]*drawn-in and fading/u)
+  assert.match(WINDOW_JS, /footsteps = detailed movement[^\n]*followed resident keeps a fading route/u)
   assert.match(WINDOW_JS, /pulse on a thing[^\n]*recorded use/u)
   assert.match(WINDOW_JS, /record\.detail\.status !== 'applied'/u)
   assert.match(WINDOW_JS, /safeExactText\(payload\?\.note\?\.body/u)
   assert.match(WINDOW_JS, /function liveDisplayedThings/u)
   assert.match(WINDOW_JS, /if \(!node\.dataset\.focusKey\) node\.dataset\.focusKey/u)
-  assert.match(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
+  assert.doesNotMatch(WINDOW_JS, /state\.resident && actor !== state\.resident/u)
+  assert.match(WINDOW_JS, /type !== 'move' && state\.resident && record\.actor !== state\.resident/u)
   assert.doesNotMatch(WINDOW_CSS, /position:\s*fixed[^}]*live-|100vw[^}]*live-/iu)
 })
 
