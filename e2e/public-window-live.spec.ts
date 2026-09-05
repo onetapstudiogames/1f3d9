@@ -3903,16 +3903,27 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(replay).toHaveAttribute('data-live-movement', 'detail')
   expect(Number(await replay.getAttribute('data-live-route-point-count')))
     .toBeGreaterThanOrEqual(3)
-  const replayPosition = () => replay.evaluate(node => {
-    const stage = node.closest('.live-stage') as HTMLElement
-    const ground = stage.getBoundingClientRect()
-    const box = node.getBoundingClientRect()
-    const scale = ground.width / Number(stage.dataset.liveStageWidth)
-    return {
-      x: (box.left + box.width / 2 - ground.left) / scale,
-      y: (box.bottom - ground.top) / scale,
-    }
-  })
+  // The replay shell is rebuilt by every live render, so a raw evaluate can land
+  // on a node the next render already detached; closest() then returns null.
+  // Retry the measurement; a target permanently outside the stage still fails.
+  const replayPosition = async () => {
+    let measured: { x: number, y: number } | null = null
+    await expect.poll(async () => {
+      measured = await replay.evaluate(node => {
+        const stage = node.closest('.live-stage') as HTMLElement | null
+        if (!stage) return null
+        const ground = stage.getBoundingClientRect()
+        const box = node.getBoundingClientRect()
+        const scale = ground.width / Number(stage.dataset.liveStageWidth)
+        return {
+          x: (box.left + box.width / 2 - ground.left) / scale,
+          y: (box.bottom - ground.top) / scale,
+        }
+      })
+      return measured !== null
+    }).toBe(true)
+    return measured!
+  }
   const initialPosition = await replayPosition()
   await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
@@ -3986,17 +3997,25 @@ test('new change rows replay once in recorded order and leave truthful residue',
   const settledWalker = page.locator(
     '[data-place-id="3"] [data-live-resident-handle="map-walker"]',
   ).first()
-  const settledPoint = await settledWalker.evaluate(node => {
-    const shell = node.closest('.live-walker') as HTMLElement
-    const stage = node.closest('.live-stage') as HTMLElement
-    const ground = stage.getBoundingClientRect()
-    const box = shell.getBoundingClientRect()
-    const scale = ground.width / Number(stage.dataset.liveStageWidth)
-    return {
-      x: (box.left + box.width / 2 - ground.left) / scale,
-      y: (box.bottom - ground.top) / scale,
-    }
-  })
+  // Same hardening as replayPosition: a render between resolution and evaluate
+  // can detach the walker, so measure until the node reads from a live stage.
+  let settledPoint: { x: number, y: number } | null = null
+  await expect.poll(async () => {
+    settledPoint = await settledWalker.evaluate(node => {
+      const shell = node.closest('.live-walker') as HTMLElement | null
+      const stage = node.closest('.live-stage') as HTMLElement | null
+      if (!shell || !stage) return null
+      const ground = stage.getBoundingClientRect()
+      const box = shell.getBoundingClientRect()
+      const scale = ground.width / Number(stage.dataset.liveStageWidth)
+      return {
+        x: (box.left + box.width / 2 - ground.left) / scale,
+        y: (box.bottom - ground.top) / scale,
+      }
+    })
+    return settledPoint !== null
+  }).toBe(true)
+  settledPoint = settledPoint!
   expect(Math.hypot(
     settledPoint.x - initialPosition.x,
     settledPoint.y - initialPosition.y,
@@ -4393,11 +4412,18 @@ test('a speech bubble the viewer watched appear stays within the live viewport',
 
   // Step 7 deliberately reverses PR #172's final transparent, borderless
   // assertion: the bubble is opaque paper with visible ink around it.
-  const bubbleStyle = await bubble.evaluate(node => {
-    const style = getComputedStyle(node)
-    const alpha = style.backgroundColor.match(/[\d.]+/gu)?.map(Number)[3] ?? 1
-    return { backgroundColor: style.backgroundColor, borderWidth: style.borderTopWidth, alpha }
-  })
+  // getComputedStyle on a node the next render already detached returns an empty
+  // declaration, so borderTopWidth reads '' and parses to NaN, and two of the checks
+  // below would pass vacuously. Poll until the measurement comes from a live node.
+  let bubbleStyle = { backgroundColor: '', borderWidth: '', alpha: 1 }
+  await expect.poll(async () => {
+    bubbleStyle = await bubble.evaluate(node => {
+      const style = getComputedStyle(node)
+      const alpha = style.backgroundColor.match(/[\d.]+/gu)?.map(Number)[3] ?? 1
+      return { backgroundColor: style.backgroundColor, borderWidth: style.borderTopWidth, alpha }
+    })
+    return bubbleStyle.borderWidth !== ''
+  }).toBe(true)
   await expect(bubble).toHaveAttribute('data-live-note-place-id', '3')
   expect(bubbleStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
   expect(bubbleStyle.alpha).toBe(1)
@@ -4426,10 +4452,15 @@ test('a speech bubble the viewer watched appear stays within the live viewport',
   await expect(page).toHaveURL(/\/window\/live\?place=3&notes=open$/u)
   const noteRow = page.locator('.live-note-row[data-live-note-id="77"]')
   await expect(noteRow).toBeFocused()
-  expect(await noteRow.evaluate(node => {
+  // The notes list can be rebuilt by a render between locator resolution and
+  // evaluate; measure until the row reads from a live list. A row that stays
+  // outside its list still fails on the poll timeout.
+  await expect.poll(() => noteRow.evaluate(node => {
+    const list = node.closest('.live-notes-list')
+    if (!list) return null
     const row = node.getBoundingClientRect()
-    const list = node.closest('.live-notes-list')!.getBoundingClientRect()
-    return row.top >= list.top && row.bottom <= list.bottom
+    const bounds = list.getBoundingClientRect()
+    return row.top >= bounds.top && row.bottom <= bounds.bottom
   })).toBe(true)
 })
 
