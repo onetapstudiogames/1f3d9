@@ -138,6 +138,8 @@ async function runClient(origins: { city: string; market: string }, stateDirecto
     marketOrigin: origins.market,
     stateDirectory,
     syncDelayMs: 5,
+    reconcileRetryDelayMs: 5,
+    reconcileAttempts: 3,
     stdout: (message: string) => { stdout += message },
     stderr: (message: string) => { stderr += message },
   })
@@ -284,10 +286,16 @@ test('world-buy resumes a saved nonce with a bare claim, then reuses that nonce 
   const stateDirectory = await mkdtemp(join(tmpdir(), '1f3d9-world-buy-saved-nonce-'))
   await savePurchaseState(stateDirectory, { nonce: TEST_NONCE })
   const claimHeaders: Array<string | undefined> = []
+  let offerReadCalls = 0
   let cityOrigin = ''
 
   const city = await listen((request, response) => {
     if (request.method === 'GET' && request.url === '/api/world/offer/31') {
+      offerReadCalls += 1
+      if (offerReadCalls === 1) {
+        response.destroy()
+        return
+      }
       sendJson(response, 200, { offer: { phase: 'reserved', asset_id: 2723 } })
       return
     }
@@ -332,6 +340,7 @@ test('world-buy resumes a saved nonce with a bare claim, then reuses that nonce 
   try {
     const result = await runClient({ city: city.origin, market: market.origin }, stateDirectory)
     assert.equal(result.status, 0)
+    assert.equal(offerReadCalls, 2)
     assert.equal(claimHeaders.length, 2)
     assert.equal(claimHeaders[0], undefined)
     assert.equal(typeof claimHeaders[1], 'string')
@@ -392,7 +401,7 @@ test('world-buy prints the request id from a paid claim 500', async () => {
   }
 })
 
-test('world-buy retries checkout-binding 409 and accepts the matching top-level receipt', async () => {
+test('world-buy retries checkout-binding 503 and 409 and accepts the matching top-level receipt', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), '1f3d9-world-buy-receipt-'))
   await savePurchaseState(stateDirectory, { nonce: TEST_NONCE })
   let syncCalls = 0
@@ -417,8 +426,8 @@ test('world-buy retries checkout-binding 409 and accepts the matching top-level 
   const market = await listen((request, response) => {
     if (request.method === 'POST' && request.url === '/api/world/sync/23') {
       syncCalls += 1
-      if (syncCalls === 1) {
-        sendJson(response, 409, {
+      if (syncCalls <= 2) {
+        sendJson(response, syncCalls === 1 ? 503 : 409, {
           error: 'the market could not confirm this paid checkout binding; retry this same sync request; do not make another payment',
         })
         return
@@ -468,9 +477,62 @@ test('world-buy retries checkout-binding 409 and accepts the matching top-level 
       stderr: () => {},
     })
     assert.equal(status, 0)
-    assert.equal(syncCalls, 2)
+    assert.equal(syncCalls, 3)
     assert.match(stdout, /Thing 2723 is currently owned by bridge-buyer\./u)
     assert.match(stdout, /Listing 23 world state is sold\./u)
+  } finally {
+    await Promise.all([close(city.server), close(market.server)])
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('world-buy stops after the configured checkout-binding retry cap', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), '1f3d9-world-buy-retry-cap-'))
+  await savePurchaseState(stateDirectory, { nonce: TEST_NONCE })
+  let syncCalls = 0
+
+  const city = await listen((request, response) => {
+    if (request.method === 'GET' && request.url === '/api/world/offer/31') {
+      sendJson(response, 200, { offer: { phase: 'reserved', asset_id: 2723 } })
+      return
+    }
+    if (request.method === 'POST' && request.url === '/api/world/offer/31/claim') {
+      sendJson(response, 200, { offer: { phase: 'claimed', asset_id: 2723 } })
+      return
+    }
+    sendJson(response, 404, { error: `unexpected city route ${request.method} ${request.url}` })
+  })
+
+  const refusal = 'the market could not confirm this paid checkout binding; retry this same sync request; do not make another payment'
+  const market = await listen((request, response) => {
+    if (request.method === 'POST' && request.url === '/api/world/sync/23') {
+      syncCalls += 1
+      sendJson(response, 503, { error: refusal })
+      return
+    }
+    sendJson(response, 404, { error: `unexpected market route ${request.method} ${request.url}` })
+  })
+
+  let stderr = ''
+  try {
+    const status = await runWorldBuy({
+      listingId: 23,
+      offerId: 31,
+      wallet: TEST_ACCOUNT.address,
+      cityKey: TEST_CITY_KEY,
+      marketKey: TEST_MARKET_KEY,
+      privateKey: TEST_PRIVATE_KEY,
+      cityOrigin: city.origin,
+      marketOrigin: market.origin,
+      stateDirectory,
+      checkoutBindingRetryDelayMs: 1,
+      checkoutBindingRetries: 2,
+      stdout: () => {},
+      stderr: message => { stderr += message },
+    })
+    assert.equal(status, 1)
+    assert.equal(syncCalls, 3)
+    assert.match(stderr, /could not confirm this paid checkout binding/iu)
   } finally {
     await Promise.all([close(city.server), close(market.server)])
     await rm(stateDirectory, { recursive: true, force: true })
@@ -491,6 +553,7 @@ test('world-buy recovers from a paid claim that answers too slowly by reconcilin
   const stateDirectory = await mkdtemp(join(tmpdir(), '1f3d9-world-buy-slow-'))
   const signedHeaders: string[] = []
   let reconcileCalls = 0
+  let offerReadCalls = 0
   let cityOrigin = ''
 
   const city = await listen((request, response) => {
@@ -529,6 +592,11 @@ test('world-buy recovers from a paid claim that answers too slowly by reconcilin
       return
     }
     if (request.method === 'GET' && request.url === '/api/world/offer/31') {
+      offerReadCalls += 1
+      if (offerReadCalls === 1) {
+        response.destroy()
+        return
+      }
       sendJson(response, 200, { offer: { phase: 'payment_pending', asset_id: 2723 } })
       return
     }
@@ -580,13 +648,91 @@ test('world-buy recovers from a paid claim that answers too slowly by reconcilin
     assert.equal(status, 0)
     assert.equal(signedHeaders.length, 1)
     assert.equal(reconcileCalls, 2)
+    assert.equal(offerReadCalls, 2)
     assert.ok(stderr.includes('did not answer in time'))
+    assert.ok(stderr.includes('without paying again'))
     assert.ok(stderr.includes('has not recorded the payment yet'))
     assert.ok(stdout.includes('Thing 2723 is currently owned by test-buyer.'))
     assert.ok(stdout.includes('Listing 23 world state is sold.'))
     for (const secret of [TEST_CITY_KEY, TEST_MARKET_KEY, TEST_PRIVATE_KEY, signedHeaders[0]!]) {
       assert.equal(`${stdout}${stderr}`.includes(secret), false)
     }
+  } finally {
+    await Promise.all([close(city.server), close(market.server)])
+    await rm(stateDirectory, { recursive: true, force: true })
+  }
+})
+
+test('world-buy keeps the saved-nonce reassurance when offer reads fail after a paid-claim timeout', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), '1f3d9-world-buy-offer-read-failure-'))
+  const signedHeaders: string[] = []
+  let offerReadCalls = 0
+  let cityOrigin = ''
+
+  const city = await listen((request, response) => {
+    if (request.method === 'GET' && request.url === '/api/me') {
+      sendJson(response, 200, { handle: 'test-buyer' })
+      return
+    }
+    if (request.method === 'POST' && request.url === '/api/world/offer/31/claim') {
+      const paymentHeader = request.headers['x-payment']
+      if (typeof paymentHeader !== 'string') {
+        sendJson(response, 402, {
+          error: 'payment required',
+          accepts: [requirements(
+            '0x1111111111111111111111111111111111111111',
+            1,
+            `${cityOrigin}/api/world/offer/31/claim`,
+            'test world offer',
+          )],
+        })
+        return
+      }
+      signedHeaders.push(paymentHeader)
+      setTimeout(() => {
+        try { sendJson(response, 200, { offer: { phase: 'claimed', asset_id: 2723 } }) } catch {}
+      }, 300)
+      return
+    }
+    if (request.method === 'GET' && request.url === '/api/world/offer/31') {
+      offerReadCalls += 1
+      response.destroy()
+      return
+    }
+    sendJson(response, 404, { error: `unexpected city route ${request.method} ${request.url}` })
+  })
+  cityOrigin = city.origin
+
+  const market = await listen((request, response) => {
+    if (request.method === 'POST' && request.url === '/api/world/checkout/23') {
+      sendJson(response, 201, { checkout: { id: 77 } })
+      return
+    }
+    sendJson(response, 404, { error: `unexpected market route ${request.method} ${request.url}` })
+  })
+
+  let stderr = ''
+  try {
+    const status = await runWorldBuy({
+      listingId: 23,
+      offerId: 31,
+      wallet: TEST_ACCOUNT.address,
+      cityKey: TEST_CITY_KEY,
+      marketKey: TEST_MARKET_KEY,
+      privateKey: TEST_PRIVATE_KEY,
+      cityOrigin: city.origin,
+      marketOrigin: market.origin,
+      stateDirectory,
+      paidClaimTimeoutMs: 50,
+      reconcileRetryDelayMs: 1,
+      reconcileAttempts: 2,
+      stdout: () => {},
+      stderr: message => { stderr += message },
+    })
+    assert.equal(status, 1)
+    assert.equal(offerReadCalls, 2)
+    assert.equal(signedHeaders.length, 1)
+    assert.match(stderr, /run this same command again; it will resume with the saved nonce and will not make a new payment/iu)
   } finally {
     await Promise.all([close(city.server), close(market.server)])
     await rm(stateDirectory, { recursive: true, force: true })

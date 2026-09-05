@@ -23,6 +23,7 @@ export declare function runWorldBuy(options: Readonly<{
   reconcileRetryDelayMs?: number
   reconcileAttempts?: number
   checkoutBindingRetryDelayMs?: number
+  checkoutBindingRetries?: number
   stdout?: (message: string) => void
   stderr?: (message: string) => void
 }>): Promise<number>

@@ -366,6 +366,7 @@ export async function runWorldBuy(options) {
     reconcileRetryDelayMs = RECONCILE_RETRY_DELAY_MS,
     reconcileAttempts = RECONCILE_ATTEMPTS,
     checkoutBindingRetryDelayMs = CHECKOUT_BINDING_RETRY_DELAY_MS,
+    checkoutBindingRetries = CHECKOUT_BINDING_RETRIES,
     stdout = message => process.stdout.write(message),
     stderr = message => process.stderr.write(message),
   } = options
@@ -452,11 +453,30 @@ export async function runWorldBuy(options) {
 
     const claimBody = { market_checkout_id: state.checkout_id, buyer_wallet: wallet }
     const claimUrl = `${cityOrigin}/api/world/offer/${offerId}/claim`
-    const readCityOffer = async () => requestJson({
-      step: 4,
-      url: `${cityOrigin}/api/world/offer/${offerId}`,
-      secrets,
-    })
+    const readCityOffer = async (unreachableMessage) => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          return await requestJson({
+            step: 4,
+            url: `${cityOrigin}/api/world/offer/${offerId}`,
+            secrets,
+          })
+        } catch (error) {
+          const transient = error instanceof WorldBuyError && error.transient
+          if (!transient || attempt >= reconcileAttempts) {
+            if (transient) {
+              throw new WorldBuyError(4, unreachableMessage ??
+                'The city could not be reached to read this offer after several tries. ' +
+                'Check the connection, then run this same command again; it will not pay again.')
+            }
+            throw error
+          }
+          stderr(`Step 4: the city offer could not be read yet; asking again in ${Math.round(reconcileRetryDelayMs / 1_000)} seconds without paying again.
+`)
+          await new Promise(resolveWait => setTimeout(resolveWait, reconcileRetryDelayMs))
+        }
+      }
+    }
     const claimWithoutPayment = async () => requestJson({
       step: 3,
       url: claimUrl,
@@ -522,7 +542,10 @@ export async function runWorldBuy(options) {
           })
         } catch (error) {
           if (!(error instanceof WorldBuyError && error.transient)) throw error
-          const offerRead = await readCityOffer()
+          const offerRead = await readCityOffer(
+            'The paid claim did not answer in time and the city offer could not be read after several tries. ' +
+            'Run this same command again; it will resume with the saved nonce and will not make a new payment.',
+          )
           if (offerFrom(offerRead.body)?.phase !== 'payment_pending') {
             throw new WorldBuyError(4,
               'The paid claim did not answer in time and the offer is not payment_pending yet. ' +
@@ -562,7 +585,7 @@ export async function runWorldBuy(options) {
 
     let syncResult
     let syncedState
-    let checkoutBindingRetries = 0
+    let checkoutBindingRetryCount = 0
     while (true) {
       try {
         syncResult = await requestJson({
@@ -574,11 +597,12 @@ export async function runWorldBuy(options) {
           secrets,
         })
       } catch (error) {
-        const checkoutBindingPending = error instanceof WorldBuyError && error.status === 409 &&
+        const checkoutBindingPending = error instanceof WorldBuyError &&
+          (error.status === 503 || error.status === 409) &&
           error.message.includes('could not confirm this paid checkout binding') &&
           error.message.includes('retry this same sync request')
-        if (!checkoutBindingPending || checkoutBindingRetries >= CHECKOUT_BINDING_RETRIES) throw error
-        checkoutBindingRetries += 1
+        if (!checkoutBindingPending || checkoutBindingRetryCount >= checkoutBindingRetries) throw error
+        checkoutBindingRetryCount += 1
         stderr(`Step 5: the market could not confirm the paid checkout binding yet; retrying this same sync in ${Math.round(checkoutBindingRetryDelayMs / 1_000)} seconds without another payment.
 `)
         await new Promise(resolveSleep => setTimeout(resolveSleep, checkoutBindingRetryDelayMs))
