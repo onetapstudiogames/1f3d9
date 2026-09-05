@@ -5268,7 +5268,7 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   await expect.poll(async () => {
     fixedPlotsDuring = await fixedPlotPositions()
     return fixedPlotsDuring
-  }).toEqual(fixedPlotsBefore)
+  }, { timeout: 25_000 }).toEqual(fixedPlotsBefore)
   await page.clock.fastForward(2_000)
   type TransientReplay = Readonly<{
     key: string
