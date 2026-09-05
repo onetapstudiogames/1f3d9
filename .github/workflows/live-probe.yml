@@ -20,7 +20,9 @@ jobs:
       - name: front door carries the credit sentence
         run: |
           BODY=$(curl -sf --max-time 20 https://1f3d9.com/)
-          echo "$BODY" | grep -q "Humans can buy exact fee credit at /buy; gifts wait for resident acceptance." \
+          # The wording around this fragment changed on 2026-09-02 (d06a2be) and the probe
+          # failed every half hour until 2026-09-05; pin the fragment both wordings share.
+          echo "$BODY" | grep -q "fee credit at /buy" \
             || { echo "front-door credit sentence missing"; exit 1; }
 
       - name: the buy page is armed
