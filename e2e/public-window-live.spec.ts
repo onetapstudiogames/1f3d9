@@ -4338,11 +4338,27 @@ test('focus keeps every exact interaction visible outside finite plate slots', a
     `.live-root-walkers [data-live-resident-handle="${maximumReplayHandle}"]`,
   )
   await expect(maximumHandlePortrait).toHaveAttribute('aria-label', `Focus on ${maximumReplayHandle}`)
-  const [maximumHandleShellHeight, shortHandleShellHeight] = await page.locator(
-    '.live-root-walkers',
-  ).evaluate((root, handles) => handles.map(handle => root.querySelector(
-    `[data-live-resident-handle="${handle}"]`,
-  )!.closest('.live-walker')!.getBoundingClientRect().height), [maximumReplayHandle, 'harbor-5'])
+  // A live repaint can replace the walkers after locator resolution, so wait for both live shells.
+  let handleShellHeights: [number, number] | null = null
+  await expect.poll(async () => {
+    handleShellHeights = await page.locator('.live-root-walkers').evaluate((root, handles) => {
+      const maximumPortrait = root.querySelector(
+        `[data-live-resident-handle="${handles[0]}"]`,
+      )
+      const shortPortrait = root.querySelector(
+        `[data-live-resident-handle="${handles[1]}"]`,
+      )
+      const maximumShell = maximumPortrait?.closest('.live-walker')
+      const shortShell = shortPortrait?.closest('.live-walker')
+      if (!maximumShell || !shortShell) return null
+      return [
+        maximumShell.getBoundingClientRect().height,
+        shortShell.getBoundingClientRect().height,
+      ] as [number, number]
+    }, [maximumReplayHandle, 'harbor-5'])
+    return handleShellHeights !== null
+  }).toBe(true)
+  const [maximumHandleShellHeight, shortHandleShellHeight] = handleShellHeights!
   expect(Math.abs(maximumHandleShellHeight - shortHandleShellHeight)).toBeLessThanOrEqual(1)
   // This fixture's note (change:1) is opening backlog, so quiet opening
   // now prints its footnote mark with no speech bubble (see step 1's
@@ -4772,14 +4788,25 @@ test('resident focus persists locally, pins exact interactions, and camera zoom 
   const pinnedThing = page.locator('[data-place-id="3"] [data-live-thing-id="9"]')
   await expect(pinnedThing).toHaveCount(1)
   await expect(pinnedThing).toHaveAttribute('data-live-focus-thing', '9')
-  const pinnedThingBounds = await pinnedThing.evaluate(node => {
-    const thing = node.getBoundingClientRect()
-    const plot = node.closest('.live-plot')!.getBoundingClientRect()
-    return {
-      thing: { left: thing.left, right: thing.right, top: thing.top, bottom: thing.bottom },
-      plot: { left: plot.left, right: plot.right, top: plot.top, bottom: plot.bottom },
-    }
-  })
+  // A live repaint can detach the thing after locator resolution, so measure from a live plot.
+  let pinnedThingBounds: {
+    thing: { left: number, right: number, top: number, bottom: number }
+    plot: { left: number, right: number, top: number, bottom: number }
+  } | null = null
+  await expect.poll(async () => {
+    pinnedThingBounds = await pinnedThing.evaluate(node => {
+      const host = node.closest('.live-plot')
+      if (!host) return null
+      const thing = node.getBoundingClientRect()
+      const plot = host.getBoundingClientRect()
+      return {
+        thing: { left: thing.left, right: thing.right, top: thing.top, bottom: thing.bottom },
+        plot: { left: plot.left, right: plot.right, top: plot.top, bottom: plot.bottom },
+      }
+    })
+    return pinnedThingBounds !== null
+  }).toBe(true)
+  pinnedThingBounds = pinnedThingBounds!
   expect(pinnedThingBounds.thing.left).toBeGreaterThanOrEqual(pinnedThingBounds.plot.left - 1)
   expect(pinnedThingBounds.thing.right).toBeLessThanOrEqual(pinnedThingBounds.plot.right + 1)
   expect(pinnedThingBounds.thing.top).toBeGreaterThanOrEqual(pinnedThingBounds.plot.top - 1)
@@ -5236,7 +5263,12 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   const replays = page.locator('.live-replay-portrait')
   await expect(replays).toHaveCount(0, { timeout: 25_000 })
   const stableResidentsDuring = await stableResidentPositions()
-  const fixedPlotsDuring = await fixedPlotPositions()
+  // A paint can briefly replace every plot; retain the first complete settled sample.
+  let fixedPlotsDuring: typeof fixedPlotsBefore = []
+  await expect.poll(async () => {
+    fixedPlotsDuring = await fixedPlotPositions()
+    return fixedPlotsDuring
+  }).toEqual(fixedPlotsBefore)
   await page.clock.fastForward(2_000)
   type TransientReplay = Readonly<{
     key: string
@@ -5356,6 +5388,9 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
       stableResidentsBefore,
       stableResidentsDuring,
       stableResidentsAfter,
+      fixedPlotsBefore,
+      fixedPlotsDuring,
+      fixedPlotsAfter,
       rosterActorCount: rosterOutcomes.length,
       missingRosterActors: missingRosterActors.slice(0, 10),
       wrongCurrentPlaces: wrongCurrentPlaces.slice(0, 10),
