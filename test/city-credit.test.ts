@@ -278,7 +278,7 @@ test('only founder resident 1 can issue the fixed fee unit', async () => {
   }
 
   const database = new MarkerDatabase({
-    issue: [[issueRow()]],
+    issue: [[issueRow({ created_at: new Date('2026-08-22T12:00:00.106Z') })]],
     'issue-balance': [[{ balance_units: CITY_FEE_CREDIT_UNITS.toString() }]],
   })
   const issued = await issueCityFeeCredit(database, {
@@ -291,6 +291,7 @@ test('only founder resident 1 can issue the fixed fee unit', async () => {
   assert.equal(issued.disposition, 'created')
   assert.equal(issued.amount, '1.000000')
   assert.equal(issued.amount_units, '1000000')
+  assert.equal(issued.created_at, '2026-08-22T12:00:00.106Z')
   assert.equal(database.calls[0]?.marker, 'issue')
   assert.ok(database.calls[0]?.params.includes('1000000'))
   assert.ok(database.calls[0]?.params.includes(SOURCE_KEY))
@@ -906,7 +907,7 @@ test('account reads expose exact decimal and integer strings, including signed h
           amount_units: '1000000', source_key: SOURCE_KEY,
           request_id: null, operation: null, target_key: null,
           related_spend_id: null, reason: 'extra finalized city payment',
-          created_at: CREATED_AT,
+          created_at: new Date('2026-08-22T12:00:00.106Z'),
         },
         {
           id: '9223372036854775806', entry_kind: 'spend',
@@ -941,6 +942,7 @@ test('account reads expose exact decimal and integer strings, including signed h
     { id: '9223372036854775807', kind: 'return', amount: '1.000000', amount_units: '1000000' },
   ])
   assert.equal(typeof account.balance, 'string')
+  assert.equal(account.history[0]?.created_at, '2026-08-22T12:00:00.106Z')
   assert.ok(account.history.every(entry => (
     typeof entry.id === 'string'
       && typeof entry.amount === 'string'

@@ -29,6 +29,7 @@ import {
 } from './engine-timer-store.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { isoTimestamp } from './timestamp.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -207,7 +208,7 @@ export async function thingState(
     id: rowId(row.id, 'thing id'),
     ownerId: rowId(row.owner_id, 'thing owner id'),
     placeId: rowId(row.place_id, 'thing place id'),
-    withdrawnAt: row.withdrawn_at == null ? null : String(row.withdrawn_at),
+    withdrawnAt: row.withdrawn_at == null ? null : isoTimestamp(row.withdrawn_at),
     activeOfferId: nullableRowId(row.active_offer_id, 'thing offer id'),
     hasOpenOffer: row.has_open_offer === true,
     openToUse: row.open_to_use === true,
@@ -799,8 +800,8 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     || (originPlaceId !== null && originPlaceId <= 0)
     || (originThingId !== null && originPlaceId !== null)
   ) return null
-  const dueAt = new Date(String(row.due_at))
-  const logicalDueAt = new Date(String(payload.logical_due_at ?? row.due_at))
+  const dueAt = new Date(isoTimestamp(row.due_at)!)
+  const logicalDueAt = new Date(isoTimestamp(payload.logical_due_at ?? row.due_at)!)
   const generation = integer(row.generation)
   if (!Number.isFinite(dueAt.getTime()) || !Number.isFinite(logicalDueAt.getTime())
     || generation === null || generation < 0 || generation > MAX_EFFECT_GENERATIONS) return null

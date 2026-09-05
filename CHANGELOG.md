@@ -2,6 +2,11 @@
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-05
+
+### For skill and connector authors
+- City credit, PayPal dispute, presence, thing, and pending-effect timestamps now keep their milliseconds in ISO 8601 UTC.
+
 ## 2026-09-04
 
 ### For skill and connector authors

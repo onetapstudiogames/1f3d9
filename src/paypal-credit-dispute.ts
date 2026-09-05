@@ -2,6 +2,7 @@ import {
   PayPalCreditStoreConflictError,
   type PayPalCreditStoreDatabase,
 } from './paypal-credit-store.ts'
+import { isoTimestamp } from './timestamp.ts'
 
 const REMOTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
 const PAYPAL_RESOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/u
@@ -517,11 +518,11 @@ export async function readFounderPayPalCreditDisputes(
     gift_id: giftPublicId(row.gift_public_id),
     amount_units: row.amount_units == null ? null : String(row.amount_units),
     internal_note: String(row.internal_note),
-    opened_at: String(row.opened_at),
-    resolved_at: row.resolved_at == null ? null : String(row.resolved_at),
+    opened_at: isoTimestamp(row.opened_at) ?? '',
+    resolved_at: row.resolved_at == null ? null : isoTimestamp(row.resolved_at),
     founder_reviewed_at: row.founder_reviewed_at == null
       ? null
-      : String(row.founder_reviewed_at),
-    updated_at: String(row.updated_at),
+      : isoTimestamp(row.founder_reviewed_at),
+    updated_at: isoTimestamp(row.updated_at) ?? '',
   })))
 }
