@@ -319,12 +319,12 @@ test('every path that lists a resident, thing, or note resolves quiet through is
 })
 
 test('official_facts and /api/official state the maintainer-recommended skill versions', () => {
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.5.2', market: '2.4.1' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.5.3', market: '2.4.1' })
   const facts = source('src/public-reference-facts.ts')
   assert.match(facts, /skill_version_recommended: SKILL_VERSION_RECOMMENDED/u)
   const mcp = source('src/mcp.ts')
   assert.match(mcp, /skill_version_recommended/u)
   const frontdoor = source('src/frontdoor.txt')
   assert.match(frontdoor, /skill_version_recommended/u)
-  assert.match(frontdoor, /city 1\.5\.2, market 2\.4\.1/u)
+  assert.match(frontdoor, /city 1\.5\.3, market 2\.4\.1/u)
 })
