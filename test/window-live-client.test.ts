@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
+import { PART_42_STAGE_NODES } from '../src/window-client/program/42-stage-nodes.ts'
 import {
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
   normalizeWindowDrawing,
@@ -32,6 +33,11 @@ import {
   windowLiveItemFacts,
   windowLiveItemLastAction,
   windowLiveItemPopoverPlacement,
+  stageNodeKey,
+  reconcileStageNodeKeys,
+  stageDrawnNodeKeys,
+  stageFacing,
+  stageTransform,
 } from '../src/window-client.ts'
 
 const LIVE_NOTES_PAGE = Object.freeze({
@@ -203,6 +209,207 @@ type LiveClientExports = Readonly<{
 }>
 
 const liveClientExports = windowClientModule as unknown as LiveClientExports
+
+type FakeStageNode = {
+  dataset: Record<string, string>
+  removed: number
+  remove(): void
+  querySelectorAll(): readonly never[]
+}
+
+type StageRegistryRuntime = Readonly<{
+  beginStageNodeReconcile(): void
+  drawnStageNodeKeys(root: Readonly<{
+    querySelectorAll(): readonly FakeStageNode[]
+  }>): readonly string[]
+  ensureStageNode(kind: string, id: number, factory: () => FakeStageNode): FakeStageNode
+  finishStageNodeReconcile(drawnKeys?: readonly string[]): void
+  stageNode(kind: string, id: number): FakeStageNode | null
+}>
+
+function createStageRegistryRuntime(): StageRegistryRuntime {
+  return new Function(
+    'stageNodeKey',
+    'reconcileStageNodeKeys',
+    'stageDrawnNodeKeys',
+    'stageTransform',
+    `const liveStageNodes = new Map()
+let liveStageNextNodeKeys = null
+let portraitObserver = null
+const observedPortraitShells = new Set()
+const pendingPortraitShells = new Set()
+${PART_42_STAGE_NODES}
+return {
+  beginStageNodeReconcile,
+  drawnStageNodeKeys,
+  ensureStageNode,
+  finishStageNodeReconcile,
+  stageNode,
+}`,
+  )(stageNodeKey, reconcileStageNodeKeys, stageDrawnNodeKeys, stageTransform) as StageRegistryRuntime
+}
+
+function fakeDrawnStage(nodes: readonly FakeStageNode[]) {
+  return Object.freeze({ querySelectorAll: () => nodes })
+}
+
+function fakeStageNodeFactory(creations: Map<number, number>, id: number) {
+  return () => {
+    creations.set(id, (creations.get(id) || 0) + 1)
+    return {
+      dataset: {},
+      removed: 0,
+      remove() { this.removed += 1 },
+      querySelectorAll: () => [],
+    }
+  }
+}
+
+test('stage node reconciliation keeps survivors, creates newcomers once, and retires departures', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+
+  runtime.beginStageNodeReconcile()
+  const departed = runtime.ensureStageNode('resident', 11, fakeStageNodeFactory(creations, 11))
+  const survivor = runtime.ensureStageNode('resident', 12, fakeStageNodeFactory(creations, 12))
+  runtime.finishStageNodeReconcile()
+  runtime.beginStageNodeReconcile()
+  const repaintedSurvivor = runtime.ensureStageNode(
+    'resident', 12, fakeStageNodeFactory(creations, 12))
+  const newcomer = runtime.ensureStageNode('resident', 13, fakeStageNodeFactory(creations, 13))
+  runtime.finishStageNodeReconcile()
+
+  assert.strictEqual(repaintedSurvivor, survivor, 'resident:12 keeps its node object')
+  assert.strictEqual(runtime.stageNode('resident', 13), newcomer)
+  assert.equal(creations.get(12), 1, 'resident:12 factory runs exactly once')
+  assert.equal(creations.get(13), 1, 'resident:13 factory runs exactly once')
+  assert.equal(departed.removed, 1, 'only resident:11 is removed')
+  assert.equal(survivor.removed, 0)
+  assert.equal(runtime.stageNode('resident', 11), null)
+})
+
+test('stage reconcile keeps every node and custom data when the drawn set is unchanged', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+  const records = Object.freeze([
+    Object.freeze({ kind: 'place', id: 3 }),
+    Object.freeze({ kind: 'resident', id: 21 }),
+    Object.freeze({ kind: 'thing', id: 9 }),
+  ])
+  const firstPaint = new Map<string, FakeStageNode>()
+  const secondPaint = new Map<string, FakeStageNode>()
+
+  runtime.beginStageNodeReconcile()
+  for (const record of records) {
+    const node = runtime.ensureStageNode(
+      record.kind, record.id, fakeStageNodeFactory(creations, record.id))
+    firstPaint.set(`${record.kind}:${String(record.id)}`, node)
+  }
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(
+    fakeDrawnStage([...firstPaint.values()])))
+  for (const record of records) {
+    firstPaint.get(`${record.kind}:${String(record.id)}`)!.dataset.identityMarker =
+      `${record.kind}-${String(record.id)}`
+  }
+
+  runtime.beginStageNodeReconcile()
+  for (const record of records) {
+    secondPaint.set(`${record.kind}:${String(record.id)}`, runtime.ensureStageNode(
+      record.kind, record.id, fakeStageNodeFactory(creations, record.id)))
+  }
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(
+    fakeDrawnStage([...secondPaint.values()])))
+
+  for (const record of records) {
+    const key = `${record.kind}:${String(record.id)}`
+    const node = secondPaint.get(key)
+    assert.strictEqual(node, firstPaint.get(key), `${key} keeps its node object`)
+    assert.strictEqual(runtime.stageNode(record.kind, record.id), node)
+    assert.equal(node?.dataset.identityMarker, `${record.kind}-${String(record.id)}`)
+    assert.equal(creations.get(record.id), 1, `${key} factory runs exactly once`)
+  }
+})
+
+test('stage reconcile retires exactly the residents dropped by overflow and keeps survivors', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+  const firstFrame = new Map<number, FakeStageNode>()
+
+  for (let id = 1; id <= 8; id += 1) {
+    firstFrame.set(id, runtime.ensureStageNode(
+      'resident', id, fakeStageNodeFactory(creations, id)))
+  }
+
+  runtime.beginStageNodeReconcile()
+  for (let id = 1; id <= 8; id += 1) {
+    runtime.ensureStageNode('resident', id, fakeStageNodeFactory(creations, id))
+  }
+  const drawnNodes = [1, 2, 3, 4, 5, 6].map(id => firstFrame.get(id)!)
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage(drawnNodes)))
+
+  for (let id = 1; id <= 6; id += 1) {
+    assert.strictEqual(runtime.stageNode('resident', id), firstFrame.get(id))
+    assert.equal(firstFrame.get(id)?.removed, 0)
+    assert.equal(creations.get(id), 1)
+  }
+  assert.equal(firstFrame.get(7)?.removed, 1)
+  assert.equal(firstFrame.get(8)?.removed, 1)
+  assert.equal(runtime.stageNode('resident', 7), null)
+  assert.equal(runtime.stageNode('resident', 8), null)
+  assert.equal([...firstFrame.values()].reduce((total, node) => total + node.removed, 0), 2)
+})
+
+test('stage reconcile retires a walker absorbed by the crowd without duplicating its id', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+
+  const walker = runtime.ensureStageNode(
+    'resident', 21, fakeStageNodeFactory(creations, 21))
+
+  runtime.beginStageNodeReconcile()
+  const staleWalker = runtime.ensureStageNode(
+    'resident', 21, fakeStageNodeFactory(creations, 21))
+  const absorbedEntry = runtime.ensureStageNode(
+    'resident', 21, fakeStageNodeFactory(creations, 21))
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage([])))
+
+  assert.strictEqual(staleWalker, walker)
+  assert.strictEqual(absorbedEntry, walker)
+  assert.equal(creations.get(21), 1)
+  assert.equal(walker.removed, 1)
+  assert.equal(runtime.stageNode('resident', 21), null)
+})
+
+test('stage reconcile retires a stale node still attached inside a kept container', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+  const stale = runtime.ensureStageNode(
+    'resident', 21, fakeStageNodeFactory(creations, 21))
+  const survivor = runtime.ensureStageNode(
+    'resident', 22, fakeStageNodeFactory(creations, 22))
+
+  runtime.beginStageNodeReconcile()
+  runtime.ensureStageNode('resident', 22, fakeStageNodeFactory(creations, 22))
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(
+    fakeDrawnStage([stale, survivor])))
+
+  assert.strictEqual(runtime.stageNode('resident', 22), survivor)
+  assert.equal(survivor.removed, 0)
+  assert.equal(stale.removed, 1)
+  assert.equal(runtime.stageNode('resident', 21), null)
+})
+
+test('stage sprite transforms flip only through --facing and never rotate', () => {
+  assert.equal(stageFacing(20, 10, 1), -1)
+  assert.equal(stageFacing(10, 20, -1), 1)
+  assert.equal(stageFacing(10, 10, -1), -1)
+  assert.equal(stageTransform(24, 36), 'translate(24px, 36px) translate(-50%, -100%)')
+  assert.doesNotMatch(stageTransform(24, 36), /rotate\s*\(/u)
+  assert.doesNotMatch(windowClientModule.WINDOW_JS, /rotate\s*\(/u)
+
+  const stylesheet = readFileSync(new URL('../src/window-style.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(stylesheet, /rotate\s*\(/u)
+})
 
 test('drawing presentation labels all five owner-chosen states without inferring progress', () => {
   const stateLabel = liveClientExports.windowDrawingStateLabel
@@ -1523,22 +1730,19 @@ test('detail budget keeps the followed resident when attention is oversized', ()
   assert.equal(selected.detailed.includes('attention-1'), true)
 })
 
-test('redraw gate schedules changed visible input and stays idle when identical or hidden', () => {
-  const visibleChange = Object.freeze({
+test('stage loop keeps scheduling while visible and stops when hidden or inactive', () => {
+  const visibleStage = Object.freeze({
     liveViewActive: true,
     documentVisible: true,
     panelVisible: true,
-    dirtyRevision: 4,
-    paintedRevision: 3,
     framePending: false,
   })
 
-  assert.equal(windowLiveShouldScheduleRedraw(visibleChange), true)
-  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, dirtyRevision: 3 }), false)
-  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, documentVisible: false }), false)
-  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, panelVisible: false }), false)
-  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, liveViewActive: false }), false)
-  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleChange, framePending: true }), false)
+  assert.equal(windowLiveShouldScheduleRedraw(visibleStage), true)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleStage, documentVisible: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleStage, panelVisible: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleStage, liveViewActive: false }), false)
+  assert.equal(windowLiveShouldScheduleRedraw({ ...visibleStage, framePending: true }), false)
 })
 
 test('route visibility returns exact progress windows for camera crossings', () => {

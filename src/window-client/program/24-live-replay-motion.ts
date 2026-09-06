@@ -218,7 +218,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     if (!Number.isFinite(wait)) return
     liveReplayVisibilityTimer = window.setTimeout(() => {
       liveReplayVisibilityTimer = 0
-      scheduleLiveMotionRedraw()
+      markLiveDirty()
     }, Math.max(0, wait) + 16)
   }
 
@@ -609,6 +609,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       portrait.type = 'button'
       portrait.dataset.focusKey = 'live-resident:' + actor
       portrait.dataset.liveResidentHandle = actor
+      portrait.dataset.liveResidentId = String(resident.id)
       portrait.title = state.live.focusResident === actor
         ? 'Clear focus from ' + actor
         : 'Focus on ' + actor
@@ -619,6 +620,32 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
         movement && !movement.detailed ? null : bubbles.get(actor),
         'live-portrait-wrap live-replay-portrait',
       )
+      const heldPortrait = shell.querySelector(':scope > .live-portrait')
+      const hasDrawing = String(Boolean(resident.has_drawing))
+      const oldSprite = heldPortrait.querySelector(':scope > .live-entity-portrait')
+      const drawingRevision = String(state.changeMarker || state.snapshot?.changeMarker || '')
+      if (heldPortrait.dataset.liveHasDrawing !== hasDrawing) {
+        if (oldSprite) {
+          portraitObserver?.unobserve(oldSprite)
+          observedPortraitShells.delete(oldSprite)
+          pendingPortraitShells.delete(oldSprite)
+          oldSprite.remove()
+        }
+        const sprite = liveSpriteNode('resident', resident.id, actor, resident.has_drawing)
+        sprite.dataset.liveDrawingRevision = drawingRevision
+        heldPortrait.prepend(sprite)
+        heldPortrait.dataset.liveHasDrawing = hasDrawing
+      } else if (hasDrawing === 'true' &&
+          oldSprite?.dataset.liveDrawingRevision !== drawingRevision) {
+        portraitObserver?.unobserve(oldSprite)
+        observedPortraitShells.delete(oldSprite)
+        pendingPortraitShells.delete(oldSprite)
+        oldSprite.querySelector(':scope > .entity-portrait-image')?.remove()
+        delete oldSprite.dataset.loaded
+        delete oldSprite.dataset.portraitState
+        oldSprite.dataset.liveDrawingRevision = drawingRevision
+        schedulePortraitShell(oldSprite)
+      }
       shell.dataset.liveReplayKey = held?.key || ''
       // Round-1 review finding #2: this walking portrait was never wired
       // to bindLiveItemPopover, so a resident's facts went unreachable for
@@ -627,9 +654,9 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       // 21-live-pinning-and-portrait-grid.ts), so the popover binds once
       // on open/focus and needs no per-frame work: positionLiveItemPopover
       // only reruns on the already-rAF-batched camera commit, and when the
-      // walk ends the next render swaps this replay portrait for the
-      // settled walker under the identical key, so syncLiveItemPopoverAnchor
-      // (27-live-render.ts) re-binds the same open popover to it rather
+      // walk ends the registered shell becomes the settled walker under the
+      // identical key, so syncLiveItemPopoverAnchor (27-live-render.ts)
+      // re-binds the same open popover to it rather
       // than closing it -- and closes it as usual (C5) if the resident
       // instead leaves the plate entirely.
       const itemKey = 'resident:' + actor
@@ -641,38 +668,48 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
         shell.dataset.liveAt = String(held.record.at.getTime())
         shell.dataset.liveLifetime = String(liveRecordLifetime(held.record))
       }
-      shell.style.left = String(point.x) + 'px'
-      shell.style.top = String(point.y) + 'px'
+      const facingPoint = movement?.points.find(routePoint => routePoint.x !== point.x) ||
+        destination || point
+      const currentFacing = Number(shell.style.getPropertyValue('--facing')) === -1 ? -1 : 1
+      const facing = stageFacing(point.x, facingPoint.x, currentFacing)
       if (destination && remaining > 0) {
         shell.dataset.liveMovement = movement.detailed ? 'detail' : 'simple'
         if (movement.detailed) {
           const path = movement.points.map((routePoint, index) =>
             (index ? 'L ' : 'M ') + String(routePoint.x) + ' ' + String(routePoint.y)).join(' ')
-          shell.style.left = '0px'
-          shell.style.top = '0px'
           shell.style.offsetPath = 'path("' + path + '")'
           shell.style.offsetDistance = '0%'
           shell.style.offsetAnchor = '50% 100%'
           shell.style.offsetRotate = '0deg'
-          shell.style.transform = 'none'
+          setStageTransform(shell, Object.freeze({ x: 0, y: 0, facing }))
           shell.style.animationName = 'live-recorded-route'
           shell.dataset.liveRoutePointCount = String(movement.geometry.points.length)
         } else {
-          shell.style.setProperty(
-            '--live-replay-delta-x', String(destination.x - point.x) + 'px')
-          shell.style.setProperty(
-            '--live-replay-delta-y', String(destination.y - point.y) + 'px')
+          shell.style.offsetPath = ''
+          shell.style.offsetDistance = ''
+          shell.style.offsetAnchor = ''
+          shell.style.animationName = 'live-recorded-glide'
+          setStageTransform(shell, Object.freeze({
+            x: point.x,
+            y: point.y,
+            facing,
+            destinationX: destination.x,
+            destinationY: destination.y,
+          }))
         }
         shell.style.animationDuration = String(remaining) + 'ms'
         shell.dataset.fromPlaceId = String(held.fromPlaceId)
         shell.dataset.toPlaceId = String(held.toPlaceId)
         shell.dataset.replayDuration = String(held.duration)
+      } else {
+        shell.style.offsetPath = ''
+        shell.style.offsetDistance = ''
+        shell.style.offsetAnchor = ''
+        shell.style.animationName = 'none'
+        setStageTransform(shell, Object.freeze({ x: point.x, y: point.y, facing }))
       }
-      portrait.addEventListener('click', () => toggleLiveFocusResident(actor))
-      bindLiveItemPopover(portrait, itemKey, 'resident', () => resident)
-      portrait.append(liveSpriteNode(
-        'resident', resident.id, actor, resident.has_drawing,
-      ))
+      heldPortrait.addEventListener('click', () => toggleLiveFocusResident(actor))
+      bindLiveItemPopover(heldPortrait, itemKey, 'resident', () => resident)
       layer.append(shell)
     }
     scheduleLiveReplayVisibility(movements)

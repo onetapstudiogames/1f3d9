@@ -119,4 +119,13 @@ export type {
 export { normalizeLiveNotesPage } from './window-client/live-notes.ts'
 export type { WindowLiveNote, WindowLiveNotesPage } from './window-client/live-notes.ts'
 
+export {
+  stageNodeKey,
+  reconcileStageNodeKeys,
+  stageDrawnNodeKeys,
+  stageFacing,
+  stageTransform,
+} from './window-client/stage-nodes.ts'
+export type { StageNodeKind, StageNodeDiff } from './window-client/stage-nodes.ts'
+
 export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')

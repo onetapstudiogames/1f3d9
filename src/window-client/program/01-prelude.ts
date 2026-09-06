@@ -85,6 +85,13 @@ import {
   windowLiveItemPopoverPlacement,
 } from '../live-popover.ts'
 import { normalizeLiveNotesPage } from '../live-notes.ts'
+import {
+  stageNodeKey,
+  reconcileStageNodeKeys,
+  stageDrawnNodeKeys,
+  stageFacing,
+  stageTransform,
+} from '../stage-nodes.ts'
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -148,6 +155,11 @@ const WINDOW_LIVE_ITEM_FACTS_JS = windowLiveItemFacts.toString()
 const WINDOW_LIVE_ITEM_LAST_ACTION_JS = windowLiveItemLastAction.toString()
 const WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS = windowLiveItemPopoverPlacement.toString()
 const NORMALIZE_LIVE_NOTES_PAGE_JS = normalizeLiveNotesPage.toString()
+const STAGE_NODE_KEY_JS = stageNodeKey.toString()
+const RECONCILE_STAGE_NODE_KEYS_JS = reconcileStageNodeKeys.toString()
+const STAGE_DRAWN_NODE_KEYS_JS = stageDrawnNodeKeys.toString()
+const STAGE_FACING_JS = stageFacing.toString()
+const STAGE_TRANSFORM_JS = stageTransform.toString()
 const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
 )
@@ -281,5 +293,10 @@ export const PART_01_PRELUDE = `(() => {
   const windowLiveItemLastAction = ${WINDOW_LIVE_ITEM_LAST_ACTION_JS}
   const windowLiveItemPopoverPlacement = ${WINDOW_LIVE_ITEM_POPOVER_PLACEMENT_JS}
   const normalizeLiveNotesPage = ${NORMALIZE_LIVE_NOTES_PAGE_JS}
+  const stageNodeKey = ${STAGE_NODE_KEY_JS}
+  const reconcileStageNodeKeys = ${RECONCILE_STAGE_NODE_KEYS_JS}
+  const stageDrawnNodeKeys = ${STAGE_DRAWN_NODE_KEYS_JS}
+  const stageFacing = ${STAGE_FACING_JS}
+  const stageTransform = ${STAGE_TRANSFORM_JS}
 
 `

@@ -127,14 +127,10 @@ export function windowLiveShouldScheduleRedraw(input: Readonly<{
   liveViewActive: boolean
   documentVisible: boolean
   panelVisible: boolean
-  dirtyRevision: number
-  paintedRevision: number
   framePending: boolean
 }>): boolean {
   return input.liveViewActive === true && input.documentVisible === true &&
-    input.panelVisible === true && input.framePending === false &&
-    Number.isSafeInteger(input.dirtyRevision) && Number.isSafeInteger(input.paintedRevision) &&
-    input.dirtyRevision > input.paintedRevision
+    input.panelVisible === true && input.framePending === false
 }
 
 export function windowLiveFootstepBeat(

@@ -232,20 +232,52 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       portrait.type = 'button'
       portrait.dataset.focusKey = 'live-resident:' + resident.handle
       portrait.dataset.liveResidentHandle = resident.handle
+      portrait.dataset.liveResidentId = String(resident.id)
       portrait.setAttribute('aria-label', state.live.focusResident === resident.handle
         ? 'Clear focus from ' + resident.handle
         : 'Focus on ' + resident.handle)
       portrait.setAttribute('aria-pressed', String(state.live.focusResident === resident.handle))
-      portrait.append(liveSpriteNode(
-        'resident', resident.id, resident.handle, resident.has_drawing,
-      ))
       const shell = livePortraitShell(
         portrait,
         bubbles?.get(resident.handle),
         'live-portrait-wrap live-walker',
       )
-      shell.style.left = String(entry.localPoint.x) + 'px'
-      shell.style.top = String(entry.localPoint.y) + 'px'
+      const heldPortrait = shell.querySelector(':scope > .live-portrait')
+      const hasDrawing = String(Boolean(resident.has_drawing))
+      const oldSprite = heldPortrait.querySelector(':scope > .live-entity-portrait')
+      const drawingRevision = String(state.changeMarker || state.snapshot?.changeMarker || '')
+      if (heldPortrait.dataset.liveHasDrawing !== hasDrawing) {
+        if (oldSprite) {
+          portraitObserver?.unobserve(oldSprite)
+          observedPortraitShells.delete(oldSprite)
+          pendingPortraitShells.delete(oldSprite)
+          oldSprite.remove()
+        }
+        const sprite = liveSpriteNode(
+          'resident', resident.id, resident.handle, resident.has_drawing)
+        sprite.dataset.liveDrawingRevision = drawingRevision
+        heldPortrait.prepend(sprite)
+        heldPortrait.dataset.liveHasDrawing = hasDrawing
+      } else if (hasDrawing === 'true' &&
+          oldSprite?.dataset.liveDrawingRevision !== drawingRevision) {
+        portraitObserver?.unobserve(oldSprite)
+        observedPortraitShells.delete(oldSprite)
+        pendingPortraitShells.delete(oldSprite)
+        oldSprite.querySelector(':scope > .entity-portrait-image')?.remove()
+        delete oldSprite.dataset.loaded
+        delete oldSprite.dataset.portraitState
+        oldSprite.dataset.liveDrawingRevision = drawingRevision
+        schedulePortraitShell(oldSprite)
+      }
+      shell.style.offsetPath = ''
+      shell.style.offsetDistance = ''
+      shell.style.offsetAnchor = ''
+      shell.style.animationName = ''
+      shell.style.animationDuration = ''
+      setStageTransform(shell, Object.freeze({
+        x: entry.localPoint.x,
+        y: entry.localPoint.y,
+      }))
       const itemKey = 'resident:' + resident.handle
       shell.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) shell.dataset.liveRaised = 'true'
@@ -254,9 +286,9 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       } else if (pinned.has(resident.id)) {
         shell.setAttribute('data-live-focus-partner', resident.handle)
       }
-      bindLiveActivation(portrait, shell, itemKey,
+      bindLiveActivation(heldPortrait, shell, itemKey,
         () => toggleLiveFocusResident(resident.handle))
-      bindLiveItemPopover(portrait, itemKey, 'resident', () => resident)
+      bindLiveItemPopover(heldPortrait, itemKey, 'resident', () => resident)
       grid.append(shell)
     })
     const visibleOverflowActors = layout.hidden.filter(resident =>
