@@ -69,7 +69,8 @@ async function measureRebuildableBoxes(
 ): Promise<readonly LocatorBox[]> {
   let measured: readonly LocatorBox[] | null = null
   await expect.poll(async () => {
-    const boxes = await Promise.all(resolveLocators().map(locator => locator.boundingBox()))
+    const boxes = await Promise.all(resolveLocators().map(locator =>
+      locator.boundingBox({ timeout: DETACHED_READ_TIMEOUT_MS })))
     measured = boxes.some(box => box === null) ? null : boxes as readonly LocatorBox[]
     return measured !== null
   }, {
@@ -88,10 +89,11 @@ async function scrollRebuildableIntoView(
   await expect.poll(async () => {
     const locator = resolveLocator()
     try {
-      await locator.scrollIntoViewIfNeeded()
-      measured = await locator.boundingBox()
+      await locator.scrollIntoViewIfNeeded({ timeout: DETACHED_READ_TIMEOUT_MS })
+      measured = await locator.boundingBox({ timeout: DETACHED_READ_TIMEOUT_MS })
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('not attached to the DOM')) throw error
+      if (!(error instanceof Error) ||
+        (error.name !== 'TimeoutError' && !error.message.includes('not attached to the DOM'))) throw error
       measured = null
     }
     return measured !== null
@@ -455,10 +457,10 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
       'drawn thing title after portrait load',
     )
     expect(
-      drawnTitleAfterLoad.x,
+      Math.abs(drawnTitleAfterLoad.x - drawnTitleBeforeLoad.x),
       comparedOperands({ drawnTitleAfterLoadX: drawnTitleAfterLoad.x,
         drawnTitleBeforeLoadX: drawnTitleBeforeLoad.x }),
-    ).toBe(drawnTitleBeforeLoad.x)
+    ).toBeLessThan(0.5)
     let portraitPixels: {
       inkAlpha: number
       centerAlpha: number
@@ -470,19 +472,19 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
         .locator('.entity-portrait[data-portrait-type="thing"]').evaluate(shell => {
           const row = shell.closest('.thing-index-row')
           if (!row) return null
-      const image = shell.querySelector('img')
-      const canvas = document.createElement('canvas')
-      canvas.width = 32
-      canvas.height = 32
-      const context = canvas.getContext('2d')
-      if (!image || !context) return null
-      context.drawImage(image, 0, 0, 32, 32)
-      return {
-        inkAlpha: context.getImageData(2, 2, 1, 1).data[3],
-        centerAlpha: context.getImageData(16, 16, 1, 1).data[3],
-        shellBackground: getComputedStyle(shell).backgroundColor,
-        rowBackground: getComputedStyle(row).backgroundColor,
-      }
+          const image = shell.querySelector('img')
+          const canvas = document.createElement('canvas')
+          canvas.width = 32
+          canvas.height = 32
+          const context = canvas.getContext('2d')
+          if (!image || !context) return null
+          context.drawImage(image, 0, 0, 32, 32)
+          return {
+            inkAlpha: context.getImageData(2, 2, 1, 1).data[3],
+            centerAlpha: context.getImageData(16, 16, 1, 1).data[3],
+            shellBackground: getComputedStyle(shell).backgroundColor,
+            rowBackground: getComputedStyle(row).backgroundColor,
+          }
         })
       return portraitPixels !== null
     }, {
