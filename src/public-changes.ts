@@ -5,8 +5,7 @@ import {
 } from './public-pagination.ts'
 import { HANDLE_RE } from './core.ts'
 import {
-  PUBLIC_EVENT_DETAIL_ID_FIELDS,
-  PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
+  PUBLIC_EVENT_DETAIL_FIELDS,
   PUBLIC_EVENT_KINDS,
   isPublicSystemEventActor,
 } from './public-events.ts'
@@ -99,11 +98,7 @@ const CHECKPOINT_SQL = `
   WHERE singleton = true
 `
 
-const PUBLIC_CHANGE_DETAIL_FIELDS = Object.freeze([
-  ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
-  ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
-])
-const PUBLIC_CHANGE_DETAIL_FIELD_SQL = PUBLIC_CHANGE_DETAIL_FIELDS
+const PUBLIC_CHANGE_DETAIL_FIELD_SQL = PUBLIC_EVENT_DETAIL_FIELDS
   .map(field => `'${field}'`)
   .join(', ')
 const CHANGES_SQL = `
@@ -143,7 +138,7 @@ function checkpointFrom(rows: readonly Record<string, unknown>[]): string {
   return checkpoint
 }
 
-const CHANGE_REFERENCE_FIELDS: ReadonlySet<string> = new Set(PUBLIC_CHANGE_DETAIL_FIELDS)
+const CHANGE_REFERENCE_FIELDS: ReadonlySet<string> = new Set(PUBLIC_EVENT_DETAIL_FIELDS)
 
 function changeReferenceDetail(value: unknown): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {

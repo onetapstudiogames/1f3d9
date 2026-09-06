@@ -19,8 +19,8 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1274 resolved source refusal producers**: **886 caller-visible** and
-**388 internal-only**. Included rows record exact served text or an honest template only
+There are **1285 resolved source refusal producers**: **889 caller-visible** and
+**396 internal-only**. Included rows record exact served text or an honest template only
 for runtime-dependent values, status, reviewed cause and next-step classifications, literal
 evidence for each Yes classification, producer, adapter, final boundary, and test proof. A status
 beginning with `expression:` records the exact typed/helper adapter expression when a producer
@@ -29,7 +29,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 173 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 176 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -101,19 +101,22 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/index.ts::creditRequest.error::2`
 - `src/index.ts::allowed.error::8`
 - `src/index.ts::allowed.error::9`
-- `src/index.ts::allowed.error::10`
 - `src/index.ts::parsed.error::5`
+- `src/index.ts::error.message::11`
+- `src/index.ts::error.message::12`
+- `src/index.ts::allowed.error::10`
+- `src/index.ts::parsed.error::6`
 - `src/index.ts::kindValue.error::1`
 - `src/index.ts::actorValue.error::1`
 - `src/index.ts::exactPlaceValue.error::1`
 - `src/index.ts::insidePlaceValue.error::1`
 - `src/index.ts::withinValue.error::1`
 - `src/index.ts::afterMarkerValue.error::3`
-- `src/index.ts::error.message::11`
+- `src/index.ts::error.message::13`
 - `src/index.ts::allowed.error::11`
-- `src/index.ts::parsed.error::6`
-- `src/index.ts::allowed.error::12`
 - `src/index.ts::parsed.error::7`
+- `src/index.ts::allowed.error::12`
+- `src/index.ts::parsed.error::8`
 - `src/mcp.ts::text::1`
 - `src/mcp.ts::hostedSignInErrorText(safeguarded.text)::1`
 - `src/mcp.ts::safeguarded.text::1`
@@ -1687,4 +1690,15 @@ machine-readable so review proves provenance instead of trusting stale hand-coun
 {"key":"src/world.ts::another action is changing this thing or kind; retry this thing upgrade::1","disposition":"included","status":"409","finalText":"another action is changing this thing or kind; retry this thing upgrade","cause":"Yes","next":"Yes","causeEvidence":"another action is changing this thing or kind","nextEvidence":"retry this thing upgrade","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes.test.ts","exclusionReason":"","expressionKey":"another action is changing this thing or kind; retry this thing upgrade"}
 {"key":"src/world.ts::thing changed or received an open sale offer; retry::2","disposition":"included","status":"409","finalText":"thing changed or received an open sale offer; retry","cause":"Yes","next":"Yes","causeEvidence":"thing changed or received an open sale offer","nextEvidence":"retry","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:source extraction and src/world.ts adapter mapping only; no exact behavioral assertion located","exclusionReason":"","expressionKey":"thing changed or received an open sale offer; retry"}
 {"key":"src/world.ts::thing id must be a positive integer::4","disposition":"included","status":"400","finalText":"thing id must be a positive integer","cause":"Yes","next":"Yes","causeEvidence":"thing id must","nextEvidence":"be a positive integer","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:source extraction and src/world.ts adapter mapping only; no exact behavioral assertion located","exclusionReason":"","expressionKey":"thing id must be a positive integer"}
+{"key":"src/index.ts::The city withheld a response that contained a resident credential.::1","disposition":"included","status":"500","finalText":"The city withheld a response that contained a resident credential.","cause":"Yes","next":"No","causeEvidence":"contained a resident credential","nextEvidence":"","producer":"src/index.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:the replay route passes its sanitized result through the shared credential-withheld refusal","exclusionReason":"","expressionKey":"The city withheld a response that contained a resident credential."}
+{"key":"src/public-replay.ts::span must be one of 1h, 2h, 6h, or 24h::1","disposition":"included","status":"expression:typed adapter status","finalText":"span must be one of 1h, 2h, 6h, or 24h","cause":"Yes","next":"No","causeEvidence":"one of 1h, 2h, 6h, or 24h","nextEvidence":"","producer":"src/public-replay.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/public-replay.test.ts","exclusionReason":"","expressionKey":"span must be one of 1h, 2h, 6h, or 24h"}
+{"key":"src/public-replay.ts::invalid public replay note row::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay note row","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay note row"}
+{"key":"src/public-replay.ts::public replay ${field} is invalid::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"public replay ${field} is invalid","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"public replay ${field} is invalid"}
+{"key":"src/public-replay.ts::invalid public replay map row::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay map row","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay map row"}
+{"key":"src/public-replay.ts::invalid public replay start row::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay start row","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay start row"}
+{"key":"src/public-replay.ts::invalid public replay count row::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay count row","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay count row"}
+{"key":"src/public-replay.ts::the city has no public record yet, so there is nothing to replay; retry after the first public change::1","disposition":"included","status":"503","finalText":"the city has no public record yet, so there is nothing to replay; retry after the first public change","cause":"Yes","next":"Yes","causeEvidence":"the city has no public record yet, so there is nothing to replay","nextEvidence":"retry after the first public change","producer":"src/public-replay.ts","adapter":"public replay unavailable adapter","finalBoundary":"HTTP 503 JSON with Retry-After: 1","testProof":"assertion:test/integration/public-replay-postgres.test.ts","exclusionReason":"","expressionKey":"the city has no public record yet, so there is nothing to replay; retry after the first public change"}
+{"key":"src/public-replay.ts::invalid public replay window::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay window","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay window"}
+{"key":"src/public-replay.ts::public replay truncation retained no public timeline row::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"public replay truncation retained no public timeline row","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"public replay truncation retained no public timeline row"}
+{"key":"src/public-replay.ts::invalid public replay moderated event rows::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"invalid public replay moderated event rows","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-replay.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"invalid public replay moderated event rows"}
 <!-- refusal-manifest:end -->

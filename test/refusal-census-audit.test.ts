@@ -179,7 +179,7 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // mountPairDisabledRoute -- are now counted here too. GET /changelog and
   // GET /changelog.txt are two more new always-200 boundaries that read
   // only the checked-in file; neither can refuse a request.
-  assert.equal(http.registrations.length, 123)
+  assert.equal(http.registrations.length, 124)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
