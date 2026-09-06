@@ -1933,7 +1933,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 5;
 }
-.body-disclosure {
+.body-disclosure, .note-decode {
   width: fit-content;
   padding: 0.35rem 0.58rem;
   color: var(--forest-deep);
@@ -1944,6 +1944,10 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   font-weight: 850;
 }
 .body-disclosure:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.note-decode:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.note-decoded { max-width: 100%; border-left: 2px solid var(--line); padding-left: 0.65rem; }
+.note-decoded-label { color: var(--muted); font-size: 0.68rem; }
+.note-decoded-text { margin: 0.3rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .body-availability { margin: 0; color: var(--muted); font-size: 0.66rem; line-height: 1.45; }
 .body-full-link { color: var(--forest-deep); font-weight: 850; }
 /* A followable handle wherever one is printed, not only in the roster. */
