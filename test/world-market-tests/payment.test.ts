@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { makeHarness, jsonHeaders } from '../helpers/world-market-fixtures/harness.ts'
-import { BUYER_SECRET, SELLER_WALLET, BUYER_WALLET, OTHER_WALLET, TX, COMPLETED_RESPONSE, X_PAYMENT, X_PAYMENT_NO_ID, NOW, type FakeOffer, draft, checkout, openOffer, fakePaymentAttempt, worldSaleRequestHash } from '../helpers/world-market-fixtures/offers.ts'
+import { BUYER_SECRET, SELLER_WALLET, BUYER_WALLET, OTHER_WALLET, TX, COMPLETED_RESPONSE, X_PAYMENT, X_PAYMENT_NO_ID, NOW, type FakeOffer, draft, openOffer, fakePaymentAttempt, worldSaleRequestHash } from '../helpers/world-market-fixtures/offers.ts'
 
 export function registerPaymentTests(): void {
   test('payment closes ownership atomically and a retry returns the same public receipt', async () => {

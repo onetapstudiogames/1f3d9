@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { publicMarketGet } from '../../src/world-market.ts'
 import { makeHarness, jsonHeaders } from '../helpers/world-market-fixtures/harness.ts'
-import { MARKET, SELLER_SECRET, BUYER_SECRET, BUYER_WALLET, TX, NOW, type FakeOffer, draft, listing, checkout, openOffer } from '../helpers/world-market-fixtures/offers.ts'
+import { MARKET, SELLER_SECRET, BUYER_SECRET, BUYER_WALLET, TX, NOW, type FakeOffer, draft, checkout, openOffer } from '../helpers/world-market-fixtures/offers.ts'
 
 export function registerListingAndPublicRecordTests(): void {
   test('seller locks an owned active thing from a valid pending market draft', async () => {

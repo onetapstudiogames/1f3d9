@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, frontdoor, frontdoorDocument, llms, mcpSource, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { FRONTDOOR, LLMS, frontdoor, frontdoorDocument, llms, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerGazetteTests(): void {
   test('every caller-facing Gazette surface states the full contract before use', () => {

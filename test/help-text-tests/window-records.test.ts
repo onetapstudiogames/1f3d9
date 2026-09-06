@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, decisions, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { FRONTDOOR, LLMS, decisions, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerWindowRecordsTests(): void {
   test('public help describes the human window combined search and flat numbered place picker', () => {

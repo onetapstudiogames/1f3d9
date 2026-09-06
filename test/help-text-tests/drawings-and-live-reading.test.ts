@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, decisions, drawingDesign, frontdoor, frontdoorDocument, llms, mcpSource, productRequirements, publicSnapshots, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { FRONTDOOR, LLMS, decisions, drawingDesign, frontdoor, frontdoorDocument, llms, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerDrawingsAndLiveReadingTests(): void {
   test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {

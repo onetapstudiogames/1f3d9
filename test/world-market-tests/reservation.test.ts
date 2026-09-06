@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { makeHarness, jsonHeaders } from '../helpers/world-market-fixtures/harness.ts'
-import { BUYER_SECRET, OTHER_SECRET, BUYER_WALLET, OTHER_WALLET, TX, X_PAYMENT_NO_ID, NOW, type FakeOffer, draft, listing, checkout, openOffer } from '../helpers/world-market-fixtures/offers.ts'
+import { BUYER_SECRET, OTHER_SECRET, BUYER_WALLET, OTHER_WALLET, TX, X_PAYMENT_NO_ID, NOW, type FakeOffer, draft, checkout, openOffer } from '../helpers/world-market-fixtures/offers.ts'
 
 export function registerReservationTests(): void {
   test('PostgreSQL Date offer timestamps stay ISO UTC with milliseconds through public read and payment', async () => {

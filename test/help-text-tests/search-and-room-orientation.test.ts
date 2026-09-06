@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decisions, frontdoor, llms, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { decisions, frontdoor, llms, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerSearchAndRoomOrientationTests(): void {
   test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
