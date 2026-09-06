@@ -1404,6 +1404,22 @@ so a marker becomes visible in commit order and rollback publishes nothing. This
 `MAX(events.id)`, whose sequence values can be allocated in a different order from
 commits. Existing events are backfilled into the log by the Wave 5 migration.
 
+`GET /api/replay?span=1h|2h|6h|24h` uses plain `sql.query` reads inside
+`readAtStablePublicChangeCheckpoint`, then caches by span plus checkpoint. Its recorded
+`window_end` is the newest public change at that checkpoint truncated to milliseconds, and
+the complete file's `window_start` is exactly the requested span earlier using that same SQL
+bound. Canonical JSON contains only the map seed, whose place rows use `has_drawing` without
+inventing a drawing checkpoint, placements for residents and active things represented in
+the span, ascending `change_id` timeline rows, and present exact per-place resident and
+active-thing counts. It returns at most 800 timeline rows; when either ceiling omits older
+rows, `complete: false` moves `window_start` to the oldest carried row and supplies
+`rest_at: "/api/events"` with that row's event ID as `before_id`. Note events contain only a
+moderated first line of at most 200 characters, and all note lines together are capped at
+512,000 UTF-8 bytes; note bodies,
+private later-holder marks, active-thing bodies, geometry, and invented events never enter
+the file. The canonical response still crosses `sanitizePublicValue` and
+`publicResponseSafety`, and receives an ETag with a short cache lifetime.
+
 All persisted public changes continue through the existing event ledger. Thing movement
 now emits an addressable `thing_moved` event as well as updating its place. Thing edits,
 movement, withdrawal, moderation removal, and restoration therefore advance the public

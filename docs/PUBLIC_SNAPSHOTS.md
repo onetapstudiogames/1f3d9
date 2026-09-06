@@ -229,8 +229,15 @@ newest revision by accident. Hiding a kind suppresses inherited presentation;
 parent moderation suppresses the complete current/history payload rather than
 editing an immutable drawing revision.
 
-The snapshot is the deliberate full public export. Ordinary map, room, window,
-directory, and census reads omit drawing fields. The window fetches a separate
+The snapshot is the deliberate full public export. `GET /api/replay` is a repackaging of
+the public record pinned to one public change checkpoint, not a dated public snapshot. Its
+requested span contains at most 800 timeline rows and at most 512,000 UTF-8 bytes across
+moderated note first lines; when either ceiling omits older rows, `complete: false` moves
+`window_start` to the oldest carried row and points readers to `/api/events` with that
+row's event ID as `before_id`.
+It never carries a note body.
+
+Ordinary map, room, window, directory, and census reads omit drawing fields. The window fetches a separate
 32x32 image through `GET /api/drawing/:type/:id/thumb.png?rev=<public-change-marker>`
 only for a named row near the viewport; selected-place terrain and drawing detail
 use `GET /api/drawing/:type/:id`. Exact redraw history is likewise absent until the deliberate bounded

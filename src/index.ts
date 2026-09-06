@@ -48,7 +48,10 @@ import {
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
 import { positiveId, publicText } from './input.ts'
-import { redactResidentCredentialText } from './credential-safety.ts'
+import {
+  PUBLIC_RESPONSE_WITHHELD,
+  redactResidentCredentialText,
+} from './credential-safety.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
@@ -130,6 +133,13 @@ import {
   PublicChangeReadConflictError,
   readAtStablePublicChangeCheckpoint,
 } from './public-changes.ts'
+import {
+  cachedPublicReplay,
+  parsePublicReplayQuery,
+  PublicReplayUnavailableError,
+  sanitizePublicReplay,
+} from './public-replay.ts'
+import { canonicalJson } from './public-snapshot-format.ts'
 import {
   createLaterHolderCursorCodec,
   LaterHolderCursorError,
@@ -1378,6 +1388,30 @@ app.get('/api/physics', c => {
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
   return c.json(publicPhysicsFacts())
+})
+
+app.get('/api/replay', async c => {
+  const parsed = parsePublicReplayQuery(c.req.queries())
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  let replay
+  try {
+    replay = await cachedPublicReplay(parsed)
+  } catch (error) {
+    if (error instanceof PublicChangeReadConflictError) return err(c, 409, error.message)
+    if (error instanceof PublicReplayUnavailableError) {
+      c.header('Retry-After', '1')
+      return err(c, 503, error.message)
+    }
+    throw error
+  }
+  const sanitized = sanitizePublicReplay(replay)
+  if (sanitized.withheld) return err(c, 500, PUBLIC_RESPONSE_WITHHELD)
+  const body = canonicalJson(sanitized.value)
+  const etag = `"${createHash('sha256').update(body).digest('hex')}"`
+  c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+  c.header('ETag', etag)
+  if (c.req.header('if-none-match') === etag) return c.body(null, 304)
+  return c.body(body, 200, { 'Content-Type': 'application/json; charset=UTF-8' })
 })
 
 app.get('/api/events', async c => {
