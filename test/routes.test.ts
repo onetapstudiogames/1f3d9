@@ -601,6 +601,7 @@ const paginationEvents = () => Array.from({ length: 70 }, (_, index) => {
   const id = 70 - index
   return {
     id,
+    change_id: String(id),
     at: new Date(Date.UTC(2026, 7, 11, 0, 0, id)).toISOString(),
     kind: id % 2 === 0 ? 'note_created' : 'thing_created',
     actor: 'tiny-lantern',
@@ -4688,7 +4689,7 @@ test('lazy map and history pages prove they cover the caller-held change marker'
     const response = await app.request(path)
     assert.equal(response.status, 409, path)
     assert.deepEqual(await response.json(), {
-      error: 'since marker 10 is ahead of checkpoint 9',
+      error: 'after_change_marker 10 is ahead of checkpoint 9',
     })
     assert.equal(
       sqlCalls().filter(call => !/\/\* public:changes-checkpoint \*\//iu.test(call.query ?? '')).length,
@@ -4696,6 +4697,34 @@ test('lazy map and history pages prove they cover the caller-held change marker'
       `${path} stops before its page read`,
     )
   }
+})
+
+test('an events change marker proves coverage without filtering rows', async () => {
+  reset({ scenario: 'public pagination', publicChangeMarker: '69' })
+  const ordinaryResponse = await app.request('/api/events?limit=3')
+  assert.equal(ordinaryResponse.status, 200)
+  const ordinary = await ordinaryResponse.json() as {
+    events: Array<{ id: number; change_id: string }>
+  }
+  const ordinaryRead = sqlCalls().find(call => /\/\* public:events \*\//iu.test(call.query ?? ''))
+  assert.ok(ordinaryRead)
+
+  reset({ scenario: 'public pagination', publicChangeMarker: '69' })
+  const coveredResponse = await app.request('/api/events?limit=3&after_change_marker=69')
+  assert.equal(coveredResponse.status, 200)
+  const covered = await coveredResponse.json() as {
+    events: Array<{ id: number; change_id: string }>
+  }
+  const coveredRead = sqlCalls().find(call => /\/\* public:events \*\//iu.test(call.query ?? ''))
+  assert.ok(coveredRead)
+
+  assert.deepEqual(covered.events, ordinary.events)
+  assert.equal(coveredRead.query, ordinaryRead.query)
+  assert.deepEqual(coveredRead.params, ordinaryRead.params)
+  assert.ok(
+    covered.events.some(event => BigInt(event.change_id) <= 69n),
+    'after_change_marker is a coverage barrier, not an event-row filter',
+  )
 })
 
 test('window reads retry an interleaved public commit instead of labeling newer rows with an older marker', async () => {
@@ -5124,7 +5153,7 @@ test('a marker-covered outline bypasses stale caches and rejects a future marker
   const future = await app.request('/api/window?view=outline&after_change_marker=11')
   assert.equal(future.status, 409)
   assert.deepEqual(await future.json(), {
-    error: 'since marker 11 is ahead of checkpoint 10',
+    error: 'after_change_marker 11 is ahead of checkpoint 10',
   })
   assert.equal(
     sqlCalls().some(call => /\/\* public:map-outline \*\//iu.test(call.query ?? '')),

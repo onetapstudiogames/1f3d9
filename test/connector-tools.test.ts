@@ -372,6 +372,7 @@ const expectedToolContracts: Readonly<Record<string, Readonly<{
         },
         after_change_marker: {
           type: 'string', maxLength: 19, pattern: CHANGE_MARKER_PATTERN,
+          description: 'Does not narrow rows; proves the read covers this checkpoint, returns the covering change_marker, sends Cache-Control: no-store, and refuses with 409 if the marker is ahead of the city. Use /api/changes?since= to window by change id.',
         },
         entry_text_limit_bytes: {
           type: 'integer', minimum: 0, maximum: 655_360,
