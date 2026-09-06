@@ -20,7 +20,6 @@ import {
   isPublicSystemEventActor,
 } from './public-events.ts'
 import {
-  PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES,
   allowedPublicQuery,
   singlePublicQueryValue,
   utf8TextBytes,
@@ -29,7 +28,7 @@ import {
 import { isoTimestamp } from './timestamp.ts'
 
 export const PUBLIC_REPLAY_ROW_CEILING = 800
-export const PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES = PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES
+export const PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES = 512_000
 const PUBLIC_REPLAY_NOTE_LINE_CHARACTERS = 200
 const PUBLIC_REPLAY_CACHE_MS = 30_000
 const POSTGRES_INTEGER_MAX = 2_147_483_647
@@ -52,6 +51,13 @@ export type PublicReplayQueryResult = PublicReplayQuery | Readonly<{
   ok: false
   error: string
 }>
+
+export class PublicReplayUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PublicReplayUnavailableError'
+  }
+}
 
 type PublicReplayModerator = <T extends object>(
   targetType: 'note',
@@ -78,6 +84,8 @@ export type PublicReplay = Readonly<{
   window_start: string
   row_ceiling: number
   complete: boolean
+  rest_at?: '/api/events'
+  before_id?: number
   map: Readonly<{ places: readonly Readonly<Record<string, unknown>>[] }>
   start: Readonly<Record<string, Readonly<Record<string, unknown>>>>
   timeline: readonly PublicReplayTimelineRow[]
@@ -117,7 +125,8 @@ export function noteTimelineFields(
 
 const REPLAY_WINDOW_SQL = `
   /* public:replay-window */
-  SELECT event.at AS window_end
+  SELECT date_trunc('milliseconds', event.at) AS window_end,
+    date_trunc('milliseconds', event.at) - $1::integer * interval '1 hour' AS window_start
   FROM public_change_state state
   JOIN public_change_log change ON change.change_id = state.current_change_id
   JOIN events event ON event.id = change.event_id
@@ -129,11 +138,10 @@ const REPLAY_MAP_SQL = `
   SELECT place.id, place.parent_id,
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
     place.owner_id, owner.handle AS owner,
-    CASE WHEN latest_moderation.action = 'remove' OR place.drawing IS NULL
-      THEN NULL::text ELSE state.current_change_id::text END AS drawing_marker,
+    latest_moderation.action IS DISTINCT FROM 'remove'
+      AND place.drawing IS NOT NULL AS has_drawing,
     place.quiet
   FROM places place
-  CROSS JOIN public_change_state state
   LEFT JOIN residents owner ON owner.id = place.owner_id
   LEFT JOIN LATERAL (
     SELECT moderation.action
@@ -142,7 +150,7 @@ const REPLAY_MAP_SQL = `
     ORDER BY moderation.created_at DESC, moderation.id DESC
     LIMIT 1
   ) latest_moderation ON TRUE
-  WHERE state.singleton = true AND place.retired_at IS NULL
+  WHERE place.retired_at IS NULL
   ORDER BY place.id
 `
 
@@ -178,7 +186,7 @@ const REPLAY_TIMELINE_SQL = `
     AND event.detail->>'note_id' ~ '^[1-9][0-9]{0,9}$'
     AND (event.detail->>'note_id')::bigint <= 2147483647
     AND note.id = (event.detail->>'note_id')::integer
-  WHERE event.at >= checkpoint_event.at - $1::integer * interval '1 hour'
+  WHERE event.at >= date_trunc('milliseconds', checkpoint_event.at) - $1::integer * interval '1 hour'
     AND event.kind = ANY($2::text[])
   ORDER BY change.change_id DESC
   LIMIT $3::integer
@@ -195,7 +203,7 @@ const REPLAY_START_SQL = `
       ON checkpoint_change.change_id = state.current_change_id
     JOIN events checkpoint_event ON checkpoint_event.id = checkpoint_change.event_id
     JOIN events event ON event.id = change.event_id
-    WHERE event.at >= checkpoint_event.at - $1::integer * interval '1 hour'
+    WHERE event.at >= date_trunc('milliseconds', checkpoint_event.at) - $1::integer * interval '1 hour'
       AND event.kind = ANY($2::text[])
   ), resident_activity AS MATERIALIZED (
     SELECT resident.id, resident.handle
@@ -328,13 +336,10 @@ function replayMap(rows: readonly Record<string, unknown>[]) {
     const ownerId = row.owner_id == null ? null : positiveId(row.owner_id)
     const name = publicLabel(row.name)
     const owner = row.owner == null ? null : String(row.owner)
-    const drawingMarker = row.drawing_marker == null
-      ? null
-      : parsePublicChangeMarker(String(row.drawing_marker))
     if (
       id === null || name === null || (row.parent_id != null && parentId === null)
       || (row.owner_id != null && ownerId === null) || (owner !== null && !HANDLE_RE.test(owner))
-      || (row.drawing_marker != null && drawingMarker === null)
+      || typeof row.has_drawing !== 'boolean'
     ) throw new Error('invalid public replay map row')
     return Object.freeze({
       id,
@@ -342,7 +347,7 @@ function replayMap(rows: readonly Record<string, unknown>[]) {
       name,
       owner_id: ownerId,
       owner,
-      drawing_marker: drawingMarker,
+      has_drawing: row.has_drawing,
       quiet: row.quiet === true,
     })
   }))
@@ -448,6 +453,8 @@ export function sanitizePublicReplay(replay: PublicReplay): PublicValueSafety {
     window_start: replay.window_start,
     row_ceiling: replay.row_ceiling,
     complete: replay.complete,
+    ...(replay.rest_at === undefined ? {} : { rest_at: replay.rest_at }),
+    ...(replay.before_id === undefined ? {} : { before_id: replay.before_id }),
   })
   const map = sanitizeReplayValues(replay.map.places)
   const startEntries = Object.entries(replay.start)
@@ -483,12 +490,17 @@ export async function buildPublicReplay(
   moderateEvents: PublicReplayEventModerator = moderateReplayEvents,
 ): Promise<PublicReplay> {
   const stable = await readAtStablePublicChangeCheckpoint(execute, null, async () => {
-    const windowRows = await execute(REPLAY_WINDOW_SQL, [])
+    const windowRows = await execute(REPLAY_WINDOW_SQL, [PUBLIC_REPLAY_SPAN_HOURS[query.span]])
     const windowEnd = isoTimestamp(windowRows[0]?.window_end)
-    if (windowEnd === null) throw new Error('public replay is unavailable until the first public change')
-    const windowStart = new Date(
-      Date.parse(windowEnd) - PUBLIC_REPLAY_SPAN_HOURS[query.span] * 60 * 60 * 1_000,
-    ).toISOString()
+    const requestedWindowStart = isoTimestamp(windowRows[0]?.window_start)
+    if (windowRows.length === 0) {
+      throw new PublicReplayUnavailableError(
+        'the city has no public record yet, so there is nothing to replay; retry after the first public change',
+      )
+    }
+    if (windowEnd === null || requestedWindowStart === null) {
+      throw new Error('invalid public replay window')
+    }
     const [mapRows, rawTimelineRows, startRows, countRows] = await Promise.all([
       execute(REPLAY_MAP_SQL, [MODERATED_TEXT]),
       execute(REPLAY_TIMELINE_SQL, [
@@ -504,7 +516,6 @@ export async function buildPublicReplay(
         return timelineRow === null ? [] : [{ timelineRow, raw: row }]
       })
       .sort((left, right) => compareChangeId(left.timelineRow, right.timelineRow))
-    const complete = sortedRows.length <= PUBLIC_REPLAY_ROW_CEILING
     const selectedRows = sortedRows.slice(-PUBLIC_REPLAY_ROW_CEILING)
     const moderatedTimeline = await moderateEvents(selectedRows.map(row => row.timelineRow))
     if (moderatedTimeline.length !== selectedRows.length) {
@@ -540,26 +551,42 @@ export async function buildPublicReplay(
         line_cut: moderated ? fields.line_cut : fields.line_cut || raw?.note_line_cut === true,
       })] as const
     }))
-    const timeline = Object.freeze(publicRows.map(({ timelineRow, raw }) => {
+    const timeline = publicRows.map(({ timelineRow, raw }) => {
       const noteId = nullablePositiveId(raw.note_id)
       const note = noteId === null ? undefined : notesById.get(noteId)
       return Object.freeze({
         ...timelineRow,
         ...(note === undefined ? {} : { line: note.line, line_cut: note.line_cut }),
       })
-    }))
-    if (utf8TextBytes(timeline, 'line') > PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES) {
-      throw new Error('public replay note-line byte ceiling was exceeded')
+    })
+    let noteLineBytes = 0
+    let retainedFrom = timeline.length
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const rowBytes = utf8TextBytes([timeline[index]!], 'line')
+      if (noteLineBytes + rowBytes > PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES) break
+      noteLineBytes += rowBytes
+      retainedFrom = index
+    }
+    const retainedTimeline = Object.freeze(timeline.slice(retainedFrom))
+    const complete = rawTimelineRows.length <= PUBLIC_REPLAY_ROW_CEILING
+      && retainedTimeline.length === timeline.length
+    const oldestRetained = retainedTimeline[0]
+    if (!complete && oldestRetained === undefined) {
+      throw new Error('public replay truncation retained no public timeline row')
     }
     return Object.freeze({
       span: query.span,
       window_end: windowEnd,
-      window_start: windowStart,
+      window_start: complete ? requestedWindowStart : oldestRetained!.at,
       row_ceiling: PUBLIC_REPLAY_ROW_CEILING,
       complete,
+      ...(complete ? {} : {
+        rest_at: '/api/events' as const,
+        before_id: oldestRetained!.event_id,
+      }),
       map: Object.freeze({ places: replayMap(mapRows) }),
       start: replayStart(startRows),
-      timeline,
+      timeline: retainedTimeline,
       counts: replayCounts(countRows),
     })
   })
@@ -570,6 +597,8 @@ export async function buildPublicReplay(
     window_start: stable.value.window_start,
     row_ceiling: stable.value.row_ceiling,
     complete: stable.value.complete,
+    ...(stable.value.rest_at === undefined ? {} : { rest_at: stable.value.rest_at }),
+    ...(stable.value.before_id === undefined ? {} : { before_id: stable.value.before_id }),
     map: stable.value.map,
     start: stable.value.start,
     timeline: stable.value.timeline,

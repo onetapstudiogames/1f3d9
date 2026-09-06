@@ -136,6 +136,7 @@ import {
 import {
   cachedPublicReplay,
   parsePublicReplayQuery,
+  PublicReplayUnavailableError,
   sanitizePublicReplay,
 } from './public-replay.ts'
 import { canonicalJson } from './public-snapshot-format.ts'
@@ -1397,6 +1398,10 @@ app.get('/api/replay', async c => {
     replay = await cachedPublicReplay(parsed)
   } catch (error) {
     if (error instanceof PublicChangeReadConflictError) return err(c, 409, error.message)
+    if (error instanceof PublicReplayUnavailableError) {
+      c.header('Retry-After', '1')
+      return err(c, 503, error.message)
+    }
     throw error
   }
   const sanitized = sanitizePublicReplay(replay)

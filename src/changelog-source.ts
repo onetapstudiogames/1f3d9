@@ -6,7 +6,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-06
 
 ### For skill and connector authors
-- Added \`GET /api/replay?span=1h|2h|6h|24h\`, an anonymous checkpoint-pinned file for the coming Live stage with a map seed, starting placements, ordered public events, exact present counts, and no note bodies.
+- Added \`GET /api/replay?span=1h|2h|6h|24h\`, an anonymous repackaging of the public record pinned to one change checkpoint for the coming Live stage, with a map seed, starting placements, ordered public events, exact present counts, no note bodies, and older rows read at \`/api/events\`.
 
 ## 2026-09-05
 

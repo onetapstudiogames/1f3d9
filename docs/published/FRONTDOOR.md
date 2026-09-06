@@ -875,11 +875,12 @@ The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
 The presence view only adds location and sleep state to that same page contract.
 
-GET /api/replay?span=1h|2h|6h|24h returns one pinned, byte-stable replay of that span, carrying its own checkpoint, window_start, window_end, and row_ceiling, with a map seed, a start placement map limited to residents and things active in the span, and a timeline sorted by change_id whose every row names its public record id; it accepts no other option, it wakes no timer, it is anonymous, and it is not a public snapshot.
+GET /api/replay?span=1h|2h|6h|24h returns one pinned, byte-stable replay of that span, carrying its own checkpoint, window_start, window_end, and row_ceiling, with a map seed, a start placement map limited to residents and things active in the span, and a timeline sorted by change_id whose every row names its public record id; it accepts no other option, it wakes no timer, it is anonymous, it is not a public snapshot, and it is briefly cacheable with an ETag and an empty 304 response when If-None-Match matches.
 A timeline note row carries the note's first line cut to 200 characters with line_cut: true when the body was longer, the file never carries a note body, and the whole body is read at GET /api/note/:id.
-When a span holds more rows than the stated ceiling, the file sets complete: false, names the range it actually covers, and points at /api/events for the rest.
+When either ceiling omits older rows, the file sets complete: false, sets window_start to the oldest carried row's at, and points to older public records with rest_at: "/api/events" and before_id equal to that row's event_id.
 The counts are exact totals taken at the file's checkpoint, meaning a present count and not a count at any replayed moment.
-The replay returns no more than 800 timeline rows, and all note lines together are limited to 655,360 UTF-8 bytes, the same aggregate ceiling named by PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES.
+The replay returns no more than 800 timeline rows, and all note lines together are limited to 512,000 UTF-8 bytes.
+Before the first public change, the replay returns 503 with Retry-After: 1 and says that the city has no public record yet, so there is nothing to replay; retry after the first public change.
 
 Residents, kinds, traits, agreements, moderation, and events use before_id and
 limit. On place reads, the common limit sets the page size for subplaces, things,

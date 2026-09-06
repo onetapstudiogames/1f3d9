@@ -131,7 +131,6 @@ interface SeededReplay {
 }
 
 async function seedReplay(client: Pool): Promise<SeededReplay> {
-  await client.query(schemaDdl)
   const observed = (await client.query<{ observed_at: Date }>(
     'SELECT clock_timestamp() AS observed_at',
   )).rows[0]!.observed_at
@@ -254,7 +253,9 @@ type ReplayBody = Readonly<{
   window_end: string
   row_ceiling: number
   complete: boolean
-  map: { places: Array<{ id: number; quiet: boolean }> }
+  rest_at?: string
+  before_id?: number
+  map: { places: Array<{ id: number; quiet: boolean; has_drawing: boolean }> }
   start: Record<string, { place_id: number | null; origin?: string; origin_event_id?: number }>
   timeline: Array<{
     change_id: string
@@ -274,9 +275,17 @@ test('the public replay route is pinned and truthful against PostgreSQL', {
   const postgres = await startPostgres()
   database = postgres.client
   try {
-    const seeded = await seedReplay(postgres.client)
+    await postgres.client.query(schemaDdl)
     const { default: app } = await import('../../src/index.ts')
     const { buildPublicReplay, parsePublicReplayQuery } = await import('../../src/public-replay.ts')
+    const unavailableResponse = await app.request('http://city.test/api/replay?span=1h')
+    assert.equal(unavailableResponse.status, 503)
+    assert.equal(unavailableResponse.headers.get('retry-after'), '1')
+    assert.deepEqual(await unavailableResponse.json(), {
+      error: 'the city has no public record yet, so there is nothing to replay; retry after the first public change',
+    })
+
+    const seeded = await seedReplay(postgres.client)
     const parsed = parsePublicReplayQuery({ span: ['1h'] })
     assert.equal(parsed.ok, true)
     assert.ok(parsed.ok)
@@ -302,12 +311,21 @@ test('the public replay route is pinned and truthful against PostgreSQL', {
     assert.equal(first.window_end, first.timeline.at(-1)?.at)
     assert.equal(first.row_ceiling, 800)
     assert.equal(first.complete, true)
+    assert.equal(Object.hasOwn(first, 'rest_at'), false)
+    assert.equal(Object.hasOwn(first, 'before_id'), false)
 
     const repeatedResponse = await app.request('http://city.test/api/replay?span=1h')
     const repeatedText = await repeatedResponse.text()
     assert.equal(repeatedResponse.status, 200, repeatedText)
     assert.equal(repeatedText, firstText, 'the same span and checkpoint must be byte-identical')
     assert.equal(repeatedResponse.headers.get('etag'), firstResponse.headers.get('etag'))
+    assert.match(firstResponse.headers.get('cache-control') ?? '', /max-age=15/u)
+
+    const notModifiedResponse = await app.request('http://city.test/api/replay?span=1h', {
+      headers: { 'If-None-Match': firstResponse.headers.get('etag')! },
+    })
+    assert.equal(notModifiedResponse.status, 304)
+    assert.equal(await notModifiedResponse.text(), '')
 
     const sameAtRows = first.timeline.filter(row => seeded.sameAtEventIds.includes(row.event_id))
     assert.equal(sameAtRows.length, 2)
@@ -376,6 +394,32 @@ test('the public replay route is pinned and truthful against PostgreSQL', {
     const changed = JSON.parse(changedText) as ReplayBody
     assert.notEqual(changed.checkpoint, first.checkpoint)
     assert.notEqual(changedText, firstText)
+
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail, at)
+      SELECT 'action', 'replay-mover', jsonb_build_object(
+        'action_id', 1000 + ordinal, 'status', 'applied'
+      ), transaction_timestamp() - interval '1 second' + ordinal * interval '1 microsecond'
+      FROM generate_series(1, 801) ordinal
+    `)
+    const truncatedResponse = await app.request('http://city.test/api/replay?span=1h')
+    const truncatedText = await truncatedResponse.text()
+    assert.equal(truncatedResponse.status, 200, truncatedText)
+    const truncated = JSON.parse(truncatedText) as ReplayBody
+    assert.equal(truncated.complete, false)
+    assert.equal(truncated.timeline.length, 800)
+    assert.equal(truncated.window_start, truncated.timeline[0]!.at)
+    assert.equal(truncated.rest_at, '/api/events')
+    assert.equal(truncated.before_id, truncated.timeline[0]!.event_id)
+
+    const olderResponse = await app.request(
+      `http://city.test/api/events?before_id=${truncated.before_id}&limit=1`,
+    )
+    const olderText = await olderResponse.text()
+    assert.equal(olderResponse.status, 200, olderText)
+    const older = JSON.parse(olderText) as { events: Array<{ id: number }> }
+    assert.equal(older.events.length, 1)
+    assert.ok(older.events[0]!.id < truncated.before_id!)
   } finally {
     database = null
     await postgres.client.end().catch(() => undefined)

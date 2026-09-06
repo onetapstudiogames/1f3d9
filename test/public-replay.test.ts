@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES } from '../src/public-pagination.ts'
 import {
   buildPublicReplay,
   noteTimelineFields,
   parsePublicReplayQuery,
+  PublicReplayUnavailableError,
   sanitizePublicReplay,
   PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES,
   PUBLIC_REPLAY_ROW_CEILING,
@@ -54,7 +54,7 @@ test('note timeline fields carry one 200-code-point line and never the body', ()
 
 test('the replay row and aggregate note-line ceilings cover worst-case UTF-8', () => {
   assert.equal(PUBLIC_REPLAY_ROW_CEILING, 800)
-  assert.equal(PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES)
+  assert.equal(PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, 512_000)
   const worstCaseLines = Array.from(
     { length: PUBLIC_REPLAY_ROW_CEILING },
     () => '🏮'.repeat(200),
@@ -64,7 +64,7 @@ test('the replay row and aggregate note-line ceilings cover worst-case UTF-8', (
     0,
   )
   assert.equal(bytes, 640_000)
-  assert.ok(bytes <= PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES)
+  assert.ok(bytes > PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES)
 })
 
 test('the builder pins the file, sorts the timeline, moderates note lines, and emits no bodies', async () => {
@@ -78,7 +78,10 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
     calls.push({ statement, params })
     if (statement.includes('public:changes-checkpoint')) return [{ checkpoint: '12' }]
     if (statement.includes('public:replay-window')) {
-      return [{ window_end: new Date('2026-09-05T12:00:00.123Z') }]
+      return [{
+        window_end: new Date('2026-09-05T12:00:00.123Z'),
+        window_start: new Date('2026-09-05T11:00:00.123Z'),
+      }]
     }
     if (statement.includes('public:replay-map')) {
       return [{
@@ -87,7 +90,7 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
         name: 'quiet archive',
         owner_id: 7,
         owner: 'lamp-reader',
-        drawing_marker: '4',
+        has_drawing: true,
         quiet: true,
       }]
     }
@@ -166,6 +169,10 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
   assert.equal(replay.window_start, '2026-09-05T11:00:00.123Z')
   assert.equal(replay.row_ceiling, PUBLIC_REPLAY_ROW_CEILING)
   assert.equal(replay.complete, true)
+  assert.equal(Object.hasOwn(replay, 'rest_at'), false)
+  assert.equal(Object.hasOwn(replay, 'before_id'), false)
+  assert.equal(replay.map.places[0]?.has_drawing, true)
+  assert.equal(Object.hasOwn(replay.map.places[0] ?? {}, 'drawing_marker'), false)
   assert.deepEqual(replay.start['resident:7'], { place_id: 2, origin_event_id: 101 })
   assert.equal(replay.start['thing:80'], undefined)
   assert.deepEqual(replay.counts['2'], { residents: 1, things: 3 })
@@ -181,9 +188,12 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
   assert.doesNotMatch(body, /moderate this|private remainder|note_body|"body"/u)
   const timelineCall = calls.find(call => call.statement.includes('public:replay-timeline'))
   const startCall = calls.find(call => call.statement.includes('public:replay-start'))
+  const windowCall = calls.find(call => call.statement.includes('public:replay-window'))
+  assert.match(windowCall?.statement ?? '', /date_trunc\('milliseconds', event\.at\)/u)
+  assert.equal(windowCall?.params[0], 1)
   assert.match(
     timelineCall?.statement ?? '',
-    /event\.at >= checkpoint_event\.at - \$1::integer \* interval '1 hour'/u,
+    /event\.at >= date_trunc\('milliseconds', checkpoint_event\.at\) - \$1::integer \* interval '1 hour'/u,
   )
   assert.doesNotMatch(timelineCall?.statement ?? '', /event\.at <=/u)
   assert.equal(timelineCall?.params[0], 1)
@@ -191,7 +201,7 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
   assert.equal(timelineCall?.params[2], PUBLIC_REPLAY_ROW_CEILING + 1)
   assert.match(
     startCall?.statement ?? '',
-    /event\.at >= checkpoint_event\.at - \$1::integer \* interval '1 hour'/u,
+    /event\.at >= date_trunc\('milliseconds', checkpoint_event\.at\) - \$1::integer \* interval '1 hour'/u,
   )
   assert.doesNotMatch(startCall?.statement ?? '', /event\.at <=/u)
   assert.equal(startCall?.params[0], 1)
@@ -217,7 +227,10 @@ test('the builder marks an over-ceiling file incomplete and names only its cover
   }))
   const execute = async (statement: string): Promise<readonly Record<string, unknown>[]> => {
     if (statement.includes('public:changes-checkpoint')) return [{ checkpoint: '801' }]
-    if (statement.includes('public:replay-window')) return [{ window_end: new Date(end) }]
+    if (statement.includes('public:replay-window')) return [{
+      window_end: new Date(end),
+      window_start: new Date(end - 60 * 60_000),
+    }]
     if (statement.includes('public:replay-map') || statement.includes('public:replay-start') ||
         statement.includes('public:replay-counts')) return []
     if (statement.includes('public:replay-timeline')) return rows
@@ -227,15 +240,112 @@ test('the builder marks an over-ceiling file incomplete and names only its cover
 
   assert.equal(replay.complete, false)
   assert.equal(replay.timeline.length, PUBLIC_REPLAY_ROW_CEILING)
-  assert.equal(replay.window_start, '2026-09-05T11:00:00.000Z')
-  assert.ok(Date.parse(replay.timeline[0]!.at) > Date.parse(replay.window_start))
+  assert.equal(replay.window_start, replay.timeline[0]!.at)
+  assert.equal(replay.rest_at, '/api/events')
+  assert.equal(replay.before_id, replay.timeline[0]!.event_id)
   assert.equal(replay.timeline.at(-1)?.change_id, '801')
+
+  const guarded = sanitizePublicReplay(replay)
+  assert.equal(guarded.withheld, false)
+  assert.equal((guarded.value as Record<string, unknown>).rest_at, '/api/events')
+  assert.equal((guarded.value as Record<string, unknown>).before_id, replay.timeline[0]!.event_id)
+})
+
+test('the raw row ceiling marks the replay incomplete even when one row cannot be parsed', async () => {
+  assert.equal(parsedOneHour.ok, true)
+  if (!parsedOneHour.ok) return
+  const end = Date.parse('2026-09-05T12:00:00.000Z')
+  const rows = Array.from({ length: PUBLIC_REPLAY_ROW_CEILING + 1 }, (_, index) => ({
+    change_id: String(index + 1),
+    event_id: index + 1,
+    at: new Date(end - ((PUBLIC_REPLAY_ROW_CEILING - index) * 1_000)),
+    kind: 'action',
+    actor: index === 0 ? 'not a public actor' : 'lamp-reader',
+    detail: { action_id: index + 1 },
+    note_id: null,
+    note_body: null,
+  }))
+  const execute = async (statement: string): Promise<readonly Record<string, unknown>[]> => {
+    if (statement.includes('public:changes-checkpoint')) return [{ checkpoint: '801' }]
+    if (statement.includes('public:replay-window')) return [{
+      window_end: new Date(end),
+      window_start: new Date(end - 60 * 60_000),
+    }]
+    if (statement.includes('public:replay-map') || statement.includes('public:replay-start') ||
+        statement.includes('public:replay-counts')) return []
+    if (statement.includes('public:replay-timeline')) return rows
+    throw new Error(`unexpected replay query: ${statement}`)
+  }
+
+  const replay = await buildPublicReplay(
+    execute, parsedOneHour, async (_type, noteRows) => noteRows, async eventRows => eventRows,
+  )
+
+  assert.equal(replay.complete, false)
+  assert.equal(replay.rest_at, '/api/events')
+  assert.equal(replay.before_id, replay.timeline[0]!.event_id)
+})
+
+test('the note-line byte ceiling drops oldest rows through the incompleteness path', async () => {
+  assert.equal(parsedOneHour.ok, true)
+  if (!parsedOneHour.ok) return
+  const end = Date.parse('2026-09-05T12:00:00.000Z')
+  const line = '🏮'.repeat(200)
+  const rows = Array.from({ length: PUBLIC_REPLAY_ROW_CEILING }, (_, index) => ({
+    change_id: String(index + 1),
+    event_id: index + 1,
+    at: new Date(end - ((PUBLIC_REPLAY_ROW_CEILING - index - 1) * 1_000)),
+    kind: 'note',
+    actor: 'lamp-reader',
+    detail: { note_id: index + 1 },
+    note_id: index + 1,
+    note_body: line,
+    note_line_cut: false,
+  }))
+  const execute = async (statement: string): Promise<readonly Record<string, unknown>[]> => {
+    if (statement.includes('public:changes-checkpoint')) return [{ checkpoint: '800' }]
+    if (statement.includes('public:replay-window')) return [{
+      window_end: new Date(end),
+      window_start: new Date(end - 60 * 60_000),
+    }]
+    if (statement.includes('public:replay-map') || statement.includes('public:replay-start') ||
+        statement.includes('public:replay-counts')) return []
+    if (statement.includes('public:replay-timeline')) return rows
+    throw new Error(`unexpected replay query: ${statement}`)
+  }
+
+  const replay = await buildPublicReplay(
+    execute, parsedOneHour, async (_type, noteRows) => noteRows, async eventRows => eventRows,
+  )
+
+  assert.equal(replay.complete, false)
+  assert.equal(replay.timeline.length, 640)
+  assert.equal(replay.timeline[0]!.event_id, 161)
+  assert.equal(replay.window_start, replay.timeline[0]!.at)
+  assert.equal(replay.rest_at, '/api/events')
+  assert.equal(replay.before_id, 161)
+})
+
+test('the builder gives the no-record state a typed refusal', async () => {
+  assert.equal(parsedOneHour.ok, true)
+  if (!parsedOneHour.ok) return
+  const execute = async (statement: string): Promise<readonly Record<string, unknown>[]> => {
+    if (statement.includes('public:changes-checkpoint')) return [{ checkpoint: '0' }]
+    if (statement.includes('public:replay-window')) return []
+    throw new Error(`unexpected replay query: ${statement}`)
+  }
+
+  await assert.rejects(
+    buildPublicReplay(execute, parsedOneHour),
+    (error: unknown) => error instanceof PublicReplayUnavailableError
+      && error.message === 'the city has no public record yet, so there is nothing to replay; retry after the first public change',
+  )
 })
 
 test('credential safety accepts a large valid replay without skipping row checks', () => {
   const places = Array.from({ length: 800 }, (_, index) => Object.freeze({
     id: index + 1, parent_id: null, name: `place ${index + 1}`,
-    owner_id: null, owner: null, drawing_marker: null, quiet: false,
+    owner_id: null, owner: null, has_drawing: false, quiet: false,
   }))
   const start = Object.fromEntries(Array.from({ length: 800 }, (_, index) => [
     `resident:${index + 1}`, Object.freeze({ place_id: index + 1 }),

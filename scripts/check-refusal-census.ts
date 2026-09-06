@@ -109,6 +109,10 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
 ])
 const CALLER_ERROR_MESSAGE_ADAPTERS = new Map([
   [
+    'src/public-replay.ts:PublicReplayUnavailableError',
+    { status: '503', adapter: 'public replay unavailable adapter', boundary: 'HTTP 503 JSON with Retry-After: 1' },
+  ],
+  [
     'src/prepaid-credit.ts:TypeError',
     { status: '400', adapter: 'prepaid-credit-routes conflictResponse TypeError adapter', boundary: 'HTTP 400 JSON; MCP forwarded tool result' },
   ],
