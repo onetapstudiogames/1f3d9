@@ -224,8 +224,8 @@ type StageRegistryRuntime = Readonly<{
   }>): readonly string[]
   ensureStageNode(kind: string, id: number, factory: () => FakeStageNode): FakeStageNode
   finishStageNodeReconcile(drawnKeys?: readonly string[]): void
-  retainStageNode(kind: string, id: number): void
   retireAllStageNodes(): void
+  stageNodeReconcileOpen(): boolean
   stageNode(kind: string, id: number): FakeStageNode | null
 }>
 
@@ -237,7 +237,6 @@ function createStageRegistryRuntime(): StageRegistryRuntime {
     'stageTransform',
     `const liveStageNodes = new Map()
 let liveStageNextNodeKeys = null
-let liveStageRetainedNodeKeys = null
 let portraitObserver = null
 const observedPortraitShells = new Set()
 const pendingPortraitShells = new Set()
@@ -247,8 +246,8 @@ return {
   drawnStageNodeKeys,
   ensureStageNode,
   finishStageNodeReconcile,
-  retainStageNode,
   retireAllStageNodes,
+  stageNodeReconcileOpen,
   stageNode,
 }`,
   )(stageNodeKey, reconcileStageNodeKeys, stageDrawnNodeKeys, stageTransform) as StageRegistryRuntime
@@ -274,10 +273,13 @@ test('stage node reconciliation keeps survivors, creates newcomers once, and ret
   const runtime = createStageRegistryRuntime()
   const creations = new Map<number, number>()
 
+  assert.equal(runtime.stageNodeReconcileOpen(), false)
   runtime.beginStageNodeReconcile()
+  assert.equal(runtime.stageNodeReconcileOpen(), true)
   const departed = runtime.ensureStageNode('resident', 11, fakeStageNodeFactory(creations, 11))
   const survivor = runtime.ensureStageNode('resident', 12, fakeStageNodeFactory(creations, 12))
   runtime.finishStageNodeReconcile()
+  assert.equal(runtime.stageNodeReconcileOpen(), false)
   runtime.beginStageNodeReconcile()
   const repaintedSurvivor = runtime.ensureStageNode(
     'resident', 12, fakeStageNodeFactory(creations, 12))
@@ -401,26 +403,6 @@ test('stage reconcile retires a stale node still attached inside a kept containe
   assert.strictEqual(runtime.stageNode('resident', 22), survivor)
   assert.equal(survivor.removed, 0)
   assert.equal(stale.removed, 1)
-  assert.equal(runtime.stageNode('resident', 21), null)
-})
-
-test('stage reconcile retains an off-camera replay for one paint, then retires it normally', () => {
-  const runtime = createStageRegistryRuntime()
-  const creations = new Map<number, number>()
-  const replay = runtime.ensureStageNode(
-    'resident', 21, fakeStageNodeFactory(creations, 21))
-
-  runtime.beginStageNodeReconcile()
-  runtime.retainStageNode('resident', 21)
-  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage([])))
-
-  assert.strictEqual(runtime.stageNode('resident', 21), replay)
-  assert.equal(replay.removed, 0)
-
-  runtime.beginStageNodeReconcile()
-  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage([])))
-
-  assert.equal(replay.removed, 1)
   assert.equal(runtime.stageNode('resident', 21), null)
 })
 

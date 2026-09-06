@@ -86,7 +86,6 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   }
   const liveStageNodes = new Map()
   let liveStageNextNodeKeys = null
-  let liveStageRetainedNodeKeys = null
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
   const viewShareButtons = [...document.querySelectorAll('[data-share-scope="view"]')]
@@ -286,7 +285,9 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
       context.renderContext,
     )
     current.replaceWith(next)
-    finishStageNodeReconcile(drawnStageNodeKeys(nodes.livePlates))
+    if (stageNodeReconcileOpen()) {
+      finishStageNodeReconcile(drawnStageNodeKeys(nodes.livePlates))
+    }
     if (movesFocus) {
       restoreFocus(focusKey, focusFallbackKey, 'live-viewport')
     }

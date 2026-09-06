@@ -27,14 +27,6 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
     node.remove()
     liveStageNodes.delete(key)
     liveStageNextNodeKeys?.delete(key)
-    liveStageRetainedNodeKeys?.delete(key)
-  }
-
-  function retainStageNode(kind, id) {
-    const key = stageNodeKey(kind, id)
-    if (liveStageRetainedNodeKeys && liveStageNodes.has(key)) {
-      liveStageRetainedNodeKeys.add(key)
-    }
   }
 
   function retireAllStageNodes() {
@@ -43,7 +35,6 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
       retireStageNode(kind, id)
     }
     liveStageNextNodeKeys = null
-    liveStageRetainedNodeKeys = null
   }
 
   function setStageTransform(node, position) {
@@ -68,7 +59,10 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
 
   function beginStageNodeReconcile() {
     liveStageNextNodeKeys = new Set()
-    liveStageRetainedNodeKeys = new Set()
+  }
+
+  function stageNodeReconcileOpen() {
+    return liveStageNextNodeKeys !== null
   }
 
   function finishStageNodeReconcile(drawnKeys = null) {
@@ -76,18 +70,15 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
     const attachedKeys = drawnKeys === null
       ? null
       : new Set(stageDrawnNodeKeys(drawnKeys))
-    const nextKeys = new Set([...(attachedKeys === null
+    const nextKeys = new Set(attachedKeys === null
       ? liveStageNextNodeKeys
-      : [...liveStageNextNodeKeys].filter(key => attachedKeys.has(key))),
-      ...(liveStageRetainedNodeKeys || []),
-    ])
+      : [...liveStageNextNodeKeys].filter(key => attachedKeys.has(key)))
     const diff = reconcileStageNodeKeys([...liveStageNodes.keys()], [...nextKeys])
     for (const key of diff.retire) {
       const [kind, id] = key.split(':')
       retireStageNode(kind, id)
     }
     liveStageNextNodeKeys = null
-    liveStageRetainedNodeKeys = null
   }
 
   function drawnStageNodeKeys(root) {
