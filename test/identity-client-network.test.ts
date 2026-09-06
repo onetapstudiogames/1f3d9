@@ -13,7 +13,7 @@ const stage = { handle: 'network-test', resident_key: key, stage_token: 'fake-st
 const confirmed = { handle: 'network-test', resident_id: 123 }
 const paths = [
   { name: 'register stage', args: ['register', '--handle', 'network-test', '--client-class', 'coding_persistent', '--human-approved'], path: '/api/register', actions: ['stage', 'confirm'], failAt: 1, result: 'nothing was created', uncertain: 'registration could not be confirmed', input: '', responses: [stage, confirmed] },
-  { name: 'register confirm', args: ['register', '--handle', 'network-test', '--client-class', 'coding_persistent', '--human-approved'], path: '/api/register', actions: ['stage', 'confirm'], failAt: 2, result: 'nothing was created', uncertain: 'registration could not be confirmed', input: '', responses: [stage, confirmed] },
+  { name: 'register confirm', args: ['register', '--handle', 'network-test', '--client-class', 'coding_persistent', '--human-approved'], path: '/api/register', actions: ['stage', 'confirm'], failAt: 2, result: 'no resident was created; a staged credential entry was written locally and remains stored', uncertain: 'registration could not be confirmed', input: '', responses: [stage, confirmed] },
   { name: 'rotate begin', args: ['rotate', '--resident-key-file', '-'], path: '/api/rotate', actions: ['begin', 'confirm'], failAt: 1, result: 'the key was not rotated', uncertain: 'key rotation could not be confirmed', input: key, responses: [stage, confirmed] },
   { name: 'rotate confirm', args: ['rotate', '--resident-key-file', '-'], path: '/api/rotate', actions: ['begin', 'confirm'], failAt: 2, result: 'the key was not rotated', uncertain: 'key rotation could not be confirmed', input: key, responses: [stage, confirmed] },
   { name: 'recovery generate', args: ['recover', 'generate', '--resident-key-file', '-'], path: '/api/recovery', actions: ['generate'], failAt: 1, result: 'no recovery was performed', uncertain: 'recovery could not be confirmed', input: key, responses: [stage] },
@@ -22,7 +22,9 @@ const paths = [
   { name: 'pair', args: ['pair', '--resident-key-file', '-'], path: '/api/pair', actions: ['pair'], failAt: 1, result: 'no pairing code was created', uncertain: 'pairing code creation could not be confirmed', input: key, responses: [{ pairing_code: 'fake-pairing-code', expires_at: '2026-09-06T00:10:00Z' }] },
 ]
 
-async function runClient(path: typeof paths[number], origin: string, failure: NetworkFailure, failAt = path.failAt) {
+type ClientPath = Omit<typeof paths[number], 'responses'> & { responses: Record<string, unknown>[] }
+
+async function runClient(path: ClientPath, origin: string, failure: NetworkFailure, failAt = path.failAt) {
   const inheritedNames = new Set(['path', 'pathext', 'systemroot', 'windir', 'comspec', 'temp', 'tmp', 'tmpdir', 'ecc_skip_git_hooks'])
   const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => inheritedNames.has(name.toLowerCase())))
   const child = spawn(process.execPath, ['--experimental-strip-types', '--import', preload, script, ...path.args, '--origin', origin], {
@@ -121,6 +123,40 @@ for (const [name, location, expected] of [
         assert.ok(!result.stderr.includes(secret), `redirect diagnostic must omit ${secret}`)
       }
     } finally { await stub.close() }
+  })
+}
+
+for (const [site, command] of [['postJson', 'register stage'], ['postAuthed', 'pair']] as const) {
+  const path = paths.find(path => path.name === command)!
+  for (const [name, value] of [
+    ['control character', 'unsafe\u001b[2J\u001b[Hprose'],
+    ['over-length value', 'x'.repeat(301)],
+    ['line separator', 'unsafe\u2028prose'],
+    ['paragraph separator', 'unsafe\u2029prose'],
+    ['empty value', '   '],
+    ['non-string value', { message: 'unsafe prose' }],
+  ] as const) {
+    for (const field of ['error', 'next_step'] as const) {
+      test(`${site}: ${field} rejects ${name} while preserving safe companion prose`, async () => {
+        const response = { error: '  Request refused  ', next_step: '  Check the city address  ', [field]: value }
+        const result = await runClient({ ...path, responses: [response] }, 'https://identity-test.invalid', 'prose')
+        const error = field === 'error' ? 'HTTP 401' : 'Request refused'
+        const nextStep = field === 'next_step' ? '' : ' next_step: Check the city address'
+        assert.equal(result.error, undefined, `${site}: child error ${String(result.error)}`)
+        assert.equal(result.status, 1, `${site}: expected failure, stderr=${JSON.stringify(result.stderr)}`)
+        assert.equal(result.stderr.trim(), `identity-client: ${path.path} refused: ${error}.${nextStep}`)
+        assert.equal(result.stdout, '', `${site}: failure must not print successful output`)
+      })
+    }
+  }
+  test(`${site}: trims server prose and accepts the 300-character boundary`, async () => {
+    const error = 'e'.repeat(300)
+    const nextStep = 'n'.repeat(300)
+    const result = await runClient({ ...path, responses: [{ error: `  ${error}  `, next_step: `  ${nextStep}  ` }] }, 'https://identity-test.invalid', 'prose')
+    assert.equal(result.error, undefined, `${site}: child error ${String(result.error)}`)
+    assert.equal(result.status, 1, `${site}: expected failure, stderr=${JSON.stringify(result.stderr)}`)
+    assert.equal(result.stderr.trim(), `identity-client: ${path.path} refused: ${error}. next_step: ${nextStep}`)
+    assert.equal(result.stdout, '', `${site}: failure must not print successful output`)
   })
 }
 
