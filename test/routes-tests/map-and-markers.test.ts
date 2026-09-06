@@ -70,8 +70,8 @@ export function registerMapAndMarkersTests(): void {
       )
       const first = await firstResponse.json() as {
         view: string
-        place: { id: number; children: unknown[] }
-        subplaces: Array<{ id: number; description?: string; children: unknown[]; places: number }>
+        place: { id: number; name: string; parent_id: number | null; children: unknown[] }
+        subplaces: Array<{ id: number; name: string; parent_id: number; description?: string; children: unknown[]; places: number }>
         subplaces_page: {
           total_items: number
           total_text_bytes: number
@@ -84,8 +84,12 @@ export function registerMapAndMarkersTests(): void {
       }
       assert.equal(first.view, 'outline')
       assert.equal(first.place.id, 1)
+      assert.equal(first.place.name, 'the world')
+      assert.equal(first.place.parent_id, null, 'world has no upward edge')
       assert.deepEqual(first.place.children, [])
       assert.deepEqual(first.subplaces.map(place => place.id), recentIds(160).slice(0, 10))
+      assert.deepEqual(first.subplaces.map(({ id, name, parent_id }) => ({ id, name, parent_id })),
+        recentIds(160).slice(0, 10).map(id => ({ id, name: `Map place ${id}`, parent_id: 1 })))
       assert.equal(first.subplaces.every(place => !Object.hasOwn(place, 'description')), true)
       assert.equal(first.subplaces.every(place => Array.isArray(place.children) && place.children.length === 0), true)
       assert.equal(first.subplaces[0]?.places, 2)
@@ -138,6 +142,17 @@ export function registerMapAndMarkersTests(): void {
         false,
         'the parent, totals, and page share one database snapshot',
       )
+      const currentResponse = await app.request('/api/map?view=outline&parent_id=160&limit=1')
+      assert.equal(currentResponse.status, 200, 'a non-root branch is anonymous to read')
+      const current = await currentResponse.json() as typeof first
+      assert.equal(current.place.id, 160)
+      assert.equal(current.place.parent_id, 1, 'the current place names the upward edge ID')
+      const upwardResponse = await app.request(`/api/map?view=outline&parent_id=${current.place.parent_id}&limit=1`)
+      assert.equal(upwardResponse.status, 200)
+      const upward = await upwardResponse.json() as typeof first
+      assert.equal(upward.place.id, current.place.parent_id)
+      assert.equal(upward.place.name, 'the world', 'the second bounded read names the upward neighbor')
+      assert.equal(upward.subplaces.length, 1, 'limit=1 bounds children without dropping the selected parent')
     } finally {
       Date.now = originalNow
     }

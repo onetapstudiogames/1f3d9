@@ -29,6 +29,16 @@ const workingStandard = read('../AGENTS.md')
 const invariants = read('../docs/INVARIANTS.md')
 const windowPage = read('../src/window-page.ts')
 
+test('movement instructions teach the anonymous bounded parent and child edge lookup', () => {
+  const sentence = 'To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.'
+  for (const [name, text] of [
+    ['front door', frontdoor], ['embedded front door', FRONTDOOR],
+    ['published front door', frontdoorDocument], ['compact map', llms], ['embedded compact map', LLMS],
+  ]) {
+    assert.ok(text!.replace(/\s+/gu, ' ').includes(sentence), `${name} must teach the complete paginated one-edge lookup`)
+  }
+})
+
 test('public surfaces keep the tools page community-only and explain its review queue', () => {
   for (const [name, text] of [
     ['front door source', frontdoor],

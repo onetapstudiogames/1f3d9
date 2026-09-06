@@ -186,6 +186,8 @@ three permission switches stay closed only for the world itself. They
 never override a child continent's permissions, and the world has no
 laws to pass down.
 
+To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
+
 MONEY
 -----
 The dollar is for claiming, not for living. Exactly two claims cost
