@@ -1,0 +1,305 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import {
+  resolveMigrationRun,
+  splitSqlStatements,
+} from '../../scripts/migrate.ts'
+import {
+  migrationDdl,
+  schemaDdl,
+  schemaStatement,
+} from '../helpers/migrate-fixtures/index.ts'
+
+export function registerCommunitySchemaTests(): void {
+  const communityToolSubmissionsMigrationFile =
+    'db/migrations/20260901_community_tool_submissions.sql' as const
+  const communityToolSubmissionPrivacyMigrationFile =
+    'db/migrations/20260901_community_tool_submission_privacy.sql' as const
+
+  test('community tool queue migration is additive and uses the guarded remote ceremony', () => {
+    const run = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'community-tool-submissions'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(run.migrationFile, communityToolSubmissionsMigrationFile)
+    assert.equal(run.executionMode, 'transactional')
+    const ddl = migrationDdl(communityToolSubmissionsMigrationFile)
+    assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submissions/iu)
+    assert.match(ddl, /CREATE TABLE IF NOT EXISTS community_tool_submission_limits/iu)
+
+    const privacyRun = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'community-tool-submission-privacy'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(privacyRun.migrationFile, communityToolSubmissionPrivacyMigrationFile)
+    assert.equal(privacyRun.executionMode, 'transactional')
+    const privacyDdl = migrationDdl(communityToolSubmissionPrivacyMigrationFile)
+    assert.match(privacyDdl, /ALTER TABLE community_tool_submissions/iu)
+    assert.match(privacyDdl, /submitter_ip_hash[\s\S]*DROP NOT NULL/iu)
+    assert.match(privacyDdl, /UPDATE community_tool_submissions[\s\S]*submitter_ip_hash\s*=\s*NULL/iu)
+    assert.match(privacyDdl, /title[\s\S]*operator_name[\s\S]*description/iu)
+    assert.match(
+      privacyDdl,
+      /community_tool_submissions_pending_hash[\s\S]*community_tool_submissions[\s\S]*community_tool_submission_limits[\s\S]*RAISE EXCEPTION/iu,
+    )
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    for (const target of ['preview', 'production'] as const) {
+      assert.match(
+        packageJson.scripts?.[`migrate:${target}:community-tool-submissions`] ?? '',
+        new RegExp(`--target ${target} --migration community-tool-submissions$`, 'u'),
+      )
+      assert.match(
+        packageJson.scripts?.[`migrate:${target}:community-tool-submission-privacy`] ?? '',
+        new RegExp(`--target ${target} --migration community-tool-submission-privacy$`, 'u'),
+      )
+    }
+  })
+
+  test('PL/pgSQL dollar-quoted bodies stay inside one migration statement', () => {
+    const ddl = `
+      CREATE OR REPLACE FUNCTION keep_history() RETURNS trigger
+      LANGUAGE plpgsql AS $function$
+      BEGIN
+        IF TG_OP = 'DELETE' THEN
+          RAISE EXCEPTION 'history; cannot be deleted';
+        END IF;
+        RETURN NEW;
+      END
+      $function$;
+
+      CREATE TABLE audit_log (id integer);
+    `
+
+    const statements = splitSqlStatements(ddl)
+
+    assert.equal(statements.length, 2)
+    assert.match(statements[0]!, /RAISE EXCEPTION 'history; cannot be deleted';/)
+    assert.match(statements[0]!, /END IF;/)
+    assert.match(statements[0]!, /\$function\$/)
+    assert.equal(statements[1], 'CREATE TABLE audit_log (id integer)')
+  })
+
+  test('schema migration reconnects valid legacy open offers to their asset mutex', () => {
+    const statements = splitSqlStatements(schemaDdl)
+
+    for (const [table, type] of [['places', 'place'], ['things', 'thing'], ['kinds', 'kind']] as const) {
+      assert.ok(statements.some(statement =>
+        new RegExp(`UPDATE\\s+${table}\\b`, 'i').test(statement) &&
+        /FROM\s+transfer_offers/i.test(statement) &&
+        new RegExp(`asset_type\\s*=\\s*'${type}'`, 'i').test(statement) &&
+        /status\s*=\s*'open'/i.test(statement) &&
+        /active_offer_id\s+IS\s+NULL/i.test(statement)
+      ), `missing legacy ${type} offer backfill`)
+    }
+  })
+
+  test('world offers extend direct transfers without weakening their buyer binding', () => {
+    const offers = schemaStatement('transfer_offers')
+
+    assert.match(offers, /channel\s+TEXT\s+NOT NULL\s+DEFAULT\s+'direct'/i)
+    assert.match(offers, /channel\s+IN\s*\(\s*'direct'\s*,\s*'world'\s*\)/i)
+    assert.doesNotMatch(offers, /buyer_id\s+INTEGER\s+NOT NULL/i)
+    assert.match(offers, /market_origin\s+TEXT\s+NOT NULL\s+DEFAULT\s+'https:\/\/1f3ea\.com'/i)
+    for (const column of ['market_draft_id', 'market_listing_id', 'market_checkout_id']) {
+      assert.match(offers, new RegExp(`\\b${column}\\b`, 'i'))
+    }
+    assert.match(offers, /channel\s*=\s*'direct'[\s\S]*buyer_id\s+IS\s+NOT\s+NULL/i)
+    assert.match(offers, /channel\s*=\s*'world'[\s\S]*asset_type\s*=\s*'thing'/i)
+    assert.match(schemaDdl, /ALTER\s+TABLE\s+transfer_offers\s+ALTER\s+COLUMN\s+buyer_id\s+DROP\s+NOT\s+NULL/i)
+    assert.match(offers, /market_buyer\s+TEXT/i)
+    assert.match(schemaDdl, /NEW\.market_buyer\s+IS\s+DISTINCT\s+FROM\s+OLD\.market_buyer/i)
+  })
+
+  test('world market identifiers are unique public bindings, not arbitrary origins', () => {
+    assert.match(
+      schemaDdl,
+      /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+transfer_offers_world_draft[\s\S]*market_draft_id[\s\S]*channel\s*=\s*'world'/i,
+    )
+    assert.match(
+      schemaDdl,
+      /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+transfer_offers_world_checkout[\s\S]*market_checkout_id[\s\S]*IS\s+NOT\s+NULL/i,
+    )
+    assert.match(schemaDdl, /market_origin\s*=\s*'https:\/\/1f3ea\.com'/i)
+  })
+
+  test('offer history trigger rejects claims without an active buyer reservation', () => {
+    assert.match(
+      schemaDdl,
+      /NEW\.status\s*=\s*'claimed'[\s\S]*OLD\.reserved_by\s+IS\s+DISTINCT\s+FROM\s+OLD\.buyer_id[\s\S]*OLD\.reserved_until\s*<=\s*clock_timestamp\(\)/i,
+    )
+    assert.match(
+      schemaDdl,
+      /NEW\.status\s*=\s*'canceled'[\s\S]*OLD\.reserved_until\s*[^\n]*>\s*clock_timestamp\(\)/i,
+    )
+    assert.match(
+      schemaDdl,
+      /OLD\.pending_x402_tx_hash\s+IS\s+NOT\s+NULL\s+AND\s+reservation_changed[\s\S]*pending x402 reservation is immutable/i,
+    )
+    assert.match(
+      schemaDdl,
+      /CREATE\s+TRIGGER\s+sale_payments_match_world_offer\s+BEFORE\s+INSERT\s+ON\s+sale_payments/i,
+    )
+    assert.match(
+      schemaDdl,
+      /NEW\.block_time\s+IS\s+NULL[\s\S]*date_trunc\('second',\s*world_offer\.reserved_at\)[\s\S]*NEW\.block_time\s+>=\s+date_trunc\('second',\s*world_offer\.reserved_until\)/i,
+    )
+  })
+
+  test('fresh and upgraded world constraints use one stable set of names', () => {
+    for (const name of [
+      'transfer_offers_channel_allowed',
+      'transfer_offers_market_origin_fixed',
+      'transfer_offers_market_ids_positive',
+      'transfer_offers_reservation_complete',
+      'transfer_offers_distinct_parties',
+      'transfer_offers_reserved_buyer',
+      'transfer_offers_five_minute_reservation',
+      'transfer_offers_status_timestamps',
+      'transfer_offers_reservation_wallet_state',
+      'transfer_offers_channel_state',
+      'transfer_offers_pending_x402_state',
+    ]) {
+      assert.match(schemaDdl, new RegExp(`CONSTRAINT\\s+${name}\\b`, 'i'))
+    }
+  })
+
+  test('x402 payment attempts are durable before settlement or final product writes', () => {
+    const attempts = schemaStatement('payment_attempts')
+
+    assert.match(attempts, /public_id\s+TEXT\s+PRIMARY KEY/i)
+    assert.match(attempts, /actor_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\(id\)/i)
+    assert.match(attempts, /operation\s+TEXT\s+NOT NULL/i)
+    assert.match(attempts, /request_hash\s+TEXT/i)
+    assert.match(attempts, /request_json\s+JSONB/i)
+    assert.match(attempts, /method\s+TEXT/i)
+    assert.match(attempts, /token\s+TEXT/i)
+    assert.match(attempts, /amount_units\s+BIGINT/i)
+    assert.match(attempts, /x402_nonce\s+TEXT/i)
+    assert.match(attempts, /x402_payload_digest\s+TEXT/i)
+    assert.match(attempts, /tx_hash\s+TEXT\s+UNIQUE/i)
+    assert.match(attempts, /finalized_block_number\s+BIGINT/i)
+    assert.match(attempts, /response_status\s+SMALLINT/i)
+    assert.match(schemaDdl, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_x402_nonce/i)
+    assert.match(schemaDdl, /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+payment_attempts_one_live_target/i)
+  })
+
+  test('round-two state tables are created idempotently', () => {
+    for (const table of [
+      'resident_presence',
+      'place_law_changes',
+      'active_labels',
+      'active_blocks',
+      'action_runs',
+      'action_resolutions',
+      'pending_effects',
+      'effect_resolutions',
+      'moderation_actions',
+      'payment_attempts',
+    ]) {
+      schemaStatement(table)
+    }
+  })
+
+  test('resident presence permits residents without a current place or home', () => {
+    const presence = schemaStatement('resident_presence')
+
+    assert.match(presence, /resident_id\s+INTEGER\s+PRIMARY KEY\s+REFERENCES\s+residents\s*\(id\)/i)
+    assert.match(presence, /current_place_id\s+INTEGER\s+REFERENCES\s+places\s*\(id\)/i)
+    assert.match(presence, /home_place_id\s+INTEGER\s+REFERENCES\s+places\s*\(id\)/i)
+    assert.doesNotMatch(presence, /current_place_id\s+INTEGER\s+NOT NULL/i)
+    assert.doesNotMatch(presence, /home_place_id\s+INTEGER\s+NOT NULL/i)
+  })
+
+  test('blocks expire and the database cannot represent a blocked go-home action', () => {
+    const blocks = schemaStatement('active_blocks')
+
+    assert.match(blocks, /action_name\s+TEXT\s+NOT NULL\s+CHECK\s*\([^)]*action_name\s+IN\s*\([^)]*'move'[^)]*\)\s*\)/is)
+    assert.doesNotMatch(blocks, /action_name\s+IN\s*\([^)]*'go_home'/is)
+    assert.match(blocks, /expires_at\s+TIMESTAMPTZ\s+NOT NULL/i)
+    assert.match(blocks, /CHECK\s*\(expires_at\s*>\s*created_at\)/i)
+    assert.match(blocks, /CHECK\s*\(expires_at\s*<=\s*created_at\s*\+\s*INTERVAL\s*'24 hours'\)/i)
+  })
+
+  test('laws and labels retain ordered, typed effect state', () => {
+    const laws = schemaStatement('place_law_changes')
+    const labels = schemaStatement('active_labels')
+
+    assert.match(laws, /change_type\s+TEXT\s+NOT NULL\s+CHECK\s*\(change_type\s+IN\s*\('add',\s*'remove'\)\)/i)
+    assert.match(laws, /position\s+SMALLINT/i)
+    assert.match(laws, /change_type\s*=\s*'add'[\s\S]*position\s+IS\s+NOT\s+NULL[\s\S]*position\s*>=\s*0/i)
+    assert.match(labels, /label\s+TEXT\s+NOT NULL/i)
+    assert.match(labels, /target_type\s+IN\s*\('resident',\s*'place',\s*'thing',\s*'kind'\)/i)
+  })
+
+  test('scheduled effects carry immutable payload, due time, and bounded generation', () => {
+    const pending = schemaStatement('pending_effects')
+
+    assert.match(pending, /payload\s+JSONB\s+NOT NULL/i)
+    assert.match(pending, /due_at\s+TIMESTAMPTZ\s+NOT NULL/i)
+    assert.match(pending, /generation\s+SMALLINT\s+NOT NULL[^,]*CHECK\s*\(generation\s+BETWEEN\s+0\s+AND\s+8\)/i)
+    assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+pending_effects_due[\s\S]*?\(place_id,\s*due_at,\s*id\)/i)
+  })
+
+  test('effect generations start at zero and advance exactly once from their parent', () => {
+    assert.match(
+      schemaDdl,
+      /CREATE\s+TRIGGER\s+pending_effects_check_generation\s+BEFORE\s+INSERT\s+ON\s+pending_effects/i,
+    )
+    assert.match(schemaDdl, /parent_effect_id\s+IS\s+NULL[\s\S]*NEW\.generation\s*<>\s*0/i)
+    assert.match(schemaDdl, /NEW\.generation\s*<>\s*parent_generation\s*\+\s*1/i)
+  })
+
+  test('actions and effects separate immutable requests from one resolution', () => {
+    const actions = schemaStatement('action_runs')
+    const actionResolutions = schemaStatement('action_resolutions')
+    const pending = schemaStatement('pending_effects')
+    const effectResolutions = schemaStatement('effect_resolutions')
+
+    for (const column of ['destination_place_id', 'recipient_id', 'payload']) {
+      assert.match(actions, new RegExp(`\\b${column}\\b`, 'i'))
+      assert.match(pending, new RegExp(`\\b${column}\\b`, 'i'))
+    }
+    assert.match(pending, /action_id\s+BIGINT\s+REFERENCES\s+action_runs\s*\(id\)/i)
+    assert.match(pending, /parent_effect_id\s+BIGINT\s+REFERENCES\s+pending_effects\s*\(id\)/i)
+    assert.match(actionResolutions, /action_run_id\s+BIGINT\s+NOT NULL\s+UNIQUE\s+REFERENCES\s+action_runs\s*\(id\)/i)
+    assert.match(effectResolutions, /pending_effect_id\s+BIGINT\s+NOT NULL\s+UNIQUE\s+REFERENCES\s+pending_effects\s*\(id\)/i)
+    assert.match(actionResolutions, /status\s+TEXT\s+NOT NULL/i)
+    assert.match(effectResolutions, /status\s+TEXT\s+NOT NULL/i)
+  })
+
+  test('moderation is founder-only remove-or-restore history', () => {
+    const moderation = schemaStatement('moderation_actions')
+
+    assert.match(moderation, /actor_id\s+INTEGER\s+NOT NULL\s+REFERENCES\s+residents\s*\(id\)[^,]*CHECK\s*\(actor_id\s*=\s*1\)/i)
+    assert.match(moderation, /action\s+TEXT\s+NOT NULL\s+CHECK\s*\(action\s+IN\s*\('remove',\s*'restore'\)\)/i)
+    assert.match(moderation, /target_type\s+IN\s*\([^)]*'resident'/i)
+  })
+
+  test('thing withdrawal keeps the row and freezes it as history', () => {
+    const things = schemaStatement('things')
+
+    assert.match(things, /open_to_use\s+BOOLEAN\s+NOT NULL\s+DEFAULT\s+FALSE/i)
+    assert.match(things, /withdrawn_at\s+TIMESTAMPTZ/i)
+    assert.match(schemaDdl, /CREATE\s+TRIGGER\s+things_keep_birth_history\s+BEFORE\s+UPDATE\s+OR\s+DELETE\s+ON\s+things/i)
+    assert.match(schemaDdl, /OLD\.withdrawn_at\s+IS\s+NOT\s+NULL\s+AND\s+NEW\s+IS\s+DISTINCT\s+FROM\s+OLD/i)
+    assert.match(schemaDdl, /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+things_place[\s\S]*WHERE\s+withdrawn_at\s+IS\s+NULL/i)
+  })
+}
