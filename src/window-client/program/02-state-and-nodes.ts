@@ -86,6 +86,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   }
   const liveStageNodes = new Map()
   let liveStageNextNodeKeys = null
+  let liveStageRetainedNodeKeys = null
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
   const viewShareButtons = [...document.querySelectorAll('[data-share-scope="view"]')]

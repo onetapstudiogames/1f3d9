@@ -32,7 +32,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
-      finishStageNodeReconcile()
+      retireAllStageNodes()
       return
     }
     if (!state.directory.loaded) {
@@ -86,7 +86,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
-      finishStageNodeReconcile()
+      retireAllStageNodes()
       return
     }
     if (focus.quiet) {
@@ -95,7 +95,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
-      finishStageNodeReconcile()
+      retireAllStageNodes()
       return
     }
     // Loading gates above temporarily detach the plate. Reconcile only once

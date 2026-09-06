@@ -224,6 +224,8 @@ type StageRegistryRuntime = Readonly<{
   }>): readonly string[]
   ensureStageNode(kind: string, id: number, factory: () => FakeStageNode): FakeStageNode
   finishStageNodeReconcile(drawnKeys?: readonly string[]): void
+  retainStageNode(kind: string, id: number): void
+  retireAllStageNodes(): void
   stageNode(kind: string, id: number): FakeStageNode | null
 }>
 
@@ -235,6 +237,7 @@ function createStageRegistryRuntime(): StageRegistryRuntime {
     'stageTransform',
     `const liveStageNodes = new Map()
 let liveStageNextNodeKeys = null
+let liveStageRetainedNodeKeys = null
 let portraitObserver = null
 const observedPortraitShells = new Set()
 const pendingPortraitShells = new Set()
@@ -244,6 +247,8 @@ return {
   drawnStageNodeKeys,
   ensureStageNode,
   finishStageNodeReconcile,
+  retainStageNode,
+  retireAllStageNodes,
   stageNode,
 }`,
   )(stageNodeKey, reconcileStageNodeKeys, stageDrawnNodeKeys, stageTransform) as StageRegistryRuntime
@@ -397,6 +402,48 @@ test('stage reconcile retires a stale node still attached inside a kept containe
   assert.equal(survivor.removed, 0)
   assert.equal(stale.removed, 1)
   assert.equal(runtime.stageNode('resident', 21), null)
+})
+
+test('stage reconcile retains an off-camera replay for one paint, then retires it normally', () => {
+  const runtime = createStageRegistryRuntime()
+  const creations = new Map<number, number>()
+  const replay = runtime.ensureStageNode(
+    'resident', 21, fakeStageNodeFactory(creations, 21))
+
+  runtime.beginStageNodeReconcile()
+  runtime.retainStageNode('resident', 21)
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage([])))
+
+  assert.strictEqual(runtime.stageNode('resident', 21), replay)
+  assert.equal(replay.removed, 0)
+
+  runtime.beginStageNodeReconcile()
+  runtime.finishStageNodeReconcile(runtime.drawnStageNodeKeys(fakeDrawnStage([])))
+
+  assert.equal(replay.removed, 1)
+  assert.equal(runtime.stageNode('resident', 21), null)
+})
+
+test('bare finish preserves the registry and permanent gates retire every stage node explicitly', () => {
+  for (const gate of ['issue', 'no-plate', 'quiet']) {
+    const runtime = createStageRegistryRuntime()
+    const creations = new Map<number, number>()
+    const resident = runtime.ensureStageNode(
+      'resident', 21, fakeStageNodeFactory(creations, 21))
+    const thing = runtime.ensureStageNode('thing', 9, fakeStageNodeFactory(creations, 9))
+
+    runtime.finishStageNodeReconcile()
+
+    assert.strictEqual(runtime.stageNode('resident', 21), resident, `${gate} bare finish keeps resident`)
+    assert.strictEqual(runtime.stageNode('thing', 9), thing, `${gate} bare finish keeps thing`)
+
+    runtime.retireAllStageNodes()
+
+    assert.equal(resident.removed, 1, `${gate} explicitly retires resident`)
+    assert.equal(thing.removed, 1, `${gate} explicitly retires thing`)
+    assert.equal(runtime.stageNode('resident', 21), null)
+    assert.equal(runtime.stageNode('thing', 9), null)
+  }
 })
 
 test('stage sprite transforms flip only through --facing and never rotate', () => {

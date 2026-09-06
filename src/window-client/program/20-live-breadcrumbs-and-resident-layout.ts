@@ -112,7 +112,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
     for (const key of [
       'liveRaised', 'liveFocusResident', 'liveFocusPartner', 'liveMovement',
       'liveAt', 'liveLifetime', 'fromPlaceId', 'toPlaceId', 'replayDuration',
-      'liveRoutePointCount',
+      'liveRoutePointCount', 'liveReplayKey',
     ]) delete shell.dataset[key]
     shell.style.animationName = ''
     shell.style.animationDuration = ''

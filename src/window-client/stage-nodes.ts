@@ -17,6 +17,7 @@ export function reconcileStageNodeKeys(
   const current = new Set(currentKeys)
   const next = new Set(nextKeys)
   return Object.freeze({
+    // Step 2 seam: later registry lanes consume keep/create; this lane consumes retire.
     keep: Object.freeze([...next].filter(key => current.has(key))),
     create: Object.freeze([...next].filter(key => !current.has(key))),
     retire: Object.freeze([...current].filter(key => !next.has(key))),

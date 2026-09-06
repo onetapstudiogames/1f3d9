@@ -10,6 +10,7 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
     return node
   }
 
+  // Step 2 seam: later stage lanes retrieve a persistent node by record key here.
   function stageNode(kind, id) {
     return liveStageNodes.get(stageNodeKey(kind, id)) || null
   }
@@ -26,6 +27,23 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
     node.remove()
     liveStageNodes.delete(key)
     liveStageNextNodeKeys?.delete(key)
+    liveStageRetainedNodeKeys?.delete(key)
+  }
+
+  function retainStageNode(kind, id) {
+    const key = stageNodeKey(kind, id)
+    if (liveStageRetainedNodeKeys && liveStageNodes.has(key)) {
+      liveStageRetainedNodeKeys.add(key)
+    }
+  }
+
+  function retireAllStageNodes() {
+    for (const key of [...liveStageNodes.keys()]) {
+      const [kind, id] = key.split(':')
+      retireStageNode(kind, id)
+    }
+    liveStageNextNodeKeys = null
+    liveStageRetainedNodeKeys = null
   }
 
   function setStageTransform(node, position) {
@@ -50,21 +68,26 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
 
   function beginStageNodeReconcile() {
     liveStageNextNodeKeys = new Set()
+    liveStageRetainedNodeKeys = new Set()
   }
 
   function finishStageNodeReconcile(drawnKeys = null) {
-    const attachedKeys = new Set(stageDrawnNodeKeys(drawnKeys || []))
-    const nextKeys = new Set(liveStageNextNodeKeys === null
-      ? attachedKeys
-      : drawnKeys === null
-        ? liveStageNextNodeKeys
-        : [...liveStageNextNodeKeys].filter(key => attachedKeys.has(key)))
+    if (liveStageNextNodeKeys === null) return
+    const attachedKeys = drawnKeys === null
+      ? null
+      : new Set(stageDrawnNodeKeys(drawnKeys))
+    const nextKeys = new Set([...(attachedKeys === null
+      ? liveStageNextNodeKeys
+      : [...liveStageNextNodeKeys].filter(key => attachedKeys.has(key))),
+      ...(liveStageRetainedNodeKeys || []),
+    ])
     const diff = reconcileStageNodeKeys([...liveStageNodes.keys()], [...nextKeys])
     for (const key of diff.retire) {
       const [kind, id] = key.split(':')
       retireStageNode(kind, id)
     }
     liveStageNextNodeKeys = null
+    liveStageRetainedNodeKeys = null
   }
 
   function drawnStageNodeKeys(root) {

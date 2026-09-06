@@ -597,7 +597,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       let movement = null
       if (held?.type === 'move') {
         movement = movements.get(actor)
-        if (!movement?.visible) continue
+        if (!movement) continue
         point = movement.points[0]
         destination = movement.points.at(-1)
         remaining = movement.remaining
