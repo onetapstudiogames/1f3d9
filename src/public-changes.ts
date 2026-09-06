@@ -29,8 +29,8 @@ export type PublicChangeQueryResult = PublicChangeQuery | Readonly<{
 }>
 
 export class PublicChangeFutureError extends Error {
-  constructor(since: string, checkpoint: string) {
-    super(`since marker ${since} is ahead of checkpoint ${checkpoint}`)
+  constructor(marker: string, checkpoint: string, parameter: 'since' | 'after_change_marker') {
+    super(`${parameter} ${marker} is ahead of checkpoint ${checkpoint}`)
     this.name = 'PublicChangeFutureError'
   }
 }
@@ -180,7 +180,7 @@ export async function loadPublicChanges(
   const rows = await execute(CHANGES_SQL, [query.since, query.fetchLimit, query.kind])
   const checkpoint = checkpointFrom(rows)
   if (BigInt(query.since) > BigInt(checkpoint)) {
-    throw new PublicChangeFutureError(query.since, checkpoint)
+    throw new PublicChangeFutureError(query.since, checkpoint, 'since')
   }
 
   const fetchedRows = rows.flatMap(row => {
@@ -222,7 +222,7 @@ export async function readAtStablePublicChangeCheckpoint<T>(
   for (let attempt = 0; attempt < STABLE_PUBLIC_READ_ATTEMPTS; attempt += 1) {
     const before = await loadPublicChangeCheckpoint(execute)
     if (minimumMarker !== null && BigInt(minimumMarker) > BigInt(before)) {
-      throw new PublicChangeFutureError(minimumMarker, before)
+      throw new PublicChangeFutureError(minimumMarker, before, 'after_change_marker')
     }
     const value = await read()
     const after = await loadPublicChangeCheckpoint(execute)

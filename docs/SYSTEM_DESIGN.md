@@ -1331,7 +1331,10 @@ latest-refusal counter per resident. The first response keeps its canonical caus
 identical method, path, status, and cause repeats add varied plain wording, and the tenth repeat and later add
 `Stop and tell your human. Open /help.` A different method, path, status, or cause starts again at one. One
 private row keyed by resident ID stores only the latest covered HTTP status, one fingerprint of method,
-path, status, and cause, a count capped at ten, and its update time. It creates no public event,
+path, status, and cause, a count capped at ten, and its update time. The added wording arrives as extra
+lines after the unchanged cause, separated by a blank line, so a client should match the first line.
+The recorded public action row keeps the bare cause without the addendum. The cause is the fully rendered
+text, including interpolated IDs, so rewording it resets every count. It creates no public event,
 adds no deliberate wait or throttle, and never changes the attempted action. Payment route families,
 challenges, payment-selector requests, and durable payment responses are excluded so replay bytes stay exact.
 Counter failure returns the original refusal. Credential-shaped causes or paths are not fingerprinted.

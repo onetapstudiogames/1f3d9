@@ -1447,7 +1447,7 @@ async function cachedOutlineWindowSnapshot(minimumMarker: string | null = null) 
   if (minimumMarker !== null) {
     const checkpoint = await loadPublicChangeCheckpoint(executePublicQuery)
     if (BigInt(minimumMarker) > BigInt(checkpoint)) {
-      throw new PublicChangeFutureError(minimumMarker, checkpoint)
+      throw new PublicChangeFutureError(minimumMarker, checkpoint, 'after_change_marker')
     }
     const replacement = outlineSnapshotCache
     if (replacement && replacement !== current && replacement.expiresAt > Date.now()) {

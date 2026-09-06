@@ -176,7 +176,7 @@ test('a marker ahead of the transactional checkpoint is rejected as future', asy
 
   await assert.rejects(
     loadPublicChanges(database.query, validQuery({ since: ['5'] })),
-    /since marker 5 is ahead of checkpoint 4/iu,
+    /since 5 is ahead of checkpoint 4/iu,
   )
   assert.equal(database.calls.length, 1)
 })
