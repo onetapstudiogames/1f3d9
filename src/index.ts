@@ -76,7 +76,11 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
-import { mountChangelogRoutes } from './changelog.ts'
+import {
+  CHANGELOG_ENTRIES,
+  countChangelogUpdatesSince,
+  mountChangelogRoutes,
+} from './changelog.ts'
 import {
   readCommunityToolQueue,
   readCommunityToolWaitingCount,
@@ -151,6 +155,7 @@ import {
   readCityCreditAttention,
   readCityCreditPreflight,
   cityCreditAttentionLines,
+  cityCreditSinceLastVisit,
 } from './city-credit.ts'
 import {
   parsePendingGiftCursor,
@@ -1051,6 +1056,14 @@ app.get('/api/me', async c => {
   return c.json({
     help: '/api/help',
     attention,
+    since_last_visit: {
+      city_updates: {
+        count: countChangelogUpdatesSince(CHANGELOG_ENTRIES, creditAttention.last_visit_at),
+        href: '/changelog',
+      },
+      fee_credit_received: cityCreditSinceLastVisit(creditAttention),
+      last_visit_at: creditAttention.last_visit_at,
+    },
     front_door_tool: 'front_door',
     front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,

@@ -59,7 +59,20 @@ export function parseChangelog(markdown: string): readonly ChangelogEntry[] {
   return entries
 }
 
-const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
+export function countChangelogUpdatesSince(
+  entries: readonly ChangelogEntry[],
+  lastVisitAt: string | null,
+): number {
+  if (lastVisitAt === null) return 0
+  const lastVisitDate = lastVisitAt.slice(0, 10)
+  return entries.reduce((count, entry) => count + (
+    entry.date > lastVisitDate
+      ? entry.categories.reduce((subtotal, category) => subtotal + category.items.length, 0)
+      : 0
+  ), 0)
+}
+
+export const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/gu, character => ({

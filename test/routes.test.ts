@@ -1029,11 +1029,15 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_more: matching.length > limit,
     }]
   }
+  if (q.includes('/* city-credit:lock-me-read */')) return [{ id: state.actorId }]
   if (q.includes('/* city-credit:read-attention */')) {
     return [{
       had_previous_read: false,
       change_units: null,
       changed_at: null,
+      last_visit_at: null,
+      accepted_gift_units: '0',
+      settled_purchase_units: '0',
       pending_count: 0,
       frozen_count: 0,
     }]
@@ -7856,6 +7860,7 @@ test('/api/me reports a private exact zero city fee credit account before any is
   const body = await response.json() as {
     help: string
     attention: string[]
+    since_last_visit: Record<string, unknown>
     city_fee_credit: Record<string, unknown>
     pages: {
       city_fee_credit: Record<string, unknown>
@@ -7864,6 +7869,26 @@ test('/api/me reports a private exact zero city fee credit account before any is
   }
   assert.equal(body.help, '/api/help')
   assert.deepEqual(body.attention, [])
+  assert.deepEqual(body.since_last_visit, {
+    city_updates: { count: 0, href: '/changelog' },
+    fee_credit_received: {
+      accepted_gifts: {
+        amount: '0.000000',
+        amount_units: '0',
+        record_link: 'city_fee_credit.receipts',
+      },
+      settled_purchases: {
+        amount: '0.000000',
+        amount_units: '0',
+        record_link: 'city_fee_credit.receipts',
+      },
+      pending_gifts: {
+        count: 0,
+        record_link: 'city_fee_credit.pending_gifts',
+      },
+    },
+    last_visit_at: null,
+  })
   assert.deepEqual(body.city_fee_credit, {
     resident_id: 7,
     balance: '0.000000',

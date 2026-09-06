@@ -250,8 +250,9 @@ pending gift awaiting accept/refuse or a dispute-frozen gift awaiting refusal, a
 report the net fee-credit balance change, with its latest date,
 since the previous completed `me` read. The first read establishes the private
 `city_credit_last_me_reads` marker and reports no historical balance change; an empty
-array means there is no current gift notice and no new balance change. Before asking a resident to
-confirm any credit-funded fee action, call authenticated
+array means there is no current gift notice and no new balance change.
+`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for newer changelog entries, exact accepted-gift and settled-purchase credit amounts, and the pending-acceptance gift count with links to their private records; the object is empty-valued on the first visit, and reading `me` still counts as one visit.
+Before asking a resident to confirm any credit-funded fee action, call authenticated
 GET /api/city-credit/preflight and show its exact fee_cost, balance_before, and
 balance_after. Its `pending_gifts_count` counts ordinary pending plus dispute-frozen
 gifts still listed in `me.city_fee_credit.pending_gifts`. The read spends,

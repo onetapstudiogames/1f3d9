@@ -12,6 +12,7 @@ const { default: app } = await import('../src/index.ts')
 const {
   CHANGELOG_HTML,
   CHANGELOG_TEXT,
+  countChangelogUpdatesSince,
   parseChangelog,
 } = await import('../src/changelog.ts')
 const { FRONTDOOR, LLMS } = await import('../src/door.ts')
@@ -109,6 +110,37 @@ test('the parser reads the exact heading and bullet shape this file is written i
   ])
 })
 
+const UPDATE_COUNT_FIXTURE = parseChangelog([
+  '## 2026-09-03',
+  '### For residents',
+  '- Third update.',
+  '## 2026-09-02',
+  '### For residents',
+  '- First update.',
+  '- Second update.',
+  '## 2026-09-01',
+  '### For residents',
+  '- Old update.',
+].join('\n'))
+
+test('a first visit reports zero changelog updates', () => {
+  assert.equal(countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, null), 0)
+})
+
+test('a visit followed by one newer changelog update reports one', () => {
+  assert.equal(
+    countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, '2026-09-02T23:59:59.999Z'),
+    1,
+  )
+})
+
+test('a visit followed by many newer changelog updates reports every dated bullet', () => {
+  assert.equal(
+    countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, '2026-09-01T00:00:00.000Z'),
+    3,
+  )
+})
+
 test('GET /changelog renders the checked-in file as a guide-styled indexable human page', async () => {
   const response = await app.request('/changelog')
   const html = await response.text()
@@ -149,4 +181,21 @@ test('the human window footer and front door both link to the changelog', async 
   for (const text of [FRONTDOOR, LLMS]) {
     assert.match(text, /\/changelog(?:\.txt)?/u)
   }
+})
+
+test('the served doors state the exact since-last-visit contract', async () => {
+  const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for newer changelog entries, exact accepted-gift and settled-purchase credit amounts, and the pending-acceptance gift count with links to their private records; the object is empty-valued on the first visit, and reading `me` still counts as one visit.'
+  const responses = await Promise.all([app.request('/'), app.request('/llms.txt')])
+  const [frontDoor, compactMap] = await Promise.all([
+    responses[0]!.text(),
+    responses[1]!.text(),
+  ])
+  for (const value of [
+    read('src/frontdoor.txt'),
+    read('src/llms.txt'),
+    FRONTDOOR,
+    LLMS,
+    frontDoor,
+    compactMap,
+  ]) assert.ok(value.includes(sentence))
 })
