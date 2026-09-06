@@ -6,10 +6,11 @@
 // stdout, and stderr -- and assert none of that ever escapes storeSecret.
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promoteReplacementKey, readSecret, SecretReadFailure, storeSecret } from '../scripts/identity-client.mjs'
+import type { StoreSecretDeps } from '../scripts/identity-client.mjs'
 
 const SECRET_MARKER = '1f3d9_sk_secret_marker_should_never_leak_aaaaaaaaaaaaaaaa'
 
@@ -32,9 +33,12 @@ function tempHomeDir(): string {
  * stdin -- so this test exercises the real encode/decode contract between
  * storeSecret and readSecret, not just a trivial passthrough.
  */
-function fakeWindowsCredentialStore() {
-  const store = new Map<string, string>()
+function fakeWindowsCredentialStore(store = new Map<string, string>()) {
   return (command: string, args: readonly string[], options: Record<string, unknown>): string => {
+    if (command === 'cmdkey' && args[0]?.startsWith('/delete:')) {
+      store.delete(args[0].slice('/delete:'.length))
+      return ''
+    }
     assert.equal(command, 'powershell.exe')
     const script = String(args[3])
     // Match the actual invocation call sites, not just the substring
@@ -56,6 +60,34 @@ function fakeWindowsCredentialStore() {
       return store.get(target)!
     }
     throw new Error(`unrecognized PowerShell script: ${script}`)
+  }
+}
+
+// NTFS cannot enforce the POSIX file backend's owner-only mode. Keep the
+// behavioral cases running through the existing Windows command fake there;
+// Linux/macOS still use real files under a fresh temporary home directory.
+function temporaryTestVault(homeDir: string) {
+  const entries = new Map<string, string>()
+  const windows = process.platform === 'win32'
+  const deps: StoreSecretDeps = windows
+    ? { platform: 'win32', execFileSync: fakeWindowsCredentialStore(entries) }
+    : { platform: 'linux', homeDir }
+  const target = (label: string) => `1f3d9:https://1f3d9.com:${label}`
+  const filePath = (label: string) => {
+    const dir = join(homeDir, '.1f3d9', 'credentials')
+    const name = readdirSync(dir).find(name => name.endsWith(`__${label}.json`))
+    assert.ok(name, `temporary credentials file for ${label} must exist`)
+    return join(dir, name)
+  }
+  return {
+    deps,
+    corrupt(label: string, content: string) {
+      if (windows) entries.set(target(label), content)
+      else writeFileSync(filePath(label), content)
+    },
+    raw(label: string) {
+      return windows ? entries.get(target(label)) : readFileSync(filePath(label), 'utf8')
+    },
   }
 }
 
@@ -227,8 +259,9 @@ test('reading a label nothing was ever stored under reports not-found, not an er
   }
 })
 
-test('a write followed by a read returns exactly what was written, against the temp-file backend (proves the same contract on Linux CI)', () => {
+test('a write followed by a read returns exactly what was written, against the temporary test backend (real files on Linux CI)', () => {
   const homeDir = tempHomeDir()
+  const { deps } = temporaryTestVault(homeDir)
   try {
     const payload = {
       kind: 'resident',
@@ -236,11 +269,11 @@ test('a write followed by a read returns exactly what was written, against the t
       resident_key: SECRET_MARKER,
       recovery_codes: ['code-a', 'code-b'],
     }
-    storeSecret('https://1f3d9.com', 'agent-1', payload, { platform: 'linux', homeDir })
-    const result = readSecret('https://1f3d9.com', 'agent-1', { platform: 'linux', homeDir })
+    storeSecret('https://1f3d9.com', 'agent-1', payload, deps)
+    const result = readSecret('https://1f3d9.com', 'agent-1', deps)
     assert.deepEqual(result, { found: true, value: payload })
 
-    const missing = readSecret('https://1f3d9.com', 'nobody-registered-this-label', { platform: 'linux', homeDir })
+    const missing = readSecret('https://1f3d9.com', 'nobody-registered-this-label', deps)
     assert.deepEqual(missing, { found: false, value: null })
   } finally {
     rmSync(homeDir, { recursive: true, force: true })
@@ -249,14 +282,13 @@ test('a write followed by a read returns exactly what was written, against the t
 
 test('a stored entry that cannot be decoded throws SecretReadFailure instead of silently reporting not-found', () => {
   const homeDir = tempHomeDir()
+  const vault = temporaryTestVault(homeDir)
   try {
-    storeSecret('https://1f3d9.com', 'agent-1', { resident_key: SECRET_MARKER }, { platform: 'linux', homeDir })
-    const dir = join(homeDir, '.1f3d9', 'credentials')
-    const [fileName] = readdirSync(dir)
-    writeFileSync(join(dir, fileName!), 'not valid json{{{')
+    storeSecret('https://1f3d9.com', 'agent-1', { resident_key: SECRET_MARKER }, vault.deps)
+    vault.corrupt('agent-1', 'not valid json{{{')
 
     assert.throws(
-      () => readSecret('https://1f3d9.com', 'agent-1', { platform: 'linux', homeDir }),
+      () => readSecret('https://1f3d9.com', 'agent-1', vault.deps),
       SecretReadFailure,
     )
   } finally {
@@ -271,6 +303,7 @@ test('a stored entry that cannot be decoded throws SecretReadFailure instead of 
 
 test('promoteReplacementKey merges the previous entry\'s fields into the promoted entry and deletes the staging copy', () => {
   const homeDir = tempHomeDir()
+  const { deps } = temporaryTestVault(homeDir)
   try {
     const handle = 'agent-1'
     const stagingLabel = `${handle}--pending-rotation`
@@ -282,8 +315,8 @@ test('promoteReplacementKey merges the previous entry\'s fields into the promote
       recovery_codes: ['code-a', 'code-b'],
       origin: 'https://1f3d9.com',
       stored_at: '2026-01-01T00:00:00.000Z',
-    }, { platform: 'linux', homeDir })
-    storeSecret('https://1f3d9.com', stagingLabel, { resident_key: SECRET_MARKER }, { platform: 'linux', homeDir })
+    }, deps)
+    storeSecret('https://1f3d9.com', stagingLabel, { resident_key: SECRET_MARKER }, deps)
 
     promoteReplacementKey(
       'https://1f3d9.com', handle, stagingLabel, SECRET_MARKER,
@@ -291,16 +324,16 @@ test('promoteReplacementKey merges the previous entry\'s fields into the promote
         ...(previous?.client_class ? { client_class: previous.client_class } : {}),
         ...(previous?.recovery_codes ? { recovery_codes: previous.recovery_codes } : {}),
       }),
-      { platform: 'linux', homeDir },
+      deps,
     )
 
-    const promoted = readSecret<ResidentBundle>('https://1f3d9.com', handle, { platform: 'linux', homeDir })
+    const promoted = readSecret<ResidentBundle>('https://1f3d9.com', handle, deps)
     assert.equal(promoted.found, true)
     assert.equal(promoted.value?.resident_key, SECRET_MARKER)
     assert.equal(promoted.value?.client_class, 'coding_persistent')
     assert.deepEqual(promoted.value?.recovery_codes, ['code-a', 'code-b'])
 
-    const staging = readSecret('https://1f3d9.com', stagingLabel, { platform: 'linux', homeDir })
+    const staging = readSecret('https://1f3d9.com', stagingLabel, deps)
     assert.equal(staging.found, false, 'the staging copy must be deleted once promotion succeeds')
   } finally {
     rmSync(homeDir, { recursive: true, force: true })
@@ -309,31 +342,54 @@ test('promoteReplacementKey merges the previous entry\'s fields into the promote
 
 test('promoteReplacementKey refuses to overwrite a live entry it cannot read back, and leaves the staged replacement key in place', () => {
   const homeDir = tempHomeDir()
+  const vault = temporaryTestVault(homeDir)
   try {
     const handle = 'agent-1'
     const stagingLabel = `${handle}--pending-rotation`
-    storeSecret('https://1f3d9.com', handle, { resident_key: 'old-key-marker' }, { platform: 'linux', homeDir })
-    const dir = join(homeDir, '.1f3d9', 'credentials')
-    const liveFile = readdirSync(dir).find(name => !name.includes('pending'))!
+    storeSecret('https://1f3d9.com', handle, { resident_key: 'old-key-marker' }, vault.deps)
     const corruptContent = 'not valid json{{{'
-    writeFileSync(join(dir, liveFile), corruptContent)
+    vault.corrupt(handle, corruptContent)
 
-    storeSecret('https://1f3d9.com', stagingLabel, { resident_key: SECRET_MARKER }, { platform: 'linux', homeDir })
+    storeSecret('https://1f3d9.com', stagingLabel, { resident_key: SECRET_MARKER }, vault.deps)
 
     assert.throws(
       () => promoteReplacementKey(
         'https://1f3d9.com', handle, stagingLabel, SECRET_MARKER, () => ({}),
-        { platform: 'linux', homeDir },
+        vault.deps,
       ),
       /refusing to overwrite the existing vault entry/u,
     )
 
     // The corrupted live entry was never overwritten by the promotion attempt.
-    assert.equal(readFileSync(join(dir, liveFile), 'utf8'), corruptContent)
+    assert.equal(vault.raw(handle), corruptContent)
     // The already-confirmed replacement key is still readable from staging.
-    const staged = readSecret<ResidentBundle>('https://1f3d9.com', stagingLabel, { platform: 'linux', homeDir })
+    const staged = readSecret<ResidentBundle>('https://1f3d9.com', stagingLabel, vault.deps)
     assert.equal(staged.found, true)
     assert.equal(staged.value?.resident_key, SECRET_MARKER)
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('the file backend creates mode 0600 and narrows an existing mode 0644 file', {
+  skip: process.platform === 'win32' && 'NTFS does not enforce POSIX permission bits; Linux/macOS and Ubuntu CI run real chmod/stat checks',
+}, () => {
+  const homeDir = tempHomeDir()
+  const deps: StoreSecretDeps = { platform: 'linux', homeDir }
+  try {
+    storeSecret('https://1f3d9.com', 'agent-1', { resident_key: 'old-key-marker' }, deps)
+    const dir = join(homeDir, '.1f3d9', 'credentials')
+    const [name] = readdirSync(dir)
+    assert.ok(name, 'the newly stored credentials file must exist')
+    const filePath = join(dir, name)
+    assert.equal(statSync(filePath).mode & 0o777, 0o600, 'new file mode must be 0600')
+    chmodSync(filePath, 0o644)
+    assert.equal(statSync(filePath).mode & 0o777, 0o644, 'fixture must begin with mode 0644')
+    storeSecret('https://1f3d9.com', 'agent-1', { resident_key: SECRET_MARKER }, deps)
+    assert.equal(statSync(filePath).mode & 0o777, 0o600, 'rewritten file mode must narrow to 0600')
+    assert.deepEqual(readSecret('https://1f3d9.com', 'agent-1', deps), {
+      found: true, value: { resident_key: SECRET_MARKER },
+    })
   } finally {
     rmSync(homeDir, { recursive: true, force: true })
   }
