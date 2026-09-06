@@ -125,6 +125,27 @@ test('Conversations keeps the open note and list attached while adding new notes
   expect(fixture.networkViolations, 'unexpected network operations compared with []').toEqual([])
 })
 
+test('refresh accepts a new snapshot from an already-started old-marker read', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL)
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const delayed = await fixture.beginOldMarkerOutlineRead()
+  try {
+    const refreshed = fixture.refresh()
+    delayed.release()
+    const nextMarker = await refreshed
+    expect({ minimumMarker: delayed.minimumMarker, nextMarker },
+      'old request minimum and new response marker operands compared in increasing order')
+      .toEqual({ minimumMarker: '9', nextMarker: '10' })
+    await expect(page.locator('#city-counts'),
+      'committed old-query/new-response note count compared with 4 notes').toContainText('4 notes')
+    await expect(page.locator('#window-status'),
+      'committed old-query/new-response status compared with Watching').toContainText('Watching')
+  } finally {
+    delayed.release()
+  }
+})
+
 test('Place keeps its open conversation attached across refresh', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL)
   violationsByPage.set(page, fixture.networkViolations)

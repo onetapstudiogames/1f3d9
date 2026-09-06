@@ -48,6 +48,11 @@ export async function installReadingFixture(
   let thingReadCount = 0
   let delayedThingRead: { started: () => void, released: Promise<void> } | null = null
   let delayedNoteRead: { started: () => void, released: Promise<void> } | null = null
+  let delayedOutlineRead: {
+    started: (minimumMarker: string | null) => void
+    released: Promise<void>
+  } | null = null
+  let forceNextChangeCheck = false
   let historyUnavailable = false
   const olderNoteTemplate = baseline.notes.find(note => note.id === 301)
   if (options.olderNote && !olderNoteTemplate) {
@@ -76,11 +81,16 @@ export async function installReadingFixture(
   }
   const networkViolations: string[] = []
   const origin = new URL(response.url()).origin
-  await page.route('**/api/changes**', route => route.fulfill({ json: {
-    change_marker: snapshot.change_marker,
-    unchanged: new URL(route.request().url()).searchParams.get('since') === snapshot.change_marker,
-    changes: pendingChanges, has_more: false, next_since: null,
-  } }))
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    const forcedChanged = forceNextChangeCheck
+    forceNextChangeCheck = false
+    return route.fulfill({ json: {
+      change_marker: snapshot.change_marker,
+      unchanged: !forcedChanged && since === snapshot.change_marker,
+      changes: pendingChanges, has_more: false, next_since: null,
+    } })
+  })
   await page.route('**/api/window**', async route => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('view') === 'directory') {
@@ -109,6 +119,12 @@ export async function installReadingFixture(
         next_before_id: hasMore ? Math.min(...snapshot.notes.map(note => Number(note.id))) : null,
       } })
       return
+    }
+    const delayed = url.searchParams.get('view') === 'outline' ? delayedOutlineRead : null
+    if (delayed) {
+      delayedOutlineRead = null
+      delayed.started(url.searchParams.get('after_change_marker'))
+      await delayed.released
     }
     await route.fulfill({ json: snapshot })
   })
@@ -191,6 +207,16 @@ export async function installReadingFixture(
       delayedNoteRead = { started, released }
       return { started: began, release }
     },
+    async beginOldMarkerOutlineRead() {
+      let started = (_minimumMarker: string | null) => {}
+      let release = () => {}
+      const began = new Promise<string | null>(resolve => { started = resolve })
+      const released = new Promise<void>(resolve => { release = resolve })
+      delayedOutlineRead = { started, released }
+      forceNextChangeCheck = true
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+      return { minimumMarker: await began, release }
+    },
     async refresh(refreshOptions: ReadingRefreshOptions = {}) {
       historyUnavailable = refreshOptions.historyUnavailable === true
       if (refreshOptions.thingBody !== undefined) fullThing = { ...fullThing, body: refreshOptions.thingBody }
@@ -239,10 +265,16 @@ export async function installReadingFixture(
           detail: { resident_id: 49 },
         }] : []),
       ]
-      const refreshed = page.waitForResponse(result => {
+      const refreshed = page.waitForResponse(async result => {
         const url = new URL(result.url())
-        return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
-          url.searchParams.get('after_change_marker') === snapshot.change_marker
+        if (url.pathname !== '/api/window' || url.searchParams.get('view') !== 'outline' ||
+            !result.ok()) return false
+        try {
+          const payload = await result.json() as { change_marker?: unknown }
+          return payload.change_marker === nextMarker
+        } catch {
+          return false
+        }
       })
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
       await refreshed
