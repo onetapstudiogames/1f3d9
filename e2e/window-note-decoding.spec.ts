@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page, type Request } from '@playwright
 import { installReadingFixture } from '../test/helpers/window-reading-fixture.ts'
 
 const violationsByPage = new WeakMap<Page, readonly string[]>()
+const LONG_ENGLISH_NOTE = 'This city has a quiet square where our neighbors can talk with their friends. '.repeat(12)
+const LONG_PORTUGUESE_NOTE = 'Esta cidade tem uma praça tranquila onde você pode falar com seus vizinhos. '.repeat(12)
 
 test.afterEach(async ({ page }) => {
   expect(violationsByPage.get(page) ?? [], 'unexpected network operations compared with []').toEqual([])
@@ -116,6 +118,24 @@ for (const languageCase of [
     body: 'Esta cidade tem uma praça tranquila para os residentes conversarem com seus vizinhos.',
     lang: 'pt',
     view: 'place' as const,
+  },
+  {
+    name: 'long English',
+    body: LONG_ENGLISH_NOTE,
+    lang: 'en',
+    view: 'conversations' as const,
+  },
+  {
+    name: 'long Portuguese',
+    body: LONG_PORTUGUESE_NOTE,
+    lang: 'pt',
+    view: 'place' as const,
+  },
+  {
+    name: 'English with joined emoji',
+    body: 'This city has a quiet square where our neighbors 👩‍💻 can talk with their friends.',
+    lang: 'en',
+    view: 'conversations' as const,
   },
   {
     name: 'mixed unknown language',

@@ -14,6 +14,13 @@ function base64Utf8(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64')
 }
 
+const ENGLISH_SENTENCE = 'This city has a quiet square where our neighbors can talk with their friends. '
+const PORTUGUESE_SENTENCE = 'Esta cidade tem uma praça tranquila onde você pode falar com seus vizinhos. '
+
+function proseAtLength(sentence: string, length: number): string {
+  return sentence.repeat(Math.ceil(length / sentence.length)).slice(0, length)
+}
+
 test('note decoding factory remains self-contained for browser embedding', () => {
   const embeddedFactory = Function(
     `return (${createNoteDecodingHelpers.toString()})`,
@@ -42,6 +49,10 @@ test('decodes complete binary byte groups as printable UTF-8', () => {
   assert.deepEqual(
     decodeNoteText(binaryBytes('Olá, cidade!')),
     { encoding: 'binary', text: 'Olá, cidade!' },
+  )
+  assert.deepEqual(
+    decodeNoteText(binaryBytes('Builders 👩‍💻 gather here.')),
+    { encoding: 'binary', text: 'Builders 👩‍💻 gather here.' },
   )
 })
 
@@ -83,6 +94,10 @@ test('decodes canonical base64 containing printable UTF-8', () => {
     decodeNoteText(' SGVsbG8h '),
     { encoding: 'base64', text: 'Hello!' },
   )
+  assert.deepEqual(
+    decodeNoteText(base64Utf8('Builders 👩‍💻 gather here.')),
+    { encoding: 'base64', text: 'Builders 👩‍💻 gather here.' },
+  )
 })
 
 test('base64 recognition rejects malformed, non-canonical, control, and binary payloads', () => {
@@ -91,6 +106,7 @@ test('base64 recognition rejects malformed, non-canonical, control, and binary p
   assert.equal(decodeNoteText('SGVsbG8'), null)
   assert.equal(decodeNoteText('Zh=='), null)
   assert.equal(decodeNoteText(base64Utf8('hello\u0000world')), null)
+  assert.equal(decodeNoteText(base64Utf8('hello\u200Cworld')), null)
   assert.equal(decodeNoteText('/wABgA=='), null)
 })
 
@@ -102,6 +118,12 @@ test('language detection labels only sufficiently evidenced English and Portugue
   assert.equal(
     detectNoteLanguage('Esta cidade tem uma praça tranquila para os residentes conversarem com seus vizinhos.'),
     'pt',
+  )
+  assert.equal(detectNoteLanguage(ENGLISH_SENTENCE.repeat(12)), 'en')
+  assert.equal(detectNoteLanguage(PORTUGUESE_SENTENCE.repeat(12)), 'pt')
+  assert.equal(
+    detectNoteLanguage('This city has a quiet square where our neighbors 👩‍💻 can talk with their friends.'),
+    'en',
   )
 })
 
@@ -139,4 +161,15 @@ test('decoding and language work are bounded', () => {
   const oversized = 'A'.repeat(20_000)
   assert.equal(decodeNoteText(oversized), null)
   assert.equal(detectNoteLanguage(oversized), null)
+  assert.equal(detectNoteLanguage(proseAtLength(ENGLISH_SENTENCE, 8_192)), 'en')
+  assert.equal(detectNoteLanguage(proseAtLength(ENGLISH_SENTENCE, 8_193)), 'en')
+  assert.equal(detectNoteLanguage(proseAtLength(ENGLISH_SENTENCE, 16_384)), 'en')
+  assert.equal(detectNoteLanguage(proseAtLength(ENGLISH_SENTENCE, 16_385)), null)
+
+  const decodedAtLimit = 'A'.repeat(8_192)
+  assert.deepEqual(
+    decodeNoteText(base64Utf8(decodedAtLimit)),
+    { encoding: 'base64', text: decodedAtLimit },
+  )
+  assert.equal(decodeNoteText(base64Utf8('A'.repeat(8_193))), null)
 })

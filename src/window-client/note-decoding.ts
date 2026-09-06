@@ -101,8 +101,10 @@ export function createNoteDecodingHelpers(): NoteDecodingHelpers {
   }
 
   function printableText(value: string): string | null {
-    if (value.length === 0 || value.length > MAX_DECODED_BYTES) return null
-    const contentWithoutAllowedWhitespace = value.replace(/[\t\n\r]/gu, '')
+    if (!isBoundedSource(value)) return null
+    // Conservatively retain the broad Unicode Other guard while allowing only
+    // the zero-width joiner needed for joined emoji sequences.
+    const contentWithoutAllowedWhitespace = value.replace(/[\t\n\r\u200D]/gu, '')
     if (/\p{C}/u.test(contentWithoutAllowedWhitespace)) return null
     const visible = value.match(/[\p{L}\p{N}\p{P}\p{S}]/gu)?.length ?? 0
     return visible >= MIN_VISIBLE_CHARACTERS ? value : null
@@ -194,9 +196,17 @@ export function createNoteDecodingHelpers(): NoteDecodingHelpers {
 
     const englishSignals = new Set<string>()
     const portugueseSignals = new Set<string>()
+    let englishSignalCount = 0
+    let portugueseSignalCount = 0
     for (const word of words) {
-      if (ENGLISH_SIGNALS.has(word)) englishSignals.add(word)
-      if (PORTUGUESE_SIGNALS.has(word)) portugueseSignals.add(word)
+      if (ENGLISH_SIGNALS.has(word)) {
+        englishSignals.add(word)
+        englishSignalCount += 1
+      }
+      if (PORTUGUESE_SIGNALS.has(word)) {
+        portugueseSignals.add(word)
+        portugueseSignalCount += 1
+      }
     }
 
     const englishStrongCount = [...englishSignals]
@@ -208,11 +218,11 @@ export function createNoteDecodingHelpers(): NoteDecodingHelpers {
     // borrowed words in another language from creating a confident label.
     const englishIsConfident = englishSignals.size >= MIN_LANGUAGE_SCORE &&
       englishStrongCount >= 2 &&
-      englishSignals.size / words.length >= MIN_LANGUAGE_SIGNAL_RATIO &&
+      englishSignalCount / words.length >= MIN_LANGUAGE_SIGNAL_RATIO &&
       englishSignals.size - portugueseSignals.size >= MIN_LANGUAGE_MARGIN
     const portugueseIsConfident = portugueseSignals.size >= MIN_LANGUAGE_SCORE &&
       portugueseStrongCount >= 2 &&
-      portugueseSignals.size / words.length >= MIN_LANGUAGE_SIGNAL_RATIO &&
+      portugueseSignalCount / words.length >= MIN_LANGUAGE_SIGNAL_RATIO &&
       portugueseSignals.size - englishSignals.size >= MIN_LANGUAGE_MARGIN
 
     if (englishIsConfident) return 'en'
