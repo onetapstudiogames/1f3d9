@@ -1,5 +1,4 @@
 export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
-    resetPortraitImages()
     if (!nodes.livePlates || !nodes.liveStage) return
     livePlotDetailContext = null
     if (nodes.liveMapCaption) nodes.liveMapCaption.hidden = true
@@ -33,6 +32,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
+      retireAllStageNodes()
       return
     }
     if (!state.directory.loaded) {
@@ -86,6 +86,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
+      retireAllStageNodes()
       return
     }
     if (focus.quiet) {
@@ -94,8 +95,12 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       renderLiveHistoryStatus()
       scheduleLiveClock()
       restoreFocus(focusKey, null, null)
+      retireAllStageNodes()
       return
     }
+    // Loading gates above temporarily detach the plate. Reconcile only once
+    // complete data can produce the truthful drawn key set.
+    beginStageNodeReconcile()
     const thingFilters = liveThingFilters(focus.id)
     const thingsPage = historyEntry('things', thingFilters)
     const children = liveChildren(snapshot, focus)
@@ -220,7 +225,14 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
     })
     plateParts.push(renderLiveTraceLayer(
       snapshot, focus, children, records, bubbles, survey, renderContext))
-    nodes.livePlates.replaceChildren(...plateParts)
+    reconcileStageChildren(nodes.livePlates, plateParts)
+    finishStageNodeReconcile(drawnStageNodeKeys(nodes.livePlates))
+    for (const sprite of nodes.livePlates.querySelectorAll(
+      '.live-entity-portrait[data-portrait-type]:not([data-loaded="true"])')) {
+      if (!observedPortraitShells.has(sprite) && !pendingPortraitShells.has(sprite)) {
+        schedulePortraitShell(sprite)
+      }
+    }
     syncLiveItemPopoverAnchor()
     scheduleLiveResidentLabels(true)
     scheduleLiveTrailExpiry()

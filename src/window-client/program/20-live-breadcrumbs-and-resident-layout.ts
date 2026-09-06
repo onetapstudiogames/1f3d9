@@ -100,8 +100,31 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
   }
 
   function livePortraitShell(portrait, bubble, className = 'live-portrait-wrap') {
-    const shell = element('span', className)
-    shell.append(portrait)
+    const residentId = portrait.dataset.liveResidentId
+    const shell = residentId
+      ? ensureStageNode('resident', residentId, () => {
+          const created = element('span', className)
+          created.append(portrait)
+          return created
+        })
+      : element('span', className)
+    shell.className = className
+    for (const key of [
+      'liveRaised', 'liveFocusResident', 'liveFocusPartner', 'liveMovement',
+      'liveAt', 'liveLifetime', 'fromPlaceId', 'toPlaceId', 'replayDuration',
+      'liveRoutePointCount', 'liveReplayKey',
+    ]) delete shell.dataset[key]
+    shell.style.animationName = ''
+    shell.style.animationDuration = ''
+    const heldPortrait = shell.querySelector(':scope > .live-portrait')
+    if (heldPortrait && heldPortrait !== portrait) {
+      const sprite = heldPortrait.querySelector(':scope > .live-entity-portrait')
+      if (sprite) portrait.prepend(sprite)
+      if (heldPortrait.dataset.liveHasDrawing) {
+        portrait.dataset.liveHasDrawing = heldPortrait.dataset.liveHasDrawing
+      }
+    }
+    shell.replaceChildren(portrait)
     if (bubble && !liveMotionReduced()) shell.append(liveSpeechBubbleNode(bubble))
     return shell
   }

@@ -84,6 +84,8 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     directorySearchField: document.querySelector('.directory-search-field'),
     viewFilters: document.querySelector('.view-filters'),
   }
+  const liveStageNodes = new Map()
+  let liveStageNextNodeKeys = null
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
   const viewShareButtons = [...document.querySelectorAll('[data-share-scope="view"]')]
@@ -222,7 +224,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveFootstepSequence = 0
   let liveDetailedMoveActors = new Set()
   let liveRenderFrame = 0
-  let liveMotionFrame = 0
+  let liveMotionDirty = false
   let liveTraceRenderContext = null
   let liveRenderDirtyRevision = 0
   let liveRenderPaintedRevision = 0
@@ -262,13 +264,40 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     return Boolean(panel && !panel.hidden)
   }
 
+  function paintLiveMotion() {
+    const current = nodes.livePlates?.querySelector('.live-trace-layer')
+    const context = liveTraceRenderContext
+    if (!current || !context || context.snapshot !== state.snapshot) {
+      markLiveDirty()
+      return
+    }
+    const active = document.activeElement
+    const focusKey = active?.dataset?.focusKey || null
+    const focusFallbackKey = active?.dataset?.focusFallbackKey || null
+    const movesFocus = current.contains(active)
+    const next = renderLiveTraceLayer(
+      context.snapshot,
+      context.focus,
+      context.children,
+      context.records,
+      context.bubbles,
+      context.survey,
+      context.renderContext,
+    )
+    current.replaceWith(next)
+    if (stageNodeReconcileOpen()) {
+      finishStageNodeReconcile(drawnStageNodeKeys(nodes.livePlates))
+    }
+    if (movesFocus) {
+      restoreFocus(focusKey, focusFallbackKey, 'live-viewport')
+    }
+  }
+
   function scheduleLiveRedraw() {
     if (!windowLiveShouldScheduleRedraw(Object.freeze({
       liveViewActive: state.view === 'live',
       documentVisible: !document.hidden,
       panelVisible: livePanelIsVisible(),
-      dirtyRevision: liveRenderDirtyRevision,
-      paintedRevision: liveRenderPaintedRevision,
       framePending: Boolean(liveRenderFrame),
     }))) return
     liveRenderFrame = window.requestAnimationFrame(() => {
@@ -277,13 +306,17 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
         liveViewActive: state.view === 'live',
         documentVisible: !document.hidden,
         panelVisible: livePanelIsVisible(),
-        dirtyRevision: liveRenderDirtyRevision,
-        paintedRevision: liveRenderPaintedRevision,
         framePending: false,
       }))) return
-      const revision = liveRenderDirtyRevision
-      if (state.snapshot) renderLive(state.snapshot)
-      liveRenderPaintedRevision = Math.max(liveRenderPaintedRevision, revision)
+      if (liveRenderDirtyRevision > liveRenderPaintedRevision) {
+        const revision = liveRenderDirtyRevision
+        if (state.snapshot) renderLive(state.snapshot)
+        liveRenderPaintedRevision = Math.max(liveRenderPaintedRevision, revision)
+        liveMotionDirty = false
+      } else if (liveMotionDirty) {
+        liveMotionDirty = false
+        paintLiveMotion()
+      }
       scheduleLiveRedraw()
     })
   }
@@ -293,43 +326,13 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     scheduleLiveRedraw()
   }
 
-  function scheduleLiveMotionRedraw() {
-    if (liveMotionFrame || state.view !== 'live' || document.hidden ||
-        !livePanelIsVisible()) return
-    liveMotionFrame = window.requestAnimationFrame(() => {
-      liveMotionFrame = 0
-      const current = nodes.livePlates?.querySelector('.live-trace-layer')
-      const context = liveTraceRenderContext
-      if (!current || !context || context.snapshot !== state.snapshot) {
-        markLiveDirty()
-        return
-      }
-      const active = document.activeElement
-      const focusKey = active?.dataset?.focusKey || null
-      const focusFallbackKey = active?.dataset?.focusFallbackKey || null
-      current.replaceWith(renderLiveTraceLayer(
-        context.snapshot,
-        context.focus,
-        context.children,
-        context.records,
-        context.bubbles,
-        context.survey,
-        context.renderContext,
-      ))
-      if (current.contains(active)) {
-        restoreFocus(focusKey, focusFallbackKey, 'live-viewport')
-      }
-    })
-  }
-
   function stopLiveVisualWork() {
     if (liveRenderFrame) window.cancelAnimationFrame(liveRenderFrame)
-    if (liveMotionFrame) window.cancelAnimationFrame(liveMotionFrame)
     if (liveLabelFrame) window.cancelAnimationFrame(liveLabelFrame)
     if (liveCameraFrame) window.cancelAnimationFrame(liveCameraFrame)
     if (liveProofFrame) window.cancelAnimationFrame(liveProofFrame)
     liveRenderFrame = 0
-    liveMotionFrame = 0
+    liveMotionDirty = false
     liveLabelFrame = 0
     liveCameraFrame = 0
     liveProofFrame = 0

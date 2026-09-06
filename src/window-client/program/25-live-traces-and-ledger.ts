@@ -25,12 +25,21 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
     node.dataset.liveKey = key
     if (!node.dataset.focusKey) node.dataset.focusKey = 'live-record:' + surface + ':' + key
     node.dataset.highlighted = String(state.live.highlightedKey === key)
-    node.addEventListener('mouseenter', () => setLiveHighlight(key))
+    if (node.dataset.liveHighlightBound === 'true') return
+    node.dataset.liveHighlightBound = 'true'
+    const currentKey = () => node.dataset.liveKey || null
+    node.addEventListener('mouseenter', () => {
+      if (currentKey()) setLiveHighlight(currentKey())
+    })
     node.addEventListener('mouseleave', () => setLiveHighlight(null))
-    node.addEventListener('focus', () => setLiveHighlight(key))
+    node.addEventListener('focus', () => {
+      if (currentKey()) setLiveHighlight(currentKey())
+    })
     node.addEventListener('blur', () => setLiveHighlight(null))
-    node.addEventListener('click', () => setLiveHighlight(
-      state.live.highlightedKey === key ? null : key))
+    node.addEventListener('click', () => {
+      const heldKey = currentKey()
+      if (heldKey) setLiveHighlight(state.live.highlightedKey === heldKey ? null : heldKey)
+    })
   }
 
   function liveTrailTiming(record, key) {
@@ -156,7 +165,8 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
     if (!Number.isFinite(nextAt)) return
     liveFootstepWakeTimer = window.setTimeout(() => {
       liveFootstepWakeTimer = 0
-      scheduleLiveMotionRedraw()
+      liveMotionDirty = true
+      scheduleLiveRedraw()
     }, Math.max(0, nextAt - now) + 1)
   }
 

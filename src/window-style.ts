@@ -1018,7 +1018,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   height: 34%;
   background: var(--sky);
   opacity: 0.55;
-  transform: rotate(45deg);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
 .drawing-unavailable { border-style: solid; }
 .live-portrait-grid { display: flex; flex-wrap: wrap; gap: 0.38rem; align-items: start; }
@@ -1042,6 +1042,13 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .live-portrait > .drawing-grid { height: 100%; aspect-ratio: auto; }
 .live-portrait > .entity-portrait { width: 100%; height: 100%; }
+[data-stage-node-kind="resident"] .live-portrait > .drawing-grid,
+[data-stage-node-kind="resident"] .live-portrait > .entity-portrait,
+[data-stage-node-kind="thing"] > .drawing-grid,
+[data-stage-node-kind="thing"] > .entity-portrait {
+  transform: scaleX(var(--facing, 1));
+  transform-origin: center;
+}
 .live-portrait.asleep { opacity: 0.48; }
 .live-speech-bubble {
   position: absolute;
@@ -1395,7 +1402,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   grid-template-columns: 1.55rem minmax(0, 1fr);
   min-width: 0;
   padding: 0.12rem;
-  transform: translate(-50%, -50%);
   background: transparent;
   box-shadow: none;
   pointer-events: auto;
@@ -1451,7 +1457,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   width: 3.5rem;
   height: 3.5rem;
   margin: 0;
-  transform: translate(-50%, -100%);
   pointer-events: auto;
 }
 .live-walker:hover, .live-walker:focus-within,
@@ -1509,7 +1514,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-root-thing-shelf > .live-thing-specimen {
   position: absolute;
   width: 9rem;
-  transform: translate(-50%, -50%);
   pointer-events: auto;
 }
 .live-focus-thing-shelf.live-root-thing-shelf > .live-thing-more {
@@ -1652,10 +1656,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 
 @keyframes live-recorded-glide {
   to {
-    transform: translate(
-      calc(-50% + var(--live-replay-delta-x, 0px)),
-      calc(-100% + var(--live-replay-delta-y, 0px))
-    );
+    transform: var(--stage-destination-transform);
   }
 }
 

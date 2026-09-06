@@ -536,6 +536,7 @@ async function installReplayRoutes(
     thingDelayMs?: number
     moveBurst?: number
     simultaneousMoves?: number
+    oppositeFacingMoves?: boolean
     useThingId?: number
     manyFocusInteractions?: boolean
     openingMovement?: boolean
@@ -602,6 +603,9 @@ async function installReplayRoutes(
   const heldOpeningPage = new Promise<void>(resolve => {
     releaseHeldOpeningPage = resolve
   })
+  let heldResidentPageRequests = 0
+  let heldResidentPageGate: Promise<void> | null = null
+  let releaseHeldResidentPage = () => {}
   let heldEmptyChangeRequests = 0
   let heldEmptyChangeGate: Promise<void> | null = null
   let releaseHeldEmptyChange = () => {}
@@ -1015,6 +1019,7 @@ async function installReplayRoutes(
             change_id: '15', created_at: new Date(now).toISOString(), kind: 'action',
             actor: 'map-walker', detail: {
               action: 'move', from_place_id: 3, to_place_id: 2,
+              ...(controls.oppositeFacingMoves ? { status: 'applied' } : {}),
             },
           }, {
             change_id: '16', created_at: new Date(now - 600_001).toISOString(), kind: 'note',
@@ -1159,6 +1164,12 @@ async function installReplayRoutes(
         json: { change_marker: marker, resident: resident ?? null },
       })
       return
+    }
+    if (heldResidentPageGate) {
+      const gate = heldResidentPageGate
+      heldResidentPageGate = null
+      heldResidentPageRequests += 1
+      await gate
     }
     if (controls.residentDelayMs) {
       await new Promise(resolve => setTimeout(resolve, controls.residentDelayMs))
@@ -1308,6 +1319,13 @@ async function installReplayRoutes(
     },
     heldEmptyChangeRequests: () => heldEmptyChangeRequests,
     releaseHeldEmptyChange: () => releaseHeldEmptyChange(),
+    holdNextResidentPage: () => {
+      heldResidentPageGate = new Promise<void>(resolve => {
+        releaseHeldResidentPage = resolve
+      })
+    },
+    heldResidentPageRequests: () => heldResidentPageRequests,
+    releaseHeldResidentPage: () => releaseHeldResidentPage(),
     recoverThingNames: () => { thingNamesUnavailable = false },
     releaseHeldOpeningPage,
     releaseHeldThingPage,
@@ -1351,8 +1369,8 @@ async function liveResidentLocalPositions(plot: Locator) {
     .map(shell => ({
       key: shell.querySelector<HTMLElement>('[data-live-resident-handle]')
         ?.dataset.liveResidentHandle ?? '',
-      x: Number.parseFloat(shell.style.left),
-      y: Number.parseFloat(shell.style.top),
+      x: Number.parseFloat(shell.style.getPropertyValue('--stage-x')),
+      y: Number.parseFloat(shell.style.getPropertyValue('--stage-y')),
     })))
 }
 
@@ -3148,6 +3166,11 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await proofButton.click()
   const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
   await expect(proofPanel).toBeVisible()
+  const replays = proofPanel.locator('.live-replay-portrait')
+  await expect(replays).toHaveCount(64)
+  const proofPaintedAt = await page.evaluate(() => Date.now())
+  await page.clock.pauseAt(proofPaintedAt + 100)
+  await page.clock.runFor(64)
   await expectProofDrawingContract(page)
   const workshopTerrain = proofPanel.locator(
     '.live-plot[data-place-id="9103"] .live-plot-terrain',
@@ -3155,12 +3178,11 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await workshopTerrain.evaluate(node => {
     ;(window as Window & { __proofWorkshopTerrain?: Element }).__proofWorkshopTerrain = node
   })
-  await expect(proofPanel.locator('.live-proof-frame-time')).toContainText(/p95 .* max/u)
-
   const retry = page.getByRole('button', { name: 'Retry proof room' })
   await expect(retry).toBeVisible()
   await expectTargetCenterExposed(retry)
   await retry.click()
+  await page.clock.runFor(32)
   await expect(retry).toHaveCount(0)
 
   const residentMore = proofPanel.getByRole('button', { name: /Show .* more residents/u })
@@ -3171,14 +3193,48 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await expectTargetCenterExposed(thingMore)
   await residentMore.click()
   await thingMore.click()
+  await page.clock.runFor(32)
   await expect(proofPanel.getByRole('dialog')).toHaveCount(0)
-  // The proof plate carries the full Step 8 crowd while keeping hana on the
-  // movement garden for the same-floor comparison from Step 3.
-  await expect(proofPanel.locator('.live-walker')).toHaveCount(88)
-  await expect(proofPanel.locator('.live-thing-specimen')).toHaveCount(7)
-
-  const replays = proofPanel.locator('.live-replay-portrait')
-  await expect(replays).toHaveCount(64)
+  const proofPlateSample = await proofPanel.evaluate(panel => {
+    const residentShells = [...panel.querySelectorAll<HTMLElement>(
+      '[data-stage-node-key^="resident:"]',
+    )]
+    const residentKeys = residentShells.map(shell => shell.dataset.stageNodeKey || '')
+    return {
+      invalidShells: residentShells
+        .filter(shell => !shell.matches('.live-walker, .live-replay-portrait'))
+        .map(shell => shell.dataset.stageNodeKey || ''),
+      registeredResidentShells: residentShells.length,
+      residentKeys,
+      uniqueResidentKeys: new Set(residentKeys).size,
+      walkers: panel.querySelectorAll('.live-walker').length,
+      replays: panel.querySelectorAll('.live-replay-portrait').length,
+      things: panel.querySelectorAll('.live-thing-specimen').length,
+    }
+  })
+  expect(proofPlateSample, JSON.stringify(proofPlateSample)).toMatchObject({
+    invalidShells: [],
+    registeredResidentShells: 152,
+    uniqueResidentKeys: 152,
+    walkers: 88,
+    replays: 64,
+    things: 7,
+  })
+  const proofStageNodes = proofPanel.locator(
+    '[data-stage-node-key^="resident:"], [data-stage-node-key^="thing:"]',
+  )
+  const proofIdentity = await proofStageNodes.evaluateAll(nodes => nodes.map((node, index) => {
+    const nodeMarker = `proof-node-${index}-${crypto.randomUUID()}`
+    const spriteMarker = `proof-sprite-${index}-${crypto.randomUUID()}`
+    const sprite = node.querySelector<HTMLElement>(':scope .live-entity-portrait')
+    ;(node as HTMLElement).dataset.stageProofIdentityMarker = nodeMarker
+    if (sprite) sprite.dataset.stageProofIdentityMarker = spriteMarker
+    return {
+      key: (node as HTMLElement).dataset.stageNodeKey || '',
+      nodeMarker,
+      spriteMarker: sprite?.dataset.stageProofIdentityMarker || '',
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
   expect(await proofPanel.locator('.live-walker').evaluateAll(walkers => {
     const moving = new Set([...document.querySelectorAll(
       '#live-panel[data-live-proof="true"] .live-replay-portrait [data-live-resident-handle]',
@@ -3193,6 +3249,8 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
       (node as HTMLElement).dataset.liveReplayKey))
     return new Set(concurrentReplayKeys).size
   }).toBeGreaterThan(0)
+  await page.clock.runFor(1_920)
+  await expect(proofPanel.locator('.live-proof-frame-time')).toHaveText(/p95 .* max/u)
   let sawUse = false
   for (let elapsed = 0; elapsed < 24_000; elapsed += 500) {
     await page.clock.runFor(500)
@@ -3200,6 +3258,16 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   }
   expect(sawUse).toBe(true)
   await expect(replays).toHaveCount(0)
+  const settledProofIdentity = await proofStageNodes.evaluateAll(nodes => nodes.map(node => {
+    const sprite = node.querySelector<HTMLElement>(':scope .live-entity-portrait')
+    return {
+      key: (node as HTMLElement).dataset.stageNodeKey || '',
+      nodeMarker: (node as HTMLElement).dataset.stageProofIdentityMarker || '',
+      spriteMarker: sprite?.dataset.stageProofIdentityMarker || '',
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+  expect(settledProofIdentity, JSON.stringify({ proofIdentity, settledProofIdentity }))
+    .toEqual(proofIdentity)
   const scriptedBubble = page.locator('.live-speech-bubble')
   await expect(scriptedBubble).toHaveText('The workshop bell rings above the busy floor.')
   expect(await workshopTerrain.evaluate(node =>
@@ -3207,6 +3275,7 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   )).toBe(true)
 
   await page.locator('#place-filter').selectOption('9103')
+  await page.clock.runFor(32)
   await expect(proofPanel.locator('.live-world-ground-tiles')).toHaveAttribute(
     'data-undrawn', 'false',
   )
@@ -3215,17 +3284,167 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
     'aria-label', "The workshop bell rings above the busy floor. (open proof-dara's note)",
   )
   await scriptedBubble.click()
+  await page.clock.runFor(32)
   const scriptedNote = proofPanel.locator('.live-note-row[data-live-note-id="9352"]')
   await expect(scriptedNote).toBeFocused()
   await expect(scriptedNote).toContainText('The workshop bell rings above the busy floor.')
   await proofPanel.locator('#live-notes-close').click()
+  await page.clock.runFor(32)
   // Closing returns focus to the bubble that opened the panel, the same
   // opener contract every other control on the plate keeps.
   await expect(page.locator('.live-speech-bubble')).toBeFocused()
 
   await proofButton.click()
+  await page.clock.runFor(32)
   await expect(proofPanel).toBeVisible()
   await expect(page.getByRole('button', { name: 'Retry proof room' })).toBeVisible()
+})
+
+test('persistent stage sprite nodes keep their identity through 20 repaints', async ({ page }) => {
+  await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const stageNodes = page.locator(
+    '[data-stage-node-key^="resident:"], [data-stage-node-key^="thing:"]',
+  )
+  await expect(stageNodes).not.toHaveCount(0)
+  const firstPaint = await stageNodes.evaluateAll(nodes => nodes.map((node, index) => {
+    const nodeMarker = `stage-node-${index}-${crypto.randomUUID()}`
+    const spriteMarker = `stage-sprite-${index}-${crypto.randomUUID()}`
+    const sprite = node.querySelector<HTMLElement>(':scope .live-entity-portrait')
+    ;(node as HTMLElement).dataset.stageIdentityMarker = nodeMarker
+    if (sprite) sprite.dataset.stageIdentityMarker = spriteMarker
+    return {
+      key: (node as HTMLElement).dataset.stageNodeKey || '',
+      nodeMarker,
+      spriteMarker: sprite?.dataset.stageIdentityMarker || '',
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+
+  for (let repaint = 0; repaint < 20; repaint += 1) {
+    const paintMarker = `paint-${repaint}`
+    await page.locator('.live-trace-layer').evaluate((node, marker) => {
+      ;(node as HTMLElement).dataset.stagePaintMarker = marker
+    }, paintMarker)
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+    await expect.poll(async () => {
+      const sample = await page.evaluate(marker => {
+        const node = document.querySelector<HTMLElement>('.live-trace-layer')
+        return {
+          present: node ? true : null,
+          paintMarker: node?.dataset.stagePaintMarker || null,
+          changed: node && node.dataset.stagePaintMarker !== marker ? true : null,
+        }
+      }, paintMarker)
+      return sample.present && sample.changed ? sample : null
+    }).toMatchObject({ present: true, changed: true })
+  }
+
+  const afterRepaints = await stageNodes.evaluateAll(nodes => nodes.map(node => {
+    const sprite = node.querySelector<HTMLElement>(':scope .live-entity-portrait')
+    return {
+      key: (node as HTMLElement).dataset.stageNodeKey || '',
+      nodeMarker: (node as HTMLElement).dataset.stageIdentityMarker || '',
+      spriteMarker: sprite?.dataset.stageIdentityMarker || '',
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+  expect(afterRepaints, JSON.stringify({ firstPaint, afterRepaints })).toEqual(firstPaint)
+})
+
+test('resident census gates detach stage nodes and return the same registered nodes', async ({ page }) => {
+  const fixture = await installReplayRoutes(page, Date.now())
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const stageNodes = page.locator('[data-stage-node-key]')
+  const stableStageNodes = page.locator(
+    '[data-stage-node-key^="place:"], ' +
+      '[data-stage-node-key^="resident:"]:not([data-stage-node-key="resident:5"])',
+  )
+  const identityBefore = await stableStageNodes.evaluateAll(nodes => nodes.map((node, index) => {
+    const element = node as HTMLElement
+    const nodeMarker = `gate-node-${index}-${crypto.randomUUID()}`
+    const spriteMarker = `gate-sprite-${index}-${crypto.randomUUID()}`
+    const sprite = element.querySelector<HTMLElement>(
+      ':scope > .live-portrait > .live-entity-portrait',
+    )
+    element.dataset.stageGateMarker = nodeMarker
+    if (sprite) sprite.dataset.stageGateMarker = spriteMarker
+    return {
+      key: element.dataset.stageNodeKey || '',
+      nodeMarker,
+      spriteMarker: sprite?.dataset.stageGateMarker || '',
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+  expect(identityBefore.length).toBeGreaterThan(0)
+
+  fixture.holdNextResidentPage()
+  try {
+    await publishReplayChanges(page, fixture)
+    await expect.poll(fixture.heldResidentPageRequests).toBe(1)
+    await expect(stageNodes).toHaveCount(0)
+  } finally {
+    fixture.releaseHeldResidentPage()
+  }
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await expect.poll(() => page.evaluate(keys => keys.map(key => {
+    const element = document.querySelector<HTMLElement>(
+      `[data-stage-node-key="${CSS.escape(key)}"]`)
+    const sprite = element?.querySelector<HTMLElement>(
+      ':scope > .live-portrait > .live-entity-portrait',
+    )
+    return {
+      key,
+      nodeMarker: element?.dataset.stageGateMarker || '',
+      spriteMarker: sprite?.dataset.stageGateMarker || '',
+    }
+  }), identityBefore.map(entry => entry.key))).toEqual(identityBefore)
+})
+
+test('a stage sprite flips --facing on left and right walks without rotating', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now, 'complete', 0, {
+    oppositeFacingMoves: true,
+  })
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  const spriteKey = 'resident:5'
+  await page.locator(`[data-stage-node-key="${spriteKey}"] .live-portrait`)
+    .evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await publishReplayChanges(page, fixture)
+
+  await expect.poll(() => page.locator(
+    `[data-stage-node-key="${spriteKey}"]`,
+  ).count()).toBe(1)
+  const facings = new Set<string>()
+  const observations = new Set<string>()
+  for (let elapsed = 0; elapsed < 30_000; elapsed += 300) {
+    await page.clock.runFor(300)
+    await page.getByRole('button', { name: 'Center live view' })
+      .evaluate(node => (node as HTMLButtonElement).click())
+    const sample = await page.evaluate(key => {
+      const node = document.querySelector<HTMLElement>(`[data-stage-node-key="${key}"]`)
+      return node ? {
+        facing: getComputedStyle(node).getPropertyValue('--facing').trim(),
+        transform: node.style.transform,
+        movement: node.dataset.liveMovement || '',
+        from: node.dataset.fromPlaceId || '',
+        to: node.dataset.toPlaceId || '',
+        offsetPath: node.style.offsetPath,
+      } : null
+    }, spriteKey)
+    if (!sample) continue
+    if (sample.facing) facings.add(sample.facing)
+    observations.add(JSON.stringify(sample))
+  }
+
+  const operands = JSON.stringify({ facings: [...facings], observations: [...observations] })
+  expect([...facings], operands).toContain('-1')
+  expect([...facings], operands).toContain('1')
+  expect([...observations].every(observation => !/rotate\s*\(/u.test(observation)), operands)
+    .toBe(true)
 })
 
 test('exiting the preview proof scene restores ordinary place choices without a reload', async ({ page }) => {
@@ -3890,7 +4109,12 @@ test('new change rows replay once in recorded order and leave truthful residue',
   const fixture = await installReplayRoutes(page, now)
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
-
+  const stableThing = page.locator('[data-stage-node-key="thing:21"]')
+  await expect(stableThing).toHaveCount(1)
+  const stableThingMarker = `stable-thing-${crypto.randomUUID()}`
+  await stableThing.evaluate((node, marker) => {
+    ;(node as HTMLElement).dataset.stageIdentityMarker = marker
+  }, stableThingMarker)
   await publishReplayChanges(page, fixture)
   const replay = page.locator('.live-replay-portrait')
   await expect(replay).toHaveCount(1)
@@ -3903,26 +4127,46 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(replay).toHaveAttribute('data-live-movement', 'detail')
   expect(Number(await replay.getAttribute('data-live-route-point-count')))
     .toBeGreaterThanOrEqual(3)
-  // The replay shell is rebuilt by every live render, so a raw evaluate can land
-  // on a node the next render already detached; closest() then returns null.
-  // Retry the measurement; a target permanently outside the stage still fails.
+  // The registry keeps the replay shell attached across paints. Geometry still
+  // retries because animation and camera work can temporarily withhold a box.
   const replayPosition = async () => {
-    let measured: { x: number, y: number } | null = null
+    let measured: {
+      box: DOMRectJSON | null
+      headTime: number
+      point: { x: number, y: number } | null
+      recordId: string | null
+    } | null = null
     await expect.poll(async () => {
-      measured = await replay.evaluate(node => {
-        const stage = node.closest('.live-stage') as HTMLElement | null
-        if (!stage) return null
+      measured = await page.evaluate(() => {
+        const node = document.querySelector<HTMLElement>('.live-replay-portrait')
+        const stage = node?.closest<HTMLElement>('.live-stage') || null
+        if (!node || !stage) return {
+          box: null,
+          headTime: Date.now(),
+          point: null,
+          recordId: node?.dataset.liveReplayKey || null,
+        }
         const ground = stage.getBoundingClientRect()
         const box = node.getBoundingClientRect()
         const scale = ground.width / Number(stage.dataset.liveStageWidth)
         return {
-          x: (box.left + box.width / 2 - ground.left) / scale,
-          y: (box.bottom - ground.top) / scale,
+          box: box.toJSON(),
+          headTime: Date.now(),
+          point: {
+            x: (box.left + box.width / 2 - ground.left) / scale,
+            y: (box.bottom - ground.top) / scale,
+          },
+          recordId: node.dataset.liveReplayKey || null,
         }
       })
-      return measured !== null
-    }).toBe(true)
-    return measured!
+      return measured
+    }).toMatchObject({
+      box: expect.any(Object),
+      headTime: expect.any(Number),
+      point: { x: expect.any(Number), y: expect.any(Number) },
+      recordId: 'change:11',
+    })
+    return measured!.point!
   }
   const initialPosition = await replayPosition()
   await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
@@ -3930,16 +4174,6 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
   await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
   await expect(page.locator('#live-focus-status')).toContainText('Focused on map-walker')
-  await expect(page.locator('#live-label-layer [data-live-resident-tag="map-walker"]'))
-    .toBeVisible()
-  await page.evaluate(() => {
-    const trackedWindow = window as Window & { liveLabelChildMutations?: number }
-    trackedWindow.liveLabelChildMutations = 0
-    new MutationObserver(records => {
-      trackedWindow.liveLabelChildMutations = Number(trackedWindow.liveLabelChildMutations) +
-        records.filter(record => record.type === 'childList').length
-    }).observe(document.querySelector('#live-label-layer')!, { childList: true })
-  })
   const movementSampleMs = Math.ceil(duration * 0.3)
   await page.clock.runFor(movementSampleMs)
   const midpoint = await replayPosition()
@@ -3947,21 +4181,6 @@ test('new change rows replay once in recorded order and leave truthful residue',
     midpoint.x - initialPosition.x,
     midpoint.y - initialPosition.y,
   )).toBeGreaterThan(10)
-  const focusedTag = page.locator(
-    '#live-label-layer [data-live-resident-tag="map-walker"]',
-  )
-  await expect.poll(async () => {
-    const portraitBounds = await replay.locator('.live-portrait').boundingBox()
-    const tagBounds = await focusedTag.boundingBox()
-    if (!portraitBounds || !tagBounds) return Number.POSITIVE_INFINITY
-    return Math.abs(
-      portraitBounds.x + portraitBounds.width / 2 -
-      (tagBounds.x + tagBounds.width / 2),
-    )
-  }).toBeLessThan(3)
-  expect(await page.evaluate(() => Number(
-    (window as Window & { liveLabelChildMutations?: number }).liveLabelChildMutations,
-  ))).toBeLessThanOrEqual(1)
   await replay.locator('.live-portrait').evaluate(node => (node as HTMLButtonElement).click())
   await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
 
@@ -3976,6 +4195,9 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(thingOverflow).toHaveAttribute('data-live-overflow-count', '3')
   await expect(page.locator('.live-footnote-mark')).toHaveCount(1)
   await expect(page.locator('.live-speech-bubble')).toHaveText('Earlier line')
+  const platePortrait = page.locator('#live-plates [data-live-resident-handle="map-walker"]')
+  await expect(platePortrait).toHaveAccessibleName(/map-walker/u)
+  await expect(platePortrait).not.toHaveAccessibleName(/Earlier|L{10}/u)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
 
   await page.clock.fastForward(651)
@@ -3986,24 +4208,22 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await page.clock.fastForward(651)
   const pulsedThing = page.locator('.live-thing-specimen.live-pulse')
   await expect(pulsedThing).toHaveCount(0)
-  const stableLantern = page.locator('[data-place-id="3"] [data-live-thing-id="9"]')
+  const stableLantern = page.locator('[data-place-id="3"] [data-stage-node-key="thing:9"]')
   await expect(stableLantern).toHaveCount(1)
-  await expect(stableLantern).not.toHaveClass(/live-pulse/u)
+  await expect(stableThing).toHaveAttribute('data-stage-identity-marker', stableThingMarker)
+  await expect(stableThing).not.toHaveClass(/live-pulse/u)
   await expect(page.locator('.live-action-mark')).toHaveCount(0)
 
   await page.clock.fastForward(600)
   await expect(replay).toHaveCount(0)
   await expect(page.locator('.live-thing-specimen.live-pulse')).toHaveCount(0)
-  const settledWalker = page.locator(
-    '[data-place-id="3"] [data-live-resident-handle="map-walker"]',
-  ).first()
-  // Same hardening as replayPosition: a render between resolution and evaluate
-  // can detach the walker, so measure until the node reads from a live stage.
   let settledPoint: { x: number, y: number } | null = null
   await expect.poll(async () => {
-    settledPoint = await settledWalker.evaluate(node => {
-      const shell = node.closest('.live-walker') as HTMLElement | null
-      const stage = node.closest('.live-stage') as HTMLElement | null
+    settledPoint = await page.evaluate(() => {
+      const portrait = document.querySelector<HTMLElement>(
+        '[data-place-id="3"] [data-live-resident-handle="map-walker"]')
+      const shell = portrait?.closest<HTMLElement>('.live-walker') || null
+      const stage = portrait?.closest<HTMLElement>('.live-stage') || null
       if (!shell || !stage) return null
       const ground = stage.getBoundingClientRect()
       const box = shell.getBoundingClientRect()
@@ -4013,17 +4233,14 @@ test('new change rows replay once in recorded order and leave truthful residue',
         y: (box.bottom - ground.top) / scale,
       }
     })
-    return settledPoint !== null
-  }).toBe(true)
-  settledPoint = settledPoint!
+    return settledPoint
+  }).toMatchObject({ x: expect.any(Number), y: expect.any(Number) })
   expect(Math.hypot(
-    settledPoint.x - initialPosition.x,
-    settledPoint.y - initialPosition.y,
+    settledPoint!.x - initialPosition.x,
+    settledPoint!.y - initialPosition.y,
   )).toBeGreaterThan(10)
+  await expect(page.locator('[data-stage-node-key="resident:5"]')).toHaveCount(1)
   await expect(page.locator('.live-footnote-mark')).toHaveCount(2)
-  const platePortrait = page.locator('#live-plates [data-live-resident-handle="map-walker"]')
-  await expect(platePortrait).toHaveAccessibleName(/map-walker/u)
-  await expect(platePortrait).not.toHaveAccessibleName(/Earlier|L{10}/u)
 
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await page.clock.fastForward(100)
@@ -4033,6 +4250,30 @@ test('new change rows replay once in recorded order and leave truthful residue',
   await expect(page.locator('.live-footnote-mark')).toHaveCount(0)
   await expect(page.locator('.live-speech-bubble')).toHaveCount(0)
   await expect(trail).toHaveCount(0)
+})
+
+test('unpinned replay records absorbed from the stage remain counted in matching overflow', async ({ page }) => {
+  const now = Date.now()
+  await page.clock.install({ time: new Date(now) })
+  const fixture = await installReplayRoutes(page, now)
+  await page.goto('/window#view=live')
+  await expect(page.locator('#live-history-status')).toContainText('history is complete')
+  await publishReplayChanges(page, fixture)
+  const replay = page.locator('.live-replay-portrait')
+  await expect(replay).toHaveCount(1)
+
+  await page.clock.runFor(25_000)
+  const harbor = page.locator('[data-place-id="3"]')
+  await expect(harbor.locator('.live-thing-specimen')).toHaveCount(5)
+  await expect(harbor.locator('.live-thing-more'))
+    .toHaveAttribute('data-live-overflow-count', '3')
+  await expect(harbor.locator('[data-stage-node-key="thing:9"]')).toHaveCount(0)
+
+  await expect(replay).toHaveCount(0)
+  await expect(harbor.locator('.live-walker')).toHaveCount(4)
+  await expect(harbor.locator('.live-resident-more'))
+    .toHaveAttribute('data-live-overflow-count', '4')
+  await expect(harbor.locator('[data-stage-node-key="resident:5"]')).toHaveCount(0)
 })
 
 test('clearing Follow after opening on a different resident does not pop a stale backlog bubble', async ({ page }) => {
@@ -4981,15 +5222,25 @@ test('a 215-resident plate reports frame time while all 64 residents move', asyn
   expect(result.cameraMoves).toBe(60)
 })
 
-test('sixty-four simultaneous walks complete in one painted batch', async ({ page }) => {
+test('sixty-four simultaneous walks complete in one paint without rebuilding stable nodes', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
+  await installLiveRenderWorkRecorder(page)
   const fixture = await installReplayRoutes(page, now, 'complete', 0, {
     simultaneousMoves: 64,
   })
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  const stableNodes = page.locator(
+    '[data-stage-node-key^="resident:"]:not([data-stage-node-key="resident:5"])',
+  )
+  const stableNodeIdentity = await stableNodes.evaluateAll(nodes => nodes.map(node => {
+    const marker = crypto.randomUUID()
+    ;(node as HTMLElement).dataset.stageCompletionMarker = marker
+    return { key: (node as HTMLElement).dataset.stageNodeKey || '', marker }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+  expect(stableNodeIdentity.length).toBeGreaterThan(0)
   await publishReplayChanges(page, fixture)
   const replays = page.locator('.live-replay-portrait')
   let durations: number[] = []
@@ -4998,6 +5249,13 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
       Number((node as HTMLElement).dataset.replayDuration)))
     return durations.length
   }).toBe(64)
+  const replayAccessibility = await replays.evaluateAll(nodes => nodes.map(node => {
+    const portrait = node.querySelector<HTMLElement>('[data-live-resident-handle]')
+    const actor = portrait?.dataset.liveResidentHandle || ''
+    return { actor, name: portrait?.getAttribute('aria-label') || '' }
+  }))
+  expect(replayAccessibility.every(entry => entry.name.includes(entry.actor) &&
+    !/Earlier|L{10}/u.test(entry.name)), JSON.stringify(replayAccessibility)).toBe(true)
   expect(new Set(durations).size).toBe(1)
   await expect.poll(() => page.locator('.live-footstep').count()).toBeGreaterThan(0)
   const footstepBudget = await page.locator('#live-plates').evaluate(plates => {
@@ -5016,9 +5274,61 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
   expect(footstepBudget.actors.length).toBeLessThanOrEqual(6)
   expect(footstepBudget.counts.every(count => count >= 2 && count <= 3)).toBe(true)
   expect(footstepBudget.total).toBeLessThanOrEqual(18)
+  const focusedReplay = replays.first()
+  const focusedHandle = await focusedReplay.locator('[data-live-resident-handle]')
+    .getAttribute('data-live-resident-handle')
+  const focusedNodeKey = await focusedReplay.getAttribute('data-stage-node-key')
+  const focusedStageNode = page.locator(`[data-stage-node-key="${focusedNodeKey}"]`)
+  await page.getByRole('button', { name: 'Pause walks' }).click()
+  await expect(page.getByRole('button', { name: 'Resume walks' })).toBeVisible()
+  await focusedStageNode.locator('.live-portrait')
+    .evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText(`Focused on ${focusedHandle}`)
+  await page.getByRole('button', { name: 'Center live view' }).click()
   await page.locator('#live-viewport').focus()
-  await page.locator('#live-viewport').evaluate(async viewport => {
-    const anchor = document.querySelector('.live-replay-portrait')!.getBoundingClientRect()
+  let anchorSample: {
+    actor: string | null
+    headTime: number
+    point: { x: number, y: number } | null
+    recordId: string | null
+    rectangle: DOMRectJSON | null
+  } | null = null
+  await expect.poll(async () => {
+    anchorSample = await page.evaluate(nodeKey => {
+      const node = document.querySelector<HTMLElement>(
+        '[data-stage-node-key="' + CSS.escape(String(nodeKey)) + '"]')
+      const stage = node?.closest<HTMLElement>('.live-stage') || null
+      const portrait = node?.querySelector<HTMLElement>('[data-live-resident-handle]') || null
+      if (!node || !stage || !portrait) return {
+        actor: portrait?.dataset.liveResidentHandle || null,
+        headTime: Date.now(),
+        point: null,
+        recordId: node?.dataset.stageNodeKey || null,
+        rectangle: null,
+      }
+      const rectangle = node.getBoundingClientRect()
+      const stageRectangle = stage.getBoundingClientRect()
+      const scale = stageRectangle.width / Number(stage.dataset.liveStageWidth)
+      return {
+        actor: portrait.dataset.liveResidentHandle || null,
+        headTime: Date.now(),
+        point: {
+          x: (rectangle.left + rectangle.width / 2 - stageRectangle.left) / scale,
+          y: (rectangle.bottom - stageRectangle.top) / scale,
+        },
+        recordId: node.dataset.stageNodeKey || null,
+        rectangle: rectangle.toJSON(),
+      }
+    }, focusedNodeKey)
+    return anchorSample
+  }).toMatchObject({
+    actor: expect.stringMatching(/^walker-burst-/u),
+    headTime: expect.any(Number),
+    point: { x: expect.any(Number), y: expect.any(Number) },
+    recordId: focusedNodeKey,
+    rectangle: expect.any(Object),
+  })
+  await page.locator('#live-viewport').evaluate(async (viewport, anchor) => {
     for (let index = 0; index < 12; index += 1) {
       viewport.dispatchEvent(new WheelEvent('wheel', {
         bubbles: true,
@@ -5029,7 +5339,7 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
       }))
     }
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-  })
+  }, anchorSample!.rectangle!)
   await expect(page.locator('#live-stage')).toHaveAttribute('data-live-label-mode', 'readable')
   await expect.poll(() => page.locator(
     '#live-label-layer [data-live-packed="true"][data-live-resident-tag^="walker-burst-"]',
@@ -5058,40 +5368,21 @@ test('sixty-four simultaneous walks complete in one painted batch', async ({ pag
     return heldWindow.liveLabelGeometryReads ?? 0
   })
   expect(labelGeometryReads).toBeLessThan(1_000)
-  await page.evaluate(() => {
-    const heldWindow = window as typeof window & {
-      liveCompletionMutations?: number
-      liveCompletionObserver?: MutationObserver
-    }
-    heldWindow.liveCompletionMutations = 0
-    // Count only childList records that net-remove replay portraits: runFor also drives ordinary
-    // motion repaints of #live-plates (7 to 8 records) that are not completions. A per-completion
-    // paint would still net-remove one portrait each, so 64 unbatched completions would still count 64.
-    heldWindow.liveCompletionObserver = new MutationObserver(records => {
-      const replayCount = (nodes: NodeList) => [...nodes].reduce((count, node) => {
-        if (!(node instanceof Element)) return count
-        return count + Number(node.matches('.live-replay-portrait')) +
-          node.querySelectorAll('.live-replay-portrait').length
-      }, 0)
-      heldWindow.liveCompletionMutations! += records.filter(record =>
-        replayCount(record.removedNodes) > replayCount(record.addedNodes)).length
-    })
-    heldWindow.liveCompletionObserver.observe(document.querySelector('#live-plates')!, {
-      childList: true,
-    })
-  })
-
+  await page.getByRole('button', { name: 'Resume walks' }).click()
+  await resetLiveRenderWork(page)
   await page.clock.runFor(durations[0]! + 270)
   await expect(replays).toHaveCount(0)
-  const completionMutations = await page.evaluate(() => {
-    const heldWindow = window as typeof window & {
-      liveCompletionMutations?: number
-      liveCompletionObserver?: MutationObserver
-    }
-    heldWindow.liveCompletionObserver?.disconnect()
-    return heldWindow.liveCompletionMutations ?? 0
-  })
-  expect(completionMutations).toBeLessThanOrEqual(2)
+  const completionWork = await readLiveRenderWork(page)
+  expect(completionWork.renders, JSON.stringify(completionWork)).toBeLessThanOrEqual(2)
+  const settledNodeIdentity = await stableNodes.evaluateAll(nodes => nodes.map(node => ({
+    key: (node as HTMLElement).dataset.stageNodeKey || '',
+    marker: (node as HTMLElement).dataset.stageCompletionMarker || '',
+  })).sort((left, right) => left.key.localeCompare(right.key)))
+  const stableMarkers = new Map(stableNodeIdentity.map(entry => [entry.key, entry.marker]))
+  const survivingStableNodes = settledNodeIdentity.filter(entry => stableMarkers.has(entry.key))
+  expect(survivingStableNodes.length).toBeGreaterThan(0)
+  expect(survivingStableNodes.every(entry => stableMarkers.get(entry.key) === entry.marker),
+    JSON.stringify({ stableNodeIdentity, settledNodeIdentity })).toBe(true)
   await expect(page.locator('.live-trail')).toHaveCount(0)
   expect(await page.locator('.live-footstep').count()).toBeLessThanOrEqual(18)
   const movedRows = page.locator('#live-roster .resident-row')
@@ -5193,7 +5484,20 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   const now = Date.now()
   const actorCount = 1_600
   const drawingPlaceCount = 215
-  const detailedPlotCount = 217
+  const detailedPlotCount = replayPlaces.filter(place => place.parent_id === 1).length +
+    drawingPlaceCount
+  const initialCrowdedResidentCount = replayResidentRows(now, 2)
+    .filter(resident => resident.current_place_id === 3).length + actorCount
+  const initialCrowdedThingCount = replayThingRows(now, 2)
+    .filter(thing => replayPlaceScopeIds(3).has(thing.place_id)).length
+  const expectedCollapsedWalkers = Math.min(
+    initialCrowdedResidentCount,
+    initialCrowdedResidentCount > 6 ? 4 : 6,
+  )
+  const expectedCollapsedThingSpecimens = Math.min(
+    initialCrowdedThingCount,
+    initialCrowdedThingCount > 6 ? 5 : 6,
+  )
   const placeRowCount = replayPlaces.length + drawingPlaceCount
   const residentRowBudget = actorCount * 16 + 10_000
   const anchorMembershipRowBudget = actorCount * 16 + 10_000
@@ -5219,6 +5523,7 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
         y: element.dataset.livePlotY,
         width: element.dataset.livePlotWidth,
         height: element.dataset.livePlotHeight,
+        marker: element.dataset.stageCrowdMarker,
       }
     }))
   await page.clock.install({ time: new Date(now) })
@@ -5230,10 +5535,34 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
   await expect(page.locator('.live-replay-portrait')).toHaveCount(0)
+  const crowdedPlot = page.locator('.live-plot[data-place-id="3"]')
+  expect(initialCrowdedResidentCount).toBe(1_607)
+  expect(initialCrowdedThingCount).toBe(1)
+  await expect(crowdedPlot.locator('.live-walker')).toHaveCount(expectedCollapsedWalkers)
+  await expect(crowdedPlot.locator('.live-thing-shelf'))
+    .not.toHaveAttribute('data-live-expanded', 'true')
+  await expect(crowdedPlot.locator('.live-thing-specimen'))
+    .toHaveCount(expectedCollapsedThingSpecimens)
+  const registeredIdentityBefore = await page.locator(
+    '[data-stage-node-key^="resident:"]:not([data-stage-node-key="resident:5"]), ' +
+      '[data-stage-node-key^="place:"]',
+  ).evaluateAll(nodes => nodes.map(node => {
+    const element = node as HTMLElement
+    element.dataset.stageCrowdMarker ||= crypto.randomUUID()
+    return {
+      key: element.dataset.stageNodeKey || '',
+      marker: element.dataset.stageCrowdMarker,
+    }
+  }).sort((left, right) => left.key.localeCompare(right.key)))
+  expect(registeredIdentityBefore).toHaveLength(detailedPlotCount + expectedCollapsedWalkers)
+  const readRegisteredIdentity = () => page.evaluate(keys => keys.map(key => {
+    const node = document.querySelector<HTMLElement>(`[data-stage-node-key="${key}"]`)
+    return { key, marker: node?.dataset.stageCrowdMarker || null }
+  }), registeredIdentityBefore.map(entry => entry.key))
   const stableResidentsBefore = await stableResidentPositions()
   const fixedPlotsBefore = await fixedPlotPositions()
   expect(fixedPlotsBefore).toHaveLength(detailedPlotCount)
-  expect(stableResidentsBefore.length).toBeGreaterThan(0)
+  expect(stableResidentsBefore).toHaveLength(expectedCollapsedWalkers)
   expect(stableResidentsBefore.every(resident =>
     !resident.key.startsWith('walker-burst-'))).toBe(true)
 
@@ -5263,7 +5592,14 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   const replays = page.locator('.live-replay-portrait')
   await expect(replays).toHaveCount(0, { timeout: 25_000 })
   const stableResidentsDuring = await stableResidentPositions()
-  // A paint can briefly replace every plot; retain the first complete settled sample.
+  let registeredIdentityDuring: typeof registeredIdentityBefore = []
+  await expect.poll(async () => {
+    registeredIdentityDuring = await readRegisteredIdentity()
+    return registeredIdentityDuring.some(entry => entry.marker === null)
+      ? null
+      : registeredIdentityDuring
+  }, { timeout: 25_000 }).toEqual(registeredIdentityBefore)
+  // Reconciled plots stay attached; poll only for the completed position update.
   let fixedPlotsDuring: typeof fixedPlotsBefore = []
   await expect.poll(async () => {
     fixedPlotsDuring = await fixedPlotPositions()
@@ -5304,6 +5640,7 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
   await expect(page.locator('.live-trail')).toHaveCount(0)
   const stableResidentsAfter = await stableResidentPositions()
   const fixedPlotsAfter = await fixedPlotPositions()
+  const registeredIdentityAfter = await readRegisteredIdentity()
 
   const rosterOutcomes = await page.locator('#live-roster .resident-row').evaluateAll(rows =>
     rows.flatMap(row => {
@@ -5358,6 +5695,8 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
       JSON.stringify(resident) === JSON.stringify(stableResidentsBefore[index])) &&
     JSON.stringify(fixedPlotsDuring) === JSON.stringify(fixedPlotsBefore) &&
     JSON.stringify(fixedPlotsAfter) === JSON.stringify(fixedPlotsBefore) &&
+    JSON.stringify(registeredIdentityDuring) === JSON.stringify(registeredIdentityBefore) &&
+    JSON.stringify(registeredIdentityAfter) === JSON.stringify(registeredIdentityBefore) &&
     rosterOutcomes.length === actorCount && missingRosterActors.length === 0 &&
     wrongCurrentPlaces.length === 0, JSON.stringify({
       renders: work.renders,
@@ -5391,6 +5730,9 @@ test('eight legal change pages settle 1,600 actors without rebuilding crowd memb
       fixedPlotsBefore,
       fixedPlotsDuring,
       fixedPlotsAfter,
+      registeredIdentityBefore,
+      registeredIdentityDuring,
+      registeredIdentityAfter,
       rosterActorCount: rosterOutcomes.length,
       missingRosterActors: missingRosterActors.slice(0, 10),
       wrongCurrentPlaces: wrongCurrentPlaces.slice(0, 10),
@@ -5426,25 +5768,109 @@ test('a moving resident returning to readable ground receives a bounded label re
   const returningReplay = replays.first()
   const returningHandle = await returningReplay.locator('[data-live-resident-handle]')
     .getAttribute('data-live-resident-handle')
-  await returningReplay.evaluate((node, handle) => {
-    const shell = node as HTMLElement
-    const stage = document.querySelector('#live-stage') as HTMLElement
-    const viewport = document.querySelector('#live-viewport') as HTMLElement
-    const scale = Number(stage.dataset.liveScale)
-    const offsetX = Number(stage.dataset.liveOffsetX)
-    const offsetY = Number(stage.dataset.liveOffsetY)
-    shell.style.animation = 'none'
-    shell.style.left = String((viewport.clientWidth / 2 - offsetX) / scale) + 'px'
-    shell.style.top = String((viewport.clientHeight / 2 - offsetY) / scale) + 'px'
-    shell.dataset.liveFocusResident = String(handle)
-    ;(node.querySelector('.live-portrait') as HTMLElement).focus()
-  }, returningHandle)
-  await expect(page.locator(
+  const returningNodeKey = await returningReplay.getAttribute('data-stage-node-key')
+  const returningStageNode = page.locator(
+    `[data-stage-node-key="${returningNodeKey}"]`,
+  )
+  await returningReplay.locator('.live-portrait')
+    .evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText(`Focused on ${returningHandle}`)
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await returningReplay.locator('.live-portrait').focus()
+  await page.evaluate(() => {
+    const heldWindow = window as Window & { liveLabelChildMutations?: number }
+    heldWindow.liveLabelChildMutations = 0
+    new MutationObserver(records => {
+      heldWindow.liveLabelChildMutations = Number(heldWindow.liveLabelChildMutations) +
+        records.filter(record => record.type === 'childList').length
+    }).observe(document.querySelector('#live-label-layer')!, { childList: true })
+  })
+  type ResidentStopSample = {
+    actor: string | null
+    headTime: number
+    point: { x: number, y: number } | null
+    previousRectangle: DOMRectJSON | null
+    recordId: string | null
+    rectangle: DOMRectJSON | null
+    rectangleUnchanged: boolean
+    replayEnded: boolean
+    replaying: boolean
+  }
+  let settledSample: ResidentStopSample | null = null
+  let stopPollOperands: ResidentStopSample | null = null
+  let previousResidentRectangle: DOMRectJSON | null = null
+  try {
+    await expect.poll(async () => {
+      const sample = await page.evaluate(({ handle, nodeKey }) => {
+        const shell = document.querySelector<HTMLElement>(
+          '[data-stage-node-key="' + CSS.escape(String(nodeKey)) + '"]')
+        const portrait = shell?.querySelector<HTMLElement>('[data-live-resident-handle]') || null
+        if (!portrait || !shell) return {
+          actor: handle, headTime: Date.now(), point: null,
+          recordId: shell?.dataset.stageNodeKey || null, rectangle: null,
+          replaying: shell?.classList.contains('live-replay-portrait') ?? false,
+        }
+        const portraitRect = portrait.getBoundingClientRect()
+        return {
+          actor: handle,
+          headTime: Date.now(),
+          point: { x: portraitRect.x + portraitRect.width / 2, y: portraitRect.bottom },
+          recordId: shell.dataset.stageNodeKey || null,
+          rectangle: portraitRect.toJSON(),
+          replaying: shell.classList.contains('live-replay-portrait'),
+        }
+      }, { handle: returningHandle, nodeKey: returningNodeKey })
+      const previousRectangle = previousResidentRectangle
+      const replayEnded = !sample.replaying
+      const rectangleUnchanged = sample.rectangle !== null && previousRectangle !== null &&
+        JSON.stringify(sample.rectangle) === JSON.stringify(previousRectangle)
+      const stopped = replayEnded && rectangleUnchanged
+      previousResidentRectangle = sample.rectangle
+      stopPollOperands = {
+        ...sample,
+        previousRectangle,
+        rectangleUnchanged,
+        replayEnded,
+      }
+      if (!stopped) return null
+      settledSample = stopPollOperands
+      return settledSample
+    }).toMatchObject({
+      actor: returningHandle,
+      headTime: expect.any(Number),
+      point: { x: expect.any(Number), y: expect.any(Number) },
+      recordId: returningNodeKey,
+      rectangle: expect.any(Object),
+      replaying: expect.any(Boolean),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`${message}\nstop operands: ${JSON.stringify(stopPollOperands)}`)
+  }
+  await page.evaluate(() => {
+    ;(window as Window & { liveLabelChildMutations?: number }).liveLabelChildMutations = 0
+  })
+  await page.getByRole('button', { name: 'Center live view' }).click()
+  await page.clock.runFor(64)
+  const returningLabel = page.locator(
     `#live-label-layer [data-live-resident-tag="${returningHandle}"]`,
-  )).toBeVisible()
+  )
+  await expect(returningLabel).toBeVisible()
   await expect(page.locator(
     `#live-label-layer [data-live-resident-tag="${returningHandle}"]`,
   )).toBeVisible({ timeout: 750 })
+  const liveLabelChildMutations = await page.evaluate(() => Number(
+    (window as Window & { liveLabelChildMutations?: number }).liveLabelChildMutations,
+  ))
+  expect(liveLabelChildMutations, JSON.stringify({
+    returningHandle,
+    returningNodeKey,
+    settledSample,
+    liveLabelChildMutations,
+  })).toBeLessThanOrEqual(1)
+  await returningStageNode.locator('.live-portrait')
+    .evaluate(node => (node as HTMLButtonElement).click())
+  await expect(page.locator('#live-focus-status')).toContainText('No resident focused')
 })
 
 test('turning on reduced motion mid-walk preserves the final fading trail', async ({ page }) => {
@@ -6352,10 +6778,8 @@ test('the popover never covers the item it describes, and closes on Escape with 
 })
 
 test('a press outside the popover closes it; a press on the popover neither closes it nor pans the plate', async ({ page }) => {
-  // The clock is frozen so this fixture's own recorded-movement replay
-  // never rebuilds the plate mid-test (which would, correctly, close the
-  // popover under rule C5 -- its anchor left the plate -- but that is a
-  // different behavior than this test is checking).
+  // The clock is frozen so this test isolates press behavior from recorded
+  // movement while the popover remains anchored to its registered node.
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
   await installReplayRoutes(page, now)
@@ -6500,14 +6924,32 @@ test('proof: one popover carries what the chips carried, for one resident, one t
   await expect(popover).toBeVisible()
   await expect(popover).toContainText('proof-cato')
   await expect(popover).toContainText('resident #9203')
-  const catoBox = await cato.boundingBox()
-  const catoPopoverBox = await popover.boundingBox()
-  expect(catoBox && catoPopoverBox).toBeTruthy()
-  const catoIntersects = catoPopoverBox!.x < catoBox!.x + catoBox!.width &&
-    catoPopoverBox!.x + catoPopoverBox!.width > catoBox!.x &&
-    catoPopoverBox!.y < catoBox!.y + catoBox!.height &&
-    catoPopoverBox!.y + catoPopoverBox!.height > catoBox!.y
-  expect(catoIntersects).toBe(false)
+  let catoGeometry: {
+    anchor: Awaited<ReturnType<typeof cato.boundingBox>>
+    popover: Awaited<ReturnType<typeof popover.boundingBox>>
+  } = { anchor: null, popover: null }
+  await expect.poll(async () => {
+    catoGeometry = await page.evaluate(() => {
+      const anchor = document.querySelector<HTMLElement>(
+        '[data-live-resident-handle="proof-cato"]')
+      const popoverNode = document.querySelector<HTMLElement>('#live-item-popover')
+      return {
+        anchor: anchor?.getBoundingClientRect().toJSON() || null,
+        popover: popoverNode?.getBoundingClientRect().toJSON() || null,
+      }
+    })
+    return catoGeometry.anchor && catoGeometry.popover ? catoGeometry : null
+  }).toMatchObject({
+    anchor: { x: expect.any(Number), y: expect.any(Number) },
+    popover: { x: expect.any(Number), y: expect.any(Number) },
+  })
+  const catoBox = catoGeometry.anchor!
+  const catoPopoverBox = catoGeometry.popover!
+  const catoIntersects = catoPopoverBox.x < catoBox.x + catoBox.width &&
+    catoPopoverBox.x + catoPopoverBox.width > catoBox.x &&
+    catoPopoverBox.y < catoBox.y + catoBox.height &&
+    catoPopoverBox.y + catoPopoverBox.height > catoBox.y
+  expect(catoIntersects, JSON.stringify(catoGeometry)).toBe(false)
   await page.keyboard.press('Escape')
   await expect(popover).toBeHidden()
   await expect(cato).toBeFocused()
@@ -6539,6 +6981,9 @@ test('proof: one popover carries what the chips carried, for one resident, one t
   await expect(popover).toContainText('kept by proof-alex')
   await expect(popover).toContainText('Preview-only Live View proof ground.')
   await expect(popover).toContainText('7 things')
+  await page.mouse.move(0, 0)
+  await workshopOpen.focus()
+  await expect(popover).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(popover).toBeHidden()
 

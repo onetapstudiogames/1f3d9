@@ -79,7 +79,8 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
     )
     liveCamera = Object.freeze({ ...liveCamera, ...next })
     if (visualChanged && Object.keys(state.live.replayActive).length) {
-      scheduleLiveMotionRedraw()
+      liveMotionDirty = true
+      scheduleLiveRedraw()
     }
     if (!nodes.liveStage || liveCameraFrame) return
     liveCameraFrame = window.requestAnimationFrame(commitLiveCamera)

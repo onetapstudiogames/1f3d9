@@ -226,16 +226,27 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       [String(place.id)]: Object.freeze(visibleThings.map(thing => thing.id)),
     })
     for (const thing of visibleThings) {
-      const specimen = element('a', 'live-thing-specimen')
+      const itemKey = 'thing:' + String(thing.id)
+      const specimen = ensureStageNode('thing', thing.id, () => {
+        const created = element('a', 'live-thing-specimen')
+        bindLiveActivation(created, created, itemKey, null)
+        bindLiveItemPopover(created, itemKey, 'thing', () => created._liveStageRecord)
+        return created
+      })
+      specimen._liveStageRecord = thing
+      specimen.className = 'live-thing-specimen'
+      delete specimen.dataset.liveFocusThing
+      delete specimen.dataset.livePulseFor
+      delete specimen.dataset.liveRaised
+      delete specimen.dataset.liveKey
+      delete specimen.dataset.highlighted
       specimen.href = '/api/thing/' + String(thing.id)
       specimen.setAttribute('aria-label', 'Read ' + thing.name)
       specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
       specimen.dataset.liveThingId = String(thing.id)
       specimen.dataset.liveThingPlaceId = String(thing.place_id)
       const point = separated[String(thing.id)]
-      specimen.style.left = String(point.x) + 'px'
-      specimen.style.top = String(point.y) + 'px'
-      const itemKey = 'thing:' + String(thing.id)
+      setStageTransform(specimen, Object.freeze({ x: point.x, y: point.y, facing: 1 }))
       specimen.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) specimen.dataset.liveRaised = 'true'
       if (pinned.has(thing.id)) specimen.dataset.liveFocusThing = String(thing.id)
@@ -247,12 +258,37 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
         specimen.dataset.livePulseFor = pulse.key
         bindLiveHighlight(specimen, pulse.key, 'pulse')
       }
-      specimen.append(
-        liveSpriteNode('thing', thing.id, thing.name, thing.has_drawing),
-        element('span', 'live-thing-name live-item-name', thing.name),
-      )
-      bindLiveActivation(specimen, specimen, itemKey, null)
-      bindLiveItemPopover(specimen, itemKey, 'thing', () => thing)
+      const hasDrawing = String(Boolean(thing.has_drawing))
+      const oldSprite = specimen.querySelector(':scope > .live-entity-portrait')
+      const drawingRevision = String(state.changeMarker || state.snapshot?.changeMarker || '')
+      if (specimen.dataset.liveHasDrawing !== hasDrawing) {
+        if (oldSprite) {
+          portraitObserver?.unobserve(oldSprite)
+          observedPortraitShells.delete(oldSprite)
+          pendingPortraitShells.delete(oldSprite)
+          oldSprite.remove()
+        }
+        const sprite = liveSpriteNode('thing', thing.id, thing.name, thing.has_drawing)
+        sprite.dataset.liveDrawingRevision = drawingRevision
+        specimen.prepend(sprite)
+        specimen.dataset.liveHasDrawing = hasDrawing
+      } else if (hasDrawing === 'true' &&
+          oldSprite?.dataset.liveDrawingRevision !== drawingRevision) {
+        portraitObserver?.unobserve(oldSprite)
+        observedPortraitShells.delete(oldSprite)
+        pendingPortraitShells.delete(oldSprite)
+        oldSprite.querySelector(':scope > .entity-portrait-image')?.remove()
+        delete oldSprite.dataset.loaded
+        delete oldSprite.dataset.portraitState
+        oldSprite.dataset.liveDrawingRevision = drawingRevision
+        schedulePortraitShell(oldSprite)
+      }
+      let name = specimen.querySelector(':scope > .live-thing-name')
+      if (!name) {
+        name = element('span', 'live-thing-name live-item-name')
+        specimen.append(name)
+      }
+      name.textContent = thing.name
       shelf.append(specimen)
     }
     const overflowCount = selection.overflowCount + selection.visible.length - visibleThings.length
@@ -373,7 +409,26 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
 
   function livePlacePlot(renderContext, place, plot, detailed, focused) {
     const { snapshot, focus } = renderContext
-    const card = element('article', 'live-plot')
+    const itemKey = 'place:' + String(place.id)
+    const card = ensureStageNode('place', place.id, () => {
+      const created = element('article', 'live-plot')
+      const open = element('button', 'live-plot-open')
+      open.type = 'button'
+      open.dataset.focusKey = 'live-place:' + String(place.id)
+      bindLiveActivation(open, created, itemKey,
+        () => navigate({ view: 'live', placeId: place.id }))
+      bindLiveItemPopover(open, itemKey, 'place', () => created._liveStageRecord)
+      created.append(open)
+      return created
+    })
+    card._liveStageRecord = place
+    unmountLivePlaceDetail(card)
+    const open = card.querySelector(':scope > .live-plot-open')
+    for (const child of [...card.children]) {
+      if (child !== open) child.remove()
+    }
+    card.className = 'live-plot'
+    delete card.dataset.liveRaised
     card.dataset.placeId = String(place.id)
     card.dataset.livePlotX = String(plot.x)
     card.dataset.livePlotY = String(plot.y)
@@ -382,21 +437,14 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     card.dataset.liveFocusPlot = String(Boolean(focused))
     card.dataset.liveDetail = String(Boolean(detailed || focused))
     card.dataset.liveDetailMounted = 'false'
-    const itemKey = 'place:' + String(place.id)
     card.dataset.liveItemKey = itemKey
     if (state.live.raisedItemKey === itemKey) card.dataset.liveRaised = 'true'
     card.style.left = String(plot.x) + 'px'
     card.style.top = String(plot.y) + 'px'
     card.style.width = String(plot.width) + 'px'
     card.style.height = String(plot.height) + 'px'
-    const open = element('button', 'live-plot-open')
-    open.type = 'button'
-    open.dataset.focusKey = 'live-place:' + String(place.id)
     open.setAttribute('aria-label', 'Open the live plate for ' + place.name)
-    bindLiveActivation(open, card, itemKey,
-      () => navigate({ view: 'live', placeId: place.id }))
-    bindLiveItemPopover(open, itemKey, 'place', () => place)
-    open.append(element('span', 'live-plot-name', place.name),
+    open.replaceChildren(element('span', 'live-plot-name', place.name),
       element('span', 'live-plot-number', '#' + String(place.id)))
     const notesControl = liveNotesControl(snapshot, place)
     card.dataset.undrawn = 'false'

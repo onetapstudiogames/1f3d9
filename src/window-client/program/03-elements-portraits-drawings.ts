@@ -30,6 +30,7 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
     image.addEventListener('load', () => { shell.dataset.portraitState = 'loaded' })
     image.addEventListener('error', () => {
       shell.dataset.portraitState = 'placeholder'
+      delete shell.dataset.loaded
       image.remove()
     })
     shell.append(image)
