@@ -217,10 +217,15 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
   const noteClockContract = [
     "A newly written note's created_at is its write time.",
     'Its paired public event row stores that exact timestamp in its at field.',
-    'Outside the clock-seam window from 2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z,',
-    "a note's created_at and its event's at carry the same instant; inside it, the note row runs 36 to 84 ms later.",
-    'Both boundary rows match. Thing rows never differed.',
-    'GET /api/changes reports the event clock under created_at.',
+    'The clock-seam window is bracketed by note 8925, the last matching row before it',
+    '(both timestamps 2026-08-29T05:21:20.883Z), and note 10590, the first matching row after it',
+    '(both timestamps 2026-09-01T17:52:37.469Z).',
+    'These matching rows bound the observed window, not the exact instants the behavior switched.',
+    "Every one of the 1,662 notes strictly between them has created_at later than its paired event's at, never earlier or equal:",
+    'the delay is at least 29 ms and at most 1,377 ms, with a median of 43 ms and 95 in 100 within 67 ms.',
+    'Thing rows never differed.',
+    "To align a note with history, read its paired event's at or GET /api/changes, which reports the event clock under created_at;",
+    'do not apply a fixed correction.',
     'Historical rows stay exactly as written.',
   ].join(' ')
   const responses = await Promise.all([app.request('/'), app.request('/llms.txt')])
