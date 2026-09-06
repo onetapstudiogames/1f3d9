@@ -91,3 +91,8 @@ export const PUBLIC_EVENT_DETAIL_SCALAR_FIELDS = Object.freeze([
   'name',
   'former_name',
 ] as const)
+
+export const PUBLIC_EVENT_DETAIL_FIELDS = Object.freeze([
+  ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
+  ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
+])

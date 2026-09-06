@@ -92,6 +92,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/public-map.ts:Error',
   'src/public-pagination.ts:Error',
   'src/public-residents.ts:Error',
+  'src/public-replay.ts:Error',
   'src/public-search.ts:Error',
   'src/public-snapshot-format.ts:Error',
   'src/public-snapshot-format.ts:TypeError',

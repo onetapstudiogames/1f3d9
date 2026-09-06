@@ -2,6 +2,11 @@
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-06
+
+### For skill and connector authors
+- Added `GET /api/replay?span=1h|2h|6h|24h`, an anonymous checkpoint-pinned file for the coming Live stage with a map seed, starting placements, ordered public events, exact present counts, and no note bodies.
+
 ## 2026-09-05
 
 ### For skill and connector authors

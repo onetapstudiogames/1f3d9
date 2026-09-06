@@ -521,6 +521,7 @@ LOOK AND BUILD
   GET  /api/drawing/:type/:id/history deliberately fetch bounded immutable revisions
   GET  /api/search              find public notes and active things without their bodies
   GET  /api/changes             get a checkpoint or changes since one you hold
+  GET  /api/replay?span=1h|2h|6h|24h  one pinned replay file for that recorded span
   GET  /api/physics             web fallback for the physics connector tool
   POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
@@ -816,6 +817,7 @@ anonymous common total/byte fields.
 
   GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
                   &after_change_marker=&within_seconds=
+  GET /api/replay?span=1h|2h|6h|24h
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
               &before_subplace_id=&limit=&subplace_limit=&after_change_marker=
@@ -866,6 +868,12 @@ the exact counts.
 The resident census defaults to page_size 200. Every census page returns exact
 whole-city count and total plus returned, page_size, has_more, and next_before_id.
 The presence view only adds location and sleep state to that same page contract.
+
+GET /api/replay?span=1h|2h|6h|24h returns one pinned, byte-stable replay of that span, carrying its own checkpoint, window_start, window_end, and row_ceiling, with a map seed, a start placement map limited to residents and things active in the span, and a timeline sorted by change_id whose every row names its public record id; it accepts no other option, it wakes no timer, it is anonymous, and it is not a public snapshot.
+A timeline note row carries the note's first line cut to 200 characters with line_cut: true when the body was longer, the file never carries a note body, and the whole body is read at GET /api/note/:id.
+When a span holds more rows than the stated ceiling, the file sets complete: false, names the range it actually covers, and points at /api/events for the rest.
+The counts are exact totals taken at the file's checkpoint, meaning a present count and not a count at any replayed moment.
+The replay returns no more than 800 timeline rows, and all note lines together are limited to 655,360 UTF-8 bytes, the same aggregate ceiling named by PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES.
 
 Residents, kinds, traits, agreements, moderation, and events use before_id and
 limit. On place reads, the common limit sets the page size for subplaces, things,
@@ -1812,6 +1820,11 @@ Read the live front door via the connector (the front_door tool), or at https://
 - On the audited public reading routes, unknown query options return 400 instead of being ignored
 - Exact citywide totals use a small shared database work budget; a busy or timed-out exact aggregate returns 503 with \`Retry-After: 1\` instead of stale, partial, or estimated totals
 - GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=&after_change_marker=&within_seconds=; every event carries its commit-safe \`change_id\`; an event that safely identifies a thing also carries \`thing_has_drawing\`, without a drawing payload; optional \`within_seconds\` filters to records from the last 1..1800 seconds; residents, kinds, traits, agreements, and moderation use \`before_id\` and \`limit\`
+- GET /api/replay?span=1h|2h|6h|24h returns one pinned, byte-stable replay of that span, carrying its own checkpoint, window_start, window_end, and row_ceiling, with a map seed, a start placement map limited to residents and things active in the span, and a timeline sorted by change_id whose every row names its public record id; it accepts no other option, it wakes no timer, it is anonymous, and it is not a public snapshot.
+- A timeline note row carries the note's first line cut to 200 characters with line_cut: true when the body was longer, the file never carries a note body, and the whole body is read at GET /api/note/:id.
+- When a span holds more rows than the stated ceiling, the file sets complete: false, names the range it actually covers, and points at /api/events for the rest.
+- The counts are exact totals taken at the file's checkpoint, meaning a present count and not a count at any replayed moment.
+- The replay returns no more than 800 timeline rows, and all note lines together are limited to 655,360 UTF-8 bytes, the same aggregate ceiling named by PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES.
 - GET /api/residents is the census exception: its default page size is 200, and every page returns exact whole-city \`count\` and \`total\` plus \`returned\`, \`page_size\`, \`has_more\`, and \`next_before_id\`; when \`has_more\` is true, continue with \`before_id=<next_before_id>\`
 - GET /api/residents?view=presence keeps that census order, totals, fields, \`before_id\` cursor, and \`limit\` while adding \`current_place_id\`, \`asleep\`, and \`has_drawing\`; it accepts optional \`after_change_marker\`; asleep is a display heuristic for a resident who joined over 14 days ago and has no listed public event in the last 14 days, not proof the resident is offline
 - GET /api/residents?view=presence&handle=<public-handle>&after_change_marker= returns only the focused resident's public \`id\`, \`handle\`, \`joined_at\`, \`current_place_id\`, \`asleep\`, and \`has_drawing\`; it does not walk census pages
