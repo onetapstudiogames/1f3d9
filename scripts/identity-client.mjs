@@ -43,6 +43,11 @@
 // --recovery-code-file <path> instead, pointing at a file this script reads
 // and never echoes -- or pass `-` as that file's path to read the one value
 // from stdin.
+//
+// Identity doors never redirect. This client refuses every redirect, even
+// within the same origin, without sending the key or code on. Diagnostics
+// show only a safe destination origin. After an unconfirmed result, check
+// whether the action completed before retrying.
 
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -565,8 +570,75 @@ function deleteSecret(origin, label, deps = {}) {
 
 // --- HTTP -----------------------------------------------------------------
 
+// Credentials and query values must not become part of a failure message.
+function diagnosticAddress(value, privateValues, base, originOnly = false) {
+  try {
+    const url = new URL(value, base)
+    if (!['http:', 'https:'].includes(url.protocol)) return 'an unreadable address'
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    const address = originOnly ? url.origin : url.href.replace(/\/$/u, '')
+    if (privateValues.some(value => address.toLowerCase().includes(value.toLowerCase()))) {
+      return 'an address containing a private value'
+    }
+    return address
+  } catch {
+    return 'an unreadable address'
+  }
+}
+
+// A connection refusal or failed address lookup happens before delivery.
+// Other failures can lose a response after the action happened, so do not
+// promise that a registration, key change, or pairing request had no effect.
+async function fetchOrExplain(origin, path, init) {
+  const body = JSON.parse(init.body)
+  const privateValues = [body.resident_key, body.recovery_code, body.stage_token, init.headers.authorization?.slice(7)]
+    .filter(value => typeof value === 'string' && value.length > 0)
+  const address = `${diagnosticAddress(origin, privateValues)}${path}`
+  let response
+  try {
+    // Identity doors never redirect. Read the response so its destination can
+    // be reported, but never forward the key or one-time code to another URL.
+    response = await fetch(`${origin}${path}`, { ...init, redirect: 'manual' })
+  } catch (error) {
+    const causes = [error, error?.cause, ...(error?.cause?.errors ?? [])]
+    const code = causes.find(cause => cause?.code)?.code
+    const detail = code === 'ECONNREFUSED' ? 'connection refused'
+      : code === 'ENOTFOUND' ? 'the server address could not be found'
+      : code === 'EAI_AGAIN' ? 'the server address could not be looked up right now'
+      : ['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(code)
+        ? 'the connection timed out'
+      : 'the connection ended before a response arrived'
+    const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)
+    const outcomes = {
+      '/api/register': ['nothing was created', 'registration could not be confirmed'],
+      '/api/rotate': ['the key was not rotated', 'key rotation could not be confirmed'],
+      '/api/recovery': ['no recovery was performed', 'recovery could not be confirmed'],
+      '/api/pair': ['no pairing code was created', 'pairing code creation could not be confirmed'],
+    }
+    const outcome = outcomes[path][notSent ? 0 : 1]
+    throw new Error(
+      `could not reach ${address} (network error: ${detail}); ${outcome}; ` +
+      (notSent ? 'check the address and your connection, then retry'
+        : 'check whether the action completed before retrying'),
+    )
+  }
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    const location = response.headers.get('location')
+    const destination = location ? diagnosticAddress(location, privateValues, `${origin}${path}`, true) : 'an unspecified address'
+    await response.body?.cancel().catch(() => {}) // Still report the redirect if body cleanup fails.
+    throw new Error(
+      `${address}: the city answered with a redirect to ${destination}; the key was not sent on; ` +
+      'check the city address and whether the action completed before retrying',
+    )
+  }
+  return response
+}
+
 async function postJson(origin, path, body) {
-  const response = await fetch(`${origin}${path}`, {
+  const response = await fetchOrExplain(origin, path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -586,7 +658,7 @@ async function postJson(origin, path, body) {
 }
 
 async function postAuthed(origin, path, residentKey, body) {
-  const response = await fetch(`${origin}${path}`, {
+  const response = await fetchOrExplain(origin, path, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
