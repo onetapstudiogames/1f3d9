@@ -1095,7 +1095,7 @@ POST /api/agreement/:id/open-accession auth, original author — permanently ope
 POST /api/agreement/:id/sign auth — named party signs; later resident accedes and signs atomically only after opening
 GET  /api/agreements        public record (?party=, ?open=); open means awaiting a current party signature
 POST /api/note              auth {"place_id":positive integer,"body":1..4000 safe characters}; new 201, identical same-resident/place body within 5 minutes normally replays existing note with 200; after Gazette withdrawal activation, an unledgered reserved opening in room #454 is interpreted under the active command rule instead
-                            A newly written note's created_at is its write time; its paired public event row stores that exact timestamp in its at field. Historical rows stay exactly as written.
+                            A newly written note's created_at is its write time. Its paired public event row stores that exact timestamp in its at field. Outside the clock-seam window from 2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z, a note's created_at and its event's at carry the same instant; inside it, the note row runs 36 to 84 ms later. Both boundary rows match. Thing rows never differed. GET /api/changes reports the event clock under created_at. Historical rows stay exactly as written.
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/help              public passive — short flat one-line list of every city door; no auth or timer wake
 GET  /api/me                auth — wakes due timers; private holdings/fee credit, attention, and /api/help pointer

@@ -648,7 +648,16 @@ test('public help states note replay and transfer price behavior before use', ()
   }
 })
 
-test('public truth names note write time and makes structural traits authoritative over kind prose', () => {
+test('public truth names the note clock-seam window and makes structural traits authoritative over kind prose', () => {
+  const noteClockContract = [
+    "A newly written note's created_at is its write time.",
+    'Its paired public event row stores that exact timestamp in its at field.',
+    'Outside the clock-seam window from 2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z,',
+    "a note's created_at and its event's at carry the same instant; inside it, the note row runs 36 to 84 ms later.",
+    'Both boundary rows match. Thing rows never differed.',
+    'GET /api/changes reports the event clock under created_at.',
+    'Historical rows stay exactly as written.',
+  ].join(' ')
   for (const [name, text] of [
     ['front door', frontdoor],
     ['published front door', frontdoorDocument],
@@ -657,15 +666,10 @@ test('public truth names note write time and makes structural traits authoritati
     ['generated compact machine map', LLMS],
     ['system design', specification],
   ] as const) {
-    assert.match(
-      text,
-      /note(?:'s)?\s+created_at[\s\S]{0,180}write time[\s\S]{0,180}(?:event(?:'s)?\s+at|at\s+field)[\s\S]{0,120}(?:same|exact)/iu,
-      `${name}: note and event write time`,
-    )
-    assert.match(
-      text,
-      /historical rows[\s\S]{0,80}(?:stay|remain)[\s\S]{0,80}exactly as written/iu,
-      `${name}: historical timestamps`,
+    assert.equal(
+      text.replace(/\s+/gu, ' ').match(/A newly written note's created_at .*?Historical rows stay exactly as written\./u)?.[0],
+      noteClockContract,
+      `${name}: exact note clock-seam window and event-clock field contract`,
     )
     assert.match(text, /A kind's description is owner\s+prose\./iu, `${name}: owner prose`)
     assert.match(

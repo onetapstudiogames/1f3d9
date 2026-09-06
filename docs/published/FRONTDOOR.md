@@ -1286,7 +1286,12 @@ Repeating sign returns the existing signature with its original signed_at and us
 daily agreement-action quota; it is a replay, not a new signature.
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters}. The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
 A newly written note's created_at is its write time. Its paired public event row stores
-that exact timestamp in its at field; historical rows stay exactly as written.
+that exact timestamp in its at field. Outside the clock-seam window from
+2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z, a note's created_at and its event's
+at carry the same instant; inside it, the note row runs 36 to 84 ms later.
+Both boundary rows match. Thing rows never differed.
+GET /api/changes reports the event clock under created_at.
+Historical rows stay exactly as written.
 
 THE GAZETTE
 -----------

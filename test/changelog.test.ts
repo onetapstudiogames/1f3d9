@@ -46,9 +46,10 @@ test('CHANGELOG.md is checked in at the repository root with dated, categorized,
       )
       assert.ok(category.items.length > 0, `${entry.date} / ${category.name} has no items`)
       for (const item of category.items) {
-        // One plain sentence per item: exactly one full stop, at the end.
+        // Timestamp decimal points are not sentence-ending full stops.
+        const prose = item.replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\b/gu, '[UTC timestamp]')
         assert.equal(item.endsWith('.'), true, `not a sentence: ${item}`)
-        assert.equal((item.match(/\./gu) ?? []).length, 1, `more than one sentence: ${item}`)
+        assert.equal((prose.match(/\./gu) ?? []).length, 1, `more than one sentence: ${item}`)
         assert.doesNotMatch(item, /[<>]/u, `looks like markup, not prose: ${item}`)
       }
     }
@@ -211,19 +212,35 @@ test('the human window footer and front door both link to the changelog', async 
   }
 })
 
-test('the served doors state the exact since-last-visit contract', async () => {
+test('the served doors state the exact since-last-visit and note clock-seam contracts', async () => {
   const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for changelog entries, exact accepted-gift and settled-purchase credit amounts, and the current pending-acceptance gift count with links to their private records; a changelog entry counts when its UTC day ends at or after the previous visit and is not in the future, so an entry dated today is reported again on every read today and clears tomorrow; on the first visit the prior time is null and the changelog count and credit amounts are zero while pending gifts still show, and reading `me` still counts as one visit.'
+  const noteClockContract = [
+    "A newly written note's created_at is its write time.",
+    'Its paired public event row stores that exact timestamp in its at field.',
+    'Outside the clock-seam window from 2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z,',
+    "a note's created_at and its event's at carry the same instant; inside it, the note row runs 36 to 84 ms later.",
+    'Both boundary rows match. Thing rows never differed.',
+    'GET /api/changes reports the event clock under created_at.',
+    'Historical rows stay exactly as written.',
+  ].join(' ')
   const responses = await Promise.all([app.request('/'), app.request('/llms.txt')])
   const [frontDoor, compactMap] = await Promise.all([
     responses[0]!.text(),
     responses[1]!.text(),
   ])
-  for (const value of [
-    read('src/frontdoor.txt'),
-    read('src/llms.txt'),
-    FRONTDOOR,
-    LLMS,
-    frontDoor,
-    compactMap,
-  ]) assert.ok(value.includes(sentence))
+  for (const [name, value] of [
+    ['front door source', read('src/frontdoor.txt')],
+    ['compact map source', read('src/llms.txt')],
+    ['embedded front door', FRONTDOOR],
+    ['embedded compact map', LLMS],
+    ['served front door', frontDoor],
+    ['served compact map', compactMap],
+  ] as const) {
+    assert.ok(value.includes(sentence), `${name}: since-last-visit contract`)
+    assert.equal(
+      value.replace(/\s+/gu, ' ').match(/A newly written note's created_at .*?Historical rows stay exactly as written\./u)?.[0],
+      noteClockContract,
+      `${name}: exact note clock-seam window and event-clock field contract`,
+    )
+  }
 })

@@ -12,6 +12,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - GET /api/me now reports how many public city updates landed, exact accepted-gift and settled-purchase fee credit received since the resident's previous visit, and gifts currently pending acceptance.
 
 ### For skill and connector authors
+- The front door now names the note clock-seam window from 2026-08-29T05:21:20.883Z to 2026-09-01T17:52:37.469Z: note rows ran 36 to 84 ms later than their events inside it and matched at both boundaries and outside it, thing rows never differed, and GET /api/changes reports the event clock under created_at.
 - The reference identity client now explains connection failures in plain words, distinguishes an unsent action from an unconfirmed result, and reports redirects without sending a key or one-time code on to their destination, even on the same origin.
 - Added `GET /api/replay?span=1h|2h|6h|24h`, an anonymous repackaging of the public record pinned to one change checkpoint for the coming Live stage, with a map seed, starting placements, ordered public events, exact present counts, no note bodies, and older rows read at `/api/events`.
 - Corrected the public contract words for change-marker coverage, repeated-refusal addenda, and sales that change title without moving the thing.
