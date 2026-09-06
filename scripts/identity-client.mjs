@@ -48,6 +48,11 @@
 // within the same origin, without sending the key or code on. Diagnostics
 // show only a safe destination origin. After an unconfirmed result, check
 // whether the action completed before retrying.
+// Server error and next_step text is trimmed and printed only when non-empty,
+// at most 300 UTF-16 code units long, and free of control or line-separator characters.
+// Otherwise the error falls back to the HTTP status and next_step is omitted.
+// If registration confirmation cannot be sent, no resident was created, but
+// a staged credential entry remains stored locally.
 
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -570,6 +575,19 @@ function deleteSecret(origin, label, deps = {}) {
 
 // --- HTTP -----------------------------------------------------------------
 
+const SERVER_PROSE_MAX_LENGTH = 300
+const UNSAFE_SERVER_PROSE_RE = /[\x00-\x1f\x7f\u2028\u2029]/u
+
+/** Returns server prose only when it is one short, non-empty line. */
+function sanitizeServerProse(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed
+    && trimmed.length <= SERVER_PROSE_MAX_LENGTH
+    && !UNSAFE_SERVER_PROSE_RE.test(trimmed)
+    ? trimmed
+    : ''
+}
+
 // Credentials and query values must not become part of a failure message.
 function diagnosticAddress(value, privateValues, base, originOnly = false) {
   try {
@@ -613,12 +631,17 @@ async function fetchOrExplain(origin, path, init) {
       : 'the connection ended before a response arrived'
     const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)
     const outcomes = {
-      '/api/register': ['nothing was created', 'registration could not be confirmed'],
+      '/api/register': [
+        body.action === 'confirm'
+          ? 'no resident was created; a staged credential entry was written locally and remains stored'
+          : 'nothing was created',
+        'registration could not be confirmed',
+      ],
       '/api/rotate': ['the key was not rotated', 'key rotation could not be confirmed'],
       '/api/recovery': ['no recovery was performed', 'recovery could not be confirmed'],
       '/api/pair': ['no pairing code was created', 'pairing code creation could not be confirmed'],
     }
-    const outcome = outcomes[path][notSent ? 0 : 1]
+    const outcome = (outcomes[path] ?? ['the request was not sent', 'the result could not be confirmed'])[notSent ? 0 : 1]
     throw new Error(
       `could not reach ${address} (network error: ${detail}); ${outcome}; ` +
       (notSent ? 'check the address and your connection, then retry'
@@ -650,9 +673,9 @@ async function postJson(origin, path, body) {
     // Non-JSON response falls through with parsed === null below.
   }
   if (!response.ok || !parsed) {
-    const error = parsed?.error ?? `HTTP ${response.status} with no readable JSON body`
-    const nextStep = parsed?.next_step ? ` next_step: ${parsed.next_step}` : ''
-    throw new Error(`${path} refused: ${error}.${nextStep}`)
+    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status} with no usable message`
+    const nextStep = sanitizeServerProse(parsed?.next_step)
+    throw new Error(`${path} refused: ${error}.${nextStep ? ` next_step: ${nextStep}` : ''}`)
   }
   return parsed
 }
@@ -673,8 +696,9 @@ async function postAuthed(origin, path, residentKey, body) {
     // handled below
   }
   if (!response.ok || !parsed) {
-    const error = parsed?.error ?? `HTTP ${response.status} with no readable JSON body`
-    throw new Error(`${path} refused: ${error}`)
+    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status} with no usable message`
+    const nextStep = sanitizeServerProse(parsed?.next_step)
+    throw new Error(`${path} refused: ${error}.${nextStep ? ` next_step: ${nextStep}` : ''}`)
   }
   return parsed
 }

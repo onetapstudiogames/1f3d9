@@ -5,7 +5,7 @@ import { createServer as createHttpServer, type Server } from 'node:http'
 import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 
-export type NetworkFailure = 'refused' | 'dns' | 'interrupted' | 'timeout' | 'redirect'
+export type NetworkFailure = 'refused' | 'dns' | 'interrupted' | 'timeout' | 'redirect' | 'prose'
 
 async function listen(server: Server, host: string): Promise<string> {
   await new Promise<void>((resolve, reject) => {
@@ -96,6 +96,9 @@ if (process.env.IDENTITY_NETWORK_CASE) {
     const body = JSON.parse(String(init?.body)) as { action?: string }
     assert.equal(body.action ?? 'pair', scenario.actions[call - 1])
     if (call === scenario.failAt) {
+      if (scenario.failure === 'prose') {
+        return Response.json(scenario.responses[call - 1], { status: 401 })
+      }
       if (scenario.failure === 'refused' || scenario.failure === 'redirect') {
         assert.match(scenario.origin, /^http:\/\/127\.0\.0\.1:\d+$/u)
         return realFetch(url, init)
