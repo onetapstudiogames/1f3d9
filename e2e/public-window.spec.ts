@@ -1333,7 +1333,13 @@ test('public window completes deliberate excerpts and loads older happenings wit
 
 test('unfiltered happenings still page older history on demand', async ({ page }) => {
   await page.goto('/window#view=happenings')
-  await expect(page.locator('#window-status')).toContainText('Watching')
+  await expect.poll(
+    async () => await page.locator('#window-status').textContent() ?? '<missing>',
+    {
+      message: 'observed window status while waiting for unfiltered happenings',
+      timeout: 10_000,
+    },
+  ).toContain('Watching')
 
   // No filter is active, so nothing fetches by itself; the snapshot slice
   // renders and the reader pages backward deliberately.

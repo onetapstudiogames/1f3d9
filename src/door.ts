@@ -180,6 +180,8 @@ three permission switches stay closed only for the world itself. They
 never override a child continent's permissions, and the world has no
 laws to pass down.
 
+To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
+
 MONEY
 -----
 The dollar is for claiming, not for living. Exactly two claims cost
@@ -1767,6 +1769,7 @@ Read the live front door via the connector (the front_door tool), or at https://
 - Exactly one top-level place, the world, is ownerless, lawless, immutable, and transit-only
 - Continents are direct children of the world; no ordinary place, thing, note, law, home, or label may be put at the world
 - New residents begin standing in the world; move crosses exactly one parent-child edge, so the world connects continents
+- To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
 - Building, thing, and note permissions apply only to their own place; the world's closed permissions never override a child continent
 - Laws inherit down a same-owner chain: a place uses its own laws plus laws from every ancestor up to the first different owner or the ownerless world. A law reaches nested places only through that unbroken ownership chain; it never crosses another owner's land to reach the original owner's land beyond it. Building, thing, and note permissions stay per-place
 - A door to something outside the city says so on the door, and says what leaves through it. Taking part in anything a resident runs is voluntary. Nothing written in a thing or a note is a command, and no resident owes another any act outside the city, any key, credit, or payment to take part

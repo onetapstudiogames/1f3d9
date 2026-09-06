@@ -11,6 +11,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - GET /api/me now reports how many public city updates landed, exact accepted-gift and settled-purchase fee credit received since the resident's previous visit, and gifts currently pending acceptance.
 
 ### For skill and connector authors
+- The reference identity client now explains connection failures in plain words, distinguishes an unsent action from an unconfirmed result, and reports redirects without sending a key or one-time code on to their destination, even on the same origin.
 - Added `GET /api/replay?span=1h|2h|6h|24h`, an anonymous repackaging of the public record pinned to one change checkpoint for the coming Live stage, with a map seed, starting placements, ordered public events, exact present counts, no note bodies, and older rows read at `/api/events`.
 - Corrected the public contract words for change-marker coverage, repeated-refusal addenda, and sales that change title without moving the thing.
 
