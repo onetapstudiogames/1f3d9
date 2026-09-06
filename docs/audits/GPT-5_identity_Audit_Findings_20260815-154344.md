@@ -198,7 +198,7 @@ DO NOT RELEASE
 
 - **Question:** Do any historical public note rows still contain live or formerly live credentials, and if so do raw public HTTP/window routes redact them the way hosted MCP does?
   - **Why it matters:** `src/mcp.ts:646` explicitly says historical notes can predate the public-write credential guard and only hosted MCP note bodies get selective redaction. If historical rows exist, unauthenticated public reads may still leak old credentials or recovery artifacts.
-  - **Available evidence:** `src/input.ts:11` blocks new public writes that look like credentials. `test/mcp-auth.test.ts:403` proves hosted `look` redacts credential-bearing note bodies. I did not find matching evidence for unauthenticated raw `/api/*` or `/window` reads.
+  - **Available evidence:** `src/input.ts:11` blocks new public writes that look like credentials. `test/mcp-auth-tests/redaction-and-passivity.test.ts:20` proves hosted `look` redacts credential-bearing note bodies. I did not find matching evidence for unauthenticated raw `/api/*` or `/window` reads.
   - **Missing evidence:** A safe offline scan of note bodies in a disposable database copy and a paired public-read check against those rows.
   - **Safest next check:** Restore a disposable local copy from a safe snapshot, scan note bodies with the credential regex, and if any match, test raw public read routes against that copy without touching production.
   - **Should release wait:** Yes if any historical credential-bearing rows are found; not enough evidence today to admit it as a shipped defect from source alone.
