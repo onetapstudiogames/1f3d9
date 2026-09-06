@@ -135,7 +135,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     )
     const { things, pinnedIds, exactTotal, selection } = presentation
     if (!things.length && (exactTotal === null || exactTotal === 0)) {
-      clearStageRoomCellKind(place.id, 'thing')
+      clearStageRoomSpotKind(place.id, 'thing')
       return null
     }
     const pinned = new Set(pinnedIds)
@@ -152,36 +152,30 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     const surfaceWidth = isRoot
       ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
       : childPlot?.width || 440
-    const heldResidents = Object.values(
-      liveStageOccupantsByPlaceId[String(place.id)] || Object.freeze({}),
-    ).filter(occupant => occupant.kind === 'resident').length
-    const minimumHeight = isRoot ? STAGE_PARENT_ROOM_HEIGHT : expanded ? 320 : childPlot?.height || 280
     const surfaceHeight = rootExpanded
       ? liveDirectGroundHeight(place.id, surfaceWidth)
-      : stageCellRoomHeight(
-          surfaceWidth, selection.visible.length + heldResidents, minimumHeight)
-    const separated = stageRoomCellPoints(
+      : isRoot ? STAGE_PARENT_ROOM_HEIGHT : childPlot?.height || 280
+    const expandedGround = !isRoot ? survey.expandedGrounds[String(place.id)] : null
+    const extraGround = Object.freeze((expandedGround?.regions || []).map(region => Object.freeze({
+      x: region.x - childPlot.x,
+      y: region.y - childPlot.y,
+      width: region.width,
+      height: region.height,
+    })))
+    const separated = stageRoomStandingPoints(
       place.id,
       'thing',
       selection.visible,
-      Object.freeze({ x: 0, y: 0, width: surfaceWidth, height: surfaceHeight }),
+      Object.freeze({ x: 0, y: 0, width: surfaceWidth,
+        height: isRoot ? surfaceHeight - 144 : surfaceHeight }),
+      true,
+      extraGround,
     )
-    const expandedGround = !isRoot && expanded
-      ? survey.expandedGrounds[String(place.id)] || null
-      : null
-    const inlineOffsetY = expandedGround?.thingTop
-      ? expandedGround.thingTop - (childPlot?.y || 0)
-      : 0
     if (expanded) shelf.dataset.liveExpanded = 'true'
     shelf.style.width = String(surfaceWidth) + 'px'
-    shelf.style.height = String(surfaceHeight) + 'px'
-    if (isRoot) {
-      shelf.style.inset = '0 auto auto 0'
-    } else if (inlineOffsetY) {
-      shelf.style.inset = 'auto'
-      shelf.style.left = '0'
-      shelf.style.top = String(inlineOffsetY) + 'px'
-    }
+    shelf.style.height = String(Math.max(surfaceHeight,
+      ...extraGround.map(region => region.y + region.height))) + 'px'
+    shelf.style.inset = '0 auto auto 0'
     shelf.setAttribute('aria-label', 'Things shown inside ' + place.name)
     const visibleThings = selection.visible.filter(thing => Boolean(separated[String(thing.id)]))
     liveThingVisibleIdsByPlaceId = Object.freeze({
@@ -214,10 +208,8 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       specimen.style.minHeight = '32px'
       const point = separated[String(thing.id)]
       setStageTransform(specimen, Object.freeze({ x: point.x, y: point.y, facing: 1 }))
-      specimen.dataset.stageCellKey = point.cellKey
+      specimen.dataset.stageSpotKey = point.spotKey
       specimen.dataset.stageRoomId = String(place.id)
-      specimen.dataset.stageCellRow = String(point.row)
-      specimen.dataset.stageCellColumn = String(point.column)
       specimen.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) specimen.dataset.liveRaised = 'true'
       if (pinned.has(thing.id)) specimen.dataset.liveFocusThing = String(thing.id)
@@ -341,7 +333,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     // whether the viewer is standing at the world root, a continent, or a
     // town looking down into this one quiet plot.
     if (isQuietPlace(place)) {
-      clearStageRoomCells(place.id)
+      clearStageRoomSpots(place.id)
       const room = renderContext.survey.plots.find(plot => plot.id === place.id)
       const residentCount = displayedResidents(snapshot).filter(resident =>
         resident.current_place_id === place.id).length
@@ -363,6 +355,19 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       card.dataset.liveDetailMounted = 'true'
       return
     }
+    const room = renderContext.survey.plots.find(plot => plot.id === place.id)
+    const extraGround = renderContext.survey.expandedGrounds[String(place.id)]
+    for (const region of extraGround?.regions || []) {
+      const extension = element('div', 'live-room-extension')
+      extension.setAttribute('aria-hidden', 'true')
+      extension.dataset.stageRoomId = String(place.id)
+      extension.dataset.stageGroundKind = region.kind
+      extension.style.left = String(region.x - room.x) + 'px'
+      extension.style.top = String(region.y - room.y) + 'px'
+      extension.style.width = String(region.width) + 'px'
+      extension.style.height = String(region.height) + 'px'
+      card.append(extension)
+    }
     // Third review pass: place itself is clear, but residentsAt/liveThingShelf
     // below still recurse through every descendant of place — a quiet place
     // nested two or more levels down (this plot's grandchild or deeper) must
@@ -378,7 +383,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
         'live-portrait-grid',
         renderContext,
       ))
-    } else clearStageRoomCellKind(place.id, 'resident')
+    } else clearStageRoomSpotKind(place.id, 'resident')
     const shelf = liveThingShelf(
       snapshot, place, records, focus.id, true, interactionThings, renderContext)
     if (shelf) card.append(shelf)

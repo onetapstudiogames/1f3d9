@@ -14,29 +14,40 @@ export type StageRoomBox = Readonly<{
   door: Readonly<{ x: number; y: number; side: 'left' | 'right' }>
 }>
 
-export type StageCellEntry = Readonly<{
+export type StageStandingEntry = Readonly<{
   key: string
   kind: 'resident' | 'thing'
-  label: string
 }>
 
-export type StageCell = Readonly<{
+export type StageStandingSpot = Readonly<{
   key: string
   kind: 'resident' | 'thing'
   x: number
   y: number
   width: number
   height: number
-  row: number
-  column: number
+}>
+
+export type StageGroundRect = Readonly<{
+  x: number
+  y: number
+  width: number
+  height: number
+}>
+
+export type StageExpandedGroundRegion = StageGroundRect & Readonly<{
+  kind: 'resident' | 'thing'
 }>
 
 export type StageExpandedGround = Readonly<{
   x: number
   residentTop: number | null
   thingTop: number | null
+  residentHeight: number
+  thingHeight: number
   width: number
   bottom: number
+  regions: readonly StageExpandedGroundRegion[]
 }>
 
 export type StageCorridorNode = Readonly<{
@@ -80,6 +91,8 @@ export function stageChildPlaces<T extends Readonly<{
 export function stageRoomLayout(
   places: readonly StageGroundPlace[],
   parentId: string | number,
+  reservedGround: readonly StageGroundRect[] = [],
+  previousRooms: Readonly<Record<string, StageRoomBox>> = {},
 ): Readonly<{
   rooms: Readonly<Record<string, StageRoomBox>>
   width: number
@@ -93,10 +106,36 @@ export function stageRoomLayout(
   const top = 48
   const rooms: Record<string, StageRoomBox> = {}
   const children = stageChildPlaces(places, parentId)
-  for (const [index, place] of children.entries()) {
+  const parentKey = String(parentId)
+  const retainedRooms = Object.freeze(Object.fromEntries(Object.entries(previousRooms)
+    .filter(([id, room]) => id === String(room.id) &&
+      String(room.parentId) === parentKey &&
+      [room.x, room.y, room.width, room.height, room.door.x, room.door.y]
+        .every(Number.isFinite) &&
+      room.width > 0 && room.height > 0)))
+  const obstacles = reservedGround.filter(area =>
+    [area.x, area.y, area.width, area.height].every(Number.isFinite) &&
+      area.width > 0 && area.height > 0)
+  let nextFreshY = Math.max(top, ...Object.values(retainedRooms)
+    .map(room => room.y + room.height + roomGap))
+  for (const place of children) {
     const id = String(place.id)
+    const retained = retainedRooms[id]
+    if (retained) {
+      rooms[id] = retained
+      continue
+    }
     const x = parentWidth + corridorWidth
-    const y = top + index * (roomHeight + roomGap)
+    let y = nextFreshY
+    while (true) {
+      const overlapping = obstacles.filter(area =>
+        x < area.x + area.width + roomGap &&
+        x + roomWidth + roomGap > area.x &&
+        y < area.y + area.height + roomGap &&
+        y + roomHeight + roomGap > area.y)
+      if (!overlapping.length) break
+      y = Math.max(...overlapping.map(area => area.y + area.height + roomGap))
+    }
     rooms[id] = Object.freeze({
       id: place.id,
       parentId,
@@ -106,80 +145,160 @@ export function stageRoomLayout(
       height: roomHeight,
       door: Object.freeze({ x, y: y + roomHeight / 2, side: 'left' as const }),
     })
+    nextFreshY = y + roomHeight + roomGap
   }
   return Object.freeze({
     rooms: Object.freeze(rooms),
     width: children.length ? parentWidth + corridorWidth + roomWidth + 64 : parentWidth,
     height: Math.max(STAGE_PARENT_ROOM_HEIGHT,
-      top + children.length * (roomHeight + roomGap)),
+      ...Object.values(rooms).map(room => room.y + room.height + roomGap)),
   })
 }
 
-export function stageAssignCells(
-  entries: readonly StageCellEntry[],
-  room: Readonly<{ x: number; y: number; width: number; height: number }>,
-  previous: Readonly<Record<string, StageCell>> = {},
-): Readonly<Record<string, StageCell>> {
+export function stageFindFreeSpots(
+  entries: readonly StageStandingEntry[],
+  room: StageGroundRect,
+  previous: Readonly<Record<string, StageStandingSpot>> = {},
+  extraGround: readonly StageGroundRect[] = [],
+): Readonly<Record<string, StageStandingSpot>> {
   if (![room.x, room.y, room.width, room.height].every(Number.isFinite) ||
       room.width <= 0 || room.height <= 0) return Object.freeze({})
   const spriteSize = 32
   const clearance = spriteSize / 2
-  const pitch = spriteSize + clearance
-  const inset = 24
-  const columns = Math.max(1, Math.floor((room.width - inset * 2 + clearance) / pitch))
-  const rows = Math.max(1, Math.floor((room.height - inset * 2 + clearance) / pitch))
+  const searchAreas = [room, ...extraGround].flatMap(area => {
+    if (![area.x, area.y, area.width, area.height].every(Number.isFinite) ||
+        area.width <= 0 || area.height <= 0) return []
+    const minimumX = Math.ceil(area.x + clearance)
+    const minimumY = Math.ceil(area.y + clearance)
+    const maximumX = Math.floor(area.x + area.width - clearance - spriteSize)
+    const maximumY = Math.floor(area.y + area.height - clearance - spriteSize)
+    const xSpan = maximumX - minimumX + 1
+    const ySpan = maximumY - minimumY + 1
+    if (xSpan <= 0 || ySpan <= 0) return []
+    return [Object.freeze({
+      minimumX, minimumY, maximumX, maximumY, xSpan, ySpan,
+      candidateCount: xSpan * ySpan,
+    })]
+  })
+  if (!searchAreas.length) return Object.freeze({})
+  const hash = (value: string): number => {
+    let result = 2166136261
+    for (let index = 0; index < value.length; index += 1) {
+      result ^= value.charCodeAt(index)
+      result = Math.imul(result, 16777619)
+    }
+    return result >>> 0
+  }
   const ordered = [...new Map(entries.filter(entry =>
     (entry.kind === 'resident' || entry.kind === 'thing') &&
-      typeof entry.key === 'string' && entry.key.length > 0 &&
-      typeof entry.label === 'string')
+      typeof entry.key === 'string' && entry.key.length > 0)
     .map(entry => [entry.key, entry])).values()]
-    .sort((left, right) => left.label.localeCompare(right.label) ||
-      left.key.localeCompare(right.key))
-  const validKeys = new Set(ordered.map(entry => entry.key))
-  const occupied = new Set<number>()
-  const result: Record<string, StageCell> = {}
+    .sort((left, right) => left.key.localeCompare(right.key))
+  const overlaps = (
+    left: Readonly<{ x: number; y: number; width: number; height: number }>,
+    right: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ): boolean => left.x < right.x + right.width + clearance &&
+    left.x + left.width + clearance > right.x &&
+    left.y < right.y + right.height + clearance &&
+    left.y + left.height + clearance > right.y
+  const bucketSize = spriteSize + clearance
+  const occupiedByBucket = new Map<number, Map<number, StageStandingSpot[]>>()
+  const bucketCoordinate = (value: number): number => Math.floor(value / bucketSize)
+  const addOccupied = (spot: StageStandingSpot): void => {
+    const x = bucketCoordinate(spot.x)
+    const y = bucketCoordinate(spot.y)
+    const bucketColumn = occupiedByBucket.get(x) || new Map<number, StageStandingSpot[]>()
+    bucketColumn.set(y, [...(bucketColumn.get(y) || []), spot])
+    occupiedByBucket.set(x, bucketColumn)
+  }
+  const collides = (
+    area: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ): boolean => {
+    const centerX = bucketCoordinate(area.x)
+    const centerY = bucketCoordinate(area.y)
+    for (let x = centerX - 1; x <= centerX + 1; x += 1) {
+      const bucketColumn = occupiedByBucket.get(x)
+      if (!bucketColumn) continue
+      for (let y = centerY - 1; y <= centerY + 1; y += 1) {
+        if ((bucketColumn.get(y) || [])
+          .some(occupied => overlaps(area, occupied))) return true
+      }
+    }
+    return false
+  }
+  const result: Record<string, StageStandingSpot> = {}
   for (const entry of ordered) {
-    const cell = previous[entry.key]
-    if (!cell || !validKeys.has(entry.key) || cell.kind !== entry.kind ||
-        !Number.isSafeInteger(cell.row) || !Number.isSafeInteger(cell.column) ||
-        cell.row < 0 || cell.row >= rows || cell.column < 0 || cell.column >= columns) continue
-    const slot = cell.row * columns + cell.column
-    if (occupied.has(slot)) continue
-    const expectedX = room.x + inset + cell.column * pitch
-    const expectedY = room.y + inset + cell.row * pitch
-    if (cell.x !== expectedX || cell.y !== expectedY ||
-        cell.width !== spriteSize || cell.height !== spriteSize) continue
-    occupied.add(slot)
-    result[entry.key] = Object.freeze({ ...cell, key: entry.key, kind: entry.kind })
+    const spot = previous[entry.key]
+    if (!spot || spot.kind !== entry.kind ||
+        ![spot.x, spot.y, spot.width, spot.height].every(Number.isFinite) ||
+        spot.width !== spriteSize || spot.height !== spriteSize ||
+        !searchAreas.some(area => spot.x >= area.minimumX && spot.y >= area.minimumY &&
+          spot.x <= area.maximumX && spot.y <= area.maximumY) ||
+        collides(spot)) continue
+    const retained = Object.freeze({
+      key: entry.key,
+      kind: entry.kind,
+      x: spot.x,
+      y: spot.y,
+      width: spriteSize,
+      height: spriteSize,
+    })
+    result[entry.key] = retained
+    addOccupied(retained)
   }
   for (const entry of ordered) {
     if (result[entry.key]) continue
-    let slot = -1
-    for (let candidate = 0; candidate < columns * rows; candidate += 1) {
-      if (!occupied.has(candidate)) {
-        slot = candidate
+    const candidateCount = searchAreas.reduce((sum, area) => sum + area.candidateCount, 0)
+    const firstCandidate = hash(entry.key) % candidateCount
+    const candidateRectAt = (candidateIndex: number): StageGroundRect => {
+      let candidate = candidateIndex
+      let searchArea = searchAreas[0]!
+      for (const candidateArea of searchAreas) {
+        searchArea = candidateArea
+        if (candidate < candidateArea.candidateCount) break
+        candidate -= candidateArea.candidateCount
+      }
+      return Object.freeze({
+        x: searchArea.minimumX + candidate % searchArea.xSpan,
+        y: searchArea.minimumY + Math.floor(candidate / searchArea.xSpan),
+        width: spriteSize,
+        height: spriteSize,
+      })
+    }
+    let chosen: Readonly<{ x: number; y: number }> | null = null
+    let probe = hash('free:' + entry.key)
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      probe = (Math.imul(probe, 1664525) + 1013904223) >>> 0
+      const candidateRect = candidateRectAt(probe % candidateCount)
+      if (!collides(candidateRect)) {
+        chosen = candidateRect
         break
       }
     }
-    if (slot < 0) continue
-    const row = Math.floor(slot / columns)
-    const column = slot % columns
-    occupied.add(slot)
-    result[entry.key] = Object.freeze({
+    for (let offset = 0; offset < candidateCount; offset += 1) {
+      if (chosen) break
+      const candidateRect = candidateRectAt((firstCandidate + offset) % candidateCount)
+      if (!collides(candidateRect)) {
+        chosen = candidateRect
+        break
+      }
+    }
+    if (!chosen) continue
+    const placed = Object.freeze({
       key: entry.key,
       kind: entry.kind,
-      x: room.x + inset + column * pitch,
-      y: room.y + inset + row * pitch,
+      x: chosen.x,
+      y: chosen.y,
       width: spriteSize,
       height: spriteSize,
-      row,
-      column,
     })
+    result[entry.key] = placed
+    addOccupied(placed)
   }
   return Object.freeze(result)
 }
 
-export function stageCellRoomHeight(
+export function stageStandingRoomHeight(
   width: number,
   count: number,
   minimumHeight = 280,
@@ -188,11 +307,18 @@ export function stageCellRoomHeight(
       width <= 0 || count < 0 || minimumHeight <= 0) return 0
   const spriteSize = 32
   const clearance = spriteSize / 2
-  const pitch = spriteSize + clearance
-  const inset = 24
-  const columns = Math.max(1, Math.floor((width - inset * 2 + clearance) / pitch))
-  const rows = Math.ceil(Math.floor(count) / columns)
-  return Math.max(Math.ceil(minimumHeight), inset * 2 + rows * pitch - clearance)
+  const minimumGap = spriteSize + clearance
+  const xSpan = Math.floor(width - clearance * 2 - spriteSize)
+  if (xSpan < 0) return 0
+  const standingAcross = Math.floor(xSpan / minimumGap) + 1
+  const depth = Math.ceil(Math.floor(count) / standingAcross)
+  // Free positions do not pack like grid rows. Reserve slack for retained,
+  // off-grid occupants; the caller first probes the actual existing ground
+  // and adds a strip only when an occupant cannot fit there.
+  const requiredHeight = depth > 0
+    ? clearance * 2 + spriteSize + (depth - 1) * minimumGap * 2
+    : clearance * 2 + spriteSize
+  return Math.max(Math.ceil(minimumHeight), requiredHeight)
 }
 
 export function stageExpandedGroundLayout(
@@ -208,6 +334,7 @@ export function stageExpandedGroundLayout(
     residentHeight: number
     thingHeight: number
   }>[],
+  previousGrounds: Readonly<Record<string, StageExpandedGround>> = {},
   groundWidth = 440,
   gap = 16,
   controlRailDepth = 64,
@@ -233,8 +360,23 @@ export function stageExpandedGroundLayout(
     width: room.width,
     height: room.height + safeRailDepth,
   }))
-  const obstacles = [...fixed]
-  const grounds: Record<string, StageExpandedGround> = {}
+  const regionsByRoom = new Map<string, StageExpandedGroundRegion[]>()
+  for (const [id, ground] of Object.entries(previousGrounds)) {
+    if (!Array.isArray(ground?.regions)) continue
+    const regions = ground.regions.filter(region =>
+      (region.kind === 'resident' || region.kind === 'thing') &&
+        [region.x, region.y, region.width, region.height].every(Number.isFinite) &&
+        region.width > 0 && region.height > 0)
+      .map(region => Object.freeze({
+        kind: region.kind,
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+      }))
+    if (regions.length) regionsByRoom.set(id, regions)
+  }
+  const obstacles = [...fixed, ...[...regionsByRoom.values()].flat()]
   const ordered = expansions.filter(expansion =>
     roomById.has(String(expansion.id)) &&
       [expansion.residentHeight, expansion.thingHeight].every(Number.isFinite) &&
@@ -248,38 +390,56 @@ export function stageExpandedGroundLayout(
     })
   for (const expansion of ordered) {
     const room = roomById.get(String(expansion.id))!
-    const totalHeight = expansion.residentHeight + expansion.thingHeight +
-      (expansion.residentHeight > 0 && expansion.thingHeight > 0 ? safeGap : 0)
-    let top = room.y + room.height + safeRailDepth + safeGap
-    while (true) {
-      const overlapping = obstacles.filter(obstacle =>
-        room.x < obstacle.x + obstacle.width + safeGap &&
-        room.x + safeGroundWidth + safeGap > obstacle.x &&
-        top < obstacle.y + obstacle.height + safeGap &&
-        top + totalHeight + safeGap > obstacle.y)
-      if (!overlapping.length) break
-      top = Math.max(...overlapping.map(obstacle =>
-        obstacle.y + obstacle.height + safeGap))
+    const id = String(expansion.id)
+    const regions = [...(regionsByRoom.get(id) || [])]
+    for (const kind of ['resident', 'thing'] as const) {
+      const requestedHeight = kind === 'resident'
+        ? expansion.residentHeight
+        : expansion.thingHeight
+      const heldHeight = regions.filter(region => region.kind === kind)
+        .reduce((sum, region) => sum + region.height, 0)
+      const missingHeight = Math.max(0, requestedHeight - heldHeight)
+      if (!missingHeight) continue
+      let top = room.y + room.height + safeRailDepth + safeGap
+      while (true) {
+        const overlapping = obstacles.filter(obstacle =>
+          room.x < obstacle.x + obstacle.width + safeGap &&
+          room.x + safeGroundWidth + safeGap > obstacle.x &&
+          top < obstacle.y + obstacle.height + safeGap &&
+          top + missingHeight + safeGap > obstacle.y)
+        if (!overlapping.length) break
+        top = Math.max(...overlapping.map(obstacle =>
+          obstacle.y + obstacle.height + safeGap))
+      }
+      const region = Object.freeze({
+        kind,
+        x: room.x,
+        y: top,
+        width: safeGroundWidth,
+        height: missingHeight,
+      })
+      regions.push(region)
+      obstacles.push(region)
     }
-    const residentTop = expansion.residentHeight > 0 ? top : null
-    const thingTop = expansion.thingHeight > 0
-      ? top + expansion.residentHeight +
-        (expansion.residentHeight > 0 ? safeGap : 0)
-      : null
-    const ground = Object.freeze({
-      x: room.x,
-      residentTop,
-      thingTop,
-      width: safeGroundWidth,
-      bottom: top + totalHeight,
+    if (regions.length) regionsByRoom.set(id, regions)
+  }
+  const grounds: Record<string, StageExpandedGround> = {}
+  for (const [id, mutableRegions] of regionsByRoom) {
+    const regions = Object.freeze(mutableRegions.map(region => Object.freeze({ ...region })))
+    const residentRegions = regions.filter(region => region.kind === 'resident')
+    const thingRegions = regions.filter(region => region.kind === 'thing')
+    const left = Math.min(...regions.map(region => region.x))
+    const right = Math.max(...regions.map(region => region.x + region.width))
+    grounds[id] = Object.freeze({
+      x: left,
+      residentTop: residentRegions[0]?.y ?? null,
+      thingTop: thingRegions[0]?.y ?? null,
+      residentHeight: residentRegions.reduce((sum, region) => sum + region.height, 0),
+      thingHeight: thingRegions.reduce((sum, region) => sum + region.height, 0),
+      width: right - left,
+      bottom: Math.max(...regions.map(region => region.y + region.height)),
+      regions,
     })
-    grounds[String(expansion.id)] = ground
-    obstacles.push(Object.freeze({
-      x: ground.x,
-      y: top,
-      width: ground.width,
-      height: totalHeight,
-    }))
   }
   return Object.freeze({
     grounds: Object.freeze(grounds),
@@ -394,7 +554,7 @@ export function stageQuietRoom(
   name: string
   owner: string | null
   counts: Readonly<{ residents: number; things: number }>
-  cells: readonly never[]
+  spots: readonly never[]
 }> | null {
   if (place.quiet !== true || typeof place.name !== 'string' ||
       (place.owner !== null && typeof place.owner !== 'string') ||
@@ -408,6 +568,6 @@ export function stageQuietRoom(
       residents: place.counts.residents,
       things: place.counts.things,
     }),
-    cells: Object.freeze([]),
+    spots: Object.freeze([]),
   })
 }

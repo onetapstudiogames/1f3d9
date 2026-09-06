@@ -21,9 +21,9 @@ import {
 import {
   STAGE_PARENT_ROOM_HEIGHT,
   STAGE_ROOM_DRAWING_CONTROL_RECT,
-  stageAssignCells,
+  stageFindFreeSpots,
   stageBuildCorridorGraph,
-  stageCellRoomHeight,
+  stageStandingRoomHeight,
   stageChildPlaces,
   stageExpandedGroundLayout,
   stageQuietRoom,
@@ -108,9 +108,9 @@ const WINDOW_SHARE_TARGET_PATH_JS = windowShareTargetPath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
-const STAGE_ASSIGN_CELLS_JS = stageAssignCells.toString()
+const STAGE_FIND_FREE_SPOTS_JS = stageFindFreeSpots.toString()
 const STAGE_BUILD_CORRIDOR_GRAPH_JS = stageBuildCorridorGraph.toString()
-const STAGE_CELL_ROOM_HEIGHT_JS = stageCellRoomHeight.toString()
+const STAGE_STANDING_ROOM_HEIGHT_JS = stageStandingRoomHeight.toString()
 const STAGE_CHILD_PLACES_JS = stageChildPlaces.toString()
 const STAGE_EXPANDED_GROUND_LAYOUT_JS = stageExpandedGroundLayout.toString()
 const STAGE_QUIET_ROOM_JS = stageQuietRoom.toString()
@@ -234,9 +234,9 @@ export const PART_01_PRELUDE = `(() => {
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
-  const stageAssignCells = ${STAGE_ASSIGN_CELLS_JS}
+  const stageFindFreeSpots = ${STAGE_FIND_FREE_SPOTS_JS}
   const stageBuildCorridorGraph = ${STAGE_BUILD_CORRIDOR_GRAPH_JS}
-  const stageCellRoomHeight = ${STAGE_CELL_ROOM_HEIGHT_JS}
+  const stageStandingRoomHeight = ${STAGE_STANDING_ROOM_HEIGHT_JS}
   const stageChildPlaces = ${STAGE_CHILD_PLACES_JS}
   const stageExpandedGroundLayout = ${STAGE_EXPANDED_GROUND_LAYOUT_JS}
   const stageQuietRoom = ${STAGE_QUIET_ROOM_JS}

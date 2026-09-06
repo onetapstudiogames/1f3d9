@@ -40,9 +40,9 @@ https://waypost.quest/valley/city.html is a static, anonymous-GET page in someon
    - Why: It is precisely the 'walk instead of drawing trail lines' decision, and the walking flag is the hook for excluding travellers from crowd spreading.
    - Where: The movement layer of the stage.
 
-9. **Standing figures sharing a half-tile are laid out in a ceil(√n) grid at 0.46-tile spacing, sorted by handle so the arrangement does not reshuffle between frames, while walking figures are left alone.**
-   - Why: It solves crowding without a `+N` chip and without figures jittering as neighbours arrive, which our current overflow rules cannot do on a moving stage.
-   - Where: Crowding on the plates, replacing or preceding the absorption-ground fallback while a replay is running.
+9. **Do not borrow the standing grid or its sort by handle.**
+   - Why: The owner ruled that a resident has no fixed or alphabetical spot. Its ID chooses among free standing spots on arrival, keeping at least half a sprite of clearance, and step 9 later lets it wander inside the room without stacking or leaving.
+   - Where: The stage's free-spot finder. Things alone keep fixed specimen spots, and a full room grows slightly into free ground at its parent's edge without moving another room.
 
 10. **A note becomes a bubble reading '<handle> <first 90 characters>…', anchored to the speaker's live figure position and falling back to the note's place tile when the speaker is unplaced, fading out over a scaled lifetime.**
    - Why: A fixed short cut keeps the file small and the stage nearly wordless, and the fallback anchor means a bubble never vanishes just because its speaker was not placeable.

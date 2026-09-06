@@ -347,7 +347,7 @@ test('the live plate is one linkable observatory instrument, never a game viewpo
   assert.match(WINDOW_JS, /localStorage\.getItem\(LIVE_FOCUS_STORAGE_KEY\)/u)
   assert.match(WINDOW_JS, /localStorage\.setItem\(LIVE_FOCUS_STORAGE_KEY/u)
   assert.match(WINDOW_JS, /data-live-focus-resident/u)
-  assert.match(WINDOW_JS, /stageCellKey/u)
+  assert.match(WINDOW_JS, /stageSpotKey/u)
   assert.doesNotMatch(WINDOW_JS, /live-overflow-absorbing/u)
   assert.match(WINDOW_JS, /LIVE_FOLLOW_TRAIL_LIFETIME_MS\s*=\s*4_?500/u)
   assert.match(WINDOW_JS, /LIVE_FOOTSTEP_LIFETIME_MS\s*=\s*2_?000/u)

@@ -1,6 +1,8 @@
-export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, focusId, children) {
+export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, focusId, children, renderContext = null) {
     if (anchorId === focusId) return Object.freeze({ x: 72, y: 58 })
-    const plot = stageRoomLayout(children, focusId).rooms[String(anchorId)]
+    const survey = renderContext?.survey ||
+      liveStageSurvey(livePlaceRows(state.snapshot), focusId)
+    const plot = survey.plots.find(room => room.id === anchorId)
     return plot ? Object.freeze({
       x: plot.x + plot.width / 2,
       y: plot.y + plot.height - 18,
@@ -9,7 +11,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
 
   function liveReplayPoint(placeId, focus, children, renderContext = null) {
     const anchor = livePlaceAnchor(placeId, focus.id, children, renderContext)
-    return liveAnchorPoint(anchor, focus.id, children)
+    return liveAnchorPoint(anchor, focus.id, children, renderContext)
   }
 
   function liveRoutePoints(points) {
@@ -118,14 +120,14 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     )
     if (!recordedFrom && !recordedTo) return null
     const survey = renderContext?.survey || liveStageSurvey(livePlaceRows(snapshot), focus.id)
-    const from = recordedFrom || livePlateBoundaryPoint(recordedTo, survey)
-    const to = recordedTo || livePlateBoundaryPoint(recordedFrom, survey)
-    if (!from || !to || (from.x === to.x && from.y === to.y)) return null
     const fromAnchor = livePlaceAnchor(
-      record.detail.from_place_id, focus.id, children, renderContext)
+      record.detail.from_place_id, focus.id, children, renderContext) || focus.id
     const toAnchor = livePlaceAnchor(
-      record.detail.to_place_id, focus.id, children, renderContext)
+      record.detail.to_place_id, focus.id, children, renderContext) || focus.id
     const corridor = stageCorridorRoute(focus.id, fromAnchor, toAnchor)
+    const from = recordedFrom || corridor[0] || livePlateBoundaryPoint(recordedTo, survey)
+    const to = recordedTo || corridor.at(-1) || livePlateBoundaryPoint(recordedFrom, survey)
+    if (!from || !to || (from.x === to.x && from.y === to.y)) return null
     const points = liveRoutePoints([from, ...corridor, to])
     return Object.freeze({ from, to, points, distance: liveRouteLength(points) })
   }

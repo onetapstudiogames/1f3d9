@@ -243,8 +243,10 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveItemPopoverPressWasInside = false
   let liveResidentVisibleIdsByPlaceId = Object.freeze({})
   let liveThingVisibleIdsByPlaceId = Object.freeze({})
-  let liveStageCellsByPlaceId = Object.freeze({})
+  let liveStageSpotsByPlaceId = Object.freeze({})
   let liveStageOccupantsByPlaceId = Object.freeze({})
+  let liveStageRoomsByParentId = Object.freeze({})
+  let liveStageExpandedGroundsByParentId = Object.freeze({})
   let liveStageCorridorsByParentId = Object.freeze({})
   const liveFloorTiles = new Map()
   const liveProofFloorTiles = new Map()

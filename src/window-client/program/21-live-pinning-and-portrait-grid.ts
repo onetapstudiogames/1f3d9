@@ -219,10 +219,9 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       grid.dataset.liveExpanded = 'true'
       if (placeId !== focus.id) {
         grid.style.width = String(layout.surfaceWidth) + 'px'
-        grid.style.height = String(layout.surfaceHeight) + 'px'
-        grid.style.inset = 'auto'
-        grid.style.left = '0'
-        grid.style.top = String(layout.inlineOffsetY) + 'px'
+        grid.style.height = String(Math.max(layout.surfaceHeight,
+          ...layout.extraGround.map(region => region.y + region.height))) + 'px'
+        grid.style.inset = '0 auto auto 0'
       }
     }
     const pinned = new Set(pinnedIds || [])
@@ -286,10 +285,8 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
         x: entry.localPoint.x,
         y: entry.localPoint.y,
       }))
-      shell.dataset.stageCellKey = entry.localPoint.cellKey
+      shell.dataset.stageSpotKey = entry.localPoint.spotKey
       shell.dataset.stageRoomId = String(placeId)
-      shell.dataset.stageCellRow = String(entry.localPoint.row)
-      shell.dataset.stageCellColumn = String(entry.localPoint.column)
       const itemKey = 'resident:' + resident.handle
       shell.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) shell.dataset.liveRaised = 'true'

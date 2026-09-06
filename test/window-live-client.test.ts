@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
 import { PART_42_STAGE_NODES } from '../src/window-client/program/42-stage-nodes.ts'
 import { PART_43_STAGE_GROUND } from '../src/window-client/program/43-stage-ground.ts'
+import { PART_24_LIVE_REPLAY_MOTION } from '../src/window-client/program/24-live-replay-motion.ts'
 import { PART_39_WIRING_AND_BOOT } from '../src/window-client/program/39-wiring-and-boot.ts'
 import {
   normalizeWindowDrawing,
@@ -32,12 +33,13 @@ import {
   stageDrawnNodeKeys,
   stageFacing,
   stageTransform,
-  stageAssignCells,
+  stageFindFreeSpots,
   stageBuildCorridorGraph,
   stageChildPlaces,
   stageExpandedGroundLayout,
   stageQuietRoom,
   stageRoomLayout,
+  stageStandingRoomHeight,
   stageShortestPath,
 } from '../src/window-client.ts'
 
@@ -416,6 +418,33 @@ test('stage ground ships as exact part 43 before the legacy tail', () => {
   assert.doesNotMatch(windowClientModule.WINDOW_JS, /live-recorded-glide/u)
 })
 
+test('replay marks use the drawn room after growth reserves its former ground', () => {
+  const children = Object.freeze([{ id: 8, parent_id: 1 }])
+  const drawnRoom = Object.freeze({ id: 8, x: 1180, y: 1320, width: 440, height: 280 })
+  const survey = Object.freeze({ plots: Object.freeze([drawnRoom]) })
+  let surveyReads = 0
+  const anchor = new Function(
+    'stageRoomLayout', 'liveStageSurvey', 'livePlaceRows', 'state',
+    `${PART_24_LIVE_REPLAY_MOTION}\nreturn liveAnchorPoint`,
+  )(
+    stageRoomLayout,
+    () => { surveyReads += 1; return survey },
+    () => children,
+    { snapshot: { places: children } },
+  ) as (id: number, focusId: number, rows: typeof children,
+    context?: { survey: typeof survey }) => { x: number; y: number } | null
+  const expected = { x: drawnRoom.x + drawnRoom.width / 2,
+    y: drawnRoom.y + drawnRoom.height - 18 }
+  assert.deepEqual(anchor(8, 1, children, { survey }), expected,
+    'replay mark must use the drawn room rectangle after expansion')
+  assert.equal(surveyReads, 0, 'a render context must reuse its existing survey')
+  assert.deepEqual(anchor(8, 1, children), expected,
+    'a replay started between paints must use the authoritative survey too')
+  assert.equal(surveyReads, 1, 'the fallback must read one authoritative survey')
+  assert.equal(anchor(99, 1, children, { survey }), null,
+    'a missing room must not invent an anchor')
+})
+
 test('drawing presentation labels all five owner-chosen states without inferring progress', () => {
   const stateLabel = liveClientExports.windowDrawingStateLabel
   assert.equal(typeof stateLabel, 'function')
@@ -532,30 +561,56 @@ test('room ground is append-stable and a founded room takes fresh parent-edge gr
   assert.deepEqual(places.map(place => place.id), [1, 4, 9], 'layout must not mutate the map seed')
 })
 
-test('expanded room grids take fresh parent-edge ground without moving fixed rooms', () => {
-  const layout = stageRoomLayout(Object.freeze([
+test('room ground retains coordinates through removal, return, and lower-id founding', () => {
+  const parent = Object.freeze({ id: 1, parent_id: null, name: 'the square' })
+  const room4 = Object.freeze({ id: 4, parent_id: 1, name: 'first room' })
+  const room9 = Object.freeze({ id: 9, parent_id: 1, name: 'second room' })
+  const opening = stageRoomLayout(Object.freeze([parent, room4, room9]), 1)
+  assert.deepEqual(stageRoomLayout(Object.freeze([room9, parent, room4]), 1), opening,
+    'the first survey must be deterministic regardless of input order')
+  const afterRemoval = stageRoomLayout(
+    Object.freeze([parent, room9]), 1, Object.freeze([]), opening.rooms)
+
+  assert.deepEqual(afterRemoval.rooms['9'], opening.rooms['9'],
+    'removing an earlier room must not shift a surviving room')
+
+  const lateRoom = Object.freeze({ id: 2, parent_id: 1, name: 'late lower-id room' })
+  const afterFounding = stageRoomLayout(
+    Object.freeze([parent, lateRoom, room9]), 1, Object.freeze([]), opening.rooms)
+  assert.deepEqual(afterFounding.rooms['9'], opening.rooms['9'],
+    'a late lower id must not shift an existing room')
+  assert.notDeepEqual(afterFounding.rooms['2'], opening.rooms['4'],
+    'a new room must not reuse a missing room coordinate')
+
+  const roomHistory = Object.freeze({ ...opening.rooms, ...afterFounding.rooms })
+  const afterReturn = stageRoomLayout(
+    Object.freeze([parent, lateRoom, room4, room9]), 1, Object.freeze([]), roomHistory)
+  assert.deepEqual(afterReturn.rooms['4'], opening.rooms['4'],
+    'a returning room must reclaim its historical coordinate')
+  assert.deepEqual(afterReturn.rooms['9'], opening.rooms['9'])
+  assert.deepEqual(afterReturn.rooms['2'], afterFounding.rooms['2'])
+})
+
+test('a full room takes fresh parent-edge standing ground without moving room boxes', () => {
+  const places = Object.freeze([
     Object.freeze({ id: 1, parent_id: null, name: 'the square' }),
     Object.freeze({ id: 4, parent_id: 1, name: 'first room' }),
     Object.freeze({ id: 9, parent_id: 1, name: 'second room' }),
-  ]), 1)
+  ])
+  const layout = stageRoomLayout(places, 1)
   const before = structuredClone(layout.rooms)
-  const expanded = stageExpandedGroundLayout(Object.values(layout.rooms), Object.freeze([
+  const expansions = Object.freeze([
     Object.freeze({ id: 4, residentHeight: 896, thingHeight: 320 }),
     Object.freeze({ id: 9, residentHeight: 0, thingHeight: 320 }),
-  ]))
+  ])
+  const expanded = stageExpandedGroundLayout(Object.values(layout.rooms), expansions)
 
-  assert.deepEqual(layout.rooms, before, 'allocating grid ground must not move a fixed room')
+  assert.deepEqual(layout.rooms, before, 'allocating standing ground must not move a room box')
   const fixed = Object.values(layout.rooms).map(room => ({
     id: String(room.id), x: room.x, y: room.y, width: room.width, height: room.height + 64,
   }))
-  const regions = Object.entries(expanded.grounds).flatMap(([id, ground]) => {
-    const tops = [ground.residentTop, ground.thingTop]
-      .filter((top): top is number => top !== null)
-    return tops.map((top, index) => ({
-      id: `${id}:${index}`, x: ground.x, y: top, width: ground.width,
-      height: (index + 1 < tops.length ? tops[index + 1]! - 16 : ground.bottom) - top,
-    }))
-  })
+  const regions = Object.entries(expanded.grounds).flatMap(([id, ground]) =>
+    ground.regions.map((region, index) => ({ id: `${id}:${index}`, ...region })))
   for (const region of regions) {
     assert.ok(region.y + region.height <= expanded.height,
       `${region.id} must fit inside height ${expanded.height}: ${JSON.stringify(region)}`)
@@ -568,41 +623,130 @@ test('expanded room grids take fresh parent-edge ground without moving fixed roo
         `${region.id} ${JSON.stringify(region)} must clear ${obstacle.id} ${JSON.stringify(obstacle)}`)
     }
   }
+
+  const founded = stageRoomLayout(Object.freeze([
+    ...places,
+    Object.freeze({ id: 21, parent_id: 1, name: 'founded room' }),
+  ]), 1, Object.freeze(regions))
+  assert.deepEqual(founded.rooms['4'], layout.rooms['4'])
+  assert.deepEqual(founded.rooms['9'], layout.rooms['9'])
+  const foundedRoom = founded.rooms['21']!
+  for (const region of regions) {
+    const overlaps = foundedRoom.x < region.x + region.width &&
+      foundedRoom.x + foundedRoom.width > region.x &&
+      foundedRoom.y < region.y + region.height &&
+      foundedRoom.y + foundedRoom.height > region.y
+    assert.equal(overlaps, false,
+      `founded room ${JSON.stringify(foundedRoom)} must not move ${region.id} ${JSON.stringify(region)}`)
+  }
+  const retained = stageExpandedGroundLayout(
+    Object.values(founded.rooms), expansions, expanded.grounds)
+  assert.deepEqual(retained.grounds, expanded.grounds,
+    'founding must retain every allocated extension rectangle')
 })
 
-test('residents and things share append-stable cells with half a sprite of clearance', () => {
-  const room = Object.freeze({ x: 0, y: 0, width: 220, height: 180 })
-  const opening = stageAssignCells(Object.freeze([
-    Object.freeze({ key: 'resident:amy', kind: 'resident' as const, label: 'amy' }),
-    Object.freeze({ key: 'thing:7', kind: 'thing' as const, label: 'lamp' }),
-    Object.freeze({ key: 'resident:zed', kind: 'resident' as const, label: 'zed' }),
-  ]), room)
-  const arrived = stageAssignCells(Object.freeze([
-    Object.freeze({ key: 'resident:amy', kind: 'resident' as const, label: 'amy' }),
-    Object.freeze({ key: 'resident:bob', kind: 'resident' as const, label: 'bob' }),
-    Object.freeze({ key: 'thing:7', kind: 'thing' as const, label: 'lamp' }),
-    Object.freeze({ key: 'resident:zed', kind: 'resident' as const, label: 'zed' }),
-  ]), room, opening)
-  const temporaryReplay = stageAssignCells(Object.freeze([
-    ...Object.keys(opening).map(key => Object.freeze({
-      key,
-      kind: opening[key]!.kind,
-      label: key,
-    })),
-    Object.freeze({ key: 'resident:visitor', kind: 'resident' as const, label: 'visitor' }),
-  ]), room, opening)
+test('hidden room extensions stay reserved through founding, growth, and return', () => {
+  const parent = Object.freeze({ id: 1, parent_id: null, name: 'the square' })
+  const room4 = Object.freeze({ id: 4, parent_id: 1, name: 'first room' })
+  const room9 = Object.freeze({ id: 9, parent_id: 1, name: 'second room' })
+  const opening = stageRoomLayout(Object.freeze([parent, room4, room9]), 1)
+  const openingGround = stageExpandedGroundLayout(Object.values(opening.rooms), Object.freeze([
+    Object.freeze({ id: 4, residentHeight: 160, thingHeight: 0 }),
+  ]))
+  const afterRemoval = stageRoomLayout(
+    Object.freeze([parent, room9]), 1, Object.freeze([]), opening.rooms)
+  const hiddenGround = stageExpandedGroundLayout(
+    Object.values(afterRemoval.rooms), Object.freeze([]), openingGround.grounds)
 
-  for (const key of Object.keys(opening)) {
-    assert.deepEqual(arrived[key], opening[key], `${key} must keep its cell after bob arrives`)
-    assert.deepEqual(temporaryReplay[key], opening[key],
-      `${key} must keep its cell during a non-persistent replay layout`)
+  assert.equal(afterRemoval.rooms['4'], undefined, 'a hidden room must not become a visible plot')
+  assert.deepEqual(hiddenGround.grounds['4'], openingGround.grounds['4'],
+    'a hidden room must retain its extension history')
+
+  const lateRoom = Object.freeze({ id: 2, parent_id: 1, name: 'late room' })
+  const reservedRegions = Object.freeze(Object.values(hiddenGround.grounds)
+    .flatMap(ground => ground.regions))
+  const founded = stageRoomLayout(
+    Object.freeze([parent, lateRoom, room9]), 1, reservedRegions, opening.rooms)
+  const roomHistory = Object.freeze({ ...opening.rooms, ...founded.rooms })
+  const grown = stageExpandedGroundLayout(Object.values(roomHistory), Object.freeze([
+    Object.freeze({ id: 9, residentHeight: 160, thingHeight: 0 }),
+  ]), hiddenGround.grounds)
+
+  const overlaps = (
+    left: Readonly<{ x: number; y: number; width: number; height: number }>,
+    right: Readonly<{ x: number; y: number; width: number; height: number }>,
+  ): boolean => left.x < right.x + right.width && left.x + left.width > right.x &&
+    left.y < right.y + right.height && left.y + left.height > right.y
+  assert.ok(!reservedRegions.some(region => overlaps(founded.rooms['2']!, region)),
+    'a founded room must avoid a hidden room extension')
+  assert.deepEqual(grown.grounds['4'], openingGround.grounds['4'])
+  assert.ok(grown.grounds['9']?.regions.length, 'the visible room must receive new ground')
+  for (const region of grown.grounds['9']?.regions || []) {
+    assert.equal(overlaps(region, opening.rooms['4']!), false,
+      'new ground must avoid the hidden room box')
+    assert.equal(overlaps(region, openingGround.grounds['4']!.regions[0]!), false,
+      'new ground must avoid the hidden room extension')
   }
-  assert.deepEqual(Object.keys(opening).sort(),
-    ['resident:amy', 'resident:zed', 'thing:7'], 'temporary layout must not mutate held cells')
-  assert.equal(arrived['resident:bob']?.row, 1, 'the fourth occupant opens the second row')
-  const cells = Object.values(arrived)
-  for (const [index, left] of cells.entries()) {
-    for (const right of cells.slice(index + 1)) {
+
+  const returned = stageRoomLayout(
+    Object.freeze([parent, lateRoom, room4, room9]), 1, reservedRegions, roomHistory)
+  const returnedGround = stageExpandedGroundLayout(
+    Object.values(roomHistory), Object.freeze([]), grown.grounds)
+  assert.deepEqual(returned.rooms['4'], opening.rooms['4'])
+  assert.deepEqual(returnedGround.grounds, grown.grounds)
+})
+
+test('resident arrivals choose id-deterministic free standing spots without a cell assignment', () => {
+  const room = Object.freeze({ x: 0, y: 0, width: 220, height: 180 })
+  const entries = Object.freeze([
+    Object.freeze({ key: 'resident:19', kind: 'resident' as const }),
+    Object.freeze({ key: 'thing:7', kind: 'thing' as const }),
+    Object.freeze({ key: 'resident:2', kind: 'resident' as const }),
+  ])
+  const opening = stageFindFreeSpots(entries, room)
+  const reloaded = stageFindFreeSpots(Object.freeze([...entries].reverse()), room)
+  const arrivedWithHistory = stageFindFreeSpots(Object.freeze([
+    ...entries,
+    Object.freeze({ key: 'resident:11', kind: 'resident' as const }),
+  ]), room, opening)
+  const otherIdWithSameFreeSpots = stageFindFreeSpots(Object.freeze([
+    ...entries,
+    Object.freeze({ key: 'resident:12', kind: 'resident' as const }),
+  ]), room, opening)
+  const movedPresentation = Object.freeze({
+    ...opening,
+    'resident:19': Object.freeze({ ...opening['resident:19']!, x: 90, y: 100 }),
+  })
+  const retainedPresentation = stageFindFreeSpots(entries, room, movedPresentation)
+  const edgeSpot = Object.freeze({
+    key: 'resident:1', kind: 'resident' as const, x: 16, y: 16, width: 32, height: 32,
+  })
+  const retainedEdgeSpot = stageFindFreeSpots(Object.freeze([
+    Object.freeze({ key: 'resident:1', kind: 'resident' as const }),
+  ]), room, Object.freeze({ 'resident:1': edgeSpot }))
+
+  assert.deepEqual(reloaded, opening, 'reload placement must depend on ids, not input order')
+  assert.notDeepEqual(arrivedWithHistory['resident:11'], otherIdWithSameFreeSpots['resident:12'],
+    'different arriving ids must choose from the same free spots differently')
+  assert.deepEqual(retainedPresentation['resident:19'], movedPresentation['resident:19'],
+    'a free presentation position must not snap back to a hidden cell')
+  assert.deepEqual(retainedEdgeSpot['resident:1'], edgeSpot,
+    'half a sprite of edge clearance is a valid occupied position')
+  for (const key of Object.keys(opening)) {
+    assert.deepEqual(arrivedWithHistory[key], opening[key],
+      `${key} must remain occupied while resident 11 arrives`)
+  }
+  assert.deepEqual(entries.map(entry => entry.key), ['resident:19', 'thing:7', 'resident:2'])
+  assert.ok(Object.values(arrivedWithHistory).every(spot =>
+    !('row' in spot) && !('column' in spot)), 'standing spots must not expose a cell grid')
+
+  const spots = Object.values(arrivedWithHistory)
+  for (const [index, left] of spots.entries()) {
+    assert.ok(left.x >= room.x && left.y >= room.y &&
+      left.x + left.width <= room.x + room.width &&
+      left.y + left.height <= room.y + room.height,
+    `${left.key} ${JSON.stringify(left)} must stay inside ${JSON.stringify(room)}`)
+    for (const right of spots.slice(index + 1)) {
       const overlapsWithClearance = left.x < right.x + right.width + 16 &&
         left.x + left.width + 16 > right.x &&
         left.y < right.y + right.height + 16 &&
@@ -611,6 +755,75 @@ test('residents and things share append-stable cells with half a sprite of clear
         `${left.key} ${JSON.stringify(left)} must clear ${right.key} ${JSON.stringify(right)}`)
     }
   }
+})
+
+test('thing spots stay fixed while residents leave and arrive', () => {
+  const room = Object.freeze({ x: 12, y: 20, width: 220, height: 180 })
+  const opening = stageFindFreeSpots(Object.freeze([
+    Object.freeze({ key: 'resident:2', kind: 'resident' as const }),
+    Object.freeze({ key: 'thing:7', kind: 'thing' as const }),
+    Object.freeze({ key: 'resident:19', kind: 'resident' as const }),
+  ]), room)
+  const changed = stageFindFreeSpots(Object.freeze([
+    Object.freeze({ key: 'thing:7', kind: 'thing' as const }),
+    Object.freeze({ key: 'resident:31', kind: 'resident' as const }),
+  ]), room, opening)
+
+  assert.deepEqual(changed['thing:7'], opening['thing:7'])
+  assert.ok(changed['resident:31'])
+  assert.equal(changed['resident:2'], undefined)
+  assert.equal(changed['resident:19'], undefined)
+
+  const extension = Object.freeze({ x: 12, y: 240, width: 220, height: 180 })
+  const extendedThing = Object.freeze({
+    key: 'thing:7', kind: 'thing' as const, x: 40, y: 268, width: 32, height: 32,
+  })
+  const extended = stageFindFreeSpots(Object.freeze([
+    Object.freeze({ key: 'thing:7', kind: 'thing' as const }),
+    Object.freeze({ key: 'resident:31', kind: 'resident' as const }),
+  ]), room, Object.freeze({ 'thing:7': extendedThing }), Object.freeze([extension]))
+  assert.deepEqual(extended['thing:7'], extendedThing,
+    'a thing on prior extension ground must not move when the room grows')
+})
+
+test('a genuinely full room grows enough for every free standing spot', () => {
+  const entries = Object.freeze(Array.from({ length: 167 }, (_, index) => Object.freeze({
+    key: `resident:${String(index + 1)}`,
+    kind: 'resident' as const,
+  })))
+  const width = 440
+  const height = stageStandingRoomHeight(width, entries.length, 280)
+  const movedResident = Object.freeze({
+    key: 'resident:1', kind: 'resident' as const, x: 50, y: 52, width: 32, height: 32,
+  })
+  const spots = stageFindFreeSpots(
+    entries,
+    Object.freeze({ x: 0, y: 0, width, height }),
+    Object.freeze({ 'resident:1': movedResident }),
+  )
+  const ordinaryEntries = Object.freeze(entries.slice(0, 25))
+  const ordinaryRoom = Object.freeze({ x: 0, y: 0, width, height: 280 })
+  const ordinarySpots = stageFindFreeSpots(ordinaryEntries, ordinaryRoom)
+  const crowdedEntries = Object.freeze(entries.slice(0, 30))
+  const crowdedBase = stageFindFreeSpots(crowdedEntries, ordinaryRoom)
+  const missingCount = crowdedEntries.length - Object.keys(crowdedBase).length
+  const extensionHeight = stageStandingRoomHeight(width, missingCount, 64) + 64
+  const grownSpots = stageFindFreeSpots(crowdedEntries, ordinaryRoom, Object.freeze({}),
+    Object.freeze([{ x: 0, y: 360, width, height: extensionHeight }]))
+
+  assert.equal(stageStandingRoomHeight(width, 15, 280), 280,
+    'eight residents and seven things must fit the ordinary room')
+  assert.equal(Object.keys(ordinarySpots).length, ordinaryEntries.length,
+    'a room with actual free coordinates must not grow from a conservative count estimate')
+  assert.ok(missingCount > 0, 'the crowded room must exhaust its actual free coordinates')
+  assert.equal(Object.keys(grownSpots).length, crowdedEntries.length,
+    'the missing occupants must fit the appended ground')
+  assert.ok(height > 280, `full room height stayed ${String(height)}`)
+  assert.equal(Object.keys(spots).length, entries.length)
+  assert.deepEqual(spots['resident:1'], movedResident)
+  assert.ok(Object.values(spots).every(spot =>
+    spot.x >= 0 && spot.y >= 0 &&
+    spot.x + spot.width <= width && spot.y + spot.height <= height))
 })
 
 test('corridor shortest paths use door and corner nodes and avoid a third room', () => {
@@ -645,7 +858,7 @@ test('corridor shortest paths use door and corner nodes and avoid a third room',
   }
 })
 
-test('quiet room ground exposes identity and exact counts but no occupied cells', () => {
+test('quiet room ground exposes identity and exact counts but no occupied spots', () => {
   const box = Object.freeze({
     id: '7', parentId: '1', x: 20, y: 30, width: 220, height: 180,
     door: Object.freeze({ x: 20, y: 120, side: 'left' as const }),
@@ -660,7 +873,7 @@ test('quiet room ground exposes identity and exact counts but no occupied cells'
     name: 'the library',
     owner: 'mira',
     counts: Object.freeze({ residents: 12, things: 8 }),
-    cells: Object.freeze([]),
+    spots: Object.freeze([]),
   }))
 })
 

@@ -677,6 +677,197 @@ async function installReplayRoutes(
   }))
   const deepPlaceRows = controls.quietPlaceId === 5 ? [deepQuietPlace] : []
   const directoryPlaces = [...replayPlaces, ...drawingPlaces, ...deepPlaceRows]
+  const replayMapRows = directoryPlaces.map(place => ({
+    ...place,
+    owner_id: place.id === 1 ? null : place.id === 2 ? 50
+      : place.id >= 100 ? 52 : 51,
+    owner: place.id === 1 ? null : place.id === 2 ? 'cinder-owner'
+      : place.id >= 100 ? 'drawing-owner' : 'harbor-owner',
+    has_drawing: place.id !== 1,
+    quiet: place.id === controls.quietPlaceId,
+  }))
+  const controlledThingRows = (marker: string) => [
+    ...replayThingRows(
+      now,
+      marker === '10' ? 2 : 3,
+      published && controls.carryMove ? 4 : undefined,
+    ),
+    ...(controls.quietPlaceId === 5 ? [{
+      id: 95, name: 'buried ledger', place_id: 5, body: 'a steady mark',
+      maker_id: 5, made_by: 'map-walker', current_owner_id: 5,
+      current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
+      kind: 'lantern', traits: [], created_at: new Date(now - 60_000).toISOString(),
+      moderated: false, kind_moderated: false, has_drawing: true,
+    }] : []),
+  ]
+  const fixtureOpeningEvents = () => controls.openingPaging === 'long'
+    ? Array.from({ length: 9 }, (_, index) => ({
+        id: 900 - index,
+        change_id: String(10 - index),
+        at: new Date(now - index - 1).toISOString(),
+        kind: 'action',
+        actor: 'history-walker',
+        detail: { action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3 },
+      }))
+    : controls.simultaneousMoves && published
+      ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
+          id: 1_000 + index,
+          change_id: String(1_001 + index),
+          at: new Date(now).toISOString(),
+          kind: 'action',
+          actor: `walker-burst-${index + 1}`,
+          detail: { action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3 },
+        }))
+      : controls.moveBurst ? Array.from({ length: controls.moveBurst }, (_, index) => ({
+          id: 500 + index, change_id: String(index + 1),
+          at: new Date(now - index).toISOString(), kind: 'action',
+          actor: index % (replayCrowd.length + 1) === 0
+            ? 'map-walker'
+            : replayCrowd[(index - 1) % replayCrowd.length]!.handle,
+          detail: { action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3 },
+        })) : noteBurst ? Array.from({ length: noteBurst }, (_, index) => ({
+          id: 300 + index, change_id: String(index + 1),
+          at: new Date(now - index).toISOString(), kind: 'note',
+          actor: `burst-${index + 1}`,
+          detail: { place_id: 3, note_id: 1_000 + index },
+        })) : controls.manyFocusInteractions ? [
+          ...replayCrowd.map((resident, index) => ({
+            id: 400 + index, change_id: String(index + 2),
+            at: new Date(now - 30_000 - index).toISOString(), kind: 'transfer',
+            actor: index === 0 ? resident.handle : 'map-walker', detail: {
+              transfer_id: 100 + index, asset_type: 'thing', asset_id: replayThings[index]!.id,
+              resident_id: index === 0 ? 5 : resident.id, place_id: 3,
+            },
+          })),
+          {
+            id: 408, change_id: '9', at: new Date(now - 29_000).toISOString(), kind: 'action',
+            actor: 'map-walker', detail: {
+              action: 'use', status: 'applied', place_id: 3, source_thing_id: 90,
+            },
+          },
+          {
+            id: 409, change_id: '10', at: new Date(now - 28_000).toISOString(),
+            kind: 'thing_created', actor: 'map-walker', detail: { thing_id: 91, place_id: 3 },
+          },
+          {
+            id: 399, change_id: '1', at: new Date(now - 30_000).toISOString(), kind: 'note',
+            actor: controls.maximumHandle ?? replayCrowd[3]!.handle,
+            detail: { place_id: 3, note_id: 77 },
+          },
+        ] : controls.openingMovement ? [{
+          id: 398, change_id: '9', at: new Date(now - 120_000).toISOString(), kind: 'action',
+          actor: 'map-walker', detail: {
+            action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
+          },
+        }] : controls.residueSizeCoincidence ? [{
+          id: 501, change_id: '1', at: new Date(now).toISOString(), kind: 'note',
+          actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
+        }] : [{
+          id: 99, change_id: '9', at: new Date(now - 30_000).toISOString(), kind: 'transfer',
+          actor: 'map-walker', detail: {
+            transfer_id: 44, asset_type: 'thing', asset_id: 26,
+            resident_id: replayCrowd.at(-1)!.id, place_id: 2,
+          },
+        }]
+  await page.route('**/api/replay**', async route => {
+    const url = new URL(route.request().url())
+    const span = url.searchParams.get('span')
+    const spanHours = span === '1h' ? 1 : span === '2h' ? 2 : span === '6h' ? 6
+      : span === '24h' ? 24 : null
+    if (route.request().method() !== 'GET') {
+      await route.fulfill({ status: 405, json: { error: 'method not allowed' } })
+      return
+    }
+    if (spanHours === null) {
+      await route.fulfill({
+        status: 400,
+        json: { error: 'span must be one of 1h, 2h, 6h, or 24h' },
+      })
+      return
+    }
+    const marker = controls.openingMarker ?? currentMarker()
+    const sourceEvents = fixtureOpeningEvents()
+      .map(event => ({
+        change_id: event.change_id,
+        event_id: event.id,
+        at: event.at,
+        kind: event.kind,
+        actor: event.actor,
+        detail: event.detail,
+      }))
+      .sort((left, right) => Number(left.change_id) - Number(right.change_id))
+    const checkpointEvent = [...sourceEvents].reverse().find(event =>
+      Number(event.change_id) <= Number(marker))
+    const windowEnd = checkpointEvent ? new Date(checkpointEvent.at).getTime() : now
+    const requestedWindowStart = windowEnd - spanHours * 3_600_000
+    const allEvents = sourceEvents.filter(event =>
+      Number(event.change_id) <= Number(marker) &&
+      new Date(event.at).getTime() >= requestedWindowStart &&
+      new Date(event.at).getTime() <= windowEnd)
+    const events = allEvents.slice(-800)
+    const complete = allEvents.length <= 800
+    const residents = controlledResidentRows(marker)
+    const things = controlledThingRows(marker)
+    const activeResidents = residents.filter(resident => allEvents.some(event =>
+      event.actor === resident.handle || event.detail.resident_id === resident.id))
+    const activeThings = things.filter(thing => allEvents.some(event =>
+      event.detail.thing_id === thing.id || event.detail.source_thing_id === thing.id ||
+      event.detail.asset_type === 'thing' && event.detail.asset_id === thing.id))
+    const residentStart = new Map(activeResidents.map(resident => {
+      const registered = allEvents.find(event => event.actor === resident.handle &&
+        event.kind === 'register')
+      const firstMove = allEvents.find(event => event.actor === resident.handle &&
+        event.kind === 'action' && event.detail.status === 'applied' &&
+        (event.detail.action === 'move' || event.detail.action === 'go_home') &&
+        typeof event.detail.from_place_id === 'number')
+      return [resident.handle, registered
+        ? { place_id: null, origin: 'register' }
+        : {
+            place_id: firstMove?.detail.from_place_id ?? resident.current_place_id,
+            ...(firstMove ? { origin_event_id: firstMove.event_id } : {}),
+            ...(!firstMove && resident.current_place_id === null ? { origin: 'unknown' } : {}),
+          }]
+    }))
+    const thingStart = new Map(activeThings.map(thing => {
+      const created = allEvents.find(event =>
+        (event.kind === 'thing_created' || event.kind === 'thing_crafted') &&
+        event.detail.thing_id === thing.id)
+      const firstMove = allEvents.find(event => event.kind === 'thing_moved' &&
+        event.detail.thing_id === thing.id && typeof event.detail.from_place_id === 'number')
+      return [thing.id, created
+        ? { place_id: null, origin: 'unknown' }
+        : {
+            place_id: firstMove?.detail.from_place_id ?? thing.place_id,
+            ...(firstMove ? { origin_event_id: firstMove.event_id } : {}),
+            ...(!firstMove && thing.place_id === null ? { origin: 'unknown' } : {}),
+          }]
+    }))
+    const counts = Object.fromEntries(directoryPlaces.map(place => [String(place.id), {
+      residents: residents.filter(resident => resident.current_place_id === place.id).length,
+      things: things.filter(thing => thing.place_id === place.id).length,
+    }]))
+    await route.fulfill({ json: {
+      span,
+      checkpoint: marker,
+      window_end: new Date(windowEnd).toISOString(),
+      window_start: complete
+        ? new Date(requestedWindowStart).toISOString()
+        : events[0]!.at,
+      row_ceiling: 800,
+      complete,
+      ...(complete ? {} : { rest_at: '/api/events', before_id: events[0]!.event_id }),
+      map: { places: replayMapRows },
+      start: Object.fromEntries([
+        ...activeResidents.map(resident => [
+          `resident:${resident.id}`,
+          residentStart.get(resident.handle) ?? { place_id: resident.current_place_id },
+        ]),
+        ...activeThings.map(thing => [`thing:${thing.id}`, thingStart.get(thing.id)!]),
+      ]),
+      timeline: events,
+      counts,
+    } })
+  })
   await page.route('**/api/map**', async route => {
     focusedPlaceRequests += 1
     const url = new URL(route.request().url())
@@ -774,25 +965,8 @@ async function installReplayRoutes(
         await route.fulfill({ status: 503, json: { error: 'test request limit reached' } })
         return
       }
-      const placeId = marker === '10' ? 2 : 3
       const scope = replayPlaceScopeIds(Number(withinPlaceId), deepPlaceRows)
-      const things = [
-        ...replayThingRows(
-          now,
-          placeId,
-          published && controls.carryMove ? 4 : undefined,
-        ),
-        // Third review pass: the one thing sitting in Cellar nook (place
-        // #5), nested two levels below Harbor room — only present when a
-        // test asks for that exact quiet place.
-        ...(controls.quietPlaceId === 5 ? [{
-          id: 95, name: 'buried ledger', place_id: 5, body: 'a steady mark',
-          maker_id: 5, made_by: 'map-walker', current_owner_id: 5,
-          current_owner: 'map-walker', owner: 'map-walker', open_to_use: true,
-          kind: 'lantern', traits: [], created_at: new Date(now - 60_000).toISOString(),
-          moderated: false, kind_moderated: false, has_drawing: true,
-        }] : []),
-      ]
+      const things = controlledThingRows(marker)
         .filter(thing => scope.has(thing.place_id))
       await route.fulfill({ json: {
         change_marker: marker,
@@ -1086,70 +1260,7 @@ async function installReplayRoutes(
     await route.fulfill({ json: {
       change_marker: controls.openingMarker ?? currentMarker(),
       has_more: false, next_before_id: null,
-      events: controls.simultaneousMoves && published
-        ? Array.from({ length: controls.simultaneousMoves }, (_, index) => ({
-            id: 1_000 + index,
-            change_id: String(1_001 + index),
-            at: new Date(now).toISOString(),
-            kind: 'action',
-            actor: `walker-burst-${index + 1}`,
-            detail: {
-              action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
-            },
-          }))
-        : controls.moveBurst ? Array.from({ length: controls.moveBurst }, (_, index) => ({
-        id: 500 + index, change_id: String(index + 1),
-        at: new Date(now - index).toISOString(), kind: 'action',
-        actor: index % (replayCrowd.length + 1) === 0
-          ? 'map-walker'
-          : replayCrowd[(index - 1) % replayCrowd.length]!.handle,
-        detail: {
-          action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
-        },
-      })) : noteBurst ? Array.from({ length: noteBurst }, (_, index) => ({
-        id: 300 + index, change_id: String(index + 1),
-        at: new Date(now - index).toISOString(), kind: 'note',
-        actor: `burst-${index + 1}`,
-        detail: { place_id: 3, note_id: 1_000 + index },
-      })) : controls.manyFocusInteractions ? [
-        ...replayCrowd.map((resident, index) => ({
-          id: 400 + index, change_id: String(index + 2),
-          at: new Date(now - 30_000 - index).toISOString(), kind: 'transfer',
-          actor: index === 0 ? resident.handle : 'map-walker', detail: {
-            transfer_id: 100 + index, asset_type: 'thing', asset_id: replayThings[index]!.id,
-            resident_id: index === 0 ? 5 : resident.id, place_id: 3,
-          },
-        })),
-        {
-          id: 408, change_id: '9', at: new Date(now - 29_000).toISOString(), kind: 'action',
-          actor: 'map-walker', detail: {
-            action: 'use', status: 'applied', place_id: 3, source_thing_id: 90,
-          },
-        },
-        {
-          id: 409, change_id: '10', at: new Date(now - 28_000).toISOString(),
-          kind: 'thing_created', actor: 'map-walker', detail: { thing_id: 91, place_id: 3 },
-        },
-        {
-          id: 399, change_id: '1', at: new Date(now - 30_000).toISOString(), kind: 'note',
-          actor: controls.maximumHandle ?? replayCrowd[3]!.handle,
-          detail: { place_id: 3, note_id: 77 },
-        },
-      ] : controls.openingMovement ? [{
-        id: 398, change_id: '9', at: new Date(now - 120_000).toISOString(), kind: 'action',
-        actor: 'map-walker', detail: {
-          action: 'move', status: 'applied', from_place_id: 2, to_place_id: 3,
-        },
-      }] : controls.residueSizeCoincidence ? [{
-        id: 501, change_id: '1', at: new Date(now).toISOString(), kind: 'note',
-        actor: 'map-walker', detail: { place_id: 3, note_id: 77 },
-      }] : [{
-        id: 99, change_id: '9', at: new Date(now - 30_000).toISOString(), kind: 'transfer',
-        actor: 'map-walker', detail: {
-          transfer_id: 44, asset_type: 'thing', asset_id: 26,
-          resident_id: replayCrowd.at(-1)!.id, place_id: 2,
-        },
-      }],
+      events: fixtureOpeningEvents(),
     } })
   })
   await page.route('**/api/residents**', async route => {
@@ -1453,25 +1564,202 @@ async function expectEveryTargetCenterExposed(page: Page, targets: Locator) {
   expect(covered).toEqual([])
 }
 
-async function expectLocatorSetsDoNotOverlap(left: Locator, right: Locator) {
-  const [leftBoxes, rightBoxes] = await Promise.all([
-    left.evaluateAll(nodes => nodes.map(node => {
-      const box = node.getBoundingClientRect()
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
-    })),
-    right.evaluateAll(nodes => nodes.map(node => {
-      const box = node.getBoundingClientRect()
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
-    })),
-  ])
-  for (const leftBox of leftBoxes) {
-    for (const rightBox of rightBoxes) {
-      expect(
-        leftBox.left < rightBox.right && leftBox.right > rightBox.left &&
-          leftBox.top < rightBox.bottom && leftBox.bottom > rightBox.top,
-      ).toBe(false)
-    }
-  }
+test('anonymous replay fixture matches the public 24h contract', async ({ page }) => {
+  const now = Date.now()
+  await installReplayRoutes(page, now, 'complete', 0, { openingMovement: true })
+  await page.goto('/')
+  const response = await page.evaluate(async () => {
+    const replayResponse = await fetch('/api/replay?span=24h')
+    return { status: replayResponse.status, body: await replayResponse.json() }
+  })
+  expect(response.status).toBe(200)
+  expect(response.body).toMatchObject({
+    span: '24h', checkpoint: '10', row_ceiling: 800, complete: true,
+  })
+  expect(Date.parse(response.body.window_end)).toBeGreaterThan(
+    Date.parse(response.body.window_start),
+  )
+  expect(response.body.map.places.find(place => place.id === 2)).toMatchObject({
+    owner_id: 50, owner: 'cinder-owner', has_drawing: true, quiet: false,
+  })
+  expect(response.body.start).toEqual({
+    'resident:5': { place_id: 2, origin_event_id: 398 },
+  })
+  expect(response.body.timeline).toEqual([expect.objectContaining({
+    change_id: '9', event_id: 398, kind: 'action', actor: 'map-walker',
+  })])
+  expect(response.body.counts).toMatchObject({
+    '2': { residents: 0, things: 7 },
+    '3': { residents: 8, things: 0 },
+    '4': { residents: 0, things: 1 },
+  })
+})
+
+type LiveStandingGeometry = Readonly<{
+  spots: readonly Readonly<{
+    key: string
+    kind: 'resident' | 'thing'
+    left: number
+    top: number
+    right: number
+    bottom: number
+  }>[]
+  regions: readonly Readonly<{
+    kind: 'base' | 'resident' | 'thing'
+    left: number
+    top: number
+    right: number
+    bottom: number
+  }>[]
+  extensions: readonly Readonly<{
+    kind: string
+    left: number
+    top: number
+    right: number
+    bottom: number
+  }>[]
+  containmentFailures: readonly string[]
+  clearanceFailures: readonly Readonly<{
+    left: string
+    right: string
+    gap: number
+    required: number
+  }>[]
+  extensionFailures: readonly string[]
+  stage: Readonly<{ left: number; top: number; right: number; bottom: number }>
+  room: Readonly<{ left: number; top: number; right: number; bottom: number }>
+  fixedBottom: number
+  residents: number
+  things: number
+}>
+
+async function readRoomStandingGeometry(
+  page: Page,
+  roomId: string,
+  expectedResidents: number,
+  expectedThings: number,
+  minimumExtensionCount: number,
+  phase: string,
+): Promise<LiveStandingGeometry> {
+  let geometry: LiveStandingGeometry | null = null
+  await expect.poll(async () => {
+    geometry = await page.evaluate(({ requestedRoomId }) => {
+      const stage = document.querySelector<HTMLElement>('#live-stage')
+      const room = stage?.querySelector<HTMLElement>(
+        `.live-plot[data-place-id="${requestedRoomId}"]`,
+      )
+      if (!stage || !room) return null
+      const scale = Number(stage.dataset.liveScale)
+      if (!(scale > 0)) return null
+      const stageBox = stage.getBoundingClientRect()
+      const roomBox = room.getBoundingClientRect()
+      const base = {
+        kind: 'base' as const,
+        left: roomBox.left + room.clientLeft * scale,
+        top: roomBox.top + room.clientTop * scale,
+        right: roomBox.left + (room.clientLeft + room.clientWidth) * scale,
+        bottom: roomBox.top + (room.clientTop + room.clientHeight) * scale,
+      }
+      const extensions = [...stage.querySelectorAll<HTMLElement>('.live-room-extension')]
+        .filter(extension => extension.dataset.stageRoomId === requestedRoomId)
+        .map(extension => {
+          const box = extension.getBoundingClientRect()
+          return {
+            kind: extension.dataset.stageGroundKind || '',
+            left: box.left,
+            top: box.top,
+            right: box.right,
+            bottom: box.bottom,
+          }
+        })
+      const regions = [base, ...extensions.flatMap(extension =>
+        extension.kind === 'resident' || extension.kind === 'thing'
+          ? [{ ...extension, kind: extension.kind }]
+          : [])]
+      const nodes = [...stage.querySelectorAll<HTMLElement>('[data-stage-spot-key]')]
+        .filter(node => node.dataset.stageRoomId === requestedRoomId &&
+          !node.classList.contains('live-replay-portrait'))
+      const spots = nodes.flatMap(node => {
+        const stageKey = node.dataset.stageNodeKey || ''
+        const kind = stageKey.startsWith('thing:')
+          ? 'thing' as const
+          : stageKey.startsWith('resident:')
+            ? 'resident' as const
+            : null
+        if (!kind) return []
+        const box = node.getBoundingClientRect()
+        return [{
+          key: stageKey,
+          kind,
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom,
+        }]
+      })
+      const containmentFailures = spots.filter(spot => !regions.some(region =>
+        spot.left + 0.05 >= region.left && spot.top + 0.05 >= region.top &&
+        spot.right - 0.05 <= region.right && spot.bottom - 0.05 <= region.bottom))
+        .map(spot => spot.key)
+      const clearance = 16 * scale
+      const clearanceFailures = spots.flatMap((left, index) => spots.slice(index + 1)
+        .flatMap(right => {
+          const gap = Math.hypot(
+            Math.max(0, right.left - left.right, left.left - right.right),
+            Math.max(0, right.top - left.bottom, left.top - right.bottom),
+          )
+          return gap + 0.05 < clearance
+            ? [{ left: left.key, right: right.key, gap, required: clearance }]
+            : []
+        }))
+      const fixedRooms = [...stage.querySelectorAll<HTMLElement>('.live-plot')]
+        .filter(candidate => candidate !== room)
+        .map(candidate => candidate.getBoundingClientRect())
+      const extensionFailures = extensions.flatMap((extension, index) => {
+        const failures = []
+        if (extension.left + 0.05 < stageBox.left || extension.top + 0.05 < stageBox.top ||
+            extension.right - 0.05 > stageBox.right || extension.bottom - 0.05 > stageBox.bottom) {
+          failures.push(`extension:${String(index)} is outside the stage`)
+        }
+        if (fixedRooms.some(fixed => extension.left < fixed.right && extension.right > fixed.left &&
+            extension.top < fixed.bottom && extension.bottom > fixed.top)) {
+          failures.push(`extension:${String(index)} overlaps a fixed room`)
+        }
+        return failures
+      })
+      return {
+        spots,
+        regions,
+        extensions,
+        containmentFailures,
+        clearanceFailures,
+        extensionFailures,
+        stage: { left: stageBox.left, top: stageBox.top,
+          right: stageBox.right, bottom: stageBox.bottom },
+        room: { left: roomBox.left, top: roomBox.top,
+          right: roomBox.right, bottom: roomBox.bottom },
+        fixedBottom: fixedRooms.length
+          ? Math.max(...fixedRooms.map(fixed => fixed.bottom))
+          : stageBox.top,
+        residents: spots.filter(spot => spot.kind === 'resident').length,
+        things: spots.filter(spot => spot.kind === 'thing').length,
+      }
+    }, { requestedRoomId: roomId })
+    return geometry
+      ? {
+          residents: geometry.residents,
+          things: geometry.things,
+          enoughExtensions: geometry.extensions.length >= minimumExtensionCount,
+        }
+      : null
+  }, {
+    message: `${phase}; room ${roomId}; geometry ${JSON.stringify(geometry)}`,
+  }).toEqual({
+    residents: expectedResidents,
+    things: expectedThings,
+    enoughExtensions: true,
+  })
+  return geometry!
 }
 
 test('Live paints exact surveyed counts and Focus ids while named thing cards load', async ({ page }, testInfo) => {
@@ -2040,6 +2328,54 @@ test('Live expands 167 residents with one bounded layout pass and no new public 
       height: element.dataset.livePlotHeight,
     }
   }))
+  const unaffectedRoomIds = childPlotsBefore
+    .map(plot => plot.id)
+    .filter((id): id is string => Boolean(id) && id !== '2')
+    .sort()
+  expect(unaffectedRoomIds.length,
+    `unaffected room ids ${JSON.stringify(unaffectedRoomIds)}; expanded room id "2"`)
+    .toBeGreaterThan(0)
+  const readUnaffectedRoomRects = async (phase: string) => {
+    let sampled: Record<string, { x: number; y: number; width: number; height: number }> | null = null
+    let previousSample = ''
+    await expect.poll(async () => {
+      sampled = await page.evaluate(requestedIds => {
+        const stage = document.querySelector<HTMLElement>('#live-stage')
+        if (!stage) return null
+        const scale = Number(stage.dataset.liveScale)
+        if (!Number.isFinite(scale) || scale <= 0) return null
+        const stageRect = stage.getBoundingClientRect()
+        const rooms = [...stage.querySelectorAll<HTMLElement>('.live-plot')]
+        const entries = requestedIds.map(id => {
+          const room = rooms.find(candidate => candidate.dataset.placeId === id)
+          if (!room) return null
+          const rect = room.getBoundingClientRect()
+          return [id, {
+            x: Math.round(((rect.left - stageRect.left) / scale) * 100) / 100,
+            y: Math.round(((rect.top - stageRect.top) / scale) * 100) / 100,
+            width: Math.round((rect.width / scale) * 100) / 100,
+            height: Math.round((rect.height / scale) * 100) / 100,
+          }] as const
+        })
+        return entries.some(entry => entry === null)
+          ? null
+          : Object.fromEntries(entries as Array<readonly [string, {
+              x: number; y: number; width: number; height: number
+            }]>)
+      }, unaffectedRoomIds)
+      const nextSample = sampled ? JSON.stringify(sampled) : ''
+      const stableSample = nextSample !== '' && nextSample === previousSample
+      previousSample = nextSample
+      return stableSample ? sampled : null
+    }, {
+      message: `${phase}; unaffected room ids ${JSON.stringify(unaffectedRoomIds)}; ` +
+        `null-guarded stage-relative rectangles ${JSON.stringify(sampled)}`,
+    }).not.toBeNull()
+    return sampled!
+  }
+  const unaffectedRoomRectsBefore = await readUnaffectedRoomRects(
+    'before room 2 resident expansion',
+  )
   const childStageBefore = await page.locator('#live-stage').evaluate(stage => ({
     width: Number((stage as HTMLElement).dataset.liveStageWidth),
     height: Number((stage as HTMLElement).dataset.liveStageHeight),
@@ -2076,40 +2412,32 @@ test('Live expands 167 residents with one bounded layout pass and no new public 
       height: element.dataset.livePlotHeight,
     }
   }))).toEqual(childPlotsBefore)
+  const unaffectedRoomRectsAfter = await readUnaffectedRoomRects(
+    'after room 2 resident expansion',
+  )
+  expect(unaffectedRoomRectsAfter,
+    `unaffected physical room rectangles before ${JSON.stringify(unaffectedRoomRectsBefore)}; ` +
+    `after ${JSON.stringify(unaffectedRoomRectsAfter)}`)
+    .toEqual(unaffectedRoomRectsBefore)
   const childStageAfter = await page.locator('#live-stage').evaluate(stage => ({
     width: Number((stage as HTMLElement).dataset.liveStageWidth),
     height: Number((stage as HTMLElement).dataset.liveStageHeight),
   }))
   expect(childStageAfter.width).toBe(childStageBefore.width)
-  const childGridGround = await cinder.evaluate(room => {
-    const stage = document.querySelector<HTMLElement>('#live-stage')!
-    const grid = room.querySelector<HTMLElement>(':scope > .live-portrait-grid')!
-    const stageBox = stage.getBoundingClientRect()
-    const gridBox = grid.getBoundingClientRect()
-    const fixedRooms = [...stage.querySelectorAll<HTMLElement>('.live-plot')]
-      .filter(candidate => candidate !== room)
-      .map(candidate => candidate.getBoundingClientRect())
-    const cells = [...grid.querySelectorAll<HTMLElement>('[data-stage-cell-key]')].map(cell => ({
-      key: cell.dataset.stageCellKey || '',
-      rect: cell.getBoundingClientRect().toJSON(),
-    }))
-    const conflicts = cells.flatMap((left, index) => cells.slice(index + 1)
-      .filter(right => left.rect.left < right.rect.right && left.rect.right > right.rect.left &&
-        left.rect.top < right.rect.bottom && left.rect.bottom > right.rect.top)
-      .map(right => [left.key, right.key]))
-    return {
-      stageBottom: stageBox.bottom,
-      gridTop: gridBox.top,
-      gridBottom: gridBox.bottom,
-      fixedBottom: Math.max(...fixedRooms.map(rect => rect.bottom)),
-      cellKeys: cells.map(cell => cell.key),
-      conflicts,
-    }
-  })
-  expect(new Set(childGridGround.cellKeys).size).toBe(167)
-  expect(childGridGround.conflicts).toEqual([])
-  expect(childGridGround.gridTop).toBeGreaterThan(childGridGround.fixedBottom)
-  expect(childGridGround.gridBottom).toBeLessThanOrEqual(childGridGround.stageBottom)
+  const childStandingGround = await readRoomStandingGeometry(
+    page, '2', 167, childThingsBefore.length, 1, 'after 167-resident expansion',
+  )
+  expect(childStandingGround.containmentFailures,
+    `child standing containment ${JSON.stringify(childStandingGround)}`).toEqual([])
+  expect(childStandingGround.clearanceFailures,
+    `child standing clearance ${JSON.stringify(childStandingGround)}`).toEqual([])
+  expect(childStandingGround.extensionFailures,
+    `child parent-edge ground ${JSON.stringify(childStandingGround)}`).toEqual([])
+  const firstExtension = childStandingGround.extensions[0]
+  expect(firstExtension?.top,
+    `room extension ${JSON.stringify(firstExtension)}; ` +
+    `fixed room bottom ${childStandingGround.fixedBottom}`)
+    .toBeGreaterThan(childStandingGround.fixedBottom)
   expect(childStageAfter.height).toBeGreaterThan(childStageBefore.height)
   await expect(cinder.locator('.live-portrait[aria-label^="Focus on "]')).toHaveCount(167)
   await cinder.locator('[data-live-resident-handle="harbor-167"]').focus()
@@ -2375,23 +2703,91 @@ test('phone Live keeps direct residents in readable home ground instead of the f
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
 
-  const homeGeometry = await page.locator('#live-stage').evaluate(stage => {
-    const stageBox = stage.getBoundingClientRect()
-    const residents = [...stage.querySelectorAll<HTMLElement>(
-      '.live-root-walkers .live-walker',
-    )].map(resident => {
-      const box = resident.getBoundingClientRect()
-      return (box.left + box.width / 2 - stageBox.left) /
-        Number((stage as HTMLElement).dataset.liveScale ?? '1')
+  let homeGeometry: null | {
+    home: { left: number; top: number; right: number; bottom: number }
+    residents: Array<{
+      key: string
+      x: number
+      left: number
+      top: number
+      right: number
+      bottom: number
+    }>
+    containmentFailures: string[]
+    clearanceFailures: Array<{ left: string; right: string; gap: number; required: number }>
+  } = null
+  await expect.poll(async () => {
+    homeGeometry = await page.evaluate(() => {
+      const stage = document.querySelector<HTMLElement>('#live-stage')
+      const home = stage?.querySelector<HTMLElement>('.live-root-walkers')
+      const residentNodes = [...(home?.querySelectorAll<HTMLElement>('.live-walker') || [])]
+      if (!stage || !home || residentNodes.length === 0) return null
+      const scale = Number(stage.dataset.liveScale)
+      if (!(scale > 0)) return null
+      const stageBox = stage.getBoundingClientRect()
+      const homeBox = home.getBoundingClientRect()
+      const residents = residentNodes.map(resident => {
+        const box = resident.getBoundingClientRect()
+        return {
+          key: resident.dataset.stageNodeKey || '',
+          x: (box.left + box.width / 2 - stageBox.left) / scale,
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom,
+        }
+      })
+      const containmentFailures = residents.filter(resident =>
+        resident.left + 0.05 < homeBox.left || resident.top + 0.05 < homeBox.top ||
+        resident.right - 0.05 > homeBox.right || resident.bottom - 0.05 > homeBox.bottom)
+        .map(resident => resident.key)
+      const occupants = [...stage.querySelectorAll<HTMLElement>(
+        '[data-stage-room-id="1"][data-stage-spot-key]:not(.live-replay-portrait)',
+      )].map(node => {
+        const box = node.getBoundingClientRect()
+        return {
+          key: node.dataset.stageNodeKey || '',
+          left: box.left,
+          top: box.top,
+          right: box.right,
+          bottom: box.bottom,
+        }
+      })
+      const clearance = 16 * scale
+      const clearanceFailures = occupants.flatMap((left, index) => occupants.slice(index + 1)
+        .flatMap(right => {
+          const gap = Math.hypot(
+            Math.max(0, right.left - left.right, left.left - right.right),
+            Math.max(0, right.top - left.bottom, left.top - right.bottom),
+          )
+          return gap + 0.05 < clearance
+            ? [{ left: left.key, right: right.key, gap, required: clearance }]
+            : []
+        }))
+      return {
+        home: { left: homeBox.left, top: homeBox.top,
+          right: homeBox.right, bottom: homeBox.bottom },
+        residents,
+        containmentFailures,
+        clearanceFailures,
+      }
     })
-    return {
-      stageWidth: (stage as HTMLElement).scrollWidth,
-      residentXs: residents,
-    }
-  })
-  expect(homeGeometry.residentXs.length).toBeGreaterThan(0)
-  expect(Math.max(...homeGeometry.residentXs)).toBeLessThanOrEqual(1_100)
-  expect(Math.max(...homeGeometry.residentXs)).toBeLessThan(homeGeometry.stageWidth / 2)
+    return homeGeometry
+  }, {
+    message: `phone direct-resident home geometry ${JSON.stringify(homeGeometry)}`,
+  }).not.toBeNull()
+  expect(homeGeometry!.residents.length,
+    `home ${JSON.stringify(homeGeometry!.home)}; residents ${JSON.stringify(homeGeometry!.residents)}`)
+    .toBeGreaterThan(0)
+  expect(Math.max(...homeGeometry!.residents.map(resident => resident.x)),
+    `home width 1100; residents ${JSON.stringify(homeGeometry!.residents)}`)
+    .toBeLessThanOrEqual(1_100)
+  expect(homeGeometry!.containmentFailures,
+    `home ${JSON.stringify(homeGeometry!.home)}; residents ${JSON.stringify(homeGeometry!.residents)}`)
+    .toEqual([])
+  expect(homeGeometry!.clearanceFailures,
+    `home ${JSON.stringify(homeGeometry!.home)}; resident clearance ${JSON.stringify(homeGeometry)}`)
+    .toEqual([])
 })
 
 test('phone full-screen Live has a clear exit and browser Back exits before navigating away', async ({ page }) => {
@@ -2494,25 +2890,76 @@ test('Live keeps both Show more controls separate and operable in one crowded pl
   ))
   await expect(cinder).toHaveAttribute('data-live-detail-mounted', 'true')
 
+  const readCinderThingPositions = async (phase: string) => {
+    let positions: Record<string, {
+      x: number
+      y: number
+      width: number
+      height: number
+    }> | null = null
+    await expect.poll(async () => {
+      positions = await page.evaluate(() => {
+        const stage = document.querySelector<HTMLElement>('#live-stage')
+        const room = stage?.querySelector<HTMLElement>('.live-plot[data-place-id="2"]')
+        const things = [...(room?.querySelectorAll<HTMLElement>(
+          '.live-thing-specimen[data-live-thing-id]',
+        ) || [])]
+        if (!stage || !room || things.length === 0) return null
+        const stageBox = stage.getBoundingClientRect()
+        const scale = Number(stage.dataset.liveScale)
+        if (!(scale > 0)) return null
+        return Object.fromEntries(things.map(thing => {
+          const rect = thing.getBoundingClientRect()
+          return [thing.dataset.liveThingId || '', {
+            x: Math.round((rect.left - stageBox.left) / scale * 100) / 100,
+            y: Math.round((rect.top - stageBox.top) / scale * 100) / 100,
+            width: Math.round(rect.width / scale * 100) / 100,
+            height: Math.round(rect.height / scale * 100) / 100,
+          }]
+        }))
+      })
+      return positions
+    }, {
+      message: `${phase}; waiting for null-guarded physical thing positions in room 2`,
+    }).not.toBeNull()
+    return positions!
+  }
+  const thingsBeforeExpansion = await readCinderThingPositions('before either Show more expansion')
+
   await panLiveTargetIntoView(page, thingMore)
   await thingMore.click()
   await expect(cinder.locator('.live-thing-specimen')).toHaveCount(7)
+  const thingsAfterThingExpansion = await readCinderThingPositions('after thing expansion')
+  const retainedAfterThingExpansion = Object.fromEntries(
+    Object.keys(thingsBeforeExpansion).map(id => [id, thingsAfterThingExpansion[id]]),
+  )
+  expect(retainedAfterThingExpansion,
+    `things before expansion ${JSON.stringify(thingsBeforeExpansion)}; ` +
+    `after thing expansion ${JSON.stringify(thingsAfterThingExpansion)}`)
+    .toEqual(thingsBeforeExpansion)
   const rearrangedResidentMore = cinder.locator('.live-resident-more')
   await panLiveTargetIntoView(page, rearrangedResidentMore)
   await rearrangedResidentMore.click()
   await expect(cinder.locator('.live-walker')).toHaveCount(8)
+  const thingsAfterResidentExpansion = await readCinderThingPositions('after resident expansion')
+  expect(thingsAfterResidentExpansion,
+    `things after thing expansion ${JSON.stringify(thingsAfterThingExpansion)}; ` +
+    `after resident expansion ${JSON.stringify(thingsAfterResidentExpansion)}`)
+    .toEqual(thingsAfterThingExpansion)
 
   const expandedResidents = cinder.locator('.live-portrait-grid[data-live-expanded="true"]')
   const expandedThings = cinder.locator('.live-thing-shelf[data-live-expanded="true"]')
   await expect(expandedResidents).toHaveCount(1)
   await expect(expandedThings).toHaveCount(1)
-  await expectLocatorSetsDoNotOverlap(expandedResidents, expandedThings)
-  await expectLocatorSetsDoNotOverlap(
-    cinder.locator(
-      '.live-portrait-grid[data-live-expanded="true"], .live-thing-shelf[data-live-expanded="true"]',
-    ),
-    page.locator('.live-plot:not([data-place-id="2"])'),
+  const crowdedStandingGround = await readRoomStandingGeometry(
+    page, '2', 8, 7, 0, 'after both room 2 Show more expansions',
   )
+  expect(crowdedStandingGround.containmentFailures,
+    `crowded room containment ${JSON.stringify(crowdedStandingGround)}`).toEqual([])
+  expect(crowdedStandingGround.clearanceFailures,
+    `crowded room clearance ${JSON.stringify(crowdedStandingGround)}`).toEqual([])
+  expect(crowdedStandingGround.extensionFailures,
+    `crowded room extensions ${JSON.stringify(crowdedStandingGround)}`).toEqual([])
   await expectEveryTargetCenterExposed(page, cinder.locator(
     '.live-walker, .live-thing-specimen',
   ))
@@ -3312,8 +3759,7 @@ test('discoverable preview proof scene visibly demonstrates every Live behavior 
   await expect(scriptedBubble).toHaveAttribute(
     'aria-label', "The workshop bell rings above the busy floor. (open proof-dara's note)",
   )
-  await scriptedBubble.focus()
-  await scriptedBubble.press('Enter')
+  await scriptedBubble.click()
   await page.clock.runFor(32)
   const scriptedNote = proofPanel.locator('.live-note-row[data-live-note-id="9352"]')
   await expect(scriptedNote).toBeFocused()
@@ -3484,7 +3930,7 @@ test('a stage sprite flips --facing on left and right walks without rotating', a
     .toBe(true)
 })
 
-test('proof: crowded room cells do not overlap at 375px and 1280px', async ({ page }) => {
+test('proof: crowded room standing spots keep half a sprite of clearance at 375px and 1280px', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
   await installReplayRoutes(page, now)
@@ -3506,46 +3952,15 @@ test('proof: crowded room cells do not overlap at 375px and 1280px', async ({ pa
     await proofPanel.getByRole('button', { name: /Show .* more things/u }).click()
     await page.clock.runFor(32)
 
-    let geometry: null | {
-      cells: Array<{ key: string; left: number; top: number; right: number; bottom: number }>
-      conflicts: Array<{ left: string; right: string }>
-      residents: number
-      things: number
-    } = null
-    await expect.poll(async () => {
-      geometry = await page.evaluate(() => {
-        const stage = document.querySelector<HTMLElement>('#live-stage')
-        const room = stage?.querySelector<HTMLElement>('.live-plot[data-place-id="9103"]')
-        const nodes = [...(stage?.querySelectorAll<HTMLElement>(
-          '[data-stage-room-id="9103"][data-stage-cell-key]',
-        ) || [])]
-        const residents = nodes.filter(node =>
-          node.dataset.stageNodeKey?.startsWith('resident:')).length
-        const things = nodes.filter(node =>
-          node.dataset.stageNodeKey?.startsWith('thing:')).length
-        if (!stage || !room) return null
-        const cells = nodes.map(node => {
-          const rect = node.getBoundingClientRect()
-          return {
-            key: node.dataset.stageCellKey || node.dataset.stageNodeKey || '',
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-          }
-        })
-        const conflicts = cells.flatMap((left, index) => cells.slice(index + 1)
-          .filter(right => left.left < right.right && left.right > right.left &&
-            left.top < right.bottom && left.bottom > right.top)
-          .map(right => ({ left: left.key, right: right.key })))
-        return { cells, conflicts, residents, things }
-      })
-      return geometry ? [geometry.residents, geometry.things] : null
-    }, {
-      message: `width ${width}; expected crowded workshop cell counts [87,7]`,
-    }).toEqual([87, 7])
-    expect(geometry!.conflicts,
-      `width ${width}; compared cells ${JSON.stringify(geometry!.cells)}`).toEqual([])
+    const geometry = await readRoomStandingGeometry(
+      page, '9103', 87, 7, 1, `proof width ${String(width)}`,
+    )
+    expect(geometry.clearanceFailures,
+      `width ${width}; standing clearance ${JSON.stringify(geometry)}`).toEqual([])
+    expect(geometry.containmentFailures,
+      `width ${width}; standing containment ${JSON.stringify(geometry)}`).toEqual([])
+    expect(geometry.extensionFailures,
+      `width ${width}; parent-edge extensions ${JSON.stringify(geometry)}`).toEqual([])
   }
 })
 
@@ -4485,20 +4900,6 @@ test('an expired trail moves keyboard focus to the viewport', async ({ page }) =
   // the viewer actually observed.
   await publishReplayChanges(page, fixture)
   const trail = page.locator('.live-trail')
-  console.log('TRAIL_GEOMETRY_DEBUG', await page.evaluate(() => {
-    const replay = document.querySelector<HTMLElement>('.live-replay-portrait')
-    const viewport = document.querySelector<HTMLElement>('#live-viewport')
-    const stage = document.querySelector<HTMLElement>('#live-stage')
-    return {
-      filter: (document.querySelector('#resident-filter') as HTMLSelectElement | null)?.value,
-      replayCount: document.querySelectorAll('.live-replay-portrait').length,
-      replayPath: replay?.style.offsetPath,
-      replayRect: replay?.getBoundingClientRect().toJSON(),
-      viewportRect: viewport?.getBoundingClientRect().toJSON(),
-      stageRect: stage?.getBoundingClientRect().toJSON(),
-      stageTransform: stage?.style.transform,
-    }
-  }))
   await expect(trail).toHaveCount(1)
   const trailCoordinates = await trail.evaluate(line => {
     const points = (line.getAttribute('points') || '').split(' ')
@@ -4580,7 +4981,7 @@ test('a followed route entirely off camera creates no timed trail DOM', async ({
       animation.effect.target.matches('.live-trail')).length)).toBe(0)
 })
 
-test('a later crowded arrival takes a free stable cell without moving neighbours', async ({ page }) => {
+test('a later crowded arrival takes a free standing spot without moving neighbours', async ({ page }) => {
   const now = Date.now()
   await page.clock.install({ time: new Date(now) })
   const fixture = await installReplayRoutes(page, now, 'complete', 0, {
@@ -4592,24 +4993,35 @@ test('a later crowded arrival takes a free stable cell without moving neighbours
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
   await expect(page.locator('#live-plates .live-walker')).toHaveCount(8)
 
-  const readCells = async (phase: string) => {
-    let sampled: Record<string, string> | null = null
+  const readSpots = async (phase: string) => {
+    let sampled: Record<string, { room: string; x: number; y: number; width: number; height: number }> | null = null
     await expect.poll(async () => {
       sampled = await page.evaluate(() => {
         const stage = document.querySelector<HTMLElement>('#live-stage')
-        const nodes = [...(stage?.querySelectorAll<HTMLElement>('[data-stage-cell-key]') || [])]
+        const nodes = [...(stage?.querySelectorAll<HTMLElement>('[data-stage-spot-key]') || [])]
         if (!stage || nodes.length === 0) return null
-        return Object.fromEntries(nodes.map(node => [
-          node.dataset.stageNodeKey || '', node.dataset.stageCellKey || '',
-        ]))
+        const stageBox = stage.getBoundingClientRect()
+        const scale = Number(stage.dataset.liveScale)
+        if (!(scale > 0)) return null
+        return Object.fromEntries(nodes.filter(node => !node.classList.contains('live-replay-portrait'))
+          .map(node => {
+            const rect = node.getBoundingClientRect()
+            return [node.dataset.stageNodeKey || '', {
+              room: node.dataset.stageRoomId || '',
+              x: Math.round((rect.left - stageBox.left) / scale * 100) / 100,
+              y: Math.round((rect.top - stageBox.top) / scale * 100) / 100,
+              width: Math.round(rect.width / scale * 100) / 100,
+              height: Math.round(rect.height / scale * 100) / 100,
+            }]
+          }))
       })
       return sampled
     }, {
-      message: `${phase}; waiting for a null-guarded stage cell sample`,
+      message: `${phase}; waiting for a null-guarded standing-position sample`,
     }).not.toBeNull()
     return sampled!
   }
-  const before = await readCells('before arrival')
+  const before = await readSpots('before arrival')
   fixture.publish()
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   const replays = page.locator('.live-replay-portrait[data-replay-duration]')
@@ -4617,13 +5029,22 @@ test('a later crowded arrival takes a free stable cell without moving neighbours
   await expect(replays).toHaveAttribute('data-live-replay-key', 'change:11')
   await page.clock.runFor(4_100)
   await page.clock.runFor(8_251)
-  const settled = await readCells(`after arrival; before cells ${JSON.stringify(before)}`)
-  for (const [key, cell] of Object.entries(before)) {
-    if (!(key in settled)) continue
-    expect(settled[key], `${key} before ${String(cell)} after ${String(settled[key])}`).toBe(cell)
+  const settled = await readSpots(`after arrival; before spots ${JSON.stringify(before)}`)
+  for (const [key, spot] of Object.entries(before)) {
+    if (!(key in settled) || settled[key]!.room !== spot.room) continue
+    expect(settled[key], `${key} before ${JSON.stringify(spot)} after ${JSON.stringify(settled[key])}`)
+      .toEqual(spot)
   }
-  expect(new Set(Object.values(settled)).size,
-    `settled cells ${JSON.stringify(settled)}`).toBe(Object.values(settled).length)
+  const occupied = Object.entries(settled)
+  for (const [index, [key, left]] of occupied.entries()) {
+    for (const [otherKey, right] of occupied.slice(index + 1)) {
+      if (left.room !== right.room) continue
+      const gap = Math.hypot(Math.max(0, right.x - left.x - left.width, left.x - right.x - right.width),
+        Math.max(0, right.y - left.y - left.height, left.y - right.y - right.height))
+      expect(gap, `${key} ${JSON.stringify(left)} and ${otherKey} ${JSON.stringify(right)}; gap ${gap}`)
+        .toBeGreaterThanOrEqual(15.95)
+    }
+  }
 })
 
 test('focused use pulses the exact pinned nested thing', async ({ page }) => {
@@ -5019,13 +5440,7 @@ test('resident tags follow zoom and intent while terrain and camera writes stay 
   }))
   const viewport = page.locator('#live-viewport')
   await viewport.focus()
-  let panPresses = 0
-  while (panPresses < 40 &&
-      await page.locator('.live-plot[data-live-detail="false"]').count() === 0) {
-    await viewport.press('ArrowRight')
-    panPresses += 1
-  }
-  expect(panPresses).toBeLessThan(40)
+  for (let index = 0; index < 16; index += 1) await viewport.press('ArrowRight')
   await expect.poll(() => page.locator('.live-plot[data-live-detail="false"]').count())
     .toBeGreaterThan(0)
   await expect(page.getByRole('button', { name: 'Zoom in' })).toBeVisible()
@@ -6395,31 +6810,90 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
     return sampled!
   }
   const originalPlots = await readPlotRects(['2', '3'])
-  const stableOccupants = page.locator(
-    '.live-plot[data-place-id="3"] .live-walker[data-live-item-key="resident:map-walker"], ' +
+  const stableResident = page.locator(
+    '.live-plot[data-place-id="3"] .live-walker[data-live-item-key="resident:map-walker"]',
+  )
+  const stableThing = page.locator(
     '.live-plot[data-place-id="2"] .live-thing-specimen[data-live-item-key="thing:9"]',
   )
-  await expect(stableOccupants).toHaveCount(2)
-  const readOccupantCells = async (phase: string) => {
-    let cells: Record<string, string> | null = null
+  await expect(stableResident).toHaveCount(1)
+  await expect(stableThing).toHaveCount(1)
+  const residentMarker = await stableResident.evaluate(node => {
+    const marker = `founding-resident-${crypto.randomUUID()}`
+    ;(node as HTMLElement).dataset.stageFoundingIdentityMarker = marker
+    return marker
+  })
+  type FoundingOccupantEvidence = Readonly<{
+    thing: Readonly<{
+      room: string
+      x: number
+      y: number
+      width: number
+      height: number
+    }>
+    resident: Readonly<{
+      marker: string
+      stageNodeKey: string
+      itemKey: string
+      stageRoomId: string
+      containingRoomId: string
+    }>
+  }>
+  const readOccupantEvidence = async (phase: string) => {
+    let evidence: FoundingOccupantEvidence | null = null
     await expect.poll(async () => {
-      cells = await page.evaluate(() => {
+      evidence = await page.evaluate(() => {
         const stage = document.querySelector<HTMLElement>('#live-stage')
-        const occupants = [...(stage?.querySelectorAll<HTMLElement>(
-          '.live-plot[data-place-id="3"] .live-walker[data-live-item-key="resident:map-walker"], ' +
+        const resident = stage?.querySelector<HTMLElement>(
+          '.live-plot[data-place-id="3"] .live-walker[data-live-item-key="resident:map-walker"]',
+        )
+        const thing = stage?.querySelector<HTMLElement>(
           '.live-plot[data-place-id="2"] .live-thing-specimen[data-live-item-key="thing:9"]',
-        ) || [])]
-        if (!stage || occupants.length !== 2 || occupants.some(node =>
-          !node.dataset.liveItemKey || !node.dataset.stageCellKey)) return null
-        return Object.fromEntries(occupants.map(node => [
-          node.dataset.liveItemKey!, node.dataset.stageCellKey!,
-        ]))
+        )
+        const containingRoom = resident?.closest<HTMLElement>('.live-plot')
+        if (!stage || !resident || !thing || !containingRoom) return null
+        const scale = Number(stage.dataset.liveScale)
+        if (!(scale > 0)) return null
+        const stageBox = stage.getBoundingClientRect()
+        const thingBox = thing.getBoundingClientRect()
+        return {
+          thing: {
+            room: thing.closest<HTMLElement>('.live-plot')?.dataset.placeId || '',
+            x: Math.round((thingBox.left - stageBox.left) / scale * 100) / 100,
+            y: Math.round((thingBox.top - stageBox.top) / scale * 100) / 100,
+            width: Math.round(thingBox.width / scale * 100) / 100,
+            height: Math.round(thingBox.height / scale * 100) / 100,
+          },
+          resident: {
+            marker: resident.dataset.stageFoundingIdentityMarker || '',
+            stageNodeKey: resident.dataset.stageNodeKey || '',
+            itemKey: resident.dataset.liveItemKey || '',
+            stageRoomId: resident.dataset.stageRoomId || '',
+            containingRoomId: containingRoom.dataset.placeId || '',
+          },
+        }
       })
-      return cells
-    }, { message: `${phase}; waiting for two null-guarded occupant cells` }).not.toBeNull()
-    return cells!
+      return evidence
+    }, { message: `${phase}; waiting for null-guarded physical occupant evidence` }).not.toBeNull()
+    return evidence!
   }
-  const originalOccupants = await readOccupantCells('before founding')
+  const originalOccupants = await readOccupantEvidence('before founding')
+  expect(originalOccupants.resident.marker,
+    `expected resident identity ${residentMarker}; evidence ${JSON.stringify(originalOccupants)}`)
+    .toBe(residentMarker)
+  const room3ResidentCount = await page.locator(
+    '[data-stage-room-id="3"][data-stage-node-key^="resident:"]:not(.live-replay-portrait)',
+  ).count()
+  const room3ThingCount = await page.locator(
+    '[data-stage-room-id="3"][data-stage-node-key^="thing:"]:not(.live-replay-portrait)',
+  ).count()
+  const originalRoom3Ground = await readRoomStandingGeometry(
+    page, '3', room3ResidentCount, room3ThingCount, 0, 'before founding room 3',
+  )
+  expect(originalRoom3Ground.containmentFailures,
+    `before founding room 3 containment ${JSON.stringify(originalRoom3Ground)}`).toEqual([])
+  expect(originalRoom3Ground.clearanceFailures,
+    `before founding room 3 clearance ${JSON.stringify(originalRoom3Ground)}`).toEqual([])
   // Quiet opening leaves no backlog trail on this plate to keyboard-focus.
   // Keep the same elapsed clock budget so the note expiry checked below
   // still lands where it always did.
@@ -6443,11 +6917,22 @@ test('the Live tab draws stored world ground and keeps surveyed plots fixed thro
   expect({ 2: expandedPlots['2'], 3: expandedPlots['3'] },
     `before ${JSON.stringify(originalPlots)}; after ${JSON.stringify(expandedPlots)}`)
     .toEqual(originalPlots)
-  await expect(stableOccupants).toHaveCount(2)
-  const foundedOccupants = await readOccupantCells('after founding')
-  expect(foundedOccupants,
-    `before ${JSON.stringify(originalOccupants)}; after ${JSON.stringify(foundedOccupants)}`)
-    .toEqual(originalOccupants)
+  await expect(stableResident).toHaveCount(1)
+  await expect(stableThing).toHaveCount(1)
+  const foundedOccupants = await readOccupantEvidence('after founding')
+  expect(foundedOccupants.thing,
+    `fixed thing before ${JSON.stringify(originalOccupants.thing)}; ` +
+    `after ${JSON.stringify(foundedOccupants.thing)}`).toEqual(originalOccupants.thing)
+  expect(foundedOccupants.resident,
+    `resident identity and membership before ${JSON.stringify(originalOccupants.resident)}; ` +
+    `after ${JSON.stringify(foundedOccupants.resident)}`).toEqual(originalOccupants.resident)
+  const foundedRoom3Ground = await readRoomStandingGeometry(
+    page, '3', room3ResidentCount, room3ThingCount, 0, 'after founding room 3',
+  )
+  expect(foundedRoom3Ground.containmentFailures,
+    `after founding room 3 containment ${JSON.stringify(foundedRoom3Ground)}`).toEqual([])
+  expect(foundedRoom3Ground.clearanceFailures,
+    `after founding room 3 clearance ${JSON.stringify(foundedRoom3Ground)}`).toEqual([])
 
   latestReadUnavailable = true
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))

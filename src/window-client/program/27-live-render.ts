@@ -207,7 +207,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
         'live-walker-layer live-root-walkers',
         renderContext,
       ))
-    } else clearStageRoomCellKind(focus.id, 'resident')
+    } else clearStageRoomSpotKind(focus.id, 'resident')
     const focusShelf = liveThingShelf(
       snapshot, focus, records, focus.id, false, interactionThings, renderContext)
     if (focusShelf) {
@@ -239,20 +239,24 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
 
     applyLiveCamera({ stageId })
     if (stageChanged) {
-      const preferredKey = state.live.focusResident
-        ? 'resident:' + state.live.focusResident
+      const cameraResidentHandle = state.live.focusResident || state.resident
+      const preferredKey = cameraResidentHandle
+        ? 'resident:' + cameraResidentHandle
         : state.live.raisedItemKey
       const preferredTargets = preferredKey
         ? [...nodes.livePlates.querySelectorAll(
             '[data-live-item-key="' + CSS.escape(preferredKey) + '"]')]
         : []
+      const cameraRevealTargets = liveCameraRevealTargets(defaultCenterTarget)
       const firstPaintTargets = state.live.proofScene && state.live.proofFailure
         ? [...nodes.livePlates.querySelectorAll('[data-focus-key="live-proof-retry"]')]
         : preferredTargets.length
           ? preferredTargets
-          : defaultCenterTarget?.preservesChildDetail
-            ? liveChildDetailRevealTargets(defaultCenterTarget)
-            : liveRevealTargetsForPlace(focus.id)
+          : cameraResidentHandle
+            ? []
+            : cameraRevealTargets.length
+              ? cameraRevealTargets
+              : liveRevealTargetsForPlace(focus.id)
       revealLiveElements(firstPaintTargets)
     }
     renderLiveNotesPanel(snapshot)

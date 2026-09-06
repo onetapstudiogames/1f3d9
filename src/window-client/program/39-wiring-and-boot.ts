@@ -184,7 +184,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   }, { passive: false })
   nodes.liveViewport?.addEventListener('keydown', event => {
     if (event.target !== nodes.liveViewport) return
-    const pan = 48
+    const pan = 48 * liveCamera.scale
     if (event.key === '0') {
       event.preventDefault()
       centerLivePlate()

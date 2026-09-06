@@ -11,7 +11,7 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
   function liveDetailedPlotIds(plots, expandedGrounds = Object.freeze({})) {
     const viewport = liveCameraViewport()
     return new Set(viewport ? windowLiveVisiblePlotIds(
-      plots, expandedGrounds, viewport, LIVE_PLOT_OVERSCAN,
+      plots, expandedGrounds, viewport, LIVE_PLOT_OVERSCAN / liveCamera.scale,
     ) : [])
   }
 
@@ -221,21 +221,24 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
     })
   }
 
-  function liveChildDetailRevealTargets(target) {
+  function liveCameraRevealTargets(target) {
     const placeId = safeId(target?.childDetailPlaceId)
-    if (!target?.preservesChildDetail || !placeId || !nodes.livePlates) return []
+    if (!nodes.livePlates) return []
     return [
-      ...nodes.livePlates.querySelectorAll(
-        '.live-plot[data-place-id="' + String(placeId) + '"] .live-plot-open',
-      ),
+      ...(target?.preservesChildDetail && placeId
+        ? nodes.livePlates.querySelectorAll(
+            '.live-plot[data-place-id="' + String(placeId) + '"] .live-plot-open',
+          )
+        : []),
       ...nodes.livePlates.querySelectorAll('.live-root-walkers .live-speech-bubble'),
     ]
   }
 
   function liveCenterTarget() {
     if (!nodes.liveViewport || !nodes.liveStage) return null
-    const preferredKey = state.live.focusResident
-      ? 'resident:' + state.live.focusResident
+    const cameraResidentHandle = state.live.focusResident || state.resident
+    const preferredKey = cameraResidentHandle
+      ? 'resident:' + cameraResidentHandle
       : state.live.raisedItemKey
     const target = preferredKey
       ? nodes.livePlates?.querySelector('[data-live-item-key="' + CSS.escape(preferredKey) + '"]')
@@ -252,10 +255,10 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
         })
       }
     }
-    if (state.live.focusResident && state.snapshot) {
+    if (cameraResidentHandle && state.snapshot) {
       const focus = liveFocusPlace(state.snapshot)
       const resident = displayedResidents(state.snapshot).find(candidate =>
-        candidate.handle === state.live.focusResident)
+        candidate.handle === cameraResidentHandle)
       const renderContext = livePlotDetailContext?.snapshot === state.snapshot &&
         focus && livePlotDetailContext.focus.id === focus.id
         ? livePlotDetailContext
@@ -312,7 +315,7 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
       liveCameraFrame = 0
       commitLiveCamera()
     }
-    if (revealLiveElements(liveChildDetailRevealTargets(target)) && liveCameraFrame) {
+    if (revealLiveElements(liveCameraRevealTargets(target)) && liveCameraFrame) {
       window.cancelAnimationFrame(liveCameraFrame)
       liveCameraFrame = 0
       commitLiveCamera()

@@ -21,9 +21,9 @@ export type {
 } from './window-client/drawing.ts'
 
 export {
-  stageAssignCells,
+  stageFindFreeSpots,
   stageBuildCorridorGraph,
-  stageCellRoomHeight,
+  stageStandingRoomHeight,
   stageChildPlaces,
   stageExpandedGroundLayout,
   stageQuietRoom,
@@ -33,11 +33,13 @@ export {
   STAGE_ROOM_DRAWING_CONTROL_RECT,
 } from './window-client/stage-ground.ts'
 export type {
-  StageCell,
-  StageCellEntry,
+  StageStandingEntry,
+  StageStandingSpot,
   StageCorridorGraph,
   StageCorridorNode,
   StageExpandedGround,
+  StageExpandedGroundRegion,
+  StageGroundRect,
   StageGroundPlace,
   StageRoomBox,
 } from './window-client/stage-ground.ts'

@@ -303,9 +303,13 @@ not a simulation of the present.
   place's direct children. Their fixed rectangular rooms follow creation-ID
   order. Allocation is append-stable: a newly created later child takes fresh
   ground at the parent edge and never moves a room already assigned. Direct
-  residents and named things share stable grid cells with half a sprite of
-  clearance. Door and corner nodes form the corridor graph; a walk between
-  rooms follows its shortest path. No coordinate is stored.
+  residents take free standing spots chosen deterministically from their IDs,
+  with no alphabetical assignment, no fixed resident spot, no overlap, and at
+  least half a sprite of clearance. Named things keep fixed specimen spots. A
+  full room grows slightly into free ground at its parent's edge without
+  moving any other room. Door and corner nodes form the corridor graph; a walk
+  between rooms follows its shortest path. Room membership and recorded moves
+  are city facts; room and standing coordinates are browser presentation.
 - Exact resident presentation counts still use marker-safe public pages. Live
   automatically reads at most eight 200-resident pages (1,600 residents); if
   another page remains, it keeps that verified cursor and offers a real
@@ -322,8 +326,9 @@ not a simulation of the present.
   for either count.
 - Residents are walkers above the ground and plots. A committed move visibly
   carries its resident between the fixed endpoint plots; only an explicitly followed
-  resident keeps the complete route beneath it. A resident or thing changes position only when a
-  recorded city event says it moved. Still residents do not idle, bob, or loop.
+  resident keeps the complete route beneath it. Things keep fixed spots. Resident
+  standing positions are presentation rather than recorded city coordinates. Still
+  residents do not idle, bob, or loop in this step.
 - Wheel or `+`/`-` zoom, two-pointer pinch zoom, pointer or arrow-key pan, and
   the visible `Center` control transform only this viewer's plate from a hard
   furthest-out scale of 0.8 through 2.2. `Center` or `0` returns to scale 1 around
@@ -348,12 +353,12 @@ not a simulation of the present.
   presentation-only: it changes no fixed plot assignment, resident or thing
   selection, exact count, or public record.
 - An unoverflowed ordinary place view shows up to six residents and six things.
-  Overflow reserves protected ground for its badge, leaving four resident
-  walker positions and five thing specimens. Every omitted row is represented
-  by an exact `+N more`. `Show more` reveals every loaded omission directly on
-  the live ground, may continue the retained names cursor, and extends and
-  naturally reflows that scene without a modal, scroll window, or dropped item.
-  Resident and thing controls reserve separate finger-sized ground.
+  A collapsed overflow draws four residents in free standing spots and five
+  things in fixed specimen spots. Its controls reserve separate ground below
+  the room. Every omitted row is represented by an exact `+N more`. `Show more`
+  reveals every loaded omission directly on the live ground, may continue the
+  retained names cursor, and grows the selected room at its parent's free edge
+  so no represented item is dropped and no other room moves.
 - A viewer may focus one resident. The choice stays only in this browser's
   `localStorage` and changes no shared URL or city record. Focus and the
   shareable Follow filter are mutually exclusive: choosing either clears the

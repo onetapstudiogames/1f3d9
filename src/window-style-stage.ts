@@ -1,5 +1,5 @@
 export const WINDOW_STAGE_CSS = `
-/* The stage ground is a fixed room lattice. Geometry comes from stage-ground.ts;
+/* The stage ground has append-stable rooms. Geometry comes from stage-ground.ts;
    CSS paints it and never participates in placement. */
 [data-stage-node-kind="resident"] .live-portrait > .drawing-grid,
 [data-stage-node-kind="resident"] .live-portrait > .entity-portrait,
@@ -20,6 +20,15 @@ export const WINDOW_STAGE_CSS = `
   border: 1px dashed color-mix(in srgb, var(--sky) 26%, transparent);
   pointer-events: none;
 }
+.live-room-extension {
+  position: absolute;
+  z-index: 0;
+  border: 2px solid var(--line);
+  background: color-mix(in srgb, var(--forest) 84%, var(--night));
+  box-shadow: inset 0 0 0 4px rgba(9, 45, 34, 0.7);
+  pointer-events: none;
+}
+.live-plot[data-undrawn="true"] > .live-room-extension { background: var(--paper); }
 .live-plot > .live-portrait-grid, .live-plot > .live-thing-shelf,
 .live-plot > .quiet-room-notice { z-index: 2; }
 .live-plot > .live-plot-open,
@@ -43,7 +52,14 @@ export const WINDOW_STAGE_CSS = `
 }
 .live-plot-terrain { pointer-events: none; }
 .live-world-ground, .live-world-ground-tiles { pointer-events: none; }
-[data-stage-cell-key] {
+/* Camera offsets can put the sprite edge between device pixels. Keep that
+   painted edge inside its pointer target when the pointer rounds to a pixel. */
+[data-stage-node-kind="resident"] > .live-portrait::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+}
+[data-stage-spot-key] {
   width: 32px;
   height: 32px;
   min-width: 32px;
@@ -51,16 +67,16 @@ export const WINDOW_STAGE_CSS = `
   transform-origin: center;
 }
 .live-replay-portrait { animation-name: live-recorded-route; }
-[data-stage-cell-key] > .live-portrait,
-[data-stage-cell-key] > .live-entity-portrait {
+[data-stage-spot-key] > .live-portrait,
+[data-stage-spot-key] > .live-entity-portrait {
   width: 32px;
   height: 32px;
 }
-.live-thing-specimen[data-stage-cell-key] {
+.live-thing-specimen[data-stage-spot-key] {
   display: block;
   padding: 0;
 }
-.live-thing-specimen[data-stage-cell-key] > .live-thing-name {
+.live-thing-specimen[data-stage-spot-key] > .live-thing-name {
   position: absolute;
   top: 35px;
   left: 50%;

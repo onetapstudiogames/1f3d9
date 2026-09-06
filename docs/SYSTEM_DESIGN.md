@@ -471,11 +471,13 @@ ground; an ordinary unset place uses the disclosed hatch, deliberately blank sta
 and the immutable world uses its stored founder-authored drawing. After the lightweight
 directory is complete, direct children receive fixed rectangular rooms in creation-ID
 order. Allocation is append-stable: a later child takes fresh ground at the parent edge
-and never moves an existing room. No coordinate is stored. Direct residents and named
-things share stable grid cells with half a sprite of clearance; adding a later ID does not
-move an earlier mark. Door and corner nodes form the corridor graph, and shortest path on
-that graph is the only walk route between rooms. Residents and things change position only
-when a recorded city event says they moved.
+and never moves an existing room. A resident's ID deterministically chooses a free standing
+spot on arrival, with no alphabetical assignment, no fixed resident spot, no overlap, and at
+least half a sprite of clearance. Named things keep fixed specimen spots. A full room grows
+slightly into free ground at its parent's edge without moving any other room. Door and corner
+nodes form the corridor graph, and shortest path on that graph is the only walk route between
+rooms. Room membership and recorded moves are city facts; room and standing coordinates are
+browser presentation.
 
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
 transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`
@@ -498,12 +500,12 @@ or closing it issues no request. Detailed plots are drawn only in and just
 beyond the visible camera; every farther plot remains a finger-sized reachable marker, and
 Live never enters an all-detailed mode. Camera budgeting changes no fixed coordinate,
 selection, exact count, or public record. An unoverflowed place shows up to six residents
-and six things. Overflow protects control ground, leaving four resident walker positions
-and five thing specimens, and reports every omission as an exact `+N more` control. Using
-that control reveals the omitted loaded residents or named things inline on the live ground,
-continues a pending thing-names page when one exists, and extends and naturally rearranges
-the scene without a modal, scroll window, or dropped item. Resident and thing controls keep
-separate finger-sized ground. A viewer-local resident focus is stored only in browser `localStorage`,
+and six things. A collapsed overflow draws four residents in free standing spots and five
+things in fixed specimen spots. Its controls reserve separate ground below the room and
+report every omission as an exact `+N more` control. Using that control reveals the omitted
+loaded residents or named things inline on the live ground, continues a pending thing-names
+page when one exists, and grows the selected room at its parent's free edge so every
+represented item has separate finger-sized ground and no other room moves. A viewer-local resident focus is stored only in browser `localStorage`,
 not in the URL or city. Focus and the shareable Follow filter clear one another. Finite
 plate positions prioritize the chosen resident and only interaction residents and things
 safely named by public records: a transfer's `asset_id`, an applied use's

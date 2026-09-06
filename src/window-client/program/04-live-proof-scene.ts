@@ -260,8 +260,10 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         liveCamera,
         liveResidentVisibleIdsByPlaceId,
         liveThingVisibleIdsByPlaceId,
-        liveStageCellsByPlaceId,
+        liveStageSpotsByPlaceId,
         liveStageOccupantsByPlaceId,
+        liveStageRoomsByParentId,
+        liveStageExpandedGroundsByParentId,
         liveStageCorridorsByParentId,
       })
     }
@@ -306,8 +308,10 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     })
     liveResidentVisibleIdsByPlaceId = Object.freeze({})
     liveThingVisibleIdsByPlaceId = Object.freeze({})
-    liveStageCellsByPlaceId = Object.freeze({})
+    liveStageSpotsByPlaceId = Object.freeze({})
     liveStageOccupantsByPlaceId = Object.freeze({})
+    liveStageRoomsByParentId = Object.freeze({})
+    liveStageExpandedGroundsByParentId = Object.freeze({})
     liveStageCorridorsByParentId = Object.freeze({})
     liveCamera = Object.freeze({
       scale: LIVE_CAMERA_CENTER_SCALE,
@@ -448,8 +452,10 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     liveCamera = restore.liveCamera
     liveResidentVisibleIdsByPlaceId = restore.liveResidentVisibleIdsByPlaceId
     liveThingVisibleIdsByPlaceId = restore.liveThingVisibleIdsByPlaceId
-    liveStageCellsByPlaceId = restore.liveStageCellsByPlaceId
+    liveStageSpotsByPlaceId = restore.liveStageSpotsByPlaceId
     liveStageOccupantsByPlaceId = restore.liveStageOccupantsByPlaceId
+    liveStageRoomsByParentId = restore.liveStageRoomsByParentId
+    liveStageExpandedGroundsByParentId = restore.liveStageExpandedGroundsByParentId
     liveStageCorridorsByParentId = restore.liveStageCorridorsByParentId
     const panel = document.getElementById('live-panel')
     if (panel) delete panel.dataset.liveProof

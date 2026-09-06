@@ -96,11 +96,15 @@ move does not erase that interaction. If a resident or opening-event continuatio
 Live keeps its verified cursor and offers a real Continue action. Hidden tabs pause those
 automatic continuations. An
 unoverflowed place shows up to six residents and six things. Places take append-stable
-open ground without a rigid grid, while residents and things spread through their available
-room. Hover or keyboard focus brings a covered item forward; touch uses one tap to raise
-and a second to open. Once a place overflows, the protected absorption ground leaves four
-resident walker positions and five thing specimens, with every `+N` exact and operable
-through Show more. Focus prioritizes finite plate positions; the complete
+open ground without a rigid grid. On arrival, a resident's ID deterministically chooses a
+free standing spot with no alphabetical assignment, no fixed resident spot, no overlap,
+and at least half a sprite of clearance. Named things keep fixed specimen spots. A full
+room grows slightly into free ground at its parent's edge without moving any other room.
+Room membership and recorded moves are facts; standing positions are browser presentation.
+Hover or keyboard focus brings a covered item forward; touch uses one tap to raise and a
+second to open. A collapsed overflow draws four residents in free standing spots and five
+things in fixed specimen spots. Its controls reserve separate ground below the room, with
+every `+N` exact and operable through Show more. Focus prioritizes finite plate positions; the complete
 Live roster keeps every safely identified resident partner visible and the Focus /
 Interactions board keeps every safely identified interacted thing visible. If the focused
 resident leaves a drilled plate, that board names their actual outside location instead of

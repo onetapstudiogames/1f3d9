@@ -244,7 +244,7 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
       }
       const placeId = liveRecordPlaceId(record)
       const anchor = livePlaceAnchor(placeId, focus.id, children, renderContext)
-      const point = liveAnchorPoint(anchor, focus.id, children)
+      const point = liveAnchorPoint(anchor, focus.id, children, renderContext)
       if (!point) continue
       if (type === 'note') {
         const mark = element('button', 'live-footnote-mark', String(noteNumbers.get(key)))

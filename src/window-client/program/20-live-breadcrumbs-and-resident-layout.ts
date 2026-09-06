@@ -141,7 +141,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
       count += historyEntry('things', liveThingFilters(placeId)).rows
         .filter(thing => thing.place_id === placeId).length
     }
-    return stageCellRoomHeight(width, count, STAGE_PARENT_ROOM_HEIGHT)
+    return stageStandingRoomHeight(width, count, STAGE_PARENT_ROOM_HEIGHT - 144) + 144
   }
 
   function liveCreateRenderContext(
@@ -202,7 +202,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
         (pinnedIds || []).join(',') + ':' +
         (surfaceLayout
           ? [surfaceLayout.surfaceWidth, surfaceLayout.surfaceHeight,
-              surfaceLayout.inlineOffsetY].join(',')
+              JSON.stringify(surfaceLayout.extraGround)].join(',')
           : '')
       return renderContext.remember(key, () => liveResidentLayout(
         residents,
@@ -255,31 +255,29 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
       : isRoot
         ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
         : plot.width
-    const minimumHeight = isRoot ? STAGE_PARENT_ROOM_HEIGHT : expanded ? 320 : plot.height
-    const heldThings = Object.values(
-      liveStageOccupantsByPlaceId[String(placeId)] || Object.freeze({}),
-    ).filter(entry => entry.kind === 'thing').length
     const surfaceHeight = surfaceLayout
       ? surfaceLayout.surfaceHeight
       : rootExpanded
         ? liveDirectGroundHeight(placeId, surfaceWidth)
-        : stageCellRoomHeight(
-            surfaceWidth, visibleResidents.length + heldThings, minimumHeight)
-    const separated = stageRoomCellPoints(
+        : isRoot ? STAGE_PARENT_ROOM_HEIGHT : plot.height
+    const expandedGround = !isRoot ? survey.expandedGrounds[String(placeId)] : null
+    const extraGround = surfaceLayout?.extraGround || Object.freeze(
+      (expandedGround?.regions || []).map(region => Object.freeze({
+        x: region.x - plot.x,
+        y: region.y - plot.y,
+        width: region.width,
+        height: region.height,
+      })),
+    )
+    const separated = stageRoomStandingPoints(
       placeId,
       'resident',
       visibleResidents,
-      Object.freeze({ x: 0, y: 0, width: surfaceWidth, height: surfaceHeight }),
+      Object.freeze({ x: 0, y: 0, width: surfaceWidth,
+        height: isRoot ? surfaceHeight - 144 : surfaceHeight }),
       persistPoints,
+      extraGround,
     )
-    const expandedGround = !isRoot && expanded
-      ? survey.expandedGrounds[String(placeId)] || null
-      : null
-    const inlineOffsetY = surfaceLayout
-      ? surfaceLayout.inlineOffsetY
-      : expandedGround?.residentTop
-        ? expandedGround.residentTop - plot.y
-        : 0
     const visible = Object.freeze(visibleResidents.flatMap(resident => {
       const localPoint = separated[String(resident.id)]
       if (!localPoint) return []
@@ -287,7 +285,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
         ? localPoint
         : Object.freeze({
             x: plot.x + border + localPoint.x,
-            y: plot.y + border + inlineOffsetY + localPoint.y,
+            y: plot.y + border + localPoint.y,
           })
       return [Object.freeze({ resident, localPoint, stagePoint })]
     }))
@@ -305,7 +303,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
       expanded,
       surfaceWidth,
       surfaceHeight,
-      inlineOffsetY,
+      extraGround,
       badgePoint: isRoot
         ? Object.freeze({ x: surfaceWidth - 58, y: surfaceHeight - 18 })
         : Object.freeze({ x: plot.x + plot.width - 28, y: plot.y + plot.height - 10 }),
