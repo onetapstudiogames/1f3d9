@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 
 const NOTE_EXCERPT = 'The public note begins here'
 const THING_EXCERPT = 'A lantern with an abbreviated inscription'
@@ -57,6 +57,52 @@ function boxesIntersect(
 ): boolean {
   return left.x < right.x + right.width && left.x + left.width > right.x &&
     left.y < right.y + right.height && left.y + left.height > right.y
+}
+
+type LocatorBox = NonNullable<Awaited<ReturnType<Locator['boundingBox']>>>
+
+const DETACHED_READ_TIMEOUT_MS = 5_000
+
+async function measureRebuildableBoxes(
+  resolveLocators: () => readonly Locator[],
+  label: string,
+): Promise<readonly LocatorBox[]> {
+  let measured: readonly LocatorBox[] | null = null
+  await expect.poll(async () => {
+    const boxes = await Promise.all(resolveLocators().map(locator => locator.boundingBox()))
+    measured = boxes.some(box => box === null) ? null : boxes as readonly LocatorBox[]
+    return measured !== null
+  }, {
+    message: `${label}: every box must come from an attached rendered node`,
+    timeout: DETACHED_READ_TIMEOUT_MS,
+  }).toBe(true)
+  return measured!
+}
+
+async function scrollRebuildableIntoView(
+  resolveLocator: () => Locator,
+  label: string,
+): Promise<void> {
+  await expect(resolveLocator()).toBeVisible()
+  let measured: LocatorBox | null = null
+  await expect.poll(async () => {
+    const locator = resolveLocator()
+    try {
+      await locator.scrollIntoViewIfNeeded()
+      measured = await locator.boundingBox()
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('not attached to the DOM')) throw error
+      measured = null
+    }
+    return measured !== null
+  }, {
+    message: `${label}: scroll and box read must use the same attached render`,
+    timeout: DETACHED_READ_TIMEOUT_MS,
+  }).toBe(true)
+}
+
+function comparedOperands(operands: Readonly<Record<string, unknown>>): string {
+  return `compared operands: ${JSON.stringify(operands)}`
 }
 
 test('public window links to the dated public snapshot archive', async ({ page }) => {
@@ -132,7 +178,10 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
   await expect(page.locator('#window-status')).toContainText('Watching')
   const rosterRow = page.locator('#resident-roster .resident-row')
     .filter({ hasText: 'browser-resident' })
-  await rosterRow.scrollIntoViewIfNeeded()
+  await scrollRebuildableIntoView(
+    () => page.locator('#resident-roster .resident-row').filter({ hasText: 'browser-resident' }),
+    'browser-resident roster portrait',
+  )
   const rosterPortrait = rosterRow.locator('.entity-portrait img')
   await expect(rosterPortrait).toHaveAttribute('loading', 'lazy')
   await expect(rosterPortrait).toHaveAttribute('width', '32')
@@ -167,13 +216,19 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
   await expect(page).toHaveURL(/\/window\/place\/11$/u)
   const occupant = page.locator('#place-occupants .person-card')
     .filter({ hasText: 'browser-resident' })
-  await occupant.scrollIntoViewIfNeeded()
+  await scrollRebuildableIntoView(
+    () => page.locator('#place-occupants .person-card').filter({ hasText: 'browser-resident' }),
+    'browser-resident place portrait',
+  )
   await expect(occupant.locator('.entity-portrait img')).toHaveAttribute(
     'src',
     /\/api\/drawing\/resident\/49\/thumb\.png\?rev=9$/u,
   )
   const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
-  await thing.scrollIntoViewIfNeeded()
+  await scrollRebuildableIntoView(
+    () => page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' }),
+    'field_lantern place portrait',
+  )
   await expect(thing.locator('.entity-portrait img[data-portrait-type="thing"]')).toHaveAttribute(
     'src',
     /\/api\/drawing\/thing\/401\/thumb\.png\?rev=9$/u,
@@ -199,7 +254,12 @@ test('public window shows lazy thumbnail portraits beside roster and room names'
     '.entity-portrait[data-portrait-type="thing"]',
   )
   await expect(madeThingPortrait).toHaveCount(1)
-  await madeThingPortrait.scrollIntoViewIfNeeded()
+  await scrollRebuildableIntoView(
+    () => page.locator('#activity-list .activity-row')
+      .filter({ hasText: 'field_lantern' })
+      .locator('.entity-portrait[data-portrait-type="thing"]'),
+    'field_lantern happening portrait',
+  )
   const madeThingPortraitImage = madeThingPortrait.locator('img')
   await expect(madeThingPortraitImage).toHaveCount(1)
   await expect(madeThingPortraitImage).toHaveAttribute(
@@ -366,22 +426,50 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
     const portrait = firstRow.locator('.entity-portrait[data-portrait-type="thing"]')
     await expect(portrait).toHaveCount(1)
     await expect(undrawnRow.locator('.entity-portrait[data-portrait-type="thing"]')).toHaveCount(0)
-    const drawnTitleBeforeLoad = await firstRow.locator('.thing-index-link').boundingBox()
-    const undrawnTitle = await undrawnRow.locator('.thing-index-link').boundingBox()
-    const drawnRow = await firstRow.boundingBox()
-    const undrawnRowBox = await undrawnRow.boundingBox()
-    expect(drawnTitleBeforeLoad).not.toBeNull()
-    expect(undrawnTitle).not.toBeNull()
-    expect(drawnRow).not.toBeNull()
-    expect(undrawnRowBox).not.toBeNull()
-    expect(undrawnTitle!.x - undrawnRowBox!.x).toBeLessThan(
-      drawnTitleBeforeLoad!.x - drawnRow!.x,
+    const [drawnTitleBeforeLoad, undrawnTitle, drawnRow, undrawnRowBox] =
+      await measureRebuildableBoxes(() => [
+        page.locator('#things-list .thing-index-row').first().locator('.thing-index-link'),
+        page.locator('#things-list .thing-index-row').nth(1).locator('.thing-index-link'),
+        page.locator('#things-list .thing-index-row').first(),
+        page.locator('#things-list .thing-index-row').nth(1),
+      ], 'thing title offsets before portrait load')
+    expect(
+      undrawnTitle.x - undrawnRowBox.x,
+      comparedOperands({
+        undrawnTitleX: undrawnTitle.x,
+        undrawnRowX: undrawnRowBox.x,
+        drawnTitleX: drawnTitleBeforeLoad.x,
+        drawnRowX: drawnRow.x,
+      }),
+    ).toBeLessThan(
+      drawnTitleBeforeLoad.x - drawnRow.x,
     )
-    await portrait.scrollIntoViewIfNeeded()
+    await scrollRebuildableIntoView(
+      () => page.locator('#things-list .thing-index-row').first()
+        .locator('.entity-portrait[data-portrait-type="thing"]'),
+      'transparent-beacon thing portrait',
+    )
     await expect(portrait).toHaveAttribute('data-portrait-state', 'loaded')
-    const drawnTitleAfterLoad = await firstRow.locator('.thing-index-link').boundingBox()
-    expect(drawnTitleAfterLoad?.x).toBe(drawnTitleBeforeLoad?.x)
-    expect(await portrait.evaluate(shell => {
+    const [drawnTitleAfterLoad] = await measureRebuildableBoxes(
+      () => [page.locator('#things-list .thing-index-row').first().locator('.thing-index-link')],
+      'drawn thing title after portrait load',
+    )
+    expect(
+      drawnTitleAfterLoad.x,
+      comparedOperands({ drawnTitleAfterLoadX: drawnTitleAfterLoad.x,
+        drawnTitleBeforeLoadX: drawnTitleBeforeLoad.x }),
+    ).toBe(drawnTitleBeforeLoad.x)
+    let portraitPixels: {
+      inkAlpha: number
+      centerAlpha: number
+      shellBackground: string
+      rowBackground: string
+    } | null = null
+    await expect.poll(async () => {
+      portraitPixels = await page.locator('#things-list .thing-index-row').first()
+        .locator('.entity-portrait[data-portrait-type="thing"]').evaluate(shell => {
+          const row = shell.closest('.thing-index-row')
+          if (!row) return null
       const image = shell.querySelector('img')
       const canvas = document.createElement('canvas')
       canvas.width = 32
@@ -393,9 +481,15 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
         inkAlpha: context.getImageData(2, 2, 1, 1).data[3],
         centerAlpha: context.getImageData(16, 16, 1, 1).data[3],
         shellBackground: getComputedStyle(shell).backgroundColor,
-        rowBackground: getComputedStyle(shell.closest('.thing-index-row')!).backgroundColor,
+        rowBackground: getComputedStyle(row).backgroundColor,
       }
-    })).toEqual({
+        })
+      return portraitPixels !== null
+    }, {
+      message: 'transparent-beacon pixels and backgrounds must come from an attached thing row',
+      timeout: DETACHED_READ_TIMEOUT_MS,
+    }).toBe(true)
+    expect(portraitPixels).toEqual({
       inkAlpha: 255,
       centerAlpha: 0,
       shellBackground: 'rgba(0, 0, 0, 0)',
@@ -417,35 +511,51 @@ test('THINGS stays bounded by choice and transparent at desktop and phone widths
       .filter({ hasText: 'oldwalker' })
     await expect(drawnResident.locator('.entity-portrait')).toHaveCount(1)
     await expect(undrawnResident.locator('.entity-portrait')).toHaveCount(0)
-    const [drawnHandle, undrawnHandle, drawnResidentBox, undrawnResidentBox] = await Promise.all([
-      drawnResident.locator('.resident-follow').boundingBox(),
-      undrawnResident.locator('.resident-follow').boundingBox(),
-      drawnResident.boundingBox(),
-      undrawnResident.boundingBox(),
-    ])
-    expect(drawnHandle).not.toBeNull()
-    expect(undrawnHandle).not.toBeNull()
-    expect(drawnResidentBox).not.toBeNull()
-    expect(undrawnResidentBox).not.toBeNull()
-    expect(undrawnHandle!.x - undrawnResidentBox!.x).toBeLessThan(
-      drawnHandle!.x - drawnResidentBox!.x,
+    const [drawnHandle, undrawnHandle, drawnResidentBox, undrawnResidentBox] =
+      await measureRebuildableBoxes(() => [
+        page.locator('#resident-roster .resident-row')
+          .filter({ hasText: 'browser-resident' }).locator('.resident-follow'),
+        page.locator('#resident-roster .resident-row')
+          .filter({ hasText: 'oldwalker' }).locator('.resident-follow'),
+        page.locator('#resident-roster .resident-row').filter({ hasText: 'browser-resident' }),
+        page.locator('#resident-roster .resident-row').filter({ hasText: 'oldwalker' }),
+      ], 'roster handle offsets')
+    expect(
+      undrawnHandle.x - undrawnResidentBox.x,
+      comparedOperands({
+        undrawnHandleX: undrawnHandle.x,
+        undrawnResidentX: undrawnResidentBox.x,
+        drawnHandleX: drawnHandle.x,
+        drawnResidentX: drawnResidentBox.x,
+      }),
+    ).toBeLessThan(
+      drawnHandle.x - drawnResidentBox.x,
     )
     if (viewport.width <= 390) {
-      const [drawnMeta, undrawnMeta] = await Promise.all([
-        drawnResident.locator('.resident-number').boundingBox(),
-        undrawnResident.locator('.resident-number').boundingBox(),
-      ])
-      expect(drawnMeta).not.toBeNull()
-      expect(undrawnMeta).not.toBeNull()
-      expect(boxesIntersect(drawnHandle!, drawnMeta!)).toBe(false)
-      expect(boxesIntersect(undrawnHandle!, undrawnMeta!)).toBe(false)
+      const [drawnMeta, undrawnMeta] = await measureRebuildableBoxes(() => [
+        page.locator('#resident-roster .resident-row')
+          .filter({ hasText: 'browser-resident' }).locator('.resident-number'),
+        page.locator('#resident-roster .resident-row')
+          .filter({ hasText: 'oldwalker' }).locator('.resident-number'),
+      ], 'phone roster metadata')
+      expect(
+        boxesIntersect(drawnHandle, drawnMeta),
+        comparedOperands({ drawnHandle, drawnMeta }),
+      ).toBe(false)
+      expect(
+        boxesIntersect(undrawnHandle, undrawnMeta),
+        comparedOperands({ undrawnHandle, undrawnMeta }),
+      ).toBe(false)
     }
   }
 
   await page.goto('/window/map')
   const mapHeading = page.locator('#place-map .place-card-thing')
     .filter({ hasText: 'transparent-beacon' })
-  await mapHeading.scrollIntoViewIfNeeded()
+  await scrollRebuildableIntoView(
+    () => page.locator('#place-map .place-card-thing').filter({ hasText: 'transparent-beacon' }),
+    'transparent-beacon map portrait',
+  )
   await expect(mapHeading.locator(
     '.entity-portrait[data-portrait-type="thing"] img',
   )).toHaveAttribute(
@@ -530,75 +640,119 @@ test('presence rows keep handles and long locations separate at phone and deskto
 
   const placeRow = page.locator('#place-occupants .person-card')
     .filter({ hasText: 'fable-lyrebird' })
-  const placeHandle = placeRow.locator('.resident-follow')
-  const placeMeta = placeRow.locator('.resident-number')
   await expect(placeRow).toBeVisible()
-  const [placeHandleBox, placeMetaBox] = await Promise.all([
-    placeHandle.boundingBox(),
-    placeMeta.boundingBox(),
-  ])
-  expect(placeHandleBox).not.toBeNull()
-  expect(placeMetaBox).not.toBeNull()
-  expect(boxesIntersect(placeHandleBox!, placeMetaBox!)).toBe(false)
-  expect(placeMetaBox!.y).toBeGreaterThanOrEqual(
-    placeHandleBox!.y + placeHandleBox!.height - 0.5,
+  const [placeHandleBox, placeMetaBox] = await measureRebuildableBoxes(() => [
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-follow'),
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-number'),
+  ], 'phone drawn place row')
+  expect(
+    boxesIntersect(placeHandleBox, placeMetaBox),
+    comparedOperands({ placeHandleBox, placeMetaBox }),
+  ).toBe(false)
+  expect(
+    placeMetaBox.y,
+    comparedOperands({ placeMetaY: placeMetaBox.y,
+      placeHandleBottomMinusHalf: placeHandleBox.y + placeHandleBox.height - 0.5 }),
+  ).toBeGreaterThanOrEqual(
+    placeHandleBox.y + placeHandleBox.height - 0.5,
   )
-  expect(await placeMeta.evaluate(element => {
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    return range.getClientRects().length
-  })).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => page.locator('#place-occupants .person-card')
+    .filter({ hasText: 'fable-lyrebird' }).locator('.resident-number').evaluate(element => {
+      if (!element.isConnected) return null
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      return range.getClientRects().length
+    }), {
+    message: 'phone place metadata line count: actual and minimum are compared below',
+    timeout: DETACHED_READ_TIMEOUT_MS,
+  }).toBeGreaterThanOrEqual(2)
 
-  const placePortraitBox = await placeRow.locator('.entity-portrait').boundingBox()
-  expect(placePortraitBox).not.toBeNull()
-  expect(placePortraitBox!.y).toBeLessThan(placeHandleBox!.y + placeHandleBox!.height)
-  expect(placePortraitBox!.y + placePortraitBox!.height).toBeGreaterThan(placeHandleBox!.y)
+  const [placePortraitBox] = await measureRebuildableBoxes(
+    () => [page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.entity-portrait')],
+    'phone place portrait',
+  )
+  expect(
+    placePortraitBox.y,
+    comparedOperands({ placePortraitY: placePortraitBox.y,
+      placeHandleBottom: placeHandleBox.y + placeHandleBox.height }),
+  ).toBeLessThan(placeHandleBox.y + placeHandleBox.height)
+  expect(
+    placePortraitBox.y + placePortraitBox.height,
+    comparedOperands({ placePortraitBottom: placePortraitBox.y + placePortraitBox.height,
+      placeHandleY: placeHandleBox.y }),
+  ).toBeGreaterThan(placeHandleBox.y)
 
   const undrawnPlaceRow = page.locator('#place-occupants .person-card')
     .filter({ hasText: 'off-by-one' })
   await expect(undrawnPlaceRow).toHaveCount(1)
   await expect(undrawnPlaceRow.locator('.entity-portrait')).toHaveCount(0)
-  const [phoneUndrawnHandleBox, phoneUndrawnMetaBox] = await Promise.all([
-    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
-    undrawnPlaceRow.locator('.resident-number').boundingBox(),
-  ])
-  expect(phoneUndrawnHandleBox).not.toBeNull()
-  expect(phoneUndrawnMetaBox).not.toBeNull()
-  expect(boxesIntersect(phoneUndrawnHandleBox!, phoneUndrawnMetaBox!)).toBe(false)
-  expect(phoneUndrawnMetaBox!.y).toBeGreaterThanOrEqual(
-    phoneUndrawnHandleBox!.y + phoneUndrawnHandleBox!.height - 0.5,
+  const [phoneUndrawnHandleBox, phoneUndrawnMetaBox] = await measureRebuildableBoxes(() => [
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'off-by-one' }).locator('.resident-follow'),
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'off-by-one' }).locator('.resident-number'),
+  ], 'phone undrawn place row')
+  expect(
+    boxesIntersect(phoneUndrawnHandleBox, phoneUndrawnMetaBox),
+    comparedOperands({ phoneUndrawnHandleBox, phoneUndrawnMetaBox }),
+  ).toBe(false)
+  expect(
+    phoneUndrawnMetaBox.y,
+    comparedOperands({ phoneUndrawnMetaY: phoneUndrawnMetaBox.y,
+      phoneUndrawnHandleBottomMinusHalf:
+        phoneUndrawnHandleBox.y + phoneUndrawnHandleBox.height - 0.5 }),
+  ).toBeGreaterThanOrEqual(
+    phoneUndrawnHandleBox.y + phoneUndrawnHandleBox.height - 0.5,
   )
-  expect(phoneUndrawnHandleBox!.x).toBeLessThan(placeHandleBox!.x)
+  expect(
+    phoneUndrawnHandleBox.x,
+    comparedOperands({ phoneUndrawnHandleX: phoneUndrawnHandleBox.x,
+      placeHandleX: placeHandleBox.x }),
+  ).toBeLessThan(placeHandleBox.x)
 
   await page.setViewportSize({ width: 1280, height: 900 })
   for (const row of [placeRow, undrawnPlaceRow]) {
-    const [handleBox, metaBox] = await Promise.all([
-      row.locator('.resident-follow').boundingBox(),
-      row.locator('.resident-number').boundingBox(),
-    ])
-    expect(handleBox).not.toBeNull()
-    expect(metaBox).not.toBeNull()
-    expect(boxesIntersect(handleBox!, metaBox!)).toBe(false)
+    const rowLabel = row === placeRow ? 'drawn' : 'undrawn'
+    const [handleBox, metaBox] = await measureRebuildableBoxes(() => [
+      row.locator('.resident-follow'),
+      row.locator('.resident-number'),
+    ], `desktop ${rowLabel} place row`)
+    expect(
+      boxesIntersect(handleBox, metaBox),
+      comparedOperands({ rowLabel, handleBox, metaBox }),
+    ).toBe(false)
   }
-  const [desktopDrawnHandleBox, desktopUndrawnHandleBox] = await Promise.all([
-    placeRow.locator('.resident-follow').boundingBox(),
-    undrawnPlaceRow.locator('.resident-follow').boundingBox(),
-  ])
-  expect(desktopDrawnHandleBox).not.toBeNull()
-  expect(desktopUndrawnHandleBox).not.toBeNull()
-  expect(desktopUndrawnHandleBox!.x).toBeLessThan(desktopDrawnHandleBox!.x)
+  const [desktopDrawnHandleBox, desktopUndrawnHandleBox] = await measureRebuildableBoxes(() => [
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-follow'),
+    page.locator('#place-occupants .person-card')
+      .filter({ hasText: 'off-by-one' }).locator('.resident-follow'),
+  ], 'desktop place handle offsets')
+  expect(
+    desktopUndrawnHandleBox.x,
+    comparedOperands({ desktopUndrawnHandleX: desktopUndrawnHandleBox.x,
+      desktopDrawnHandleX: desktopDrawnHandleBox.x }),
+  ).toBeLessThan(desktopDrawnHandleBox.x)
 
   await page.setViewportSize({ width: 390, height: 844 })
 
-  const thing = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
-  const [thingNameBox, thingMetaBox] = await Promise.all([
-    thing.locator('h4').boundingBox(),
-    thing.locator('.thing-meta').boundingBox(),
-  ])
-  expect(thingNameBox).not.toBeNull()
-  expect(thingMetaBox).not.toBeNull()
-  expect(boxesIntersect(thingNameBox!, thingMetaBox!)).toBe(false)
-  expect(thingMetaBox!.y).toBeGreaterThanOrEqual(thingNameBox!.y + thingNameBox!.height - 0.5)
+  const [thingNameBox, thingMetaBox] = await measureRebuildableBoxes(() => [
+    page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' }).locator('h4'),
+    page.locator('#place-things .thing-card')
+      .filter({ hasText: 'field_lantern' }).locator('.thing-meta'),
+  ], 'phone place thing row')
+  expect(
+    boxesIntersect(thingNameBox, thingMetaBox),
+    comparedOperands({ thingNameBox, thingMetaBox }),
+  ).toBe(false)
+  expect(
+    thingMetaBox.y,
+    comparedOperands({ thingMetaY: thingMetaBox.y,
+      thingNameBottomMinusHalf: thingNameBox.y + thingNameBox.height - 0.5 }),
+  ).toBeGreaterThanOrEqual(thingNameBox.y + thingNameBox.height - 0.5)
 
   await page.getByRole('tab', { name: 'Map', exact: true }).click()
   const rosterRow = page.locator('#resident-roster .resident-row')
@@ -609,30 +763,45 @@ test('presence rows keep handles and long locations separate at phone and deskto
     element.textContent =
       'resident #49 · at frontier valley / the corrigenda room / the long lantern gallery'
   })
-  const [rosterHandleBox, rosterMetaBox] = await Promise.all([
-    rosterRow.locator('.resident-follow').boundingBox(),
-    rosterMeta.boundingBox(),
-  ])
-  expect(rosterHandleBox).not.toBeNull()
-  expect(rosterMetaBox).not.toBeNull()
-  expect(boxesIntersect(rosterHandleBox!, rosterMetaBox!)).toBe(false)
-  expect(rosterMetaBox!.y).toBeGreaterThanOrEqual(
-    rosterHandleBox!.y + rosterHandleBox!.height - 0.5,
+  const [rosterHandleBox, rosterMetaBox] = await measureRebuildableBoxes(() => [
+    page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-follow'),
+    page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-number'),
+  ], 'phone roster row')
+  expect(
+    boxesIntersect(rosterHandleBox, rosterMetaBox),
+    comparedOperands({ rosterHandleBox, rosterMetaBox }),
+  ).toBe(false)
+  expect(
+    rosterMetaBox.y,
+    comparedOperands({ rosterMetaY: rosterMetaBox.y,
+      rosterHandleBottomMinusHalf: rosterHandleBox.y + rosterHandleBox.height - 0.5 }),
+  ).toBeGreaterThanOrEqual(
+    rosterHandleBox.y + rosterHandleBox.height - 0.5,
   )
-  expect(await rosterMeta.evaluate(element => {
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    return range.getClientRects().length
-  })).toBeGreaterThanOrEqual(2)
+  await expect.poll(() => page.locator('#resident-roster .resident-row')
+    .filter({ hasText: 'fable-lyrebird' }).locator('.resident-number').evaluate(element => {
+      if (!element.isConnected) return null
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      return range.getClientRects().length
+    }), {
+    message: 'phone roster metadata line count: actual and minimum are compared below',
+    timeout: DETACHED_READ_TIMEOUT_MS,
+  }).toBeGreaterThanOrEqual(2)
 
   await page.setViewportSize({ width: 1280, height: 900 })
-  const [desktopRosterHandleBox, desktopRosterMetaBox] = await Promise.all([
-    rosterRow.locator('.resident-follow').boundingBox(),
-    rosterMeta.boundingBox(),
-  ])
-  expect(desktopRosterHandleBox).not.toBeNull()
-  expect(desktopRosterMetaBox).not.toBeNull()
-  expect(boxesIntersect(desktopRosterHandleBox!, desktopRosterMetaBox!)).toBe(false)
+  const [desktopRosterHandleBox, desktopRosterMetaBox] = await measureRebuildableBoxes(() => [
+    page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-follow'),
+    page.locator('#resident-roster .resident-row')
+      .filter({ hasText: 'fable-lyrebird' }).locator('.resident-number'),
+  ], 'desktop roster row')
+  expect(
+    boxesIntersect(desktopRosterHandleBox, desktopRosterMetaBox),
+    comparedOperands({ desktopRosterHandleBox, desktopRosterMetaBox }),
+  ).toBe(false)
 })
 
 test('each visible view has one share button that copies its absolute clean URL', async ({ page }) => {
@@ -749,11 +918,18 @@ test('an unproven Gazette issue restores and shares without claiming it exists i
   const shareIssue = panel.getByRole('button', { name: 'Share issue 7', exact: true })
   await expect(readIssue).toHaveAttribute('href', '/gazette/7')
   await expect(shareIssue).toBeVisible()
-  const [readBox, shareBox] = await Promise.all([readIssue.boundingBox(), shareIssue.boundingBox()])
-  expect(readBox).not.toBeNull()
-  expect(shareBox).not.toBeNull()
-  expect(Math.abs((readBox?.y ?? 0) - (shareBox?.y ?? 0))).toBeLessThan(1)
-  expect(Math.abs((readBox?.height ?? 0) - (shareBox?.height ?? 0))).toBeLessThan(1)
+  const [readBox, shareBox] = await measureRebuildableBoxes(() => [
+    page.locator('#gazette-panel').getByRole('link', { name: 'Read issue 7', exact: true }),
+    page.locator('#gazette-panel').getByRole('button', { name: 'Share issue 7', exact: true }),
+  ], 'Gazette issue actions')
+  expect(
+    Math.abs(readBox.y - shareBox.y),
+    comparedOperands({ readY: readBox.y, shareY: shareBox.y }),
+  ).toBeLessThan(1)
+  expect(
+    Math.abs(readBox.height - shareBox.height),
+    comparedOperands({ readHeight: readBox.height, shareHeight: shareBox.height }),
+  ).toBeLessThan(1)
   await expect(panel.locator('.gazette-issue-summary button')).toHaveCount(0)
   await shareIssue.click()
   await expect.poll(() => copiedShareLinks(page)).toEqual([
