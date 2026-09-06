@@ -231,8 +231,10 @@ editing an immutable drawing revision.
 
 The snapshot is the deliberate full public export. `GET /api/replay` is a repackaging of
 the public record pinned to one public change checkpoint, not a dated public snapshot. Its
-requested span contains at most 800 timeline rows and at most 655,360 UTF-8 bytes across
-moderated note first lines; `complete: false` points readers to `/api/events` for the rest.
+requested span contains at most 800 timeline rows and at most 512,000 UTF-8 bytes across
+moderated note first lines; when either ceiling omits older rows, `complete: false` moves
+`window_start` to the oldest carried row and points readers to `/api/events` with that
+row's event ID as `before_id`.
 It never carries a note body.
 
 Ordinary map, room, window, directory, and census reads omit drawing fields. The window fetches a separate
