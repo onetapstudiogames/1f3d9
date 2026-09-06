@@ -14,7 +14,7 @@ export const FRONT_DOOR_POINTER =
 
 process.env.PUBLIC_ORIGIN = PUBLIC_ORIGIN
 
-export interface ToolDefinition {
+interface ToolDefinition {
   name: string
   title?: string
   description: string
