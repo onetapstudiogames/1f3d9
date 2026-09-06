@@ -496,6 +496,8 @@ test('prepaid credit transitions stay exact, private, nonnegative, and nonexpiri
       assert.equal(await balance(postgres.client, 2), '0')
 
       const pending = await readCityCreditAttention(db, 2)
+      assert.equal(pending.accepted_gifts_received_units, '0')
+      assert.equal(pending.settled_purchases_received_units, '0')
       assert.deepEqual(cityCreditAttentionLines(pending), [
         'You have 1 pending 1F3D9 fee-credit gift awaiting accept or refuse; see city_fee_credit.pending_gifts.',
       ])
@@ -510,6 +512,8 @@ test('prepaid credit transitions stay exact, private, nonnegative, and nonexpiri
       `)
       const acceptedAtIso = acceptedAt.rows[0]!.created_at.toISOString()
       const accepted = await readCityCreditAttention(db, 2)
+      assert.equal(accepted.accepted_gifts_received_units, '4000000')
+      assert.equal(accepted.settled_purchases_received_units, '0')
       assert.deepEqual(cityCreditAttentionLines(accepted), [
         `Your 1F3D9 fee-credit balance changed by 4.000000 since your previous me read; the latest change was on ${acceptedAtIso}.`,
       ])

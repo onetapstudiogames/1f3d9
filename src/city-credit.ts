@@ -55,6 +55,7 @@ type QueryRow = Record<string, unknown>
 
 export interface CityCreditDatabase {
   query(text: string, params?: readonly unknown[] | any[]): Promise<readonly QueryRow[]>
+  transaction?<T>(work: (database: CityCreditDatabase) => Promise<T>): Promise<T>
 }
 
 export interface CityCreditHistoryEntry {
@@ -90,11 +91,31 @@ export interface CityCreditAccount {
 export type CityCreditAttentionState = Readonly<{
   pending_gifts_count: number
   frozen_gifts_count: number
+  last_visit_at: string | null
+  accepted_gifts_received_units: string
+  settled_purchases_received_units: string
   credit_change: Readonly<{
     amount: string
     amount_units: string
     changed_at: string
   }> | null
+}>
+
+export type CityCreditSinceLastVisit = Readonly<{
+  accepted_gifts: Readonly<{
+    amount: string
+    amount_units: string
+    record_link: 'city_fee_credit.receipts'
+  }>
+  settled_purchases: Readonly<{
+    amount: string
+    amount_units: string
+    record_link: 'city_fee_credit.receipts'
+  }>
+  pending_gifts: Readonly<{
+    count: number
+    record_link: 'city_fee_credit.pending_gifts'
+  }>
 }>
 
 function runQuery(
@@ -776,15 +797,26 @@ export async function readCityCreditAccount(
   }
 }
 
-export async function readCityCreditAttention(
+function cityCreditAttentionUnavailable(): never {
+  throw new TypeError('city credit attention is unavailable')
+}
+
+function invalidCityCreditAttentionTime(): never {
+  throw new TypeError('city credit attention time is invalid')
+}
+
+async function readCityCreditAttentionSnapshot(
   database: CityCreditDatabase,
-  residentIdInput: number,
+  residentId: number,
 ): Promise<CityCreditAttentionState> {
-  const residentId = positiveResidentId(residentIdInput)
   // Ledger IDs are allocation-, not commit-ordered; closing the rare late-lower-ID window requires a per-resident cursor allocated under the account lock.
   const rows = await runQuery(database, `
     /* city-credit:read-attention */
-    WITH cutoff AS MATERIALIZED (
+    WITH prior AS MATERIALIZED (
+      SELECT marker.read_at
+      FROM city_credit_last_me_reads marker
+      WHERE marker.resident_id = $1::integer
+    ), cutoff AS MATERIALIZED (
       SELECT coalesce(max(entry.id), 0)::bigint AS entry_id
       FROM city_credit_entries entry
       WHERE entry.resident_id = $1::integer
@@ -813,7 +845,13 @@ export async function readCityCreditAttention(
             THEN -entry.amount_units
           ELSE 0
         END), 0)::text AS change_units,
-        max(entry.created_at) AS changed_at
+        max(entry.created_at) AS changed_at,
+        coalesce(sum(entry.amount_units) FILTER (
+          WHERE entry.entry_kind = 'gift_accept'
+        ), 0)::text AS accepted_gift_units,
+        coalesce(sum(entry.amount_units) FILTER (
+          WHERE entry.entry_kind = 'purchase' AND entry.gift_id IS NULL
+        ), 0)::text AS settled_purchase_units
       FROM city_credit_entries entry
       CROSS JOIN advanced
       WHERE advanced.previous_credit_entry_id IS NOT NULL
@@ -837,8 +875,11 @@ export async function readCityCreditAttention(
         AND gift.status IN ('pending', 'frozen')
     )
     SELECT advanced.previous_credit_entry_id IS NOT NULL AS had_previous_read,
+      (SELECT prior.read_at FROM prior) AS last_visit_at,
       CASE WHEN balance_changes.change_count > 0 THEN balance_changes.change_units END AS change_units,
       CASE WHEN balance_changes.change_count > 0 THEN balance_changes.changed_at END AS changed_at,
+      balance_changes.accepted_gift_units,
+      balance_changes.settled_purchase_units,
       gift_counts.pending_count,
       gift_counts.frozen_count
     FROM advanced
@@ -846,18 +887,27 @@ export async function readCityCreditAttention(
     CROSS JOIN gift_counts
   `, [residentId])
   const row = rows[0]
-  if (!row) throw new TypeError('city credit attention is unavailable')
+  if (!row) cityCreditAttentionUnavailable()
   const pendingCount = integerValue(row.pending_count, 'pending city credit gift count')
   if (pendingCount < 0) throw new TypeError('city credit gift count is invalid')
   const frozenCount = integerValue(row.frozen_count, 'frozen city credit gift count')
   if (frozenCount < 0 || frozenCount > pendingCount) {
     throw new TypeError('frozen city credit gift count is invalid')
   }
+  const lastVisitAt = isoTimestamp(row.last_visit_at)
+  if (row.last_visit_at != null && lastVisitAt === null) {
+    invalidCityCreditAttentionTime()
+  }
+  const acceptedGiftUnits = bigintString(row.accepted_gift_units, 'accepted city credit gifts')
+  const settledPurchaseUnits = bigintString(row.settled_purchase_units, 'settled city credit purchases')
   const hadPreviousRead = booleanValue(row.had_previous_read)
   if (!hadPreviousRead || row.change_units == null) {
     return Object.freeze({
       pending_gifts_count: pendingCount,
       frozen_gifts_count: frozenCount,
+      last_visit_at: lastVisitAt,
+      accepted_gifts_received_units: acceptedGiftUnits,
+      settled_purchases_received_units: settledPurchaseUnits,
       credit_change: null,
     })
   }
@@ -865,14 +915,59 @@ export async function readCityCreditAttention(
   const changed = row.changed_at instanceof Date
     ? row.changed_at
     : new Date(String(row.changed_at ?? ''))
-  if (Number.isNaN(changed.getTime())) throw new TypeError('city credit attention time is invalid')
+  if (Number.isNaN(changed.getTime())) invalidCityCreditAttentionTime()
   return Object.freeze({
     pending_gifts_count: pendingCount,
     frozen_gifts_count: frozenCount,
+    last_visit_at: lastVisitAt,
+    accepted_gifts_received_units: acceptedGiftUnits,
+    settled_purchases_received_units: settledPurchaseUnits,
     credit_change: Object.freeze({
       amount: formatUsdcUnits(BigInt(changeUnits)),
       amount_units: changeUnits,
       changed_at: changed.toISOString(),
+    }),
+  })
+}
+
+export async function readCityCreditAttention(
+  database: CityCreditDatabase,
+  residentIdInput: number,
+): Promise<CityCreditAttentionState> {
+  const residentId = positiveResidentId(residentIdInput)
+  if (!database.transaction) return readCityCreditAttentionSnapshot(database, residentId)
+  return database.transaction(async transaction => {
+    const locked = await runQuery(transaction, `
+      /* city-credit:lock-me-read */
+      SELECT resident.id
+      FROM residents resident
+      WHERE resident.id = $1::integer
+      FOR NO KEY UPDATE
+    `, [residentId])
+    if (!locked[0]) cityCreditAttentionUnavailable()
+    return readCityCreditAttentionSnapshot(transaction, residentId)
+  })
+}
+
+export function cityCreditSinceLastVisit(
+  state: CityCreditAttentionState,
+): CityCreditSinceLastVisit {
+  const acceptedGiftUnits = BigInt(state.accepted_gifts_received_units)
+  const settledPurchaseUnits = BigInt(state.settled_purchases_received_units)
+  return Object.freeze({
+    accepted_gifts: Object.freeze({
+      amount: formatUsdcUnits(acceptedGiftUnits),
+      amount_units: acceptedGiftUnits.toString(),
+      record_link: 'city_fee_credit.receipts' as const,
+    }),
+    settled_purchases: Object.freeze({
+      amount: formatUsdcUnits(settledPurchaseUnits),
+      amount_units: settledPurchaseUnits.toString(),
+      record_link: 'city_fee_credit.receipts' as const,
+    }),
+    pending_gifts: Object.freeze({
+      count: state.pending_gifts_count - state.frozen_gifts_count,
+      record_link: 'city_fee_credit.pending_gifts' as const,
     }),
   })
 }

@@ -4,6 +4,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-09-06
 
+### For residents
+- GET /api/me now reports how many public city updates landed, exact accepted-gift and settled-purchase fee credit received since the resident's previous visit, and gifts currently pending acceptance.
+
 ### For skill and connector authors
 - Added `GET /api/replay?span=1h|2h|6h|24h`, an anonymous repackaging of the public record pinned to one change checkpoint for the coming Live stage, with a map seed, starting placements, ordered public events, exact present counts, no note bodies, and older rows read at `/api/events`.
 

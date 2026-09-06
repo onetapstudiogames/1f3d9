@@ -59,7 +59,20 @@ export function parseChangelog(markdown: string): readonly ChangelogEntry[] {
   return entries
 }
 
-const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
+export function countChangelogUpdatesSince(
+  entries: readonly ChangelogEntry[],
+  lastVisitAt: string | null,
+): number {
+  if (lastVisitAt === null) return 0
+  const lastVisitTime = Date.parse(lastVisitAt)
+  const today = new Date().toISOString().slice(0, 10)
+  return entries.filter(entry => (
+    entry.date <= today
+    && Date.parse(`${entry.date}T23:59:59.999Z`) >= lastVisitTime
+  )).length
+}
+
+export const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/gu, character => ({

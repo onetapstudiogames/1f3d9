@@ -276,6 +276,7 @@ interface FakeState {
   cityCreditBalances: Map<number, bigint>
   cityCreditEntries: FakeCityCreditEntry[]
   nextCityCreditEntryId: number
+  attentionPendingGiftsCount: number
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
@@ -379,6 +380,7 @@ const initialState = (): FakeState => ({
   cityCreditBalances: new Map(),
   cityCreditEntries: [],
   nextCityCreditEntryId: 1,
+  attentionPendingGiftsCount: 0,
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,
@@ -1029,12 +1031,16 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       has_more: matching.length > limit,
     }]
   }
+  if (q.includes('/* city-credit:lock-me-read */')) return [{ id: state.actorId }]
   if (q.includes('/* city-credit:read-attention */')) {
     return [{
       had_previous_read: false,
       change_units: null,
       changed_at: null,
-      pending_count: 0,
+      last_visit_at: null,
+      accepted_gift_units: '0',
+      settled_purchase_units: '0',
+      pending_count: state.attentionPendingGiftsCount,
       frozen_count: 0,
     }]
   }
@@ -7856,6 +7862,7 @@ test('/api/me reports a private exact zero city fee credit account before any is
   const body = await response.json() as {
     help: string
     attention: string[]
+    since_last_visit: Record<string, unknown>
     city_fee_credit: Record<string, unknown>
     pages: {
       city_fee_credit: Record<string, unknown>
@@ -7864,6 +7871,26 @@ test('/api/me reports a private exact zero city fee credit account before any is
   }
   assert.equal(body.help, '/api/help')
   assert.deepEqual(body.attention, [])
+  assert.deepEqual(body.since_last_visit, {
+    city_updates: { count: 0, href: '/changelog' },
+    fee_credit_received: {
+      accepted_gifts: {
+        amount: '0.000000',
+        amount_units: '0',
+        record_link: 'city_fee_credit.receipts',
+      },
+      settled_purchases: {
+        amount: '0.000000',
+        amount_units: '0',
+        record_link: 'city_fee_credit.receipts',
+      },
+      pending_gifts: {
+        count: 0,
+        record_link: 'city_fee_credit.pending_gifts',
+      },
+    },
+    last_visit_at: null,
+  })
   assert.deepEqual(body.city_fee_credit, {
     resident_id: 7,
     balance: '0.000000',
@@ -7883,6 +7910,31 @@ test('/api/me reports a private exact zero city fee credit account before any is
     next_before_gift_id: null,
   })
   assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+test('/api/me reports current pending gifts on a first visit while received amounts stay zero', async () => {
+  reset({ attentionPendingGiftsCount: 2 })
+  const response = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    attention: string[]
+    since_last_visit: {
+      fee_credit_received: {
+        accepted_gifts: { amount_units: string }
+        settled_purchases: { amount_units: string }
+        pending_gifts: { count: number }
+      }
+      last_visit_at: string | null
+    }
+  }
+
+  assert.deepEqual(body.attention, [
+    'You have 2 pending 1F3D9 fee-credit gifts awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+  ])
+  assert.equal(body.since_last_visit.fee_credit_received.pending_gifts.count, 2)
+  assert.equal(body.since_last_visit.fee_credit_received.accepted_gifts.amount_units, '0')
+  assert.equal(body.since_last_visit.fee_credit_received.settled_purchases.amount_units, '0')
+  assert.equal(body.since_last_visit.last_visit_at, null)
 })
 
 test('/api/city-credit/preflight privately shows exact cost and balance without spending', async () => {
