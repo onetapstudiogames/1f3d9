@@ -827,7 +827,9 @@ visible records in place during refresh and merge new rows into their lists.
 Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
-only for the current page. Changed or removed public text still updates.
+only for the current page. Invalid saved choices are skipped individually.
+If an older-history check fails, its held copy stays while the rest of the view
+refreshes. Changed or removed public text still updates after a successful check.
 Window history reads still report has_more and a next cursor, but not the common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.

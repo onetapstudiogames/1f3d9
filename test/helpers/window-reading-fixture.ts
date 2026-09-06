@@ -278,11 +278,6 @@ export async function installReadingFixture(
       })
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
       await refreshed
-      if (historyUnavailable) {
-        await expect(page.locator('#window-status'), 'failed history check compared with explicit stale view')
-          .toContainText('updated public city view could not be read', { timeout: 15_000 })
-        return snapshot.change_marker
-      }
       await expect(page.locator('#city-counts'),
         `completed refresh note count compared with ${snapshot.totals.conversations}`)
         .toContainText(`${snapshot.totals.conversations} notes`)

@@ -244,9 +244,11 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         }))())
       }
     }
-    const completed = await Promise.all(reads)
+    const completed = await Promise.allSettled(reads)
     let reconciled = histories
-    for (const result of completed) {
+    for (const completedRead of completed) {
+      if (completedRead.status !== 'fulfilled') continue
+      const result = completedRead.value
       reconciled = {
         ...reconciled,
         [result.collection]: {

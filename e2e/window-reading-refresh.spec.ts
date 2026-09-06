@@ -378,8 +378,9 @@ test('a newer refresh finishes its full-body read while an older response is del
     await obsoleteResponse
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
     await expect(body, 'late obsolete response compared with preserved latest inscription').toHaveText(replacement)
-    await expect(body.locator('..').locator('.body-disclosure'),
-      'latest read busy state compared with false').toHaveAttribute('aria-busy', 'false')
+    const disclosure = body.locator('..').locator('.body-disclosure')
+    await expect(disclosure, 'latest read busy state compared with false').toHaveAttribute('aria-busy', 'false')
+    await expect(disclosure, 'complete short body needs no disclosure').toBeHidden()
   } finally {
     delayed.release()
   }
@@ -449,11 +450,12 @@ test('moderation removes or tombstones an older note loaded by the reader', asyn
     .toMatchObject({ originalPresent: false, goneOrTombstoned: true })
 })
 
-test('a failed older-history refresh lets an existing detail read finish', async ({ page, baseURL }) => {
+test('a failed older-history check keeps its held copy while the city and detail refresh', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
   violationsByPage.set(page, fixture.networkViolations)
   await ready(page, '/window/conversations')
   const selector = await loadOlderNote(page)
+  await holdNodes(page, [selector])
   const delayed = fixture.delayNextNoteRead()
   try {
     const request = page.waitForRequest(request => new URL(request.url()).pathname === '/api/note/299')
@@ -463,9 +465,14 @@ test('a failed older-history refresh lets an existing detail read finish', async
     await expect(page.locator('#record-detail-body'), 'pending note detail compared with explicit loading')
       .toContainText('Reading the live public record')
     await fixture.refresh({ historyUnavailable: true })
+    await expectHeldNodes(page, [selector])
+    await expect(page.locator(selector), 'failed history check retains the held older note')
+      .toContainText(READING_OLDER_NOTE.trim())
+    await expect(page.locator('#conversation-stream [data-viewer-record-key="note:304"]'),
+      'new note arrives despite the failed older-history check').toContainText('A newly arrived note.')
     delayed.release()
     await expect(page.locator('#record-detail .record-detail-text'),
-      'detail after failed snapshot compared with last completed note').toHaveText(READING_OLDER_NOTE.trim())
+      'detail after partial history failure compared with the complete note').toHaveText(READING_OLDER_NOTE.trim())
   } finally {
     delayed.release()
   }

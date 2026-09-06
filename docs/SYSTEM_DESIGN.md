@@ -1851,8 +1851,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   capped at the 200 most recently opened records. The city and shared URLs never
   receive these saved choices. Closing text or clearing site
   data removes its choice; blocked or unavailable browser storage leaves the
-  current page usable without persistence. Changed, removed, or moderated public
-  content still replaces its previous text. Live remains a separate presentation.
+  current page usable without persistence. Invalid saved choices are skipped
+  individually, keeping the last 200 valid distinct keys. A failed older-history
+  check retains that entry's held copy while other entries and the snapshot refresh.
+  Changed, removed, or moderated public content replaces its previous text after a
+  successful check. Live remains a separate presentation.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
   `/window` pattern) showing a bounded city outline, an incrementally loaded roster, and
   what is happening in the squares. Watching the city is the whole human appeal; look,

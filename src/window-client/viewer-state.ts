@@ -14,18 +14,18 @@ export function parseWindowViewerOpenKeys(
   } catch {
     return []
   }
-  if (!Array.isArray(parsed) || parsed.length > 200) return []
+  if (!Array.isArray(parsed)) return []
 
   const keys: string[] = []
   const seen = new Set<string>()
   for (const value of parsed) {
-    if (typeof value !== 'string') return []
+    if (typeof value !== 'string') continue
     const match = /^(?:note|thing|agreement):([1-9]\d*)$/u.exec(value)
-    if (!match || !Number.isSafeInteger(Number(match[1]))) return []
+    if (!match || !Number.isSafeInteger(Number(match[1]))) continue
     if (!seen.has(value)) {
       seen.add(value)
       keys.push(value)
     }
   }
-  return keys
+  return keys.slice(-200)
 }

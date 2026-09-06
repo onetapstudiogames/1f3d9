@@ -203,6 +203,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
               }),
             },
           }
+          syncBodyDisclosures()
         }
         return
       }
