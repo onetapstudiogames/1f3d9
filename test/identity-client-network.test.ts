@@ -140,7 +140,7 @@ for (const [site, command] of [['postJson', 'register stage'], ['postAuthed', 'p
       test(`${site}: ${field} rejects ${name} while preserving safe companion prose`, async () => {
         const response = { error: '  Request refused  ', next_step: '  Check the city address  ', [field]: value }
         const result = await runClient({ ...path, responses: [response] }, 'https://identity-test.invalid', 'prose')
-        const error = field === 'error' ? 'HTTP 401' : 'Request refused'
+        const error = field === 'error' ? 'HTTP 401 with no usable message' : 'Request refused'
         const nextStep = field === 'next_step' ? '' : ' next_step: Check the city address'
         assert.equal(result.error, undefined, `${site}: child error ${String(result.error)}`)
         assert.equal(result.status, 1, `${site}: expected failure, stderr=${JSON.stringify(result.stderr)}`)

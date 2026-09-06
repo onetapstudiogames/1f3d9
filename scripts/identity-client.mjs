@@ -673,7 +673,7 @@ async function postJson(origin, path, body) {
     // Non-JSON response falls through with parsed === null below.
   }
   if (!response.ok || !parsed) {
-    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status}`
+    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status} with no usable message`
     const nextStep = sanitizeServerProse(parsed?.next_step)
     throw new Error(`${path} refused: ${error}.${nextStep ? ` next_step: ${nextStep}` : ''}`)
   }
@@ -696,7 +696,7 @@ async function postAuthed(origin, path, residentKey, body) {
     // handled below
   }
   if (!response.ok || !parsed) {
-    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status}`
+    const error = sanitizeServerProse(parsed?.error) || `HTTP ${response.status} with no usable message`
     const nextStep = sanitizeServerProse(parsed?.next_step)
     throw new Error(`${path} refused: ${error}.${nextStep ? ` next_step: ${nextStep}` : ''}`)
   }
