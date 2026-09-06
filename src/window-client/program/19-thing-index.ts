@@ -118,7 +118,11 @@ export const PART_19_THING_INDEX = `  function livePlaceRows(snapshot) {
         'Bodies stay closed until you choose one.'
     }
     if (index.loading && !index.rows.length) {
-      renderEmpty(nodes.thingsList, 'loading-row', 'Reading the newest public thing headings…')
+      const heldList = [...nodes.thingsList.children].find(child =>
+        child.__viewerListKey === 'thing-index:' + expectedScopeKey)
+      if (!heldList) {
+        renderEmpty(nodes.thingsList, 'loading-row', 'Reading the newest public thing headings…')
+      }
       renderThingIndexPage()
       return
     }
@@ -146,8 +150,9 @@ export const PART_19_THING_INDEX = `  function livePlaceRows(snapshot) {
       if (isQuietPlace(resolvedPlace)) {
         row.classList.add('thing-index-row-quiet')
         row.append(quietRoomNotice(resolvedPlace))
-        return row
+        return viewerRecordNode(row, 'thing', thing, viewerPlacePresentation(resolvedPlace))
       }
+      const placePresentation = viewerPlacePresentation(resolvedPlace)
       const title = element('h3', 'thing-index-title')
       title.append(
         portraitNode('thing', thing.id, thing.name, thing.has_drawing),
@@ -168,9 +173,13 @@ export const PART_19_THING_INDEX = `  function livePlaceRows(snapshot) {
         document.createTextNode(' · ' + String(thing.body_text_bytes) + ' UTF-8 body bytes'),
       )
       row.append(title, meta)
-      return row
+      return viewerRecordNode(row, 'thing', thing, Object.freeze({
+        place: placePresentation,
+        maker: viewerResidentPresentation(residentReference(snapshot, thing.made_by)),
+        owner: viewerResidentPresentation(residentReference(snapshot, thing.current_owner)),
+      }))
     }))
-    nodes.thingsList.replaceChildren(list)
+    renderViewerList(nodes.thingsList, list, 'thing-index:' + expectedScopeKey)
     renderThingIndexPage()
   }
 

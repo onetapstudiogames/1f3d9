@@ -11,10 +11,11 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     list.append(...things.map(thing => {
       const item = element('li', 'thing-card')
       const resolvedPlace = placeOf ? placeOf(thing.place_id) : null
+      const placePresentation = viewerPlacePresentation(resolvedPlace)
       if (isQuietPlace(resolvedPlace)) {
         item.classList.add('thing-card-quiet')
         item.append(quietRoomNotice(resolvedPlace))
-        return item
+        return viewerRecordNode(item, 'thing', thing, placePresentation)
       }
       const thingMeta = element('p', 'thing-meta')
       thingMeta.append(document.createTextNode('made by '))
@@ -52,7 +53,15 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         openDetailLink('thing', thing.id, thing.name, 'detail-link thing-detail-link'),
       )
       item.append(heading, thingMeta)
-      if (thing.body) item.append(renderExpandableBody('thing', thing.id, thing.body, thing.truncated))
+      const presentation = Object.freeze({
+        place: placePresentation,
+        maker: viewerResidentPresentation(residentReference(state.snapshot, thing.made_by)),
+        owner: viewerResidentPresentation(residentReference(state.snapshot, thing.current_owner)),
+      })
+      if (thing.body) item.append(renderExpandableBody(
+        'thing', thing.id, thing.body, thing.truncated,
+        viewerRecordDataVersion(thing),
+      ))
       const traits = element('div', 'trait-list')
       if (thing.traits.length) {
         traits.append(...thing.traits.map(trait => {
@@ -67,9 +76,11 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       if (thing.moderated || thing.kind_moderated) {
         item.append(element('span', 'moderated-mark', 'Maintainer removal shown as a tombstone'))
       }
-      return item
+      return viewerRecordNode(item, 'thing', thing, presentation)
     }))
-    target.replaceChildren(list)
+    renderViewerList(target, list, [
+      'things', target.id, state.placeId || '', state.resident || '',
+    ].join(':'))
   }
 
   // Decision #75: every note card resolves quiet at its own place_id, never
@@ -81,8 +92,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     if (isQuietPlace(place)) {
       const card = element('article', 'note-card note-card-quiet')
       card.append(quietRoomNotice(place))
-      return card
+      return viewerRecordNode(card, 'note', note, viewerPlacePresentation(place))
     }
+    const placePresentation = viewerPlacePresentation(place)
     const card = element('article', 'note-card')
     const meta = element('p', 'note-meta')
     meta.append(
@@ -103,9 +115,16 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         'note', note.id, 'Open note #' + String(note.id), 'detail-link note-detail-link',
       ),
     )
-    card.append(meta, renderExpandableBody('note', note.id, note.body, note.truncated))
+    const presentation = Object.freeze({
+      place: placePresentation,
+      author: viewerResidentPresentation(residentReference(state.snapshot, note.author)),
+    })
+    card.append(meta, renderExpandableBody(
+      'note', note.id, note.body, note.truncated,
+      viewerRecordDataVersion(note),
+    ))
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
-    return card
+    return viewerRecordNode(card, 'note', note, presentation)
   }
 
   function renderNotes(target, notes, emptyMessage, placeOf) {
@@ -119,7 +138,10 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       note,
       typeof placeOf === 'function' ? placeOf(note.place_id) : placeOf,
     )))
-    target.replaceChildren(list)
+    renderViewerList(target, list, [
+      'notes', target.id, state.placeId || '', state.resident || '',
+      state.conversationContext ? 'context' : 'direct',
+    ].join(':'))
   }
 
   function renderHistoryOutcome(target, entry, messages, itemTag) {

@@ -65,6 +65,7 @@ import { PART_38_REFRESH_CITY } from './38-refresh-city.ts'
 import { PART_40_LIVE_ITEM_POPOVER } from './40-live-item-popover.ts'
 import { PART_41_LIVE_NOTES_PANEL } from './41-live-notes-panel.ts'
 import { PART_42_STAGE_NODES } from './42-stage-nodes.ts'
+import { PART_44_VIEWER_READING_STATE } from './44-viewer-reading-state.ts'
 import { PART_39_WIRING_AND_BOOT } from './39-wiring-and-boot.ts'
 
 export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
@@ -109,5 +110,6 @@ export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
   PART_40_LIVE_ITEM_POPOVER,
   PART_41_LIVE_NOTES_PANEL,
   PART_42_STAGE_NODES,
+  PART_44_VIEWER_READING_STATE,
   PART_39_WIRING_AND_BOOT,
 ])

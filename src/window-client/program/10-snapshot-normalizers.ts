@@ -257,6 +257,10 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
         const value = safeId(source[key])
         return value ? [[key, value]] : []
       }))
+      if (raw.kind === 'moderation' &&
+          ['note', 'thing', 'agreement'].includes(source.target_type)) {
+        detail = { ...detail, target_type: source.target_type }
+      }
       detail = normalizeLiveTransferDetail(raw.kind, source, detail)
       if (raw.kind === 'gazette_printed') {
         const issueNumber = safeId(source.issue_number)
@@ -310,6 +314,10 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
         const value = safeId(source[key])
         return value ? [[key, value]] : []
       }))
+      if (raw.kind === 'moderation' &&
+          ['note', 'thing', 'agreement'].includes(source.target_type)) {
+        detail = { ...detail, target_type: source.target_type }
+      }
       detail = normalizeLiveTransferDetail(raw.kind, source, detail)
       if (raw.kind === 'action' && SAFE_ACTIONS.has(source.action)) {
         detail.action = source.action

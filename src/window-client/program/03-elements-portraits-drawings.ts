@@ -19,6 +19,8 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
   function loadPortraitImage(shell) {
     if (!shell.isConnected || shell.dataset.loaded === 'true') return
     shell.dataset.loaded = 'true'
+    const source = portraitUrl(shell.dataset.portraitType, shell.dataset.portraitId)
+    shell.dataset.portraitUrl = source
     const image = element('img', 'entity-portrait-image')
     image.alt = ''
     image.width = 32
@@ -34,7 +36,7 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
       image.remove()
     })
     shell.append(image)
-    image.src = portraitUrl(shell.dataset.portraitType, shell.dataset.portraitId)
+    image.src = source
   }
 
   function observePortraitShell(shell) {
