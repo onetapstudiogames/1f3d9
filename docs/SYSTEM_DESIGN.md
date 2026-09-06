@@ -1454,8 +1454,9 @@ conversation context, directory search (`find`), places whose asleep-resident li
 expanded (`sleepers`), and Archive `q`, `mode`, and `type`. Existing hash links remain
 readable and immediately normalize to this path. `find` is one NFC-normalized, trimmed,
 credential-free safe line of at most 100 characters; unsafe or malformed display text is
-not copied into a URL. Transient menu focus, body and branch
-disclosure, paging, and the public-change marker stay session-local. MCP exposes anonymous `search` and
+not copied into a URL. Transient menu focus, branch disclosure, paging, and the
+public-change marker stay session-local; expanded body choices stay in browser-local
+storage. MCP exposes anonymous `search` and
 `changes` tools without adding a server-side read ledger. After a confirmed unchanged
 marker, the window refreshes only the bounded resident-presence pages needed for
 time-derived `asleep` state; it does not download the same authored snapshot text again.
@@ -1844,6 +1845,14 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
 
 ## The window and the market bridge
 
+- Conversations, Happenings, Place, Things, and Agreements retain unchanged open
+  or visible record nodes across refresh and merge new rows into existing lists.
+  Expanded note, thing, and agreement keys are browser-local presentation state,
+  capped at the 200 most recently opened records. The city and shared URLs never
+  receive these saved choices. Closing text or clearing site
+  data removes its choice; blocked or unavailable browser storage leaves the
+  current page usable without persistence. Changed, removed, or moderated public
+  content still replaces its previous text. Live remains a separate presentation.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
   `/window` pattern) showing a bounded city outline, an incrementally loaded roster, and
   what is happening in the squares. Watching the city is the whole human appeal; look,

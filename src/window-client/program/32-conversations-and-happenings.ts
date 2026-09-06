@@ -64,15 +64,27 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
     }
     if (place && !state.resident) {
       const group = element('section', 'conversation-group')
+      const groupKey = 'conversation-group:' + historyKey('notes', filters)
+      group.__viewerGroupKey = groupKey
       const heading = element('header', '')
       heading.append(
         element('h3', '', 'Inside ' + place.name),
         element('span', 'place-facts', place.path + ' · ' + String(notes.length) + ' shown'),
       )
       const list = element('div', 'note-list')
+      list.__viewerListKey = groupKey + ':notes'
       list.append(...notes.map(note => noteCard(note, placeReference(snapshot, note.place_id))))
-      group.append(heading, list)
-      nodes.conversations.replaceChildren(group)
+      const currentGroup = [...nodes.conversations.children].find(node =>
+        node.__viewerGroupKey === groupKey)
+      if (currentGroup) {
+        const currentHeading = currentGroup.querySelector(':scope > header')
+        if (currentHeading) currentHeading.replaceWith(heading)
+        else currentGroup.prepend(heading)
+        renderViewerList(currentGroup, list, groupKey + ':notes')
+      } else {
+        group.append(heading, list)
+        nodes.conversations.replaceChildren(group)
+      }
     } else {
       // The server pages notes newest first, so retain that order and name each
       // room without regrouping. Only the explicit room-context question marks
@@ -97,7 +109,11 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         }
         return card
       }))
-      nodes.conversations.replaceChildren(list)
+      renderViewerList(
+        nodes.conversations,
+        list,
+        'conversations:' + historyKey('notes', filters),
+      )
     }
     renderHistoryControl(nodes.conversationPage, 'notes', 'conversations', filters)
   }
@@ -286,9 +302,23 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         row.append(element('span', 'activity-context',
           'Observed at ' + group.semantics.location))
       }
-      return row
+      return viewerRecordNode(row, 'event', event, Object.freeze({
+        semantics: group.semantics,
+        count: group.count,
+        actor: SAFE_SYSTEM_EVENT_ACTORS.has(event.actor)
+          ? null
+          : viewerResidentPresentation(residentReference(snapshot, event.actor)),
+        thing: thingId ? (() => {
+          const thing = namedThingReference(snapshot, thingId)
+          return thing ? Object.freeze({
+            id: thing.id,
+            name: thing.name,
+            hasDrawing: thing.has_drawing === true,
+          }) : null
+        })() : null,
+      }))
     })
-    nodes.activity.replaceChildren(...rows)
+    renderViewerRows(nodes.activity, 'happenings:' + historyKey('events', filters), rows)
     renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
   }
 

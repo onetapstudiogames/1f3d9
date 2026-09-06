@@ -2,6 +2,9 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     const gazetteView = state.view === 'gazette'
     if (nodes.directorySearchField) nodes.directorySearchField.hidden = gazetteView
     if (nodes.viewFilters) nodes.viewFilters.hidden = gazetteView
+    if (nodes.readingNotice) {
+      nodes.readingNotice.hidden = !viewerReadingViewIsActive()
+    }
     for (const tab of tabs) {
       const active = tab.dataset.view === state.view
       tab.setAttribute('aria-selected', String(active))
@@ -91,6 +94,7 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       renderAgreements(snapshot)
     }
     syncBodyDisclosures()
+    if (viewerReadingViewIsActive()) refreshViewerPortraits()
     if (nodes.placeFilter) nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     renderDirectorySearch(snapshot)
     if (nodes.residentFilter) nodes.residentFilter.value = state.resident || ''

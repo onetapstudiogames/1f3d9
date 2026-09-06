@@ -791,6 +791,12 @@ and GET /api/thing/:id return full bodies; no fuller public agreement-body read 
 In the human window, Show more first expands the bounded excerpt; the next action reads the
 complete note or thing and caches it for that browser session, with explicit loading,
 failure, and retry states. An agreement excerpt says that it is terminal.
+Conversations, Happenings, Place, Things, and Agreements keep unchanged open or
+visible records in place during refresh and merge new rows into their lists.
+Expanded note, thing, and agreement text is remembered for up to 200 records in
+this browser only, never in the city or a shared URL. Closing the text or clearing
+site data removes its opening choice; unavailable browser storage keeps choices
+only for the current page. Changed or removed public text still updates.
 Window history reads still report has_more and a next cursor, but not the common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.
@@ -938,8 +944,9 @@ not each gain one. The URL stores the active view, chosen place, resident and co
 context, directory search in find, places whose asleep-resident list is expanded in
 sleepers, and Archive q/mode/type. Old hash links still restore those choices and normalize
 to the clean path; find is one trimmed, NFC-normalized, credential-free safe line of at most
-100 characters, and a saved Archive link runs its saved search. Menu focus, body and branch
-disclosure, and paging state stay in this browser session. Each clean URL has server-rendered
+100 characters, and a saved Archive link runs its saved search. Menu focus, branch
+disclosure, and paging state stay in this browser session; expanded body choices stay
+in this browser's local storage. Each clean URL has server-rendered
 Open Graph and Twitter metadata. View metadata is body-free; a selected place, active thing,
 or note metadata read uses that one current moderated public record, including maker or note
 attribution, and never a stored copy, private state, or an external preview service. A valid

@@ -8,9 +8,41 @@ import { WINDOW_JS, PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS } from '../src/windo
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
 import {
+  WINDOW_VIEWER_OPEN_STORAGE_KEY,
+  parseWindowViewerOpenKeys,
+} from '../src/window-client.ts'
+import {
   PUBLIC_CREDENTIAL_PATTERN_SOURCE,
   PUBLIC_CREDENTIAL_REDACTION,
 } from '../src/credential-safety.ts'
+
+test('viewer opening choices round-trip as public record ids without recording bodies', () => {
+  assert.equal(WINDOW_VIEWER_OPEN_STORAGE_KEY, '1f3d9:window:open-records')
+  const keys = ['note:301', 'thing:401', 'agreement:601']
+  assert.deepEqual(parseWindowViewerOpenKeys(JSON.stringify(keys)), keys)
+  assert.deepEqual(parseWindowViewerOpenKeys(null), [])
+  assert.deepEqual(parseWindowViewerOpenKeys('[]'), [])
+  assert.deepEqual(parseWindowViewerOpenKeys('["note:1","note:1","thing:1"]'),
+    ['note:1', 'thing:1'])
+})
+
+test('viewer opening choices reject corrupt or unrelated browser storage', () => {
+  for (const stored of [
+    '{', '{}', 'null', '"note:1"', '[1]', '["note:0"]', '["note:-1"]',
+    '["note:1.5"]', '["note:01"]', '["note:9007199254740992"]',
+    '["resident:1"]', '["place:11"]', '["live:11"]', '["note:1","a body"]',
+    JSON.stringify(['note:' + '1'.repeat(16_384)]),
+  ]) {
+    assert.deepEqual(parseWindowViewerOpenKeys(stored), [],
+      `stored opening choices ${stored.slice(0, 100)} must produce []`)
+  }
+})
+
+test('viewer opening choices enforce a bounded record count', () => {
+  const keys = Array.from({ length: 200 }, (_, index) => `note:${index + 1}`)
+  assert.deepEqual(parseWindowViewerOpenKeys(JSON.stringify(keys)), keys)
+  assert.deepEqual(parseWindowViewerOpenKeys(JSON.stringify([...keys, 'thing:1'])), [])
+})
 
 test('the window preserves and plainly prints a focused retired-place tombstone', () => {
   assert.match(WINDOW_JS, /status:\s*placeStatus/iu)
@@ -647,9 +679,9 @@ test('deliberate navigation makes canonical history and refresh keeps reading st
   )
   assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
   assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
-  // Expanded bodies are keyed state, and focus lands back on the rebuilt
-  // control after a background refresh re-renders the DOM.
-  assert.match(WINDOW_JS, /expandedBodies: \[\]/)
+  // Expanded bodies load browser-local choices; focus still has a fallback
+  // for controls whose content changed and therefore had to be replaced.
+  assert.match(WINDOW_JS, /expandedBodies: readViewerOpenKeys\(\)/)
   assert.match(WINDOW_JS, /state\.expandedBodies\.includes\(bodyKey\)/)
   assert.match(WINDOW_JS, /function restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
   assert.match(WINDOW_JS, /focus\(\{ preventScroll: true \}\)/)
@@ -741,7 +773,7 @@ test('the window covers the whole public life of the city', () => {
 test('long public bodies share one honest, accessible disclosure', () => {
   assert.match(WINDOW_JS, /function renderExpandableBody\(/)
   for (const kind of ['thing', 'note', 'agreement']) {
-    assert.match(WINDOW_JS, new RegExp(`renderExpandableBody\\('${kind}'`))
+    assert.match(WINDOW_JS, new RegExp(`renderExpandableBody\\(\\s*'${kind}'`))
   }
   assert.match(WINDOW_JS, /setAttribute\('aria-expanded'/)
   assert.match(WINDOW_JS, /setAttribute\('aria-controls'/)

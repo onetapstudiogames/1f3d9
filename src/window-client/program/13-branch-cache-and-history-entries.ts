@@ -101,17 +101,62 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     }
   }
 
-  function freshSnapshotHistories(snapshot) {
+  function historyViewerRecordKind(collection) {
+    return collection === 'notes' ? 'note'
+      : collection === 'things' ? 'thing'
+        : collection === 'agreements' ? 'agreement' : 'event'
+  }
+
+  function freshSnapshotHistories(snapshot, changes = null) {
     let histories = {}
+    const retainViewerRows = Array.isArray(changes)
+    const heldKeys = retainViewerRows ? viewerHeldRecordKeys() : new Set()
+    const invalidatedKeys = changedViewerRecordKeys(changes || [])
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const page = snapshot.pages[collection]
+      const previousEntries = state.histories[collection] || {}
+      const entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
+        if (!entry?.rows) return []
+        const freshRows = key === 'all' || !entry.filters
+          ? snapshot[collection]
+          : filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
+        const freshIds = new Set(freshRows.map(row => row.id))
+        const kind = historyViewerRecordKind(collection)
+        const retainedRows = entry.rows.filter(row => {
+          const recordKey = kind + ':' + String(row.id)
+          return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
+            !invalidatedKeys.has(recordKey)
+        })
+        if (!retainedRows.length || key === 'all') return []
+        return [[key, Object.freeze({
+          ...entry,
+          rows: mergeWindowRows(retainedRows, freshRows),
+          loading: false,
+          error: false,
+          refreshing: false,
+          refreshError: false,
+        })]]
+      }))
+      const previousAll = previousEntries.all
+      const freshIds = new Set(snapshot[collection].map(row => row.id))
+      const kind = historyViewerRecordKind(collection)
+      const retainedAllRows = (previousAll?.rows || []).filter(row => {
+        const recordKey = kind + ':' + String(row.id)
+        return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
+          !invalidatedKeys.has(recordKey)
+      })
       histories = {
         ...histories,
         [collection]: {
+          ...entries,
           all: Object.freeze({
-            rows: snapshot[collection],
-            hasMore: page.hasMore,
-            nextBeforeId: page.nextBeforeId,
+            rows: retainedAllRows.length
+              ? mergeWindowRows(retainedAllRows, snapshot[collection])
+              : snapshot[collection],
+            hasMore: retainedAllRows.length && previousAll
+              ? previousAll.hasMore : page.hasMore,
+            nextBeforeId: retainedAllRows.length && previousAll
+              ? previousAll.nextBeforeId : page.nextBeforeId,
             initialized: true,
             loading: false,
             error: false,
@@ -122,6 +167,95 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       }
     }
     return histories
+  }
+
+  async function rereadHeldHistoryEntry(
+    collection, entry, filters, heldIds, marker, signal,
+  ) {
+    let rows = []
+    let beforeId = null
+    const seenCursors = new Set()
+    for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
+      const url = historyRequestUrl(collection, {
+        initialized: Boolean(beforeId), nextBeforeId: beforeId,
+      }, filters, marker)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal,
+      })
+      if (!response.ok) throw new Error('held public history unavailable')
+      const payload = await response.json()
+      requireExactReadMarker(payload?.change_marker, marker)
+      const incoming = normalizeHistoryRows(collection, payload)
+      rows = mergeWindowRows(rows, incoming)
+      const hasMore = payload.has_more === true
+      const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
+      if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
+          (beforeId && nextBeforeId >= beforeId) ||
+          !incoming.some(row => row.id === nextBeforeId))) {
+        throw new Error('held public history cursor did not progress')
+      }
+      const foundHeldRows = [...heldIds].every(id => rows.some(row => row.id === id))
+      if (foundHeldRows || !hasMore) {
+        return Object.freeze({
+          ...entry,
+          rows,
+          hasMore,
+          nextBeforeId,
+          initialized: true,
+          loading: false,
+          error: false,
+          refreshing: false,
+          refreshError: false,
+        })
+      }
+      seenCursors.add(nextBeforeId)
+      beforeId = nextBeforeId
+    }
+    throw new Error('held public history reconciliation limit reached')
+  }
+
+  async function rereadHeldSnapshotHistories(histories, snapshot, marker, signal) {
+    const heldKeys = viewerHeldRecordKeys()
+    const reads = []
+    for (const collection of ['notes', 'things', 'agreements', 'events']) {
+      const kind = historyViewerRecordKind(collection)
+      for (const [key, entry] of Object.entries(histories[collection] || {})) {
+        const filters = entry.filters || Object.freeze({
+          placeId: null, resident: null, context: false,
+        })
+        const freshRows = key === 'all'
+          ? snapshot[collection]
+          : filterHistoryRows(collection, snapshot[collection], filters, snapshot)
+        const freshIds = new Set(freshRows.map(row => row.id))
+        const heldIds = new Set(entry.rows.filter(row =>
+          !freshIds.has(row.id) && heldKeys.has(kind + ':' + String(row.id)))
+          .map(row => row.id))
+        if (!heldIds.size) continue
+        reads.push((async () => Object.freeze({
+          collection,
+          key,
+          entry: await rereadHeldHistoryEntry(
+            collection, entry, filters, heldIds, marker, signal),
+        }))())
+      }
+    }
+    const completed = await Promise.all(reads)
+    let reconciled = histories
+    for (const result of completed) {
+      reconciled = {
+        ...reconciled,
+        [result.collection]: {
+          ...reconciled[result.collection],
+          [result.key]: result.entry,
+        },
+      }
+    }
+    return reconciled
   }
 
   function mergeUnchangedSnapshotHistories(snapshot) {

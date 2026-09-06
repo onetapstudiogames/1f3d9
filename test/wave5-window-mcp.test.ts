@@ -131,7 +131,7 @@ test('the window keeps its public change marker only in this page session', () =
   assert.match(WINDOW_JS, /changeState\.status\s*===\s*'unchanged'[\s\S]{0,240}refreshUnchangedPresence/u)
   assert.match(WINDOW_JS, /searchParams\.set\('after_change_marker',\s*minimumMarker\)/u)
   assert.match(WINDOW_JS, /markerCovers\(freshSnapshot\.changeMarker,\s*requiredMarker\)/u)
-  assert.match(WINDOW_JS, /freshSnapshotHistories\(snapshot\)/u)
+  assert.match(WINDOW_JS, /freshSnapshotHistories\(snapshot, retainViewerReading \? changeState\.changes : null\)/u)
   assert.match(WINDOW_JS, /let authoredRevision\s*=\s*0/u)
   assert.match(WINDOW_JS, /if \(replaceAuthored\) authoredRevision \+= 1/u)
   assert.match(WINDOW_JS, /authoredRevision !== requestAuthoredRevision/u)

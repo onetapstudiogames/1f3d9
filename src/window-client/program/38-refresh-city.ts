@@ -78,9 +78,22 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         return
       }
       const snapshot = navigation.snapshot
-      const histories = replaceAuthored
-        ? freshSnapshotHistories(snapshot)
+      const retainViewerReading = viewerReadingViewIsActive()
+      let histories = replaceAuthored
+        ? freshSnapshotHistories(snapshot, retainViewerReading ? changeState.changes : null)
         : mergeUnchangedSnapshotHistories(snapshot)
+      if (hadSnapshot && replaceAuthored && retainViewerReading) {
+        histories = await rereadHeldSnapshotHistories(
+          histories,
+          snapshot,
+          freshSnapshot.changeMarker || requiredMarker,
+          controller.signal,
+        )
+        if (navigationRevision !== navigationRevisionAtStart) {
+          await finishWatchingPublicStreets()
+          return
+        }
+      }
       const archive = replaceAuthored
         ? {
             ...state.archive,
@@ -90,6 +103,11 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         : state.archive
       const invalidateSnapshotCaches = hadSnapshot && replaceAuthored &&
         changeState.status !== 'changed'
+      const invalidatedRecordKeys = changedViewerRecordKeys(changeState.changes)
+      const fullBodies = replaceAuthored
+        ? retainedViewerFullBodies(state.fullBodies, invalidatedRecordKeys)
+        : state.fullBodies
+      const revalidateFullBodyKeys = replaceAuthored ? Object.keys(fullBodies) : []
       if (replaceAuthored) authoredRevision += 1
       state = {
         ...state,
@@ -114,7 +132,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
               noteBodies: {},
             }
           : state.live,
-        fullBodies: replaceAuthored ? {} : state.fullBodies,
+        fullBodies,
         details: replaceAuthored ? {} : state.details,
         detailDrawings: replaceAuthored ? {} : state.detailDrawings,
         detailDrawingHistories: replaceAuthored ? {} : state.detailDrawingHistories,
@@ -123,7 +141,9 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         failures: 0,
       }
       populateFilters(snapshot)
-      renderAll()
+      if (retainViewerReading) renderWithViewerInvalidations(changeState.changes, renderAll)
+      else renderAll()
+      revalidateViewerFullBodies(revalidateFullBodyKeys)
       void ensureDetail(replaceAuthored)
       loadSharedArchiveQuestion()
       if (hadSnapshot && replaceAuthored &&

@@ -18,7 +18,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
       return
     }
-    nodes.agreements.replaceChildren(...agreements.map(agreement => {
+    const rows = agreements.map(agreement => {
       const card = element('article', 'agreement-card')
       const copy = element('div', '')
       const agreementMeta = element('p', 'agreement-meta')
@@ -73,8 +73,13 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       side.append(element('span', agreement.accession_open ? 'badge badge-open' : 'badge badge-complete',
         agreement.accession_open ? 'Open to later signers' : 'Closed to later signers'))
       card.append(copy, side)
-      return card
-    }))
+      return viewerRecordNode(card, 'agreement', agreement, Object.freeze({
+        author: viewerResidentPresentation(residentReference(snapshot, agreement.created_by)),
+        parties: agreement.parties.map(party =>
+          viewerResidentPresentation(residentReference(snapshot, party))),
+      }))
+    })
+    renderViewerRows(nodes.agreements, 'agreements:' + historyKey('agreements', filters), rows)
     renderHistoryControl(nodes.agreementsPage, 'agreements', 'agreements', filters)
   }
 

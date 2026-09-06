@@ -92,6 +92,10 @@ import {
   stageFacing,
   stageTransform,
 } from '../stage-nodes.ts'
+import {
+  WINDOW_VIEWER_OPEN_STORAGE_KEY,
+  parseWindowViewerOpenKeys,
+} from '../viewer-state.ts'
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -160,6 +164,8 @@ const RECONCILE_STAGE_NODE_KEYS_JS = reconcileStageNodeKeys.toString()
 const STAGE_DRAWN_NODE_KEYS_JS = stageDrawnNodeKeys.toString()
 const STAGE_FACING_JS = stageFacing.toString()
 const STAGE_TRANSFORM_JS = stageTransform.toString()
+const WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON = JSON.stringify(WINDOW_VIEWER_OPEN_STORAGE_KEY)
+const PARSE_WINDOW_VIEWER_OPEN_KEYS_JS = parseWindowViewerOpenKeys.toString()
 const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
 )
@@ -194,6 +200,7 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_DETAIL_MOVER_LIMIT = 6
   const LIVE_FOOTSTEP_VISUAL_LIMIT = LIVE_DETAIL_MOVER_LIMIT * 3
   const LIVE_FOCUS_STORAGE_KEY = '1f3d9:window:live-focus'
+  const WINDOW_VIEWER_OPEN_STORAGE_KEY = ${WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON}
   const LIVE_CAMERA_MIN_SCALE = 0.8
   const LIVE_CAMERA_CENTER_SCALE = 1
   const LIVE_CAMERA_MAX_SCALE = 2.2
@@ -244,6 +251,7 @@ export const PART_01_PRELUDE = `(() => {
   const pageWindowDirectorySearch = ${PAGE_WINDOW_DIRECTORY_SEARCH_JS}
   const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
   const parseWindowSleeperPlaceIds = ${PARSE_WINDOW_SLEEPER_PLACE_IDS_JS}
+  const parseWindowViewerOpenKeys = ${PARSE_WINDOW_VIEWER_OPEN_KEYS_JS}
   const containsMalformedPublicText = ${CONTAINS_MALFORMED_PUBLIC_TEXT_JS}
   const validateWindowArchiveQuery = ${VALIDATE_WINDOW_ARCHIVE_QUERY_JS}
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}

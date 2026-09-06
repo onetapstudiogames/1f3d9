@@ -128,4 +128,9 @@ export {
 } from './window-client/stage-nodes.ts'
 export type { StageNodeKind, StageNodeDiff } from './window-client/stage-nodes.ts'
 
+export {
+  WINDOW_VIEWER_OPEN_STORAGE_KEY,
+  parseWindowViewerOpenKeys,
+} from './window-client/viewer-state.ts'
+
 export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')
