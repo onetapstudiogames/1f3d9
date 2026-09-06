@@ -196,7 +196,7 @@ test('since-last-visit credit separates received gifts, settled purchases, and g
   })
 })
 
-test('the first visit keeps since-last-visit credit empty while attention still sees pending gifts', () => {
+test('the first visit keeps credit amounts empty while reporting current pending gifts', () => {
   assert.deepEqual(cityCreditSinceLastVisit({
     pending_gifts_count: 2,
     frozen_gifts_count: 0,
@@ -216,7 +216,7 @@ test('the first visit keeps since-last-visit credit empty while attention still 
       record_link: 'city_fee_credit.receipts',
     },
     pending_gifts: {
-      count: 0,
+      count: 2,
       record_link: 'city_fee_credit.pending_gifts',
     },
   })

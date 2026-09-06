@@ -127,17 +127,45 @@ test('a first visit reports zero changelog updates', () => {
   assert.equal(countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, null), 0)
 })
 
-test('a visit followed by one newer changelog update reports one', () => {
+test('an entry whose UTC day ends at the visit remains included with later entries', () => {
   assert.equal(
     countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, '2026-09-02T23:59:59.999Z'),
-    1,
+    2,
   )
 })
 
-test('a visit followed by many newer changelog updates reports every dated bullet', () => {
+test('city updates count dated changelog groups, not their bullets', () => {
   assert.equal(
-    countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, '2026-09-01T00:00:00.000Z'),
+    countChangelogUpdatesSince(UPDATE_COUNT_FIXTURE, '2026-08-31T23:59:59.999Z'),
     3,
+  )
+})
+
+test('a same-day changelog entry appears on the next read, repeats that day, and clears tomorrow', () => {
+  const entries = parseChangelog([
+    '## 2026-09-02',
+    '### For residents',
+    '- Same-day update.',
+  ].join('\n'))
+
+  assert.equal(countChangelogUpdatesSince(entries, '2026-09-02T08:00:00.000Z'), 1)
+  assert.equal(countChangelogUpdatesSince(entries, '2026-09-02T20:00:00.000Z'), 1)
+  assert.equal(countChangelogUpdatesSince(entries, '2026-09-03T00:00:00.000Z'), 0)
+})
+
+test('future-dated changelog entries do not count as city updates', () => {
+  const entries = parseChangelog([
+    '## 9999-12-31',
+    '### For residents',
+    '- Future update.',
+    '## 2026-09-03',
+    '### For residents',
+    '- Landed update.',
+  ].join('\n'))
+
+  assert.equal(
+    countChangelogUpdatesSince(entries, '2026-08-31T23:59:59.999Z'),
+    1,
   )
 })
 
@@ -184,7 +212,7 @@ test('the human window footer and front door both link to the changelog', async 
 })
 
 test('the served doors state the exact since-last-visit contract', async () => {
-  const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for newer changelog entries, exact accepted-gift and settled-purchase credit amounts, and the pending-acceptance gift count with links to their private records; the object is empty-valued on the first visit, and reading `me` still counts as one visit.'
+  const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for changelog entries, exact accepted-gift and settled-purchase credit amounts, and the current pending-acceptance gift count with links to their private records; a changelog entry counts when its UTC day ends at or after the previous visit and is not in the future, so an entry dated today is reported again on every read today and clears tomorrow; on the first visit the prior time is null and the changelog count and credit amounts are zero while pending gifts still show, and reading `me` still counts as one visit.'
   const responses = await Promise.all([app.request('/'), app.request('/llms.txt')])
   const [frontDoor, compactMap] = await Promise.all([
     responses[0]!.text(),

@@ -952,7 +952,6 @@ export async function readCityCreditAttention(
 export function cityCreditSinceLastVisit(
   state: CityCreditAttentionState,
 ): CityCreditSinceLastVisit {
-  const isFirstVisit = state.last_visit_at === null
   const acceptedGiftUnits = BigInt(state.accepted_gifts_received_units)
   const settledPurchaseUnits = BigInt(state.settled_purchases_received_units)
   return Object.freeze({
@@ -967,7 +966,7 @@ export function cityCreditSinceLastVisit(
       record_link: 'city_fee_credit.receipts' as const,
     }),
     pending_gifts: Object.freeze({
-      count: isFirstVisit ? 0 : state.pending_gifts_count - state.frozen_gifts_count,
+      count: state.pending_gifts_count - state.frozen_gifts_count,
       record_link: 'city_fee_credit.pending_gifts' as const,
     }),
   })

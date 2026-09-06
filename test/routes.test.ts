@@ -276,6 +276,7 @@ interface FakeState {
   cityCreditBalances: Map<number, bigint>
   cityCreditEntries: FakeCityCreditEntry[]
   nextCityCreditEntryId: number
+  attentionPendingGiftsCount: number
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
@@ -379,6 +380,7 @@ const initialState = (): FakeState => ({
   cityCreditBalances: new Map(),
   cityCreditEntries: [],
   nextCityCreditEntryId: 1,
+  attentionPendingGiftsCount: 0,
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,
@@ -1038,7 +1040,7 @@ function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] 
       last_visit_at: null,
       accepted_gift_units: '0',
       settled_purchase_units: '0',
-      pending_count: 0,
+      pending_count: state.attentionPendingGiftsCount,
       frozen_count: 0,
     }]
   }
@@ -7908,6 +7910,31 @@ test('/api/me reports a private exact zero city fee credit account before any is
     next_before_gift_id: null,
   })
   assert.equal(response.headers.get('cache-control'), 'no-store')
+})
+
+test('/api/me reports current pending gifts on a first visit while received amounts stay zero', async () => {
+  reset({ attentionPendingGiftsCount: 2 })
+  const response = await app.request('/api/me', { headers: authHeaders() })
+  assert.equal(response.status, 200, await response.clone().text())
+  const body = await response.json() as {
+    attention: string[]
+    since_last_visit: {
+      fee_credit_received: {
+        accepted_gifts: { amount_units: string }
+        settled_purchases: { amount_units: string }
+        pending_gifts: { count: number }
+      }
+      last_visit_at: string | null
+    }
+  }
+
+  assert.deepEqual(body.attention, [
+    'You have 2 pending 1F3D9 fee-credit gifts awaiting accept or refuse; see city_fee_credit.pending_gifts.',
+  ])
+  assert.equal(body.since_last_visit.fee_credit_received.pending_gifts.count, 2)
+  assert.equal(body.since_last_visit.fee_credit_received.accepted_gifts.amount_units, '0')
+  assert.equal(body.since_last_visit.fee_credit_received.settled_purchases.amount_units, '0')
+  assert.equal(body.since_last_visit.last_visit_at, null)
 })
 
 test('/api/city-credit/preflight privately shows exact cost and balance without spending', async () => {

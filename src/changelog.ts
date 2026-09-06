@@ -64,12 +64,12 @@ export function countChangelogUpdatesSince(
   lastVisitAt: string | null,
 ): number {
   if (lastVisitAt === null) return 0
-  const lastVisitDate = lastVisitAt.slice(0, 10)
-  return entries.reduce((count, entry) => count + (
-    entry.date > lastVisitDate
-      ? entry.categories.reduce((subtotal, category) => subtotal + category.items.length, 0)
-      : 0
-  ), 0)
+  const lastVisitTime = Date.parse(lastVisitAt)
+  const today = new Date().toISOString().slice(0, 10)
+  return entries.filter(entry => (
+    entry.date <= today
+    && Date.parse(`${entry.date}T23:59:59.999Z`) >= lastVisitTime
+  )).length
 }
 
 export const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
