@@ -124,7 +124,17 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       record.detail.from_place_id, focus.id, children, renderContext) || focus.id
     const toAnchor = livePlaceAnchor(
       record.detail.to_place_id, focus.id, children, renderContext) || focus.id
-    const corridor = stageCorridorRoute(focus.id, fromAnchor, toAnchor)
+    const corridorGraph = survey.corridor ||
+      liveStageCorridorsByParentId[String(focus.id)]
+    const corridor = corridorGraph ? stageAttachedCorridorPath(
+      corridorGraph,
+      fromAnchor,
+      recordedFrom,
+      survey.expandedGrounds[String(fromAnchor)]?.regions || Object.freeze([]),
+      toAnchor,
+      recordedTo,
+      survey.expandedGrounds[String(toAnchor)]?.regions || Object.freeze([]),
+    ) : Object.freeze([])
     const from = recordedFrom || corridor[0] || livePlateBoundaryPoint(recordedTo, survey)
     const to = recordedTo || corridor.at(-1) || livePlateBoundaryPoint(recordedFrom, survey)
     if (!from || !to || (from.x === to.x && from.y === to.y)) return null

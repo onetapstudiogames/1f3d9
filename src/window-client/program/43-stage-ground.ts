@@ -179,9 +179,4 @@ export const PART_43_STAGE_GROUND = `  function stageRoomSurvey(places, parentId
     })
   }
 
-  function stageCorridorRoute(parentId, fromPlaceId, toPlaceId) {
-    const graph = liveStageCorridorsByParentId[String(parentId)]
-    return graph ? stageShortestPath(graph, fromPlaceId, toPlaceId) : Object.freeze([])
-  }
-
 `

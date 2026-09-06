@@ -6,6 +6,7 @@ import { PART_42_STAGE_NODES } from '../src/window-client/program/42-stage-nodes
 import { PART_43_STAGE_GROUND } from '../src/window-client/program/43-stage-ground.ts'
 import { PART_24_LIVE_REPLAY_MOTION } from '../src/window-client/program/24-live-replay-motion.ts'
 import { PART_39_WIRING_AND_BOOT } from '../src/window-client/program/39-wiring-and-boot.ts'
+import { stageAttachedCorridorPath } from '../src/window-client/stage-ground.ts'
 import {
   normalizeWindowDrawing,
   normalizeLiveNotesPage,
@@ -856,6 +857,145 @@ test('corridor shortest paths use door and corner nodes and avoid a third room',
     assert.equal(verticalCrossing || horizontalCrossing, false,
       `${from.id} ${JSON.stringify(from)} -> ${to.id} ${JSON.stringify(to)} crossed room 3 ${JSON.stringify(middle)}`)
   }
+})
+
+test('expanded-room replay endpoints attach to the ordered corridor rail', () => {
+  const room = (id: number, y: number) => Object.freeze({
+    id,
+    parentId: 9101,
+    x: 1180,
+    y,
+    width: 440,
+    height: 280,
+    door: Object.freeze({ x: 1180, y: y + 140, side: 'left' as const }),
+  })
+  const garden = room(9102, 48)
+  const workshop = room(9103, 408)
+  const retry = room(9104, 768)
+  const graph = stageBuildCorridorGraph(Object.freeze([garden, workshop, retry]))
+  const workshopExtension = Object.freeze({
+    kind: 'resident' as const,
+    x: 1180,
+    y: 1132,
+    width: 440,
+    height: 1664,
+  })
+  const extensionPoint = Object.freeze({ x: 1400, y: 2000 })
+  const gardenPoint = Object.freeze({ x: 1400, y: 220 })
+  const retryPoint = Object.freeze({ x: 1400, y: 1000 })
+  const departure = stageAttachedCorridorPath(
+    graph, 9103, extensionPoint, Object.freeze([workshopExtension]),
+    9102, gardenPoint, Object.freeze([]))
+  const arrival = stageAttachedCorridorPath(
+    graph, 9102, gardenPoint, Object.freeze([]),
+    9103, extensionPoint, Object.freeze([workshopExtension]))
+  const nearestRoom = stageAttachedCorridorPath(
+    graph, 9103, extensionPoint, Object.freeze([workshopExtension]),
+    9104, retryPoint, Object.freeze([]))
+
+  assert.deepEqual(
+    departure.slice(0, 2).map(node => ({ kind: node.kind, x: node.x, y: node.y })),
+    [
+      { kind: 'door', x: 1180, y: 2000 },
+      { kind: 'corner', x: 1140, y: 2000 },
+    ],
+  )
+  assert.deepEqual(
+    arrival.slice(-2).map(node => ({ kind: node.kind, x: node.x, y: node.y })),
+    [
+      { kind: 'corner', x: 1140, y: 2000 },
+      { kind: 'door', x: 1180, y: 2000 },
+    ],
+  )
+  assert.deepEqual(nearestRoom.map(node => [node.kind, node.x, node.y]), [
+    ['door', 1180, 2000],
+    ['corner', 1140, 2000],
+    ['corner', 1140, 908],
+    ['door', 1180, 908],
+  ], 'the extension must join the nearest ordered rail corner')
+  assert.ok([...departure, ...arrival, ...nearestRoom]
+    .every(node => node.kind === 'door' || node.kind === 'corner'))
+
+  const crossesInterior = (
+    from: Readonly<{ x: number; y: number }>,
+    to: Readonly<{ x: number; y: number }>,
+  ): boolean => {
+    const axisInterval = (start: number, delta: number, minimum: number, maximum: number) => {
+      if (delta === 0) return start > minimum && start < maximum
+        ? [-Infinity, Infinity] as const
+        : null
+      const first = (minimum - start) / delta
+      const second = (maximum - start) / delta
+      return [Math.min(first, second), Math.max(first, second)] as const
+    }
+    const x = axisInterval(from.x, to.x - from.x, retry.x, retry.x + retry.width)
+    const y = axisInterval(from.y, to.y - from.y, retry.y, retry.y + retry.height)
+    if (!x || !y) return false
+    return Math.max(0, x[0], y[0]) < Math.min(1, x[1], y[1])
+  }
+  for (const points of [
+    [extensionPoint, ...departure, gardenPoint],
+    [gardenPoint, ...arrival, extensionPoint],
+  ]) {
+    for (let index = 1; index < points.length; index += 1) {
+      assert.equal(crossesInterior(points[index - 1]!, points[index]!), false,
+        `${JSON.stringify(points[index - 1])} -> ${JSON.stringify(points[index])} crossed retry`)
+    }
+  }
+
+  const survey = Object.freeze({
+    corridor: graph,
+    expandedGrounds: Object.freeze({
+      '9103': Object.freeze({ regions: Object.freeze([workshopExtension]) }),
+    }),
+  })
+  const replayGeometry = new Function(
+    'liveResidentReplayPoint',
+    'livePlaceAnchor',
+    'stageAttachedCorridorPath',
+    'liveStageCorridorsByParentId',
+    `${PART_24_LIVE_REPLAY_MOTION}\nreturn liveReplayMoveGeometry`,
+  )(
+    (_snapshot: unknown, placeId: number) => placeId === 9103 ? extensionPoint : gardenPoint,
+    (placeId: number) => placeId,
+    stageAttachedCorridorPath,
+    Object.freeze({}),
+  ) as (
+    record: Readonly<{ actor: string; detail: Readonly<{
+      from_place_id: number; to_place_id: number
+    }> }>,
+    snapshot: unknown,
+    focus: Readonly<{ id: number }>,
+    children: readonly unknown[],
+    renderContext: Readonly<{ survey: typeof survey }>,
+    cacheable: boolean,
+  ) => Readonly<{ points: readonly Readonly<{ x: number; y: number }>[] }> | null
+  const integrated = replayGeometry(Object.freeze({
+    actor: 'proof-alex',
+    detail: Object.freeze({ from_place_id: 9103, to_place_id: 9102 }),
+  }), Object.freeze({}), Object.freeze({ id: 9101 }), Object.freeze([]),
+  Object.freeze({ survey }), false)
+  assert.deepEqual(integrated?.points, [extensionPoint, ...departure, gardenPoint],
+    'live replay geometry must pass the survey corridor and extension regions to the helper')
+
+  const ordinary = stageAttachedCorridorPath(
+    graph, 9103, Object.freeze({ x: 1400, y: 600 }), Object.freeze([]),
+    9102, gardenPoint, Object.freeze([]))
+  assert.equal(ordinary[0]?.id, 'door:9103',
+    'an ordinary room endpoint must still join through its own door')
+  assert.match(PART_24_LIVE_REPLAY_MOTION,
+    /const corridor = corridorGraph \? stageAttachedCorridorPath\(/u,
+    'live replay geometry must route through the tested attachment helper')
+
+  const gardenExtension = Object.freeze({
+    kind: 'resident' as const, x: 1180, y: 3000, width: 440, height: 400,
+  })
+  const betweenExtensions = stageAttachedCorridorPath(
+    graph, 9103, extensionPoint, Object.freeze([workshopExtension]),
+    9102, Object.freeze({ x: 1400, y: 3200 }), Object.freeze([gardenExtension]))
+  assert.deepEqual(betweenExtensions.map(node => node.kind),
+    ['door', 'corner', 'corner', 'door'],
+    'two detached extensions must take their direct ordered rail span')
 })
 
 test('quiet room ground exposes identity and exact counts but no occupied spots', () => {

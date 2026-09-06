@@ -138,6 +138,9 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     if (!nodes.liveItemPopover || !nodes.liveViewport || !state.snapshot) return
     const item = resolve()
     if (!item) return
+    liveItemPopoverDismissedKey = null
+    liveItemPopoverDismissedAnchor = null
+    liveItemPopoverDismissedPointerLeft = false
     const result = liveItemPopoverFacts(kind, item, state.snapshot)
     const id = item.id
     const name = liveItemPopoverAnchorName(kind, item)
@@ -155,9 +158,10 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     positionLiveItemPopover()
   }
 
-  function hideLiveItemPopover(restoreFocus) {
+  function hideLiveItemPopover(restoreFocus, suppressRestoredOpen = false) {
     if (!nodes.liveItemPopover || nodes.liveItemPopover.hidden) return
     const anchor = liveItemPopoverAnchor
+    const key = liveItemPopoverKey
     nodes.liveItemPopover.hidden = true
     nodes.liveItemPopover.replaceChildren()
     delete nodes.liveItemPopover.dataset.livePopoverKind
@@ -167,6 +171,11 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     liveItemPopoverAnchor = null
     liveItemPopoverKey = null
     liveItemPopoverRect = null
+    if (suppressRestoredOpen) {
+      liveItemPopoverDismissedKey = key
+      liveItemPopoverDismissedAnchor = anchor
+      liveItemPopoverDismissedPointerLeft = !anchor?.matches(':hover')
+    }
     if (restoreFocus && anchor && anchor.isConnected) {
       // .focus() dispatches focusin synchronously, and bindLiveItemPopover's
       // own focusin listener would otherwise reopen the popover it was
@@ -251,8 +260,14 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
   }
 
   function bindLiveItemPopover(control, key, kind, resolve) {
-    const open = () => {
+    const open = event => {
       if (liveItemPopoverSuppressOpen) return
+      if (liveItemPopoverDismissedKey === key) {
+        if (event.type !== 'pointerover' || !liveItemPopoverDismissedPointerLeft) return
+        liveItemPopoverDismissedKey = null
+        liveItemPopoverDismissedAnchor = null
+        liveItemPopoverDismissedPointerLeft = false
+      }
       showLiveItemPopover(control, key, kind, resolve)
     }
     const closesFrom = event => {
@@ -261,6 +276,10 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
           (control.contains(related) || nodes.liveItemPopover?.contains(related))) return
       if (liveItemPopoverKey === key) hideLiveItemPopover(false)
     }
+    const movesOutsidePair = event => control.isConnected &&
+      event.relatedTarget instanceof Node &&
+      !control.contains(event.relatedTarget) &&
+      !nodes.liveItemPopover?.contains(event.relatedTarget)
     // A mousedown on the popover's own non-focusable content (a fact line,
     // its own text) blurs whatever was focused with relatedTarget === null
     // -- there being no next focusable target is not the same as focus
@@ -283,12 +302,28 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
       // flag is false because no pointerdown preceded it) still closes.
       const pressWasInside = liveItemPopoverPressWasInside
       liveItemPopoverPressWasInside = false
-      if (event.relatedTarget === null || pressWasInside) return
+      if (pressWasInside) return
+      if (event.relatedTarget === null) {
+        window.queueMicrotask(() => {
+          const activeKey = document.activeElement?.dataset?.focusKey || null
+          if (activeKey !== control.dataset.focusKey && liveItemPopoverDismissedKey === key) {
+            liveItemPopoverDismissedKey = null
+            liveItemPopoverDismissedAnchor = null
+            liveItemPopoverDismissedPointerLeft = false
+          }
+        })
+        return
+      }
+      if (movesOutsidePair(event) && liveItemPopoverDismissedKey === key) {
+        liveItemPopoverDismissedKey = null
+        liveItemPopoverDismissedAnchor = null
+        liveItemPopoverDismissedPointerLeft = false
+      }
       closesFrom(event)
     }
     control.addEventListener('pointerover', event => {
       if (event.pointerType === 'touch') return
-      open()
+      open(event)
     })
     control.addEventListener('pointerout', closesFrom)
     control.addEventListener('focusin', open)
@@ -360,7 +395,7 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
       if (event.key !== 'Escape' || !liveItemPopoverIsOpen()) return
       event.preventDefault()
       event.stopPropagation()
-      hideLiveItemPopover(true)
+      hideLiveItemPopover(true, true)
     }, true)
     document.addEventListener('pointerdown', event => {
       if (!liveItemPopoverIsOpen()) {
@@ -380,6 +415,12 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
       liveItemPopoverPressWasInside = Boolean(inside)
       if (inside) return
       hideLiveItemPopover(false)
+    }, true)
+    document.addEventListener('pointermove', () => {
+      if (liveItemPopoverDismissedKey && liveItemPopoverDismissedAnchor &&
+          !liveItemPopoverDismissedAnchor.matches(':hover')) {
+        liveItemPopoverDismissedPointerLeft = true
+      }
     }, true)
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && liveItemPopoverIsOpen()) hideLiveItemPopover(false)

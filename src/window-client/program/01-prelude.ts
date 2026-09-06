@@ -29,6 +29,7 @@ import {
   stageQuietRoom,
   stageRoomLayout,
   stageShortestPath,
+  stageAttachedCorridorPath,
 } from '../stage-ground.ts'
 import {
   windowLiveTouchActivation,
@@ -116,6 +117,7 @@ const STAGE_EXPANDED_GROUND_LAYOUT_JS = stageExpandedGroundLayout.toString()
 const STAGE_QUIET_ROOM_JS = stageQuietRoom.toString()
 const STAGE_ROOM_LAYOUT_JS = stageRoomLayout.toString()
 const STAGE_SHORTEST_PATH_JS = stageShortestPath.toString()
+const STAGE_ATTACHED_CORRIDOR_PATH_JS = stageAttachedCorridorPath.toString()
 const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
 const WINDOW_LIVE_VISIBLE_PLOT_IDS_JS = windowLiveVisiblePlotIds.toString()
 const WINDOW_LIVE_FLOOR_TILING_JS = windowLiveFloorTiling.toString()
@@ -242,6 +244,7 @@ export const PART_01_PRELUDE = `(() => {
   const stageQuietRoom = ${STAGE_QUIET_ROOM_JS}
   const stageRoomLayout = ${STAGE_ROOM_LAYOUT_JS}
   const stageShortestPath = ${STAGE_SHORTEST_PATH_JS}
+  const stageAttachedCorridorPath = ${STAGE_ATTACHED_CORRIDOR_PATH_JS}
   const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
   const windowLiveVisiblePlotIds = ${WINDOW_LIVE_VISIBLE_PLOT_IDS_JS}
   const windowLiveFloorTiling = ${WINDOW_LIVE_FLOOR_TILING_JS}

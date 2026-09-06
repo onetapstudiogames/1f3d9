@@ -541,6 +541,98 @@ export function stageShortestPath(
   return Object.freeze(ids.map(id => graph.nodes[id]!))
 }
 
+export function stageAttachedCorridorPath(
+  graph: StageCorridorGraph,
+  fromRoomId: string | number,
+  fromPoint: Readonly<{ x: number; y: number }> | null,
+  fromRegions: readonly StageGroundRect[],
+  toRoomId: string | number,
+  toPoint: Readonly<{ x: number; y: number }> | null,
+  toRegions: readonly StageGroundRect[],
+): readonly StageCorridorNode[] {
+  let nodes: Readonly<Record<string, StageCorridorNode>> = graph.nodes
+  let edges = graph.edges
+  let roomDoors = graph.roomDoors
+  const attach = (
+    side: 'from' | 'to',
+    roomId: string | number,
+    point: Readonly<{ x: number; y: number }> | null,
+    regions: readonly StageGroundRect[],
+  ): string => {
+    const roomKey = String(roomId)
+    const roomDoorId = graph.roomDoors[roomKey]
+    const roomDoor = roomDoorId ? graph.nodes[roomDoorId] : null
+    if (!roomDoor || !point || ![point.x, point.y].every(Number.isFinite)) return roomKey
+    const roomCorner = graph.edges.flatMap(edge => {
+      if (edge.from === roomDoorId && graph.nodes[edge.to]?.kind === 'corner') {
+        return [graph.nodes[edge.to]!]
+      }
+      if (edge.to === roomDoorId && graph.nodes[edge.from]?.kind === 'corner') {
+        return [graph.nodes[edge.from]!]
+      }
+      return []
+    })[0]
+    if (!roomCorner) return roomKey
+    const region = regions.find(area =>
+      [area.x, area.y, area.width, area.height].every(Number.isFinite) &&
+      area.width > 0 && area.height > 0 &&
+      point.x >= area.x && point.x <= area.x + area.width &&
+      point.y >= area.y && point.y <= area.y + area.height)
+    if (!region) return roomKey
+    const routeRoomId = '__stage_attachment_' + side + '__'
+    const doorId = 'door:' + routeRoomId
+    const cornerId = 'corner:' + routeRoomId
+    const nearEdge = Math.abs(region.x - roomCorner.x) <=
+      Math.abs(region.x + region.width - roomCorner.x)
+      ? region.x
+      : region.x + region.width
+    const door = Object.freeze({
+      id: doorId,
+      kind: 'door' as const,
+      roomId: roomKey,
+      x: nearEdge,
+      y: point.y,
+    })
+    const corner = Object.freeze({
+      id: cornerId,
+      kind: 'corner' as const,
+      roomId: null,
+      x: roomCorner.x,
+      y: point.y,
+    })
+    nodes = Object.freeze({ ...nodes, [doorId]: door, [cornerId]: corner })
+    edges = Object.freeze([...edges, Object.freeze({
+      from: doorId,
+      to: cornerId,
+      distance: Math.abs(corner.x - door.x),
+    })])
+    roomDoors = Object.freeze({ ...roomDoors, [routeRoomId]: doorId })
+    return routeRoomId
+  }
+  const fromRouteRoomId = attach('from', fromRoomId, fromPoint, fromRegions)
+  const toRouteRoomId = attach('to', toRoomId, toPoint, toRegions)
+  if (nodes === graph.nodes) return stageShortestPath(graph, fromRoomId, toRoomId)
+
+  const doorEdges = edges.filter(edge =>
+    nodes[edge.from]?.kind !== 'corner' || nodes[edge.to]?.kind !== 'corner')
+  const corners = Object.values(nodes).filter(node => node.kind === 'corner')
+    .sort((left, right) => left.y - right.y || left.x - right.x ||
+      left.id.localeCompare(right.id))
+  const railEdges = corners.slice(1).map((corner, index) => Object.freeze({
+    from: corners[index]!.id,
+    to: corner.id,
+    distance: Math.hypot(
+      corner.x - corners[index]!.x,
+      corner.y - corners[index]!.y,
+    ),
+  }))
+  return stageShortestPath(Object.freeze({
+    nodes,
+    edges: Object.freeze([...doorEdges, ...railEdges]),
+    roomDoors,
+  }), fromRouteRoomId, toRouteRoomId)
+}
+
 export function stageQuietRoom(
   place: Readonly<{
     name: string

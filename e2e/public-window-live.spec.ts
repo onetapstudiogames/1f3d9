@@ -7649,6 +7649,50 @@ test('proof: one popover carries what the chips carried, for one resident, one t
   await expect(popover).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(popover).toBeHidden()
+  await workshopOpen.evaluate(node => {
+    const repaintProbe = document.createElement('span')
+    repaintProbe.dataset.liveRepaintProbe = 'pending'
+    node.append(repaintProbe)
+    node.addEventListener('focusin', () => {
+      node.dataset.liveRepaintFocusRestored = 'true'
+    }, { once: true })
+  })
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event('resize'))
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  await expect(workshopOpen.locator('[data-live-repaint-probe]')).toHaveCount(0)
+  await expect(workshopOpen).toHaveAttribute('data-live-repaint-focus-restored', 'true')
+  await expect(workshopOpen).toBeFocused()
+  await expect(popover).toBeHidden()
+  await page.keyboard.press('Tab')
+  await workshopOpen.focus()
+  await expect(popover).toBeVisible()
+  await workshopOpen.hover()
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
+  await page.mouse.move(0, 0)
+  await workshopOpen.evaluate(node => {
+    const repaintProbe = document.createElement('span')
+    repaintProbe.dataset.liveRepaintProbe = 'pointer-left'
+    node.append(repaintProbe)
+    node.dataset.liveRepaintFocusRestored = 'pending'
+    node.addEventListener('focusin', () => {
+      node.dataset.liveRepaintFocusRestored = 'true'
+    }, { once: true })
+  })
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event('resize'))
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+  await expect(workshopOpen.locator('[data-live-repaint-probe]')).toHaveCount(0)
+  await expect(workshopOpen).toHaveAttribute('data-live-repaint-focus-restored', 'true')
+  await expect(workshopOpen).toBeFocused()
+  await expect(popover).toBeHidden()
+  await workshopOpen.hover()
+  await expect(popover).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(popover).toBeHidden()
 
   // Thumbnail portrait images (the sprites' own lazy-loaded thumb.png
   // requests, unrelated to hovering) are expected; the popover itself must
