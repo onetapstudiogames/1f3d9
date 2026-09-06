@@ -79,5 +79,4 @@ export {
   USDC,
   X_PAYMENT,
   X_PAYMENT_NO_ID,
-  xPayment,
 }

@@ -79,7 +79,6 @@ function roomPurposeIn(params: readonly unknown[]): string | null {
 
 export {
   frontMatterIdsIn,
-  integerArrayValue,
   recordPayment,
   reset,
   roomPurposeIn,

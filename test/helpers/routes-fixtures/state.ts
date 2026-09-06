@@ -359,17 +359,10 @@ export const fixtureState: { current: FakeState } = { current: initialState() }
 
 export { initialState, paidCompletionError }
 export type {
-  DbCall,
   FakeCityCreditEntry,
   FakeCommunityToolSubmission,
   FakeFounderPayPalDispute,
-  FakeFounderPayPalDisputeEvent,
   FakeLaterHolderItem,
-  FakePaidCompletionFailure,
   FakePaymentAttempt,
-  FakeRecentNote,
-  FakeResidentRefusalState,
   FakeState,
-  LawRecipe,
-  OfferState,
 }
