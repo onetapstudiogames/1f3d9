@@ -19,24 +19,17 @@ import {
   windowDrawingSourceLabel,
 } from '../drawing.ts'
 import {
-  windowLivePlateChildren,
-  WINDOW_LIVE_DIRECT_COMMONS_WIDTH,
-  WINDOW_LIVE_DIRECT_COMMONS_HEIGHT,
-  WINDOW_LIVE_CHILD_GROUND_GAP,
-  windowLiveSurveyedPlots,
-  windowLiveExpandedGroundLayout,
-  windowLiveScatteredPoint,
-  windowLiveScatteredPoints,
-  windowLiveScatterSurfaceHeight,
-} from '../live-ground.ts'
-import {
-  windowLiveSeparatedPoints,
-  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
-  windowLivePointFootprints,
-  windowLiveRootReservations,
-  windowLiveResidentPointsAroundThings,
-  windowLiveThingPointsAroundResidents,
-} from '../live-scatter.ts'
+  STAGE_PARENT_ROOM_HEIGHT,
+  STAGE_ROOM_DRAWING_CONTROL_RECT,
+  stageAssignCells,
+  stageBuildCorridorGraph,
+  stageCellRoomHeight,
+  stageChildPlaces,
+  stageExpandedGroundLayout,
+  stageQuietRoom,
+  stageRoomLayout,
+  stageShortestPath,
+} from '../stage-ground.ts'
 import {
   windowLiveTouchActivation,
   windowLiveVisiblePlots,
@@ -115,19 +108,14 @@ const WINDOW_SHARE_TARGET_PATH_JS = windowShareTargetPath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
-const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
-const WINDOW_LIVE_SURVEYED_PLOTS_JS = windowLiveSurveyedPlots.toString()
-const WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS = windowLiveExpandedGroundLayout.toString()
-const WINDOW_LIVE_SCATTERED_POINT_JS = windowLiveScatteredPoint.toString()
-const WINDOW_LIVE_SCATTERED_POINTS_JS = windowLiveScatteredPoints.toString()
-const WINDOW_LIVE_SCATTER_SURFACE_HEIGHT_JS = windowLiveScatterSurfaceHeight.toString()
-const WINDOW_LIVE_SEPARATED_POINTS_JS = windowLiveSeparatedPoints.toString()
-const WINDOW_LIVE_POINT_FOOTPRINTS_JS = windowLivePointFootprints.toString()
-const WINDOW_LIVE_ROOT_RESERVATIONS_JS = windowLiveRootReservations.toString()
-const WINDOW_LIVE_RESIDENT_POINTS_AROUND_THINGS_JS =
-  windowLiveResidentPointsAroundThings.toString()
-const WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS =
-  windowLiveThingPointsAroundResidents.toString()
+const STAGE_ASSIGN_CELLS_JS = stageAssignCells.toString()
+const STAGE_BUILD_CORRIDOR_GRAPH_JS = stageBuildCorridorGraph.toString()
+const STAGE_CELL_ROOM_HEIGHT_JS = stageCellRoomHeight.toString()
+const STAGE_CHILD_PLACES_JS = stageChildPlaces.toString()
+const STAGE_EXPANDED_GROUND_LAYOUT_JS = stageExpandedGroundLayout.toString()
+const STAGE_QUIET_ROOM_JS = stageQuietRoom.toString()
+const STAGE_ROOM_LAYOUT_JS = stageRoomLayout.toString()
+const STAGE_SHORTEST_PATH_JS = stageShortestPath.toString()
 const WINDOW_LIVE_VISIBLE_PLOTS_JS = windowLiveVisiblePlots.toString()
 const WINDOW_LIVE_VISIBLE_PLOT_IDS_JS = windowLiveVisiblePlotIds.toString()
 const WINDOW_LIVE_FLOOR_TILING_JS = windowLiveFloorTiling.toString()
@@ -160,12 +148,8 @@ const RECONCILE_STAGE_NODE_KEYS_JS = reconcileStageNodeKeys.toString()
 const STAGE_DRAWN_NODE_KEYS_JS = stageDrawnNodeKeys.toString()
 const STAGE_FACING_JS = stageFacing.toString()
 const STAGE_TRANSFORM_JS = stageTransform.toString()
-const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
-  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
-)
-const WINDOW_LIVE_DIRECT_COMMONS_WIDTH_JSON = JSON.stringify(WINDOW_LIVE_DIRECT_COMMONS_WIDTH)
-const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT_JSON = JSON.stringify(WINDOW_LIVE_DIRECT_COMMONS_HEIGHT)
-const WINDOW_LIVE_CHILD_GROUND_GAP_JSON = JSON.stringify(WINDOW_LIVE_CHILD_GROUND_GAP)
+const STAGE_ROOM_DRAWING_CONTROL_RECT_JSON = JSON.stringify(STAGE_ROOM_DRAWING_CONTROL_RECT)
+const STAGE_PARENT_ROOM_HEIGHT_VALUE = STAGE_PARENT_ROOM_HEIGHT
 
 export const PART_01_PRELUDE = `(() => {
   'use strict'
@@ -177,7 +161,6 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_FOOTSTEP_LIFETIME_MS = 2_000
   const LIVE_FOLLOW_TRAIL_LIFETIME_MS = 4_500
   const LIVE_REPLAY_COMPLETION_BATCH_MS = 250
-  const LIVE_ABSORPTION_MS = 900
   const LIVE_PULSE_MS = 600
   const LIVE_NOTE_REPLAY_MS = 650
   const LIVE_NOTE_FETCH_CONCURRENCY = 4
@@ -198,16 +181,14 @@ export const PART_01_PRELUDE = `(() => {
   const LIVE_CAMERA_CENTER_SCALE = 1
   const LIVE_CAMERA_MAX_SCALE = 2.2
   const LIVE_CAMERA_SAFE_INSET = 16
-  const WINDOW_LIVE_DIRECT_COMMONS_WIDTH = ${WINDOW_LIVE_DIRECT_COMMONS_WIDTH_JSON}
-  const WINDOW_LIVE_DIRECT_COMMONS_HEIGHT = ${WINDOW_LIVE_DIRECT_COMMONS_HEIGHT_JSON}
-  const WINDOW_LIVE_CHILD_GROUND_GAP = ${WINDOW_LIVE_CHILD_GROUND_GAP_JSON}
-  const LIVE_DIRECT_GROUND_WIDTH = WINDOW_LIVE_DIRECT_COMMONS_WIDTH
+  const LIVE_DIRECT_GROUND_WIDTH = 1100
+  const STAGE_PARENT_ROOM_HEIGHT = ${STAGE_PARENT_ROOM_HEIGHT_VALUE}
   const LIVE_LABEL_READABLE_SCALE = 1.6
   const LIVE_LABEL_FULL_REFRESH_MS = 250
   const LIVE_LABEL_CONTINUOUS_LIMIT = 12
   const LIVE_PLOT_OVERSCAN = 160
-  const LIVE_PLOT_DRAWING_DETAIL_RECT = Object.freeze(
-    ${WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON})
+  const STAGE_ROOM_DRAWING_CONTROL_RECT = Object.freeze(
+    ${STAGE_ROOM_DRAWING_CONTROL_RECT_JSON})
   // Step 4: the single reusable Live item popover's clear space from the
   // sprite it describes, and its minimum inset from the live viewport edge.
   const LIVE_ITEM_POPOVER_GAP = 10
@@ -253,19 +234,14 @@ export const PART_01_PRELUDE = `(() => {
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
-  const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
-  const windowLiveSurveyedPlots = ${WINDOW_LIVE_SURVEYED_PLOTS_JS}
-  const windowLiveExpandedGroundLayout = ${WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS}
-  const windowLiveScatteredPoint = ${WINDOW_LIVE_SCATTERED_POINT_JS}
-  const windowLiveScatteredPoints = ${WINDOW_LIVE_SCATTERED_POINTS_JS}
-  const windowLiveScatterSurfaceHeight = ${WINDOW_LIVE_SCATTER_SURFACE_HEIGHT_JS}
-  const windowLiveSeparatedPoints = ${WINDOW_LIVE_SEPARATED_POINTS_JS}
-  const windowLivePointFootprints = ${WINDOW_LIVE_POINT_FOOTPRINTS_JS}
-  const windowLiveRootReservations = ${WINDOW_LIVE_ROOT_RESERVATIONS_JS}
-  const windowLiveResidentPointsAroundThings =
-    ${WINDOW_LIVE_RESIDENT_POINTS_AROUND_THINGS_JS}
-  const windowLiveThingPointsAroundResidents =
-    ${WINDOW_LIVE_THING_POINTS_AROUND_RESIDENTS_JS}
+  const stageAssignCells = ${STAGE_ASSIGN_CELLS_JS}
+  const stageBuildCorridorGraph = ${STAGE_BUILD_CORRIDOR_GRAPH_JS}
+  const stageCellRoomHeight = ${STAGE_CELL_ROOM_HEIGHT_JS}
+  const stageChildPlaces = ${STAGE_CHILD_PLACES_JS}
+  const stageExpandedGroundLayout = ${STAGE_EXPANDED_GROUND_LAYOUT_JS}
+  const stageQuietRoom = ${STAGE_QUIET_ROOM_JS}
+  const stageRoomLayout = ${STAGE_ROOM_LAYOUT_JS}
+  const stageShortestPath = ${STAGE_SHORTEST_PATH_JS}
   const windowLiveVisiblePlots = ${WINDOW_LIVE_VISIBLE_PLOTS_JS}
   const windowLiveVisiblePlotIds = ${WINDOW_LIVE_VISIBLE_PLOT_IDS_JS}
   const windowLiveFloorTiling = ${WINDOW_LIVE_FLOOR_TILING_JS}

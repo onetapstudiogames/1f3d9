@@ -16,7 +16,7 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
   }
 
   function liveChildren(snapshot, focus) {
-    return windowLivePlateChildren(livePlaceRows(snapshot), focus.id).map(place =>
+    return stageChildPlaces(livePlaceRows(snapshot), focus.id).map(place =>
       placeReference(snapshot, place.id) || place)
   }
 
@@ -130,22 +130,18 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
   }
 
   function liveDirectGroundHeight(placeId, width) {
-    let height = 680
-    if (!state.snapshot) return height
+    if (!state.snapshot) return STAGE_PARENT_ROOM_HEIGHT
+    let count = 0
     if (state.live.expandedResidentPlaceIds.includes(placeId)) {
-      const residents = displayedResidents(state.snapshot).filter(resident =>
+      count += displayedResidents(state.snapshot).filter(resident =>
         resident.current_place_id === placeId &&
-        (!state.resident || resident.handle === state.resident))
-      height = windowLiveScatterSurfaceHeight(
-        height, width, residents.length, 56, 56, 12)
+        (!state.resident || resident.handle === state.resident)).length
     }
     if (state.live.expandedThingPlaceIds.includes(placeId)) {
-      const things = historyEntry('things', liveThingFilters(placeId)).rows
-        .filter(thing => thing.place_id === placeId)
-      height = windowLiveScatterSurfaceHeight(
-        height, width, things.length, 144, 56, 12, true)
+      count += historyEntry('things', liveThingFilters(placeId)).rows
+        .filter(thing => thing.place_id === placeId).length
     }
-    return Math.max(680, height)
+    return stageCellRoomHeight(width, count, STAGE_PARENT_ROOM_HEIGHT)
   }
 
   function liveCreateRenderContext(
@@ -224,8 +220,9 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
     const ordered = [...residents.filter(resident => !resident.asleep),
       ...residents.filter(resident => resident.asleep)]
     const isRoot = placeId === focus.id
-    const plot = isRoot ? null : windowLiveSurveyedPlots(children, focus.id)
-      .find(candidate => candidate.id === placeId)
+    const plot = isRoot ? null : (renderContext?.survey ||
+      liveStageSurvey(livePlaceRows(state.snapshot), focus.id)).plots
+      .find(candidate => Number(candidate.id) === placeId)
     if (!isRoot && !plot) {
       return Object.freeze({ visible: [], hidden: ordered, overflowCount: ordered.length,
         badgePoint: null })
@@ -257,71 +254,24 @@ export const PART_20_LIVE_BREADCRUMBS_AND_RESIDENT_LAYOUT = `  function liveFocu
       ? surfaceLayout.surfaceWidth
       : isRoot
         ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
-        : expanded ? 480 : plot.width
-    const minimumHeight = isRoot ? 680 : expanded ? 320 : plot.height
-    const itemWidth = 56
-    const itemHeight = 56
-    const thingItemWidth = isRoot ? 144 : 94
-    const margin = isRoot ? 12 : 6
-    const stablePointHeadroom = expanded && !isRoot
-      ? Math.min(
-          LIVE_PORTRAIT_LIMIT,
-          Object.keys(liveResidentPointsByPlaceId[String(placeId)] || {}).length,
-        )
-      : 0
+        : plot.width
+    const minimumHeight = isRoot ? STAGE_PARENT_ROOM_HEIGHT : expanded ? 320 : plot.height
+    const heldThings = Object.values(
+      liveStageOccupantsByPlaceId[String(placeId)] || Object.freeze({}),
+    ).filter(entry => entry.kind === 'thing').length
     const surfaceHeight = surfaceLayout
       ? surfaceLayout.surfaceHeight
-      : isRoot
-        ? rootExpanded ? liveDirectGroundHeight(placeId, surfaceWidth) : minimumHeight
-        : !expanded
-          ? minimumHeight
-          : Math.max(
-              minimumHeight,
-              windowLiveScatterSurfaceHeight(
-                0,
-                surfaceWidth,
-                visibleResidents.length + stablePointHeadroom,
-                itemWidth,
-                itemHeight,
-                margin,
-                selection.overflowCount > 0,
-              ),
-            )
-    const reserved = isRoot
-      ? windowLiveRootReservations(surfaceWidth, surfaceHeight)
-      : Object.freeze([])
-    const residentKeys = new Set(ordered.map(resident => String(resident.id)))
-    const previous = Object.fromEntries(Object.entries(
-      liveResidentPointsByPlaceId[String(placeId)] || {},
-    ).filter(([key]) => residentKeys.has(key)))
-    const selectedResidentIds = new Set(visibleResidents.map(resident => resident.id))
-    const placementIds = Object.freeze([
-      ...(pinnedIds || []).filter(id => selectedResidentIds.has(id)),
-      ...visibleResidents.map(resident => resident.id)
-        .filter(id => !(pinnedIds || []).includes(id)),
-    ])
-    const separated = windowLiveResidentPointsAroundThings(
-      placementIds,
-      surfaceWidth,
-      surfaceHeight,
-      placeId * 17 + 3,
-      itemWidth,
-      itemHeight,
-      margin,
-      liveThingPointsByPlaceId[String(placeId)] || Object.freeze({}),
-      thingItemWidth,
-      reserved,
-      previous,
-      isRoot || (
-        !expanded && !state.live.expandedThingPlaceIds.includes(placeId)
-      ),
+      : rootExpanded
+        ? liveDirectGroundHeight(placeId, surfaceWidth)
+        : stageCellRoomHeight(
+            surfaceWidth, visibleResidents.length + heldThings, minimumHeight)
+    const separated = stageRoomCellPoints(
+      placeId,
+      'resident',
+      visibleResidents,
+      Object.freeze({ x: 0, y: 0, width: surfaceWidth, height: surfaceHeight }),
+      persistPoints,
     )
-    if (persistPoints) {
-      liveResidentPointsByPlaceId = Object.freeze({
-        ...liveResidentPointsByPlaceId,
-        [String(placeId)]: separated,
-      })
-    }
     const expandedGround = !isRoot && expanded
       ? survey.expandedGrounds[String(placeId)] || null
       : null

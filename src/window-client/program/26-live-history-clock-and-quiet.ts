@@ -368,9 +368,9 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
     if (nodes.liveWorldGround) nodes.liveWorldGround.replaceChildren()
     if (nodes.liveStage) {
       nodes.liveStage.style.setProperty('--live-stage-width', '1100px')
-      nodes.liveStage.style.setProperty('--live-stage-height', '680px')
+      nodes.liveStage.style.setProperty('--live-stage-height', String(STAGE_PARENT_ROOM_HEIGHT) + 'px')
       nodes.liveStage.dataset.liveStageWidth = '1100'
-      nodes.liveStage.dataset.liveStageHeight = '680'
+      nodes.liveStage.dataset.liveStageHeight = String(STAGE_PARENT_ROOM_HEIGHT)
       nodes.liveStage.setAttribute('aria-label', 'Live surveyed plate for ' + focus.name)
     }
     renderLiveBreadcrumbs(snapshot, focus)

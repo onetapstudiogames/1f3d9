@@ -1,4 +1,6 @@
-export const WINDOW_CSS = `:root {
+import { WINDOW_STAGE_CSS } from './window-style-stage.ts'
+
+const WINDOW_BASE_CSS = `:root {
   color-scheme: dark;
   --night: #0b1714;
   --night-soft: #14241f;
@@ -1042,13 +1044,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .live-portrait > .drawing-grid { height: 100%; aspect-ratio: auto; }
 .live-portrait > .entity-portrait { width: 100%; height: 100%; }
-[data-stage-node-kind="resident"] .live-portrait > .drawing-grid,
-[data-stage-node-kind="resident"] .live-portrait > .entity-portrait,
-[data-stage-node-kind="thing"] > .drawing-grid,
-[data-stage-node-kind="thing"] > .entity-portrait {
-  transform: scaleX(var(--facing, 1));
-  transform-origin: center;
-}
 .live-portrait.asleep { opacity: 0.48; }
 .live-speech-bubble {
   position: absolute;
@@ -1471,7 +1466,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .live-replay-portrait {
   z-index: 18;
   will-change: transform;
-  animation-name: live-recorded-glide;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
 }
@@ -1606,7 +1600,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   > .live-thing-shelf:not([data-live-expanded="true"]) > .live-thing-more {
   inset: 286px auto auto 286px;
 }
-.live-overflow-absorbing { animation: live-overflow-absorb 480ms steps(4, end) both; }
 .live-trace-layer {
   position: absolute;
   z-index: 10;
@@ -1654,12 +1647,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   50% { box-shadow: 0 0 0 10px transparent; }
 }
 
-@keyframes live-recorded-glide {
-  to {
-    transform: var(--stage-destination-transform);
-  }
-}
-
 @keyframes live-recorded-route {
   to { offset-distance: 100%; }
 }
@@ -1667,12 +1654,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 @keyframes live-footstep-fade {
   from { opacity: 1; }
   to { opacity: 0; }
-}
-
-@keyframes live-overflow-absorb {
-  0% { opacity: 1; transform: scale(0.84); background: var(--brick); color: #fff; }
-  55% { opacity: 1; transform: scale(1.16); background: var(--signal); color: var(--ink); }
-  100% { opacity: 1; transform: scale(1); background: var(--signal); color: var(--ink); }
 }
 
 @keyframes live-trail-ink {
@@ -2478,7 +2459,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
   .live-action-mark.live-pulse { display: none !important; animation: none !important; }
   .live-thing-specimen.live-pulse { animation: none !important; }
-  .live-walker, .live-replay-portrait, .live-overflow-absorbing,
+  .live-walker, .live-replay-portrait,
   .live-speech-bubble { animation: none !important; transition: none !important; }
   .live-trail, .live-trail-inking, .live-footstep {
     animation: none !important;
@@ -2504,3 +2485,5 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .live-speech-bubble { color: CanvasText; background: Canvas; }
 }
 `
+
+export const WINDOW_CSS = WINDOW_BASE_CSS + WINDOW_STAGE_CSS

@@ -186,7 +186,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
       replayQueues: {}, replayActive: {}, replayPositions: {},
       replayReadyAtByActor: {},
       replaySeenKeys: [], replayRevealedKeys: [], residueKeys: [], residueKeySet: new Set(),
-      focusResident: null, paused: false, absorptionEndsAtByPlaceId: {}, trailStarts: {},
+      focusResident: null, paused: false, trailStarts: {},
       raisedItemKey: null, expandedResidentPlaceIds: [], expandedThingPlaceIds: [],
       focusRestoreKey: null, focusRestoreFallbackId: null,
       suppressReplayOnNextRead: false,
@@ -243,8 +243,9 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveItemPopoverPressWasInside = false
   let liveResidentVisibleIdsByPlaceId = Object.freeze({})
   let liveThingVisibleIdsByPlaceId = Object.freeze({})
-  let liveResidentPointsByPlaceId = Object.freeze({})
-  let liveThingPointsByPlaceId = Object.freeze({})
+  let liveStageCellsByPlaceId = Object.freeze({})
+  let liveStageOccupantsByPlaceId = Object.freeze({})
+  let liveStageCorridorsByParentId = Object.freeze({})
   const liveFloorTiles = new Map()
   const liveProofFloorTiles = new Map()
   const liveFloorTileLoads = new Map()

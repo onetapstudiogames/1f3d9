@@ -239,7 +239,7 @@ test('every path that lists a resident, thing, or note resolves quiet through is
     },
     {
       name: 'mountLivePlaceDetail: a detailed child plot on an ancestor Live plate',
-      pattern: /if \(isQuietPlace\(place\)\) \{\s*\n\s*card\.append\(quietRoomNotice\(place\)\)\s*\n\s*card\.dataset\.liveDetailMounted = 'true'/u,
+      pattern: /if \(isQuietPlace\(place\)\) \{[\s\S]{0,2000}stageQuietRoom\([\s\S]{0,800}card\.append\(quietRoomNotice\(place\)\)\s*\n\s*card\.dataset\.liveDetailMounted = 'true'/u,
     },
     {
       name: 'liveLedgerQuietPlace: a recorded action pointing at a quiet place (move, note, make, use)',

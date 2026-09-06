@@ -49,12 +49,6 @@ export const PART_42_STAGE_NODES = `  function ensureStageNode(kind, id, factory
     node.style.setProperty('--stage-x', String(position.x) + 'px')
     node.style.setProperty('--stage-y', String(position.y) + 'px')
     node.style.transform = stageTransform(position.x, position.y, anchor)
-    if (Number.isFinite(position.destinationX) && Number.isFinite(position.destinationY)) {
-      node.style.setProperty('--stage-destination-transform', stageTransform(
-        position.destinationX, position.destinationY, anchor))
-    } else {
-      node.style.removeProperty('--stage-destination-transform')
-    }
   }
 
   function beginStageNodeReconcile() {

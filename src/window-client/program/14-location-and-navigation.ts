@@ -135,8 +135,13 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
       (Object.hasOwn(next, 'placeId') && next.placeId !== state.placeId) ||
       (Object.hasOwn(next, 'resident') && next.resident !== state.resident)
     )
+    const changesFollowedResident = previousView === 'live' && nextView === 'live' &&
+      Object.hasOwn(next, 'resident') && next.resident !== state.resident
     if (leavesReplayPlate && liveReplayHeldKeys().size) settleLiveReplays()
     if (clearsLiveFocus && state.live.focusResident) storeLiveFocusResident(null)
+    if (changesFollowedResident) {
+      liveCamera = Object.freeze({ ...liveCamera, stageId: null })
+    }
     state = {
       ...state,
       ...next,

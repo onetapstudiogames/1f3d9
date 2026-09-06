@@ -1,7 +1,6 @@
 export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, focusId, children) {
     if (anchorId === focusId) return Object.freeze({ x: 72, y: 58 })
-    const plot = windowLiveSurveyedPlots(children, focusId)
-      .find(candidate => candidate.id === anchorId)
+    const plot = stageRoomLayout(children, focusId).rooms[String(anchorId)]
     return plot ? Object.freeze({
       x: plot.x + plot.width / 2,
       y: plot.y + plot.height - 18,
@@ -122,13 +121,12 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     const from = recordedFrom || livePlateBoundaryPoint(recordedTo, survey)
     const to = recordedTo || livePlateBoundaryPoint(recordedFrom, survey)
     if (!from || !to || (from.x === to.x && from.y === to.y)) return null
-    const fromDoor = recordedFrom
-      ? liveReplayPoint(record.detail.from_place_id, focus, children, renderContext)
-      : from
-    const toDoor = recordedTo
-      ? liveReplayPoint(record.detail.to_place_id, focus, children, renderContext)
-      : to
-    const points = liveRoutePoints([from, fromDoor, toDoor, to])
+    const fromAnchor = livePlaceAnchor(
+      record.detail.from_place_id, focus.id, children, renderContext)
+    const toAnchor = livePlaceAnchor(
+      record.detail.to_place_id, focus.id, children, renderContext)
+    const corridor = stageCorridorRoute(focus.id, fromAnchor, toAnchor)
+    const points = liveRoutePoints([from, ...corridor, to])
     return Object.freeze({ from, to, points, distance: liveRouteLength(points) })
   }
 
@@ -180,9 +178,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     const result = new Map()
     for (const movement of base) {
       const detailed = liveDetailedMoveActors.has(movement.actor)
-      const canonical = detailed
-        ? movement.geometry.points
-        : Object.freeze([movement.geometry.from, movement.geometry.to])
+      const canonical = movement.geometry.points
       const canonicalPoint = liveRoutePoint(canonical, movement.progress)
       const renderedPoint = liveRenderedReplayPoint(movement.actor)
       const remainder = liveRouteSlice(canonical, movement.progress, 1)
@@ -263,7 +259,6 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
     const active = { ...state.live.replayActive }
     const positions = { ...state.live.replayPositions }
     const trailStarts = { ...state.live.trailStarts }
-    const absorptionEndsAtByPlaceId = { ...state.live.absorptionEndsAtByPlaceId }
     const replayReadyAtByActor = { ...state.live.replayReadyAtByActor }
     const focus = state.snapshot ? liveFocusPlace(state.snapshot) : null
     const children = focus && state.snapshot ? liveChildren(state.snapshot, focus) : []
@@ -272,26 +267,17 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       ? livePlotDetailContext
       : null
     const now = Date.now()
-    const absorptionDeadlines = new Map()
     let changed = false
     for (const completion of completions) {
       const held = active[completion.actor]
       if (!held || held.key !== completion.key) continue
-      const absorbingPlaceId = held.type === 'move' && focus
-        ? livePlaceAnchor(held.toPlaceId, focus.id, children, renderContext)
-        : null
       delete active[completion.actor]
       if (held.type === 'move') {
         positions[completion.actor] = held.toPlaceId
         trailStarts[completion.key] = now
-        if (absorbingPlaceId) {
-          const deadline = now + LIVE_ABSORPTION_MS
-          absorptionEndsAtByPlaceId[String(absorbingPlaceId)] = deadline
-          absorptionDeadlines.set(String(absorbingPlaceId), deadline)
-        }
       }
       if (!state.live.replayQueues[completion.actor]?.length) {
-        if (!absorbingPlaceId) delete positions[completion.actor]
+        delete positions[completion.actor]
         delete replayReadyAtByActor[completion.actor]
       } else {
         const pendingCount = Object.values(state.live.replayQueues)
@@ -313,35 +299,9 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       replayActive: Object.freeze(active),
       replayPositions: Object.freeze(positions),
       trailStarts: Object.freeze(trailStarts),
-      absorptionEndsAtByPlaceId: Object.freeze(absorptionEndsAtByPlaceId),
       replayReadyAtByActor: Object.freeze(replayReadyAtByActor),
     } }
     if (state.view === 'live' && state.snapshot) markLiveDirty()
-    for (const [placeId, absorptionEndsAt] of absorptionDeadlines) {
-      const absorbedActors = Object.entries(positions)
-        .filter(([actor, placeIdAtRest]) =>
-          !active[actor] &&
-          !state.live.replayQueues[actor]?.length &&
-          livePlaceAnchor(
-            placeIdAtRest, focus.id, children, renderContext) === Number(placeId))
-        .map(([actor]) => actor)
-      window.setTimeout(() => {
-        if (state.live.absorptionEndsAtByPlaceId[placeId] !== absorptionEndsAt) return
-        const remaining = { ...state.live.absorptionEndsAtByPlaceId }
-        const remainingPositions = { ...state.live.replayPositions }
-        delete remaining[placeId]
-        for (const actor of absorbedActors) {
-          if (!state.live.replayActive[actor] &&
-              !state.live.replayQueues[actor]?.length) delete remainingPositions[actor]
-        }
-        state = { ...state, live: {
-          ...state.live,
-          absorptionEndsAtByPlaceId: Object.freeze(remaining),
-          replayPositions: Object.freeze(remainingPositions),
-        } }
-        if (state.view === 'live' && state.snapshot) markLiveDirty()
-      }, LIVE_ABSORPTION_MS)
-    }
   }
 
   function liveReplayThingIsDisplayed(
@@ -475,10 +435,7 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
             continue
           }
           const fromPlaceId = record.detail.from_place_id
-          const distance = Math.hypot(
-            geometry.to.x - geometry.from.x,
-            geometry.to.y - geometry.from.y,
-          )
+          const distance = geometry.distance
           const remainingLifetime = record.at.getTime() + liveRecordLifetime(record) - now
           const naturalDuration = windowLiveReplayDuration(distance, remainingLifetime)
           const pacedDurationCap = longestActorQueue > 1
@@ -674,29 +631,15 @@ export const PART_24_LIVE_REPLAY_MOTION = `  function liveAnchorPoint(anchorId, 
       const facing = stageFacing(point.x, facingPoint.x, currentFacing)
       if (destination && remaining > 0) {
         shell.dataset.liveMovement = movement.detailed ? 'detail' : 'simple'
-        if (movement.detailed) {
-          const path = movement.points.map((routePoint, index) =>
-            (index ? 'L ' : 'M ') + String(routePoint.x) + ' ' + String(routePoint.y)).join(' ')
-          shell.style.offsetPath = 'path("' + path + '")'
-          shell.style.offsetDistance = '0%'
-          shell.style.offsetAnchor = '50% 100%'
-          shell.style.offsetRotate = '0deg'
-          setStageTransform(shell, Object.freeze({ x: 0, y: 0, facing }))
-          shell.style.animationName = 'live-recorded-route'
-          shell.dataset.liveRoutePointCount = String(movement.geometry.points.length)
-        } else {
-          shell.style.offsetPath = ''
-          shell.style.offsetDistance = ''
-          shell.style.offsetAnchor = ''
-          shell.style.animationName = 'live-recorded-glide'
-          setStageTransform(shell, Object.freeze({
-            x: point.x,
-            y: point.y,
-            facing,
-            destinationX: destination.x,
-            destinationY: destination.y,
-          }))
-        }
+        const path = movement.points.map((routePoint, index) =>
+          (index ? 'L ' : 'M ') + String(routePoint.x) + ' ' + String(routePoint.y)).join(' ')
+        shell.style.offsetPath = 'path("' + path + '")'
+        shell.style.offsetDistance = '0%'
+        shell.style.offsetAnchor = '50% 100%'
+        shell.style.offsetRotate = '0deg'
+        setStageTransform(shell, Object.freeze({ x: 0, y: 0, facing }))
+        shell.style.animationName = 'live-recorded-route'
+        shell.dataset.liveRoutePointCount = String(movement.geometry.points.length)
         shell.style.animationDuration = String(remaining) + 'ms'
         shell.dataset.fromPlaceId = String(held.fromPlaceId)
         shell.dataset.toPlaceId = String(held.toPlaceId)

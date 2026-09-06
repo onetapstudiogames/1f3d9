@@ -155,9 +155,10 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
   }
 
   function liveDefaultCenterTarget(snapshot, focus, survey, renderContext = null) {
-    const focusedResident = state.live.focusResident
+    const cameraResidentHandle = state.live.focusResident || state.resident
+    const focusedResident = cameraResidentHandle
       ? displayedResidents(snapshot).find(resident =>
-          resident.handle === state.live.focusResident)
+          resident.handle === cameraResidentHandle)
       : null
     if (focusedResident) {
       const focusedPoint = liveResidentReplayPoint(
@@ -193,7 +194,7 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
     }
     const ordinaryTarget = Object.freeze({
       x: Math.min(survey.width, LIVE_DIRECT_GROUND_WIDTH) / 2,
-      y: Math.min(survey.height, WINDOW_LIVE_DIRECT_COMMONS_HEIGHT) / 2,
+      y: Math.min(survey.height, STAGE_PARENT_ROOM_HEIGHT) / 2,
     })
     if (!firstChild || !nodes.liveViewport) return ordinaryTarget
     const ordinaryCamera = liveCameraForStageTarget(ordinaryTarget, true)
@@ -290,7 +291,7 @@ export const PART_06_LIVE_CAMERA_AND_POINTERS = `  function liveCameraViewport()
     const height = Number(nodes.liveStage.dataset.liveStageHeight) || nodes.liveStage.offsetHeight
     return Object.freeze({
       x: Math.min(width, LIVE_DIRECT_GROUND_WIDTH) / 2,
-      y: Math.min(height, WINDOW_LIVE_DIRECT_COMMONS_HEIGHT) / 2,
+      y: Math.min(height, STAGE_PARENT_ROOM_HEIGHT) / 2,
     })
   }
 

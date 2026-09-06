@@ -260,8 +260,9 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         liveCamera,
         liveResidentVisibleIdsByPlaceId,
         liveThingVisibleIdsByPlaceId,
-        liveResidentPointsByPlaceId,
-        liveThingPointsByPlaceId,
+        liveStageCellsByPlaceId,
+        liveStageOccupantsByPlaceId,
+        liveStageCorridorsByParentId,
       })
     }
     window.clearTimeout(liveProofScriptedMoveTimer)
@@ -305,8 +306,9 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     })
     liveResidentVisibleIdsByPlaceId = Object.freeze({})
     liveThingVisibleIdsByPlaceId = Object.freeze({})
-    liveResidentPointsByPlaceId = Object.freeze({})
-    liveThingPointsByPlaceId = Object.freeze({})
+    liveStageCellsByPlaceId = Object.freeze({})
+    liveStageOccupantsByPlaceId = Object.freeze({})
+    liveStageCorridorsByParentId = Object.freeze({})
     liveCamera = Object.freeze({
       scale: LIVE_CAMERA_CENTER_SCALE,
       offsetX: 0,
@@ -373,7 +375,6 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
         residueKeySet: new Set(),
         focusResident: null,
         paused: false,
-        absorptionEndsAtByPlaceId: {},
         trailStarts: {},
         raisedItemKey: null,
         expandedResidentPlaceIds: [],
@@ -447,8 +448,9 @@ export const PART_04_LIVE_PROOF_SCENE = `  function liveProofPayload(now) {
     liveCamera = restore.liveCamera
     liveResidentVisibleIdsByPlaceId = restore.liveResidentVisibleIdsByPlaceId
     liveThingVisibleIdsByPlaceId = restore.liveThingVisibleIdsByPlaceId
-    liveResidentPointsByPlaceId = restore.liveResidentPointsByPlaceId
-    liveThingPointsByPlaceId = restore.liveThingPointsByPlaceId
+    liveStageCellsByPlaceId = restore.liveStageCellsByPlaceId
+    liveStageOccupantsByPlaceId = restore.liveStageOccupantsByPlaceId
+    liveStageCorridorsByParentId = restore.liveStageCorridorsByParentId
     const panel = document.getElementById('live-panel')
     if (panel) delete panel.dataset.liveProof
     if (state.snapshot) populateFilters(state.snapshot)

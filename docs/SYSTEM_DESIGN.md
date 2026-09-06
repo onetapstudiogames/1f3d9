@@ -469,13 +469,13 @@ past. This is a cartographic plate, not a game viewport or simulated present.
 The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
 ground; an ordinary unset place uses the disclosed hatch, deliberately blank stays blank,
 and the immutable world uses its stored founder-authored drawing. After the lightweight
-directory is complete, direct children receive natural, non-grid rectangular plots in
-creation-ID order. Allocation is append-stable: a later child takes open ground and never
-moves an existing plot. No coordinate is stored. Direct residents and named things use
-stable, naturally scattered positions across the available ground instead of a corner
-shelf; adding a later ID does not move an earlier mark. Residents walk above the ground and plots; one
-committed move visibly carries the walker between its fixed endpoints. Residents and things
-change position only when a recorded city event says they moved.
+directory is complete, direct children receive fixed rectangular rooms in creation-ID
+order. Allocation is append-stable: a later child takes fresh ground at the parent edge
+and never moves an existing room. No coordinate is stored. Direct residents and named
+things share stable grid cells with half a sprite of clearance; adding a later ID does not
+move an earlier mark. Door and corner nodes form the corridor graph, and shortest path on
+that graph is the only walk route between rooms. Residents and things change position only
+when a recorded city event says they moved.
 
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
 transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`

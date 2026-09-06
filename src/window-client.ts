@@ -21,24 +21,26 @@ export type {
 } from './window-client/drawing.ts'
 
 export {
-  windowLivePlateChildren,
-  WINDOW_LIVE_DIRECT_COMMONS_WIDTH,
-  WINDOW_LIVE_DIRECT_COMMONS_HEIGHT,
-  WINDOW_LIVE_CHILD_GROUND_GAP,
-  windowLiveSurveyedPlots,
-  windowLiveExpandedGroundLayout,
-  windowLiveScatteredPoint,
-  windowLiveScatteredPoints,
-  windowLiveScatterSurfaceHeight,
-} from './window-client/live-ground.ts'
-
-export {
-  windowLiveSeparatedPoints,
-  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
-  windowLiveRootReservations,
-  windowLiveResidentPointsAroundThings,
-  windowLiveThingPointsAroundResidents,
-} from './window-client/live-scatter.ts'
+  stageAssignCells,
+  stageBuildCorridorGraph,
+  stageCellRoomHeight,
+  stageChildPlaces,
+  stageExpandedGroundLayout,
+  stageQuietRoom,
+  stageRoomLayout,
+  stageShortestPath,
+  STAGE_PARENT_ROOM_HEIGHT,
+  STAGE_ROOM_DRAWING_CONTROL_RECT,
+} from './window-client/stage-ground.ts'
+export type {
+  StageCell,
+  StageCellEntry,
+  StageCorridorGraph,
+  StageCorridorNode,
+  StageExpandedGround,
+  StageGroundPlace,
+  StageRoomBox,
+} from './window-client/stage-ground.ts'
 
 export {
   windowLiveTouchActivation,

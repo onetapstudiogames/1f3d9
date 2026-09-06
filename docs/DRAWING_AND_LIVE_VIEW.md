@@ -300,11 +300,12 @@ not a simulation of the present.
   state, and drawing source -- independent of the click-through drawing-detail
   button that still carries the exact current JSON record.
 - Live completes the lightweight public directory before allocating the focus
-  place's direct children. Their natural, non-grid rectangular plots follow
-  creation-ID order. Allocation is append-stable: a newly created later child
-  takes open ground and never moves a plot already assigned. Direct residents
-  and named things spread through the available room in stable positions rather
-  than collecting in one corner. No coordinate is stored.
+  place's direct children. Their fixed rectangular rooms follow creation-ID
+  order. Allocation is append-stable: a newly created later child takes fresh
+  ground at the parent edge and never moves a room already assigned. Direct
+  residents and named things share stable grid cells with half a sprite of
+  clearance. Door and corner nodes form the corridor graph; a walk between
+  rooms follows its shortest path. No coordinate is stored.
 - Exact resident presentation counts still use marker-safe public pages. Live
   automatically reads at most eight 200-resident pages (1,600 residents); if
   another page remains, it keeps that verified cursor and offers a real
@@ -585,14 +586,14 @@ after the split.
 
 **Where things live now:**
 
-- `src/window-client.ts` survives as a **facade**. It re-exports every
-  TypeScript helper under its original name (so every existing import path,
-  including tests, e2e specs, and `src/window.ts`, keeps working unchanged) and assembles
+- `src/window-client.ts` survives as a **facade**. It re-exports the current
+  TypeScript helpers used by tests, e2e specs, and `src/window.ts`, and assembles
   `WINDOW_JS` from the ordered program parts:
   `export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')`.
-- `src/window-client/*.ts` holds the eight TypeScript helper modules
-  (`drawing.ts`, `live-ground.ts`, `live-scatter.ts`, `live-visibility.ts`,
-  `live-camera.ts`, `live-replay.ts`, `rows.ts`, `directory.ts`): the
+- `src/window-client/*.ts` holds the ten TypeScript helper modules
+  (`drawing.ts`, `stage-ground.ts`, `stage-nodes.ts`, `live-visibility.ts`,
+  `live-camera.ts`, `live-replay.ts`, `live-popover.ts`, `live-notes.ts`,
+  `rows.ts`, `directory.ts`): the
   functions and types the facade re-exports.
 - `src/window-client/program/NN-*.ts` holds the ordered client-JS
   fragments that make up the client's own JavaScript. Each part file is

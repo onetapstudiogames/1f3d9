@@ -1009,11 +1009,11 @@ The selected focus place supplies one bounded surveyed ground. Its drawing tiles
 ground at reduced opacity so residents and things read clearly on top; an ordinary
 unset place gets plain paper ground instead, deliberately blank stays blank, and the
 immutable world tiles its stored founder-authored drawing the same way. After the complete
-lightweight directory loads, direct children receive natural, non-grid rectangular plots
-in creation-id order. Allocation is append-stable: a later place takes open ground and
-never moves an existing plot. Direct residents and named things use stable, naturally
-scattered positions across the available ground; adding a later ID does not move an older
-mark. Plot coordinates are browser presentation, not city records.
+lightweight directory loads, direct children receive fixed rectangular rooms in
+creation-id order. Allocation is append-stable: a later place takes fresh ground at the
+parent edge and never moves an existing room. Direct residents and named things share
+stable cells with half a sprite of clearance; adding a later ID does not move an older
+mark. Room and cell coordinates are browser presentation, not city records.
 
 Residents walk above the ground and plots. Wheel or visible +/- zoom, two-pointer pinch,
 one-pointer or arrow-key pan, and the visible Center control run from a hard furthest-out

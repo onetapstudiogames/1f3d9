@@ -170,8 +170,12 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
   }
 
   function positionLiveRootOverflowControl(control, slot, width, height) {
-    const rail = windowLiveRootReservations(width, height)[0]
-    if (!rail) return
+    const rail = Object.freeze({
+      x: Math.max(0, width - 116),
+      y: Math.max(0, height - 144),
+      width: Math.min(116, width),
+      height: Math.min(144, height),
+    })
     const inset = 6
     const gap = 8
     const controlWidth = rail.width - inset * 2
@@ -274,10 +278,18 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       shell.style.offsetAnchor = ''
       shell.style.animationName = ''
       shell.style.animationDuration = ''
+      shell.style.width = '32px'
+      shell.style.height = '32px'
+      shell.style.minWidth = '32px'
+      shell.style.minHeight = '32px'
       setStageTransform(shell, Object.freeze({
         x: entry.localPoint.x,
         y: entry.localPoint.y,
       }))
+      shell.dataset.stageCellKey = entry.localPoint.cellKey
+      shell.dataset.stageRoomId = String(placeId)
+      shell.dataset.stageCellRow = String(entry.localPoint.row)
+      shell.dataset.stageCellColumn = String(entry.localPoint.column)
       const itemKey = 'resident:' + resident.handle
       shell.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) shell.dataset.liveRaised = 'true'
@@ -304,9 +316,6 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
       badge.setAttribute('data-live-overflow-count', String(overflowCount))
       badge.title = String(residents.length) + ' residents here; showing ' +
         String(residents.length - overflowCount)
-      if (Number(state.live.absorptionEndsAtByPlaceId[String(placeId)]) > Date.now()) {
-        badge.classList.add('live-overflow-absorbing')
-      }
       if (placeId === focus.id) {
         positionLiveRootOverflowControl(
           badge, 'resident', layout.surfaceWidth, layout.surfaceHeight)

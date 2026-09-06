@@ -209,7 +209,8 @@ export const PART_25_LIVE_TRACES_AND_LEDGER = `  function visibleLiveRecords(sna
         // was not present for (opening backlog, or the first catch-up
         // after a hidden tab), so it settles at its recorded endpoint with
         // no trail at all.
-        if (record.actor !== state.resident || liveIsRecordResidue(record)) continue
+        const followedResident = state.live.focusResident || state.resident
+        if (record.actor !== followedResident || liveIsRecordResidue(record)) continue
         const geometry = liveReplayMoveGeometry(
           record, snapshot, focus, children, renderContext)
         const from = geometry?.from

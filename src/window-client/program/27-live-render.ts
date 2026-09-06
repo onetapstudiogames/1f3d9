@@ -207,7 +207,7 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
         'live-walker-layer live-root-walkers',
         renderContext,
       ))
-    }
+    } else clearStageRoomCellKind(focus.id, 'resident')
     const focusShelf = liveThingShelf(
       snapshot, focus, records, focus.id, false, interactionThings, renderContext)
     if (focusShelf) {

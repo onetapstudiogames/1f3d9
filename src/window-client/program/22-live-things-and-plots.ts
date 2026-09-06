@@ -134,8 +134,10 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       renderContext,
     )
     const { things, pinnedIds, exactTotal, selection } = presentation
-    if (!things.length && exactTotal !== null && exactTotal === 0) return null
-    if (!things.length && exactTotal === null) return null
+    if (!things.length && (exactTotal === null || exactTotal === 0)) {
+      clearStageRoomCellKind(place.id, 'thing')
+      return null
+    }
     const pinned = new Set(pinnedIds)
     const shelf = element('section', 'live-thing-shelf')
     const expanded = state.live.expandedThingPlaceIds.includes(place.id)
@@ -147,62 +149,23 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     )
     const survey = renderContext?.survey || liveStageSurvey(livePlaceRows(snapshot), focusId)
     const childPlot = isRoot ? null : survey.plots.find(candidate => candidate.id === place.id)
-    const itemWidth = isRoot ? 144 : 94
-    const itemHeight = 56
     const surfaceWidth = isRoot
       ? windowLiveDirectGroundWidth(survey.width, LIVE_DIRECT_GROUND_WIDTH)
-      : expanded ? 480 : childPlot?.width || 440
-    const margin = isRoot ? 12 : 6
-    const hasOverflow = exactTotal === null
-      ? things.length > selection.visible.length
-      : selection.overflowCount > 0
-    const surfaceHeight = isRoot
-      ? rootExpanded ? liveDirectGroundHeight(place.id, surfaceWidth) : 680
-      : !expanded
-        ? childPlot?.height || 280
-        : Math.max(
-            320,
-            windowLiveScatterSurfaceHeight(
-              0,
-              surfaceWidth,
-              selection.visible.length,
-              itemWidth,
-              itemHeight,
-              margin,
-              hasOverflow,
-            ),
-          )
-    const reserved = isRoot
-      ? windowLiveRootReservations(surfaceWidth, surfaceHeight)
-      : Object.freeze([])
-    const thingKeys = new Set(things.map(thing => String(thing.id)))
-    const previous = Object.fromEntries(Object.entries(
-      liveThingPointsByPlaceId[String(place.id)] || {},
-    ).filter(([key]) => thingKeys.has(key)))
-    const selectedThingIds = new Set(selection.visible.map(thing => thing.id))
-    const placementIds = Object.freeze([
-      ...pinnedIds.filter(id => selectedThingIds.has(id)),
-      ...selection.visible.map(thing => thing.id).filter(id => !pinned.has(id)),
-    ])
-    const separated = windowLiveThingPointsAroundResidents(
-      placementIds,
-      surfaceWidth,
-      surfaceHeight,
-      place.id * 29 + 11,
-      itemWidth,
-      itemHeight,
-      margin,
-      liveResidentPointsByPlaceId[String(place.id)] || Object.freeze({}),
-      reserved,
-      previous,
-      isRoot || (
-        !expanded && !state.live.expandedResidentPlaceIds.includes(place.id)
-      ),
+      : childPlot?.width || 440
+    const heldResidents = Object.values(
+      liveStageOccupantsByPlaceId[String(place.id)] || Object.freeze({}),
+    ).filter(occupant => occupant.kind === 'resident').length
+    const minimumHeight = isRoot ? STAGE_PARENT_ROOM_HEIGHT : expanded ? 320 : childPlot?.height || 280
+    const surfaceHeight = rootExpanded
+      ? liveDirectGroundHeight(place.id, surfaceWidth)
+      : stageCellRoomHeight(
+          surfaceWidth, selection.visible.length + heldResidents, minimumHeight)
+    const separated = stageRoomCellPoints(
+      place.id,
+      'thing',
+      selection.visible,
+      Object.freeze({ x: 0, y: 0, width: surfaceWidth, height: surfaceHeight }),
     )
-    liveThingPointsByPlaceId = Object.freeze({
-      ...liveThingPointsByPlaceId,
-      [String(place.id)]: separated,
-    })
     const expandedGround = !isRoot && expanded
       ? survey.expandedGrounds[String(place.id)] || null
       : null
@@ -245,8 +208,16 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       specimen.dataset.focusKey = 'live-thing:' + String(thing.id)
       specimen.dataset.liveThingId = String(thing.id)
       specimen.dataset.liveThingPlaceId = String(thing.place_id)
+      specimen.style.width = '32px'
+      specimen.style.height = '32px'
+      specimen.style.minWidth = '32px'
+      specimen.style.minHeight = '32px'
       const point = separated[String(thing.id)]
       setStageTransform(specimen, Object.freeze({ x: point.x, y: point.y, facing: 1 }))
+      specimen.dataset.stageCellKey = point.cellKey
+      specimen.dataset.stageRoomId = String(place.id)
+      specimen.dataset.stageCellRow = String(point.row)
+      specimen.dataset.stageCellColumn = String(point.column)
       specimen.dataset.liveItemKey = itemKey
       if (state.live.raisedItemKey === itemKey) specimen.dataset.liveRaised = 'true'
       if (pinned.has(thing.id)) specimen.dataset.liveFocusThing = String(thing.id)
@@ -321,10 +292,6 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       badge.setAttribute('data-live-overflow-count', String(overflowCount))
       badge.title = String(exactTotal) + ' things here; showing ' +
         String(visibleThings.length)
-      if (Object.values(state.live.replayActive).some(active =>
-        active.type === 'make' && liveRecordPlaceId(active.record) === place.id)) {
-        badge.classList.add('live-overflow-absorbing')
-      }
       if (isRoot) {
         positionLiveRootOverflowControl(badge, 'thing', surfaceWidth, surfaceHeight)
       }
@@ -363,10 +330,10 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
       place.name,
       'live-plot-drawing-detail drawing-detail-open',
     )
-    drawingDetail.style.left = String(LIVE_PLOT_DRAWING_DETAIL_RECT.x) + 'px'
-    drawingDetail.style.top = String(LIVE_PLOT_DRAWING_DETAIL_RECT.y) + 'px'
-    drawingDetail.style.width = String(LIVE_PLOT_DRAWING_DETAIL_RECT.width) + 'px'
-    drawingDetail.style.height = String(LIVE_PLOT_DRAWING_DETAIL_RECT.height) + 'px'
+    drawingDetail.style.left = String(STAGE_ROOM_DRAWING_CONTROL_RECT.x) + 'px'
+    drawingDetail.style.top = String(STAGE_ROOM_DRAWING_CONTROL_RECT.y) + 'px'
+    drawingDetail.style.width = String(STAGE_ROOM_DRAWING_CONTROL_RECT.width) + 'px'
+    drawingDetail.style.height = String(STAGE_ROOM_DRAWING_CONTROL_RECT.height) + 'px'
     card.append(drawingDetail)
     // Decision #75: a detailed child plot honours its own quiet mark exactly
     // like the main plate does for the focused place — name, owner, and
@@ -374,6 +341,24 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     // whether the viewer is standing at the world root, a continent, or a
     // town looking down into this one quiet plot.
     if (isQuietPlace(place)) {
+      clearStageRoomCells(place.id)
+      const room = renderContext.survey.plots.find(plot => plot.id === place.id)
+      const residentCount = displayedResidents(snapshot).filter(resident =>
+        resident.current_place_id === place.id).length
+      const thingCount = liveSurveyThingTotal(snapshot, place.id, false)
+      const quietGround = room && thingCount !== null ? stageQuietRoom(Object.freeze({
+        name: place.name,
+        owner: place.owner || null,
+        quiet: true,
+        counts: Object.freeze({ residents: residentCount, things: thingCount }),
+      }), room) : null
+      if (quietGround) {
+        card.dataset.stageQuietRoom = 'true'
+        card.append(element('p', 'quiet-plate-facts',
+          (quietGround.owner ? 'Kept by ' + quietGround.owner : 'Nobody owns it') +
+          ' · ' + String(quietGround.counts.residents) + ' residents' +
+          ' · ' + String(quietGround.counts.things) + ' things'))
+      }
       card.append(quietRoomNotice(place))
       card.dataset.liveDetailMounted = 'true'
       return
@@ -393,7 +378,7 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
         'live-portrait-grid',
         renderContext,
       ))
-    }
+    } else clearStageRoomCellKind(place.id, 'resident')
     const shelf = liveThingShelf(
       snapshot, place, records, focus.id, true, interactionThings, renderContext)
     if (shelf) card.append(shelf)
@@ -451,54 +436,12 @@ export const PART_22_LIVE_THINGS_AND_PLOTS = `  function liveThingFilters(focusI
     card.dataset.placeKind = focus.parent_id === null ? 'continent' : 'place'
     card.append(open)
     if (notesControl) card.append(notesControl)
-    if (detailed || focused) mountLivePlaceDetail(card, renderContext, place)
+    if (detailed || focused || isQuietPlace(place)) mountLivePlaceDetail(card, renderContext, place)
     return card
   }
 
   function liveStageSurvey(places, parentId) {
-    const plots = windowLiveSurveyedPlots(places, parentId)
-    let width = Math.max(1_100, ...plots.map(plot => plot.x + plot.width + 64))
-    const occupiedHeight = Math.max(680, ...plots.map(plot => plot.y + plot.height + 96))
-    let height = occupiedHeight
-    let expandedGrounds = Object.freeze({})
-    if (state.snapshot && (state.live.expandedResidentPlaceIds.includes(parentId) ||
-        state.live.expandedThingPlaceIds.includes(parentId))) {
-      const directWidth = windowLiveDirectGroundWidth(width, LIVE_DIRECT_GROUND_WIDTH)
-      height = Math.max(height, liveDirectGroundHeight(parentId, directWidth))
-    }
-    if (state.snapshot) {
-      const expansions = plots.flatMap(plot => {
-        const residentsExpanded = state.live.expandedResidentPlaceIds.includes(plot.id)
-        const thingsExpanded = state.live.expandedThingPlaceIds.includes(plot.id)
-        if (!residentsExpanded && !thingsExpanded) return []
-        const residentHeight = residentsExpanded
-          ? Math.max(320, windowLiveScatterSurfaceHeight(
-              0,
-              480,
-              liveVisibleResidentsAt(state.snapshot, plot.id).length + Math.min(
-                LIVE_PORTRAIT_LIMIT,
-                Object.keys(liveResidentPointsByPlaceId[String(plot.id)] || {}).length,
-              ),
-              56,
-              56,
-              6,
-            ))
-          : 0
-        const things = thingsExpanded
-          ? liveDisplayedThings(state.snapshot, plot.id, parentId, true)
-          : []
-        const thingHeight = thingsExpanded
-          ? Math.max(320, windowLiveScatterSurfaceHeight(
-              0, 480, things.length, 94, 56, 6, true))
-          : 0
-        return [Object.freeze({ id: plot.id, residentHeight, thingHeight })]
-      })
-      const expandedLayout = windowLiveExpandedGroundLayout(plots, expansions)
-      expandedGrounds = expandedLayout.grounds
-      width = Math.max(width, expandedLayout.width + 64)
-      height = Math.max(height, expandedLayout.height + 96)
-    }
-    return Object.freeze({ plots, width, height, expandedGrounds })
+    return stageRoomSurvey(places, parentId)
   }
 
 `
