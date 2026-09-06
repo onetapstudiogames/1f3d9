@@ -119,12 +119,49 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       place: placePresentation,
       author: viewerResidentPresentation(residentReference(state.snapshot, note.author)),
     })
-    card.append(meta, renderExpandableBody(
+    const bodyBlock = renderExpandableBody(
       'note', note.id, note.body, note.truncated,
       viewerRecordDataVersion(note),
-    ))
+    )
+    addNoteReadingTools(bodyBlock, note)
+    card.append(meta, bodyBlock)
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return viewerRecordNode(card, 'note', note, presentation)
+  }
+
+  // Only the non-Live note cards call this. Keep the original inside the retained
+  // body block so a refresh preserves an open decoding until its source changes.
+  function addNoteReadingTools(block, note) {
+    const bodyNode = block.querySelector('.public-body')
+    if (!bodyNode) return
+    const source = bodyNode.textContent || ''
+    // An empty tag means unknown, instead of inheriting the page's English tag.
+    bodyNode.lang = detectNoteLanguage(source) || ''
+    const fullEntry = state.fullBodies['note:' + String(note.id)]
+    const complete = !note.truncated || (typeof fullEntry?.body === 'string' &&
+      fullEntry.recordVersion === viewerRecordDataVersion(note))
+    const decoded = complete && !note.moderated ? decodeNoteText(source) : null
+    if (!decoded) return
+    const button = element('button', 'note-decode', 'Decode')
+    button.type = 'button'
+    button.dataset.focusKey = 'note-decode:' + String(note.id)
+    button.setAttribute('aria-expanded', 'false')
+    const result = element('div', 'note-decoded')
+    result.id = bodyNode.id + '-decoded'
+    result.lang = 'en'
+    result.hidden = true
+    const label = element('strong', 'note-decoded-label', 'Decoded')
+    const text = element('p', 'note-decoded-text', decoded.text)
+    text.lang = detectNoteLanguage(decoded.text) || ''
+    result.append(label, text)
+    button.setAttribute('aria-controls', result.id)
+    button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') !== 'true'
+      button.setAttribute('aria-expanded', String(expanded))
+      button.textContent = expanded ? 'Hide decoded' : 'Decode'
+      result.hidden = !expanded
+    })
+    block.append(button, result)
   }
 
   function renderNotes(target, notes, emptyMessage, placeOf) {

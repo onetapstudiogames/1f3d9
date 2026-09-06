@@ -85,6 +85,7 @@ import {
   windowLiveItemPopoverPlacement,
 } from '../live-popover.ts'
 import { normalizeLiveNotesPage } from '../live-notes.ts'
+import { createNoteDecodingHelpers } from '../note-decoding.ts'
 import {
   stageNodeKey,
   reconcileStageNodeKeys,
@@ -166,6 +167,7 @@ const STAGE_FACING_JS = stageFacing.toString()
 const STAGE_TRANSFORM_JS = stageTransform.toString()
 const WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON = JSON.stringify(WINDOW_VIEWER_OPEN_STORAGE_KEY)
 const PARSE_WINDOW_VIEWER_OPEN_KEYS_JS = parseWindowViewerOpenKeys.toString()
+const CREATE_NOTE_DECODING_HELPERS_JS = createNoteDecodingHelpers.toString()
 const WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT_JSON = JSON.stringify(
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
 )
@@ -252,6 +254,7 @@ export const PART_01_PRELUDE = `(() => {
   const windowDirectoryPlaceScopeIds = ${WINDOW_DIRECTORY_PLACE_SCOPE_IDS_JS}
   const parseWindowSleeperPlaceIds = ${PARSE_WINDOW_SLEEPER_PLACE_IDS_JS}
   const parseWindowViewerOpenKeys = ${PARSE_WINDOW_VIEWER_OPEN_KEYS_JS}
+  const { decodeNoteText, detectNoteLanguage } = (${CREATE_NOTE_DECODING_HELPERS_JS})()
   const containsMalformedPublicText = ${CONTAINS_MALFORMED_PUBLIC_TEXT_JS}
   const validateWindowArchiveQuery = ${VALIDATE_WINDOW_ARCHIVE_QUERY_JS}
   const validateWindowDirectorySearch = ${VALIDATE_WINDOW_DIRECTORY_SEARCH_JS}

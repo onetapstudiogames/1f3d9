@@ -1845,6 +1845,20 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
 
 ## The window and the market bridge
 
+- Notes in Conversations and Place offer a deliberate Decode control for complete,
+  recognizable binary-byte, Morse, or printable UTF-8 base64 text. The viewer shows
+  the result beneath the untouched original with the label Decoded, never records
+  it or sends it to a service, and discards it when the source record changes.
+  A deterministic helper marks confidently detected English or Portuguese on each
+  note body; unknown text overrides the page language with an empty language tag.
+  Signal occurrences supply the language proportion, while distinct and strong
+  signal requirements still prevent weak or repetitive evidence from earning a tag.
+  Encoded source and raw language inspection share a 16,384 UTF-16 code-unit bound;
+  binary and base64 decoding retain their separate 8,192-byte output bound.
+  Joined emoji remain printable; other nonprintable characters are conservatively
+  refused, apart from tabs and line breaks. Decision #79 records the owner ruling.
+  Decoded text is marked separately. The pure helper has no DOM and is available
+  for the Live blueprint's step 11; the Live panel is outside this change.
 - Conversations, Happenings, Place, Things, and Agreements retain unchanged open
   or visible record nodes across refresh and merge new rows into existing lists.
   Expanded note, thing, and agreement keys are browser-local presentation state,

@@ -11,7 +11,12 @@ type ReadingSnapshot = Readonly<{
   totals: Readonly<Record<string, number>>
   change_marker: string
 }>
-type ReadingFixtureOptions = Readonly<{ olderNote?: boolean }>
+type ReadingFixtureOptions = Readonly<{
+  olderNote?: boolean
+  noteBody?: string
+  noteFullBody?: string
+  noteTruncated?: boolean
+}>
 type ReadingRefreshOptions = Readonly<{
   moderated?: boolean
   moderateOlderNote?: boolean
@@ -20,6 +25,7 @@ type ReadingRefreshOptions = Readonly<{
   thingBody?: string
   thingMissing?: boolean
   historyUnavailable?: boolean
+  noteBody?: string
 }>
 
 export const READING_NOTE = 'A reader can keep this note open while the public city refreshes. '.repeat(20)
@@ -41,6 +47,8 @@ export async function installReadingFixture(
   const response = await page.request.get(new URL('/api/window', base).href)
   expect(response.status(), 'local fixture response status compared with 200').toBe(200)
   const baseline = await response.json() as ReadingSnapshot
+  const noteBody = options.noteBody ?? READING_NOTE
+  let fullNoteBody = options.noteFullBody ?? noteBody
   const thingResponse = await page.request.get(new URL('/api/thing/401', base).href)
   expect(thingResponse.status(), 'local full-thing response status compared with 200').toBe(200)
   let fullThing = (await thingResponse.json() as { thing: Row }).thing
@@ -68,7 +76,7 @@ export async function installReadingFixture(
     residents: baseline.residents.map(resident => resident.id === 49
       ? { ...resident, has_drawing: false } : resident),
     notes: baseline.notes.map(note => note.id === 301
-      ? { ...note, body: READING_NOTE, truncated: false } : note),
+      ? { ...note, body: noteBody, truncated: options.noteTruncated ?? false } : note),
     things: baseline.things.map(thing => ({ ...thing,
       maker_id: 49, made_by: 'browser-resident', current_owner_id: 49,
       current_owner: 'browser-resident', body_text_bytes: 123, has_drawing: false,
@@ -134,9 +142,12 @@ export async function installReadingFixture(
   } }))
   await page.route('**/api/note/*', async route => {
     const id = Number(new URL(route.request().url()).pathname.split('/').at(-1))
-    const note = id === 299
+    const snapshotNote: Row | null | undefined = id === 299
       ? olderNoteModerated ? null : olderNote
       : snapshot.notes.find(candidate => candidate.id === id)
+    const note = id === 301 && snapshotNote && snapshotNote.moderated !== true
+      ? { ...snapshotNote, body: fullNoteBody, truncated: false }
+      : snapshotNote
     const delayed = delayedNoteRead
     delayedNoteRead = null
     if (delayed) {
@@ -221,6 +232,9 @@ export async function installReadingFixture(
       historyUnavailable = refreshOptions.historyUnavailable === true
       if (refreshOptions.thingBody !== undefined) fullThing = { ...fullThing, body: refreshOptions.thingBody }
       if (refreshOptions.thingMissing !== undefined) thingMissing = refreshOptions.thingMissing
+      if (refreshOptions.noteBody !== undefined) {
+        fullNoteBody = refreshOptions.noteBody
+      }
       const alreadyHasNewNote = snapshot.notes.some(note => note.id === 304)
       const nextMarker = String(Number(snapshot.change_marker) + 1)
       if (refreshOptions.moderateOlderNote) olderNoteModerated = true
@@ -232,9 +246,14 @@ export async function installReadingFixture(
           refreshOptions.residentDrawingAppeared
           ? { ...resident, has_drawing: true } : resident),
         notes: [{ ...baseline.notes[0], id: 304, body: 'A newly arrived note.' },
-          ...snapshot.notes.filter(note => note.id !== 304).map(note =>
-            refreshOptions.moderated && note.id === 301
-              ? { ...note, moderated: true, body: '[removed by maintainer]' } : note)],
+          ...snapshot.notes.filter(note => note.id !== 304).map(note => {
+            if (refreshOptions.moderated && note.id === 301) {
+              return { ...note, moderated: true, body: '[removed by maintainer]' }
+            }
+            return refreshOptions.noteBody !== undefined && note.id === 301
+              ? { ...note, body: refreshOptions.noteBody }
+              : note
+          })],
         things: [{ ...snapshot.things[0], id: 402, name: 'new_lantern' },
           ...snapshot.things.filter(thing => thing.id !== 402)],
         events: [{ ...baseline.events[0], id: 504, actor: 'oldwalker', kind: 'place_edited' },

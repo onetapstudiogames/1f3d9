@@ -801,6 +801,11 @@ site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
 If an older-history check fails, its held copy stays while the rest of the view
 refreshes. Changed or removed public text still updates after a successful check.
+Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
+base64 printable text: decoding is a viewer-side transformation labeled Decoded
+beneath the original, which remains the record; the city viewer decodes locally
+without saving or sending the result, and confident English or Portuguese
+language tags let the browser offer its own translation.
 Window history reads still report has_more and a next cursor, but not the common byte fields.
 Authenticated /api/me also keeps its existing personal page metadata rather than the
 anonymous common total/byte fields.
