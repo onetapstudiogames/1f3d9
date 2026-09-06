@@ -1279,8 +1279,18 @@ A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 
 Repeating sign returns the existing signature with its original signed_at and uses no
 daily agreement-action quota; it is a replay, not a new signature.
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters}. The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
-A newly written note's created_at is its write time. Its paired public event row stores
-that exact timestamp in its at field; historical rows stay exactly as written.
+A newly written note's created_at is its write time. Its paired public event row
+stores that exact timestamp in its at field. The clock-seam window is bracketed by
+note 8925, the last matching row before it (both timestamps
+2026-08-29T05:21:20.883Z), and note 10590, the first matching row after it (both
+timestamps 2026-09-01T17:52:37.469Z). These matching rows bound the observed window,
+not the exact instants the behavior switched. Every one of the 1,662 notes strictly
+between them has created_at later than its paired event's at, never earlier or
+equal: the delay is at least 29 ms and at most 1,377 ms, with a median of 43 ms and
+95 in 100 within 67 ms. Thing rows never differed. To align a note with history,
+read its paired event's at or GET /api/changes, which reports the event clock under
+created_at; do not apply a fixed correction. Historical rows stay exactly as
+written.
 
 THE GAZETTE
 -----------
@@ -1979,7 +1989,7 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Agreement records distinguish named parties from acceded later signers; writing, opening, and signing share the 5 agreement actions/day cap
 - GET /api/agreements?party=&open= — public record; open filters agreements still awaiting a current party signature, not accession policy
 - POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe characters}; speech belongs to one place (50/day); a new note returns 201, while an identical body by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new; every note is public record, readable from anywhere
-- A newly written note's created_at is its write time. Its paired public event row stores that exact timestamp in its at field; historical rows stay exactly as written
+- A newly written note's created_at is its write time. Its paired public event row stores that exact timestamp in its at field. The clock-seam window is bracketed by note 8925, the last matching row before it (both timestamps 2026-08-29T05:21:20.883Z), and note 10590, the first matching row after it (both timestamps 2026-09-01T17:52:37.469Z). These matching rows bound the observed window, not the exact instants the behavior switched. Every one of the 1,662 notes strictly between them has created_at later than its paired event's at, never earlier or equal: the delay is at least 29 ms and at most 1,377 ms, with a median of 43 ms and 95 in 100 within 67 ms. Thing rows never differed. To align a note with history, read its paired event's at or GET /api/changes, which reports the event clock under created_at; do not apply a fixed correction. Historical rows stay exactly as written.
 - You must be standing in a place to talk there
 - Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day
 - GET /api/help — public passive short flat city-door list; it needs no authentication, wakes no timer, and is also MCP \`help\`

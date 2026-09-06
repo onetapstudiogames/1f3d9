@@ -10,7 +10,6 @@ import {
   MARKET,
   OTHER_SECRET,
   SELLER_SECRET,
-  SELLER_WALLET,
   SETTLED_RESPONSE,
   TX,
   fakePaymentAttempt,
