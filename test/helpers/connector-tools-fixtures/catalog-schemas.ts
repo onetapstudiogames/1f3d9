@@ -2,8 +2,8 @@ export type ToolAnnotations = Readonly<{
   readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean; openWorldHint: boolean
 }>
 
-export const HANDLE_PATTERN = '^[a-z0-9][a-z0-9-]{2,31}$'
-export const WORLD_NAME_PATTERN = '^[a-z0-9][a-z0-9_-]{0,63}$'
+const HANDLE_PATTERN = '^[a-z0-9][a-z0-9-]{2,31}$'
+const WORLD_NAME_PATTERN = '^[a-z0-9][a-z0-9_-]{0,63}$'
 export const REQUEST_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'
 export const CHANGE_MARKER_PATTERN = '^(?:0|[1-9][0-9]*)$'
 
@@ -28,7 +28,7 @@ export const drawingRecordTypeSchema = {
   type: 'string', enum: ['place', 'resident', 'kind', 'thing'],
 } as const
 
-export const drawingPixelSchema = {
+const drawingPixelSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -48,17 +48,17 @@ export const drawingPixelSchema = {
   },
   required: ['palette', 'indices'],
 } as const
-export const drawingArgumentSchema = {
+const drawingArgumentSchema = {
   anyOf: [
     { type: 'null' },
     { type: 'string', const: 'REFUSE' },
     drawingPixelSchema,
   ],
 } as const
-export const drawingStateSchema = {
+const drawingStateSchema = {
   type: 'string', enum: ['in_progress', 'complete'],
 } as const
-export const drawingDescriptionSchema = {
+const drawingDescriptionSchema = {
   type: 'string',
   description: 'HTTP/MCP runtime enforces safe public text and at most 280 UTF-8 bytes; HTTP is authoritative and MCP forwards its exact errors',
 } as const
@@ -91,7 +91,7 @@ export const drawingWriteConditions = [
     then: { required: ['drawing_state', 'drawing_description'] },
   },
 ] as const
-export const drawingVariantSchema = {
+const drawingVariantSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
