@@ -51,6 +51,13 @@
 // Server error and next_step text is trimmed and printed only when non-empty,
 // at most 300 UTF-16 code units long, and free of control or line-separator characters.
 // Otherwise the error falls back to the HTTP status and next_step is omitted.
+// Success fields are checked before storage or printing: handles use 3-32
+// lowercase letters, digits, or hyphens, starting with a letter or digit;
+// resident ids are integers; resident keys are 1f3d9_sk_ plus 48 lowercase hex
+// digits; recovery sets contain eight 1f3d9_rc_ codes with 64 lowercase hex
+// digits each; pairing codes use 1f3d9_pc_ plus 64 lowercase hex digits; and
+// pairing expiry is an ISO timestamp with a timezone. A malformed field stops
+// the command without echoing its value; check the address and outcome before retrying.
 // If registration confirmation cannot be sent, no resident was created, but
 // a staged credential entry remains stored locally.
 
@@ -63,6 +70,33 @@ import { pathToFileURL } from 'node:url'
 
 const ROOT_KEY_RE = /^1f3d9_sk_[0-9a-f]{48}$/u
 const RECOVERY_CODE_RE = /^1f3d9_rc_[0-9a-f]{64}$/u
+const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
+const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u
+
+const SERVER_FIELD_CHECKS = {
+  handle: value => typeof value === 'string' && HANDLE_RE.test(value),
+  resident_id: value => Number.isInteger(value),
+  resident_key: value => typeof value === 'string' && ROOT_KEY_RE.test(value),
+  recovery_codes: value => Array.isArray(value) && value.length === 8
+    && value.every(code => typeof code === 'string' && RECOVERY_CODE_RE.test(code)),
+  pairing_code: value => typeof value === 'string' && PAIRING_CODE_RE.test(value),
+  expires_at: value => typeof value === 'string' && ISO_TIMESTAMP_RE.test(value)
+    && Number.isFinite(Date.parse(value))
+    // Date.parse rolls impossible days into the next month; check the written date too.
+    && new Date(value.slice(0, 10)).toISOString().slice(0, 10) === value.slice(0, 10),
+}
+
+function validateServerFields(response, fields) {
+  for (const field of fields) {
+    if (!SERVER_FIELD_CHECKS[field](response[field])) {
+      throw new Error(
+        `the server returned invalid ${field.replaceAll('_', ' ')}; ` +
+        'check the city address and whether the action completed before retrying',
+      )
+    }
+  }
+}
 
 function fail(message) {
   console.error(`identity-client: ${message}`)
@@ -733,6 +767,7 @@ async function register(flags) {
     client_class: clientClass,
     human_approved: true,
   })
+  validateServerFields(staged, ['handle', 'resident_key', 'recovery_codes'])
 
   const location = storeSecret(origin, handle, {
     kind: 'resident',
@@ -749,6 +784,7 @@ async function register(flags) {
     stage_token: staged.stage_token,
     resident_key: staged.resident_key,
   })
+  validateServerFields(confirmed, ['handle', 'resident_id'])
 
   revealOrHide(flags, 'Resident key', [staged.resident_key])
   revealOrHide(flags, 'Recovery codes (all eight)', staged.recovery_codes)
@@ -767,6 +803,7 @@ async function rotate(flags) {
   }
 
   const staged = await postJson(origin, '/api/rotate', { action: 'begin', resident_key: residentKey })
+  validateServerFields(staged, ['handle', 'resident_key'])
 
   // Stage the replacement under a DISTINCT vault target first -- never
   // overwrite the live entry before confirm succeeds. If confirm below
@@ -792,6 +829,7 @@ async function rotate(flags) {
     deleteSecret(origin, stagingLabel)
     throw error
   }
+  validateServerFields(confirmed, ['handle'])
 
   // Promote: merge the now-confirmed replacement key with whatever the live
   // entry already held (recovery codes, client_class), so rotation never
@@ -819,6 +857,7 @@ async function recoverGenerate(flags) {
     throw new Error('--resident-key-file (or IDENTITY_RESIDENT_KEY) must point to the current, valid resident key')
   }
   const generated = await postJson(origin, '/api/recovery', { action: 'generate', resident_key: residentKey })
+  validateServerFields(generated, ['handle', 'recovery_codes'])
 
   const location = storeSecret(origin, `${generated.handle}-recovery`, {
     kind: 'recovery_codes',
@@ -840,6 +879,7 @@ async function recoverBegin(flags) {
   }
 
   const staged = await postJson(origin, '/api/recovery', { action: 'begin', recovery_code: recoveryCode })
+  validateServerFields(staged, ['handle', 'resident_key'])
 
   // Same staging discipline as rotate() above, and for the same reason: the
   // old key still works until confirm below actually succeeds, so the live
@@ -864,6 +904,7 @@ async function recoverBegin(flags) {
     deleteSecret(origin, stagingLabel)
     throw error
   }
+  validateServerFields(confirmed, ['handle'])
 
   // Same promote-or-refuse discipline as rotate() above -- see
   // promoteReplacementKey's doc comment.
@@ -885,6 +926,7 @@ async function pair(flags) {
     throw new Error('--resident-key-file (or IDENTITY_RESIDENT_KEY) must point to the current, valid resident key')
   }
   const minted = await postAuthed(origin, '/api/pair', residentKey, {})
+  validateServerFields(minted, ['pairing_code', 'expires_at'])
   // The pairing code is meant to be read by a human, not stored -- it is
   // single-use, expires in ten minutes, and never substitutes for the key.
   // Printing it is the entire point of this command, so it is not gated

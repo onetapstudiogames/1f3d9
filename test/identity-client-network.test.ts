@@ -9,7 +9,9 @@ const script = fileURLToPath(new URL('../scripts/identity-client.mjs', import.me
 const preload = new URL('./helpers/identity-network-stub.ts', import.meta.url).href
 const key = `1f3d9_sk_${'a'.repeat(48)}`
 const code = `1f3d9_rc_${'b'.repeat(64)}`
-const stage = { handle: 'network-test', resident_key: key, stage_token: 'fake-stage', recovery_codes: ['fake-code'] }
+const pairingCode = `1f3d9_pc_${'c'.repeat(64)}`
+const recoveryCodes = Array.from({ length: 8 }, (_, index) => `1f3d9_rc_${String(index).repeat(64)}`)
+const stage = { handle: 'network-test', resident_key: key, stage_token: 'fake-stage', recovery_codes: recoveryCodes }
 const confirmed = { handle: 'network-test', resident_id: 123 }
 const paths = [
   { name: 'register stage', args: ['register', '--handle', 'network-test', '--client-class', 'coding_persistent', '--human-approved'], path: '/api/register', actions: ['stage', 'confirm'], failAt: 1, result: 'nothing was created', uncertain: 'registration could not be confirmed', input: '', responses: [stage, confirmed] },
@@ -19,10 +21,10 @@ const paths = [
   { name: 'recovery generate', args: ['recover', 'generate', '--resident-key-file', '-'], path: '/api/recovery', actions: ['generate'], failAt: 1, result: 'no recovery was performed', uncertain: 'recovery could not be confirmed', input: key, responses: [stage] },
   { name: 'recovery begin', args: ['recover', 'begin', '--recovery-code-file', '-'], path: '/api/recovery', actions: ['begin', 'confirm'], failAt: 1, result: 'no recovery was performed', uncertain: 'recovery could not be confirmed', input: code, responses: [stage, confirmed] },
   { name: 'recovery confirm', args: ['recover', 'begin', '--recovery-code-file', '-'], path: '/api/recovery', actions: ['begin', 'confirm'], failAt: 2, result: 'no recovery was performed', uncertain: 'recovery could not be confirmed', input: code, responses: [stage, confirmed] },
-  { name: 'pair', args: ['pair', '--resident-key-file', '-'], path: '/api/pair', actions: ['pair'], failAt: 1, result: 'no pairing code was created', uncertain: 'pairing code creation could not be confirmed', input: key, responses: [{ pairing_code: 'fake-pairing-code', expires_at: '2026-09-06T00:10:00Z' }] },
+  { name: 'pair', args: ['pair', '--resident-key-file', '-'], path: '/api/pair', actions: ['pair'], failAt: 1, result: 'no pairing code was created', uncertain: 'pairing code creation could not be confirmed', input: key, responses: [{ pairing_code: pairingCode, expires_at: '2026-09-06T00:10:00Z' }] },
 ]
 
-type ClientPath = Omit<typeof paths[number], 'responses'> & { responses: Record<string, unknown>[] }
+type ClientPath = Omit<typeof paths[number], 'responses'> & { responses: Record<string, unknown>[]; tty?: boolean }
 
 async function runClient(path: ClientPath, origin: string, failure: NetworkFailure, failAt = path.failAt) {
   const inheritedNames = new Set(['path', 'pathext', 'systemroot', 'windir', 'comspec', 'temp', 'tmp', 'tmpdir', 'ecc_skip_git_hooks'])
@@ -168,7 +170,94 @@ const successOutputs: Record<string, string> = {
   'rotate begin': hidden('Replacement resident key') + 'handle: network-test\n' + stored('network-test'),
   'recovery generate': hidden('New recovery codes (replace every earlier set)') + 'handle: network-test\n' + stored('network-test-recovery'),
   'recovery begin': hidden('Replacement resident key') + 'handle: network-test\n' + stored('network-test'),
-  pair: 'Pairing code (shown once, give it to the human completing hosted-chat sign-in):\nfake-pairing-code\nexpires_at: 2026-09-06T00:10:00Z\n',
+  pair: `Pairing code (shown once, give it to the human completing hosted-chat sign-in):\n${pairingCode}\nexpires_at: 2026-09-06T00:10:00Z\n`,
+}
+
+const successFields = [
+  ['register stage', 'handle'],
+  ['register stage', 'resident_key'],
+  ['register stage', 'recovery_codes'],
+  ['register confirm', 'handle'],
+  ['register confirm', 'resident_id'],
+  ['rotate begin', 'handle'],
+  ['rotate begin', 'resident_key'],
+  ['rotate confirm', 'handle'],
+  ['recovery generate', 'handle'],
+  ['recovery generate', 'recovery_codes'],
+  ['recovery begin', 'handle'],
+  ['recovery begin', 'resident_key'],
+  ['recovery confirm', 'handle'],
+  ['pair', 'pairing_code'],
+  ['pair', 'expires_at'],
+] as const
+
+for (const [site, field] of successFields) {
+  for (const [name, badValue] of [
+    ['control character', 'unsafe\u001b[2J\u001b[Hfield'],
+    ['wrong shape', 'wrong_shape'],
+    ['non-string value', { unsafe: 'field' }],
+  ] as const) {
+    test(`${site}: ${field} rejects ${name} without printing it, even with --reveal`, async () => {
+      const path = paths.find(path => path.name === site)!
+      const value = field === 'recovery_codes'
+        ? recoveryCodes.map((code, index) => index === 7 ? badValue : code) : badValue
+      const responses = path.responses.map((response, index) => index === path.failAt - 1
+        ? { ...response, [field]: value } : response)
+      const result = await runClient({ ...path, args: [...path.args, '--reveal'], responses, tty: true }, origin, 'dns', 0)
+      assert.equal(result.error, undefined)
+      assert.equal(result.status, 1)
+      assert.equal(result.stdout, '', 'invalid success fields must not print any success output or secrets')
+      assert.equal(result.stderr.trim(), `identity-client: the server returned invalid ${field.replaceAll('_', ' ')}; check the city address and whether the action completed before retrying`)
+    })
+  }
+}
+
+for (const [site, field, value, name] of [
+  ['register stage', 'handle', 'ab', 'short handle'],
+  ['register stage', 'handle', 'a'.repeat(33), 'long handle'],
+  ['register stage', 'handle', '-abc', 'leading hyphen'],
+  ['register stage', 'handle', 'Abc', 'uppercase handle'],
+  ['register stage', 'handle', 'abc\n', 'trailing newline'],
+  ['register stage', 'resident_key', `${key}\n`, 'trailing newline'],
+  ['register stage', 'recovery_codes', recoveryCodes.slice(0, 7), 'incomplete code set'],
+  ['recovery generate', 'recovery_codes', [...recoveryCodes, code], 'extra recovery code'],
+  ['recovery generate', 'recovery_codes', code, 'non-array code set'],
+  ['register confirm', 'resident_id', 1.5, 'fractional resident id'],
+  ['register confirm', 'resident_id', '123', 'string resident id'],
+  ['pair', 'pairing_code', `${pairingCode}\n`, 'trailing newline'],
+  ['pair', 'expires_at', '2026-13-06T00:10:00Z', 'invalid timestamp'],
+  ['pair', 'expires_at', '2026-02-31T00:10:00Z', 'impossible calendar day'],
+  ['pair', 'expires_at', '2026-02-29T00:10:00+00:00', 'non-leap-year February 29'],
+  ['pair', 'expires_at', '2026-09-06', 'date without time'],
+  ['pair', 'expires_at', '2026-09-06T00:10:00Z\n', 'trailing newline'],
+] as const) {
+  test(`${site}: ${field} rejects ${name}`, async () => {
+    const path = paths.find(path => path.name === site)!
+    const responses = path.responses.map((response, index) => index === path.failAt - 1
+      ? { ...response, [field]: value } : response)
+    const result = await runClient({ ...path, responses }, origin, 'dns', 0)
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(result.stderr.trim(), `identity-client: the server returned invalid ${field.replaceAll('_', ' ')}; check the city address and whether the action completed before retrying`)
+  })
+}
+
+test('register: valid resident key and all eight recovery codes are revealed unchanged at a TTY', async () => {
+  const path = paths.find(path => path.name === 'register stage')!
+  const result = await runClient({ ...path, args: [...path.args, '--reveal'], tty: true }, origin, 'dns', 0)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stderr, '')
+  assert.equal(result.stdout, `Resident key (shown once):\n${key}\nRecovery codes (all eight) (shown once):\n${recoveryCodes.join('\n')}\nhandle: network-test\nresident_id: 123\n${stored('network-test')}`)
+})
+
+for (const expiresAt of ['2026-09-06T00:10:00.123Z', '2026-09-06T00:10:00+00:00', '2028-02-29T23:10:00-05:00']) {
+  test(`pair: ISO timestamp ${expiresAt} is printed unchanged`, async () => {
+    const path = paths.find(path => path.name === 'pair')!
+    const result = await runClient({ ...path, responses: [{ pairing_code: pairingCode, expires_at: expiresAt }] }, origin, 'dns', 0)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stderr, '')
+    assert.ok(result.stdout.endsWith(`expires_at: ${expiresAt}\n`))
+  })
 }
 for (const path of paths.filter(path => path.name in successOutputs)) {
   test(`${path.name}: successful CLI output stays unchanged`, async () => {

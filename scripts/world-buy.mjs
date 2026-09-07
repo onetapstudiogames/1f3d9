@@ -36,6 +36,8 @@ const PRIVATE_KEY_RE = /^0x[0-9a-fA-F]{64}$/u
 const NONCE_RE = /^0x[0-9a-fA-F]{64}$/u
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/u
 const INTEGER_RE = /^(?:0|[1-9][0-9]*)$/u
+const SERVER_PROSE_MAX_LENGTH = 300
+const UNSAFE_SERVER_PROSE_RE = /[\x00-\x1f\x7f\u2028\u2029]/u
 const TERMINAL_WORLD_STATES = new Set([
   'sold',
   'payment_invalid',
@@ -131,10 +133,20 @@ function redact(message, secrets) {
   )
 }
 
+function sanitizeServerProse(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed
+    && trimmed.length <= SERVER_PROSE_MAX_LENGTH
+    && !UNSAFE_SERVER_PROSE_RE.test(trimmed)
+    ? trimmed
+    : ''
+}
+
 function serverMessage(body, fallback) {
   const value = record(body)
   for (const field of ['error', 'message', 'retry']) {
-    if (typeof value?.[field] === 'string' && value[field].trim()) return value[field].trim()
+    const message = sanitizeServerProse(value?.[field])
+    if (message) return message
   }
   return fallback
 }
@@ -188,7 +200,7 @@ async function requestJson({
     throw new WorldBuyError(step, `${new URL(url).origin} returned an invalid response. Retry this same command.`)
   }
   if (!response.ok && !(acceptPaymentRequired && response.status === 402)) {
-    const message = serverMessage(parsed, `${new URL(url).origin} returned HTTP ${response.status}.`)
+    const message = serverMessage(parsed, `HTTP ${response.status} with no usable message`)
     const requestId = response.status === 500 && typeof parsed.request_id === 'string' && parsed.request_id.trim()
       ? ` Request ID: ${parsed.request_id.trim()}.`
       : ''
@@ -567,7 +579,7 @@ export async function runWorldBuy(options) {
       const txHash = transactionFrom(cityResult.body)
       state = { ...state, payment_pending: true, ...(txHash ? { tx_hash: txHash } : {}) }
       await writeState(statePath, state, 4)
-      const message = serverMessage(cityResult.body, 'The city says the payment is pending.')
+      const message = serverMessage(cityResult.body, `HTTP ${cityResult.status} with no usable message`)
       stderr(`Step 4: ${redact(message, secrets)} Run this same command again to reconcile; do not pay again.\n`)
       return 2
     }

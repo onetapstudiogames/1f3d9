@@ -68,7 +68,9 @@ if (process.env.IDENTITY_NETWORK_CASE) {
     failAt: number
     failure: NetworkFailure
     responses: Record<string, unknown>[]
+    tty?: boolean
   }
+  if (scenario.tty) Object.defineProperty(process.stdout, 'isTTY', { value: true })
   const entries = new Map<string, string>()
   os.platform = () => 'win32'
   childProcess.execFileSync = ((command: string, args: string[], options: { input?: string }) => {
