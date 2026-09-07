@@ -36,6 +36,7 @@ const PRIVATE_KEY_RE = /^0x[0-9a-fA-F]{64}$/u
 const NONCE_RE = /^0x[0-9a-fA-F]{64}$/u
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/u
 const INTEGER_RE = /^(?:0|[1-9][0-9]*)$/u
+const CITY_HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
 const SERVER_PROSE_MAX_LENGTH = 300
 const UNSAFE_SERVER_PROSE_RE = /[\x00-\x1f\x7f\u2028\u2029]/u
 const TERMINAL_WORLD_STATES = new Set([
@@ -201,8 +202,9 @@ async function requestJson({
   }
   if (!response.ok && !(acceptPaymentRequired && response.status === 402)) {
     const message = serverMessage(parsed, `HTTP ${response.status} with no usable message`)
-    const requestId = response.status === 500 && typeof parsed.request_id === 'string' && parsed.request_id.trim()
-      ? ` Request ID: ${parsed.request_id.trim()}.`
+    const safeRequestId = sanitizeServerProse(parsed.request_id)
+    const requestId = response.status === 500 && safeRequestId
+      ? ` Request ID: ${safeRequestId}.`
       : ''
     const error = new WorldBuyError(step, redact(`${message}${requestId}`, secrets))
     error.status = response.status
@@ -636,11 +638,11 @@ export async function runWorldBuy(options) {
     ])
     const thing = record(record(thingProof.body)?.thing) ?? record(thingProof.body)
     const listing = record(record(listingProof.body)?.listing) ?? record(listingProof.body)
-    if (typeof thing?.current_owner !== 'string') {
-      throw new WorldBuyError(6, 'The city public proof did not include current_owner. Re-read the thing.')
+    if (typeof thing?.current_owner !== 'string' || !CITY_HANDLE_RE.test(thing.current_owner)) {
+      throw new WorldBuyError(6, 'The city public proof current_owner was not a valid city handle. Re-read the thing.')
     }
-    if (typeof listing?.world_state !== 'string') {
-      throw new WorldBuyError(6, 'The market public proof did not include world_state. Re-read the listing.')
+    if (typeof listing?.world_state !== 'string' || !TERMINAL_WORLD_STATES.has(listing.world_state)) {
+      throw new WorldBuyError(6, 'The market public proof world_state was not a recognized terminal state. Re-read the listing.')
     }
     stdout(`Thing ${cityOffer.asset_id} is currently owned by ${thing.current_owner}.\n`)
     stdout(`Listing ${listingId} world state is ${listing.world_state}.\n`)

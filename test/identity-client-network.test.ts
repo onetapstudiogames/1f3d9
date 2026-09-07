@@ -224,12 +224,15 @@ for (const [site, field, value, name] of [
   ['recovery generate', 'recovery_codes', code, 'non-array code set'],
   ['register confirm', 'resident_id', 1.5, 'fractional resident id'],
   ['register confirm', 'resident_id', '123', 'string resident id'],
+  ['register confirm', 'resident_id', 0, 'zero resident id'],
+  ['register confirm', 'resident_id', -1, 'negative resident id'],
+  ['register confirm', 'resident_id', Number.MAX_SAFE_INTEGER + 1, 'unsafe integer resident id'],
   ['pair', 'pairing_code', `${pairingCode}\n`, 'trailing newline'],
   ['pair', 'expires_at', '2026-13-06T00:10:00Z', 'invalid timestamp'],
-  ['pair', 'expires_at', '2026-02-31T00:10:00Z', 'impossible calendar day'],
-  ['pair', 'expires_at', '2026-02-29T00:10:00+00:00', 'non-leap-year February 29'],
-  ['pair', 'expires_at', '2026-09-06', 'date without time'],
-  ['pair', 'expires_at', '2026-09-06T00:10:00Z\n', 'trailing newline'],
+  ['pair', 'expires_at', `2026-09-06T00:10:00.${'1'.repeat(300)}Z`, 'over-length value'],
+  ['pair', 'expires_at', 'Sep 06\u007f 2026', 'DEL'],
+  ['pair', 'expires_at', 'Sep 06\u2028 2026', 'line separator'],
+  ['pair', 'expires_at', 'Sep 06\u2029 2026', 'paragraph separator'],
 ] as const) {
   test(`${site}: ${field} rejects ${name}`, async () => {
     const path = paths.find(path => path.name === site)!
@@ -257,6 +260,32 @@ for (const expiresAt of ['2026-09-06T00:10:00.123Z', '2026-09-06T00:10:00+00:00'
     assert.equal(result.status, 0, result.stderr)
     assert.equal(result.stderr, '')
     assert.ok(result.stdout.endsWith(`expires_at: ${expiresAt}\n`))
+  })
+}
+
+for (const [name, expiresAt] of [
+  ['date without time', '2026-09-06'],
+  ['timestamp without timezone', '2026-09-06T00:10:00'],
+  ['HTTP date', 'Sun, 06 Sep 2026 00:10:00 GMT'],
+  ['calendar date normalized by Date.parse', '2026-02-31T00:10:00Z'],
+  ['surrounding whitespace', ' \n2026-09-06T00:10:00Z\u2028 '],
+] as const) {
+  test(`pair: parseable expires_at accepts ${name} and prints the safe trimmed value`, async () => {
+    const path = paths.find(path => path.name === 'pair')!
+    const result = await runClient({ ...path, responses: [{ pairing_code: pairingCode, expires_at: expiresAt }] }, origin, 'dns', 0)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stderr, '')
+    assert.equal(result.stdout, `Pairing code (shown once, give it to the human completing hosted-chat sign-in):\n${pairingCode}\nexpires_at: ${expiresAt.trim()}\n`)
+  })
+}
+
+for (const residentId of [1, Number.MAX_SAFE_INTEGER]) {
+  test(`register confirm: resident_id accepts positive safe integer ${residentId}`, async () => {
+    const path = paths.find(path => path.name === 'register confirm')!
+    const result = await runClient({ ...path, responses: [stage, { ...confirmed, resident_id: residentId }] }, origin, 'dns', 0)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stderr, '')
+    assert.ok(result.stdout.includes(`resident_id: ${residentId}\n`))
   })
 }
 for (const path of paths.filter(path => path.name in successOutputs)) {

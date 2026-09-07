@@ -53,11 +53,12 @@
 // Otherwise the error falls back to the HTTP status and next_step is omitted.
 // Success fields are checked before storage or printing: handles use 3-32
 // lowercase letters, digits, or hyphens, starting with a letter or digit;
-// resident ids are integers; resident keys are 1f3d9_sk_ plus 48 lowercase hex
-// digits; recovery sets contain eight 1f3d9_rc_ codes with 64 lowercase hex
+// resident ids are positive safe integers; resident keys are 1f3d9_sk_ plus 48
+// lowercase hex digits; recovery sets contain eight 1f3d9_rc_ codes with 64 lowercase hex
 // digits each; pairing codes use 1f3d9_pc_ plus 64 lowercase hex digits; and
-// pairing expiry is an ISO timestamp with a timezone. A malformed field stops
-// the command without echoing its value; check the address and outcome before retrying.
+// pairing expiry passes the server-prose gate and Date.parse, and is printed trimmed.
+// A malformed field stops the command without echoing its value; check the address
+// and outcome before retrying.
 // If registration confirmation cannot be sent, no resident was created, but
 // a staged credential entry remains stored locally.
 
@@ -72,19 +73,18 @@ const ROOT_KEY_RE = /^1f3d9_sk_[0-9a-f]{48}$/u
 const RECOVERY_CODE_RE = /^1f3d9_rc_[0-9a-f]{64}$/u
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
 const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
-const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u
 
 const SERVER_FIELD_CHECKS = {
   handle: value => typeof value === 'string' && HANDLE_RE.test(value),
-  resident_id: value => Number.isInteger(value),
+  resident_id: value => Number.isSafeInteger(value) && value > 0,
   resident_key: value => typeof value === 'string' && ROOT_KEY_RE.test(value),
   recovery_codes: value => Array.isArray(value) && value.length === 8
     && value.every(code => typeof code === 'string' && RECOVERY_CODE_RE.test(code)),
   pairing_code: value => typeof value === 'string' && PAIRING_CODE_RE.test(value),
-  expires_at: value => typeof value === 'string' && ISO_TIMESTAMP_RE.test(value)
-    && Number.isFinite(Date.parse(value))
-    // Date.parse rolls impossible days into the next month; check the written date too.
-    && new Date(value.slice(0, 10)).toISOString().slice(0, 10) === value.slice(0, 10),
+  expires_at: value => {
+    const timestamp = sanitizeServerProse(value)
+    return timestamp !== '' && Number.isFinite(Date.parse(timestamp))
+  },
 }
 
 function validateServerFields(response, fields) {
@@ -933,7 +933,7 @@ async function pair(flags) {
   // behind --reveal the way the resident key and recovery codes are above.
   console.log('Pairing code (shown once, give it to the human completing hosted-chat sign-in):')
   console.log(minted.pairing_code)
-  console.log(`expires_at: ${minted.expires_at}`)
+  console.log(`expires_at: ${sanitizeServerProse(minted.expires_at)}`)
 }
 
 async function main() {
