@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { mountPayPalCreditRoutes } from '../src/paypal-credit-routes.ts'
-import type { PayPalCreditStoreDatabase } from '../src/paypal-credit-store.ts'
+import { mountPayPalCreditRoutes } from '../../../src/paypal-credit-routes.ts'
+import type { PayPalCreditStoreDatabase } from '../../../src/paypal-credit-store.ts'
 
 export const READY_ENV = Object.freeze({
   PAYPAL_CLIENT_ID: 'sandbox-client-id',

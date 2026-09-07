@@ -15,7 +15,7 @@ import {
   paypalFetcher,
   postJson,
   postRaw,
-} from './paypal-credit-route-fixture.ts'
+} from './helpers/paypal-credit-route-fixtures/route-harness.ts'
 
 test('every dormant PayPal route returns a caller-specific config-first 503 without auth, body, DB, or network work', async () => {
   let databaseCalls = 0
