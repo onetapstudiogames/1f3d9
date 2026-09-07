@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 import { Hono, type Context } from 'hono'
 import type { Resident } from '../../../src/core.ts'
 import { founderWorldDrawing, rowsFor } from '../../helpers/drawings-fixtures/drawing-samples.ts'
 
 export async function registerDrawingRoutesTests(
-  t: TestContext,
   client: Client,
   database: { query: (text: string, params?: readonly unknown[]) => Promise<Record<string, unknown>[]> },
   freshWorld: { id: number; drawing: unknown },

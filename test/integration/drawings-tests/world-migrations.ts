@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 
 export async function registerWorldMigrationTests(
-  t: TestContext,
   client: Client,
   freshWorld: { id: number; drawing: unknown },
   migrationDdl: string,

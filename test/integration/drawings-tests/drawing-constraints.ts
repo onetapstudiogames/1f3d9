@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 import { founderWorldDrawing } from '../../helpers/drawings-fixtures/drawing-samples.ts'
 
 export async function registerDrawingConstraintsTests(
-  t: TestContext,
   client: Client,
   replacement: { palette: string[]; indices: (number | null)[] },
   inheritedThingId: number,

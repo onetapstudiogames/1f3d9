@@ -176,7 +176,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   routeClient = client
 
   await registerSchemaContractTests(
-    t, client, drawingFunctionDdl,
+    client, drawingFunctionDdl,
   )
 
   await client.query(schemaDdl)
@@ -186,7 +186,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   assert.deepEqual(freshWorld.drawing, founderWorldDrawing)
 
   await registerWorldMigrationTests(
-    t, client, freshWorld, migrationDdl, installLegacyNullWorldDrawing,
+    client, freshWorld, migrationDdl, installLegacyNullWorldDrawing,
     worldRootDrawingMigrationDdl, worldRootTopologyMigrationDdl,
     drawingContractMigrationDdl, schemaDdl, drawing,
   )
@@ -273,7 +273,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
 
   const replacement = drawing('#0b1714')
   await registerDrawingConstraintsTests(
-    t, client, replacement, inheritedThingId, thingDrawing, kindId, placeDrawing,
+    client, replacement, inheritedThingId, thingDrawing, kindId, placeDrawing,
   )
 
   await client.query(`
@@ -289,7 +289,7 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
   ).rows[0]!.payload
 
   await registerSnapshotInheritanceTests(
-    t, client, snapshot, replacement, freshWorld, placeId, placeDrawing,
+    client, snapshot, replacement, freshWorld, placeId, placeDrawing,
     kindId, kindDrawing, ownThingId, thingDrawing, inheritedThingId,
     variantThingId, kindVariants,
   )
@@ -299,18 +299,18 @@ test('real PostgreSQL enforces, preserves, moderates, exports, and settles drawi
       (await client!.query(text, [...params])).rows,
   }
   await registerDrawingRoutesTests(
-    t, client, database, freshWorld, inheritedThingId, drawing,
+    client, database, freshWorld, inheritedThingId, drawing,
   )
 
   await registerPaidRevisionTests(
-    t, client, database, placeId, drawing,
+    client, database, placeId, drawing,
   )
 
   await registerLateFinalityTests(
-    t, client, database, drawing,
+    client, database, drawing,
   )
 
   await registerLegacyPaymentTests(
-    t, client, database, placeId,
+    client, database, placeId,
   )
 })

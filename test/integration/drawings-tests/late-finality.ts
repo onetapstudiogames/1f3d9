@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 import { setTimeout as delay } from 'node:timers/promises'
 import { NETWORK, USDC } from '../../../src/chain.ts'
@@ -8,7 +7,6 @@ import { completeTreasuryPaymentOperation } from '../../../src/payment-treasury-
 import { TREASURY } from '../../../src/pay.ts'
 
 export async function registerLateFinalityTests(
-  t: TestContext,
   client: Client,
   database: { query: (text: string, params?: readonly unknown[]) => Promise<Record<string, unknown>[]> },
   drawing: (colour: string) => { palette: string[]; indices: (number | null)[] },

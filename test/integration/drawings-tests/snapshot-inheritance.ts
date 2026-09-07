@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 import { Hono } from 'hono'
 import { founderWorldDrawing, rowsFor } from '../../helpers/drawings-fixtures/drawing-samples.ts'
 
 export async function registerSnapshotInheritanceTests(
-  t: TestContext,
   client: Client,
   snapshot: (className: string, recordId: number) => Promise<Record<string, unknown>>,
   replacement: { palette: string[]; indices: (number | null)[] },

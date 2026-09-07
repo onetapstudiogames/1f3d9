@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
-import type { TestContext } from 'node:test'
 import type { Client } from 'pg'
 import { beginCityCreditSpend, issueCityFeeCredit } from '../../../src/city-credit.ts'
 import { completeTreasuryPaymentOperation } from '../../../src/payment-treasury-operations.ts'
 
 export async function registerPaidRevisionTests(
-  t: TestContext,
   client: Client,
   database: { query: (text: string, params?: readonly unknown[]) => Promise<Record<string, unknown>[]> },
   placeId: number,
