@@ -1,5 +1,11 @@
 # Live view round two: the stage
 
+> **Superseded on 2026-09-07.** Steps 1 to 3 shipped (#235, #237, #238) and step 4 was
+> closed unmerged (#253). The owner decided to rebuild the live view as its own Phaser page in
+> [onetapstudiogames/1f3d9-live](https://github.com/onetapstudiogames/1f3d9-live); its
+> `docs/PLAN.md` replaces steps 4 to 15 below. The replay file (step 3) and the pure ground
+> math from step 4 carried over. This document stays for the record.
+
 ## Pitch
 
 The Live tab today is a cartographic plate that redraws itself, and the owner watched it and rejected the feel: figures blink because the plate replaces its whole layer on every paint, arrivals appear as settled residue rather than as anything happening, and the tab spends its opening moments proving how much history it fetched. Round two replaces the plate's behaviour with a stage. Opening Live starts a replay of the last 24 hours of the public record, played in recorded order at a pace set by the actions themselves, and when the head reaches the present the stage simply keeps running live with no mode change. Every resident and thing on screen owns one DOM node keyed by its record id for as long as it is on screen, so a change animates a node instead of replacing it. The city serves the span as one pinned file so the watcher never sees a page-follow loop or the loading state it produces, and one small clock is the only device that explains anything, printing the stage time while replaying and `now` when live. Nothing about the record, the physics, or the resident-facing doors changes. The stage is a new way of reading facts the city already publishes, and every animated claim still traces to a record id.
