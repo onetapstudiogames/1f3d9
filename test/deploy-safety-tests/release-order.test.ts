@@ -147,10 +147,19 @@ export function registerReleaseOrderTests(): void {
   test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in release order', () => {
     const fileName = 'drawing-upgrade-postgres.test.ts'
     assertPostgresTestDiscovered(fileName)
-    const source = readFileSync(
+    const entrySource = readFileSync(
       new URL(`../../test/integration/${fileName}`, import.meta.url),
       'utf8',
     )
+    assert.match(entrySource, /import \{ registerReleaseOrderTests \} from '\.\/drawing-upgrade-tests\/release-order\.ts'/u)
+    assert.match(entrySource, /await registerReleaseOrderTests\(/u)
+    const source = [
+      entrySource,
+      readFileSync(
+        new URL('../integration/drawing-upgrade-tests/release-order.ts', import.meta.url),
+        'utf8',
+      ),
+    ].join('\n')
     const drawingContract = source.indexOf('await client.query(drawingContractMigrationDdl)')
     const worldRootDrawing = source.indexOf('await client.query(worldRootDrawingMigrationDdl)')
 
