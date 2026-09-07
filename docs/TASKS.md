@@ -5,6 +5,15 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] The live view is being rebuilt as its own Phaser page in
+  [onetapstudiogames/1f3d9-live](https://github.com/onetapstudiogames/1f3d9-live) (owner
+  decision, 2026-09-07; plan in that repo's `docs/PLAN.md`). The current Live tab stays as it
+  is until that page is good. Then: point the Live tab at the new page, delete the old stage
+  code (`src/window-client/program/2*-live-*.ts`, `42-stage-nodes.ts`, `live-*.ts`) with
+  `e2e/public-window-live.spec.ts` and `test/window-live-client.test.ts`, and retire the
+  Live sentences the door and docs carry for it. Small public facts the page needs
+  (`asleep since`, `joined_at` on the replay's start block, a law summary per place) come
+  through ordinary PRs with door words.
 - [ ] After explicit release approval, apply the public-snapshot migration, provision
   the restricted export login, complete the manual dry run, and publish the first dated
   snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
