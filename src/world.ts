@@ -32,6 +32,7 @@ import { makeThingThroughEngine } from './thing-making.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import {
   isWorldRootRow,
+  WORLD_ARRIVAL_LINE,
   WORLD_TRANSIT_ONLY_ERROR,
 } from './world-root.ts'
 import {
@@ -559,6 +560,7 @@ export function mountWorldRoutes(app: Hono): void {
     return publicJson(c, {
       ...(requestedView == null ? {} : { view }),
       place: { ...publicPlace, labels, laws: publicDetails.laws },
+      ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
       front_matter: (publicPlace as unknown as Record<string, unknown>).moderated === true
         ? Object.freeze([])
         : frontMatterByPlace.get(id) ?? Object.freeze([]),

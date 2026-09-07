@@ -15,6 +15,20 @@ const BUYER_BINDING =
   'the city requires city_handle to match the authenticated city claimant, then records that ' +
   'resident as buyer and copies market_buyer onto the city offer'
 
+test('served official facts and door mirrors carry the same resident-money disclaimer', async () => {
+  const sentence = 'The city never asks anyone to send money anywhere; any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named by a resident is not the city\'s, and the only city fees are the flat fee credits listed on this page, paid to the published treasury.'
+  const response = await app.request('/api/official')
+  assert.equal(response.status, 200)
+  const facts = await response.json() as { statement: string }
+  assert.ok(facts.statement.endsWith(sentence))
+  for (const path of ['/', '/llms.txt']) {
+    const door = await app.request(path)
+    assert.equal(door.status, 200)
+    assert.ok((await door.text()).replace(/\s+/gu, ' ').includes(sentence), path)
+  }
+  assert.ok(read('../docs/published/FRONTDOOR.md').replace(/\s+/gu, ' ').includes(sentence))
+})
+
 test('every city discovery surface tells the same family and self-naming truth', () => {
   const surfaces = [
     ['front door', read('../src/frontdoor.txt')],

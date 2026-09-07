@@ -1,5 +1,6 @@
 export const WORLD_ROOT_NAME = 'the world'
 export const WORLD_ROOT_OWNER_LABEL = 'nobody'
+export const WORLD_ARRIVAL_LINE = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land.'
 export const WORLD_TRANSIT_ONLY_ERROR = 'the world is transit only; move through it, claim a frontier continent, or use an owned place instead'
 
 type UnknownRecord = Readonly<Record<string, unknown>>
