@@ -53,6 +53,8 @@ import {
   redactResidentCredentialText,
 } from './credential-safety.ts'
 import { describeUnsupportedFields } from './world-support.ts'
+import { loadPublicPlaceRecord } from './public-records.ts'
+import { isWorldRootRow, WORLD_ARRIVAL_LINE } from './world-root.ts'
 import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
 import {
@@ -964,6 +966,7 @@ app.get('/api/me', async c => {
     offerRows,
     cityFeeCredit,
     pendingCreditGifts,
+    currentPlace,
   ] = await Promise.all([
     executePublicQuery(`
       /* public:me_places */
@@ -1035,6 +1038,7 @@ app.get('/api/me', async c => {
       beforeId: giftRequest.beforeId,
       limit: giftRequest.limit,
     }),
+    presence.currentPlaceId === null ? null : loadPublicPlaceRecord(presence.currentPlaceId),
   ])
   const places = finalizePublicPage(
     placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
@@ -1065,6 +1069,7 @@ app.get('/api/me', async c => {
   const attention = cityCreditAttentionLines(creditAttention)
   return c.json({
     help: '/api/help',
+    ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,
     since_last_visit: {
       city_updates: {

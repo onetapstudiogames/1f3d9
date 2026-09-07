@@ -12,6 +12,23 @@ import { respondToDatabaseStage8 } from './db-respond-8.ts'
 export function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (fixtureState.current.scenario === 'root arrival' && Number(params[0]) === 195) {
+    if (q.includes('from places p') && q.includes('where p.id =')) {
+      return [{
+        id: 195, parent_id: null, name: 'the world', owner_id: null, owner: null,
+        description: '', purpose: '', status: 'active', retired_at: null,
+        open_to_building: false, open_to_things: false, open_to_notes: false,
+        created_at: '2026-08-14T00:00:00.000Z',
+      }]
+    }
+    if (q.includes('/* public:place-collections */')) {
+      return [{
+        subplaces: [], things: [], notes: [],
+        subplace_items: 0, subplace_text_bytes: 0,
+        thing_items: 0, thing_text_bytes: 0, note_items: 0, note_text_bytes: 0,
+      }]
+    }
+  }
   if (fixtureState.current.scenario === 'protected place lifecycle') {
     if (q.includes("to_regclass('public.place_name_history')")) return [{ installed: true }]
     if (q.includes('as protected_city_service') && q.includes('as name_taken')) {

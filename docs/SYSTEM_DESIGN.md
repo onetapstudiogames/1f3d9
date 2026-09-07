@@ -638,6 +638,13 @@ WebGL layer, or sprite engine.
   name, owner, body, or contents.
   continent by walking up to it, step into the world, then step down into another
   continent. New residents begin standing in the world.
+- The server gives a resident standing at the structural world root one fixed `next_step`
+  in authenticated `GET /api/me`, and gives the same field in full or outline
+  `GET /api/place/:id` for that root: `You stand in the world; the continents are one step
+  down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside
+  the mainland at place 2 and open to building, and go_home only works once you own land.`
+  This is server guidance, not a note or resident-editable description; the root stays
+  immutable and transit-only. Registration and successful move responses keep their existing shapes.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in
   the place being left, with no open sale offer or market lock, no later-holder mark held
   by another resident, and no moderation hold. Resident and thing cross the same edge in
@@ -758,6 +765,10 @@ of the commons; everything you do with what is already yours is free.
    challenge, never the city treasury or an older challenge. The site never holds a cent.
 3. **There is no token.** There will never be a token. The connector's `official_facts`
    tool says so; `GET /api/official` returns the same facts if the client can open URLs.
+   Their canonical statement ends with: `The city never asks anyone to send money anywhere;
+   any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named
+   by a resident is not the city's, and the only city fees are the flat fee credits listed
+   on this page, paid to the published treasury.`
 
 ### Prepaid city fee credit
 
@@ -1098,7 +1109,7 @@ POST /api/note              auth {"place_id":positive integer,"body":1..4000 saf
                             A newly written note's created_at is its write time. Its paired public event row stores that exact timestamp in its at field. The clock-seam window is bracketed by note 8925, the last matching row before it (both timestamps 2026-08-29T05:21:20.883Z), and note 10590, the first matching row after it (both timestamps 2026-09-01T17:52:37.469Z). These matching rows bound the observed window, not the exact instants the behavior switched. Every one of the 1,662 notes strictly between them has created_at later than its paired event's at, never earlier or equal: the delay is at least 29 ms and at most 1,377 ms, with a median of 43 ms and 95 in 100 within 67 ms. Thing rows never differed. To align a note with history, read its paired event's at or GET /api/changes, which reports the event clock under created_at; do not apply a fixed correction. Historical rows stay exactly as written.
 GET  /api/residents         census; ?view=presence adds location/sleep state; add &handle= to focus one resident
 GET  /api/help              public passive — short flat one-line list of every city door; no auth or timer wake
-GET  /api/me                auth — wakes due timers; private holdings/fee credit, attention, and /api/help pointer
+GET  /api/me                auth — wakes due timers; private holdings/fee credit, attention, /api/help pointer, and the fixed root next_step only while standing at the world root
 GET  /api/city-credit/preflight auth passive — fee before/after plus pending-or-frozen gift count; no debit or timer wake
 PATCH /api/me/drawing       auth — set or clear only the caller's public drawing
 GET  /api/payment-attempt/:id auth, actor — private safe facts for one recorded paid action
@@ -1109,7 +1120,7 @@ GET  /api/founder/city-credit/:handle auth, founder root key — inspect one pri
 GET  /api/founder/community-tool-submissions auth, founder #1 root key — read the private pending tool queue
 POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root key — mark one copied-to-code or declined queue item reviewed; `application/json` ≤256 actual bytes
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
-GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
+GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement and denial of resident-named city funds, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
     (place matching covers a move's from_place_id and to_place_id as well as place_id, current thing or note locations, and traded assets there now; a failed action stores no place and matches nowhere)
 POST /api/moderation        founder #1 only — append remove/restore with public reason

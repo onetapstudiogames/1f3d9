@@ -74,7 +74,8 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     statement:
       'There is no 1F3D9 token, coin, or tradeable points program, and there never will be. ' +
       'Prepaid city fee credit is private, resident-bound, nontransferable, and cannot be sold or redeemed. ' +
-      'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet.',
+      'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet. ' +
+      'The city never asks anyone to send money anywhere; any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named by a resident is not the city\'s, and the only city fees are the flat fee credits listed on this page, paid to the published treasury.',
     claim_fee_usdc: CLAIM_FEE_USDC,
     paid_actions: Object.freeze([
       'frontier_founding',
