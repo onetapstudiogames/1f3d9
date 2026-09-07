@@ -268,7 +268,7 @@ test('typed error.message adapters and named boundary proofs are explicit', () =
   }, {
     status: '409',
     adapter: 'founder city-credit conflict adapter',
-    proof: 'assertion:test/city-credit.test.ts',
+    proof: 'assertion:test/city-credit-tests/founder-issuance.test.ts',
   })
   const logDrain = rows.find(row => row.finalText.startsWith('log drain signature was rejected'))
   assert.equal(logDrain?.testProof, 'assertion:test/log-drain-http.test.ts')
