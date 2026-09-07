@@ -241,8 +241,9 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let liveItemPopoverRect = null
   let liveItemPopoverSuppressOpen = false
   let liveItemPopoverDismissedKey = null
-  let liveItemPopoverDismissedAnchor = null
-  let liveItemPopoverDismissedPointerLeft = false
+  let liveItemPopoverPointer = null
+  let liveItemPopoverDismissedPointer = null
+  let liveItemPopoverDismissedPointerMoved = false
   let liveItemPopoverPressWasInside = false
   let liveResidentVisibleIdsByPlaceId = Object.freeze({})
   let liveThingVisibleIdsByPlaceId = Object.freeze({})

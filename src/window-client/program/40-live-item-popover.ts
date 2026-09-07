@@ -139,8 +139,8 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     const item = resolve()
     if (!item) return
     liveItemPopoverDismissedKey = null
-    liveItemPopoverDismissedAnchor = null
-    liveItemPopoverDismissedPointerLeft = false
+    liveItemPopoverDismissedPointer = null
+    liveItemPopoverDismissedPointerMoved = false
     const result = liveItemPopoverFacts(kind, item, state.snapshot)
     const id = item.id
     const name = liveItemPopoverAnchorName(kind, item)
@@ -173,8 +173,8 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     liveItemPopoverRect = null
     if (suppressRestoredOpen) {
       liveItemPopoverDismissedKey = key
-      liveItemPopoverDismissedAnchor = anchor
-      liveItemPopoverDismissedPointerLeft = !anchor?.matches(':hover')
+      liveItemPopoverDismissedPointer = liveItemPopoverPointer
+      liveItemPopoverDismissedPointerMoved = false
     }
     if (restoreFocus && anchor && anchor.isConnected) {
       // .focus() dispatches focusin synchronously, and bindLiveItemPopover's
@@ -263,10 +263,10 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
     const open = event => {
       if (liveItemPopoverSuppressOpen) return
       if (liveItemPopoverDismissedKey === key) {
-        if (event.type !== 'pointerover' || !liveItemPopoverDismissedPointerLeft) return
+        if (event.type !== 'pointerover' || !liveItemPopoverDismissedPointerMoved) return
         liveItemPopoverDismissedKey = null
-        liveItemPopoverDismissedAnchor = null
-        liveItemPopoverDismissedPointerLeft = false
+        liveItemPopoverDismissedPointer = null
+        liveItemPopoverDismissedPointerMoved = false
       }
       showLiveItemPopover(control, key, kind, resolve)
     }
@@ -308,16 +308,16 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
           const activeKey = document.activeElement?.dataset?.focusKey || null
           if (activeKey !== control.dataset.focusKey && liveItemPopoverDismissedKey === key) {
             liveItemPopoverDismissedKey = null
-            liveItemPopoverDismissedAnchor = null
-            liveItemPopoverDismissedPointerLeft = false
+            liveItemPopoverDismissedPointer = null
+            liveItemPopoverDismissedPointerMoved = false
           }
         })
         return
       }
       if (movesOutsidePair(event) && liveItemPopoverDismissedKey === key) {
         liveItemPopoverDismissedKey = null
-        liveItemPopoverDismissedAnchor = null
-        liveItemPopoverDismissedPointerLeft = false
+        liveItemPopoverDismissedPointer = null
+        liveItemPopoverDismissedPointerMoved = false
       }
       closesFrom(event)
     }
@@ -416,11 +416,16 @@ export const PART_40_LIVE_ITEM_POPOVER = `  function liveItemPopoverIsOpen() {
       if (inside) return
       hideLiveItemPopover(false)
     }, true)
-    document.addEventListener('pointermove', () => {
-      if (liveItemPopoverDismissedKey && liveItemPopoverDismissedAnchor &&
-          !liveItemPopoverDismissedAnchor.matches(':hover')) {
-        liveItemPopoverDismissedPointerLeft = true
+    document.addEventListener('pointermove', event => {
+      // Repainting a room can break :hover without the pointer moving.
+      // Only changed client coordinates release Escape's pointer gate.
+      const point = Object.freeze({ x: event.clientX, y: event.clientY })
+      if (liveItemPopoverDismissedKey &&
+          (point.x !== liveItemPopoverDismissedPointer?.x ||
+           point.y !== liveItemPopoverDismissedPointer?.y)) {
+        liveItemPopoverDismissedPointerMoved = true
       }
+      liveItemPopoverPointer = point
     }, true)
     document.addEventListener('visibilitychange', () => {
       if (document.hidden && liveItemPopoverIsOpen()) hideLiveItemPopover(false)

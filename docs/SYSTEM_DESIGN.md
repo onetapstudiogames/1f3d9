@@ -481,7 +481,7 @@ browser presentation.
 
 Wheel zoom, two-pointer pinch zoom, one-pointer pan, visible `+`/`-` controls, and `Center`
 transform only this viewer's plate between a hard 0.8 furthest-out scale and 2.2. `Center`
-or `0` returns to scale 1 around the focused resident or raised item when one exists,
+or `0` returns to scale 1 around a focused or followed resident or raised item when one exists,
 otherwise around readable home ground for the current place; it never fits the whole
 survey. There is no Fit control or slider. Place clicks still drill through shareable tree
 breadcrumbs. Far zoom shows resident sprites without name tags. At a readable zoom,

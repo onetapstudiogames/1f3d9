@@ -454,12 +454,11 @@ function replayThingRows(now: number, placeId: number, carriedPlaceId?: number) 
 }
 
 function replaySnapshot(
-  now: number, published: boolean, marker: string, carryMove = false, quietPlaceId?: number,
+  now: number, published: boolean, marker: string,
+  things: ReturnType<typeof replayThingRows>, quietPlaceId?: number,
 ) {
   const residentPlaceId = published ? 4 : 2
-  const thingPlaceId = published ? 3 : 2
   const residents = replayResidentRows(now, residentPlaceId)
-  const things = replayThingRows(now, thingPlaceId, published && carryMove ? 4 : undefined)
   return {
     view: 'outline', change_marker: marker,
     places: [{
@@ -494,7 +493,7 @@ function replaySnapshot(
     things: things.slice(0, 2),
     agreements: [], events: [],
     totals: { places: quietPlaceId === 5 ? 5 : 4, residents: residents.length, conversations: 0,
-      things: 8, agreements: 0, events: published ? 6 : 0 },
+      things: things.length, agreements: 0, events: published ? 6 : 0 },
     pages: {
       places: { has_more: false },
       residents: { has_more: true, next_before_id: residents[2]!.id },
@@ -689,7 +688,7 @@ async function installReplayRoutes(
   const controlledThingRows = (marker: string) => [
     ...replayThingRows(
       now,
-      marker === '10' ? 2 : 3,
+      marker === '10' || controls.movementOnly ? 2 : 3,
       published && controls.carryMove ? 4 : undefined,
     ),
     ...(controls.quietPlaceId === 5 ? [{
@@ -981,7 +980,7 @@ async function installReplayRoutes(
       now,
       controls.carryMove ? published : marker !== '10',
       marker,
-      controls.carryMove,
+      controlledThingRows(marker),
       controls.quietPlaceId,
     )
     const drawingRows = drawingPlaces.map(extra => ({
@@ -2206,7 +2205,9 @@ test('Center returns to one touch-raised child occupant without breaking the det
   await expect(page.locator('#live-stage')).toHaveAttribute('data-live-scale', '1')
   await expect.poll(() => resident.evaluate(node => {
     const residentBox = node.getBoundingClientRect()
-    const viewportBox = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')
+    if (!viewport) return null
+    const viewportBox = viewport.getBoundingClientRect()
     return residentBox.left >= viewportBox.left && residentBox.right <= viewportBox.right &&
       residentBox.top >= viewportBox.top && residentBox.bottom <= viewportBox.bottom
   })).toBe(true)
@@ -2551,10 +2552,12 @@ test('Live ignores a stale raised parent when framing its drilled child plate', 
   await page.getByRole('button', { name: 'Center live view' }).click()
   await expect.poll(() => parentOpen.evaluate(open => {
     const box = open.getBoundingClientRect()
-    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')
+    if (!viewport) return null
+    const viewportBox = viewport.getBoundingClientRect()
     return box.width > 0 && box.height > 0 &&
-      box.left >= viewport.left && box.right <= viewport.right &&
-      box.top >= viewport.top && box.bottom <= viewport.bottom
+      box.left >= viewportBox.left && box.right <= viewportBox.right &&
+      box.top >= viewportBox.top && box.bottom <= viewportBox.bottom
   })).toBe(true)
 
   await parentOpen.dispatchEvent('pointerdown', { pointerType: 'touch' })
@@ -2604,10 +2607,12 @@ test('Live ignores an outside focus when framing First Town', async ({ page }) =
   await page.getByRole('button', { name: 'Center live view' }).click()
   await expect.poll(() => resident.evaluate(node => {
     const box = node.getBoundingClientRect()
-    const viewport = document.querySelector('#live-viewport')!.getBoundingClientRect()
+    const viewport = document.querySelector('#live-viewport')
+    if (!viewport) return null
+    const viewportBox = viewport.getBoundingClientRect()
     return box.width > 0 && box.height > 0 &&
-      box.left >= viewport.left && box.right <= viewport.right &&
-      box.top >= viewport.top && box.bottom <= viewport.bottom
+      box.left >= viewportBox.left && box.right <= viewportBox.right &&
+      box.top >= viewportBox.top && box.bottom <= viewportBox.bottom
   })).toBe(true)
 
   const parentOpen = page.locator('.live-plot[data-place-id="2"] .live-plot-open')
@@ -3935,14 +3940,16 @@ test('proof: crowded room standing spots keep half a sprite of clearance at 375p
   await page.clock.install({ time: new Date(now) })
   await installReplayRoutes(page, now)
   for (const width of [375, 1280]) {
+    await page.clock.resume()
     await page.setViewportSize({ width, height: width === 375 ? 812 : 800 })
     await page.goto('/window#view=live')
     await page.getByRole('button', { name: 'Run preview proof scene' }).click()
+    const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
+    await expect(proofPanel, `width ${width}; proof panel expected visible`).toBeVisible()
+    await expect(proofPanel.locator('.live-replay-portrait')).toHaveCount(64)
     const proofPaintedAt = await page.evaluate(() => Date.now())
     await page.clock.pauseAt(proofPaintedAt + 100)
     await page.clock.runFor(64)
-    const proofPanel = page.locator('#live-panel[data-live-proof="true"]')
-    await expect(proofPanel, `width ${width}; proof panel expected visible`).toBeVisible()
     const retry = page.getByRole('button', { name: 'Retry proof room' })
     await expect(retry, `width ${width}; retry expected before settling proof room`).toBeVisible()
     await retry.click()
@@ -4988,10 +4995,16 @@ test('a later crowded arrival takes a free standing spot without moving neighbou
     secondArrival: true,
     movementOnly: true,
     staggeredArrivalDeadlines: true,
+    residentCrowdSize: 8,
   })
   await page.goto('/window#view=live')
   await expect(page.locator('#live-history-status')).toContainText('history is complete')
-  await expect(page.locator('#live-plates .live-walker')).toHaveCount(8)
+  // Keep all receiving-room neighbours drawn before either arrival. A
+  // collapsed crowd deliberately omits residents when it crosses its limit.
+  const showMore = page.locator('.live-plot[data-place-id="3"] .live-resident-more')
+  await panLiveTargetIntoView(page, showMore)
+  await showMore.click()
+  await expect(page.locator('#live-plates .live-walker')).toHaveCount(9)
 
   const readSpots = async (phase: string) => {
     let sampled: Record<string, { room: string; x: number; y: number; width: number; height: number }> | null = null
@@ -5029,11 +5042,24 @@ test('a later crowded arrival takes a free standing spot without moving neighbou
   await expect(replays).toHaveAttribute('data-live-replay-key', 'change:11')
   await page.clock.runFor(4_100)
   await page.clock.runFor(8_251)
+  await expect.poll(async () => {
+    await page.clock.runFor(250)
+    return replays.count()
+  }, { message: 'changes 11 and 17 must both finish before comparing standing occupants' }).toBe(0)
   const settled = await readSpots(`after arrival; before spots ${JSON.stringify(before)}`)
+  const recordedArrivals = new Set(['resident:5', `resident:${replayCrowd[0]!.id}`])
   for (const [key, spot] of Object.entries(before)) {
-    if (!(key in settled) || settled[key]!.room !== spot.room) continue
+    if (recordedArrivals.has(key)) continue
     expect(settled[key], `${key} before ${JSON.stringify(spot)} after ${JSON.stringify(settled[key])}`)
       .toEqual(spot)
+  }
+  for (const key of recordedArrivals) {
+    expect(settled[key], `${key}; changes 11 and 17 arrive at place 4 on parent room 3's ground; before ${JSON.stringify(before[key])}; after ${JSON.stringify(settled[key])}`)
+      .toMatchObject({ room: '3' })
+  }
+  for (const handle of ['map-walker', replayCrowd[0]!.handle]) {
+    await expect(page.locator('#live-roster .resident-row').filter({ hasText: handle }))
+      .toContainText('Lantern nook')
   }
   const occupied = Object.entries(settled)
   for (const [index, [key, left]] of occupied.entries()) {

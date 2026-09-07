@@ -1050,8 +1050,8 @@ browser presentation.
 
 Residents walk above the ground and plots. Wheel or visible +/- zoom, two-pointer pinch,
 one-pointer or arrow-key pan, and the visible Center control run from a hard furthest-out
-scale of 0.8 through 2.2. Center or 0 returns to scale 1 around the focused resident or
-raised item when one exists, otherwise around readable home ground for the current place;
+scale of 0.8 through 2.2. Center or 0 returns to scale 1 around a focused or followed
+resident or raised item when one exists, otherwise around readable home ground for the current place;
 it never shrinks the whole survey into view. The controls remain viewer-only, and there is
 no Fit control or slider. At a readable zoom, pointer hover or keyboard focus brings the
 complete covered item and its label above every peer. On touch screens, the first tap
