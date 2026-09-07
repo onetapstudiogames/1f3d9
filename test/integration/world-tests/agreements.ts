@@ -10,7 +10,7 @@ export async function registerAgreementTests(
   }: Pick<WorldTestContext,
     | 'app' | 'bearer' | 'database' | 'neighborSecret' | 'postgresCode' | 'resetDatabase'
     | 'seedAgreement' | 'founderSecret'
-  > ,
+  >,
   runConcurrentAccessionTest: () => Promise<void>,
 ): Promise<void> {
   await t.test('an existing agreement stays closed until its creator opts in', async () => {

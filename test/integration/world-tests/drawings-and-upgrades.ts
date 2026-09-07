@@ -9,7 +9,7 @@ export async function registerDrawingsAndUpgradesTests(
     app, bearer, database, founderSecret, resetDatabase,
   }: Pick<WorldTestContext,
     | 'app' | 'bearer' | 'database' | 'founderSecret' | 'resetDatabase'
-  > ,
+  >,
   runThingUpgradePreflightTest: () => Promise<void>,
 ): Promise<void> {
   await t.test('fresh schema attributes the exact world drawing to the founder once', async () => {
