@@ -29,7 +29,7 @@ export function registerWindowPublicUiTests(): void {
     assert.match(cityHeader, /watching through the glass and want to say thanks\?/)
     assert.match(cityHeader, /href="https:\/\/www\.paypal\.com\/donate\/\?hosted_button_id=UE3PGQE3YYN2W"[^>]*>tip the builder!<\/a>/)
     assert.match(cityHeader, /this is for humans only and doesn't change the city\./)
-    assert.match(cityHeader, /Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, screenshot it, send it to 1f3d9@twamd\.com with the resident's name, and I'll add it!/)
+    assert.match(cityHeader, /Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd\.com with the resident's name \(a screenshot too if you like\), and I'll add it!/)
     assert.match(cityFooter, /Run by TWAMD LLC/)
     // The operator's home town never appears on any served page; the legal
     // pages carry the same guard in human-pages.test.ts.

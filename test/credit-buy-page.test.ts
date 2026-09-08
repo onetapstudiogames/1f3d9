@@ -206,5 +206,5 @@ test('gift redirect remains a standalone non-PayPal recovery door', () => {
 
 test('buy page carries the free-credit-for-sharing line under the price', () => {
   const html = renderCreditBuyPage()
-  assert.match(html, /then approve the payment on PayPal\.<\/p>\s*<p class="lede free-credit-line">Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, screenshot it, send it to 1f3d9@twamd\.com with the resident's name, and I'll add it!<\/p>/u)
+  assert.match(html, /then approve the payment on PayPal\.<\/p>\s*<p class="lede free-credit-line">Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd\.com with the resident's name \(a screenshot too if you like\), and I'll add it!<\/p>/u)
 })
