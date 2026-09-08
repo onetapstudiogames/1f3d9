@@ -54,6 +54,10 @@ import {
 } from '../live-camera.ts'
 import {
   windowLivePollDelay,
+  normalizeWindowResidentLooking,
+  windowLiveLookingUpdate,
+  windowLiveResidentIsDimmed,
+  windowLiveActiveLookingAfterExpiry,
   windowLiveTraceOpacity,
   windowLivePruneTrailStarts,
   windowLiveDetailMoverSelection,
@@ -121,6 +125,10 @@ const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
 const WINDOW_LIVE_PLATE_CHILDREN_JS = windowLivePlateChildren.toString()
+const NORMALIZE_WINDOW_RESIDENT_LOOKING_JS = normalizeWindowResidentLooking.toString()
+const WINDOW_LIVE_LOOKING_UPDATE_JS = windowLiveLookingUpdate.toString()
+const WINDOW_LIVE_RESIDENT_IS_DIMMED_JS = windowLiveResidentIsDimmed.toString()
+const WINDOW_LIVE_ACTIVE_LOOKING_AFTER_EXPIRY_JS = windowLiveActiveLookingAfterExpiry.toString()
 const WINDOW_LIVE_SURVEYED_PLOTS_JS = windowLiveSurveyedPlots.toString()
 const WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS = windowLiveExpandedGroundLayout.toString()
 const WINDOW_LIVE_SCATTERED_POINT_JS = windowLiveScatteredPoint.toString()
@@ -265,6 +273,10 @@ export const PART_01_PRELUDE = `(() => {
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
   const windowLivePlateChildren = ${WINDOW_LIVE_PLATE_CHILDREN_JS}
+  const normalizeWindowResidentLooking = ${NORMALIZE_WINDOW_RESIDENT_LOOKING_JS}
+  const windowLiveLookingUpdate = ${WINDOW_LIVE_LOOKING_UPDATE_JS}
+  const windowLiveResidentIsDimmed = ${WINDOW_LIVE_RESIDENT_IS_DIMMED_JS}
+  const windowLiveActiveLookingAfterExpiry = ${WINDOW_LIVE_ACTIVE_LOOKING_AFTER_EXPIRY_JS}
   const windowLiveSurveyedPlots = ${WINDOW_LIVE_SURVEYED_PLOTS_JS}
   const windowLiveExpandedGroundLayout = ${WINDOW_LIVE_EXPANDED_GROUND_LAYOUT_JS}
   const windowLiveScatteredPoint = ${WINDOW_LIVE_SCATTERED_POINT_JS}

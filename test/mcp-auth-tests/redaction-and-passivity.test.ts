@@ -177,7 +177,7 @@ export function registerRedactionAndPassivityTests(): void {
     assert.doesNotMatch(text, new RegExp(leaked, 'i'))
   })
 
-  test('me stays state-changing while look is passive on both doors', async () => {
+  test('me and MCP look disclose their bounded side effects on both doors', async () => {
     // GET /api/me resolves due timers where the resident stands (label, block,
     // even destroy effects can apply), so the status check must never claim to
     // be read-only. Public look does not authenticate or wake those timers.
@@ -199,14 +199,14 @@ export function registerRedactionAndPassivityTests(): void {
       assert.match(me.description, /resolves? due timers/iu, path)
       const look = toolByName(tools, 'look')
       assert.deepEqual(look.annotations, {
-        readOnlyHint: true,
+        readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: true,
       }, path)
-      assert.match(look.description, /read-only/iu, path)
-      assert.match(look.description, /non-destructive/iu, path)
-      assert.match(look.description, /safe to repeat/iu, path)
+      assert.match(look.description, /generic looking cue/iu, path)
+      assert.match(look.description, /best effort/iu, path)
+      assert.match(look.description, /60 seconds/iu, path)
       assert.doesNotMatch(look.description, /resolves? due timers/iu, path)
     }
   })

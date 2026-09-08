@@ -50,7 +50,7 @@ test('every root place view carries the same server line and remains passive wit
         assert.deepEqual(value, [])
       }
       const queries = fixtureState.current.calls.map(call => call.query ?? '').join('\n')
-      assert.doesNotMatch(queries, /secret_hash|resident_presence|pending_effects|\b(?:insert|update|delete)\b/iu)
+      assert.doesNotMatch(queries, /secret_hash|pending_effects|\b(?:insert|update|delete)\b/iu)
     }
   }
 })

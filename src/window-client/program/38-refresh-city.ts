@@ -24,6 +24,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
             changeState.marker,
           )
           if (navigationRevision !== navigationRevisionAtStart) {
+            state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
             await finishWatchingPublicStreets()
             return
           }
@@ -34,6 +35,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
               ...state,
               changeMarker: changeState.marker,
               failures: 0,
+              live: { ...state.live, lookingWitnessAllowed: true },
             }
             await finishWatchingPublicStreets()
             return
@@ -56,6 +58,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           await finishWatchingPublicStreets()
           return
         } catch {
+          state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
           // Presence is time-derived. If its small read fails, continue into a
           // marker-covered authored snapshot instead of retaining an unproven
           // mixed refresh.
@@ -74,6 +77,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         ? freshSnapshotNavigation(freshSnapshot)
         : await mergeFreshNavigation(freshSnapshot, controller.signal)
       if (navigationRevision !== navigationRevisionAtStart) {
+        state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
         await finishWatchingPublicStreets()
         return
       }
@@ -90,6 +94,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           controller.signal,
         )
         if (navigationRevision !== navigationRevisionAtStart) {
+          state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
           await finishWatchingPublicStreets()
           return
         }
@@ -164,6 +169,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           // view. Re-read them from the last completed marker; queued keys stay
           // held and cannot replay twice when the covering snapshot succeeds.
           streamMarker: state.changeMarker,
+          lookingWitnessAllowed: false,
         },
       }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)

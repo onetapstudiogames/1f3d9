@@ -90,6 +90,19 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
       return
     }
     if (focus.quiet) {
+      const quietLooking = windowLiveLookingUpdate(
+        state.live.lookingBurstsByHandle,
+        displayedResidents(snapshot),
+        new Set(),
+        new Set(state.directory.places.filter(place => isQuietPlace(place)).map(place => place.id)),
+        Date.now(),
+        false,
+      )
+      state = { ...state, live: { ...state.live,
+        lookingBurstsByHandle: quietLooking.burstsByHandle,
+        lookingActiveHandles: [],
+        lookingWitnessAllowed: true,
+      } }
       renderLiveQuietPlate(snapshot, focus)
       renderLiveNotesPanel(snapshot)
       renderLiveHistoryStatus()
@@ -104,6 +117,23 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
     const thingFilters = liveThingFilters(focus.id)
     const thingsPage = historyEntry('things', thingFilters)
     const children = liveChildren(snapshot, focus)
+    const looking = windowLiveLookingUpdate(
+      state.live.lookingBurstsByHandle,
+      displayedResidents(snapshot),
+      placeScopeSet(focus.id, snapshot),
+      new Set(state.directory.places.filter(place => isQuietPlace(place)).map(place => place.id)),
+      Date.now(),
+      state.live.lookingWitnessAllowed && !document.hidden,
+    )
+    state = { ...state, live: { ...state.live,
+      lookingBurstsByHandle: looking.burstsByHandle,
+      lookingActiveHandles: looking.activeHandles,
+      lookingAnnouncements: Object.freeze([
+        ...state.live.lookingAnnouncements,
+        ...looking.announcements,
+      ].slice(-4)),
+      lookingWitnessAllowed: true,
+    } }
     const survey = liveStageSurvey(livePlaceRows(snapshot), focus.id)
     const renderContextBase = liveCreateRenderContext(snapshot, focus, children, survey)
     const records = visibleLiveRecords(snapshot, focus, children, renderContextBase)
@@ -167,6 +197,17 @@ export const PART_27_LIVE_RENDER = `  function renderLive(snapshot) {
           'p', 'live-proof-frame-time',
           'crowd proof · 152 residents · 64 movers · frame time · sampling…'))
         scheduleLiveProofFrameReadout()
+      }
+      if (state.live.lookingAnnouncements.length) {
+        const visibleLookingLog = state.live.lookingAnnouncements.filter(row =>
+          placeScopeSet(focus.id, snapshot).has(row.place_id) &&
+          !isQuietPlace(placeReference(snapshot, row.place_id)))
+        const lookingLog = element('div', 'live-looking-log')
+        lookingLog.setAttribute('role', 'log')
+        lookingLog.setAttribute('aria-label', 'Looking around activity')
+        lookingLog.replaceChildren(...visibleLookingLog.map(row =>
+          element('p', 'live-looking-log-row', row.message)))
+        if (visibleLookingLog.length) nodes.liveMapCaption.append(lookingLog)
       }
     }
 

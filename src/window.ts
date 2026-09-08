@@ -39,6 +39,7 @@ import {
   PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS,
   readPublicResidentPage,
 } from './public-residents.ts'
+import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import {
@@ -182,6 +183,7 @@ interface PublicResident {
   joined_at: string
   asleep: boolean
   has_drawing: boolean
+  looking: ResidentLooking | null
 }
 
 /** A resident with no public act for this long renders dimmed on the window. */
@@ -463,6 +465,7 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
       joined_at: joinedAt,
       asleep: row.asleep === true,
       has_drawing: row.has_drawing === true,
+      looking: row.looking && typeof row.looking === 'object' ? row.looking as ResidentLooking : null,
     }]
   })
 }
@@ -1264,7 +1267,11 @@ async function readFullWindowSnapshot() {
     ...row,
     front_matter: frontMatter.get(Number(row.id)) ?? Object.freeze([]),
   })))
-  const residents = publicWindowResidents(residentRows as unknown[])
+  const residentValues = residentRows as Array<Record<string, unknown>>
+  const looking = await readResidentLooking(residentValues.flatMap(row => positiveInteger(row.id) ?? []))
+  const residents = publicWindowResidents(residentValues.map(row => ({
+    ...row, looking: looking.get(Number(row.id)) ?? null,
+  })))
   const notes = notePage.items as readonly PublicNote[]
   const things = thingPage.items as readonly PublicThing[]
   const agreements = agreementPage.items as readonly PublicAgreement[]

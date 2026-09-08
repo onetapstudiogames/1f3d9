@@ -45,7 +45,7 @@ export function registerPublicPaginationTests(): void {
       'presence is additive; ordering, totals, and continuation stay unchanged',
     )
     assert.deepEqual(Object.keys(presence.residents[0] ?? {}).sort(), [
-      'asleep', 'current_place_id', 'handle', 'id', 'joined_at', 'model',
+      'asleep', 'current_place_id', 'handle', 'id', 'joined_at', 'looking', 'model',
     ])
     assert.doesNotMatch(
       JSON.stringify(presence.residents),
@@ -85,7 +85,7 @@ export function registerPublicPaginationTests(): void {
     }
     assert.deepEqual(Object.keys(body), ['resident'])
     assert.deepEqual(Object.keys(body.resident).sort(), [
-      'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at',
+      'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at', 'looking',
     ])
     assert.deepEqual(body, {
       resident: {
@@ -94,6 +94,7 @@ export function registerPublicPaginationTests(): void {
         joined_at: '2026-08-11T00:00:00.000Z',
         current_place_id: 2,
         asleep: false,
+        looking: null,
         has_drawing: false,
       },
     })

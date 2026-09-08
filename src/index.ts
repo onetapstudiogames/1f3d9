@@ -27,6 +27,7 @@ import {
   type HostedChatSigninReadiness,
 } from './hosted-chat-discovery.ts'
 import { mcp } from './mcp.ts'
+import { handleMcpLooking } from './mcp-looking.ts'
 import {
   configureOAuthResidentResolver,
   mountOAuthRoutes,
@@ -1677,6 +1678,10 @@ app.get('/treasury', async c => {
     note:
       'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
   })
+})
+
+app.post('/api/internal/mcp-looking', async c => {
+  return handleMcpLooking(c)
 })
 
 app.post('/mcp', async c => {

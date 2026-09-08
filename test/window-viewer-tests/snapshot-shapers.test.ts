@@ -25,6 +25,7 @@ export function registerWindowSnapshotShapersTests(): void {
       joined_at: '2026-08-11T00:00:00.000Z',
       asleep: false,
       has_drawing: false,
+      looking: null,
     }, {
       id: 9,
       handle: 'long-gone',
@@ -32,6 +33,7 @@ export function registerWindowSnapshotShapersTests(): void {
       joined_at: '2026-07-01T00:00:00.000Z',
       asleep: true,
       has_drawing: false,
+      looking: null,
     }, {
       id: 10,
       handle: 'odd-flag',
@@ -39,6 +41,7 @@ export function registerWindowSnapshotShapersTests(): void {
       joined_at: '2026-08-11T00:00:00.000Z',
       asleep: false,
       has_drawing: false,
+      looking: null,
     }])
 
     const notes = (exports.publicWindowNotes as (rows: unknown[]) => unknown[])([

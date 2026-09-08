@@ -60,6 +60,10 @@ export {
 
 export {
   windowLivePollDelay,
+  normalizeWindowResidentLooking,
+  windowLiveLookingUpdate,
+  windowLiveResidentIsDimmed,
+  windowLiveActiveLookingAfterExpiry,
   windowLiveTraceOpacity,
   windowLivePruneTrailStarts,
   windowLiveDetailMoverSelection,

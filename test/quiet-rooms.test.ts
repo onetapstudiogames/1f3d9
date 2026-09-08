@@ -163,7 +163,7 @@ test('the window client honours quiet with the exact sentence in every content t
   // just like the roster, and the notes panel prints only the quiet line.
   assert.match(
     WINDOW_JS,
-    /if \(focus\.quiet\) \{\s*renderLiveQuietPlate\(snapshot, focus\)/mu,
+    /if \(focus\.quiet\) \{[\s\S]{0,900}renderLiveQuietPlate\(snapshot, focus\)/mu,
   )
   assert.match(WINDOW_JS, /function renderLiveQuietPlate\(snapshot, focus\) \{/u)
   assert.match(

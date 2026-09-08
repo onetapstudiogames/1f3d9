@@ -3,6 +3,111 @@ export function windowLivePollDelay(hadEvents: boolean, quietReads: number): num
   return [60000, 120000, 240000, 300000][Math.min(3, Math.max(0, quietReads))]!
 }
 
+export type WindowResidentLooking = Readonly<{
+  place_id: number
+  started_at: Date
+  expires_at: Date
+}>
+
+export function normalizeWindowResidentLooking(
+  value: unknown,
+  currentPlaceId: number | null,
+): WindowResidentLooking | null {
+  if (!value || typeof value !== 'object' || !Number.isSafeInteger(currentPlaceId) ||
+      Number(currentPlaceId) <= 0) return null
+  const raw = value as Readonly<Record<string, unknown>>
+  const placeId = raw.place_id
+  if (!Number.isSafeInteger(placeId) || Number(placeId) <= 0 || placeId !== currentPlaceId) return null
+  const startedAt = raw.started_at instanceof Date
+    ? new Date(raw.started_at.getTime())
+    : typeof raw.started_at === 'string' ? new Date(raw.started_at) : new Date(Number.NaN)
+  const expiresAt = raw.expires_at instanceof Date
+    ? new Date(raw.expires_at.getTime())
+    : typeof raw.expires_at === 'string' ? new Date(raw.expires_at) : new Date(Number.NaN)
+  if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(expiresAt.getTime()) ||
+      expiresAt.getTime() <= startedAt.getTime()) return null
+  return Object.freeze({ place_id: Number(placeId), started_at: startedAt, expires_at: expiresAt })
+}
+
+export function windowLiveLookingUpdate(
+  previousBurstsByHandle: Readonly<Record<string, string>>,
+  residents: readonly Readonly<{
+    handle: string
+    current_place_id: number | null
+    looking?: WindowResidentLooking | null
+  }>[],
+  visiblePlaceIds: ReadonlySet<number>,
+  quietPlaceIds: ReadonlySet<number>,
+  now: number,
+  announce: boolean,
+  clockSkewMs = 5_000,
+): Readonly<{
+  burstsByHandle: Readonly<Record<string, string>>
+  activeHandles: readonly string[]
+  announcements: readonly Readonly<{
+    burst: string
+    handle: string
+    place_id: number
+    message: string
+  }>[]
+}> {
+  const safeNow = Number.isFinite(now) ? now : 0
+  const safeClockSkew = Number.isFinite(clockSkewMs)
+    ? Math.max(0, Math.min(30_000, clockSkewMs))
+    : 0
+  const next: Record<string, string> = {}
+  const activeHandles: string[] = []
+  const announcements: Array<Readonly<{
+    burst: string
+    handle: string
+    place_id: number
+    message: string
+  }>> = []
+  const seenHandles = new Set<string>()
+  for (const resident of residents) {
+    if (!resident || typeof resident.handle !== 'string' || !resident.handle ||
+        seenHandles.has(resident.handle)) continue
+    seenHandles.add(resident.handle)
+    const looking = normalizeWindowResidentLooking(resident.looking, resident.current_place_id)
+    if (!looking || looking.expires_at.getTime() <= safeNow) continue
+    const burst = String(looking.place_id) + ':' + looking.started_at.toISOString()
+    next[resident.handle] = burst
+    if (looking.started_at.getTime() > safeNow + safeClockSkew) continue
+    const visible = visiblePlaceIds.has(looking.place_id) && !quietPlaceIds.has(looking.place_id)
+    if (!visible) continue
+    activeHandles.push(resident.handle)
+    if (announce && previousBurstsByHandle[resident.handle] !== burst) {
+      announcements.push(Object.freeze({
+        burst,
+        handle: resident.handle,
+        place_id: looking.place_id,
+        message: resident.handle + ' is looking around.',
+      }))
+    }
+  }
+  return Object.freeze({
+    burstsByHandle: Object.freeze(next),
+    activeHandles: Object.freeze(activeHandles),
+    announcements: Object.freeze(announcements),
+  })
+}
+
+export function windowLiveResidentIsDimmed(asleep: boolean, lookingActive: boolean): boolean {
+  return asleep === true && lookingActive !== true
+}
+
+export function windowLiveActiveLookingAfterExpiry(
+  activeHandles: readonly string[],
+  cues: readonly Readonly<{ handle: string; expiresAt: number }>[],
+  now: number,
+): readonly string[] {
+  const safeNow = Number.isFinite(now) ? now : 0
+  const expired = new Set(cues.filter(cue => !Number.isFinite(cue.expiresAt) ||
+    cue.expiresAt <= safeNow).map(cue => cue.handle))
+  return Object.freeze([...new Set(activeHandles.filter(handle =>
+    typeof handle === 'string' && handle && !expired.has(handle)))])
+}
+
 export function windowLiveTraceOpacity(at: number, now: number, lifetime: number): number {
   if (!Number.isFinite(at) || !Number.isFinite(now) || !Number.isFinite(lifetime) || lifetime <= 0) {
     return 0

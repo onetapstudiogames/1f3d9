@@ -966,6 +966,18 @@ CREATE INDEX IF NOT EXISTS resident_presence_current
 CREATE INDEX IF NOT EXISTS resident_presence_home
   ON resident_presence (home_place_id) WHERE home_place_id IS NOT NULL;
 
+-- A current, generic MCP-looking signal. Rows expire logically after one minute
+-- and are pruned opportunistically; they are never an activity history.
+CREATE TABLE IF NOT EXISTS resident_looking (
+  resident_id INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
+  place_id INTEGER NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+  started_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT resident_looking_window CHECK (expires_at > started_at)
+);
+CREATE INDEX IF NOT EXISTS resident_looking_place_expiry
+  ON resident_looking (place_id, expires_at);
+
 -- The generic transfer table cannot cleanly own three circular foreign keys.
 -- Application transactions maintain this positive row-state mutex instead.
 ALTER TABLE places ADD COLUMN IF NOT EXISTS active_offer_id INTEGER;

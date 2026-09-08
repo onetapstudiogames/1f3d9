@@ -92,9 +92,10 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
       const handle = safeHandle(raw.handle)
       const joinedAt = safeDate(raw.joined_at)
       const currentPlaceId = raw.current_place_id == null ? null : safeId(raw.current_place_id)
+      const looking = normalizeWindowResidentLooking(raw.looking, currentPlaceId)
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
         ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt,
-          asleep: raw.asleep === true, has_drawing: raw.has_drawing === true }]
+          asleep: raw.asleep === true, has_drawing: raw.has_drawing === true, looking }]
         : []
     })
   }

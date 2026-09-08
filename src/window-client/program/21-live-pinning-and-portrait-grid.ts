@@ -226,7 +226,8 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
     layout.visible.forEach(entry => {
       const resident = entry.resident
       if (overlayHandles.has(resident.handle)) return
-      const portrait = element('button', resident.asleep
+      const lookingActive = state.live.lookingActiveHandles.includes(resident.handle)
+      const portrait = element('button', windowLiveResidentIsDimmed(resident.asleep, lookingActive)
         ? 'live-portrait asleep'
         : 'live-portrait')
       portrait.type = 'button'
@@ -242,6 +243,16 @@ export const PART_21_LIVE_PINNING_AND_PORTRAIT_GRID = `  function livePinnedResi
         bubbles?.get(resident.handle),
         'live-portrait-wrap live-walker',
       )
+      if (lookingActive) {
+        shell.dataset.liveLooking = 'true'
+        shell.dataset.liveResidentAsleep = String(resident.asleep === true)
+        const cue = element('span', 'live-looking-cue', '••')
+        cue.setAttribute('aria-label', resident.handle + ' is looking around')
+        cue.setAttribute('role', 'img')
+        cue.dataset.liveLookingExpires = String(resident.looking.expires_at.getTime())
+        cue.dataset.liveLookingHandle = resident.handle
+        shell.append(cue)
+      }
       const heldPortrait = shell.querySelector(':scope > .live-portrait')
       const hasDrawing = String(Boolean(resident.has_drawing))
       const oldSprite = heldPortrait.querySelector(':scope > .live-entity-portrait')

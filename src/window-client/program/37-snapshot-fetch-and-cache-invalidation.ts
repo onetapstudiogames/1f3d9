@@ -148,7 +148,9 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     const visibilityInterrupted = Number.isSafeInteger(changeState.visibilityRevision) &&
       changeState.visibilityRevision !== liveVisibilityRevision
     if (changeState.status === 'unavailable') {
-      state = { ...state, live: { ...state.live, streamError: true } }
+      state = { ...state, live: {
+        ...state.live, streamError: true, lookingWitnessAllowed: false,
+      } }
       return visibilityInterrupted ? 0 : BASE_REFRESH_MS
     }
     const incoming = changeState.changes || []
