@@ -111,6 +111,10 @@ verify_release_readiness() {
     echo "!! the resident-awareness migration must be applied to Preview and Production before application rollout"
     return 1
   }
+  [ "${CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION" ] || {
+    echo "!! the me-public-checkpoint migration must be applied to Preview and Production before application rollout"
+    return 1
+  }
   [ "${CONFIRM_GAZETTE_SCHEMA_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED" ] || {
     echo "!! confirm the Gazette schema was applied to Preview and Production while room #454 was closed before release preparation"
     return 1
@@ -124,7 +128,7 @@ verify_release_readiness() {
     return 1
   }
 
-  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/Gazette schema/withdrawal schema/drawing release readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/me-public-checkpoint/Gazette schema/withdrawal schema/drawing release readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"

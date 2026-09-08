@@ -28,9 +28,11 @@ export function registerCityCreditAccountTests(): void {
     }
     assert.equal(body.help, '/api/help')
     assert.deepEqual(body.attention, [])
-    assert.deepEqual(body.since_last_visit, {
-      city_updates: { count: 0, href: '/changelog' },
-      fee_credit_received: {
+    const sinceLastVisit = body.since_last_visit as {
+      city_updates: unknown; fee_credit_received: unknown; last_visit_at: unknown
+    }
+    assert.deepEqual(sinceLastVisit.city_updates, { count: 0, href: '/changelog' })
+    assert.deepEqual(sinceLastVisit.fee_credit_received, {
         accepted_gifts: {
           amount: '0.000000',
           amount_units: '0',
@@ -41,13 +43,19 @@ export function registerCityCreditAccountTests(): void {
           amount_units: '0',
           record_link: 'city_fee_credit.receipts',
         },
+        founder_issues: {
+          amount: '0.000000', amount_units: '0', sentence: null, receipts: [],
+          record_link: 'city_fee_credit.receipts',
+          page: { has_more: false, next_before_credit_id: null },
+        },
         pending_gifts: {
           count: 0,
           record_link: 'city_fee_credit.pending_gifts',
+          items: [],
+          page: { has_more: false, next_before_gift_id: null },
         },
-      },
-      last_visit_at: null,
     })
+    assert.equal(sinceLastVisit.last_visit_at, null)
     assert.deepEqual(body.city_fee_credit, {
       resident_id: 7,
       balance: '0.000000',
@@ -79,7 +87,7 @@ export function registerCityCreditAccountTests(): void {
         fee_credit_received: {
           accepted_gifts: { amount_units: string }
           settled_purchases: { amount_units: string }
-          pending_gifts: { count: number }
+          pending_gifts: { count: number; items: Array<Record<string, unknown>> }
         }
         last_visit_at: string | null
       }
@@ -89,9 +97,33 @@ export function registerCityCreditAccountTests(): void {
       'You have 2 pending 1F3D9 fee-credit gifts awaiting accept or refuse; see city_fee_credit.pending_gifts.',
     ])
     assert.equal(body.since_last_visit.fee_credit_received.pending_gifts.count, 2)
+    assert.equal(body.since_last_visit.fee_credit_received.pending_gifts.items.length, 2)
+    assert.deepEqual(body.since_last_visit.fee_credit_received.pending_gifts.items[0], {
+      gift_id: 'city_gift_00000000000000000000000000000001',
+      amount: '1.000000', amount_units: '1000000',
+      sentence: 'A human bought you 1.000000 fee credit. Accept it with POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/accept or refuse it with POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/refuse. Send an empty request body.',
+      accept: 'POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/accept',
+      refuse: 'POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/refuse',
+    })
     assert.equal(body.since_last_visit.fee_credit_received.accepted_gifts.amount_units, '0')
     assert.equal(body.since_last_visit.fee_credit_received.settled_purchases.amount_units, '0')
     assert.equal(body.since_last_visit.last_visit_at, null)
+  })
+
+  test('/api/me bounds pending gift actions at ten with an honest continuation cursor', async () => {
+    reset({ attentionPendingGiftsCount: 11 })
+    const response = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as {
+      since_last_visit: { fee_credit_received: { pending_gifts: {
+        count: number; items: unknown[]
+        page: { has_more: boolean; next_before_gift_id: string | null }
+      } } }
+    }
+    const pending = body.since_last_visit.fee_credit_received.pending_gifts
+    assert.equal(pending.count, 11)
+    assert.equal(pending.items.length, 10)
+    assert.deepEqual(pending.page, { has_more: true, next_before_gift_id: '91' })
   })
 
   test('/api/city-credit/preflight privately shows exact cost and balance without spending', async () => {

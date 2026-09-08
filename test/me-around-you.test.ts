@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { mapAroundYou } from '../src/me-around-you.ts'
+
+const empty = () => ({ count: 0, records: [] })
+const snapshot = () => ({
+  after_change_id: '15', through_change_id: '100',
+  notes_in_owned_places: empty(), new_things_in_owned_places: empty(),
+  new_agreement_signers: empty(), mentions: empty(),
+})
+
+test('a migrated resident establishes a public baseline independently of their prior visit time', () => {
+  const report = mapAroundYou({ ...snapshot(), after_change_id: null })
+  assert.equal(report.baseline, true)
+  assert.equal(report.after_change_id, null)
+  assert.equal(report.through_change_id, '100')
+  assert.deepEqual(report.mentions, { count: 0, records: [], has_more: false, more_href: null })
+})
+
+test('counts stay exact beyond ten links and continuation starts after the last supplied record', () => {
+  const records = Array.from({ length: 10 }, (_, index) => ({ id: index + 1, change_id: String(index + 16) }))
+  const report = mapAroundYou({ ...snapshot(), notes_in_owned_places: { count: 120, records } })
+  assert.equal(report.baseline, false)
+  assert.equal(report.notes_in_owned_places.count, 120)
+  assert.equal(report.notes_in_owned_places.records.length, 10)
+  assert.equal(report.notes_in_owned_places.has_more, true)
+  assert.equal(report.notes_in_owned_places.more_href, '/api/changes?since=25&limit=200')
+  assert.equal(report.notes_in_owned_places.records[0]!.href, '/api/note/1')
+  assert.match(report.scope, /through_change_id/u)
+  assert.match(report.scope, /broader public change log/u)
+})
+
+test('record links use existing note, thing and agreement reads and omit source bodies', () => {
+  const report = mapAroundYou({
+    ...snapshot(),
+    mentions: { count: 1, records: [{ id: 9, change_id: '16', body: 'do not copy this' }] },
+    new_things_in_owned_places: { count: 1, records: [{ id: 3, change_id: '17', body: 'private input' }] },
+    new_agreement_signers: { count: 1, records: [{ id: 23, change_id: '18', signer: 'new-signer', body: 'terms' }] },
+  })
+  assert.equal(report.mentions.records[0]!.href, '/api/note/9')
+  assert.equal(report.new_things_in_owned_places.records[0]!.href, '/api/thing/3')
+  assert.equal(report.new_agreement_signers.records[0]!.href, '/api/agreements?before_id=24&limit=1')
+  assert.equal(report.new_agreement_signers.records[0]!.signer, 'new-signer')
+  assert.doesNotMatch(JSON.stringify(report), /do not copy this|private input|terms|"body"/u)
+  const maximum = mapAroundYou({ ...snapshot(), new_agreement_signers: {
+    count: 1, records: [{ id: 2_147_483_647, change_id: '19', signer: 'new-signer' }],
+  } })
+  assert.equal(maximum.new_agreement_signers.records[0]!.href, '/api/agreements?limit=1')
+})
+
+test('invalid checkpoints or reversed intervals fail instead of advancing an untrustworthy report', () => {
+  for (const bad of [null, {}, { ...snapshot(), after_change_id: '101' },
+    { ...snapshot(), through_change_id: '9223372036854775808' },
+    { ...snapshot(), through_change_id: -1 }]) {
+    assert.throws(() => mapAroundYou(bad), /around-you/u)
+  }
+})
+
+test('unsafe or inconsistent counts cannot be presented as exact', () => {
+  for (const count of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '1', null]) {
+    assert.throws(() => mapAroundYou({ ...snapshot(), mentions: { count, records: [] } }), /around-you/u)
+  }
+  for (const records of [[], Array.from({ length: 11 }, (_, i) => ({ id: i + 1, change_id: String(i + 16) }))]) {
+    assert.throws(() => mapAroundYou({ ...snapshot(), mentions: { count: 12, records } }), /around-you/u)
+  }
+  assert.throws(() => mapAroundYou({ ...snapshot(), after_change_id: null,
+    mentions: { count: 1, records: [{ id: 1, change_id: '16' }] },
+  }), /around-you/u)
+})
+
+test('out-of-window records, invalid identifiers and unsafe signer handles are rejected', () => {
+  for (const record of [{ id: 0, change_id: '16' }, { id: 2_147_483_648, change_id: '16' },
+    { id: 1, change_id: '15' }, { id: 1, change_id: '101' }, { id: 1, change_id: 'x' }]) {
+    assert.throws(() => mapAroundYou({ ...snapshot(), mentions: { count: 1, records: [record] } }), /around-you/u)
+  }
+  assert.throws(() => mapAroundYou({ ...snapshot(), new_agreement_signers: {
+    count: 1, records: [{ id: 1, change_id: '16', signer: 'not a handle' }],
+  } }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), mentions: { count: 2,
+    records: [{ id: 2, change_id: '17' }, { id: 1, change_id: '16' }],
+  } }), /around-you/u)
+})

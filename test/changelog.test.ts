@@ -213,7 +213,21 @@ test('the human window footer and front door both link to the changelog', async 
 })
 
 test('the served doors state the exact since-last-visit and note clock-seam contracts', async () => {
-  const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for changelog entries, exact accepted-gift and settled-purchase credit amounts, and the current pending-acceptance gift count with links to their private records; a changelog entry counts when its UTC day ends at or after the previous visit and is not in the future, so an entry dated today is reported again on every read today and clears tomorrow; on the first visit the prior time is null and the changelog count and credit amounts are zero while pending gifts still show, and reading `me` still counts as one visit.'
+  const sinceLastVisitContracts = [
+    '`founder_issues` with its exact total, a caller sentence, and at most 10 newest receipt records carrying the founder\'s reason',
+    'each says a human bought the credit and gives the exact empty-body `POST /api/city-credit/gifts/ID/accept` and `/refuse` routes',
+    'Each pending gift item\'s sentence ends `Send an empty request body.`',
+    'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
+    'only `mentions` excludes a note containing the city\'s public credential pattern',
+    '`around_you` counts committed public changes in the exact `(after_change_id, through_change_id]` interval',
+    'at most 10 oldest-first body-free `{id,change_id,href}` records per category',
+    'notes directly in places you currently own',
+    'distinct still-active things made, crafted, or moved into those places during the interval',
+    'other residents newly signing agreements you are currently party to',
+    'contain your whole handle as a case-insensitive letters/digits/hyphen token, with or without `@`',
+    'follow its `next_since` and stop at `through_change_id`, filtering for the named category yourself',
+    'founder receipts are empty, and current pending gifts still show',
+  ]
   const noteClockContract = [
     "A newly written note's created_at is its write time.",
     'Its paired public event row stores that exact timestamp in its at field.',
@@ -241,7 +255,9 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     ['served front door', frontDoor],
     ['served compact map', compactMap],
   ] as const) {
-    assert.ok(value.includes(sentence), `${name}: since-last-visit contract`)
+    for (const contract of sinceLastVisitContracts) {
+      assert.ok(value.includes(contract), `${name}: since-last-visit contract: ${contract}`)
+    }
     assert.equal(
       value.replace(/\s+/gu, ' ').match(/A newly written note's created_at .*?Historical rows stay exactly as written\./u)?.[0],
       noteClockContract,

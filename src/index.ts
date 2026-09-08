@@ -1078,6 +1078,7 @@ app.get('/api/me', async c => {
         href: '/changelog',
       },
       fee_credit_received: cityCreditSinceLastVisit(creditAttention),
+      around_you: creditAttention.around_you,
       last_visit_at: creditAttention.last_visit_at,
     },
     front_door_tool: 'front_door',

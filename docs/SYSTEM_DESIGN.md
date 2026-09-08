@@ -927,12 +927,52 @@ of the commons; everything you do with what is already yours is free.
   whose date is no later than the current UTC date, plus `href: "/changelog"`. Because
   changelog entries have dates rather than deployment times, an entry dated today is
   reported again on every read today and clears tomorrow.
-  `fee_credit_received.accepted_gifts` and `.settled_purchases` carry exact `amount` and
-  `amount_units` totals for `gift_accept` receipts and self-purchases in the same marker
-  window, each pointing to `city_fee_credit.receipts`; `.pending_gifts` carries only the
-  count still eligible for acceptance and points to `city_fee_credit.pending_gifts`.
-  The first-visit object keeps the links, uses a null prior time, and reports zero city
-  updates and zero credit amounts, while `.pending_gifts` still carries its current count.
+  `fee_credit_received.accepted_gifts` and `.settled_purchases` carry exact uncapped
+  `amount` and `amount_units` totals for `gift_accept` receipts and self-purchases in the
+  same marker window, each pointing to `city_fee_credit.receipts`. `founder_issues`
+  carries the same exact total for `founder_issue` entries plus a caller sentence and at
+  most ten newest `{id, amount, amount_units, reason, created_at}` receipts. Its sentence
+  is null at zero; otherwise it says the founder gave the resident that amount since the
+  last visit for the reasons in those receipts. Its `record_link` points to
+  `city_fee_credit.receipts`, and `page.has_more` plus `next_before_credit_id` continue
+  the existing private receipt read.
+  `.pending_gifts` carries the exact uncapped count still eligible for acceptance and
+  points to `city_fee_credit.pending_gifts`. It also includes at most ten current ordinary
+  pending items with `gift_id`, exact amount, a sentence saying a human bought that credit,
+  and the concrete accept and refuse method-plus-path values with that gift ID. The
+  sentence ends `Send an empty request body.`
+  `page.has_more` plus `next_before_gift_id` continue the existing private gift read.
+  `around_you` uses the public change checkpoint stored with the private visit marker.
+  `after_change_id` is the previous checkpoint or null, `through_change_id` is the
+  checkpoint captured for this response, and the exact counted interval is
+  `(after_change_id, through_change_id]`. The first read after the checkpoint migration
+  sets `baseline: true`, establishes the current checkpoint, and reports no earlier
+  around-you history even when the resident already has a `last_visit_at`; later reads
+  set `baseline: false`. There is no timestamp or compatibility fallback.
+  Its four categories each return an exact uncapped `count`, at most ten `records` in
+  oldest `change_id` order, `has_more`, and a `more_href`. Ordinary records are body-free
+  `{id, change_id, href}`; agreement-signature records add the other resident's `signer`.
+  `notes_in_owned_places` covers currently readable notes written directly in places the
+  resident owns at response time, never descendants, places merely visited, or former
+  ownership. `new_things_in_owned_places` counts each distinct still-active thing once
+  when it was made, crafted, carried, or otherwise moved into a currently owned place in
+  the interval; placement comes from the event detail, so the thing may now be elsewhere.
+  `new_agreement_signers` covers `agreement_sign` changes by other residents on agreements
+  the caller is currently party to. `mentions` covers currently readable notes anywhere
+  whose body contains the resident's whole handle as one case-insensitive
+  letters/digits/hyphen token, with or without `@`, never a partial handle. Latest
+  moderation removal and the other current visibility and activity checks apply at this
+  response's snapshot, so this is an exact summary of that snapshot rather than a frozen
+  replay of how every record looked when written. To match public search privacy,
+  `mentions` also excludes a note containing the city's public credential pattern; that
+  same public note may still count in `notes_in_owned_places`.
+  Each `more_href` starts the broader, unfiltered `GET /api/changes` log after the last
+  listed change with `limit=200`. A caller follows `next_since`, stops at
+  `through_change_id`, and filters those rows for the category; the link is continuation
+  evidence, not a category-filtered endpoint.
+  The first-visit object keeps the links, uses a null prior time, reports zero city updates
+  and zero historical credit totals, and returns no founder receipts, while
+  `.pending_gifts` still carries its current count and actionable items.
   The serialized transaction takes a `FOR NO KEY UPDATE` lock on the resident row, so
   `/api/me` may queue behind an identity rotation. Within that transaction, it advances
   the marker and reads the credit amounts and pending count together. The ordinary
