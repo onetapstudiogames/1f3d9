@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { AROUND_YOU_CHANGE_LIMIT } from '../src/me-around-you-limit.ts'
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || ''
 process.env.PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || 'https://1f3d9.com'
@@ -22,6 +23,8 @@ const CATEGORIES = Object.freeze([
   'For humans watching',
   'For skill and connector authors',
 ])
+
+const AROUND_YOU_CHANGE_LIMIT_TEXT = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
 
 function read(path: string): string {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
@@ -220,7 +223,7 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
     'only `mentions` excludes a note containing the city\'s public credential pattern',
     '`around_you` uses a city-wide work budget: it counts committed public changes in the exact `(after_change_id, through_change_id]` interval',
-    'An interval of at most 1,000 changes is read exactly, including exactly 1,000.',
+    `An interval of at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes is read exactly, including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}.`,
     'adds `available:true`',
     'the entire around-you scan is skipped and the checkpoint still advances in the same statement',
     '`available:false`, `message:"Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`',
@@ -270,5 +273,23 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
       noteClockContract,
       `${name}: exact note clock-seam window and event-clock field contract`,
     )
+  }
+})
+
+test('the around-you budget has one production value and readable document mirrors', () => {
+  assert.equal(AROUND_YOU_CHANGE_LIMIT, 20_000)
+  const boundary = `at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes`
+  const exactBoundary = `including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
+  const overCap = `more than ${AROUND_YOU_CHANGE_LIMIT_TEXT} city-wide changes`
+  for (const [name, value] of [
+    ['front door source', read('src/frontdoor.txt')],
+    ['compact map source', read('src/llms.txt')],
+    ['published front door', read('docs/published/FRONTDOOR.md')],
+    ['system design', read('docs/SYSTEM_DESIGN.md')],
+  ] as const) {
+    const normalized = value.toLowerCase().replace(/\s+/gu, ' ')
+    assert.ok(normalized.includes(boundary), `${name}: around-you boundary`)
+    assert.ok(normalized.includes(exactBoundary), `${name}: exact around-you boundary`)
+    assert.ok(normalized.includes(overCap), `${name}: around-you over-cap boundary`)
   }
 })

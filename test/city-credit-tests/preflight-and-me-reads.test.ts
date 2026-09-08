@@ -3,6 +3,7 @@ import test from 'node:test'
 import { cityCreditAttentionLines, cityCreditSinceLastVisit, readCityCreditAttention, readCityCreditPreflight } from '../../src/city-credit.ts'
 import { MarkerDatabase } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { mapAroundYou } from '../../src/me-around-you.ts'
+import { AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
 
 const EMPTY_AROUND_YOU = {
   after_change_id: null, through_change_id: '0',
@@ -318,7 +319,7 @@ export function registerPreflightAndMeReadsTests(): void {
     const database = new MarkerDatabase({
       'lock-me-read': [[{ id: 7 }]],
       'read-attention': [[attentionRow({ around_you: {
-        after_change_id: '1', through_change_id: '1002',
+        after_change_id: '1', through_change_id: String(AROUND_YOU_CHANGE_LIMIT + 2),
         notes_in_owned_places: null, new_things_in_owned_places: null,
         new_agreement_signers: null, mentions: null,
       } })]],
@@ -334,7 +335,7 @@ export function registerPreflightAndMeReadsTests(): void {
     }, 7)
     assert.equal(committed, true)
     assert.equal(state.around_you.available, false)
-    assert.equal(state.around_you.through_change_id, '1002')
+    assert.equal(state.around_you.through_change_id, String(AROUND_YOU_CHANGE_LIMIT + 2))
     assert.equal(state.around_you.notes_in_owned_places, null)
     const credit = cityCreditSinceLastVisit(state)
     assert.equal(credit.founder_issues.receipts[0]?.reason, 'Showing room prize')

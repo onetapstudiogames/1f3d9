@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
 import {
   NOAUTH_SECURITY_SCHEME,
   OAUTH_SECURITY_SCHEME,
@@ -62,5 +63,17 @@ export function registerToolContractTests(): void {
     assert.match(buyCreditDescription, /1.*10,?000/iu)
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /authenticated|resident.*only/iu)
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /anonymous.*web-only/iu)
+    const aroundYouLimit = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+    for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
+      const meDescription = tools.find(tool => tool.name === 'me')!.description
+      assert.ok(
+        meDescription.includes(`At most ${aroundYouLimit} changes, including exactly ${aroundYouLimit}`),
+        `${catalog} me exact around-you boundary`,
+      )
+      assert.ok(
+        meDescription.includes(`More than ${aroundYouLimit} city-wide changes`),
+        `${catalog} me around-you over-cap boundary`,
+      )
+    }
   })
 }

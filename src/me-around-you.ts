@@ -1,9 +1,9 @@
 import { HANDLE_RE } from './core.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
+import { AROUND_YOU_CHANGE_LIMIT } from './me-around-you-limit.ts'
 
 const RECORD_LIMIT = 10
-const AROUND_YOU_CHANGE_LIMIT = 1000
 const MAX_RECORD_ID = 2_147_483_647
 const CATEGORIES = [
   'notes_in_owned_places', 'new_things_in_owned_places', 'new_agreement_signers', 'mentions',
@@ -133,7 +133,7 @@ export const AROUND_YOU_SQL = `(
     ) END
 )`
 
-const SCOPE = 'Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most 1000 city-wide public changes are summarized. Above 1000, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.'
+const SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are summarized, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
 
 function unavailable(): never {
   throw new TypeError('around-you summary is invalid')

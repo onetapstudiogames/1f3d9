@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mapAroundYou } from '../src/me-around-you.ts'
+import { AROUND_YOU_CHANGE_LIMIT } from '../src/me-around-you-limit.ts'
 
 const empty = () => ({ count: 0, records: [] })
 const snapshot = () => ({
@@ -85,16 +86,18 @@ test('out-of-window records, invalid identifiers and unsafe signer handles are r
   } }), /around-you/u)
 })
 
-test('an interval above 1000 changes is explicitly unread, body-free, and links the whole skipped interval', () => {
+test('an interval above the change limit is explicitly unread, body-free, and links the whole skipped interval', () => {
+  const after = 9_007_199_254_740_993n
+  const through = after + BigInt(AROUND_YOU_CHANGE_LIMIT) + 1n
   const report = mapAroundYou({
-    after_change_id: '9007199254740993', through_change_id: '9007199254741994',
+    after_change_id: String(after), through_change_id: String(through),
     notes_in_owned_places: null, new_things_in_owned_places: null,
     new_agreement_signers: null, mentions: null,
   })
   assert.equal(report.available, false)
   assert.equal(report.baseline, false)
-  assert.equal(report.after_change_id, '9007199254740993')
-  assert.equal(report.through_change_id, '9007199254741994')
+  assert.equal(report.after_change_id, String(after))
+  assert.equal(report.through_change_id, String(through))
   if (report.available) assert.fail('an over-limit interval must not claim available counts')
   assert.equal(report.read_href, '/api/changes?since=9007199254740993&limit=200')
   assert.equal(report.message, 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.')
@@ -105,18 +108,20 @@ test('an interval above 1000 changes is explicitly unread, body-free, and links 
   assert.doesNotMatch(JSON.stringify(report), /"count":0|"body"/u)
 })
 
-test('exactly 1000 changes are eligible and a first-read baseline skips any amount of history', () => {
-  const boundary = mapAroundYou({ ...snapshot(), after_change_id: '20', through_change_id: '1020' })
+test('exactly the change limit is eligible and a first-read baseline skips any amount of history', () => {
+  const boundary = mapAroundYou({ ...snapshot(), after_change_id: '20', through_change_id: String(20 + AROUND_YOU_CHANGE_LIMIT) })
   assert.equal(boundary.available, true)
   const baseline = mapAroundYou({ ...snapshot(), after_change_id: null, through_change_id: '1000000' })
   assert.equal(baseline.available, true)
   assert.equal(baseline.baseline, true)
   assert.equal(baseline.notes_in_owned_places?.count, 0)
   assert.match(boundary.scope, /Your own notes and things, and notes containing your own handle, count too/u)
+  assert.ok(boundary.scope.includes(`at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}`))
+  assert.ok(boundary.scope.includes(`including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}`))
 })
 
 test('an unavailable interval cannot carry fabricated counts or bodies', () => {
-  assert.throws(() => mapAroundYou({ ...snapshot(), through_change_id: '1016' }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), through_change_id: String(16 + AROUND_YOU_CHANGE_LIMIT) }), /around-you/u)
   assert.throws(() => mapAroundYou({
     ...snapshot(), notes_in_owned_places: null, new_things_in_owned_places: null,
     new_agreement_signers: null, mentions: null,

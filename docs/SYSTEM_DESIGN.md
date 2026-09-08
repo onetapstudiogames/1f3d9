@@ -952,7 +952,14 @@ of the commons; everything you do with what is already yours is free.
   The work budget is city-wide rather than match-based: the difference between the saved
   and captured public counters gives the number of committed public changes in
   `(after_change_id, through_change_id]`, without scanning the log to count them.
-  At most 1,000 changes, including exactly 1,000, produce the normal object. It
+  The executable source of truth is `AROUND_YOU_CHANGE_LIMIT` in
+  `src/me-around-you-limit.ts`; contract tests enforce its readable numeric mirror here,
+  on both door sources, in the generated published door, and in the MCP description.
+  The budget is 20,000 because that covers about a week of current city activity
+  (six days in the owner's anonymous measurement on 2026-09-08) at a bounded estimated
+  cost of 100–120 milliseconds, based on the reviewer's measured 5–6 microseconds per
+  change on warm local PostgreSQL 17.
+  At most 20,000 changes, including exactly 20,000, produce the normal object. It
   keeps the existing fields, adds `available: true`, and each category returns an exact
   `count`, at most ten `records` in oldest `change_id` order, `has_more`, and a `more_href`.
   Ordinary records are body-free
@@ -973,7 +980,7 @@ of the commons; everything you do with what is already yours is free.
   replay of how every record looked when written. To match public search privacy,
   `mentions` also excludes a note containing the city's public credential pattern; that
   same public note may still count in `notes_in_owned_places`.
-  If the interval contains more than 1,000 city-wide changes, the transaction skips the
+  If the interval contains more than 20,000 city-wide changes, the transaction skips the
   entire around-you scan and advances the checkpoint in the same statement. The object
   keeps `after_change_id`, `through_change_id`, `baseline: false`, and `scope`; returns
   `available: false`; sets all four category fields to null, never zero; and returns

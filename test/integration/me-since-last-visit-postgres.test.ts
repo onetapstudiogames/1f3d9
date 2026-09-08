@@ -11,6 +11,8 @@ import type { AroundYou } from '../../src/me-around-you.ts'
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'me_since_last_visit_integration'
 const RESIDENT_SECRET = `1f3d9_sk_${'v'.repeat(48)}`
+// Reduce only this process's fixture budget; production-boundary units use the real limit.
+const TEST_AROUND_YOU_CHANGE_LIMIT = 1_000
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const checkpointMigrationDdl = await readFile(
   new URL('../../db/migrations/20260908_me_public_checkpoint.sql', import.meta.url),
@@ -109,6 +111,11 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
   namedExports: {
     sql,
     runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/me-since-last-visit',
+  },
+})
+mock.module(new URL('../../src/me-around-you-limit.ts', import.meta.url).href, {
+  namedExports: {
+    AROUND_YOU_CHANGE_LIMIT: TEST_AROUND_YOU_CHANGE_LIMIT,
   },
 })
 
@@ -651,14 +658,14 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     await postgres.client.query(`
       INSERT INTO events (kind, actor, detail)
       SELECT 'integration_filler', 'neighbor', jsonb_build_object('sequence', sequence)
-      FROM generate_series(1, 999) AS sequence
-    `)
+      FROM generate_series(1, $1::integer) AS sequence
+    `, [TEST_AROUND_YOU_CHANGE_LIMIT - 1])
     const boundaryVisit = await readMe()
     assert.equal(boundaryVisit.around_you.available, true)
     assert.equal(boundaryVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
     assert.equal(
       BigInt(boundaryVisit.around_you.through_change_id) - BigInt(boundaryVisit.around_you.after_change_id),
-      1_000n,
+      BigInt(TEST_AROUND_YOU_CHANGE_LIMIT),
     )
     assert.equal(boundaryVisit.around_you.notes_in_owned_places.count, 1)
     assert.equal(boundaryVisit.around_you.mentions.count, 1)
@@ -678,8 +685,8 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     await postgres.client.query(`
       INSERT INTO events (kind, actor, detail)
       SELECT 'integration_filler', 'neighbor', jsonb_build_object('sequence', sequence)
-      FROM generate_series(1, 1000) AS sequence
-    `)
+      FROM generate_series(1, $1::integer) AS sequence
+    `, [TEST_AROUND_YOU_CHANGE_LIMIT])
     const overflowThrough = await postgres.client.query<{ current_change_id: string }>(`
       SELECT current_change_id::text FROM public_change_state WHERE singleton = true
     `)
@@ -720,7 +727,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     assert.equal(degradedVisit.around_you.after_change_id, boundaryVisit.around_you.through_change_id)
     assert.equal(
       BigInt(degradedVisit.around_you.through_change_id) - BigInt(degradedVisit.around_you.after_change_id),
-      1_001n,
+      BigInt(TEST_AROUND_YOU_CHANGE_LIMIT + 1),
     )
     assert.equal(
       degradedVisit.around_you.message,
