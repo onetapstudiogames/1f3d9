@@ -50,7 +50,7 @@ export async function recordResidentLooking(
       WHERE resident_looking.place_id <> EXCLUDED.place_id
          OR resident_looking.expires_at <= EXCLUDED.started_at
          OR resident_looking.expires_at <= EXCLUDED.started_at
-              + ((${RESIDENT_LOOKING_TTL_SECONDS} - ${RESIDENT_LOOKING_REFRESH_SECONDS})::integer * interval '1 second')
+              + (${RESIDENT_LOOKING_TTL_SECONDS - RESIDENT_LOOKING_REFRESH_SECONDS}::integer * interval '1 second')
     `
   } catch {
     // Attribution must never make an otherwise successful public read fail.

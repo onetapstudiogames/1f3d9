@@ -44,7 +44,8 @@ test('PostgreSQL combines repeats, restarts after movement, and suppresses expir
   }) as unknown as typeof import('../../src/db.ts').sql
 
   await recordResidentLooking({ id: 1 }, tagged)
-  const first = (await readResidentLooking([1], tagged)).get(1)!
+  const first = (await readResidentLooking([1], tagged)).get(1)
+  assert.ok(first, 'first looking write must produce one readable signal')
   await delay(10)
   await recordResidentLooking({ id: 1 }, tagged)
   const combined = (await readResidentLooking([1], tagged)).get(1)!
@@ -63,6 +64,6 @@ test('PostgreSQL combines repeats, restarts after movement, and suppresses expir
   const moved = (await readResidentLooking([1], tagged)).get(1)!
   assert.equal(moved.place_id, 3)
   assert.notEqual(moved.started_at, first.started_at)
-  await client.query("UPDATE resident_looking SET expires_at = clock_timestamp() - interval '1 second'")
+  await client.query("UPDATE resident_looking SET started_at = clock_timestamp() - interval '2 minutes', expires_at = clock_timestamp() - interval '1 second'")
   assert.equal((await readResidentLooking([1], tagged)).size, 0)
 })
