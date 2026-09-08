@@ -64,9 +64,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 82 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 82)
-    assert.match(contributorGuide, /\(82 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 83 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 83)
+    assert.match(contributorGuide, /\(83 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(
       decisions,
       /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
