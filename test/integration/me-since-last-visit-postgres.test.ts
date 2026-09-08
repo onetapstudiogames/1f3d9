@@ -114,6 +114,7 @@ const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts
 const { default: cityApp } = await import('../../src/index.ts')
 const { deliverPayPalCredit } = await import('../../src/paypal-credit-delivery.ts')
 const {
+  attachPayPalOrder,
   attachPayPalSubscription,
   beginPayPalCreditIntent,
 } = await import('../../src/paypal-credit-store.ts')
@@ -292,16 +293,20 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       createHash('sha256').update('neighbor-integration').digest('hex'),
     ])
     const world = await postgres.client.query<{ id: number }>(`
-      INSERT INTO places (place_kind, parent_id, name, owner_id)
-      VALUES ('world', NULL, 'the world', NULL) RETURNING id
+      SELECT id FROM places WHERE place_kind = 'world' AND parent_id IS NULL
     `)
+    assert.equal(world.rows.length, 1, 'the full local schema installs exactly one world row')
+    const continent = await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (place_kind, parent_id, name, owner_id)
+      VALUES ('continent', $1, 'visit continent', 1) RETURNING id
+    `, [world.rows[0]!.id])
     const places = await postgres.client.query<{ id: number }>(`
       INSERT INTO places (place_kind, parent_id, name, owner_id)
       VALUES ('place', $1, 'reader room', 7),
         ('place', $1, 'neighbor room', 8),
         ('place', $1, 'later reader room', 8),
         ('place', $1, 'former reader room', 7) RETURNING id
-    `, [world.rows[0]!.id])
+    `, [continent.rows[0]!.id])
     const ownedPlaceId = places.rows[0]!.id
     const foreignPlaceId = places.rows[1]!.id
     const gainedPlaceId = places.rows[2]!.id
@@ -513,14 +518,35 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       ) VALUES (7, 'founder_issue', 1000000, 1,
         'integration:founder:late', 'Showing room prize')
     `)
-    await postgres.client.query(`
-      INSERT INTO city_credit_gifts (
-        public_id, recipient_id, amount_units, source_key, claim_token_hash, status
-      ) VALUES (
-        'city_gift_0123456789abcdef0123456789abcdef', 7, 1000000,
-        'integration:pending:late', repeat('a', 64), 'pending'
-      )
-    `)
+    // The real delivery writes the gift, purchase, pending-arrival receipt,
+    // and verified-event binding atomically, as the deferred triggers require.
+    const giftIntent = await beginPayPalCreditIntent(sql, {
+      requestId: 'snapshot-gift-0001',
+      intentKind: 'order',
+      delivery: 'gift',
+      recipientId: 7,
+      amountUnits: 1_000_000n,
+      paypalEnvironment: 'sandbox',
+    })
+    const giftOrder = await attachPayPalOrder(sql, {
+      purchaseId: giftIntent.purchaseId,
+      orderId: 'SNAPSHOT-GIFT-ORDER-0001',
+    })
+    const pendingGift = await deliverPayPalCredit(sql, {
+      intent: Object.freeze({
+        ...giftIntent,
+        remoteOrderId: giftOrder.orderId,
+        status: giftOrder.status,
+      }),
+      sourceKey: 'paypal:capture:SNAPSHOT-GIFT-CAPTURE-0001',
+      purchaseKind: 'paypal',
+      eventId: 'SNAPSHOT-GIFT-EVENT-0001',
+      eventKind: 'PAYMENT.CAPTURE.COMPLETED',
+      remoteResourceId: 'SNAPSHOT-GIFT-CAPTURE-0001',
+    })
+    assert.equal(pendingGift.disposition, 'created')
+    assert.equal(pendingGift.status, 'pending')
+    assert.match(String(pendingGift.gift_id), /^city_gift_[0-9a-f]{32}$/u)
     const intent = await beginPayPalCreditIntent(sql, {
       requestId: 'snapshot-purchase-0001',
       intentKind: 'allowance',
@@ -563,7 +589,11 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     assert.equal(nextVisit.fee_credit_received.pending_gifts.count, 1)
     assert.equal(
       nextVisit.fee_credit_received.pending_gifts.items[0]?.accept,
-      'POST /api/city-credit/gifts/city_gift_0123456789abcdef0123456789abcdef/accept',
+      `POST /api/city-credit/gifts/${pendingGift.gift_id}/accept`,
+    )
+    assert.equal(
+      nextVisit.fee_credit_received.pending_gifts.items[0]?.refuse,
+      `POST /api/city-credit/gifts/${pendingGift.gift_id}/refuse`,
     )
     assert.match(nextVisit.fee_credit_received.pending_gifts.items[0]?.sentence ?? '', /A human bought you/iu)
     assert.equal(nextVisit.around_you.notes_in_owned_places.count, 15)
