@@ -75,6 +75,14 @@ export function registerPreparationReadinessTests(): void {
     )
     assert.equal(existsSync(fixture.commandLog), false)
 
+    const missingMePublicCheckpoint = fixture.run({ CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION: '' })
+    assert.notEqual(missingMePublicCheckpoint.status, 0)
+    assert.match(
+      `${missingMePublicCheckpoint.stdout}\n${missingMePublicCheckpoint.stderr}`,
+      /me-public-checkpoint.*migration.*Preview and Production.*before.*rollout/iu,
+    )
+    assert.equal(existsSync(fixture.commandLog), false)
+
     const missingGazette = fixture.run({ CONFIRM_GAZETTE_SCHEMA_MIGRATION: '' })
     assert.notEqual(missingGazette.status, 0)
     assert.match(

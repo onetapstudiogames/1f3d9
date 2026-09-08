@@ -215,4 +215,18 @@ export function registerReleaseOrderTests(): void {
     )
     assert.match(environmentRunbook, /CONFIRM_RESIDENT_AWARENESS_MIGRATION/u)
   })
+
+  test('release preparation requires the me public checkpoint after resident awareness', () => {
+    const previewAwareness = deploymentRunbook.indexOf('npm run migrate:preview:resident-awareness')
+    const previewCheckpoint = deploymentRunbook.indexOf('npm run migrate:preview:me-public-checkpoint')
+    const productionAwareness = deploymentRunbook.indexOf('npm run migrate:production:resident-awareness')
+    const productionCheckpoint = deploymentRunbook.indexOf('npm run migrate:production:me-public-checkpoint')
+
+    assert.ok(previewAwareness >= 0 && previewAwareness < previewCheckpoint)
+    assert.ok(productionAwareness >= 0 && productionAwareness < productionCheckpoint)
+    assert.match(
+      deploymentRunbook,
+      /CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
+    )
+  })
 }

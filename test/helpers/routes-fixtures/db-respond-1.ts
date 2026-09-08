@@ -250,7 +250,18 @@ export function respondToDatabaseStage1(
     }]
   }
   if (q.includes('/* city-credit:lock-me-read */')) return [{ id: fixtureState.current.actorId }]
+  if (q.includes('/* city-credit:me-summary-window */')) return [{ after_change_id: null, through_change_id: '0' }]
+  if (q.includes('/* city-credit:admit-me-summary */')) return [{ slot: 0 }]
+  if (/\/\* city-credit:(?:save-me-summary|me-summary-timeout|me-summary-parallel|release-me-summary|rollback-me-summary) \*\//u.test(q)) return []
   if (q.includes('/* city-credit:read-attention */')) {
+    const pendingGifts = Array.from(
+      { length: Math.min(fixtureState.current.attentionPendingGiftsCount, 10) },
+      (_, index) => ({
+        row_id: String(100 - index),
+        gift_id: `city_gift_${String(index + 1).padStart(32, '0')}`,
+        amount_units: '1000000',
+      }),
+    )
     return [{
       had_previous_read: false,
       change_units: null,
@@ -258,8 +269,22 @@ export function respondToDatabaseStage1(
       last_visit_at: null,
       accepted_gift_units: '0',
       settled_purchase_units: '0',
+      founder_issue_units: '0',
+      founder_issue_count: 0,
+      founder_issues: [],
+      founder_issues_have_more: false,
+      pending_gifts: pendingGifts,
+      pending_gifts_have_more: fixtureState.current.attentionPendingGiftsCount > 10,
       pending_count: fixtureState.current.attentionPendingGiftsCount,
       frozen_count: 0,
+      around_you: {
+        after_change_id: null,
+        through_change_id: '0',
+        notes_in_owned_places: { count: 0, records: [] },
+        new_things_in_owned_places: { count: 0, records: [] },
+        new_agreement_signers: { count: 0, records: [] },
+        mentions: { count: 0, records: [] },
+      },
     }]
   }
   if (q.includes('/* paypal-credit:founder-dispute-inspection */')) return []

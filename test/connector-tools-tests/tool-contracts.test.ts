@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  AROUND_YOU_ADMISSION_CHANGE_THRESHOLD,
+  AROUND_YOU_CHANGE_LIMIT,
+  AROUND_YOU_STATEMENT_TIMEOUT_MS,
+} from '../../src/me-around-you-limit.ts'
+import {
   NOAUTH_SECURITY_SCHEME,
   OAUTH_SECURITY_SCHEME,
   expectedToolContracts,
@@ -62,5 +67,35 @@ export function registerToolContractTests(): void {
     assert.match(buyCreditDescription, /1.*10,?000/iu)
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /authenticated|resident.*only/iu)
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /anonymous.*web-only/iu)
+    const aroundYouLimit = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+    const aroundYouAdmissionThreshold = AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')
+    const aroundYouStatementTimeout = AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')
+    for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
+      const meDescription = tools.find(tool => tool.name === 'me')!.description
+      assert.ok(
+        meDescription.includes(`Intervals under ${aroundYouAdmissionThreshold} changes do not need a summary slot; intervals from ${aroundYouAdmissionThreshold} through ${aroundYouLimit} are admitted two at a time.`),
+        `${catalog} me around-you admission boundaries`,
+      )
+      assert.ok(
+        meDescription.includes(`An available interval of at most ${aroundYouLimit} changes, including exactly ${aroundYouLimit}`),
+        `${catalog} me exact around-you upper boundary`,
+      )
+      assert.ok(
+        meDescription.includes(`More than ${aroundYouLimit} city-wide changes`),
+        `${catalog} me around-you over-cap boundary`,
+      )
+      assert.ok(
+        meDescription.includes(`Every summary-capable me read attempt, including an interval under ${aroundYouAdmissionThreshold} changes, has a ${aroundYouStatementTimeout} ms database statement budget.`),
+        `${catalog} me around-you statement budget`,
+      )
+      assert.ok(
+        meDescription.includes('Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id.'),
+        `${catalog} me around-you busy message`,
+      )
+      assert.ok(
+        meDescription.includes('The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.'),
+        `${catalog} me around-you timeout message`,
+      )
+    }
   })
 }

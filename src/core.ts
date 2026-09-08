@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { Context } from 'hono'
 import { sql } from './db.ts'
+import { HANDLE_RE, postgresErrorCode } from './core-primitives.ts'
+
+export { HANDLE_RE, postgresErrorCode }
 
 export const SECRET_PREFIX = '1f3d9_sk_'
-export const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/
 export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
 export const WORLD_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
@@ -169,13 +171,6 @@ export async function residentBySecretPassive(secret: string): Promise<Resident 
     WHERE secret_hash = ${sha256(secret)}
   `) as Resident[]
   return rows[0] ?? null
-}
-
-export function postgresErrorCode(error: unknown, depth = 0): string | null {
-  if (!error || typeof error !== 'object' || depth > 3) return null
-  const candidate = error as { code?: unknown; sourceError?: unknown }
-  if (typeof candidate.code === 'string') return candidate.code
-  return postgresErrorCode(candidate.sourceError, depth + 1)
 }
 
 export function postgresErrorConstraint(error: unknown, depth = 0): string | null {

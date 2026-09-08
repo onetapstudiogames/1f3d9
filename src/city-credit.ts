@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { postgresErrorCode } from './core-primitives.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
+import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
+import { parsePublicChangeMarker } from './public-changes.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
   CITY_FEE_CREDIT_USDC,
@@ -19,6 +23,7 @@ export {
 }
 export const CITY_CREDIT_HISTORY_DEFAULT = 20
 export const CITY_CREDIT_HISTORY_MAX = 50
+const SINCE_LAST_VISIT_ITEM_LIMIT = 10
 if (CITY_FEE_CREDIT_UNITS !== 1_000_000n) throw new Error('city fee credit unit invariant changed')
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u
@@ -94,11 +99,32 @@ export type CityCreditAttentionState = Readonly<{
   last_visit_at: string | null
   accepted_gifts_received_units: string
   settled_purchases_received_units: string
+  founder_issues_received_units: string
+  founder_issues: readonly FounderIssueSinceLastVisit[]
+  founder_issues_have_more: boolean
+  pending_gifts: readonly PendingGiftSinceLastVisit[]
+  pending_gifts_have_more: boolean
+  around_you: AroundYou
   credit_change: Readonly<{
     amount: string
     amount_units: string
     changed_at: string
   }> | null
+}>
+
+type FounderIssueSinceLastVisit = Readonly<{
+  id: string
+  amount: string
+  amount_units: string
+  reason: string
+  created_at: string
+}>
+
+type PendingGiftSinceLastVisit = Readonly<{
+  row_id: string
+  gift_id: string
+  amount: string
+  amount_units: string
 }>
 
 export type CityCreditSinceLastVisit = Readonly<{
@@ -112,9 +138,26 @@ export type CityCreditSinceLastVisit = Readonly<{
     amount_units: string
     record_link: 'city_fee_credit.receipts'
   }>
+  founder_issues: Readonly<{
+    amount: string
+    amount_units: string
+    sentence: string | null
+    receipts: readonly FounderIssueSinceLastVisit[]
+    record_link: 'city_fee_credit.receipts'
+    page: Readonly<{ has_more: boolean; next_before_credit_id: string | null }>
+  }>
   pending_gifts: Readonly<{
     count: number
     record_link: 'city_fee_credit.pending_gifts'
+    items: readonly Readonly<{
+      gift_id: string
+      amount: string
+      amount_units: string
+      sentence: string
+      accept: string
+      refuse: string
+    }>[]
+    page: Readonly<{ has_more: boolean; next_before_gift_id: string | null }>
   }>
 }>
 
@@ -805,26 +848,64 @@ function invalidCityCreditAttentionTime(): never {
   throw new TypeError('city credit attention time is invalid')
 }
 
+function mapFounderIssueItems(value: unknown): readonly FounderIssueSinceLastVisit[] {
+  return Object.freeze(historyArray(value).map(row => {
+    const units = BigInt(bigintString(row.amount_units, 'founder issue amount'))
+    if (units !== CITY_FEE_CREDIT_UNITS) throw new TypeError('founder issue amount is invalid')
+    const createdAt = isoTimestamp(row.created_at)
+    if (!createdAt) invalidCityCreditAttentionTime()
+    const reason = safeReason(row.reason)
+    return Object.freeze({
+      id: idString(row.id, 'founder issue receipt id'),
+      amount: formatUsdcUnits(units),
+      amount_units: units.toString(),
+      reason,
+      created_at: createdAt,
+    })
+  }))
+}
+
+function mapPendingGiftItems(value: unknown): readonly PendingGiftSinceLastVisit[] {
+  return Object.freeze(historyArray(value).map(row => {
+    const giftId = String(row.gift_id ?? '')
+    if (!/^city_gift_[0-9a-f]{32}$/u.test(giftId)) {
+      throw new TypeError('pending city credit gift id is invalid')
+    }
+    const units = BigInt(bigintString(row.amount_units, 'pending city credit gift amount'))
+    if (units <= 0n) throw new TypeError('pending city credit gift amount is invalid')
+    return Object.freeze({
+      row_id: idString(row.row_id, 'pending city credit gift cursor'),
+      gift_id: giftId,
+      amount: formatUsdcUnits(units),
+      amount_units: units.toString(),
+    })
+  }))
+}
+
 async function readCityCreditAttentionSnapshot(
   database: CityCreditDatabase,
   residentId: number,
+  skipAroundYou: 'busy' | 'timeout' | null = null,
+  publicCutoff: string | null = null,
 ): Promise<CityCreditAttentionState> {
   // Ledger IDs are allocation-, not commit-ordered; closing the rare late-lower-ID window requires a per-resident cursor allocated under the account lock.
   const rows = await runQuery(database, `
     /* city-credit:read-attention */
     WITH prior AS MATERIALIZED (
-      SELECT marker.read_at
+      SELECT marker.read_at, marker.last_public_change_id
       FROM city_credit_last_me_reads marker
       WHERE marker.resident_id = $1::integer
     ), cutoff AS MATERIALIZED (
-      SELECT coalesce(max(entry.id), 0)::bigint AS entry_id
+      SELECT coalesce(max(entry.id), 0)::bigint AS entry_id,
+        coalesce($3::bigint, (SELECT current_change_id FROM public_change_state WHERE singleton = true)) AS public_change_id,
+        $2::text AS skip_around_you
       FROM city_credit_entries entry
       WHERE entry.resident_id = $1::integer
     ), advanced AS MATERIALIZED (
       INSERT INTO city_credit_last_me_reads (
-        resident_id, previous_credit_entry_id, last_credit_entry_id, read_at
+        resident_id, previous_credit_entry_id, last_credit_entry_id, last_public_change_id, read_at
       )
-      SELECT $1::integer, NULL, cutoff.entry_id, clock_timestamp()
+      SELECT $1::integer, NULL, cutoff.entry_id, cutoff.public_change_id, clock_timestamp()
       FROM cutoff
       ON CONFLICT (resident_id) DO UPDATE
       SET previous_credit_entry_id = city_credit_last_me_reads.last_credit_entry_id,
@@ -832,8 +913,9 @@ async function readCityCreditAttentionSnapshot(
           city_credit_last_me_reads.last_credit_entry_id,
           excluded.last_credit_entry_id
         ),
+        last_public_change_id = excluded.last_public_change_id,
         read_at = excluded.read_at
-      RETURNING previous_credit_entry_id, last_credit_entry_id
+      RETURNING previous_credit_entry_id, last_credit_entry_id, last_public_change_id, read_at
     ), balance_changes AS MATERIALIZED (
       SELECT count(*)::integer AS change_count,
         coalesce(sum(CASE
@@ -851,7 +933,11 @@ async function readCityCreditAttentionSnapshot(
         ), 0)::text AS accepted_gift_units,
         coalesce(sum(entry.amount_units) FILTER (
           WHERE entry.entry_kind = 'purchase' AND entry.gift_id IS NULL
-        ), 0)::text AS settled_purchase_units
+        ), 0)::text AS settled_purchase_units,
+        coalesce(sum(entry.amount_units) FILTER (
+          WHERE entry.entry_kind = 'founder_issue'
+        ), 0)::text AS founder_issue_units,
+        count(*) FILTER (WHERE entry.entry_kind = 'founder_issue')::integer AS founder_issue_count
       FROM city_credit_entries entry
       CROSS JOIN advanced
       WHERE advanced.previous_credit_entry_id IS NOT NULL
@@ -865,6 +951,18 @@ async function readCityCreditAttentionSnapshot(
           )
           OR (entry.entry_kind = 'purchase' AND entry.gift_id IS NULL)
         )
+    ), founder_issue_items AS MATERIALIZED (
+      SELECT entry.id::text AS id, entry.amount_units::text AS amount_units,
+        entry.reason, entry.created_at
+      FROM city_credit_entries entry
+      CROSS JOIN advanced
+      WHERE advanced.previous_credit_entry_id IS NOT NULL
+        AND entry.resident_id = $1::integer
+        AND entry.id > advanced.previous_credit_entry_id
+        AND entry.id <= advanced.last_credit_entry_id
+        AND entry.entry_kind = 'founder_issue'
+      ORDER BY entry.id DESC
+      LIMIT 11
     ), gift_counts AS MATERIALIZED (
       SELECT count(*) FILTER (
           WHERE gift.status IN ('pending', 'frozen')
@@ -873,6 +971,13 @@ async function readCityCreditAttentionSnapshot(
       FROM city_credit_gifts gift
       WHERE gift.recipient_id = $1::integer
         AND gift.status IN ('pending', 'frozen')
+    ), pending_gift_items AS MATERIALIZED (
+      SELECT gift.id::text AS row_id, gift.public_id AS gift_id,
+        gift.amount_units::text AS amount_units
+      FROM city_credit_gifts gift
+      WHERE gift.recipient_id = $1::integer AND gift.status = 'pending'
+      ORDER BY gift.id DESC
+      LIMIT 11
     )
     SELECT advanced.previous_credit_entry_id IS NOT NULL AS had_previous_read,
       (SELECT prior.read_at FROM prior) AS last_visit_at,
@@ -880,12 +985,22 @@ async function readCityCreditAttentionSnapshot(
       CASE WHEN balance_changes.change_count > 0 THEN balance_changes.changed_at END AS changed_at,
       balance_changes.accepted_gift_units,
       balance_changes.settled_purchase_units,
+      balance_changes.founder_issue_units,
+      balance_changes.founder_issue_count,
+      coalesce((SELECT jsonb_agg(to_jsonb(item) ORDER BY item.id::bigint DESC)
+        FROM (SELECT * FROM founder_issue_items ORDER BY id::bigint DESC LIMIT 10) item), '[]'::jsonb) AS founder_issues,
+      (SELECT count(*) > 10 FROM founder_issue_items) AS founder_issues_have_more,
+      coalesce((SELECT jsonb_agg(to_jsonb(item) ORDER BY item.row_id::bigint DESC)
+        FROM (SELECT * FROM pending_gift_items ORDER BY row_id::bigint DESC LIMIT 10) item), '[]'::jsonb) AS pending_gifts,
+      (SELECT count(*) > 10 FROM pending_gift_items) AS pending_gifts_have_more,
       gift_counts.pending_count,
-      gift_counts.frozen_count
+      gift_counts.frozen_count,
+      ${AROUND_YOU_SQL} AS around_you
     FROM advanced
+    CROSS JOIN cutoff
     CROSS JOIN balance_changes
     CROSS JOIN gift_counts
-  `, [residentId])
+  `, [residentId, skipAroundYou, publicCutoff])
   const row = rows[0]
   if (!row) cityCreditAttentionUnavailable()
   const pendingCount = integerValue(row.pending_count, 'pending city credit gift count')
@@ -900,6 +1015,24 @@ async function readCityCreditAttentionSnapshot(
   }
   const acceptedGiftUnits = bigintString(row.accepted_gift_units, 'accepted city credit gifts')
   const settledPurchaseUnits = bigintString(row.settled_purchase_units, 'settled city credit purchases')
+  const founderIssueUnits = bigintString(row.founder_issue_units, 'founder-issued city credit')
+  const founderIssues = mapFounderIssueItems(row.founder_issues)
+  const pendingGifts = mapPendingGiftItems(row.pending_gifts)
+  const founderIssuesHaveMore = booleanValue(row.founder_issues_have_more)
+  const pendingGiftsHaveMore = booleanValue(row.pending_gifts_have_more)
+  const founderIssueCount = integerValue(row.founder_issue_count, 'founder issue receipt count')
+  if (
+    founderIssueCount < 0
+    || BigInt(founderIssueUnits) !== BigInt(founderIssueCount) * CITY_FEE_CREDIT_UNITS
+    || founderIssues.length !== Math.min(founderIssueCount, SINCE_LAST_VISIT_ITEM_LIMIT)
+    || founderIssuesHaveMore !== (founderIssueCount > SINCE_LAST_VISIT_ITEM_LIMIT)
+  ) throw new TypeError('founder issue receipt page is inconsistent')
+  const ordinaryPendingCount = pendingCount - frozenCount
+  if (
+    pendingGifts.length !== Math.min(ordinaryPendingCount, SINCE_LAST_VISIT_ITEM_LIMIT)
+    || pendingGiftsHaveMore !== (ordinaryPendingCount > SINCE_LAST_VISIT_ITEM_LIMIT)
+  ) throw new TypeError('pending city credit gift page is inconsistent')
+  const aroundYou = mapAroundYou(row.around_you)
   const hadPreviousRead = booleanValue(row.had_previous_read)
   if (!hadPreviousRead || row.change_units == null) {
     return Object.freeze({
@@ -908,6 +1041,12 @@ async function readCityCreditAttentionSnapshot(
       last_visit_at: lastVisitAt,
       accepted_gifts_received_units: acceptedGiftUnits,
       settled_purchases_received_units: settledPurchaseUnits,
+      founder_issues_received_units: founderIssueUnits,
+      founder_issues: founderIssues,
+      founder_issues_have_more: founderIssuesHaveMore,
+      pending_gifts: pendingGifts,
+      pending_gifts_have_more: pendingGiftsHaveMore,
+      around_you: aroundYou,
       credit_change: null,
     })
   }
@@ -922,6 +1061,12 @@ async function readCityCreditAttentionSnapshot(
     last_visit_at: lastVisitAt,
     accepted_gifts_received_units: acceptedGiftUnits,
     settled_purchases_received_units: settledPurchaseUnits,
+    founder_issues_received_units: founderIssueUnits,
+    founder_issues: founderIssues,
+    founder_issues_have_more: founderIssuesHaveMore,
+    pending_gifts: pendingGifts,
+    pending_gifts_have_more: pendingGiftsHaveMore,
+    around_you: aroundYou,
     credit_change: Object.freeze({
       amount: formatUsdcUnits(BigInt(changeUnits)),
       amount_units: changeUnits,
@@ -945,7 +1090,61 @@ export async function readCityCreditAttention(
       FOR NO KEY UPDATE
     `, [residentId])
     if (!locked[0]) cityCreditAttentionUnavailable()
-    return readCityCreditAttentionSnapshot(transaction, residentId)
+    // The resident lock freezes the saved checkpoint. Pin the public cutoff too:
+    // arrivals after this cheap check belong to the next visit, so a small read
+    // cannot grow into a large unadmitted scan before the report statement runs.
+    const window = await runQuery(transaction, `
+      /* city-credit:me-summary-window */
+      SELECT marker.last_public_change_id::text AS after_change_id,
+        state.current_change_id::text AS through_change_id
+      FROM public_change_state state
+      LEFT JOIN city_credit_last_me_reads marker ON marker.resident_id = $1::integer
+      WHERE state.singleton = true
+    `, [residentId])
+    const before = window[0]?.after_change_id
+    const after = before === null ? null : parsePublicChangeMarker(before)
+    const through = parsePublicChangeMarker(window[0]?.through_change_id)
+    if (through === null || (before !== null && after === null)
+      || (after !== null && BigInt(after) > BigInt(through))) cityCreditAttentionUnavailable()
+    const intervalSize = after === null ? 0n : BigInt(through) - BigInt(after)
+    const needsAdmission = intervalSize >= BigInt(AROUND_YOU_ADMISSION_CHANGE_THRESHOLD)
+      && intervalSize <= BigInt(AROUND_YOU_CHANGE_LIMIT)
+    // The resident lock survives rollback to this savepoint. Only the successful
+    // statement's marker and report commit; a cancelled attempt leaves neither.
+    await runQuery(transaction, '/* city-credit:save-me-summary */ SAVEPOINT city_me_around_you', [])
+    let skipReason: 'busy' | 'timeout' = 'busy'
+    try {
+      let admitted = !needsAdmission
+      if (needsAdmission) {
+        const admission = await runQuery(transaction, `
+          /* city-credit:admit-me-summary */
+          SELECT CASE
+            WHEN pg_try_advisory_xact_lock(${AROUND_YOU_ADVISORY_NAMESPACE}, 0) THEN 0
+            WHEN pg_try_advisory_xact_lock(${AROUND_YOU_ADVISORY_NAMESPACE}, 1) THEN 1
+            ELSE NULL
+          END AS slot
+        `, [])
+        const slot = admission[0]?.slot
+        if (slot !== null && slot !== 0 && slot !== 1) cityCreditAttentionUnavailable()
+        admitted = slot !== null
+      }
+      if (admitted) {
+        await runQuery(transaction, `/* city-credit:me-summary-timeout */ SET LOCAL statement_timeout = '${AROUND_YOU_STATEMENT_TIMEOUT_MS}ms'`, [])
+        await runQuery(transaction, '/* city-credit:me-summary-parallel */ SET LOCAL max_parallel_workers_per_gather = 0', [])
+        const result = await readCityCreditAttentionSnapshot(transaction, residentId, null, through)
+        await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
+        return result
+      }
+    } catch (error) {
+      if (postgresErrorCode(error) !== '57014') throw error
+      skipReason = 'timeout'
+    }
+    // Rollback restores the previous timeout and releases this attempt's slot.
+    // The retry has a fresh snapshot but keeps the pinned public cutoff, with the
+    // heavy CASE arm disabled. Later arrivals are left for the next visit.
+    await runQuery(transaction, '/* city-credit:rollback-me-summary */ ROLLBACK TO SAVEPOINT city_me_around_you', [])
+    await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
+    return readCityCreditAttentionSnapshot(transaction, residentId, skipReason, through)
   })
 }
 
@@ -954,6 +1153,25 @@ export function cityCreditSinceLastVisit(
 ): CityCreditSinceLastVisit {
   const acceptedGiftUnits = BigInt(state.accepted_gifts_received_units)
   const settledPurchaseUnits = BigInt(state.settled_purchases_received_units)
+  const founderIssueUnits = BigInt(state.founder_issues_received_units)
+  const founderNextBefore = state.founder_issues_have_more
+    ? state.founder_issues.at(-1)?.id ?? null
+    : null
+  const pendingItems = Object.freeze(state.pending_gifts.map(gift => {
+    const accept = `POST /api/city-credit/gifts/${gift.gift_id}/accept`
+    const refuse = `POST /api/city-credit/gifts/${gift.gift_id}/refuse`
+    return Object.freeze({
+      gift_id: gift.gift_id,
+      amount: gift.amount,
+      amount_units: gift.amount_units,
+      sentence: `A human bought you ${gift.amount} fee credit. Accept it with ${accept} or refuse it with ${refuse}. Send an empty request body.`,
+      accept,
+      refuse,
+    })
+  }))
+  const pendingNextBefore = state.pending_gifts_have_more
+    ? state.pending_gifts.at(-1)?.row_id ?? null
+    : null
   return Object.freeze({
     accepted_gifts: Object.freeze({
       amount: formatUsdcUnits(acceptedGiftUnits),
@@ -965,14 +1183,34 @@ export function cityCreditSinceLastVisit(
       amount_units: settledPurchaseUnits.toString(),
       record_link: 'city_fee_credit.receipts' as const,
     }),
+    founder_issues: Object.freeze({
+      amount: formatUsdcUnits(founderIssueUnits),
+      amount_units: founderIssueUnits.toString(),
+      sentence: founderIssueUnits === 0n
+        ? null
+        : `The founder gave you ${formatUsdcUnits(founderIssueUnits)} fee credit since your last visit for the reasons listed in these receipts.`,
+      receipts: state.founder_issues,
+      record_link: 'city_fee_credit.receipts' as const,
+      page: Object.freeze({
+        has_more: state.founder_issues_have_more,
+        next_before_credit_id: founderNextBefore,
+      }),
+    }),
     pending_gifts: Object.freeze({
       count: state.pending_gifts_count - state.frozen_gifts_count,
       record_link: 'city_fee_credit.pending_gifts' as const,
+      items: pendingItems,
+      page: Object.freeze({
+        has_more: state.pending_gifts_have_more,
+        next_before_gift_id: pendingNextBefore,
+      }),
     }),
   })
 }
 
-export function cityCreditAttentionLines(state: CityCreditAttentionState): string[] {
+export function cityCreditAttentionLines(
+  state: Pick<CityCreditAttentionState, 'pending_gifts_count' | 'frozen_gifts_count' | 'credit_change'>,
+): string[] {
   const lines: string[] = []
   const ordinaryGiftCount = state.pending_gifts_count - state.frozen_gifts_count
   if (ordinaryGiftCount > 0) {

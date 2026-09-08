@@ -3402,6 +3402,9 @@ CREATE TABLE IF NOT EXISTS city_credit_last_me_reads (
   resident_id          INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
   previous_credit_entry_id BIGINT CHECK (previous_credit_entry_id >= 0),
   last_credit_entry_id BIGINT NOT NULL CHECK (last_credit_entry_id >= 0),
+  last_public_change_id BIGINT
+    CONSTRAINT city_credit_last_me_reads_public_change_nonnegative
+    CHECK (last_public_change_id >= 0),
   read_at              TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 

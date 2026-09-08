@@ -3,7 +3,7 @@ import {
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
-import { HANDLE_RE } from './core.ts'
+import { HANDLE_RE } from './core-primitives.ts'
 import {
   PUBLIC_EVENT_DETAIL_FIELDS,
   PUBLIC_EVENT_KINDS,

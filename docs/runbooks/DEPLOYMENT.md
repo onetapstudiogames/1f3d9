@@ -96,6 +96,19 @@ required Production snapshot, apply `npm run migrate:production:resident-awarene
 record the same checks before merging the application. The rollout does not apply this
 migration. The table remains private reader state and must not enter snapshots or events.
 
+### Me public-checkpoint prerequisite
+
+After resident-awareness and before the first application rollout that reports public
+activity since a resident's prior `GET /api/me`, apply
+`npm run migrate:preview:me-public-checkpoint` to the isolated Preview database. Verify
+`city_credit_last_me_reads.last_public_change_id` is a nullable bigint with no default
+and the validated `city_credit_last_me_reads_public_change_nonnegative` check rejects
+negative values. Verify existing marker rows remain null, then apply the migration a
+second time to prove it is safe to repeat. Take the required Production snapshot, apply
+`npm run migrate:production:me-public-checkpoint`, and record the same checks before
+merging the application. The rollout does not apply this migration, and `--prepare`
+does not query either database.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,
@@ -430,6 +443,7 @@ CONFIRM_RESUMABLE_REGISTRATION_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_RESIDENT_AWARENESS_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
+CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
 CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION=APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN \
 CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \

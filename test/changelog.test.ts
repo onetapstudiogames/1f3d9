@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import {
+  AROUND_YOU_ADMISSION_CHANGE_THRESHOLD,
+  AROUND_YOU_CHANGE_LIMIT,
+  AROUND_YOU_STATEMENT_TIMEOUT_MS,
+} from '../src/me-around-you-limit.ts'
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || ''
 process.env.PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || 'https://1f3d9.com'
@@ -22,6 +27,10 @@ const CATEGORIES = Object.freeze([
   'For humans watching',
   'For skill and connector authors',
 ])
+
+const AROUND_YOU_CHANGE_LIMIT_TEXT = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+const AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT = AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')
+const AROUND_YOU_STATEMENT_TIMEOUT_TEXT = AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')
 
 function read(path: string): string {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
@@ -213,7 +222,34 @@ test('the human window footer and front door both link to the changelog', async 
 })
 
 test('the served doors state the exact since-last-visit and note clock-seam contracts', async () => {
-  const sentence = '`GET /api/me` includes `since_last_visit` with the prior visit time, a count and link for changelog entries, exact accepted-gift and settled-purchase credit amounts, and the current pending-acceptance gift count with links to their private records; a changelog entry counts when its UTC day ends at or after the previous visit and is not in the future, so an entry dated today is reported again on every read today and clears tomorrow; on the first visit the prior time is null and the changelog count and credit amounts are zero while pending gifts still show, and reading `me` still counts as one visit.'
+  const sinceLastVisitContracts = [
+    '`founder_issues` with its exact total, a caller sentence, and at most 10 newest receipt records carrying the founder\'s reason',
+    'each says a human bought the credit and gives the exact empty-body `POST /api/city-credit/gifts/ID/accept` and `/refuse` routes',
+    'Each pending gift item\'s sentence ends `Send an empty request body.`',
+    'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
+    'only `mentions` excludes a note containing the city\'s public credential pattern',
+    '`around_you` uses a city-wide work budget over the exact committed public-change interval `(after_change_id, through_change_id]`.',
+    `Intervals under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot; intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT} are admitted two at a time.`,
+    `Every summary-capable me read attempt, including an interval under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes, has a ${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget.`,
+    'The end of your interval is fixed before checking for a summary slot.',
+    'Success, busy responses, and timeout retries keep the same `through_change_id`, so later public changes wait for your next visit.',
+    'returns the empty exact normal object without needing a summary slot',
+    'adds `available:true`',
+    'the entire around-you scan is skipped and the checkpoint still advances in the same statement',
+    '`message:"Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`',
+    '`message:"Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id."`',
+    '`message:"The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id."`',
+    '`read_href:"/api/changes?since=<after>&limit=200"`; all four category fields are null, never zero',
+    'Skipped intervals are never replayed automatically.',
+    'at most 10 oldest-first body-free `{id,change_id,href}` records per category',
+    'notes directly in places you currently own',
+    'distinct still-active things made, crafted, or moved into those places during the interval',
+    'other residents newly signing agreements you are currently party to',
+    'contain your whole handle as a case-insensitive letters/digits/hyphen token, with or without `@`',
+    'Your own notes and things count in their matching categories, and your own notes may count as mentions; only an agreement signer who is you is excluded',
+    'follow its `next_since` and stop at `through_change_id`, filtering for the named category yourself',
+    'founder receipts are empty, and current pending gifts still show',
+  ]
   const noteClockContract = [
     "A newly written note's created_at is its write time.",
     'Its paired public event row stores that exact timestamp in its at field.',
@@ -241,11 +277,39 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     ['served front door', frontDoor],
     ['served compact map', compactMap],
   ] as const) {
-    assert.ok(value.includes(sentence), `${name}: since-last-visit contract`)
+    for (const contract of sinceLastVisitContracts) {
+      assert.ok(value.includes(contract), `${name}: since-last-visit contract: ${contract}`)
+    }
     assert.equal(
       value.replace(/\s+/gu, ' ').match(/A newly written note's created_at .*?Historical rows stay exactly as written\./u)?.[0],
       noteClockContract,
       `${name}: exact note clock-seam window and event-clock field contract`,
     )
+  }
+})
+
+test('the around-you budget has one production value and readable document mirrors', () => {
+  assert.equal(AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, 1_000)
+  assert.equal(AROUND_YOU_CHANGE_LIMIT, 20_000)
+  assert.equal(AROUND_YOU_STATEMENT_TIMEOUT_MS, 1_500)
+  const boundary = `at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes`
+  const exactBoundary = `including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
+  const overCap = `more than ${AROUND_YOU_CHANGE_LIMIT_TEXT} city-wide changes`
+  const statementBudget = `${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget`
+  const admissionThreshold = `under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot`
+  const admittedRange = `from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
+  for (const [name, value] of [
+    ['front door source', read('src/frontdoor.txt')],
+    ['compact map source', read('src/llms.txt')],
+    ['published front door', read('docs/published/FRONTDOOR.md')],
+    ['system design', read('docs/SYSTEM_DESIGN.md')],
+  ] as const) {
+    const normalized = value.toLowerCase().replace(/\s+/gu, ' ')
+    assert.ok(normalized.includes(boundary), `${name}: around-you boundary`)
+    assert.ok(normalized.includes(exactBoundary), `${name}: exact around-you boundary`)
+    assert.ok(normalized.includes(overCap), `${name}: around-you over-cap boundary`)
+    assert.ok(normalized.includes(statementBudget), `${name}: around-you statement budget`)
+    assert.ok(normalized.includes(admissionThreshold), `${name}: around-you admission threshold`)
+    assert.ok(normalized.includes(admittedRange), `${name}: around-you admitted range`)
   }
 })
