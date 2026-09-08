@@ -970,6 +970,111 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     assert.equal(resumedVisit.around_you.notes_in_owned_places.count, 1)
     assert.equal(resumedVisit.around_you.notes_in_owned_places.records[0]?.id, resumedNote.rows[0]!.id)
     assert.equal(resumedVisit.around_you.mentions.count, 1)
+
+    await postgres.client.query(
+      'UPDATE places SET owner_id = 8 WHERE id = ANY($1::integer[])',
+      [[ownedPlaceId, gainedPlaceId]],
+    )
+    const landlessReader = await postgres.client.query<{ owned_places: number }>(`
+      SELECT count(*)::integer AS owned_places FROM places WHERE owner_id = 7
+    `)
+    assert.equal(landlessReader.rows[0]!.owned_places, 0)
+    await postgres.client.query(
+      'UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 7',
+      [foreignPlaceId],
+    )
+    const presentRoomNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'a landless reader sees this note in the room') RETURNING id
+    `, [foreignPlaceId])
+    const presentRoomThing = await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, owner_id, maker_id)
+      VALUES ($1, 'landless reader room marker', 8, 8) RETURNING id
+    `, [foreignPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail) VALUES
+        ('note', 'neighbor', jsonb_build_object(
+          'note_id', $1::integer, 'place_id', $3::integer
+        )),
+        ('thing_created', 'neighbor', jsonb_build_object(
+          'thing_id', $2::integer, 'place_id', $3::integer
+        ))
+    `, [presentRoomNote.rows[0]!.id, presentRoomThing.rows[0]!.id, foreignPlaceId])
+    const presentRoomVisit = await readMe()
+    assert.equal(presentRoomVisit.around_you.available, true)
+    assert.equal(presentRoomVisit.around_you.after_change_id, resumedVisit.around_you.through_change_id)
+    assert.equal(presentRoomVisit.around_you.notes_in_owned_places.count, 1) // One new note in the current room; no owned places.
+    assert.equal(
+      presentRoomVisit.around_you.notes_in_owned_places.records[0]?.id,
+      presentRoomNote.rows[0]!.id,
+    )
+    assert.equal(presentRoomVisit.around_you.new_things_in_owned_places.count, 1) // One new thing in the same current room.
+    assert.equal(
+      presentRoomVisit.around_you.new_things_in_owned_places.records[0]?.id,
+      presentRoomThing.rows[0]!.id,
+    )
+
+    await postgres.client.query(
+      'UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 7',
+      [ownedPlaceId],
+    )
+    const departedRoomNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'the departed reader must not see this later note') RETURNING id
+    `, [foreignPlaceId])
+    const departedRoomThing = await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, owner_id, maker_id)
+      VALUES ($1, 'departed reader room marker', 8, 8) RETURNING id
+    `, [foreignPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail) VALUES
+        ('note', 'neighbor', jsonb_build_object(
+          'note_id', $1::integer, 'place_id', $3::integer
+        )),
+        ('thing_created', 'neighbor', jsonb_build_object(
+          'thing_id', $2::integer, 'place_id', $3::integer
+        ))
+    `, [departedRoomNote.rows[0]!.id, departedRoomThing.rows[0]!.id, foreignPlaceId])
+    const departedRoomVisit = await readMe()
+    assert.equal(departedRoomVisit.around_you.available, true)
+    assert.equal(departedRoomVisit.around_you.after_change_id, presentRoomVisit.around_you.through_change_id)
+    assert.equal(departedRoomVisit.around_you.notes_in_owned_places.count, 0) // The only new note is in the unowned room left behind.
+    assert.equal(departedRoomVisit.around_you.new_things_in_owned_places.count, 0) // The only new thing is in that departed room too.
+
+    await postgres.client.query('UPDATE places SET owner_id = 7 WHERE id = $1', [ownedPlaceId])
+    await postgres.client.query(
+      'UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 7',
+      [ownedPlaceId],
+    )
+    const overlappingRoomNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'ownership and presence overlap once') RETURNING id
+    `, [ownedPlaceId])
+    const overlappingRoomThing = await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, owner_id, maker_id)
+      VALUES ($1, 'ownership presence overlap marker', 8, 8) RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail) VALUES
+        ('note', 'neighbor', jsonb_build_object(
+          'note_id', $1::integer, 'place_id', $3::integer
+        )),
+        ('thing_created', 'neighbor', jsonb_build_object(
+          'thing_id', $2::integer, 'place_id', $3::integer
+        ))
+    `, [overlappingRoomNote.rows[0]!.id, overlappingRoomThing.rows[0]!.id, ownedPlaceId])
+    const overlappingRoomVisit = await readMe()
+    assert.equal(overlappingRoomVisit.around_you.available, true)
+    assert.equal(overlappingRoomVisit.around_you.after_change_id, departedRoomVisit.around_you.through_change_id)
+    assert.equal(overlappingRoomVisit.around_you.notes_in_owned_places.count, 1) // One note qualifies by both ownership and presence, counted once.
+    assert.equal(overlappingRoomVisit.around_you.new_things_in_owned_places.count, 1) // One thing qualifies by both ownership and presence, counted once.
+    const overlappingRoomNoReplay = await readMe()
+    assert.equal(overlappingRoomNoReplay.around_you.available, true)
+    assert.equal(overlappingRoomNoReplay.around_you.after_change_id, overlappingRoomVisit.around_you.through_change_id)
+    assert.equal(overlappingRoomNoReplay.around_you.through_change_id, overlappingRoomVisit.around_you.through_change_id)
+    assert.equal(overlappingRoomNoReplay.around_you.notes_in_owned_places.count, 0)
+    assert.equal(overlappingRoomNoReplay.around_you.new_things_in_owned_places.count, 0)
+
     const finalMarker = await postgres.client.query<{ last_credit_entry_id: string }>(`
       SELECT last_credit_entry_id::text
       FROM city_credit_last_me_reads WHERE resident_id = 7

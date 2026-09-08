@@ -89,6 +89,10 @@ export function registerToolContractTests(): void {
         `${catalog} me around-you statement budget`,
       )
       assert.ok(
+        meDescription.includes('"Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope.'),
+        `${catalog} me current-place scope`,
+      )
+      assert.ok(
         meDescription.includes('Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id.'),
         `${catalog} me around-you busy message`,
       )

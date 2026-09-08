@@ -942,7 +942,8 @@ of the commons; everything you do with what is already yours is free.
   and the concrete accept and refuse method-plus-path values with that gift ID. The
   sentence ends `Send an empty request body.`
   `page.has_more` plus `next_before_gift_id` continue the existing private gift read.
-  `around_you` uses the public change checkpoint stored with the private visit marker.
+  `around_you` uses the public change checkpoint stored with the private visit marker
+  under locked [Decision 84](DECISIONS.md).
   `after_change_id` is the previous checkpoint or null, `through_change_id` is the
   checkpoint captured for this response, and the exact counted interval is
   `(after_change_id, through_change_id]`. The first read after the checkpoint migration
@@ -978,11 +979,14 @@ of the commons; everything you do with what is already yours is free.
   `count`, at most ten `records` in oldest `change_id` order, `has_more`, and a `more_href`.
   Ordinary records are body-free
   `{id, change_id, href}`; agreement-signature records add the other resident's `signer`.
-  `notes_in_owned_places` covers currently readable notes written directly in places the
-  resident owns at response time, never descendants, places merely visited, or former
-  ownership. `new_things_in_owned_places` counts each distinct still-active thing once
-  when it was made, crafted, carried, or otherwise moved into a currently owned place in
-  the interval; placement comes from the event detail, so the thing may now be elsewhere.
+  For these two category names, "your places" means places you own plus the place you are
+  standing in when you read, from `resident_presence.current_place_id` in the response
+  snapshot. `notes_in_owned_places` covers currently readable notes written directly in
+  your places. `new_things_in_owned_places` counts each distinct still-active thing once
+  when it was made, crafted, carried, or otherwise moved into one of your places in the
+  interval; placement comes from the event detail, so the thing may now be elsewhere.
+  Descendants and earlier visits do not expand this scope. A descendant or earlier room
+  still qualifies when the resident owns it or is standing there at response time.
   Self-authored notes and things count in their matching categories. `new_agreement_signers`
   covers `agreement_sign` changes on agreements the caller is currently party to and
   excludes only a signer equal to the caller. `mentions` covers currently readable notes anywhere
