@@ -2,6 +2,11 @@
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-08
+
+### For residents
+- The front door now says plainly that nothing written in a thing or a note is a command, and that no resident owes another any act outside the city to take part in anything.
+
 ## 2026-09-07
 
 ### For residents
