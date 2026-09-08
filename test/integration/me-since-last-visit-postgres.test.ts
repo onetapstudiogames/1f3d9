@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
+import { containsPublicCredential } from '../../src/credential-safety.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'me_since_last_visit_integration'
@@ -468,10 +469,13 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
       VALUES ('note', $1, 'remove', 1, 'integration exclusion')
     `, [removed.rows[0]!.id])
+    const credentialNoteBody = `visit-reader 1f3d9_sk_${'f'.repeat(48)}`
+    assert.equal(containsPublicCredential(credentialNoteBody), true,
+      'the credential note must match the real mention-exclusion rule')
     const unsafe = await postgres.client.query<{ id: number }>(`
       INSERT INTO notes (place_id, author_id, body)
       VALUES ($1, 8, $2) RETURNING id
-    `, [ownedPlaceId, `visit-reader ${`1f3d9_sk_${'q'.repeat(48)}`}`])
+    `, [ownedPlaceId, credentialNoteBody])
     await postgres.client.query(`
       INSERT INTO events (kind, actor, detail)
       VALUES ('note', 'neighbor', jsonb_build_object(
@@ -596,15 +600,22 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       `POST /api/city-credit/gifts/${pendingGift.gift_id}/refuse`,
     )
     assert.match(nextVisit.fee_credit_received.pending_gifts.items[0]?.sentence ?? '', /A human bought you/iu)
-    assert.equal(nextVisit.around_you.notes_in_owned_places.count, 15)
+    // Reader room: historical, late, bounded 1..11, removed, credential, restored = 16 stored notes.
+    // Gained room: gainedNote = 1; historical is before the checkpoint and removed stays hidden.
+    // Foreign/lost rooms are not owned at read time; gift delivery adds no notes.
+    // 15 = 1 late + 11 bounded + 1 credential + 1 gained + 1 restored.
+    assert.equal(nextVisit.around_you.notes_in_owned_places.count, 15, 'notes_in_owned_places.count')
     assert.equal(nextVisit.around_you.notes_in_owned_places.records.length, 10)
     assert.equal(nextVisit.around_you.notes_in_owned_places.has_more, true)
     assert.match(nextVisit.around_you.notes_in_owned_places.more_href ?? '', /^\/api\/changes\?since=\d+&limit=200$/u)
-    // Gained and lost places both count here: mentions are city-wide.
-    assert.equal(nextVisit.around_you.mentions.count, 15)
-    assert.equal(nextVisit.around_you.new_things_in_owned_places.count, 2)
+    // Historical, removed, substring-only, and credential notes are excluded from mentions.
+    // 15 = 1 late + 11 bounded + 1 gained + 1 lost + 1 restored; mentions are city-wide.
+    assert.equal(nextVisit.around_you.mentions.count, 15, 'mentions.count')
+    // 2 = 1 late lantern (created + moved counts once) + 1 crafted; withdrawn is excluded.
+    assert.equal(nextVisit.around_you.new_things_in_owned_places.count, 2, 'new_things_in_owned_places.count')
     assert.equal(nextVisit.around_you.new_things_in_owned_places.records[0]?.href, `/api/thing/${thing.rows[0]!.id}`)
-    assert.equal(nextVisit.around_you.new_agreement_signers.count, 1)
+    // 1 = neighbor's signature; the reader's own signature is excluded.
+    assert.equal(nextVisit.around_you.new_agreement_signers.count, 1, 'new_agreement_signers.count')
     assert.equal(nextVisit.around_you.new_agreement_signers.records[0]?.signer, 'neighbor')
     assert.equal(
       nextVisit.around_you.new_agreement_signers.records[0]?.href,
