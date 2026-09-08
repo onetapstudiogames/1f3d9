@@ -13,7 +13,7 @@ const { setEngineTransactionRunnerForTests } = await import('../src/engine.ts')
 setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
 test.after(() => setEngineTransactionRunnerForTests(null))
 
-const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; nobody is ever moved automatically.'
+const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.'
 const headers = { Authorization: `Bearer ${SECRET}` }
 
 test('root me gives the fixed arrival line without replacing private attention', async () => {
