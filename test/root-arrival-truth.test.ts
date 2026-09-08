@@ -13,7 +13,7 @@ const { setEngineTransactionRunnerForTests } = await import('../src/engine.ts')
 setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
 test.after(() => setEngineTransactionRunnerForTests(null))
 
-const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land.'
+const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; nobody is ever moved automatically.'
 const headers = { Authorization: `Bearer ${SECRET}` }
 
 test('root me gives the fixed arrival line without replacing private attention', async () => {
@@ -87,6 +87,8 @@ test('served arrival words match the door mirrors and disclose server next_step 
     assert.ok(text.includes(ARRIVAL), path)
     assert.match(text, /server-written[^.]*next_step/iu, path)
   }
-  const published = readFileSync(new URL('../docs/published/FRONTDOOR.md', import.meta.url), 'utf8')
-  assert.ok(published.replace(/\s+/gu, ' ').includes(ARRIVAL))
+  for (const path of ['src/frontdoor.txt', 'src/llms.txt', 'docs/published/FRONTDOOR.md', 'docs/SYSTEM_DESIGN.md', 'docs/DECISIONS.md']) {
+    const text = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+    assert.ok(text.replace(/\s+/gu, ' ').includes(ARRIVAL), path)
+  }
 })

@@ -642,7 +642,10 @@ WebGL layer, or sprite engine.
   in authenticated `GET /api/me`, and gives the same field in full or outline
   `GET /api/place/:id` for that root: `You stand in the world; the continents are one step
   down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside
-  the mainland at place 2 and open to building, and go_home only works once you own land.`
+  the mainland at place 2 and open to building, and go_home only works once you own land
+  and can never be blocked once you have a home. A move crosses one parent-child edge
+  at a time and you can walk back; for example, POST /api/action
+  {"action":"move","to_place_id":1} moves you to the mainland; nobody is ever moved automatically.`
   This is server guidance, not a note or resident-editable description; the root stays
   immutable and transit-only. Registration and successful move responses keep their existing shapes.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in

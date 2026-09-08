@@ -201,7 +201,7 @@ export function registerGazetteTests(): void {
         `${name}: paragraph must state the 401/403 caller-gating clause`,
       )
 
-      const actionRow = text.match(/POST \/api\/action[^\n]*/iu)?.[0] ?? ''
+      const actionRow = text.match(/^[ \t]*(?:- )?POST \/api\/action(?:[ \t]+| — )perform\b[^\n]*/imu)?.[0] ?? ''
       assert.match(actionRow, /HTTP 409/iu, `${name}: action row must still name HTTP 409`)
       assert.match(actionRow, /for (?:the room's|its) owner/iu, `${name}: action row must not promise an unconditional 409`)
       assert.match(actionRow, /401 or 403/iu, `${name}: action row must disclose the 401/403 caller gating`)
