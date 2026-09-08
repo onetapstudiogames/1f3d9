@@ -127,3 +127,28 @@ test('an unavailable interval cannot carry fabricated counts or bodies', () => {
     new_agreement_signers: null, mentions: null,
   }), /around-you/u)
 })
+
+test('a time or admission budget skip names the unread interval without inventing counts', () => {
+  const report = mapAroundYou({
+    ...snapshot(), unavailable_reason: 'budget', body: 'must not escape',
+    notes_in_owned_places: null, new_things_in_owned_places: null,
+    new_agreement_signers: null, mentions: null,
+  })
+  assert.equal(report.available, false)
+  assert.equal(report.baseline, false)
+  assert.equal(report.after_change_id, '15')
+  assert.equal(report.through_change_id, '100')
+  assert.equal(report.read_href, '/api/changes?since=15&limit=200')
+  assert.equal(report.message, 'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.')
+  assert.equal(report.notes_in_owned_places, null)
+  assert.equal(report.new_things_in_owned_places, null)
+  assert.equal(report.new_agreement_signers, null)
+  assert.equal(report.mentions, null)
+  assert.doesNotMatch(JSON.stringify(report), /must not escape|"count":0|"body"/u)
+})
+
+test('a budget skip cannot carry counts, a missing prior checkpoint, or an unknown reason', () => {
+  assert.throws(() => mapAroundYou({ ...snapshot(), unavailable_reason: 'budget' }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), unavailable_reason: 'database internals' }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), after_change_id: null, unavailable_reason: 'budget' }), /around-you/u)
+})

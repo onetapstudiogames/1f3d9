@@ -13,6 +13,8 @@ const POSTGRES_DATABASE = 'me_since_last_visit_integration'
 const RESIDENT_SECRET = `1f3d9_sk_${'v'.repeat(48)}`
 // Reduce only this process's fixture budget; production-boundary units use the real limit.
 const TEST_AROUND_YOU_CHANGE_LIMIT = 1_000
+const TEST_AROUND_YOU_STATEMENT_TIMEOUT_MS = 10_000
+const realAroundYouLimits = await import('../../src/me-around-you-limit.ts')
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const checkpointMigrationDdl = await readFile(
   new URL('../../db/migrations/20260908_me_public_checkpoint.sql', import.meta.url),
@@ -43,6 +45,7 @@ interface TestTaggedSql {
 }
 
 let database: Pool | null = null
+let useShortAroundYouTimeoutOnce = false
 
 function connectedDatabase(): Pool {
   assert.ok(database, 'the since-last-visit PostgreSQL client must be connected')
@@ -66,9 +69,13 @@ function taggedFor(queryable: Pool | PoolClient) {
   tagged.query = async (
     text: string,
     values: readonly unknown[] = [],
-  ): Promise<Record<string, unknown>[]> => (
-    await queryable.query(text, [...values])
-  ).rows as Record<string, unknown>[]
+  ): Promise<Record<string, unknown>[]> => {
+    const statement = useShortAroundYouTimeoutOnce && text.includes('city-credit:me-summary-timeout')
+      ? text.replace(/statement_timeout\s*=\s*'[^']+'/iu, "statement_timeout = '50ms'")
+      : text
+    if (statement !== text) useShortAroundYouTimeoutOnce = false
+    return (await queryable.query(statement, [...values])).rows as Record<string, unknown>[]
+  }
   return tagged
 }
 
@@ -115,7 +122,9 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
 })
 mock.module(new URL('../../src/me-around-you-limit.ts', import.meta.url).href, {
   namedExports: {
+    ...realAroundYouLimits,
     AROUND_YOU_CHANGE_LIMIT: TEST_AROUND_YOU_CHANGE_LIMIT,
+    AROUND_YOU_STATEMENT_TIMEOUT_MS: TEST_AROUND_YOU_STATEMENT_TIMEOUT_MS,
   },
 })
 
@@ -263,6 +272,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
   })
 
   let blocker: PoolClient | null = null
+  const admissionHolders: PoolClient[] = []
   const pendingReads: Promise<ReadOutcome>[] = []
   try {
     await postgres.client.query(schemaDdl)
@@ -645,6 +655,120 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     assert.equal(noReplay.around_you.new_agreement_signers.count, 0)
     assert.equal(noReplay.fee_credit_received.founder_issues.amount, '0.000000')
 
+    await postgres.client.query('DROP TRIGGER pause_me_marker_update ON city_credit_last_me_reads')
+    await postgres.client.query('DROP FUNCTION pause_me_marker_update()')
+
+    const busyNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader summary admission was busy') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [busyNote.rows[0]!.id, ownedPlaceId])
+    for (const slot of [0, 1]) {
+      const holder = await postgres.client.connect()
+      admissionHolders.push(holder)
+      await holder.query('BEGIN')
+      await holder.query(
+        'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
+        [realAroundYouLimits.AROUND_YOU_ADVISORY_NAMESPACE, slot],
+      )
+    }
+    const busyVisit = await readMe()
+    assert.equal(busyVisit.around_you.available, false)
+    assert.equal(busyVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
+    assert.equal(BigInt(busyVisit.around_you.through_change_id) - BigInt(busyVisit.around_you.after_change_id), 1n)
+    assert.equal(busyVisit.around_you.read_href, `/api/changes?since=${busyVisit.around_you.after_change_id}&limit=200`)
+    assert.equal(
+      busyVisit.around_you.message,
+      'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.',
+    )
+    assert.equal(busyVisit.around_you.notes_in_owned_places, null)
+    assert.equal(busyVisit.around_you.new_things_in_owned_places, null)
+    assert.equal(busyVisit.around_you.new_agreement_signers, null)
+    assert.equal(busyVisit.around_you.mentions, null)
+    const busyMarker = await postgres.client.query<{ last_public_change_id: string }>(`
+      SELECT last_public_change_id::text
+      FROM city_credit_last_me_reads WHERE resident_id = 7
+    `)
+    assert.equal(busyMarker.rows[0]!.last_public_change_id, busyVisit.around_you.through_change_id)
+    for (const holder of admissionHolders.splice(0)) {
+      await holder.query('COMMIT')
+      holder.release()
+    }
+    const afterBusy = await readMe()
+    assert.equal(afterBusy.around_you.available, true)
+    assert.equal(afterBusy.around_you.after_change_id, busyVisit.around_you.through_change_id)
+    assert.equal(afterBusy.around_you.through_change_id, busyVisit.around_you.through_change_id)
+    assert.equal(afterBusy.around_you.notes_in_owned_places.count, 0)
+
+    await postgres.client.query(`
+      CREATE FUNCTION delay_budgeted_me_summary() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF current_setting('statement_timeout') <> '0' THEN
+          PERFORM pg_sleep(0.2);
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER delay_budgeted_me_summary
+      BEFORE UPDATE ON city_credit_last_me_reads
+      FOR EACH ROW EXECUTE FUNCTION delay_budgeted_me_summary();
+    `)
+    const timeoutNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader summary exceeded its statement budget') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [timeoutNote.rows[0]!.id, ownedPlaceId])
+    useShortAroundYouTimeoutOnce = true
+    const timeoutVisit = await readMe()
+    assert.equal(useShortAroundYouTimeoutOnce, false, 'the timeout seam reached the tagged SET LOCAL statement')
+    assert.equal(timeoutVisit.around_you.available, false)
+    assert.equal(timeoutVisit.around_you.after_change_id, afterBusy.around_you.through_change_id)
+    assert.equal(BigInt(timeoutVisit.around_you.through_change_id) - BigInt(timeoutVisit.around_you.after_change_id), 1n)
+    assert.equal(timeoutVisit.around_you.read_href, `/api/changes?since=${timeoutVisit.around_you.after_change_id}&limit=200`)
+    assert.equal(timeoutVisit.around_you.message, busyVisit.around_you.message)
+    assert.equal(timeoutVisit.around_you.notes_in_owned_places, null)
+    assert.equal(timeoutVisit.around_you.new_things_in_owned_places, null)
+    assert.equal(timeoutVisit.around_you.new_agreement_signers, null)
+    assert.equal(timeoutVisit.around_you.mentions, null)
+    const timeoutMarker = await postgres.client.query<{ last_public_change_id: string }>(`
+      SELECT last_public_change_id::text
+      FROM city_credit_last_me_reads WHERE resident_id = 7
+    `)
+    assert.equal(timeoutMarker.rows[0]!.last_public_change_id, timeoutVisit.around_you.through_change_id)
+    const afterTimeout = await readMe()
+    assert.equal(afterTimeout.around_you.available, true)
+    assert.equal(afterTimeout.around_you.after_change_id, timeoutVisit.around_you.through_change_id)
+    assert.equal(afterTimeout.around_you.through_change_id, timeoutVisit.around_you.through_change_id)
+    assert.equal(afterTimeout.around_you.notes_in_owned_places.count, 0)
+    await postgres.client.query('DROP TRIGGER delay_budgeted_me_summary ON city_credit_last_me_reads')
+    await postgres.client.query('DROP FUNCTION delay_budgeted_me_summary()')
+
+    const budgetResumeNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader summary resumed after admission and timeout skips') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [budgetResumeNote.rows[0]!.id, ownedPlaceId])
+    const afterBudgetSkips = await readMe()
+    assert.equal(afterBudgetSkips.around_you.available, true)
+    assert.equal(afterBudgetSkips.around_you.after_change_id, afterTimeout.around_you.through_change_id)
+    assert.equal(afterBudgetSkips.around_you.notes_in_owned_places.count, 1)
+    assert.equal(afterBudgetSkips.around_you.notes_in_owned_places.records[0]?.id, budgetResumeNote.rows[0]!.id)
+
     const boundaryNote = await postgres.client.query<{ id: number }>(`
       INSERT INTO notes (place_id, author_id, body)
       VALUES ($1, 8, 'visit-reader saw the exact summary boundary') RETURNING id
@@ -662,7 +786,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     `, [TEST_AROUND_YOU_CHANGE_LIMIT - 1])
     const boundaryVisit = await readMe()
     assert.equal(boundaryVisit.around_you.available, true)
-    assert.equal(boundaryVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
+    assert.equal(boundaryVisit.around_you.after_change_id, afterBudgetSkips.around_you.through_change_id)
     assert.equal(
       BigInt(boundaryVisit.around_you.through_change_id) - BigInt(boundaryVisit.around_you.after_change_id),
       BigInt(TEST_AROUND_YOU_CHANGE_LIMIT),
@@ -690,37 +814,42 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     const overflowThrough = await postgres.client.query<{ current_change_id: string }>(`
       SELECT current_change_id::text FROM public_change_state WHERE singleton = true
     `)
-    const explain = await postgres.client.query<{ 'QUERY PLAN': unknown }>(`
-      EXPLAIN (ANALYZE, FORMAT JSON)
-      WITH prior AS MATERIALIZED (
-        SELECT $2::bigint AS last_public_change_id
-      ), cutoff AS MATERIALIZED (
-        SELECT $3::bigint AS public_change_id
-      )
-      SELECT ${AROUND_YOU_SQL} AS around_you FROM cutoff
-    `, [7, boundaryVisit.around_you.through_change_id, overflowThrough.rows[0]!.current_change_id])
-    const planNodes: Readonly<Record<string, unknown>>[] = []
-    const collectPlanNodes = (value: unknown): void => {
-      if (Array.isArray(value)) {
-        for (const item of value) collectPlanNodes(item)
-      } else if (value !== null && typeof value === 'object') {
-        const node = value as Readonly<Record<string, unknown>>
-        if ('Node Type' in node) planNodes.push(node)
-        for (const child of Object.values(node)) collectPlanNodes(child)
+    for (const skippedWindow of [
+      { after: boundaryVisit.around_you.through_change_id, forced: false },
+      { after: String(BigInt(overflowThrough.rows[0]!.current_change_id) - 1n), forced: true },
+    ]) {
+      const explain = await postgres.client.query<{ 'QUERY PLAN': unknown }>(`
+        EXPLAIN (ANALYZE, FORMAT JSON)
+        WITH prior AS MATERIALIZED (
+          SELECT $2::bigint AS last_public_change_id
+        ), cutoff AS MATERIALIZED (
+          SELECT $3::bigint AS public_change_id, $4::boolean AS skip_around_you
+        )
+        SELECT ${AROUND_YOU_SQL} AS around_you FROM cutoff
+      `, [7, skippedWindow.after, overflowThrough.rows[0]!.current_change_id, skippedWindow.forced])
+      const planNodes: Readonly<Record<string, unknown>>[] = []
+      const collectPlanNodes = (value: unknown): void => {
+        if (Array.isArray(value)) {
+          for (const item of value) collectPlanNodes(item)
+        } else if (value !== null && typeof value === 'object') {
+          const node = value as Readonly<Record<string, unknown>>
+          if ('Node Type' in node) planNodes.push(node)
+          for (const child of Object.values(node)) collectPlanNodes(child)
+        }
       }
+      collectPlanNodes(explain.rows[0]!['QUERY PLAN'])
+      const heavyRelations = new Set([
+        'public_change_log', 'events', 'notes', 'places', 'residents', 'things',
+        'agreements', 'agreement_parties', 'agreement_signatures', 'moderation_actions',
+      ])
+      const heavyScanNodes = planNodes.filter(node => heavyRelations.has(String(node['Relation Name'])))
+      assert.ok(heavyScanNodes.length > 0, 'the explained heavy around-you branch must remain visible')
+      assert.deepEqual(
+        heavyScanNodes.map(node => node['Actual Loops']),
+        heavyScanNodes.map(() => 0),
+        'both count-cap and forced-budget CASE arms must skip every heavy around-you relation scan',
+      )
     }
-    collectPlanNodes(explain.rows[0]!['QUERY PLAN'])
-    const heavyRelations = new Set([
-      'public_change_log', 'events', 'notes', 'places', 'residents', 'things',
-      'agreements', 'agreement_parties', 'agreement_signatures', 'moderation_actions',
-    ])
-    const heavyScanNodes = planNodes.filter(node => heavyRelations.has(String(node['Relation Name'])))
-    assert.ok(heavyScanNodes.length > 0, 'the explained heavy around-you branch must remain visible')
-    assert.deepEqual(
-      heavyScanNodes.map(node => node['Actual Loops']),
-      heavyScanNodes.map(() => 0),
-      'the over-cap CASE must skip every heavy around-you relation scan',
-    )
     const degradedVisit = await readMe()
     assert.equal(degradedVisit.around_you.available, false)
     assert.equal(degradedVisit.around_you.baseline, false)
@@ -784,6 +913,10 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     if (blocker) {
       await blocker.query('ROLLBACK').catch(() => undefined)
       blocker.release()
+    }
+    for (const holder of admissionHolders.splice(0)) {
+      await holder.query('ROLLBACK').catch(() => undefined)
+      holder.release()
     }
     await Promise.all(pendingReads)
     setEngineTransactionRunnerForTests(null)

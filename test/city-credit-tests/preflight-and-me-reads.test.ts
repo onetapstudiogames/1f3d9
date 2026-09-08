@@ -13,6 +13,14 @@ const EMPTY_AROUND_YOU = {
   mentions: { count: 0, records: [] },
 } as const
 
+const SUMMARY_BUDGET_REPLIES = {
+  'save-me-summary': [[]],
+  'admit-me-summary': [[{ slot: 0 }]],
+  'me-summary-timeout': [[]],
+  'me-summary-parallel': [[]],
+  'release-me-summary': [[]],
+} as const
+
 function attentionRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     had_previous_read: true, change_units: '0', changed_at: '2026-09-01T15:00:00.000Z',
@@ -296,6 +304,7 @@ export function registerPreflightAndMeReadsTests(): void {
       }
     }
     const database = new TransactionDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]],
       'read-attention': [[attentionRow({ founder_issues: undefined })]],
     })
@@ -308,6 +317,7 @@ export function registerPreflightAndMeReadsTests(): void {
     assert.equal(missingResident.committed, false)
     assert.equal(missingResident.calls.length, 1)
     const missingSnapshot = new TransactionDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]], 'read-attention': [[]],
     })
     await assert.rejects(readCityCreditAttention(missingSnapshot, 7), TypeError)
@@ -317,6 +327,7 @@ export function registerPreflightAndMeReadsTests(): void {
 
   test('an unread around-you interval completes the me transaction and preserves credit information', async () => {
     const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]],
       'read-attention': [[attentionRow({ around_you: {
         after_change_id: '1', through_change_id: String(AROUND_YOU_CHANGE_LIMIT + 2),
@@ -341,6 +352,72 @@ export function registerPreflightAndMeReadsTests(): void {
     assert.equal(credit.founder_issues.receipts[0]?.reason, 'Showing room prize')
     assert.equal(credit.pending_gifts.count, 1)
     assert.match(credit.pending_gifts.items[0]?.sentence ?? '', /A human bought you/u)
+  })
+
+  test('no summary slot skips the heavy statement and still commits the captured report', async () => {
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]],
+      'admit-me-summary': [[{ slot: null }]],
+      'rollback-me-summary': [[]],
+      'read-attention': [[attentionRow({ around_you: {
+        after_change_id: '5', through_change_id: '6', unavailable_reason: 'budget',
+        notes_in_owned_places: null, new_things_in_owned_places: null,
+        new_agreement_signers: null, mentions: null,
+      } })]],
+    })
+    const result = await readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7)
+    assert.equal(result.around_you.available, false)
+    assert.deepEqual(database.calls.map(call => call.marker), [
+      'lock-me-read', 'save-me-summary', 'admit-me-summary',
+      'rollback-me-summary', 'release-me-summary', 'read-attention',
+    ])
+    assert.deepEqual(database.calls.at(-1)?.params, [7, true])
+  })
+
+  test('a cancelled summary rolls back once and returns only the forced-skip retry snapshot', async () => {
+    const cancelled = Object.assign(new Error('query cancelled'), { code: '57014' })
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]],
+      'rollback-me-summary': [[]],
+      'read-attention': [Object.assign(new Error('wrapped'), { sourceError: cancelled }), [attentionRow({
+        last_visit_at: '2026-09-01T10:00:00Z',
+        around_you: {
+          after_change_id: '5', through_change_id: '8', unavailable_reason: 'budget',
+          notes_in_owned_places: null, new_things_in_owned_places: null,
+          new_agreement_signers: null, mentions: null,
+        },
+      })]],
+    })
+    const result = await readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7)
+    assert.equal(result.around_you.available, false)
+    assert.equal(result.around_you.through_change_id, '8')
+    assert.equal(result.last_visit_at, '2026-09-01T10:00:00.000Z')
+    assert.equal(result.founder_issues[0]?.reason, 'Showing room prize')
+    assert.deepEqual(database.calls.map(call => call.marker), [
+      'lock-me-read', 'save-me-summary', 'admit-me-summary',
+      'me-summary-timeout', 'me-summary-parallel', 'read-attention',
+      'rollback-me-summary', 'release-me-summary', 'read-attention',
+    ])
+    assert.deepEqual(database.calls.filter(call => call.marker === 'read-attention').map(call => call.params), [[7, false], [7, true]])
+  })
+
+  test('a non-budget database error is not retried or hidden by an unavailable summary', async () => {
+    const failure = Object.assign(new Error('database failed'), { code: 'XX000' })
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]], 'read-attention': [failure],
+    })
+    await assert.rejects(readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7), error => error === failure)
+    assert.equal(database.calls.filter(call => call.marker === 'read-attention').length, 1)
+    assert.equal(database.calls.some(call => call.marker === 'rollback-me-summary'), false)
   })
 
   test('the first visit keeps credit amounts empty while reporting current pending gifts', () => {

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { postgresErrorCode } from './core.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
+import { AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
   CITY_FEE_CREDIT_USDC,
@@ -882,6 +884,7 @@ function mapPendingGiftItems(value: unknown): readonly PendingGiftSinceLastVisit
 async function readCityCreditAttentionSnapshot(
   database: CityCreditDatabase,
   residentId: number,
+  skipAroundYou = false,
 ): Promise<CityCreditAttentionState> {
   // Ledger IDs are allocation-, not commit-ordered; closing the rare late-lower-ID window requires a per-resident cursor allocated under the account lock.
   const rows = await runQuery(database, `
@@ -892,7 +895,8 @@ async function readCityCreditAttentionSnapshot(
       WHERE marker.resident_id = $1::integer
     ), cutoff AS MATERIALIZED (
       SELECT coalesce(max(entry.id), 0)::bigint AS entry_id,
-        (SELECT current_change_id FROM public_change_state WHERE singleton = true) AS public_change_id
+        (SELECT current_change_id FROM public_change_state WHERE singleton = true) AS public_change_id,
+        $2::boolean AS skip_around_you
       FROM city_credit_entries entry
       WHERE entry.resident_id = $1::integer
     ), advanced AS MATERIALIZED (
@@ -994,7 +998,7 @@ async function readCityCreditAttentionSnapshot(
     CROSS JOIN cutoff
     CROSS JOIN balance_changes
     CROSS JOIN gift_counts
-  `, [residentId])
+  `, [residentId, skipAroundYou])
   const row = rows[0]
   if (!row) cityCreditAttentionUnavailable()
   const pendingCount = integerValue(row.pending_count, 'pending city credit gift count')
@@ -1084,7 +1088,36 @@ export async function readCityCreditAttention(
       FOR NO KEY UPDATE
     `, [residentId])
     if (!locked[0]) cityCreditAttentionUnavailable()
-    return readCityCreditAttentionSnapshot(transaction, residentId)
+    // The resident lock survives rollback to this savepoint. Only the successful
+    // statement's marker and report commit; a cancelled attempt leaves neither.
+    await runQuery(transaction, '/* city-credit:save-me-summary */ SAVEPOINT city_me_around_you', [])
+    try {
+      const admission = await runQuery(transaction, `
+        /* city-credit:admit-me-summary */
+        SELECT CASE
+          WHEN pg_try_advisory_xact_lock(${AROUND_YOU_ADVISORY_NAMESPACE}, 0) THEN 0
+          WHEN pg_try_advisory_xact_lock(${AROUND_YOU_ADVISORY_NAMESPACE}, 1) THEN 1
+          ELSE NULL
+        END AS slot
+      `, [])
+      const slot = admission[0]?.slot
+      if (slot !== null && slot !== 0 && slot !== 1) cityCreditAttentionUnavailable()
+      if (slot !== null) {
+        await runQuery(transaction, `/* city-credit:me-summary-timeout */ SET LOCAL statement_timeout = '${AROUND_YOU_STATEMENT_TIMEOUT_MS}ms'`, [])
+        await runQuery(transaction, '/* city-credit:me-summary-parallel */ SET LOCAL max_parallel_workers_per_gather = 0', [])
+        const result = await readCityCreditAttentionSnapshot(transaction, residentId)
+        await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
+        return result
+      }
+    } catch (error) {
+      if (postgresErrorCode(error) !== '57014') throw error
+    }
+    // Rollback restores the previous timeout and releases this attempt's slot.
+    // The retry captures a fresh snapshot and cutoff, with the heavy CASE arm
+    // disabled. It cannot lose an interval to a cancelled marker write.
+    await runQuery(transaction, '/* city-credit:rollback-me-summary */ ROLLBACK TO SAVEPOINT city_me_around_you', [])
+    await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
+    return readCityCreditAttentionSnapshot(transaction, residentId, true)
   })
 }
 

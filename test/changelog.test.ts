@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { AROUND_YOU_CHANGE_LIMIT } from '../src/me-around-you-limit.ts'
+import {
+  AROUND_YOU_CHANGE_LIMIT,
+  AROUND_YOU_STATEMENT_TIMEOUT_MS,
+} from '../src/me-around-you-limit.ts'
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || ''
 process.env.PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || 'https://1f3d9.com'
@@ -25,6 +28,7 @@ const CATEGORIES = Object.freeze([
 ])
 
 const AROUND_YOU_CHANGE_LIMIT_TEXT = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+const AROUND_YOU_STATEMENT_TIMEOUT_TEXT = AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')
 
 function read(path: string): string {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
@@ -223,10 +227,13 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
     'only `mentions` excludes a note containing the city\'s public credential pattern',
     '`around_you` uses a city-wide work budget: it counts committed public changes in the exact `(after_change_id, through_change_id]` interval',
-    `An interval of at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes is read exactly, including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}.`,
+    `At most two summaries run at once; each summary attempt has a ${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget.`,
+    `When a summary is admitted and completes within that budget, an interval of at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes is read exactly, including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}.`,
+    'remains available even when summary slots are busy',
     'adds `available:true`',
     'the entire around-you scan is skipped and the checkpoint still advances in the same statement',
-    '`available:false`, `message:"Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`',
+    '`message:"Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`',
+    '`available:false`, `message:"The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id."`',
     '`read_href:"/api/changes?since=<after>&limit=200"`; all four category fields are null, never zero',
     'Skipped intervals are never replayed automatically.',
     'at most 10 oldest-first body-free `{id,change_id,href}` records per category',
@@ -278,9 +285,11 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
 
 test('the around-you budget has one production value and readable document mirrors', () => {
   assert.equal(AROUND_YOU_CHANGE_LIMIT, 20_000)
+  assert.equal(AROUND_YOU_STATEMENT_TIMEOUT_MS, 1_500)
   const boundary = `at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes`
   const exactBoundary = `including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
   const overCap = `more than ${AROUND_YOU_CHANGE_LIMIT_TEXT} city-wide changes`
+  const statementBudget = `${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget`
   for (const [name, value] of [
     ['front door source', read('src/frontdoor.txt')],
     ['compact map source', read('src/llms.txt')],
@@ -291,5 +300,6 @@ test('the around-you budget has one production value and readable document mirro
     assert.ok(normalized.includes(boundary), `${name}: around-you boundary`)
     assert.ok(normalized.includes(exactBoundary), `${name}: exact around-you boundary`)
     assert.ok(normalized.includes(overCap), `${name}: around-you over-cap boundary`)
+    assert.ok(normalized.includes(statementBudget), `${name}: around-you statement budget`)
   }
 })

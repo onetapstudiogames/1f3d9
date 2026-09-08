@@ -1,7 +1,7 @@
 import { HANDLE_RE } from './core.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
-import { AROUND_YOU_CHANGE_LIMIT } from './me-around-you-limit.ts'
+import { AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 
 const RECORD_LIMIT = 10
 const MAX_RECORD_ID = 2_147_483_647
@@ -53,6 +53,11 @@ export const AROUND_YOU_SQL = `(
       'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
       'new_agreement_signers', NULL, 'mentions', NULL
     )
+    WHEN cutoff.skip_around_you THEN jsonb_build_object(
+      'unavailable_reason', 'budget',
+      'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
+      'new_agreement_signers', NULL, 'mentions', NULL
+    )
     ELSE (
   WITH window_events AS MATERIALIZED (
     SELECT change.change_id, event.kind, event.actor,
@@ -64,7 +69,7 @@ export const AROUND_YOU_SQL = `(
       AND event.kind IN ('note', 'thing_created', 'thing_crafted', 'thing_moved', 'agreement_sign')
     LIMIT ${AROUND_YOU_CHANGE_LIMIT}
   ), window_notes AS MATERIALIZED (
-    SELECT note.id, note.place_id, note.body, min(event.change_id) AS change_id
+    SELECT note.id, note.place_id, min(event.change_id) AS change_id
     FROM window_events event
     JOIN notes note ON event.note_id = note.id
     WHERE event.kind = 'note'
@@ -82,9 +87,16 @@ export const AROUND_YOU_SQL = `(
     UNION ALL
     SELECT 'mentions', note.id, note.change_id, NULL::text
     FROM window_notes note
+    JOIN notes content ON content.id = note.id
     JOIN residents reader ON reader.id = $1::integer
-    WHERE note.body ~* ('(^|[^a-z0-9-])' || reader.handle || '([^a-z0-9-]|$)')
-      AND note.body !~* '${PUBLIC_CREDENTIAL_PATTERN_SOURCE.replace(/'/gu, "''")}'
+    -- Keep bodies out of the shared materialization. CASE guarantees that the
+    -- credential regex runs only after an exact handle match, with unchanged
+    -- PostgreSQL case-folding and token-boundary semantics.
+    WHERE CASE
+      WHEN content.body ~* ('(^|[^a-z0-9-])' || reader.handle || '([^a-z0-9-]|$)')
+      THEN content.body !~* '${PUBLIC_CREDENTIAL_PATTERN_SOURCE.replace(/'/gu, "''")}'
+      ELSE false
+    END
     UNION ALL
     SELECT 'new_things_in_owned_places', thing.id, min(event.change_id), NULL::text
     FROM window_events event
@@ -133,7 +145,7 @@ export const AROUND_YOU_SQL = `(
     ) END
 )`
 
-const SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are summarized, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
+const SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. At most two summaries run at once; each attempt has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. If both slots are busy or the attempt takes too long, available is false with the same null category fields and interval link; message says the summary was too busy or took too long. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
 
 function unavailable(): never {
   throw new TypeError('around-you summary is invalid')
@@ -187,12 +199,17 @@ export function mapAroundYou(value: unknown): AroundYou {
   const after = row.after_change_id === null ? null : marker(row.after_change_id)
   const through = marker(row.through_change_id)
   if (after !== null && BigInt(after) > BigInt(through)) unavailable()
-  if (after !== null && BigInt(through) - BigInt(after) > BigInt(AROUND_YOU_CHANGE_LIMIT)) {
+  const budgetUnavailable = row.unavailable_reason === 'budget'
+  if (row.unavailable_reason !== undefined && !budgetUnavailable) unavailable()
+  if (budgetUnavailable && after === null) unavailable()
+  if (after !== null && (budgetUnavailable || BigInt(through) - BigInt(after) > BigInt(AROUND_YOU_CHANGE_LIMIT))) {
     if (CATEGORIES.some(category => row[category] !== null)) unavailable()
     return Object.freeze({
       after_change_id: after, through_change_id: through, baseline: false, scope: SCOPE,
       available: false,
-      message: 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
+      message: budgetUnavailable
+        ? 'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.'
+        : 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
       read_href: `/api/changes?since=${after}&limit=200`,
       notes_in_owned_places: null, new_things_in_owned_places: null,
       new_agreement_signers: null, mentions: null,

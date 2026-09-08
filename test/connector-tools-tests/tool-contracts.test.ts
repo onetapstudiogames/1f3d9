@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
+import {
+  AROUND_YOU_CHANGE_LIMIT,
+  AROUND_YOU_STATEMENT_TIMEOUT_MS,
+} from '../../src/me-around-you-limit.ts'
 import {
   NOAUTH_SECURITY_SCHEME,
   OAUTH_SECURITY_SCHEME,
@@ -64,15 +67,24 @@ export function registerToolContractTests(): void {
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /authenticated|resident.*only/iu)
     assert.match(legacy.find(tool => tool.name === 'flag')!.description, /anonymous.*web-only/iu)
     const aroundYouLimit = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+    const aroundYouStatementTimeout = AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')
     for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
       const meDescription = tools.find(tool => tool.name === 'me')!.description
       assert.ok(
-        meDescription.includes(`At most ${aroundYouLimit} changes, including exactly ${aroundYouLimit}`),
+        meDescription.includes(`When a summary is admitted and completes within that budget, at most ${aroundYouLimit} changes, including exactly ${aroundYouLimit}`),
         `${catalog} me exact around-you boundary`,
       )
       assert.ok(
         meDescription.includes(`More than ${aroundYouLimit} city-wide changes`),
         `${catalog} me around-you over-cap boundary`,
+      )
+      assert.ok(
+        meDescription.includes(`At most two summaries run at once; each summary attempt has a ${aroundYouStatementTimeout} ms database statement budget.`),
+        `${catalog} me around-you statement budget`,
+      )
+      assert.ok(
+        meDescription.includes('The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.'),
+        `${catalog} me around-you unavailable message`,
       )
     }
   })
