@@ -250,6 +250,7 @@ export function respondToDatabaseStage1(
     }]
   }
   if (q.includes('/* city-credit:lock-me-read */')) return [{ id: fixtureState.current.actorId }]
+  if (q.includes('/* city-credit:me-summary-window */')) return [{ after_change_id: null, through_change_id: '0' }]
   if (q.includes('/* city-credit:admit-me-summary */')) return [{ slot: 0 }]
   if (/\/\* city-credit:(?:save-me-summary|me-summary-timeout|me-summary-parallel|release-me-summary|rollback-me-summary) \*\//u.test(q)) return []
   if (q.includes('/* city-credit:read-attention */')) {

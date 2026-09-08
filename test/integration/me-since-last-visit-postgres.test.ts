@@ -13,6 +13,7 @@ const POSTGRES_DATABASE = 'me_since_last_visit_integration'
 const RESIDENT_SECRET = `1f3d9_sk_${'v'.repeat(48)}`
 // Reduce only this process's fixture budget; production-boundary units use the real limit.
 const TEST_AROUND_YOU_CHANGE_LIMIT = 1_000
+const TEST_AROUND_YOU_ADMISSION_CHANGE_THRESHOLD = 1_000
 const TEST_AROUND_YOU_STATEMENT_TIMEOUT_MS = 10_000
 const realAroundYouLimits = await import('../../src/me-around-you-limit.ts')
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
@@ -46,6 +47,7 @@ interface TestTaggedSql {
 
 let database: Pool | null = null
 let useShortAroundYouTimeoutOnce = false
+let afterSummaryWindowOnce: (() => Promise<void>) | null = null
 
 function connectedDatabase(): Pool {
   assert.ok(database, 'the since-last-visit PostgreSQL client must be connected')
@@ -74,7 +76,13 @@ function taggedFor(queryable: Pool | PoolClient) {
       ? text.replace(/statement_timeout\s*=\s*'[^']+'/iu, "statement_timeout = '50ms'")
       : text
     if (statement !== text) useShortAroundYouTimeoutOnce = false
-    return (await queryable.query(statement, [...values])).rows as Record<string, unknown>[]
+    const rows = (await queryable.query(statement, [...values])).rows as Record<string, unknown>[]
+    if (text.includes('city-credit:me-summary-window') && afterSummaryWindowOnce) {
+      const callback = afterSummaryWindowOnce
+      afterSummaryWindowOnce = null
+      await callback()
+    }
+    return rows
   }
   return tagged
 }
@@ -124,6 +132,7 @@ mock.module(new URL('../../src/me-around-you-limit.ts', import.meta.url).href, {
   namedExports: {
     ...realAroundYouLimits,
     AROUND_YOU_CHANGE_LIMIT: TEST_AROUND_YOU_CHANGE_LIMIT,
+    AROUND_YOU_ADMISSION_CHANGE_THRESHOLD: TEST_AROUND_YOU_ADMISSION_CHANGE_THRESHOLD,
     AROUND_YOU_STATEMENT_TIMEOUT_MS: TEST_AROUND_YOU_STATEMENT_TIMEOUT_MS,
   },
 })
@@ -658,16 +667,16 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     await postgres.client.query('DROP TRIGGER pause_me_marker_update ON city_credit_last_me_reads')
     await postgres.client.query('DROP FUNCTION pause_me_marker_update()')
 
-    const busyNote = await postgres.client.query<{ id: number }>(`
+    const smallIntervalNote = await postgres.client.query<{ id: number }>(`
       INSERT INTO notes (place_id, author_id, body)
-      VALUES ($1, 8, 'visit-reader summary admission was busy') RETURNING id
+      VALUES ($1, 8, 'visit-reader small interval bypassed busy summary slots') RETURNING id
     `, [ownedPlaceId])
     await postgres.client.query(`
       INSERT INTO events (kind, actor, detail)
       VALUES ('note', 'neighbor', jsonb_build_object(
         'note_id', $1::integer, 'place_id', $2::integer
       ))
-    `, [busyNote.rows[0]!.id, ownedPlaceId])
+    `, [smallIntervalNote.rows[0]!.id, ownedPlaceId])
     for (const slot of [0, 1]) {
       const holder = await postgres.client.connect()
       admissionHolders.push(holder)
@@ -677,14 +686,61 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
         [realAroundYouLimits.AROUND_YOU_ADVISORY_NAMESPACE, slot],
       )
     }
+    const smallIntervalVisit = await readMe()
+    assert.equal(smallIntervalVisit.around_you.available, true)
+    assert.equal(smallIntervalVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
+    assert.equal(
+      BigInt(smallIntervalVisit.around_you.through_change_id) - BigInt(smallIntervalVisit.around_you.after_change_id),
+      1n,
+    )
+    assert.equal(smallIntervalVisit.around_you.notes_in_owned_places.count, 1)
+    assert.equal(smallIntervalVisit.around_you.notes_in_owned_places.records[0]?.id, smallIntervalNote.rows[0]!.id)
+    assert.equal(smallIntervalVisit.around_you.mentions.count, 1)
+    assert.equal(smallIntervalVisit.around_you.new_things_in_owned_places.count, 0)
+    assert.equal(smallIntervalVisit.around_you.new_agreement_signers.count, 0)
+
+    const busyNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader threshold interval found both summary slots busy') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [busyNote.rows[0]!.id, ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'integration_filler', 'neighbor', jsonb_build_object('sequence', sequence)
+      FROM generate_series(1, $1::integer) AS sequence
+    `, [TEST_AROUND_YOU_ADMISSION_CHANGE_THRESHOLD - 1])
+    let latePinnedNoteId: number | null = null
+    afterSummaryWindowOnce = async () => {
+      const lateNote = await postgres.client.query<{ id: number }>(`
+        INSERT INTO notes (place_id, author_id, body)
+        VALUES ($1, 8, 'visit-reader arrived after the pinned summary cutoff') RETURNING id
+      `, [ownedPlaceId])
+      latePinnedNoteId = lateNote.rows[0]!.id
+      await postgres.client.query(`
+        INSERT INTO events (kind, actor, detail)
+        VALUES ('note', 'neighbor', jsonb_build_object(
+          'note_id', $1::integer, 'place_id', $2::integer
+        ))
+      `, [latePinnedNoteId, ownedPlaceId])
+    }
     const busyVisit = await readMe()
+    assert.equal(afterSummaryWindowOnce, null, 'the late public change was committed after the summary-window query')
+    assert.ok(latePinnedNoteId !== null)
     assert.equal(busyVisit.around_you.available, false)
-    assert.equal(busyVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
-    assert.equal(BigInt(busyVisit.around_you.through_change_id) - BigInt(busyVisit.around_you.after_change_id), 1n)
+    assert.equal(busyVisit.around_you.after_change_id, smallIntervalVisit.around_you.through_change_id)
+    assert.equal(
+      BigInt(busyVisit.around_you.through_change_id) - BigInt(busyVisit.around_you.after_change_id),
+      BigInt(TEST_AROUND_YOU_ADMISSION_CHANGE_THRESHOLD),
+    )
     assert.equal(busyVisit.around_you.read_href, `/api/changes?since=${busyVisit.around_you.after_change_id}&limit=200`)
     assert.equal(
       busyVisit.around_you.message,
-      'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.',
+      'Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id.',
     )
     assert.equal(busyVisit.around_you.notes_in_owned_places, null)
     assert.equal(busyVisit.around_you.new_things_in_owned_places, null)
@@ -702,8 +758,15 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     const afterBusy = await readMe()
     assert.equal(afterBusy.around_you.available, true)
     assert.equal(afterBusy.around_you.after_change_id, busyVisit.around_you.through_change_id)
-    assert.equal(afterBusy.around_you.through_change_id, busyVisit.around_you.through_change_id)
-    assert.equal(afterBusy.around_you.notes_in_owned_places.count, 0)
+    assert.equal(
+      BigInt(afterBusy.around_you.through_change_id) - BigInt(afterBusy.around_you.after_change_id),
+      1n,
+    )
+    assert.equal(afterBusy.around_you.notes_in_owned_places.count, 1)
+    assert.equal(afterBusy.around_you.notes_in_owned_places.records[0]?.id, latePinnedNoteId)
+    assert.equal(afterBusy.around_you.mentions.count, 1)
+    assert.equal(afterBusy.around_you.new_things_in_owned_places.count, 0)
+    assert.equal(afterBusy.around_you.new_agreement_signers.count, 0)
 
     await postgres.client.query(`
       CREATE FUNCTION delay_budgeted_me_summary() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -735,7 +798,10 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     assert.equal(timeoutVisit.around_you.after_change_id, afterBusy.around_you.through_change_id)
     assert.equal(BigInt(timeoutVisit.around_you.through_change_id) - BigInt(timeoutVisit.around_you.after_change_id), 1n)
     assert.equal(timeoutVisit.around_you.read_href, `/api/changes?since=${timeoutVisit.around_you.after_change_id}&limit=200`)
-    assert.equal(timeoutVisit.around_you.message, busyVisit.around_you.message)
+    assert.equal(
+      timeoutVisit.around_you.message,
+      'The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.',
+    )
     assert.equal(timeoutVisit.around_you.notes_in_owned_places, null)
     assert.equal(timeoutVisit.around_you.new_things_in_owned_places, null)
     assert.equal(timeoutVisit.around_you.new_agreement_signers, null)
@@ -815,18 +881,18 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       SELECT current_change_id::text FROM public_change_state WHERE singleton = true
     `)
     for (const skippedWindow of [
-      { after: boundaryVisit.around_you.through_change_id, forced: false },
-      { after: String(BigInt(overflowThrough.rows[0]!.current_change_id) - 1n), forced: true },
+      { after: boundaryVisit.around_you.through_change_id, unavailableReason: null },
+      { after: String(BigInt(overflowThrough.rows[0]!.current_change_id) - 1n), unavailableReason: 'busy' },
     ]) {
       const explain = await postgres.client.query<{ 'QUERY PLAN': unknown }>(`
         EXPLAIN (ANALYZE, FORMAT JSON)
         WITH prior AS MATERIALIZED (
           SELECT $2::bigint AS last_public_change_id
         ), cutoff AS MATERIALIZED (
-          SELECT $3::bigint AS public_change_id, $4::boolean AS skip_around_you
+          SELECT $3::bigint AS public_change_id, $4::text AS skip_around_you
         )
         SELECT ${AROUND_YOU_SQL} AS around_you FROM cutoff
-      `, [7, skippedWindow.after, overflowThrough.rows[0]!.current_change_id, skippedWindow.forced])
+      `, [7, skippedWindow.after, overflowThrough.rows[0]!.current_change_id, skippedWindow.unavailableReason])
       const planNodes: Readonly<Record<string, unknown>>[] = []
       const collectPlanNodes = (value: unknown): void => {
         if (Array.isArray(value)) {
@@ -847,7 +913,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       assert.deepEqual(
         heavyScanNodes.map(node => node['Actual Loops']),
         heavyScanNodes.map(() => 0),
-        'both count-cap and forced-budget CASE arms must skip every heavy around-you relation scan',
+        'both count-cap and busy-admission CASE arms must skip every heavy around-you relation scan',
       )
     }
     const degradedVisit = await readMe()
@@ -910,6 +976,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     `)
     assert.equal(finalMarker.rows[0]!.last_credit_entry_id, purchase.receipt_id)
   } finally {
+    afterSummaryWindowOnce = null
     if (blocker) {
       await blocker.query('ROLLBACK').catch(() => undefined)
       blocker.release()

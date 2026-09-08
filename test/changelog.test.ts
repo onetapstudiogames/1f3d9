@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  AROUND_YOU_ADMISSION_CHANGE_THRESHOLD,
   AROUND_YOU_CHANGE_LIMIT,
   AROUND_YOU_STATEMENT_TIMEOUT_MS,
 } from '../src/me-around-you-limit.ts'
@@ -28,6 +29,7 @@ const CATEGORIES = Object.freeze([
 ])
 
 const AROUND_YOU_CHANGE_LIMIT_TEXT = AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')
+const AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT = AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')
 const AROUND_YOU_STATEMENT_TIMEOUT_TEXT = AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')
 
 function read(path: string): string {
@@ -226,14 +228,17 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'Each pending gift item\'s sentence ends `Send an empty request body.`',
     'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
     'only `mentions` excludes a note containing the city\'s public credential pattern',
-    '`around_you` uses a city-wide work budget: it counts committed public changes in the exact `(after_change_id, through_change_id]` interval',
-    `At most two summaries run at once; each summary attempt has a ${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget.`,
-    `When a summary is admitted and completes within that budget, an interval of at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes is read exactly, including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}.`,
-    'remains available even when summary slots are busy',
+    '`around_you` uses a city-wide work budget over the exact committed public-change interval `(after_change_id, through_change_id]`.',
+    `Intervals under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot; intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT} are admitted two at a time.`,
+    `Every summary-capable me read attempt, including an interval under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes, has a ${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget.`,
+    'The end of your interval is fixed before checking for a summary slot.',
+    'Success, busy responses, and timeout retries keep the same `through_change_id`, so later public changes wait for your next visit.',
+    'returns the empty exact normal object without needing a summary slot',
     'adds `available:true`',
     'the entire around-you scan is skipped and the checkpoint still advances in the same statement',
     '`message:"Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`',
-    '`available:false`, `message:"The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id."`',
+    '`message:"Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id."`',
+    '`message:"The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id."`',
     '`read_href:"/api/changes?since=<after>&limit=200"`; all four category fields are null, never zero',
     'Skipped intervals are never replayed automatically.',
     'at most 10 oldest-first body-free `{id,change_id,href}` records per category',
@@ -284,12 +289,15 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
 })
 
 test('the around-you budget has one production value and readable document mirrors', () => {
+  assert.equal(AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, 1_000)
   assert.equal(AROUND_YOU_CHANGE_LIMIT, 20_000)
   assert.equal(AROUND_YOU_STATEMENT_TIMEOUT_MS, 1_500)
   const boundary = `at most ${AROUND_YOU_CHANGE_LIMIT_TEXT} changes`
   const exactBoundary = `including exactly ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
   const overCap = `more than ${AROUND_YOU_CHANGE_LIMIT_TEXT} city-wide changes`
   const statementBudget = `${AROUND_YOU_STATEMENT_TIMEOUT_TEXT} ms database statement budget`
+  const admissionThreshold = `under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot`
+  const admittedRange = `from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
   for (const [name, value] of [
     ['front door source', read('src/frontdoor.txt')],
     ['compact map source', read('src/llms.txt')],
@@ -301,5 +309,7 @@ test('the around-you budget has one production value and readable document mirro
     assert.ok(normalized.includes(exactBoundary), `${name}: exact around-you boundary`)
     assert.ok(normalized.includes(overCap), `${name}: around-you over-cap boundary`)
     assert.ok(normalized.includes(statementBudget), `${name}: around-you statement budget`)
+    assert.ok(normalized.includes(admissionThreshold), `${name}: around-you admission threshold`)
+    assert.ok(normalized.includes(admittedRange), `${name}: around-you admitted range`)
   }
 })

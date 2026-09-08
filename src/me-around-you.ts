@@ -1,7 +1,7 @@
 import { HANDLE_RE } from './core.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
-import { AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
+import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 
 const RECORD_LIMIT = 10
 const MAX_RECORD_ID = 2_147_483_647
@@ -32,8 +32,9 @@ function eventRecordId(field: 'note_id' | 'thing_id' | 'place_id' | 'agreement_i
       THEN (event.detail->>'${field}')::integer END END AS ${field}`
 }
 
-// Embedded only in the private me statement: prior and cutoff are captured in its
-// snapshot while the resident lock serializes visits. Public change IDs follow
+// Embedded only in the private me statement: counts use its snapshot, with the
+// public cutoff pinned at the admission precheck under the resident lock.
+// Public change IDs follow
 // commit visibility, unlike record timestamps or sequence-allocated event IDs.
 // CASE encloses the entire heavy subquery so baseline/over-limit reads do not
 // execute its scans, joins, body matching, or aggregation. The caller's marker
@@ -53,8 +54,8 @@ export const AROUND_YOU_SQL = `(
       'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
       'new_agreement_signers', NULL, 'mentions', NULL
     )
-    WHEN cutoff.skip_around_you THEN jsonb_build_object(
-      'unavailable_reason', 'budget',
+    WHEN cutoff.skip_around_you IS NOT NULL THEN jsonb_build_object(
+      'unavailable_reason', cutoff.skip_around_you,
       'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
       'new_agreement_signers', NULL, 'mentions', NULL
     )
@@ -145,7 +146,7 @@ export const AROUND_YOU_SQL = `(
     ) END
 )`
 
-const SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. At most two summaries run at once; each attempt has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. If both slots are busy or the attempt takes too long, available is false with the same null category fields and interval link; message says the summary was too busy or took too long. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
+const SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. Intervals with fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot; every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. Eligible intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} changes, including exactly ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')}, require one of two summary slots. If both slots are busy, message says so; if the me read attempt exceeds its database statement budget, message says the summary was skipped. In either case available is false with the same null category fields and interval link. The interval ends at the public cutoff captured before admission; later changes wait for your next visit. Counts and current record state use one final read snapshot. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. Notes are directly in places you currently own. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
 
 function unavailable(): never {
   throw new TypeError('around-you summary is invalid')
@@ -199,7 +200,7 @@ export function mapAroundYou(value: unknown): AroundYou {
   const after = row.after_change_id === null ? null : marker(row.after_change_id)
   const through = marker(row.through_change_id)
   if (after !== null && BigInt(after) > BigInt(through)) unavailable()
-  const budgetUnavailable = row.unavailable_reason === 'budget'
+  const budgetUnavailable = row.unavailable_reason === 'busy' || row.unavailable_reason === 'timeout'
   if (row.unavailable_reason !== undefined && !budgetUnavailable) unavailable()
   if (budgetUnavailable && after === null) unavailable()
   if (after !== null && (budgetUnavailable || BigInt(through) - BigInt(after) > BigInt(AROUND_YOU_CHANGE_LIMIT))) {
@@ -207,8 +208,10 @@ export function mapAroundYou(value: unknown): AroundYou {
     return Object.freeze({
       after_change_id: after, through_change_id: through, baseline: false, scope: SCOPE,
       available: false,
-      message: budgetUnavailable
-        ? 'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.'
+      message: row.unavailable_reason === 'busy'
+        ? 'Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id.'
+        : row.unavailable_reason === 'timeout'
+        ? 'The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.'
         : 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
       read_href: `/api/changes?since=${after}&limit=200`,
       notes_in_owned_places: null, new_things_in_owned_places: null,

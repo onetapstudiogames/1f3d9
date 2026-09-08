@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mapAroundYou } from '../src/me-around-you.ts'
-import { AROUND_YOU_CHANGE_LIMIT } from '../src/me-around-you-limit.ts'
+import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from '../src/me-around-you-limit.ts'
 
 const empty = () => ({ count: 0, records: [] })
 const snapshot = () => ({
@@ -128,9 +128,9 @@ test('an unavailable interval cannot carry fabricated counts or bodies', () => {
   }), /around-you/u)
 })
 
-test('a time or admission budget skip names the unread interval without inventing counts', () => {
+test('a busy admission slot names the unread interval without inventing counts', () => {
   const report = mapAroundYou({
-    ...snapshot(), unavailable_reason: 'budget', body: 'must not escape',
+    ...snapshot(), unavailable_reason: 'busy', body: 'must not escape',
     notes_in_owned_places: null, new_things_in_owned_places: null,
     new_agreement_signers: null, mentions: null,
   })
@@ -139,7 +139,7 @@ test('a time or admission budget skip names the unread interval without inventin
   assert.equal(report.after_change_id, '15')
   assert.equal(report.through_change_id, '100')
   assert.equal(report.read_href, '/api/changes?since=15&limit=200')
-  assert.equal(report.message, 'The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id.')
+  assert.equal(report.message, 'Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id.')
   assert.equal(report.notes_in_owned_places, null)
   assert.equal(report.new_things_in_owned_places, null)
   assert.equal(report.new_agreement_signers, null)
@@ -148,7 +148,33 @@ test('a time or admission budget skip names the unread interval without inventin
 })
 
 test('a budget skip cannot carry counts, a missing prior checkpoint, or an unknown reason', () => {
-  assert.throws(() => mapAroundYou({ ...snapshot(), unavailable_reason: 'budget' }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), unavailable_reason: 'timeout' }), /around-you/u)
   assert.throws(() => mapAroundYou({ ...snapshot(), unavailable_reason: 'database internals' }), /around-you/u)
-  assert.throws(() => mapAroundYou({ ...snapshot(), after_change_id: null, unavailable_reason: 'budget' }), /around-you/u)
+  assert.throws(() => mapAroundYou({ ...snapshot(), after_change_id: null, unavailable_reason: 'busy' }), /around-you/u)
+})
+
+test('a timed-out me statement names the whole attempt and preserves the skipped interval link', () => {
+  const report = mapAroundYou({
+    ...snapshot(), unavailable_reason: 'timeout',
+    notes_in_owned_places: null, new_things_in_owned_places: null,
+    new_agreement_signers: null, mentions: null,
+  })
+  assert.equal(report.available, false)
+  assert.equal(report.message, 'The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.')
+  assert.equal(report.read_href, '/api/changes?since=15&limit=200')
+  assert.equal(report.through_change_id, '100')
+  assert.equal(report.notes_in_owned_places, null)
+  assert.equal(report.new_things_in_owned_places, null)
+  assert.equal(report.new_agreement_signers, null)
+  assert.equal(report.mentions, null)
+})
+
+test('small intervals retain exact counts and state the admission exception before use', () => {
+  const report = mapAroundYou({ ...snapshot(),
+    mentions: { count: 1, records: [{ id: 9, change_id: '16' }] },
+  })
+  assert.ok(report.available)
+  assert.equal(report.mentions.count, 1)
+  assert.ok(report.scope.includes(`fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot`))
+  assert.ok(report.scope.includes(`every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget`))
 })

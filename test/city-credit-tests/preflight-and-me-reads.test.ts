@@ -3,7 +3,7 @@ import test from 'node:test'
 import { cityCreditAttentionLines, cityCreditSinceLastVisit, readCityCreditAttention, readCityCreditPreflight } from '../../src/city-credit.ts'
 import { MarkerDatabase } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { mapAroundYou } from '../../src/me-around-you.ts'
-import { AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
+import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
 
 const EMPTY_AROUND_YOU = {
   after_change_id: null, through_change_id: '0',
@@ -14,6 +14,7 @@ const EMPTY_AROUND_YOU = {
 } as const
 
 const SUMMARY_BUDGET_REPLIES = {
+  'me-summary-window': [[{ after_change_id: '5', through_change_id: String(5 + AROUND_YOU_ADMISSION_CHANGE_THRESHOLD) }]],
   'save-me-summary': [[]],
   'admit-me-summary': [[{ slot: 0 }]],
   'me-summary-timeout': [[]],
@@ -329,6 +330,7 @@ export function registerPreflightAndMeReadsTests(): void {
     const database = new MarkerDatabase({
       ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]],
+      'me-summary-window': [[{ after_change_id: '1', through_change_id: String(AROUND_YOU_CHANGE_LIMIT + 2) }]],
       'read-attention': [[attentionRow({ around_you: {
         after_change_id: '1', through_change_id: String(AROUND_YOU_CHANGE_LIMIT + 2),
         notes_in_owned_places: null, new_things_in_owned_places: null,
@@ -348,20 +350,21 @@ export function registerPreflightAndMeReadsTests(): void {
     assert.equal(state.around_you.available, false)
     assert.equal(state.around_you.through_change_id, String(AROUND_YOU_CHANGE_LIMIT + 2))
     assert.equal(state.around_you.notes_in_owned_places, null)
+    assert.equal(database.calls.some(call => call.marker === 'admit-me-summary'), false)
     const credit = cityCreditSinceLastVisit(state)
     assert.equal(credit.founder_issues.receipts[0]?.reason, 'Showing room prize')
     assert.equal(credit.pending_gifts.count, 1)
     assert.match(credit.pending_gifts.items[0]?.sentence ?? '', /A human bought you/u)
   })
 
-  test('no summary slot skips the heavy statement and still commits the captured report', async () => {
+  test('exactly the admission threshold needs a slot and a busy result preserves its pinned cutoff', async () => {
     const database = new MarkerDatabase({
       ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]],
       'admit-me-summary': [[{ slot: null }]],
       'rollback-me-summary': [[]],
       'read-attention': [[attentionRow({ around_you: {
-        after_change_id: '5', through_change_id: '6', unavailable_reason: 'budget',
+        after_change_id: '5', through_change_id: String(5 + AROUND_YOU_ADMISSION_CHANGE_THRESHOLD), unavailable_reason: 'busy',
         notes_in_owned_places: null, new_things_in_owned_places: null,
         new_agreement_signers: null, mentions: null,
       } })]],
@@ -371,22 +374,23 @@ export function registerPreflightAndMeReadsTests(): void {
     }, 7)
     assert.equal(result.around_you.available, false)
     assert.deepEqual(database.calls.map(call => call.marker), [
-      'lock-me-read', 'save-me-summary', 'admit-me-summary',
+      'lock-me-read', 'me-summary-window', 'save-me-summary', 'admit-me-summary',
       'rollback-me-summary', 'release-me-summary', 'read-attention',
     ])
-    assert.deepEqual(database.calls.at(-1)?.params, [7, true])
+    assert.deepEqual(database.calls.at(-1)?.params, [7, 'busy', String(5 + AROUND_YOU_ADMISSION_CHANGE_THRESHOLD)])
   })
 
-  test('a cancelled summary rolls back once and returns only the forced-skip retry snapshot', async () => {
+  test('a small me statement still has a budget and a timeout retry retains the pinned cutoff', async () => {
     const cancelled = Object.assign(new Error('query cancelled'), { code: '57014' })
     const database = new MarkerDatabase({
       ...SUMMARY_BUDGET_REPLIES,
       'lock-me-read': [[{ id: 7 }]],
+      'me-summary-window': [[{ after_change_id: '5', through_change_id: '8' }]],
       'rollback-me-summary': [[]],
       'read-attention': [Object.assign(new Error('wrapped'), { sourceError: cancelled }), [attentionRow({
         last_visit_at: '2026-09-01T10:00:00Z',
         around_you: {
-          after_change_id: '5', through_change_id: '8', unavailable_reason: 'budget',
+          after_change_id: '5', through_change_id: '8', unavailable_reason: 'timeout',
           notes_in_owned_places: null, new_things_in_owned_places: null,
           new_agreement_signers: null, mentions: null,
         },
@@ -400,11 +404,91 @@ export function registerPreflightAndMeReadsTests(): void {
     assert.equal(result.last_visit_at, '2026-09-01T10:00:00.000Z')
     assert.equal(result.founder_issues[0]?.reason, 'Showing room prize')
     assert.deepEqual(database.calls.map(call => call.marker), [
-      'lock-me-read', 'save-me-summary', 'admit-me-summary',
+      'lock-me-read', 'me-summary-window', 'save-me-summary',
       'me-summary-timeout', 'me-summary-parallel', 'read-attention',
       'rollback-me-summary', 'release-me-summary', 'read-attention',
     ])
-    assert.deepEqual(database.calls.filter(call => call.marker === 'read-attention').map(call => call.params), [[7, false], [7, true]])
+    assert.deepEqual(database.calls.filter(call => call.marker === 'read-attention').map(call => call.params), [[7, null, '8'], [7, 'timeout', '8']])
+  })
+
+  test('a small interval bypasses admission and pins its cutoff against changes arriving after the precheck', async () => {
+    const through = String(5 + AROUND_YOU_ADMISSION_CHANGE_THRESHOLD - 1)
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]],
+      'me-summary-window': [[{ after_change_id: '5', through_change_id: through }]],
+      // Returning a blocked slot would degrade the summary if admission ran.
+      'admit-me-summary': [[{ slot: null }]],
+      'read-attention': [[attentionRow({ around_you: {
+        ...EMPTY_AROUND_YOU, after_change_id: '5', through_change_id: through,
+        mentions: { count: 1, records: [{ id: 9, change_id: '6' }] },
+      } })]],
+    })
+    const result = await readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7)
+    assert.ok(result.around_you.available)
+    assert.equal(result.around_you.mentions.count, 1)
+    assert.deepEqual(database.calls.map(call => call.marker), [
+      'lock-me-read', 'me-summary-window', 'save-me-summary',
+      'me-summary-timeout', 'me-summary-parallel', 'read-attention', 'release-me-summary',
+    ])
+    const snapshot = database.calls.find(call => call.marker === 'read-attention')!
+    assert.deepEqual(snapshot.params, [7, null, through])
+    // $3 wins over a newly advanced public counter in the final snapshot.
+    assert.match(snapshot.text, /coalesce\(\$3::bigint, \(SELECT current_change_id/u)
+  })
+
+  test('a baseline does not compete for an admission slot regardless of the current public counter', async () => {
+    const through = String(AROUND_YOU_CHANGE_LIMIT + 1)
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]],
+      'me-summary-window': [[{ after_change_id: null, through_change_id: through }]],
+      'admit-me-summary': [[{ slot: null }]],
+      'read-attention': [[attentionRow({ around_you: { ...EMPTY_AROUND_YOU, through_change_id: through } })]],
+    })
+    const result = await readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7)
+    assert.ok(result.around_you.available)
+    assert.equal(result.around_you.baseline, true)
+    assert.equal(database.calls.some(call => call.marker === 'admit-me-summary'), false)
+  })
+
+  test('exactly the upper change limit still takes a slot and returns an available summary', async () => {
+    const through = String(5 + AROUND_YOU_CHANGE_LIMIT)
+    const database = new MarkerDatabase({
+      ...SUMMARY_BUDGET_REPLIES,
+      'lock-me-read': [[{ id: 7 }]],
+      'me-summary-window': [[{ after_change_id: '5', through_change_id: through }]],
+      'read-attention': [[attentionRow({ around_you: {
+        ...EMPTY_AROUND_YOU, after_change_id: '5', through_change_id: through,
+      } })]],
+    })
+    const result = await readCityCreditAttention({
+      query: database.query.bind(database), transaction: work => work(database),
+    }, 7)
+    assert.ok(result.around_you.available)
+    assert.equal(database.calls.filter(call => call.marker === 'admit-me-summary').length, 1)
+    assert.deepEqual(database.calls.find(call => call.marker === 'read-attention')?.params, [7, null, through])
+  })
+
+  test('missing, invalid or reversed precheck markers fail before the marker can advance', async () => {
+    for (const row of [undefined,
+      { after_change_id: '9', through_change_id: '8' },
+      { after_change_id: '-1', through_change_id: '8' },
+      { after_change_id: null, through_change_id: null },
+      { through_change_id: '8' },
+    ]) {
+      const database = new MarkerDatabase({
+        'lock-me-read': [[{ id: 7 }]], 'me-summary-window': [row ? [row] : []],
+      })
+      await assert.rejects(readCityCreditAttention({
+        query: database.query.bind(database), transaction: work => work(database),
+      }, 7), TypeError)
+      assert.deepEqual(database.calls.map(call => call.marker), ['lock-me-read', 'me-summary-window'])
+    }
   })
 
   test('a non-budget database error is not retried or hidden by an unavailable summary', async () => {

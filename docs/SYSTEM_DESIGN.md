@@ -952,7 +952,8 @@ of the commons; everything you do with what is already yours is free.
   The work budget is city-wide rather than match-based: the difference between the saved
   and captured public counters gives the number of committed public changes in
   `(after_change_id, through_change_id]`, without scanning the log to count them.
-  The executable sources of truth are `AROUND_YOU_CHANGE_LIMIT` and
+  The executable sources of truth are `AROUND_YOU_ADMISSION_CHANGE_THRESHOLD`,
+  `AROUND_YOU_CHANGE_LIMIT`, and
   `AROUND_YOU_STATEMENT_TIMEOUT_MS` in `src/me-around-you-limit.ts`; contract tests enforce
   their readable numeric mirrors here,
   on both door sources, in the generated published door, and in the MCP description.
@@ -962,13 +963,17 @@ of the commons; everything you do with what is already yours is free.
   changes with 2 KB note bodies, but 6.6 to 6.9 seconds, about 6.7 seconds, with 64 KiB
   note bodies before a statement budget was added. The expensive case remained expensive
   even when no rows ultimately matched the resident.
-  At most two summaries run at once; each summary attempt has a 1,500 ms database
-  statement budget. Two fixed transaction-scoped advisory-lock slots in namespace
-  524128290 admit at most two of the five database connections into this heavy query;
-  parallel gather is disabled for the statement. The 1,500 ms value matches the exact
-  public contract. It bounds the database statement, not the whole HTTP request.
-  When a summary is admitted and completes within that budget, at most 20,000 changes,
-  including exactly 20,000, produce the normal object. It
+  After taking the resident row lock, a cheap single query reads the saved checkpoint
+  and pins the current public cutoff. Intervals under 1,000 changes do not need a
+  summary slot; the exact threshold lets frequent visits avoid heavy-read contention
+  while keeping their large 64 KiB note worst cases budgeted. Intervals from 1,000 through 20,000 are
+  admitted two at a time through fixed transaction-scoped advisory-lock slots in
+  namespace 524128290. Parallel gather is disabled. Every summary-capable `me` read
+  attempt, including the small-interval path, has a 1,500 ms database statement budget.
+  The value matches the exact public contract and bounds that main `me` statement,
+  not the whole HTTP request.
+  An available interval of at most 20,000 changes, including exactly 20,000, produces
+  the normal object. It
   keeps the existing fields, adds `available: true`, and each category returns an exact
   `count`, at most ten `records` in oldest `change_id` order, `has_more`, and a `more_href`.
   Ordinary records are body-free
@@ -992,22 +997,31 @@ of the commons; everything you do with what is already yours is free.
   The shared note set materializes only identifiers, places and change markers; only
   the mention branch fetches bodies, and an explicit CASE runs the credential regex
   only after the existing whole-handle regex matches, preserving its case-folding rules.
-  A baseline read remains an empty available object even when summary slots are busy.
-  The transaction tries advisory keys 0 and 1 after locking the resident row.
-  If both slots are busy, it runs the response statement once with the summary forced
-  unavailable. If an admitted attempt reaches PostgreSQL timeout `57014`, a savepoint
+  A baseline read uses the cheap precheck and remains an empty available object without
+  taking a summary slot. The final main statement reads the current counts, credit,
+  ownership, and around-you results in one snapshot and writes the frozen end marker.
+  Classification and preparation before it are not the final data snapshot. Successful,
+  busy, and timeout-retry results all pin the same `through_change_id`; public changes
+  committed after the precheck remain for the next visit.
+  For admitted intervals, the transaction tries advisory keys 0 and 1 after locking the resident row.
+  If an interval needing admission finds both slots busy, it runs the response statement once with the summary forced
+  unavailable. If an attempt reaches PostgreSQL timeout `57014`, a savepoint
   rollback removes that attempt's marker write and `SET LOCAL` timeout, then the
-  transaction releases the savepoint and runs the same response statement once with the
-  summary forced unavailable. The resident row lock was acquired before the savepoint and
+  transaction releases the savepoint and runs the response statement once with the
+  summary forced unavailable under the transaction's restored prior timeout. The resident
+  row lock was acquired before the savepoint and
   stays held; rolling back the savepoint releases the advisory slot acquired inside it.
-  The forced-unavailable retry captures a fresh cutoff and advances the checkpoint in its
-  one statement. It does not wrap approximate counts around the failed attempt. This is
-  why returned counts still describe one snapshot: they exist only when an admitted
-  summary completes within budget. A busy or timed-out interval keeps
+  The forced-unavailable retry keeps the already pinned cutoff, takes a new main-statement
+  snapshot, and advances the checkpoint to that frozen end marker. It does not wrap
+  approximate counts around the failed attempt. This is
+  why returned counts still describe one snapshot: they exist only when a successful
+  summary attempt completes within budget. A busy interval keeps
   `after_change_id`, `through_change_id`, `baseline: false`, and `scope`; returns
   `available: false`; sets all four category fields to null, never zero; and returns
-  `message: "The around-you summary was too busy or took too long. This interval was not summarized; follow read_href through through_change_id."`
+  `message: "Both summary slots were busy, so this interval was not summarized; follow read_href through through_change_id."`
   with `read_href: "/api/changes?since=<after>&limit=200"`.
+  A timed-out interval has the same unavailable shape and returns
+  `message: "The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id."`.
   If the interval contains more than 20,000 city-wide changes, the transaction skips the
   entire around-you scan and advances the checkpoint in the same statement. The object
   keeps `after_change_id`, `through_change_id`, `baseline: false`, and `scope`; returns
