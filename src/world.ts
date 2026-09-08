@@ -30,6 +30,7 @@ import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { readLookingResidentsAtPlace } from './resident-looking.ts'
 import {
   isWorldRootRow,
   WORLD_ARRIVAL_LINE,
@@ -488,7 +489,7 @@ export function mountWorldRoutes(app: Hono): void {
       })
     }
 
-    const [collections, labels, laws, frontMatterByPlace] = await Promise.all([
+    const [collections, labels, laws, frontMatterByPlace, lookingResidents] = await Promise.all([
       loadPublicPlaceCollectionRows(executePublicQuery, id, {
         subplaces: subplaceRequest,
         things: thingRequest,
@@ -497,6 +498,7 @@ export function mountWorldRoutes(app: Hono): void {
       activePlaceLabels(id),
       effectiveLaws(id),
       loadPublicPlaceFrontMatter(executePublicQuery, [id]),
+      readLookingResidentsAtPlace(id),
     ])
     const subplacesPage = collections.pages == null
       ? {
@@ -567,6 +569,12 @@ export function mountWorldRoutes(app: Hono): void {
       subplaces: publicSubplaces,
       things: publicDetails.things,
       notes: publicNotes,
+      looking_residents: lookingResidents.residents,
+      looking_residents_page: {
+        total_items: lookingResidents.total,
+        returned_items: lookingResidents.residents.length,
+        has_more: lookingResidents.has_more,
+      },
       subplaces_page: {
         total_items: collections.totals.subplaces.items,
         total_text_bytes: collections.totals.subplaces.textBytes,

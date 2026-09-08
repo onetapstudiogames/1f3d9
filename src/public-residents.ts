@@ -9,6 +9,7 @@ import {
   type PublicPage,
 } from './public-pagination.ts'
 import { PUBLIC_RESIDENT_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
+import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
 
 const PUBLIC_EVENT_KIND_SQL = PUBLIC_EVENT_KINDS
   .map(kind => `'${kind.replaceAll("'", "''")}'`)
@@ -121,10 +122,12 @@ export interface PublicResidentPresence {
   readonly current_place_id: number | null
   readonly asleep: boolean
   readonly has_drawing: boolean
+  readonly looking: ResidentLooking | null
 }
 
 function publicResidentPresence(
   row: Readonly<Record<string, unknown>>,
+  looking: ResidentLooking | null = null,
 ): PublicResidentPresence {
   const id = positiveId(row.id)
   const handle = typeof row.handle === 'string' && HANDLE_RE.test(row.handle) ? row.handle : null
@@ -146,6 +149,7 @@ function publicResidentPresence(
     current_place_id: currentPlaceId,
     asleep: row.asleep,
     has_drawing: row.has_drawing === true,
+    looking,
   })
 }
 
@@ -153,7 +157,10 @@ export async function readPublicResidentPresence(
   handle: string,
 ): Promise<PublicResidentPresence | null> {
   const rows = await sql.query(FOCUSED_PRESENCE_SQL, [handle]) as readonly Record<string, unknown>[]
-  return rows[0] ? publicResidentPresence(rows[0]) : null
+  if (!rows[0]) return null
+  const id = positiveId(rows[0].id)
+  const looking = id === null ? null : (await readResidentLooking([id])).get(id) ?? null
+  return publicResidentPresence(rows[0], looking)
 }
 
 export async function readPublicResidentPage(
@@ -170,8 +177,13 @@ export async function readPublicResidentPage(
     collection.rows as readonly (Record<string, unknown> & { readonly id: number })[],
     page.limit,
   )
+  const looking = includePresence
+    ? await readResidentLooking(result.items.map(row => row.id))
+    : new Map<number, ResidentLooking>()
   return Object.freeze({
-    residents: result.items,
+    residents: includePresence
+      ? result.items.map(row => ({ ...row, looking: looking.get(row.id) ?? null }))
+      : result.items,
     totalItems: collection.total.items,
     totalTextBytes: collection.total.textBytes,
     hasMore: result.hasMore,

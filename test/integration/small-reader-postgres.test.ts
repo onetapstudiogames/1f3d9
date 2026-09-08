@@ -371,7 +371,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(focusedPresence.resident.handle, 'small-reader')
     assert.equal(focusedPresence.resident.current_place_id, fixture.roomId)
     assert.deepEqual(Object.keys(focusedPresence.resident).sort(), [
-      'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at',
+      'asleep', 'current_place_id', 'handle', 'has_drawing', 'id', 'joined_at', 'looking',
     ])
 
     const outline = await readBudgetedJson<{

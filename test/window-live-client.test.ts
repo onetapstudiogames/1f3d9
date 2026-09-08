@@ -3,6 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as windowClientModule from '../src/window-client.ts'
 import { PART_42_STAGE_NODES } from '../src/window-client/program/42-stage-nodes.ts'
+import { PART_21_LIVE_PINNING_AND_PORTRAIT_GRID } from '../src/window-client/program/21-live-pinning-and-portrait-grid.ts'
+import { PART_24_LIVE_REPLAY_MOTION } from '../src/window-client/program/24-live-replay-motion.ts'
+import { PART_26_LIVE_HISTORY_CLOCK_AND_QUIET } from '../src/window-client/program/26-live-history-clock-and-quiet.ts'
+import { PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION } from '../src/window-client/program/37-snapshot-fetch-and-cache-invalidation.ts'
+import { PART_38_REFRESH_CITY } from '../src/window-client/program/38-refresh-city.ts'
 import {
   WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
   normalizeWindowDrawing,
@@ -15,6 +20,10 @@ import {
   windowLiveFootstepBeat,
   windowLivePlateChildren,
   windowLivePollDelay,
+  normalizeWindowResidentLooking,
+  windowLiveLookingUpdate,
+  windowLiveResidentIsDimmed,
+  windowLiveActiveLookingAfterExpiry,
   windowLiveReplayDuration,
   windowLiveReplayOrder,
   windowLiveReplayPace,
@@ -39,6 +48,127 @@ import {
   stageFacing,
   stageTransform,
 } from '../src/window-client.ts'
+
+test('resident looking accepts only a bounded signal for their actual current room', () => {
+  const valid = normalizeWindowResidentLooking({
+    place_id: 7,
+    started_at: '2026-09-05T12:00:00.000Z',
+    expires_at: '2026-09-05T12:01:00.000Z',
+  }, 7)
+  assert.deepEqual(valid, {
+    place_id: 7,
+    started_at: new Date('2026-09-05T12:00:00.000Z'),
+    expires_at: new Date('2026-09-05T12:01:00.000Z'),
+  })
+  assert.equal(normalizeWindowResidentLooking(null, 7), null)
+  assert.equal(normalizeWindowResidentLooking({ ...valid, place_id: 8 }, 7), null)
+  assert.equal(normalizeWindowResidentLooking({ ...valid,
+    expires_at: '2026-09-05T11:59:59.999Z' }, 7), null)
+  assert.equal(normalizeWindowResidentLooking({ ...valid,
+    started_at: 'bad-date' }, 7), null)
+})
+
+test('looking update cues one resident, expires locally, and never infers idle looking', () => {
+  const now = Date.parse('2026-09-05T12:00:30.000Z')
+  const residents = [
+    { id: 1, handle: 'one-resident', current_place_id: 7, looking: {
+      place_id: 7, started_at: new Date(now - 30_000), expires_at: new Date(now + 30_000),
+    } },
+    { id: 2, handle: 'idle-resident', current_place_id: 7, looking: null },
+  ]
+  const witnessed = windowLiveLookingUpdate({}, residents, new Set([7]), new Set(), now, true)
+  assert.deepEqual(witnessed.activeHandles, ['one-resident'])
+  assert.deepEqual(witnessed.announcements.map(row => row.message),
+    ['one-resident is looking around.'])
+  const extendedResidents = [{ ...residents[0]!, looking: {
+    ...residents[0]!.looking!, expires_at: new Date(now + 60_000),
+  } }, residents[1]!]
+  const repeated = windowLiveLookingUpdate(
+    witnessed.burstsByHandle, extendedResidents, new Set([7]), new Set(), now + 1_000, true)
+  assert.deepEqual(repeated.announcements, [])
+  const expired = windowLiveLookingUpdate(
+    repeated.burstsByHandle, extendedResidents, new Set([7]), new Set(), now + 60_001, true)
+  assert.deepEqual(expired.activeHandles, [])
+})
+
+test('looking update suppresses opening, hidden, outside-room, and quiet announcements', () => {
+  const now = Date.parse('2026-09-05T12:00:30.000Z')
+  const signal = (handle: string, placeId: number, startedOffset = -1_000) => ({
+    id: placeId, handle, current_place_id: placeId, looking: {
+      place_id: placeId, started_at: new Date(now + startedOffset),
+      expires_at: new Date(now + 30_000),
+    },
+  })
+  const residents = [signal('opening-one', 7), signal('outside-one', 8), signal('quiet-one', 9)]
+  const opening = windowLiveLookingUpdate(
+    {}, residents, new Set([7, 9]), new Set([9]), now, false)
+  assert.deepEqual(opening.activeHandles, ['opening-one'])
+  assert.deepEqual(opening.announcements, [])
+  const visible = windowLiveLookingUpdate(
+    opening.burstsByHandle, residents, new Set([7, 9]), new Set([9]), now + 1, true)
+  assert.deepEqual(visible.announcements, [])
+  const moved = [signal('opening-one', 8, 1)]
+  const roomMove = windowLiveLookingUpdate(
+    visible.burstsByHandle, moved, new Set([8]), new Set(), now + 2, true)
+  assert.deepEqual(roomMove.announcements.map(row => row.message),
+    ['opening-one is looking around.'])
+})
+
+test('looking update baselines future starts and tolerates only bounded display clock skew', () => {
+  const now = Date.parse('2026-09-05T12:00:00.000Z')
+  const resident = (offset: number) => ({
+    handle: 'clock-skewed', current_place_id: 7, looking: {
+      place_id: 7, started_at: new Date(now + offset), expires_at: new Date(now + 60_000),
+    },
+  })
+  const near = windowLiveLookingUpdate({}, [resident(4_000)], new Set([7]), new Set(), now, true)
+  assert.deepEqual(near.activeHandles, ['clock-skewed'])
+  const far = windowLiveLookingUpdate({}, [resident(20_000)], new Set([7]), new Set(), now, true)
+  assert.deepEqual(far.activeHandles, [])
+  const later = windowLiveLookingUpdate(
+    far.burstsByHandle, [resident(20_000)], new Set([7]), new Set(), now + 20_000, true)
+  assert.deepEqual(later.announcements, [])
+})
+
+test('looking keeps an otherwise asleep portrait fully visible', () => {
+  assert.equal(windowLiveResidentIsDimmed(true, false), true)
+  assert.equal(windowLiveResidentIsDimmed(true, true), false)
+  assert.match(PART_21_LIVE_PINNING_AND_PORTRAIT_GRID,
+    /windowLiveResidentIsDimmed\(resident\.asleep, lookingActive\)/u)
+})
+
+test('looking keeps a moving replay portrait visible and carries its expiring cue', () => {
+  assert.match(PART_24_LIVE_REPLAY_MOTION,
+    /windowLiveResidentIsDimmed\(resident\.asleep, lookingActive\)/u)
+  assert.match(PART_24_LIVE_REPLAY_MOTION,
+    /if \(lookingActive\)[\s\S]*?live-looking-cue[\s\S]*?liveLookingExpires/u)
+})
+
+test('local looking expiry restores state and the existing portrait asleep class', () => {
+  const now = Date.parse('2026-09-05T12:01:00.000Z')
+  assert.deepEqual(windowLiveActiveLookingAfterExpiry(
+    ['expired-one', 'current-one'],
+    [
+      { handle: 'expired-one', expiresAt: now },
+      { handle: 'current-one', expiresAt: now + 1 },
+    ],
+    now,
+  ), ['current-one'])
+  assert.match(PART_26_LIVE_HISTORY_CLOCK_AND_QUIET,
+    /portrait\.classList\.toggle\('asleep', shell\.dataset\.liveResidentAsleep === 'true'\)/u)
+})
+
+test('failed and interrupted refreshes disable looking announcements until a baseline paint', () => {
+  assert.match(PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION,
+    /status === 'unavailable'[\s\S]*?lookingWitnessAllowed: false/u)
+  assert.equal((PART_38_REFRESH_CITY.match(
+    /navigationRevision !== navigationRevisionAtStart[\s\S]{0,180}lookingWitnessAllowed: false/gu,
+  ) || []).length, 3)
+  assert.match(PART_38_REFRESH_CITY,
+    /catch \{[\s\S]*?lookingWitnessAllowed: false/u)
+  assert.match(PART_38_REFRESH_CITY,
+    /if \(!residentPresentationChanged\)[\s\S]{0,260}lookingWitnessAllowed: true[\s\S]{0,160}return/u)
+})
 
 const LIVE_NOTES_PAGE = Object.freeze({
   change_marker: '25',

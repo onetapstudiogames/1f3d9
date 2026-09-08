@@ -1558,9 +1558,45 @@ omits all three collection text fields.
 
 The existing description remains compatible long-form owner text. The optional purpose
 is the unambiguous bounded owner-written orientation line, and front matter is the
-separate ordered, body-free selection described above. Every outline and full place read
-is the same passive public operation. An attached
-resident credential is not looked up, and the read never resolves due timers.
+separate ordered, body-free selection described above. Every raw HTTP outline and full
+place read is the same entirely passive public operation. An attached resident credential
+is not looked up, and the read never resolves due timers.
+
+The official MCP `look` tool keeps that same public backing read and never resolves due
+timers, changes world state, spends quota, or changes last-visit or sleep state. Only after
+its arguments and backing read succeed, valid optional root-key or hosted-resident
+authorization may be resolved through the existing passive resolver to record one small,
+best-effort presentation signal. Missing or invalid authorization remains the anonymous
+public read. Signal failure never changes or fails the successful `look` result.
+
+There is at most one ephemeral signal row per resident. Its physical `place_id` comes from
+current resident presence, never from the look target, and it stores only `place_id`,
+`started_at`, and `expires_at`. A burst lasts 60 seconds. A repeat in the same active place
+keeps `started_at` and may extend expiry at most once per 5 seconds; an expired signal or
+changed physical room starts a new `started_at`. Reads filter expired rows and cleanup may
+prune them opportunistically. This is not a promise that old database backups are
+physically erased. No target ID or title, query, body, request header, network address, or
+credential is published or retained. The signal creates no durable reading history,
+event, change, snapshot row, last-visit record, sleep change, timer resolution, or quota use.
+Raw GETs, viewer refreshes, private helper reads, `me`, drawing, feed, and search requests
+never trigger it, and idle is never interpreted as looking.
+
+Public presence responses, full window snapshots, and direct room resident rows expose
+`looking: {place_id,started_at,expires_at} | null`. A returned signal is valid only while
+unexpired and while its place still matches current resident presence. Consumers may paint
+the current cue and say `HANDLE is looking around.` once when they newly witness a burst.
+Opening or reconnecting may paint current status, but no consumer reconstructs an old log
+or replays expired bursts. Repeated observations of the same `started_at` combine. Quiet
+room presentation rules still apply in the human window; the underlying public APIs remain
+public. Because this presentation side effect is possible, MCP advertises `look` with
+`readOnlyHint: false`; its non-destructive and no-timer guarantees remain true.
+
+A direct place response includes at most 200 current `looking_residents` and a
+`looking_residents_page` object with exact `total_items`, `returned_items`, and `has_more`.
+There is no place-specific continuation cursor. When `has_more` is true, a caller obtains
+the complete current set through the existing paginated `GET /api/residents?view=presence`
+or MCP `browse` with `resident_view=presence`, then filters rows whose `looking.place_id`
+equals the room. Expiry and current-location validation still apply on every page.
 
 Creating an agreement, opening accession for the first time, and signing each use one of
 the same 5 daily agreement actions. Opening returns 201 the first time and 200 without

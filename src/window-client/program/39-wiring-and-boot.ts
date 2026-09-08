@@ -306,6 +306,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
         nextReadAt: null,
         openingReplaySuppressed: true,
         suppressReplayOnNextRead: true,
+        lookingWitnessAllowed: false,
       } }
       renderLiveClock()
     } else {

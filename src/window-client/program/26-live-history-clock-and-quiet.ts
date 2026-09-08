@@ -298,6 +298,31 @@ export const PART_26_LIVE_HISTORY_CLOCK_AND_QUIET = `  function renderLiveHistor
       state = { ...state, live: { ...state.live, trailStarts } }
     }
     pruneLiveNoteBodies(now)
+    const lookingCues = [...(nodes.livePlates?.querySelectorAll(
+      '[data-live-looking-expires][data-live-looking-handle]') || [])]
+    state = { ...state, live: { ...state.live,
+      lookingActiveHandles: windowLiveActiveLookingAfterExpiry(
+        state.live.lookingActiveHandles,
+        lookingCues.map(cue => Object.freeze({
+          handle: cue.dataset.liveLookingHandle,
+          expiresAt: Number(cue.dataset.liveLookingExpires),
+        })),
+        now,
+      ),
+    } }
+    for (const cue of lookingCues) {
+      if (Number(cue.dataset.liveLookingExpires) > now) continue
+      const shell = cue.closest('[data-live-looking="true"]')
+      cue.remove()
+      if (shell) {
+        const portrait = shell.querySelector(':scope > .live-portrait')
+        if (portrait) {
+          portrait.classList.toggle('asleep', shell.dataset.liveResidentAsleep === 'true')
+        }
+        delete shell.dataset.liveLooking
+        delete shell.dataset.liveResidentAsleep
+      }
+    }
     const agedNodes = [
       ...(nodes.livePlates?.querySelectorAll('[data-live-at][data-live-lifetime]') || []),
     ]

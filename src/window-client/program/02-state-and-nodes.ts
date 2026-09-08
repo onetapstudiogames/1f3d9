@@ -197,6 +197,8 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
         hasMore: false, initialized: false, loading: false, error: false,
       }),
       proofNotesByPlaceId: Object.freeze({}),
+      lookingBurstsByHandle: {}, lookingActiveHandles: [], lookingAnnouncements: [],
+      lookingWitnessAllowed: false,
     },
   }
   let liveCamera = Object.freeze({

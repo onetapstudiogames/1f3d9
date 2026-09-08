@@ -1459,6 +1459,24 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   margin: 0;
   pointer-events: auto;
 }
+.live-looking-cue {
+  position: absolute;
+  left: 50%;
+  top: -0.45rem;
+  z-index: 3;
+  color: var(--ink, #17130f);
+  font: 700 1rem/1 ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  transform: translateX(-50%);
+  animation: live-looking-glance 1.2s steps(2, end) infinite alternate;
+  pointer-events: none;
+}
+@keyframes live-looking-glance {
+  from { transform: translateX(-62%); }
+  to { transform: translateX(-38%); }
+}
+.live-looking-log { margin-top: 0.45rem; }
+.live-looking-log-row { margin: 0.1rem 0 0; font-size: 0.78rem; }
 .live-walker:hover, .live-walker:focus-within,
 .live-replay-portrait:hover, .live-replay-portrait:focus-within { z-index: 30; }
 .live-walker[data-live-focus-resident],
@@ -2481,6 +2499,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
   .live-action-mark.live-pulse { display: none !important; animation: none !important; }
+  .live-looking-cue { animation: none !important; }
   .live-thing-specimen.live-pulse { animation: none !important; }
   .live-walker, .live-replay-portrait, .live-overflow-absorbing,
   .live-speech-bubble { animation: none !important; transition: none !important; }
