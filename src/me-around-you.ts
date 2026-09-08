@@ -1,4 +1,4 @@
-import { HANDLE_RE } from './core.ts'
+import { HANDLE_RE } from './core-primitives.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'

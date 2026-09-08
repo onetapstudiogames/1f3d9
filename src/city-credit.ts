@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { postgresErrorCode } from './core.ts'
+import { postgresErrorCode } from './core-primitives.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
