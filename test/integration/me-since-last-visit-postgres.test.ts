@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
 import { containsPublicCredential } from '../../src/credential-safety.ts'
+import type { AroundYou } from '../../src/me-around-you.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'me_since_last_visit_integration'
@@ -113,6 +114,7 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
 
 const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
 const { default: cityApp } = await import('../../src/index.ts')
+const { AROUND_YOU_SQL } = await import('../../src/me-around-you.ts')
 const { deliverPayPalCredit } = await import('../../src/paypal-credit-delivery.ts')
 const {
   attachPayPalOrder,
@@ -174,31 +176,6 @@ async function startPostgres(): Promise<{ client: Pool; containerName: string }>
 function authHeaders(): Record<string, string> {
   return { authorization: `Bearer ${RESIDENT_SECRET}` }
 }
-
-type AroundRecord = Readonly<{
-  id: number
-  change_id: string
-  href: string
-  signer?: string
-}>
-
-type AroundCategory = Readonly<{
-  count: number
-  records: readonly AroundRecord[]
-  has_more: boolean
-  more_href: string | null
-}>
-
-type AroundYou = Readonly<{
-  after_change_id: string | null
-  through_change_id: string
-  baseline: boolean
-  scope: string
-  notes_in_owned_places: AroundCategory
-  new_things_in_owned_places: AroundCategory
-  new_agreement_signers: AroundCategory
-  mentions: AroundCategory
-}>
 
 type SinceLastVisit = Readonly<{
   city_updates: Readonly<{ count: number; href: string }>
@@ -342,6 +319,7 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     `, [historicalNote.rows[0]!.id, ownedPlaceId])
 
     const firstVisit = await readMe()
+    assert.equal(firstVisit.around_you.available, true)
     assert.equal(firstVisit.last_visit_at, '2026-09-01T12:00:00.000Z')
     assert.ok(firstVisit.city_updates.count > 0)
     assert.equal(firstVisit.fee_credit_received.settled_purchases.amount, '0.000000')
@@ -414,6 +392,23 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
           'thing_id', $2::integer, 'place_id', $3::integer
         ))
     `, [crafted.rows[0]!.id, withdrawn.rows[0]!.id, ownedPlaceId])
+    const selfNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 7, 'visit-reader recorded their own visit-reader field note') RETURNING id
+    `, [ownedPlaceId])
+    const selfMadeThing = await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, owner_id, maker_id)
+      VALUES ($1, 'reader-made compass', 7, 7) RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail) VALUES
+        ('note', 'visit-reader', jsonb_build_object(
+          'note_id', $1::integer, 'place_id', $3::integer
+        )),
+        ('thing_created', 'visit-reader', jsonb_build_object(
+          'thing_id', $2::integer, 'place_id', $3::integer
+        ))
+    `, [selfNote.rows[0]!.id, selfMadeThing.rows[0]!.id, ownedPlaceId])
     const agreement = await postgres.client.query<{ id: number }>(`
       INSERT INTO agreements (created_by_id, body)
       VALUES (7, 'A late agreement.') RETURNING id
@@ -580,11 +575,13 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
     blocker = null
 
     const interleavedVisit = await successfulRead(interleavedVisitPromise)
+    assert.equal(interleavedVisit.around_you.available, true)
     assert.equal(interleavedVisit.last_visit_at, baselineReadAt)
     assert.equal(interleavedVisit.fee_credit_received.settled_purchases.amount, '0.000000')
     assert.equal(interleavedVisit.around_you.notes_in_owned_places.count, 0)
     assert.equal(interleavedVisit.fee_credit_received.founder_issues.amount, '0.000000')
     const nextVisit = await successfulRead(followingVisitPromise)
+    assert.equal(nextVisit.around_you.available, true)
     assert.notEqual(nextVisit.last_visit_at, baselineReadAt)
     assert.equal(nextVisit.fee_credit_received.settled_purchases.amount, '2.000000')
     assert.equal(nextVisit.fee_credit_received.settled_purchases.amount_units, '2000000')
@@ -600,19 +597,19 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       `POST /api/city-credit/gifts/${pendingGift.gift_id}/refuse`,
     )
     assert.match(nextVisit.fee_credit_received.pending_gifts.items[0]?.sentence ?? '', /A human bought you/iu)
-    // Reader room: historical, late, bounded 1..11, removed, credential, restored = 16 stored notes.
+    // Reader room: historical, late, self-authored, bounded 1..11, removed, credential, restored = 17 stored notes.
     // Gained room: gainedNote = 1; historical is before the checkpoint and removed stays hidden.
     // Foreign/lost rooms are not owned at read time; gift delivery adds no notes.
-    // 15 = 1 late + 11 bounded + 1 credential + 1 gained + 1 restored.
-    assert.equal(nextVisit.around_you.notes_in_owned_places.count, 15, 'notes_in_owned_places.count')
+    // 16 = 1 late + 1 self-authored + 11 bounded + 1 credential + 1 gained + 1 restored.
+    assert.equal(nextVisit.around_you.notes_in_owned_places.count, 16, 'notes_in_owned_places.count')
     assert.equal(nextVisit.around_you.notes_in_owned_places.records.length, 10)
     assert.equal(nextVisit.around_you.notes_in_owned_places.has_more, true)
     assert.match(nextVisit.around_you.notes_in_owned_places.more_href ?? '', /^\/api\/changes\?since=\d+&limit=200$/u)
     // Historical, removed, substring-only, and credential notes are excluded from mentions.
-    // 15 = 1 late + 11 bounded + 1 gained + 1 lost + 1 restored; mentions are city-wide.
-    assert.equal(nextVisit.around_you.mentions.count, 15, 'mentions.count')
-    // 2 = 1 late lantern (created + moved counts once) + 1 crafted; withdrawn is excluded.
-    assert.equal(nextVisit.around_you.new_things_in_owned_places.count, 2, 'new_things_in_owned_places.count')
+    // 16 = 1 late + 1 self-authored + 11 bounded + 1 gained + 1 lost + 1 restored; mentions are city-wide.
+    assert.equal(nextVisit.around_you.mentions.count, 16, 'mentions.count')
+    // 3 = 1 late lantern (created + moved counts once) + 1 crafted + 1 reader-made; withdrawn is excluded.
+    assert.equal(nextVisit.around_you.new_things_in_owned_places.count, 3, 'new_things_in_owned_places.count')
     assert.equal(nextVisit.around_you.new_things_in_owned_places.records[0]?.href, `/api/thing/${thing.rows[0]!.id}`)
     // 1 = neighbor's signature; the reader's own signature is excluded.
     assert.equal(nextVisit.around_you.new_agreement_signers.count, 1, 'new_agreement_signers.count')
@@ -634,11 +631,143 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       assert.equal(linkedRecord.status, 200, await linkedRecord.text())
     }
     const noReplay = await readMe()
+    assert.equal(noReplay.around_you.available, true)
     assert.equal(noReplay.around_you.notes_in_owned_places.count, 0)
     assert.equal(noReplay.around_you.mentions.count, 0)
     assert.equal(noReplay.around_you.new_things_in_owned_places.count, 0)
     assert.equal(noReplay.around_you.new_agreement_signers.count, 0)
     assert.equal(noReplay.fee_credit_received.founder_issues.amount, '0.000000')
+
+    const boundaryNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader saw the exact summary boundary') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [boundaryNote.rows[0]!.id, ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'integration_filler', 'neighbor', jsonb_build_object('sequence', sequence)
+      FROM generate_series(1, 999) AS sequence
+    `)
+    const boundaryVisit = await readMe()
+    assert.equal(boundaryVisit.around_you.available, true)
+    assert.equal(boundaryVisit.around_you.after_change_id, noReplay.around_you.through_change_id)
+    assert.equal(
+      BigInt(boundaryVisit.around_you.through_change_id) - BigInt(boundaryVisit.around_you.after_change_id),
+      1_000n,
+    )
+    assert.equal(boundaryVisit.around_you.notes_in_owned_places.count, 1)
+    assert.equal(boundaryVisit.around_you.mentions.count, 1)
+    assert.equal(boundaryVisit.around_you.new_things_in_owned_places.count, 0)
+    assert.equal(boundaryVisit.around_you.new_agreement_signers.count, 0)
+
+    const overflowNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader overflowed summary must not scan this note') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [overflowNote.rows[0]!.id, ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'integration_filler', 'neighbor', jsonb_build_object('sequence', sequence)
+      FROM generate_series(1, 1000) AS sequence
+    `)
+    const overflowThrough = await postgres.client.query<{ current_change_id: string }>(`
+      SELECT current_change_id::text FROM public_change_state WHERE singleton = true
+    `)
+    const explain = await postgres.client.query<{ 'QUERY PLAN': unknown }>(`
+      EXPLAIN (ANALYZE, FORMAT JSON)
+      WITH prior AS MATERIALIZED (
+        SELECT $2::bigint AS last_public_change_id
+      ), cutoff AS MATERIALIZED (
+        SELECT $3::bigint AS public_change_id
+      )
+      SELECT ${AROUND_YOU_SQL} AS around_you FROM cutoff
+    `, [7, boundaryVisit.around_you.through_change_id, overflowThrough.rows[0]!.current_change_id])
+    const planNodes: Readonly<Record<string, unknown>>[] = []
+    const collectPlanNodes = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const item of value) collectPlanNodes(item)
+      } else if (value !== null && typeof value === 'object') {
+        const node = value as Readonly<Record<string, unknown>>
+        if ('Node Type' in node) planNodes.push(node)
+        for (const child of Object.values(node)) collectPlanNodes(child)
+      }
+    }
+    collectPlanNodes(explain.rows[0]!['QUERY PLAN'])
+    const heavyRelations = new Set([
+      'public_change_log', 'events', 'notes', 'places', 'residents', 'things',
+      'agreements', 'agreement_parties', 'agreement_signatures', 'moderation_actions',
+    ])
+    const heavyScanNodes = planNodes.filter(node => heavyRelations.has(String(node['Relation Name'])))
+    assert.ok(heavyScanNodes.length > 0, 'the explained heavy around-you branch must remain visible')
+    assert.deepEqual(
+      heavyScanNodes.map(node => node['Actual Loops']),
+      heavyScanNodes.map(() => 0),
+      'the over-cap CASE must skip every heavy around-you relation scan',
+    )
+    const degradedVisit = await readMe()
+    assert.equal(degradedVisit.around_you.available, false)
+    assert.equal(degradedVisit.around_you.baseline, false)
+    assert.equal(degradedVisit.around_you.after_change_id, boundaryVisit.around_you.through_change_id)
+    assert.equal(
+      BigInt(degradedVisit.around_you.through_change_id) - BigInt(degradedVisit.around_you.after_change_id),
+      1_001n,
+    )
+    assert.equal(
+      degradedVisit.around_you.message,
+      'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
+    )
+    assert.equal(
+      degradedVisit.around_you.read_href,
+      `/api/changes?since=${degradedVisit.around_you.after_change_id}&limit=200`,
+    )
+    assert.equal(degradedVisit.around_you.notes_in_owned_places, null)
+    assert.equal(degradedVisit.around_you.new_things_in_owned_places, null)
+    assert.equal(degradedVisit.around_you.new_agreement_signers, null)
+    assert.equal(degradedVisit.around_you.mentions, null)
+    assert.equal(degradedVisit.fee_credit_received.settled_purchases.amount, '0.000000')
+    assert.equal(degradedVisit.fee_credit_received.founder_issues.amount, '0.000000')
+    assert.equal(degradedVisit.fee_credit_received.pending_gifts.count, 1)
+    const degradedMarker = await postgres.client.query<{ last_public_change_id: string }>(`
+      SELECT last_public_change_id::text
+      FROM city_credit_last_me_reads WHERE resident_id = 7
+    `)
+    assert.equal(degradedMarker.rows[0]!.last_public_change_id, degradedVisit.around_you.through_change_id)
+
+    const afterDegraded = await readMe()
+    assert.equal(afterDegraded.around_you.available, true)
+    assert.equal(afterDegraded.around_you.after_change_id, degradedVisit.around_you.through_change_id)
+    assert.equal(afterDegraded.around_you.through_change_id, degradedVisit.around_you.through_change_id)
+    assert.equal(afterDegraded.around_you.notes_in_owned_places.count, 0)
+    assert.equal(afterDegraded.around_you.mentions.count, 0)
+    assert.equal(afterDegraded.around_you.new_things_in_owned_places.count, 0)
+    assert.equal(afterDegraded.around_you.new_agreement_signers.count, 0)
+
+    const resumedNote = await postgres.client.query<{ id: number }>(`
+      INSERT INTO notes (place_id, author_id, body)
+      VALUES ($1, 8, 'visit-reader summaries resumed') RETURNING id
+    `, [ownedPlaceId])
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail)
+      VALUES ('note', 'neighbor', jsonb_build_object(
+        'note_id', $1::integer, 'place_id', $2::integer
+      ))
+    `, [resumedNote.rows[0]!.id, ownedPlaceId])
+    const resumedVisit = await readMe()
+    assert.equal(resumedVisit.around_you.available, true)
+    assert.equal(resumedVisit.around_you.after_change_id, afterDegraded.around_you.through_change_id)
+    assert.equal(resumedVisit.around_you.notes_in_owned_places.count, 1)
+    assert.equal(resumedVisit.around_you.notes_in_owned_places.records[0]?.id, resumedNote.rows[0]!.id)
+    assert.equal(resumedVisit.around_you.mentions.count, 1)
     const finalMarker = await postgres.client.query<{ last_credit_entry_id: string }>(`
       SELECT last_credit_entry_id::text
       FROM city_credit_last_me_reads WHERE resident_id = 7

@@ -11,6 +11,7 @@ const snapshot = () => ({
 
 test('a migrated resident establishes a public baseline independently of their prior visit time', () => {
   const report = mapAroundYou({ ...snapshot(), after_change_id: null })
+  assert.ok(report.available)
   assert.equal(report.baseline, true)
   assert.equal(report.after_change_id, null)
   assert.equal(report.through_change_id, '100')
@@ -20,6 +21,7 @@ test('a migrated resident establishes a public baseline independently of their p
 test('counts stay exact beyond ten links and continuation starts after the last supplied record', () => {
   const records = Array.from({ length: 10 }, (_, index) => ({ id: index + 1, change_id: String(index + 16) }))
   const report = mapAroundYou({ ...snapshot(), notes_in_owned_places: { count: 120, records } })
+  assert.ok(report.available)
   assert.equal(report.baseline, false)
   assert.equal(report.notes_in_owned_places.count, 120)
   assert.equal(report.notes_in_owned_places.records.length, 10)
@@ -37,6 +39,7 @@ test('record links use existing note, thing and agreement reads and omit source 
     new_things_in_owned_places: { count: 1, records: [{ id: 3, change_id: '17', body: 'private input' }] },
     new_agreement_signers: { count: 1, records: [{ id: 23, change_id: '18', signer: 'new-signer', body: 'terms' }] },
   })
+  assert.ok(report.available)
   assert.equal(report.mentions.records[0]!.href, '/api/note/9')
   assert.equal(report.new_things_in_owned_places.records[0]!.href, '/api/thing/3')
   assert.equal(report.new_agreement_signers.records[0]!.href, '/api/agreements?before_id=24&limit=1')
@@ -45,6 +48,7 @@ test('record links use existing note, thing and agreement reads and omit source 
   const maximum = mapAroundYou({ ...snapshot(), new_agreement_signers: {
     count: 1, records: [{ id: 2_147_483_647, change_id: '19', signer: 'new-signer' }],
   } })
+  assert.ok(maximum.available)
   assert.equal(maximum.new_agreement_signers.records[0]!.href, '/api/agreements?limit=1')
 })
 
@@ -79,4 +83,42 @@ test('out-of-window records, invalid identifiers and unsafe signer handles are r
   assert.throws(() => mapAroundYou({ ...snapshot(), mentions: { count: 2,
     records: [{ id: 2, change_id: '17' }, { id: 1, change_id: '16' }],
   } }), /around-you/u)
+})
+
+test('an interval above 1000 changes is explicitly unread, body-free, and links the whole skipped interval', () => {
+  const report = mapAroundYou({
+    after_change_id: '9007199254740993', through_change_id: '9007199254741994',
+    notes_in_owned_places: null, new_things_in_owned_places: null,
+    new_agreement_signers: null, mentions: null,
+  })
+  assert.equal(report.available, false)
+  assert.equal(report.baseline, false)
+  assert.equal(report.after_change_id, '9007199254740993')
+  assert.equal(report.through_change_id, '9007199254741994')
+  if (report.available) assert.fail('an over-limit interval must not claim available counts')
+  assert.equal(report.read_href, '/api/changes?since=9007199254740993&limit=200')
+  assert.equal(report.message, 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.')
+  assert.equal(report.notes_in_owned_places, null)
+  assert.equal(report.new_things_in_owned_places, null)
+  assert.equal(report.new_agreement_signers, null)
+  assert.equal(report.mentions, null)
+  assert.doesNotMatch(JSON.stringify(report), /"count":0|"body"/u)
+})
+
+test('exactly 1000 changes are eligible and a first-read baseline skips any amount of history', () => {
+  const boundary = mapAroundYou({ ...snapshot(), after_change_id: '20', through_change_id: '1020' })
+  assert.equal(boundary.available, true)
+  const baseline = mapAroundYou({ ...snapshot(), after_change_id: null, through_change_id: '1000000' })
+  assert.equal(baseline.available, true)
+  assert.equal(baseline.baseline, true)
+  assert.equal(baseline.notes_in_owned_places?.count, 0)
+  assert.match(boundary.scope, /Your own notes and things, and notes containing your own handle, count too/u)
+})
+
+test('an unavailable interval cannot carry fabricated counts or bodies', () => {
+  assert.throws(() => mapAroundYou({ ...snapshot(), through_change_id: '1016' }), /around-you/u)
+  assert.throws(() => mapAroundYou({
+    ...snapshot(), notes_in_owned_places: null, new_things_in_owned_places: null,
+    new_agreement_signers: null, mentions: null,
+  }), /around-you/u)
 })

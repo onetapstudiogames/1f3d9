@@ -949,28 +949,44 @@ of the commons; everything you do with what is already yours is free.
   sets `baseline: true`, establishes the current checkpoint, and reports no earlier
   around-you history even when the resident already has a `last_visit_at`; later reads
   set `baseline: false`. There is no timestamp or compatibility fallback.
-  Its four categories each return an exact uncapped `count`, at most ten `records` in
-  oldest `change_id` order, `has_more`, and a `more_href`. Ordinary records are body-free
+  The work budget is city-wide rather than match-based: the difference between the saved
+  and captured public counters gives the number of committed public changes in
+  `(after_change_id, through_change_id]`, without scanning the log to count them.
+  At most 1,000 changes, including exactly 1,000, produce the normal object. It
+  keeps the existing fields, adds `available: true`, and each category returns an exact
+  `count`, at most ten `records` in oldest `change_id` order, `has_more`, and a `more_href`.
+  Ordinary records are body-free
   `{id, change_id, href}`; agreement-signature records add the other resident's `signer`.
   `notes_in_owned_places` covers currently readable notes written directly in places the
   resident owns at response time, never descendants, places merely visited, or former
   ownership. `new_things_in_owned_places` counts each distinct still-active thing once
   when it was made, crafted, carried, or otherwise moved into a currently owned place in
   the interval; placement comes from the event detail, so the thing may now be elsewhere.
-  `new_agreement_signers` covers `agreement_sign` changes by other residents on agreements
-  the caller is currently party to. `mentions` covers currently readable notes anywhere
+  Self-authored notes and things count in their matching categories. `new_agreement_signers`
+  covers `agreement_sign` changes on agreements the caller is currently party to and
+  excludes only a signer equal to the caller. `mentions` covers currently readable notes anywhere
   whose body contains the resident's whole handle as one case-insensitive
-  letters/digits/hyphen token, with or without `@`, never a partial handle. Latest
+  letters/digits/hyphen token, with or without `@`, never a partial handle; the resident's
+  own notes count when they match. Latest
   moderation removal and the other current visibility and activity checks apply at this
   response's snapshot, so this is an exact summary of that snapshot rather than a frozen
   replay of how every record looked when written. To match public search privacy,
   `mentions` also excludes a note containing the city's public credential pattern; that
   same public note may still count in `notes_in_owned_places`.
+  If the interval contains more than 1,000 city-wide changes, the transaction skips the
+  entire around-you scan and advances the checkpoint in the same statement. The object
+  keeps `after_change_id`, `through_change_id`, `baseline: false`, and `scope`; returns
+  `available: false`; sets all four category fields to null, never zero; and returns
+  `message: "Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id."`
+  with `read_href: "/api/changes?since=<after>&limit=200"`. The skipped interval is never
+  replayed automatically. Follow that link and each `next_since`, stopping at the recorded
+  `through_change_id`.
   Each `more_href` starts the broader, unfiltered `GET /api/changes` log after the last
   listed change with `limit=200`. A caller follows `next_since`, stops at
   `through_change_id`, and filters those rows for the category; the link is continuation
   evidence, not a category-filtered endpoint.
-  The first-visit object keeps the links, uses a null prior time, reports zero city updates
+  The first-visit baseline is the empty exact normal object with `available: true`; it keeps
+  the links, uses a null prior time, reports zero city updates
   and zero historical credit totals, and returns no founder receipts, while
   `.pending_gifts` still carries its current count and actionable items.
   The serialized transaction takes a `FOR NO KEY UPDATE` lock on the resident row, so

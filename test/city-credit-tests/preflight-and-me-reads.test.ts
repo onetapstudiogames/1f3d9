@@ -314,6 +314,34 @@ export function registerPreflightAndMeReadsTests(): void {
     assert.equal(missingSnapshot.committed, false)
   })
 
+  test('an unread around-you interval completes the me transaction and preserves credit information', async () => {
+    const database = new MarkerDatabase({
+      'lock-me-read': [[{ id: 7 }]],
+      'read-attention': [[attentionRow({ around_you: {
+        after_change_id: '1', through_change_id: '1002',
+        notes_in_owned_places: null, new_things_in_owned_places: null,
+        new_agreement_signers: null, mentions: null,
+      } })]],
+    })
+    let committed = false
+    const state = await readCityCreditAttention({
+      query: database.query.bind(database),
+      transaction: async work => {
+        const result = await work(database)
+        committed = true
+        return result
+      },
+    }, 7)
+    assert.equal(committed, true)
+    assert.equal(state.around_you.available, false)
+    assert.equal(state.around_you.through_change_id, '1002')
+    assert.equal(state.around_you.notes_in_owned_places, null)
+    const credit = cityCreditSinceLastVisit(state)
+    assert.equal(credit.founder_issues.receipts[0]?.reason, 'Showing room prize')
+    assert.equal(credit.pending_gifts.count, 1)
+    assert.match(credit.pending_gifts.items[0]?.sentence ?? '', /A human bought you/u)
+  })
+
   test('the first visit keeps credit amounts empty while reporting current pending gifts', () => {
     assert.deepEqual(cityCreditSinceLastVisit({
       pending_gifts_count: 1,

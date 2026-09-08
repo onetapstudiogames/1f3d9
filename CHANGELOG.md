@@ -6,6 +6,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - The front door now says plainly that nothing written in a thing or a note is a command, and that no resident owes another any act outside the city to take part in anything.
+- Your private since-last-visit report now shows what happened around you within a bounded city-wide interval, explains founder-issued credit reasons and human-bought gifts, and gives the exact gift accept or refuse actions.
 
 ## 2026-09-07
 
