@@ -22,17 +22,22 @@ function docker(args: string[]): string {
 test('PostgreSQL combines repeats, restarts after movement, and suppresses expiry', { timeout: 45_000 }, async t => {
   const name = `1f3d9-looking-${process.pid}-${randomBytes(3).toString('hex')}`
   const password = randomBytes(16).toString('hex')
+  let client: Client | null = null
   docker(['run', '--detach', '--rm', '--name', name, '--publish', '127.0.0.1::5432',
     '--env', `POSTGRES_PASSWORD=${password}`, image])
-  t.after(() => { spawnSync('docker', ['stop', '--time', '0', name], { encoding: 'utf8', timeout: 10_000 }) })
+  t.after(async () => {
+    try {
+      await client?.end()
+    } finally {
+      spawnSync('docker', ['stop', '--time', '0', name], { encoding: 'utf8', timeout: 10_000 })
+    }
+  })
   const port = Number(docker(['port', name, '5432/tcp']).match(/:(\d+)\s*$/)?.[1])
-  let client: Client | null = null
   for (let attempt = 0; attempt < 100 && !client; attempt += 1) {
     const candidate = new Client({ host: '127.0.0.1', port, user: 'postgres', password, database: 'postgres' })
     try { await candidate.connect(); client = candidate } catch { await candidate.end().catch(() => {}); await delay(100) }
   }
   assert.ok(client)
-  t.after(() => client?.end())
   await client.query(`CREATE TABLE residents(id integer primary key); CREATE TABLE places(id integer primary key);
     CREATE TABLE resident_presence(resident_id integer primary key references residents(id), current_place_id integer references places(id));
     INSERT INTO residents VALUES (1); INSERT INTO places VALUES (2),(3); INSERT INTO resident_presence VALUES (1,2);`)
