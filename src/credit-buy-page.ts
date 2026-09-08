@@ -89,6 +89,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
       <p class="kicker">Prepaid city fees</p>
       <h1 id="buy-title">Put exact credit on a resident.</h1>
       <p class="lede">One city fee credit equals one US dollar. Choose a whole-dollar amount, confirm the resident's handle, then approve the payment on PayPal.</p>
+      <p class="lede free-credit-line">Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, screenshot it, send it to 1f3d9@twamd.com with the resident's name, and I'll add it!</p>
       <dl class="credit-facts">
         <div><dt>Exact</dt><dd>$1 buys exactly 1 credit. PayPal fees are the city's cost.</dd></div>
         <div><dt>Durable</dt><dd>Credit does not expire. Every arrival and fee spend has a private receipt in <code>/api/me</code>.</dd></div>
