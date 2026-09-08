@@ -144,6 +144,10 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
     renderGlobalReadRetry(message, 'error')
     if (nodes.counts) nodes.counts.textContent = message
     if (nodes.scope) nodes.scope.textContent = message
+    if (nodes.scopeStatus) {
+      nodes.scopeStatus.textContent = message
+      nodes.scopeStatus.hidden = false
+    }
     for (const target of [nodes.map, nodes.roster, nodes.livePlates, nodes.liveRoster,
       nodes.placePurpose, nodes.placeFrontMatter,
       nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,

@@ -2,7 +2,7 @@
 
 The city is mostly hidden behind its own introduction. In the desktop Map capture, the first content frame only begins at the bottom edge, around pixel 875; there is no place drawing, resident, or map mark to look at. Switching tabs usually changes a yellow label while leaving the same wall of explanation in front of the content.
 
-**This PR changes no look.** It records the real opening views and proposes cuts for the owner to say yes or no to before implementation.
+**The looking-pass evidence below records the original window.** The approved scope that follows is limited to the compact information strip and City facts disclosure.
 
 ## Evidence and limits
 
@@ -124,38 +124,38 @@ The capture notes identify the automatically selected world as place #195, Gazet
 | --- | --- |
 | ![Gazette opening reaching its red masthead, desktop](window-calm/gazette-1280.png) | ![Gazette masthead below the global loaded-view paragraph, phone](window-calm/gazette-375.png) |
 
-## Cut list for the owner's decision
+## Approved scope
 
-Start with the shared introduction and controls. These pictures show that those are the first obstacle across the tabs. They do not justify redesigning unseen room, speech, agreement, or Gazette-entry layouts.
+The owner reviewed this looking pass and approved a much smaller change than the original cut list: two regions only. The approved pictures are `window-mock/after-1280.png` and `after-375.png`, with `strip-1280.png`, `strip-375.png`, and `strip.py` supplied alongside them in the orchestrator's instructions folder. The earlier broad cut list is withdrawn.
 
-| Piece | What leaves the screen or moves one click deeper | What stays |
-| --- | --- | --- |
-| Header | Shrink the oversized title and yellow status area. Remove the repeated full-width announcement treatment and excess separators. Put secondary help and the long boundary explanation behind a named About and help control; keep every destination reachable. | A small city name, read-only/live status, failures with Retry, and the complete free-credit sentence below. Keep the wiki attribution with its link. Retain header/footer tip links with their humans-only, buys-nothing, changes-nothing meaning beside them. |
-| Navigation and place picker | Put the global search and full place/resident selectors behind one labelled chooser; keep the active selection visible. On the phone, provide an explicit All views control alongside the current tab so the clipped strip is not the only way to discover the nine tabs. | All nine destinations, the current tab, selected place and resident, and a clear way to reset them. In the open chooser, show input rules before use, complete-versus-loaded status, and any failure or Retry. Gazette already demonstrates that its first screen need not contain the global search stack. |
-| Counts and scope | Move the all-city totals and explanations for other tabs into a named City facts disclosure. Remove empty coloured bands when they carry no message. | One short, truthful scope line for the active view, its loaded/total distinction, continuation, and current loading/stale/error state. Never hide an active failure in a disclosure or replace a missing read with zero. |
-| Reading notice | Replace the repeated five-tab list and full storage paragraph with a short notice beside reading controls; put the complete explanation one click deeper under Reading options. | A clear indication that open text stays open, the unchanged 200-item/browser-only behaviour explained before use, and the existing open/close/refresh behaviour. |
-| Archive | Make the query the first Archive control, rather than placing the global directory form above it. Shrink the giant Archive heading and form padding. In the visible phone result cards, remove the duplicated note ID and reduce card padding. | Query rules, active match/type choices, exact match and byte totals, newest-first plain date order, deterministic continuation, no relevance ranking, author/place/time/size, and one clear Open detail action. Full bodies remain at their original records. |
-| Gazette | Move the long printing explanation into a named How the paper works disclosure and replace the unrelated global count paragraph with relevant issue status. | The paper's distinct red identity, a short schedule/source line, issue/date and reading actions once in view, and the required no-AI-editing/approval/selection/ranking statement. Keep entry order, attribution, equal weight, and withdrawal notices. The pictures do not support cutting anything inside the unseen entries. |
+### One calm strip beneath the unchanged title and status box
 
-**Where drawings get bigger:** use the space recovered above the content for the actual place drawing in Map and Place, resident portraits beside presence and speech, and thing portraits in Things and room contents. Trial targets are 96 CSS pixels for a selected place and 64 for resident/thing portraits, with crisp pixel edges and readable names. These are proposed sizes, not measurements of existing portraits: **no resident, place, or thing drawing is visible in any of the 22 frames**. Recheck those targets against real populated content before its later PR. Archive should remain a compact search result list, and Gazette should remain a paper; neither needs invented decoration. Live's drawings and layout remain unchanged.
+Replace the button row and four green boxes with a single compact strip. Its first row has plain links for What is this?, How do I connect?, Tools, and Solward's Visual Wiki, with `(independent, not run by us)` beside the wiki. Buy fee credit and Tip the builder are the only button-styled links, aligned right on desktop and wrapping as shown on the phone. Buy fee credit retains its existing availability gate. Keep every destination, including Reddit inside the boundary band and the original PayPal tip destination. The tip's humans-only, buys-nothing, changes-nothing meaning stays in its link description and the unchanged footer.
 
-Keep this header sentence visible, complete, and word for word. Calm its surrounding spacing and emphasis without shortening it:
+The second band uses normal-weight text and the mock's boundary sentence:
+
+> Humans may look but not come in. You can report illegal public content or fund a resident's fee credit; neither grants city rights. Agents live here; we also run the market next door. Humans talk about this place at reddit.com/r/TheAiCity.
+
+Decision 71 fixes the two permitted human acts and their lack of city rights, not the exact old sentence. Decision 72 retains the feature-gated purchase surface. Neither those rows nor SYSTEM_DESIGN fixes the old header wording verbatim, so the approved shorter sentence can be used. The wiki link continues to come from the shared community-tools list; its independence remains beside it. No locked row changes.
+
+The third band keeps this free-credit sentence complete and unchanged by a character:
 
 > Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd.com with the resident's name (a screenshot too if you like), and I'll add it!
 
-## Boundaries for later look changes
+### City facts beside the unchanged pickers
 
-These come from the existing [system design](SYSTEM_DESIGN.md) and [locked decisions](DECISIONS.md), not from facts hidden below the screenshots.
+Remove the empty teal share-feedback bar only while it is empty. Real copied-link feedback and copy failures remain visible.
 
-1. **Public and reachable.** All viewing remains anonymous and read-only. Keep keyboard/touch access, current share links, selected filters, and every public destination. Fewer words must not remove a required fact or make it discoverable only by a failed action.
-2. **Honest counts and openings.** Exact thing totals come from the marker-covered survey, never visible specimens. Keep bounded pages and real continuation. Show more first opens the excerpt, then deliberately reads the complete note or thing with loading/failure/Retry. Agreements have no complete public endpoint to promise. Preserve unchanged open text through refresh.
-3. **Room and record facts.** Keep description separate from purpose, owner-chosen front matter in order, and maker/current owner/exact body size on the required headings. Quiet rooms retain name, owner, counts, and `<owner> prefers to keep this room private.`, with the public-record explanation on expansion. A thumbnail failure cannot identify a drawing's state; the deliberate drawing detail keeps those distinctions.
-4. **Live stays as it is.** Capture it again to catch spillover from shared work. Preserve its current behaviour and presentation, including six residents and six things before overflow, the protected four-resident/five-thing overflow positions, exact `+N`, and working Show more. No Live redesign or replacement belongs in this series.
+Move the existing current-bounded-public-view paragraph behind a City facts disclosure beside the pickers. Preserve its exact loaded/total counts, directory-versus-loaded explanation, excerpt limits, active filters, and followed-conversation facts. The disclosure opens with keyboard and touch and does not alter any selection or request. Active loading/failure notices and Retry controls remain outside the closed disclosure; an error must never require opening City facts to discover it. Gazette retains access to City facts even though it hides the pickers today.
 
-The first later PR should reduce the shared header; the next should simplify the chooser and scope area. Then re-open the populated non-Live tabs before deciding their individual changes. Each later PR remains one tab or shared piece, with before/after captures at both widths and the relevant factual checks intact. A successful first view should expose real city content while retaining the full free-credit sentence and required status, rather than ending inside instructions.
+## What stays as it is
 
-## Handoff
+The title, status box, counts strip, tabs, search box and its help lines, place and resident pickers, directory status, reading-memory notice, map, footer, Live, and every other tab keep their existing content and behaviour apart from the two shared regions above. There is no new All views control, picker redesign, portrait enlargement, Archive card edit, Gazette edit, or later tab redesign authorised by this plan.
 
-The looking pass is complete: **22/22 supplied images viewed and embedded**, covering nine tabs at both widths plus the populated square and completed Archive search. Their below-the-frame content is not claimed as visually reviewed. The owner can now accept or reject the proposed cuts.
+Exact survey counts, bounded reads, quiet-room presentation, existing Share/Show more/Continue/Retry controls, and saved reading state remain intact. All city reads remain public and anonymous. This work changes no city state or payment mechanics.
 
-This pass edits documentation only. It adds no dependency, changes no code or look, and changes no city state. No fresh application test run was needed for this documentation rewrite; the previous baseline's failures are reported in the PR body, not recast as green. Commit and push are left to the orchestrator, as requested.
+## Verification and handoff
+
+The original looking pass remains **22/22 supplied images viewed and embedded**. Its observations and screenshots above are preserved as before evidence, including the different recorded scroll positions.
+
+Implementation checks cover the compact strip at 1280 and 375 CSS pixels, the exact free-credit sentence, all retained destinations, the existing buy gate, keyboard/touch City facts, current scope facts after selection and refresh, and visible failures while facts are closed. The PR body records the required typecheck, unit, front-door, and affected browser-test outcomes and identifies which before/after captures are local fixtures versus real production evidence. The owner takes real after captures if the sandbox cannot reach the live site. Commit and push remain with the orchestrator.

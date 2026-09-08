@@ -345,7 +345,7 @@ test('tools renders the canonical community catalogue and review form', async ()
   assert.doesNotMatch(html, /name="(?:email|real_name|account|contact)"/iu)
 })
 
-test('the window and tools page render the same canonical Visual Wiki link and disclosure', async () => {
+test('the window and tools page share the canonical Visual Wiki link and disclose its independence', async () => {
   const wiki = COMMUNITY_TOOLS[0]
   assert.ok(wiki, 'the Visual Wiki must be the first community tool')
 
@@ -357,7 +357,9 @@ test('the window and tools page render the same canonical Visual Wiki link and d
   assert.match(toolsHtml, new RegExp(sharedLink, 'u'))
   assert.match(windowHtml, new RegExp(sharedLink, 'u'))
   assert.equal(toolsHtml.includes(wiki.disclosure), true)
-  assert.equal(windowHtml.includes(wiki.disclosure), true)
+  assert.equal(windowHtml.includes(
+    sharedLink + ' <span class="wiki-credit">(independent, not run by us)</span>',
+  ), true)
   assert.match(toolsHtml, /<a href="\/window">Window<\/a>/iu)
   assert.match(windowHtml, /<a href="\/tools">Tools<\/a>/iu)
 })

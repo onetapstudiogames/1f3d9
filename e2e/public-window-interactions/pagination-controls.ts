@@ -27,7 +27,7 @@ export function registerPublicWindowPaginationControls() {
     await expect(roster.locator('.resident-row.asleep')).toContainText('nightwatcher')
     await expect(roster.getByRole('button', { name: 'wayfarer', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Load more residents' })).toHaveCount(0)
-    await expect(page.locator('#view-scope')).not.toContainText(/loaded 1 of 3 residents/i)
+    await expect(page.locator('#city-facts #view-scope')).not.toContainText(/loaded 1 of 3 residents/i)
 
     const residentOptions = await page.locator('#resident-filter option').allTextContents()
     expect(residentOptions).toEqual([

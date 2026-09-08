@@ -22,7 +22,7 @@ export function registerWindowPagesTests(): void {
     assert.equal((armed.match(/href="\/buy"/g) || []).length, 2)
     assert.match(
       armed,
-      /Solward&#39;s Visual Wiki<\/a>\s*<a href="\/buy">Buy fee credit<\/a>/,
+      /<nav class="window-guide-links"[^>]*>[\s\S]*?Solward&#39;s Visual Wiki<\/a>[\s\S]*?<a class="window-strip-button" href="\/buy">Buy fee credit<\/a>[\s\S]*?<\/nav>/,
     )
     assert.equal((dormant.match(/href="\/buy"/g) || []).length, 0)
     assert.match(armed, /Neither grants power over the city/)
