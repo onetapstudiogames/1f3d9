@@ -93,6 +93,7 @@ export function registerPublicWindowThingsIndexLayout() {
         } })
         return
       }
+      if (url.searchParams.has('collection')) return route.fallback()
       const response = await route.fetch()
       const snapshot = await response.json()
       const [square, sideRoom] = snapshot.places
@@ -273,19 +274,21 @@ export function registerPublicWindowThingsIndexLayout() {
       }
     }
 
-    await page.goto('/window/map')
-    const mapHeading = page.locator('#place-map .place-card-thing')
+    await page.goto('/window/place/11')
+    const placeHeading = page.locator('#place-front-matter .front-matter-heading')
       .filter({ hasText: 'transparent-beacon' })
     await scrollRebuildableIntoView(
-      () => page.locator('#place-map .place-card-thing').filter({ hasText: 'transparent-beacon' }),
-      'transparent-beacon map portrait',
+      () => page.locator('#place-front-matter .front-matter-heading').filter({ hasText: 'transparent-beacon' }),
+      'transparent-beacon place portrait',
     )
-    await expect(mapHeading.locator(
+    await expect(placeHeading.locator(
       '.entity-portrait[data-portrait-type="thing"] img',
     )).toHaveAttribute(
       'src',
       /\/api\/drawing\/thing\/427\/thumb\.png\?rev=9$/u,
     )
+    await page.getByRole('tab', { name: 'Map', exact: true }).click()
+    await expect(page.locator('#place-map .place-card-thing')).toHaveCount(0)
 
     const search = page.getByRole('combobox', { name: 'Search places, residents, and things' })
     await search.fill('transparent-beacon')

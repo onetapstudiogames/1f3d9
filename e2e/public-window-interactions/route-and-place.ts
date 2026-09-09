@@ -37,6 +37,8 @@ export function registerPublicWindowRouteAndPlace() {
 
   test('selected Place labels and preserves owner-chosen body-free front matter without reading things', async ({ page }) => {
     expect(SNAPSHOT.places[0].front_matter.every(heading => !Object.hasOwn(heading, 'body'))).toBe(true)
+    await expect(page.locator('#place-map .place-card-things')).toHaveCount(0)
+    await expect(page.locator('#place-map .place-card-thing')).toHaveCount(0)
     await page.getByRole('tab', { name: 'Place' }).click()
 
     const placePanel = page.locator('#place-panel')

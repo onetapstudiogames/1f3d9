@@ -1025,7 +1025,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .resident-reference,
 .front-matter-title,
 .thing-index-title,
-.place-card-thing,
 .activity-thing-reference {
   display: inline-flex;
   gap: 0.35rem;
@@ -1757,7 +1756,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .place-tree { padding: 0; margin: 0; list-style: none; }
 .place-tree[hidden] { display: none; }
 .place-tree .place-tree { margin-inline-start: 1.35rem; border-inline-start: 2px solid var(--paper-line); }
-.place-node { position: relative; padding: 0.55rem 0 0.55rem 0.95rem; }
+.place-node { container-type: inline-size; position: relative; padding: 0.55rem 0 0.55rem 0.95rem; }
 .place-tree .place-tree > .place-node::before {
   content: "";
   position: absolute;
@@ -1767,7 +1766,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 }
 .place-card {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: 2rem minmax(min-content, 1fr) fit-content(50%);
   gap: 0.35rem 0.85rem;
   padding: 0.78rem 0.85rem;
   background: var(--paper-light);
@@ -1777,17 +1776,6 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
 .place-card > .place-portrait { grid-column: 1; grid-row: 1 / 3; }
 .place-card > .place-watch { grid-column: 2; grid-row: 1; }
 .place-card > .place-owner { grid-column: 2; grid-row: 2; }
-.place-card-things {
-  display: flex;
-  grid-column: 1 / -1;
-  flex-wrap: wrap;
-  gap: 0.45rem 0.9rem;
-  padding: 0.45rem 0 0;
-  margin: 0;
-  border-top: 1px solid var(--paper-line);
-  list-style: none;
-}
-.place-card-thing { min-width: 0; }
 .place-card[data-watched="true"] { border-color: var(--brick); box-shadow: 5px 5px 0 rgba(173, 63, 37, 0.23); }
 .place-name, .place-owner, .activity-copy, .note-body, .thing-body, .agreement-body {
   unicode-bidi: plaintext;
@@ -1811,6 +1799,8 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   text-underline-offset: 0.18em;
 }
 .place-name { font-size: 1rem; }
+.place-card > .place-name, .place-card > .place-owner { overflow-wrap: normal; }
+.place-card .place-owner-resident { white-space: nowrap; }
 .place-disclosure {
   grid-column: 1 / -1;
   width: fit-content;
@@ -1860,6 +1850,10 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   font-size: 0.64rem;
   line-height: 1.55;
   text-align: end;
+}
+@container (max-width: 40rem) {
+  .place-card { grid-template-columns: 2rem minmax(0, 1fr); }
+  .place-card > .place-facts { grid-column: 1 / -1; grid-row: auto; text-align: start; }
 }
 .occupant-line {
   grid-column: 1 / -1;
@@ -2510,12 +2504,7 @@ body:has(#live-panel[data-live-fullscreen="true"]) { overflow: hidden; }
   .conversation-choices { width: 100%; }
   .conversation-mode-button { flex: 1 1 12rem; }
   .place-tree .place-tree { margin-inline-start: 0.55rem; }
-  .place-card { grid-template-columns: 2rem minmax(0, 1fr); }
-  .place-card > .place-portrait { grid-column: 1; grid-row: 1 / 3; }
-  .place-card > .place-watch { grid-column: 2; }
-  .place-card > .place-owner { grid-column: 2; }
   .place-facts { grid-column: 1 / -1; grid-row: auto; text-align: start; }
-  .place-card-things { display: grid; grid-template-columns: 1fr; }
   .thing-index-row { padding: 0.75rem; }
   .thing-index-title { align-items: flex-start; }
   .roster-group .resident-row, .person-card {

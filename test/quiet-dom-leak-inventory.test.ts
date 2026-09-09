@@ -152,6 +152,9 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
   ['occupantChip',
     'Only ever invoked by occupantLine with residents already filtered by isQuietPlace; occupantChip ' +
     'itself never resolves a place.'],
+  ['placeList',
+    'Names only the public place keeper; resident locations still pass through occupantLine and ' +
+    'its quiet checks, while Map cards no longer render selected things.'],
   ['renderResidentPage',
     'dataset.focusFallbackKey is an internal keyboard-focus lookup key on the Load More button, never ' +
     'rendered as visible text; handles are already public in the directory regardless of quiet.'],
@@ -243,6 +246,18 @@ test('the allow-list names only functions that still exist and carries a real re
     assert.ok(functionNames.has(name), 'allow-listed function "' + name + '" no longer exists in ' + WINDOW_CLIENT_PATH)
     assert.ok(reason.length >= 40, 'allow-list reason for "' + name + '" is too short to be a real explanation')
   }
+})
+
+test('Map cards name only the public keeper directly and retain guarded occupant rendering', () => {
+  const clientSource = source(WINDOW_CLIENT_PATH)
+  const functions = extractTopLevelFunctions(clientSource)
+  const mapWrites = findIdentityDomWrites(clientSource, functions)
+    .filter(flag => flag.functionName === 'placeList')
+  assert.deepEqual(mapWrites.map(flag => flag.text), [
+    "residentNode(place.owner, 'place-owner-resident',",
+  ])
+  const mapFunction = functions.find(fn => fn.name === 'placeList')!
+  assert.match(functionBody(clientSource, mapFunction), /occupantLine\(place, occupants,/u)
 })
 
 test('the allow-list carries no stale entries: every listed function still has a flagged DOM write', () => {

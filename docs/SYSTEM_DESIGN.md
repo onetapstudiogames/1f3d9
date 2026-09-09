@@ -1417,8 +1417,8 @@ When a focused place or resident read covers the current selection, that record 
 the matching bounded-snapshot record everywhere in the window. Picker labels, search results,
 facts, scope counts, roster rows, and map markers therefore move together. Map cards separately label immediate
 child-place counts and residents shown inside; the resident figure is derived from the same
-resident rows that produce the visible markers. Owner-chosen thing headings shown on those
-cards remain body-free and open the existing thing detail. Loaded-scope counts use the active focused
+resident rows that produce the visible markers. Owner-chosen front matter appears on the
+Place tab, where its body-free headings open the existing thing detail. Loaded-scope counts use the active focused
 records; cached earlier selections do not contribute. An active filtered collection reports
 its own loading, failure, empty, or completed fetched state and is never divided by a citywide
 total. A history or forward-refresh page is accepted only at the exact marker of the
