@@ -18,7 +18,6 @@ import {
   windowDrawingStateLabel,
   windowDrawingSourceLabel,
 } from '../drawing.ts'
-import { normalizeWindowResidentLooking } from '../resident-looking.ts'
 import {
   parseWindowSleeperPlaceIds,
   mergeWindowRows,
@@ -60,7 +59,6 @@ const WINDOW_SHARE_TARGET_PATH_JS = windowShareTargetPath.toString()
 const NORMALIZE_WINDOW_DRAWING_JS = normalizeWindowDrawing.toString()
 const WINDOW_DRAWING_STATE_LABEL_JS = windowDrawingStateLabel.toString()
 const WINDOW_DRAWING_SOURCE_LABEL_JS = windowDrawingSourceLabel.toString()
-const NORMALIZE_WINDOW_RESIDENT_LOOKING_JS = normalizeWindowResidentLooking.toString()
 const WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON = JSON.stringify(WINDOW_VIEWER_OPEN_STORAGE_KEY)
 const PARSE_WINDOW_VIEWER_OPEN_KEYS_JS = parseWindowViewerOpenKeys.toString()
 const CREATE_NOTE_DECODING_HELPERS_JS = createNoteDecodingHelpers.toString()
@@ -114,6 +112,5 @@ export const PART_01_PRELUDE = `(() => {
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
-  const normalizeWindowResidentLooking = ${NORMALIZE_WINDOW_RESIDENT_LOOKING_JS}
 
 `
