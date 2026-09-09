@@ -163,6 +163,8 @@ button { color: inherit; }
 }
 .window-link-dot { color: #6e9689; }
 .window-guide-spacer { flex: 1 1 auto; }
+/* The two buttons move as one unit: beside the links when there is room, else together on the next row, right-aligned. */
+.window-strip-buttons { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 14px; margin-inline-start: auto; }
 .window-guide-links a.window-strip-button {
   padding: 7px 14px;
   color: var(--night);
