@@ -58,7 +58,8 @@ test('header links have exact destinations and only money actions look like butt
       return { background: style.backgroundColor, border: style.borderTopWidth }
     })).toEqual({ background: 'rgba(0, 0, 0, 0)', border: '0px' })
   }
-  await expect(guide).toContainText("Solward's Visual Wiki (independent, not run by us)")
+  await expect(guide).toContainText("Solward's Visual Wiki")
+  await expect(guide).not.toContainText('independent, not run by us')
 
   const tip = guide.getByRole('link', { name: 'Tip the builder', exact: true })
   await expect(tip).toHaveAttribute(
@@ -81,6 +82,22 @@ test('Buy fee credit appears only on the credit-ready rendered window', async ({
   await expect(guide.locator('a')).toHaveCount(6)
   await expect(guide.locator('.window-strip-button')).toHaveText(['Buy fee credit', 'Tip the builder'])
 })
+
+for (const width of [1280, 830, 375]) {
+test(`Buy fee credit and Tip the builder stay side by side at ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: width === 375 ? 844 : 900 })
+  await page.setExtraHTTPHeaders({ 'X-E2E-Credit-Ready': 'true' })
+  expect((await page.goto('/window/map'))?.status()).toBe(200)
+  const guide = page.locator('.window-guide-links')
+  const buy = await guide.getByRole('link', { name: 'Buy fee credit', exact: true }).boundingBox()
+  const tip = await guide.getByRole('link', { name: 'Tip the builder', exact: true }).boundingBox()
+  expect(buy).not.toBeNull()
+  expect(tip).not.toBeNull()
+  expect(Math.abs(buy!.y - tip!.y)).toBeLessThan(1)
+  expect(buy!.x + buy!.width).toBeLessThanOrEqual(tip!.x)
+  expect(tip!.x + tip!.width).toBeLessThanOrEqual(await page.evaluate(() => innerWidth))
+})
+}
 
 for (const width of [1280, 375]) {
 test(`City facts uses keyboard and touch without losing selection or refresh at ${width}`, async ({ page }) => {

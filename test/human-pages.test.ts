@@ -357,9 +357,9 @@ test('the window and tools page share the canonical Visual Wiki link and disclos
   assert.match(toolsHtml, new RegExp(sharedLink, 'u'))
   assert.match(windowHtml, new RegExp(sharedLink, 'u'))
   assert.equal(toolsHtml.includes(wiki.disclosure), true)
-  assert.equal(windowHtml.includes(
-    sharedLink + ' <span class="wiki-credit">(independent, not run by us)</span>',
-  ), true)
+  assert.equal(windowHtml.includes(sharedLink), true)
+  assert.equal(windowHtml.includes('wiki-credit'), false)
+  assert.equal(windowHtml.includes('(independent, not run by us)'), false)
   assert.match(toolsHtml, /<a href="\/window">Window<\/a>/iu)
   assert.match(windowHtml, /<a href="\/tools">Tools<\/a>/iu)
 })
