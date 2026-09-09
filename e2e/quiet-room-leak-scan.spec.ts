@@ -1,13 +1,13 @@
 // Fourth review pass on row 75 (docs/DECISIONS.md row 75): three prior
 // review passes each fixed the specific rows a human reviewer happened to
-// spot; both the directory search box and the Live roster's dataset markers
+// spot; the directory search box's dataset markers
 // shipped, were reviewed twice more, and still leaked. Rather than adding
 // another pair of spot assertions, this file drives the whole shipped window
-// client — every tab, the directory search box, the live focus/follow state,
+// client — every in-window view, the directory search box,
 // a resident-filtered deep link, and every share button — against a fixture
 // with one quiet grandchild place holding a resident, a thing, and a note
 // each carrying a unique sentinel value. After every step it scans the
-// entire live DOM (outerHTML text and every element's own attributes,
+// entire DOM (outerHTML text and every element's own attributes,
 // including dataset) for those three sentinels. A hit anywhere fails the
 // test with the exact step and element that produced it, so a future leak
 // anywhere in the client — not just at the two rows this round's report
@@ -265,7 +265,7 @@ type Leak = Readonly<{ sentinel: string; path: string; detail: string }>
 // resident handle only — a thing name or note body must never appear
 // inside them either, so this scan still checks them.
 const RESIDENT_HANDLE_ALLOWED_CONTAINERS =
-  '#resident-filter, #directory-search-results, .live-focus-resident-card, ' +
+  '#resident-filter, #directory-search-results, ' +
   '#view-scope, #city-facts-status, #conversation-mode, #share-status, #record-detail-share-status'
 
 async function scanForSentinels(page: Page): Promise<readonly Leak[]> {
@@ -333,44 +333,6 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   await expect(page.locator('#place-map .place-card > .quiet-room-notice')).toHaveCount(0)
   await assertNoLeak(page, 'Map tab, quiet grandchild card expanded')
 
-  // Live tab: the roster, the plates (livePortraitGrid / liveThingShelf),
-  // the trail/replay layer, and the ledger all recurse through the quiet
-  // grandchild two levels below the focused root.
-  await page.getByRole('tab', { name: 'Live' }).click()
-  await expect(page.locator('#live-plates')).toBeVisible()
-  await assertNoLeak(page, 'Live tab, default load')
-
-  // Step 4: the single reusable Live item popover. Drill to lantern_row so
-  // the quiet grandchild (hushed_cellar) renders as one of its own direct
-  // plots -- the only anchor a quiet room offers on the plate, since its
-  // residents and things never render at all -- and open the popover on
-  // its nameplate. liveItemPopoverFacts resolves this place's own quiet
-  // mark and must print only its name, owner, and counts (all public per
-  // decision #75) plus the locked quiet sentence, never the sentinel
-  // resident, thing, or note this fixture would otherwise leak.
-  await page.evaluate(placeId => { window.location.hash = '#view=live&place=' + String(placeId) }, CHILD_PLACE_ID)
-  const quietPlot = page.locator('.live-plot[data-place-id="' + String(QUIET_PLACE_ID) + '"]')
-  await expect(quietPlot).toBeVisible()
-  await quietPlot.locator('.live-plot-open').hover()
-  await expect(page.locator('#live-item-popover')).toBeVisible()
-  await expect(page.locator('#live-item-popover')).toContainText('hushed_cellar')
-  await expect(page.locator('#live-item-popover .quiet-room-notice')).toContainText(
-    'archivist prefers to keep this room private.',
-  )
-  await assertNoLeak(page, 'Live item popover on the quiet grandchild plot')
-  await page.keyboard.press('Escape')
-
-  // Step 6: the exact count remains public, but opening the quiet room's
-  // notes panel must show only the locked quiet sentence and no note body.
-  await quietPlot.getByRole('button', { name: 'Open 1 notes in hushed_cellar' }).click()
-  await expect(page.locator('#live-notes-panel')).toBeVisible()
-  await expect(page.locator('#live-notes-panel .quiet-room-notice')).toContainText(
-    'archivist prefers to keep this room private.',
-  )
-  await expect(page.locator('#live-notes-panel .live-note-body')).toHaveCount(0)
-  await assertNoLeak(page, 'Live notes panel on the quiet grandchild plot')
-  await page.keyboard.press('Escape')
-
   // Things tab: the city-wide heading list (renderThingIndex) and its own
   // history-page control.
   await page.getByRole('tab', { name: 'Things' }).click()
@@ -392,6 +354,8 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   // (front matter), and the occupants/things/conversation quiet-notice panels.
   await page.evaluate(placeId => { window.location.hash = '#view=place&place=' + String(placeId) }, QUIET_PLACE_ID)
   await expect(page.locator('#place-focus-title')).toHaveText('hushed_cellar')
+  await expect(page.locator('#place-watch-live')).toBeHidden()
+  await expect(page.locator('#place-watch-live')).not.toHaveAttribute('href')
   await assertNoLeak(page, 'Place tab, watching the quiet grandchild directly')
 
   // Conversations tab: the city-wide note stream must withhold the quiet
@@ -399,6 +363,12 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   await page.evaluate(() => { window.location.hash = '#view=conversations' })
   await expect(page.locator('#conversation-stream')).toBeVisible()
   await assertNoLeak(page, 'Conversations tab, default load')
+
+  for (const view of ['Happenings', 'Agreements', 'Archive', 'Gazette']) {
+    await page.getByRole('tab', { name: view, exact: true }).click()
+    await expect(page.locator('#' + view.toLowerCase() + '-panel')).toBeVisible()
+    await assertNoLeak(page, view + ' tab, default load')
+  }
 
   // A resident-filtered deep link: the viewer explicitly names the sentinel
   // resident by handle (which decision #75 allows to keep naming — the
@@ -409,7 +379,7 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   // per-row isQuietPlace checks as ambient browsing, not the separate
   // "already an identified, viewer-chosen handle" exemption that only
   // applies once a followed resident falls outside the focused plate.
-  for (const view of ['map', 'live', 'things', 'conversations']) {
+  for (const view of ['map', 'things', 'conversations']) {
     await page.evaluate(({ view: nextView, resident }) => {
       window.location.hash = '#view=' + nextView + '&resident=' + resident
     }, { view, resident: RESIDENT_SENTINEL })
@@ -419,15 +389,13 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
 
   // No follow control exists anywhere for the quiet resident: there is no
   // click path to focus them from the UI at all.
-  await page.evaluate(() => { window.location.hash = '#view=live' })
-  await expect(page.locator('[data-live-resident-handle="' + RESIDENT_SENTINEL + '"]')).toHaveCount(0)
   await expect(page.locator('.resident-follow', { hasText: RESIDENT_SENTINEL })).toHaveCount(0)
 
   // Share links: every view's share button serializes only the viewer's own
   // chosen filters (view/place/resident/search), never ambient room content
   // — click each one while the quiet grandchild and the sentinel resident
   // filter are in scope and confirm the resulting status text stays clean.
-  for (const view of ['map', 'live', 'things', 'place', 'conversations']) {
+  for (const view of ['map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette']) {
     await page.evaluate(({ view: nextView, place, resident }) => {
       window.location.hash = '#view=' + nextView + '&place=' + String(place) + '&resident=' + resident
     }, { view, place: QUIET_PLACE_ID, resident: RESIDENT_SENTINEL })

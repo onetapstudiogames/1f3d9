@@ -147,8 +147,6 @@ export function registerWindowPagesTests(): void {
     assert.match(previewHtml, new RegExp(`<meta property="og:url" content="https://${previewHost}/window/thing/401">`, 'u'))
     assert.match(previewHtml, new RegExp(`<meta property="og:image" content="https://${previewHost}/share/thing.png">`, 'u'))
     assert.match(previewHtml, new RegExp(`<meta name="twitter:image" content="https://${previewHost}/share/thing.png">`, 'u'))
-    assert.match(previewHtml, /id="live-proof"[^>]*data-preview-available="true"/u)
-    assert.doesNotMatch(previewHtml, /id="live-proof"[^>]*hidden/u)
     assert.doesNotMatch(previewHtml, /evil\.example|1f3d9-hosted-chat-preview/u)
 
     const productionApp = new Hono()
@@ -166,7 +164,6 @@ export function registerWindowPagesTests(): void {
     const productionHtml = await (await productionApp.request('https://evil.example/window/thing/401')).text()
     assert.match(productionHtml, /href="https:\/\/1f3d9\.com\/window\/thing\/401"/u)
     assert.match(productionHtml, /content="https:\/\/1f3d9\.com\/share\/thing\.png"/u)
-    assert.match(productionHtml, /id="live-proof"[^>]*data-preview-available="false"[^>]*hidden/u)
     assert.doesNotMatch(productionHtml, /evil\.example|onetapstudiogames-projects/u)
   })
 }

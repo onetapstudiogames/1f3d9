@@ -143,7 +143,7 @@ export function registerPublicWindowGazetteEntries() {
       .toBe(true)
     const tabReachability = await tab.evaluate(element => {
       const tabBox = element.getBoundingClientRect()
-      const tabList = element.parentElement
+      const tabList = element.closest('.view-tabs')
       const tabListBox = tabList?.getBoundingClientRect()
       return {
         withinScroller: Boolean(

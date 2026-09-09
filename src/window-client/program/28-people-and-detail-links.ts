@@ -75,17 +75,6 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     return link
   }
 
-  function openDrawingDetailButton(
-    kind, id, label, className, text = 'Current drawing', ariaPrefix = 'Open current drawing for ',
-  ) {
-    const button = element('button', className || 'drawing-detail-open', text)
-    button.type = 'button'
-    button.dataset.focusKey = 'drawing-detail:' + kind + ':' + String(id)
-    button.setAttribute('aria-label', ariaPrefix + label)
-    button.addEventListener('click', () => navigate({ detail: Object.freeze({ kind, id }) }))
-    return button
-  }
-
   function normalizeDetailRecord(kind, id, payload) {
     const raw = payload && typeof payload === 'object'
       ? kind === 'place' ? payload.place || payload.tombstone : payload[kind]

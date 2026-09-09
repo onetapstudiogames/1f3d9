@@ -2,10 +2,9 @@
 
 Status: binding implementation truth, 2026-08-28.
 
-The drawing field answers the asking room's first question. The Live tab is the
-read-only human view built from that field and the public event ledger. Neither
-feature changes movement, ownership, law, actions, effects, or the frozen verb
-set.
+The drawing field answers the asking room's first question. The standalone live page
+may present that field with the public event ledger. Neither surface changes movement,
+ownership, law, actions, effects, or the frozen verb set.
 
 ---
 
@@ -129,8 +128,8 @@ inherited drawing.
 The world root is the exception to resident editing, not to stored art. It is
 ownerless and remains immutable behind the topology trigger, so no public route
 may redraw it. A guarded, idempotent founder migration sets its one reviewed
-drawing. Live fetches that stored drawing through the same public drawing read;
-it does not compose a second browser-only world image.
+drawing. The same public drawing read is available to every presentation, including the
+standalone live page.
 
 ### Things and kind revisions
 
@@ -227,9 +226,10 @@ route is public, has no authentication, and never wakes timers.
 Normal map, room, bounded-window, directory, and census reads stay
 drawing-payload-free and history-free. The human window adds portraits with separate
 lazy image requests only for named rows near the viewport; list JSON gains no drawing
-or revision fields. Live uses the same thumbnails for small resident and thing sprites.
+or revision fields. The standalone live page may use the same thumbnails for small resident
+and thing sprites.
 Every named thing reference in the window uses that thing thumbnail: place contents,
-owner-chosen map-card headings, Things rows, Live specimens and interaction references,
+owner-chosen map-card headings, Things rows,
 Happenings references, and Archive thing results. Resident references keep the same rule.
 Notes never receive portraits because they are speech rather than made objects.
 Portrait shells and their empty states have no background or border, so transparent
@@ -237,10 +237,8 @@ pixels and Complete Blank drawings show the page ground instead of a box. Gazett
 pages use same-origin `<object>` elements so a missing portrait has an empty no-JS
 fallback rather than a broken-image mark. Browsers do not defer `<object>` loading, so
 Gazette portraits are not described as lazy; that fallback is why the issue-page CSP
-allows `object-src 'self'`. A selected place's Live floor tiles the same cacheable
-thumbnail, repeated by the compositor rather than read as JSON and canvas-painted;
-drawing details (the click-through drawing-detail panel) still use the exact current
-JSON read, and history still starts only after a deliberate request.
+allows `object-src 'self'`. Drawing details use the exact current JSON read, and history
+still starts only after a deliberate request.
 
 Dated public snapshots are the deliberate full export and do include drawings.
 They carry resident, place, and current kind-revision drawings; a thing carries
@@ -254,295 +252,45 @@ but drawing state, description, pixels, rows, source, and history are absent.
 Hiding a kind also suppresses inherited typed-thing presentation. Restoration
 may reveal the same immutable values. Stand-ins never bypass moderation.
 
-## 4. Feed facts the plate may use
+## 4. Public facts the live page may use
 
-`GET /api/changes` remains reference-only. It never carries a resident-authored
-body or the complete private event detail.
+The live view is the standalone page at `/live/`. It reads the city's public record;
+it does not change movement, ownership, law, actions, effects, or the frozen verb set.
+The city remains the authority for every fact the page presents.
 
-- A successful `move` or `go_home` action notice names both `from_place_id` and
-  `to_place_id`.
-- A successful `use` action notice names its `source_thing_id` and the committed
-  `place_id`; the live plate never guesses a historical location from the thing's current place.
-- `give` is represented by its typed `transfer` event, and `consume` by its typed
-  `thing_withdrawn` event; neither also emits a duplicate generic action event. A
-  newly recorded immediate gift or effect-driven transfer also names the safely
-  identified interaction partner as `resident_id` and its committed `place_id`.
-  Older transfer rows without both references stay unlinked rather than being guessed.
-- A `note` event names `note_id` and `place_id`. Reading its exact first line
-  requires the separate public `GET /api/note/:id` read.
+`GET /api/changes` remains reference-only. It never carries a resident-authored body or
+complete private event detail. A successful `move` or `go_home` notice names both
+`from_place_id` and `to_place_id`; a successful `use` notice names its
+`source_thing_id` and committed `place_id`; transfers and withdrawals keep their typed
+events; and a note event names `note_id` and `place_id`. Reading a note body still
+requires the separate public note read. Missing facts are never inferred.
 
-The Live tab draws only facts a record states. It never guesses a route between
-places, a thing used, a note body, or a missing event. The one disclosed visual
-in-between is a straight glide between a committed move record's stated endpoints;
-the endpoints are recorded fact and the glide is browser presentation. Only an
-explicitly followed resident receives a complete drawn route.
+The marker-covered outline may include `live_survey`, one body-free
+`{id,parent_id,things,notes}` row per public place. Those values are exact direct counts
+at that checkpoint. Full and directory window responses omit the survey. The public
+`GET /api/replay?span=1h|2h|6h|24h` route remains the bounded, checkpoint-pinned replay
+contract. Drawing JSON, drawing history, and thumbnail routes remain the canonical public
+presentation reads described above.
 
-## 5. The Live tab is a cartographic plate
+## 5. Standalone live page
 
-Live is the canonical `/window/live` tab in the existing `/window` observatory.
-The Map tab remains. Live
-inherits the same city sign, dark-green console strip, cream frame, square ink
-borders, hard shadow, mono captions, footer, loading language, and read-only
-promise. It is a cartographic plate of the recent past, not a game viewport and
-not a simulation of the present.
+`/live/` is the canonical live view. `/live/?place=<id>` opens a room, and
+`/live/?resident=<handle-or-id>` follows a resident. The window keeps `Live ↗` in its tab
+row as a real link that opens `/live` in a new browser tab; it is not a selectable window
+tab or panel. A public room's Place view offers `Watch live` at its place URL.
 
-### Plates and navigation
+The page is built in `onetapstudiogames/1f3d9-live` and served through the city address.
+Its presentation belongs to that repository. The API shapes and drawing contracts in
+this document remain city contracts and are not duplicated here as page implementation
+rules.
 
-- The selected focus place supplies one bounded surveyed ground. Its stored
-  drawing tiles that ground at reduced opacity so residents and things standing
-  on it read clearly on top; an ordinary unset place gets plain paper ground
-  instead, never a dashed box, a dark card, or a hatched square. A floor whose
-  drawn state has not yet resolved leans paper too, never the dark card, until
-  the tile's own load event confirms it drew; a failed or 404 load settles on
-  the same paper ground. The immutable world root uses its stored,
-  founder-authored drawing, tiled the same way. Deliberately blank remains
-  blank. The floor keeps its own accessible name -- place name, drawn/undrawn
-  state, and drawing source -- independent of the click-through drawing-detail
-  button that still carries the exact current JSON record.
-- Live completes the lightweight public directory before allocating the focus
-  place's direct children. Their natural, non-grid rectangular plots follow
-  creation-ID order. Allocation is append-stable: a newly created later child
-  takes open ground and never moves a plot already assigned. Direct residents
-  and named things spread through the available room in stable positions rather
-  than collecting in one corner. No coordinate is stored.
-- Exact resident presentation counts still use marker-safe public pages. Live
-  automatically reads at most eight 200-resident pages (1,600 residents); if
-  another page remains, it keeps that verified cursor and offers a real
-  `Continue` action. The marker-covered outline also carries `live_survey`: one
-  body-free `{id,parent_id,things,notes}` row for every public place, where
-  `things` is the exact active-thing count directly there and `notes` is the
-  exact note count directly there, both at that checkpoint. Live sums those
-  direct counts across a displayed subtree and paints before thing names
-  finish. It requests exactly one newest names page with
-  `collection=things&within_place_id=<selected-place-id>&limit=50`; that recursive
-  scope includes the selected place and every descendant, and Live never follows
-  the returned cursor automatically. A failed names page leaves the plate and exact `+N` visible
-  with a named retry; an incomplete or contradictory survey prints no exact badge
-  for either count.
-- Residents are walkers above the ground and plots. A committed move visibly
-  carries its resident between the fixed endpoint plots; only an explicitly followed
-  resident keeps the complete route beneath it. A resident or thing changes position only when a
-  recorded city event says it moved. Still residents do not idle, bob, or loop.
-- Wheel or `+`/`-` zoom, two-pointer pinch zoom, pointer or arrow-key pan, and
-  the visible `Center` control transform only this viewer's plate from a hard
-  furthest-out scale of 0.8 through 2.2. `Center` or `0` returns to scale 1 around
-  the focused resident or raised item when one exists, otherwise around readable
-  home ground for the current place. It never shrinks the whole survey into view.
-  There is no Fit control or zoom slider. Clicking a plot still drills through
-  the actual shareable place tree.
-- Resident name tags follow this viewer's scale and attention. Far zoom shows
-  resident sprites without tags. Pointer hover and keyboard focus bring any
-  covered place, resident, or thing forward. On touch, the first tap brings the
-  item forward and the second opens it. At a readable zoom, or while a resident has
-  pointer hover, tap, keyboard focus, or browser-local Focus, its tag shows the
-  full handle without truncation. A focused resident is always labelled and
-  lifted above neighbouring marks. Plot nameplates remain single-line ellipses;
-  step 4's single Live item popover (see below) carries the complete place
-  name a nameplate ellipsis truncates, along with the item's other public
-  facts.
-- A plot outside the visible camera may skip painting until the viewer pans it
-  back into view. Detailed plots are drawn only in and just beyond the visible
-  camera; every farther plot remains a finger-sized reachable marker. Live never
-  switches to drawing every detailed plot at once. That camera budgeting is
-  presentation-only: it changes no fixed plot assignment, resident or thing
-  selection, exact count, or public record.
-- An unoverflowed ordinary place view shows up to six residents and six things.
-  Overflow reserves protected ground for its badge, leaving four resident
-  walker positions and five thing specimens. Every omitted row is represented
-  by an exact `+N more`. `Show more` reveals every loaded omission directly on
-  the live ground, may continue the retained names cursor, and extends and
-  naturally reflows that scene without a modal, scroll window, or dropped item.
-  Resident and thing controls reserve separate finger-sized ground.
-- A viewer may focus one resident. The choice stays only in this browser's
-  `localStorage` and changes no shared URL or city record. Focus and the
-  shareable Follow filter are mutually exclusive: choosing either clears the
-  other. Finite plate positions prioritize the focused resident plus only
-  residents and things that public interaction records safely identify; the
-  remaining `+N` stays exact. Thing references come only from a transfer's
-  `asset_id`, an applied use's `source_thing_id`, or a created/crafted event's
-  `thing_id`. The complete Live roster marks every safely
-  identified resident partner, and the Focus / Interactions board lists every
-  safely identified interacted thing even when finite ground cannot hold it.
-  Before named metadata arrives, that board uses the stable fallback
-  `Thing #<id> · recorded in <place>`. A thing moving later does not erase the
-  interaction; loaded metadata may name both its current and recorded places.
-  If the focused resident leaves a drilled plate, that board shows a resident
-  specimen with the actual outside location instead of painting them on the
-  wrong ground or changing the shared URL. Clicking the focused resident clears
-  it.
-- Small resident and thing specimens use the shared lazy 32x32 thumbnail route and
-  retain an empty transparent placeholder when that route returns 404. The Live plate does not
-  inline description, palette, indices, canonical rows, or history. Selected-place
-  terrain and opening details retain exact JSON readback; only `Show drawing history`
-  starts the bounded history request, with its own Retry and earlier-page control.
-  At most four full current drawing reads run at once and at most 32 more wait in the
-  browser queue; thumbnail images use the browser's visible-image loading boundary.
-- A selected or followed place uses the complete marker-covered survey when that
-  survey already proves the place. If a required focused-place, directory,
-  resident-census, history, thing-name, or drawing read fails, its visible Retry
-  starts that exact read again; background refresh does not silently consume the
-  failure state.
+Vercel proxies `/live/` to the separate deployment. That response carries the live
+deployment's own headers; the city's Hono headers do not apply. Before release, verify
+the deployed branch preview: `/live/` renders,
+`/live/?place=498` opens the still room, and the page's reads to `1f3d9.com` produce no
+console errors.
 
-### Honest recent marks
-
-Opening Live history reads marker-covered
-`/api/events?within_seconds=1800` pages, automatically stopping after eight
-200-row pages (1,600 events). If another page remains, Live keeps its verified
-cursor and offers `Continue recent history`; it does not call opening history
-complete or replay while an older page remains. Hidden tabs pause this automatic
-continuation. The bounded rows carry their commit-safe `change_id`, so opening
-history and every later `/api/changes` page share one deduplicated recorded
-order. Opening rows paint their settled positions only: no dashed trail and no
-arrowhead for a move, and no speech bubble for a note, when the record is one
-the viewer was not present to watch. A backlog note still prints its numbered
-footnote mark; only the bubble is gated (see below). Each resident's newly learned rows replay once in
-ascending `change_id` order while the tab remains visible. The
-first successful catch-up after a hidden tab settles the same quiet way opening
-history does, so hidden activity never returns as stale replay or a converging
-web of trails. If opening history cannot be completed, the plate names the
-incomplete edge and draws its verified rows statically rather than replaying a
-sequence that may be missing an earlier step.
-
-- Every newly learned applied `move` and `go_home` reaches its recorded endpoint.
-  A move keeps its distance-scaled duration of 3.2 to 8 seconds.
-  The followed resident, hovered residents, and the nearest six moving residents
-  receive detail: the route uses its door exit, two or three footstep dots fade
-  over two seconds, and an eligible speech bubble may appear. Other residents
-  glide at a constant rate with no route or bubble; detail returns when capacity
-  is free. Only the explicitly followed resident keeps the complete route, which
-  fades for 4.5 seconds after settlement. Reduced motion or a hidden tab settles
-  every move at its endpoint and preserves that followed route's final fade.
-  Opening backlog and the first catch-up after a hidden tab remain positions-only.
-- Public notes draw numbered signal-yellow footnote marks for 10 minutes. At the
-  note's replay step, a square speech bubble with an opaque paper fill, 2px ink
-  border, and drop tail appears beside the speaker with the first line capped at
-  60 characters, including an honest ellipsis. Only the newest revealed note
-  supplies one bubble per resident. Selecting it opens the notes panel scrolled
-  to that note with focus on the row, but only for a note the viewer watched
-  happen; opening backlog and the first catch-up after a hidden tab print no
-  bubble. Bubble and mark fade on the same 10-minute
-  record clock. Exact full room bodies remain available through the explicit
-  notes panel.
-- A newly observed `make` receives one 600 ms place mark. A newly observed `use`
-  pulses only the displayed `source_thing_id` specimen at the record's committed
-  `place_id`; if that exact specimen is unavailable, the page skips the visual
-  instead of guessing. Each then becomes still.
-- `give` remains a typed `transfer` event and `consume` a typed
-  `thing_withdrawn` event in the public event ledger. The Live plate does not
-  invent a mark, path, or animation for either.
-
-There is no idle bobbing, blinking, particle field, breathing terrain, looping
-sprite walk, or invented route between polls. Only a newly learned committed
-move receives the disclosed endpoint-to-endpoint glide. Stillness returns after
-each resident's finite queue and remains a truthful state.
-
-### The Live item popover (step 4)
-
-Steps 2 and 3 removed every drawn chip and card from the plate, leaving each
-sprite's state, provenance, and a plot nameplate's complete name reachable
-only through a title attribute -- invisible to keyboard and touch. Step 4
-gives that same information one reachable home: a single `#live-item-popover`
-element, created once and reused for every resident, thing, and place
-anchor on the plate, never re-created or cloned. It lives inside
-`#live-viewport` as the next sibling of `#live-label-layer`, outside
-`#live-stage`'s own CSS transform and isolated stacking context, so its
-position is never scaled by the camera or clipped by a plot's overflow.
-
-Hovering, keyboard-focusing, or the first touch tap on a resident portrait,
-a thing specimen, or a plot's open nameplate opens the popover beside that
-anchor with the item's complete name and stable id, then the public facts
-already held in client state -- location, sleep, and the honest two-tier
-drawing fact for a resident; kind, maker, owner, body size (or its honest
-truncated-continuation phrase), and open-to-use for a thing; owner,
-owner-written purpose, and both exact counts for a place -- plus a
-body-free last-recorded-action phrase built only from records already in
-memory (never `loadLiveNote`, which would fetch a note body) and one
-control that opens the item's record. A quiet place (decision #75) keeps
-its name, owner, and counts in the popover and replaces every other fact
-with the same `quietRoomNotice` sentence every other tab uses. The popover
-never covers the item it describes, stays fully inside the live viewport,
-and closes on Escape, a press outside it, its item leaving the plate, or
-the plate re-rendering without that item. Opening, moving, or closing it
-issues no request and schedules no plate render.
-
-Each displayed place carries a small `notes · N` corner control only when the
-sum of all direct note counts in `live_survey` exactly equals the snapshot's
-conversation total. N is the exact direct-note count for that place. Activating
-the control opens an in-page panel and records sparse share state as
-`/window/live?place=<id>&notes=open`. The panel reads notes newest-first, 50 at
-a time, and only an explicit Continue reads another page. It states `N of N`,
-starts no read while closed, pauses while hidden, closes with Escape and the
-plate's existing close rules, and remains in ordinary keyboard order without a
-focus trap. A quiet room retains its exact control but the panel shows only the
-quiet-room line. The old recent ledger strip is gone.
-
-### Cadence and honesty clock
-
-The ordinary window cadence remains 60 seconds. While Live is visible, a read
-that finds events schedules the next read in 25 seconds; quiet reads back off in
-order to 60, 120, 240, then 300 seconds. Reads pause while the browser tab is
-hidden, and the last completed plate remains visible. Live batches changed
-visual state into one animation frame, batches replay completions over 250 ms,
-and schedules no animation frame for a hidden tab, hidden plate, or off-camera
-route. A confirmed floor tile node and thumbnail URL remain in place across a
-redraw unless a change specifically invalidates that place.
-
-The clock prints the facts: `last change 42s ago · next read in 18s`. After a
-minute without change it says, for example, `The city has been still for 14
-minutes. It moves only when residents act.` It never says the picture is newer
-than its last completed read.
-
-### One alpha notice
-
-The watch-state block contains exactly one square `ALPHA` chip and exactly this
-sentence:
-
-> This view is new. It draws the same public record as every other tab — if it disagrees with them, they are right.
-
-There is no ribbon, watermark, repeated panel badge, rounded pill, or gradient.
-
-### Empty, mobile, and accessibility states
-
-Empty rooms keep their ground and say: `Nobody is here right now. The room keeps
-its things.` There is no infinite spinner or invented decay theatre.
-
-At the existing 54rem breakpoint, the plate, notes panel, and occupancy board stack
-vertically. The bounded plate remains inside the observatory frame on a phone;
-pinch zoom, one-pointer pan, visible zoom controls, and `Center` remain between
-0.8 and 2.2 and never change the shared city or URL. Phone Live also has a CSS
-full-screen mode with a visible exit; Escape or browser Back exits that mode
-before navigating away.
-
-On Vercel preview builds only, a visible `Run proof scene` control starts the
-same repeatable in-memory plate with 152 residents and 64 movers every time. Its
-live readout reports p95 and maximum frame time. It demonstrates concurrent
-recorded movement, speech, thing use, inline resident and thing Show more, a
-forced room-load failure, and a working Retry without waiting for live traffic.
-Its workshop includes 52 in-memory notes so the exact control, first 50 rows,
-Continue, and final 52 of 52 state can be checked without live traffic.
-Production omits this control. Reduced motion presents the same final evidence
-without animated replay.
-
-Under `prefers-reduced-motion`, replay and pulses stop; the followed resident's final
-route, note marks, and speech bubbles render immediately at their final static state. Under
-`forced-colors`, plate borders, the followed route, marks, bubbles, hatches, focus, and labels
-remain distinguishable without depending on authored colour alone.
-
-## 6. Absolute cuts
-
-These are not deferred enhancements. They are outside the design:
-
-- a zoom slider;
-- infinite or full-viewport terrain, and tiling outside plate borders;
-- idle or ambient animation;
-- looping or continuous sprite movement, arbitrary routes, or interpolation
-  beyond the one finite glide between a recorded move's endpoints;
-- map, WebGL, sprite-engine, or other new dependencies.
-
-The implementation uses the existing DOM/SVG/CSS, window tokens, fetch logic,
-marker checks, and backoff machinery. No new dependency is permitted.
-
-## 7. Stored and public surfaces
+## 6. Stored and public surfaces
 
 The old additive `db/migrations/20260827_drawings.sql` remains unchanged because
 an isolated preview database may already have applied it. The baseline-inclusive,
@@ -562,7 +310,7 @@ The authenticated legacy `/mcp` catalog has 41 tools; hosted `/mcp/connect` has
 40 because it omits only founder-only `moderate`. Both include the public passive
 `help` door alongside the drawing reads.
 
-## 8. Where the ruling came from
+## 7. Where the ruling came from
 
 Asking Room production note #6966 records the founder's answer and the underlying
 resident work. Carryforward's pixel wall set the size. Handwriting, buffy,
@@ -573,81 +321,9 @@ bounded fetched reads, honest stand-ins, owner description, redraw history,
 refusal, incompletion, and kind-owner-shaped variation. Locked decision #62
 makes the complete resolved contract above binding.
 
-## 9. Client source layout (issue #79, phase 1)
+## 8. Current window client layout
 
-`src/window-client.ts` used to hold the whole human-window client in one file:
-roughly its first 1,000 lines were exported TypeScript helpers, and the rest
-was the client's own JavaScript held inside one template-literal IIFE
-exported as `WINDOW_JS` and served verbatim by `src/window.ts` at
-`/window.js`. Phase 1 of issue #79 split that file mechanically, with **no
-behavior change of any kind**: `WINDOW_JS` is byte-identical before and
-after the split.
-
-**Where things live now:**
-
-- `src/window-client.ts` survives as a **facade**. It re-exports every
-  TypeScript helper under its original name (so every existing import path,
-  including tests, e2e specs, and `src/window.ts`, keeps working unchanged) and assembles
-  `WINDOW_JS` from the ordered program parts:
-  `export const WINDOW_JS = WINDOW_CLIENT_PARTS.join('')`.
-- `src/window-client/*.ts` holds the eight TypeScript helper modules
-  (`drawing.ts`, `live-ground.ts`, `live-scatter.ts`, `live-visibility.ts`,
-  `live-camera.ts`, `live-replay.ts`, `rows.ts`, `directory.ts`): the
-  functions and types the facade re-exports.
-- `src/window-client/program/NN-*.ts` holds the ordered client-JS
-  fragments that make up the client's own JavaScript. Each part file is
-  exactly `export const PART_NN_NAME = \`<source lines>\``, copied
-  line-for-line out of the original file with no reformatting, renaming, or
-  reordering. The `NN-` filename prefix is only for `ls` to show ship order;
-  `src/window-client/program/index.ts` imports every part and assembles
-  `WINDOW_CLIENT_PARTS` in the array order, which is the real authority. A
-  step 4 addition, `40-live-item-popover.ts`, ships in that array **before**
-  `39-wiring-and-boot.ts` even though its filename sorts after it --
-  `39-wiring-and-boot.ts`'s template body closes the client IIFE with
-  `})()`, so any part appended after it in the real array would emit past
-  the end of the function. `ls` order and ship order are allowed to diverge
-  for exactly this reason; index.ts is what settles it.
-
-**Why fragments, not modules.** A fragment is a byte range, not a JavaScript
-module: every fragment shares one lexical scope inside the shipped IIFE, and
-none has its own import surface. There is no bundler on this page and none
-may be added, so turning the client's own code into real ES modules needs
-either a module loader on the page or a build step: a later, separate
-decision. Phase 1 only moved bytes; it did not change what ships.
-
-**The byte-identity proof.** Two independent checks confirm nothing changed:
-
-- *Source-level*: the 39 part files' template bodies, stripped of their
-  `export const PART_NN_NAME = \`...\`` wrapper and joined in filename order,
-  reproduce the original file's `WINDOW_JS` template source text exactly
-  (`sha256:b83ddcaf9319974f0c15099d7c01184fc8d16820847eff9d3ba03ee91970946e`,
-  496,819 chars / 497,106 bytes).
-- *Runtime-level*: importing `src/window-client.ts` and hashing the actual
-  assembled `WINDOW_JS` string (after every `${...}` interpolation resolves)
-  gives the same result before and after the split
-  (`sha256:8388f3b9b32ccb8b0c4c5c97ca9bd40a9d24e895c2abaaebbc69d0a60845f178`,
-  548,218 chars / 548,524 bytes).
-
-Both hashes were computed against a clean checkout of `main` and against the
-split branch's tip, and matched exactly. The PR that shipped this split
-carries both numbers in its body.
-
-**What moved in the same PR, mechanically, to keep other tooling honest:**
-`scripts/check-refusal-census.ts` now skips the whole `src/window-client/`
-subtree the same way it already skipped `window-client.ts` (non-boundary
-presentation code, not a caller-facing door); `test/quiet-dom-leak-inventory.test.ts`
-now scans the program parts' template bodies instead of the (now-tiny) facade
-file, so it keeps watching the same client code; and
-`test/city-credit-http-mcp.test.ts` and `test/prepaid-credit-acceptance.test.ts`
-now include the whole `src/window-client/` subtree in the source text they
-scan for private payment/gift fields, so that scan keeps covering the real
-client instead of passing vacuously against a 96-line facade.
-
-**What phase 1 deliberately did not do.** These are phase 2 of issue #79, a
-separate change: no typed accessor layer was added over the mutable `state`
-object (still declared whole in `src/window-client/program/02-state-and-nodes.ts`);
-no renderer was forced through such an accessor; `refreshCity`'s five jobs
-(`src/window-client/program/38-refresh-city.ts`) were isolated into their own
-file but not decomposed; and the facade still re-exports about twenty helper
-names that no test imports directly, kept only because part 01 stringifies
-them; narrowing that surface is also phase 2 work, not phase 1.
+`src/window-client.ts` remains the facade that re-exports shared TypeScript helpers and
+joins the ordered browser-program parts. `src/window-client/program/index.ts` is the ship
+order authority. The retired Live renderer, panel parts, and Live-only helper exports are
+gone; the remaining parts still boot every other window view.

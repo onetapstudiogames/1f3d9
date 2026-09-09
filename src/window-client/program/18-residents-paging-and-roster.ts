@@ -1,7 +1,7 @@
 export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUrl(entry, minimumMarker) {
     const url = new URL('/api/residents', window.location.origin)
     url.searchParams.set('view', 'presence')
-    url.searchParams.set('limit', state.view === 'live' ? '200' : '25')
+    url.searchParams.set('limit', '25')
     if (entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
@@ -10,7 +10,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
   }
 
   async function loadResidents(automatic = false) {
-    if (automatic && (state.view !== 'live' || document.hidden)) return
+    if (automatic) return
     const current = state.residentPaging
     if (!state.snapshot || current.loading || (!current.hasMore && !current.error)) return
     if (automatic && (current.automaticPageCount || 0) >= MAX_AUTO_HISTORY_PAGES) {

@@ -3,7 +3,6 @@ import { containsMalformedPublicText, publicText } from './input.ts'
 
 export type WindowShareView =
   | 'map'
-  | 'live'
   | 'things'
   | 'place'
   | 'conversations'
@@ -33,7 +32,6 @@ export type WindowShareState = Readonly<{
   archive: WindowShareArchive
   gazetteIssueId: number | null
   detail: WindowShareDetail | null
-  notesOpen: boolean
 }>
 
 /**
@@ -56,7 +54,6 @@ export function windowDetailShareState(state: WindowShareState): WindowShareStat
     archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
     gazetteIssueId: null,
     detail: null,
-    notesOpen: false,
   })
 }
 
@@ -83,7 +80,6 @@ const DEFAULT_STATE: WindowShareState = Object.freeze({
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
   gazetteIssueId: null,
   detail: null,
-  notesOpen: false,
 })
 
 export type WindowArchiveQueryValidation = Readonly<{
@@ -171,7 +167,7 @@ export function validateWindowArchiveQuery(
  */
 export function windowSharePath(state: WindowShareState): string | null {
   const views = new Set([
-    'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const safeId = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
@@ -180,9 +176,6 @@ export function windowSharePath(state: WindowShareState): string | null {
 
   if (!state || typeof state !== 'object' || !views.has(state.view)) return null
   if (state.placeId !== null && !safeId(state.placeId)) return null
-  if (state.notesOpen && (state.view !== 'live' || state.placeId === null || state.detail !== null)) {
-    return null
-  }
   if (state.resident !== null && !safeHandle(state.resident)) return null
   const directorySearch = validateWindowDirectorySearch(state.directorySearch)
   if (!directorySearch.ok) return null
@@ -224,7 +217,6 @@ export function windowSharePath(state: WindowShareState): string | null {
   if (state.placeId !== null && !(state.view === 'place' && path.startsWith('/window/place/'))) {
     params.set('place', String(state.placeId))
   }
-  if (state.notesOpen) params.set('notes', 'open')
   if (state.resident !== null) params.set('resident', state.resident)
   if (state.resident !== null && state.conversationContext) params.set('context', 'place')
   if (directorySearch.value) params.set('find', directorySearch.value)
@@ -301,7 +293,7 @@ export function parseWindowShareRequest(
     view = 'map'
   } else if (parts.length === 2) {
     if (![
-      'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
     ].includes(segment!)) {
       return null
     }
@@ -326,7 +318,7 @@ export function parseWindowShareRequest(
     return null
   }
   const allowed = new Set([
-    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue', 'notes',
+    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
   ])
   if ([...params.keys()].some(name => !allowed.has(name))) return null
   for (const name of allowed) if (params.getAll(name).length > 1) return null
@@ -341,11 +333,9 @@ export function parseWindowShareRequest(
   const modeValue = singleValue(params, 'mode')
   const typeValue = singleValue(params, 'type')
   const issueValue = singleValue(params, 'issue')
-  const notesValue = singleValue(params, 'notes')
   if (placeValue === undefined || residentValue === undefined || contextValue === undefined ||
       findValue === undefined || sleepersValue === undefined || queryValue === undefined ||
-      modeValue === undefined || typeValue === undefined || issueValue === undefined ||
-      notesValue === undefined) return null
+      modeValue === undefined || typeValue === undefined || issueValue === undefined) return null
   if (parts.length === 3 && segment === 'place' && placeValue !== null) return null
 
   if (view === 'gazette') {
@@ -363,10 +353,6 @@ export function parseWindowShareRequest(
   if (detail === null && placeValue !== null) {
     placeId = positiveId(placeValue)
     if (placeId === null) return null
-  }
-  const notesOpen = notesValue === 'open'
-  if (notesValue !== null && (!notesOpen || view !== 'live' || placeId === null || detail !== null)) {
-    return null
   }
   const resident = residentValue === null
     ? null
@@ -399,7 +385,6 @@ export function parseWindowShareRequest(
     }),
     gazetteIssueId,
     detail,
-    notesOpen,
   })
   const canonicalPath = windowSharePath(state)
   return canonicalPath === null ? null : Object.freeze({ canonicalPath, state })
@@ -475,10 +460,6 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   map: Object.freeze({
     title: 'The live city map — 1F3D9',
     description: 'Look through the glass at the current public city: its places and where residents are standing now.',
-  }),
-  live: Object.freeze({
-    title: 'The recent city, drawn — 1F3D9',
-    description: 'Watch recent verified public events cross fixed place plots on the city’s authored ground.',
   }),
   things: Object.freeze({
     title: 'Public things — 1F3D9',

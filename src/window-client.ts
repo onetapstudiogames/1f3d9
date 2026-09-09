@@ -3,11 +3,9 @@ import { WINDOW_CLIENT_PARTS } from './window-client/program/index.ts'
 
 export { PUBLIC_EVENT_KINDS, PUBLIC_EVENT_LABELS }
 
-// The human window's client program was split out of this file in Phase 1 of
-// issue #79 (see docs/DRAWING_AND_LIVE_VIEW.md for the fragment layout and
-// the byte-identity proof). This file survives as a facade: it re-exports
-// every helper under its original name so every existing import path keeps
-// working, and assembles WINDOW_JS from the ordered program parts.
+// The browser program is assembled from the ordered fragments in
+// window-client/program/index.ts. This facade exports the shared helpers used
+// outside the assembled program and exposes the final script.
 
 export {
   normalizeWindowDrawing,
@@ -19,63 +17,6 @@ export type {
   WindowDrawingState,
   WindowDrawingSource,
 } from './window-client/drawing.ts'
-
-export {
-  windowLivePlateChildren,
-  WINDOW_LIVE_DIRECT_COMMONS_WIDTH,
-  WINDOW_LIVE_DIRECT_COMMONS_HEIGHT,
-  WINDOW_LIVE_CHILD_GROUND_GAP,
-  windowLiveSurveyedPlots,
-  windowLiveExpandedGroundLayout,
-  windowLiveScatteredPoint,
-  windowLiveScatteredPoints,
-  windowLiveScatterSurfaceHeight,
-} from './window-client/live-ground.ts'
-
-export {
-  windowLiveSeparatedPoints,
-  WINDOW_LIVE_PLOT_DRAWING_DETAIL_RECT,
-  windowLiveRootReservations,
-  windowLiveResidentPointsAroundThings,
-  windowLiveThingPointsAroundResidents,
-} from './window-client/live-scatter.ts'
-
-export {
-  windowLiveTouchActivation,
-  windowLiveVisiblePlots,
-  windowLiveVisiblePlotIds,
-  windowLiveFloorTiling,
-  windowLiveFloorAccessibleLabel,
-  windowLiveDirectGroundWidth,
-  windowLiveCapacitySelection,
-} from './window-client/live-visibility.ts'
-export type { WindowLiveFloorDrawingEntry } from './window-client/live-visibility.ts'
-
-export {
-  windowLiveCenterCamera,
-  windowLiveRevealCamera,
-  windowLiveClampZoomScale,
-  windowLiveResidentLabelMode,
-} from './window-client/live-camera.ts'
-
-export {
-  windowLivePollDelay,
-  normalizeWindowResidentLooking,
-  windowLiveLookingUpdate,
-  windowLiveResidentIsDimmed,
-  windowLiveActiveLookingAfterExpiry,
-  windowLiveTraceOpacity,
-  windowLivePruneTrailStarts,
-  windowLiveDetailMoverSelection,
-  windowLiveRouteVisibilityIntervals,
-  windowLiveShouldScheduleRedraw,
-  windowLiveFootstepBeat,
-  windowLiveReplayDuration,
-  windowLiveReplayPace,
-  windowLiveReplayStartOffsets,
-  windowLiveReplayOrder,
-  windowLiveSpeechLine,
-} from './window-client/live-replay.ts'
 
 export {
   parseWindowSleeperPlaceIds,
@@ -100,37 +41,8 @@ export type {
   WindowDirectorySearchPage,
 } from './window-client/directory.ts'
 
-export {
-  windowLiveItemFacts,
-  windowLiveItemLastAction,
-  windowLiveItemPopoverPlacement,
-} from './window-client/live-popover.ts'
-export type {
-  WindowLiveItemKind,
-  WindowLiveCachedDrawing,
-  WindowLiveItemFactsResident,
-  WindowLiveItemFactsThing,
-  WindowLiveItemFactsPlace,
-  WindowLiveItemFactsContext,
-  WindowLiveItemFactsResult,
-  WindowLiveItemRecord,
-  WindowLiveRect,
-  WindowLiveSize,
-  WindowLiveItemPopoverSide,
-  WindowLiveItemPopoverPlacement,
-} from './window-client/live-popover.ts'
-
-export { normalizeLiveNotesPage } from './window-client/live-notes.ts'
-export type { WindowLiveNote, WindowLiveNotesPage } from './window-client/live-notes.ts'
-
-export {
-  stageNodeKey,
-  reconcileStageNodeKeys,
-  stageDrawnNodeKeys,
-  stageFacing,
-  stageTransform,
-} from './window-client/stage-nodes.ts'
-export type { StageNodeKind, StageNodeDiff } from './window-client/stage-nodes.ts'
+export { normalizeWindowResidentLooking } from './window-client/resident-looking.ts'
+export type { WindowResidentLooking } from './window-client/resident-looking.ts'
 
 export {
   WINDOW_VIEWER_OPEN_STORAGE_KEY,

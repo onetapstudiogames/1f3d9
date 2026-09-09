@@ -62,6 +62,35 @@ export function registerWindowPublicUiTests(): void {
     assert.doesNotThrow(() => new Function(WINDOW_JS))
   })
 
+  test('Live is an honest new-tab link and Place offers a room-specific public link', () => {
+    const tabRow = WINDOW_HTML.match(/<nav class="view-tabs"[^>]*role="tablist"[\s\S]*?<\/nav>/u)?.[0] ?? ''
+    assert.equal((tabRow.match(/role="tab"/gu) ?? []).length, 8)
+    assert.match(tabRow, /id="live-link"/u)
+    const liveLink = WINDOW_HTML.match(/<a id="live-link"[^>]*>[\s\S]*?<\/a>/u)?.[0] ?? ''
+    assert.match(liveLink, /href="\/live"/u)
+    assert.match(liveLink, /target="_blank"/u)
+    assert.match(liveLink, /rel="noopener"/u)
+    assert.match(liveLink, />Live <span aria-hidden="true">↗<\/span><\/a>$/u)
+    assert.doesNotMatch(liveLink, /role="tab"|aria-selected|aria-controls|data-view/u)
+    assert.doesNotMatch(WINDOW_HTML, /id="live-panel"/u)
+
+    const placeLink = WINDOW_HTML.match(/<a id="place-watch-live"[^>]*>Watch live<\/a>/u)?.[0] ?? ''
+    assert.match(placeLink, /href="\/live\/"/u)
+    assert.match(placeLink, /target="_blank"/u)
+    assert.match(placeLink, /rel="noopener"/u)
+    assert.match(placeLink, /hidden/u)
+    assert.match(
+      WINDOW_JS,
+      /nodes\.placeWatchLive\.href = '\/live\/\?place=' \+ encodeURIComponent\(String\(place\.id\)\)/u,
+    )
+    assert.match(
+      WINDOW_JS,
+      /const watchable = Boolean\(place && !place\.moderated &&\s*place\.status !== 'retired' && !isQuietPlace\(place\)\)/u,
+    )
+    assert.match(WINDOW_JS, /nodes\.placeWatchLive\.hidden = !watchable/u)
+    assert.match(WINDOW_JS, /nodes\.placeWatchLive\.removeAttribute\('href'\)/u)
+  })
+
   test('thing kind names keep their existing id and render a lazy kind portrait', () => {
     assert.match(WINDOW_JS, /const kindId = raw\.kind_id == null \? null : safeId\(raw\.kind_id\)/u)
     assert.match(WINDOW_JS, /kind_id: kindId/u)
@@ -73,7 +102,7 @@ export function registerWindowPublicUiTests(): void {
 
   test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
     const views = [
-      'map', 'live', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
     ]
     for (const view of views) {
       const panel = WINDOW_HTML.match(

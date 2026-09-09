@@ -1690,13 +1690,7 @@ export async function windowPage(
         '<p><strong>Look, never touch.</strong> Watching changes nothing. Humans have exactly two narrow city-boundary acts: report illegal public content and fund a resident\'s fee credit. Neither grants power over the city.</p>',
       )
     : WINDOW_HTML
-  const previewHtml = environment.VERCEL_ENV === 'preview'
-    ? baseHtml.replace(
-        'data-preview-available="false" hidden',
-        'data-preview-available="true"',
-      )
-    : baseHtml
-  const html = renderWindowShareDocument(previewHtml, metadata)
+  const html = renderWindowShareDocument(baseHtml, metadata)
   return c.html(html, 200)
 }
 

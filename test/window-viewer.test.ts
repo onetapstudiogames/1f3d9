@@ -1,6 +1,5 @@
 import { registerWindowOpeningTests } from './window-viewer-tests/opening.test.ts'
 import { registerWindowPublicUiTests } from './window-viewer-tests/public-ui.test.ts'
-import { registerWindowLiveObservatoryTests } from './window-viewer-tests/live-observatory.test.ts'
 import { registerWindowOperationsTests } from './window-viewer-tests/operations.test.ts'
 import { registerWindowRouteAndPaginationTests } from './window-viewer-tests/route-and-pagination.test.ts'
 import { registerWindowCollectionsAndFollowTests } from './window-viewer-tests/collections-and-follow.test.ts'
@@ -11,7 +10,6 @@ import { registerWindowPagesTests } from './window-viewer-tests/pages.test.ts'
 
 registerWindowOpeningTests()
 registerWindowPublicUiTests()
-registerWindowLiveObservatoryTests()
 registerWindowOperationsTests()
 registerWindowRouteAndPaginationTests()
 registerWindowCollectionsAndFollowTests()

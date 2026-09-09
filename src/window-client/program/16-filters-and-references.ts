@@ -151,16 +151,6 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
       : null
   }
 
-  function liveSurveyCoversPlace(snapshot, placeId) {
-    return Boolean(
-      placeId &&
-      state.view === 'live' &&
-      state.directory.loaded &&
-      liveSurveyIsComplete(snapshot) &&
-      snapshot.liveSurvey.some(place => place.id === placeId),
-    )
-  }
-
   function displayedResidents(snapshot) {
     const residents = snapshot.residents.map(resident =>
       focusedResident(resident.handle) || resident)
@@ -174,21 +164,6 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
     const placeIds = placeScopeSet(placeId, snapshot)
     return displayedResidents(snapshot).filter(resident => placeIds.has(resident.current_place_id) &&
       (!state.resident || resident.handle === state.resident))
-  }
-
-  // Decision #75, third review pass: residentsAt stays raw and
-  // quiet-inclusive on purpose — occupantLine (the Map tab's place cards)
-  // needs the un-filtered list to notice a hidden descendant and render its
-  // own quietRoomNotice. Every OTHER recursive Live consumer that renders a
-  // resident by name (a detailed ancestor plot's portrait grid, the direct
-  // ground's expanded height) must never receive a resident whose own
-  // place — resolved at that resident's row, never at whatever place the
-  // card being built happens to be — is quiet, no matter how many levels
-  // below the plotted place that quiet place sits. Route every such
-  // consumer through here instead of calling residentsAt directly.
-  function liveVisibleResidentsAt(snapshot, placeId) {
-    return residentsAt(snapshot, placeId).filter(resident =>
-      !isQuietPlace(placeReference(snapshot, resident.current_place_id)))
   }
 
   function selectionIssue(snapshot, includeCurrentPlace) {

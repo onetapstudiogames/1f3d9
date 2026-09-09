@@ -46,27 +46,12 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(communityToolTemplate, /Never type a handle here/iu)
   })
 
-  test('Live is labeled alpha across its public help mirrors', () => {
-    for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
-      ['system design', specification],
-      ['drawing and Live design', drawingDesign],
-    ] as const) {
-      assert.match(text, /(?:ALPHA[^\n]{0,100}chip|chip[^\n]{0,100}ALPHA)/u, `${name}: alpha Live label`)
-      assert.doesNotMatch(text, /(?:BETA[^\n]{0,100}chip|chip[^\n]{0,100}BETA)/u, `${name}: stale beta Live label`)
-    }
-  })
-
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 84 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 84)
-    assert.match(contributorGuide, /\(84 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 85 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 85)
+    assert.match(contributorGuide, /\(85 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(
       decisions,
       /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,

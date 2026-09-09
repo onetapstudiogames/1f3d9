@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, decisions, drawingDesign, frontdoor, frontdoorDocument, llms, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { decisions, drawingDesign, frontdoor, llms, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerDrawingsAndLiveReadingTests(): void {
-  test('drawing, feed, snapshot, and live-plate contracts stay aligned', () => {
+  test('drawing, feed, and snapshot contracts stay aligned', () => {
     for (const [name, text] of [
       ['front door', frontdoor],
       ['compact machine map', llms],
@@ -38,49 +38,6 @@ export function registerDrawingsAndLiveReadingTests(): void {
       assert.match(text, /from_place_id[\s\S]{0,160}to_place_id|to_place_id[\s\S]{0,160}from_place_id/iu, `${name}: movement endpoints`)
       assert.match(text, /\bsource_thing_id\b/iu, `${name}: used thing reference`)
       assert.match(text, /\bsource_thing_id\b[\s\S]{0,120}\bplace_id\b/iu, `${name}: committed use place`)
-      assert.match(text, /give[\s\S]{0,180}\btransfer\b[\s\S]{0,220}consume[\s\S]{0,180}\bthing_withdrawn\b/iu, `${name}: typed give and consume events`)
-      assert.match(text, /\blive_survey\b/iu, `${name}: compact exact thing survey`)
-      assert.match(
-        text,
-        /body-free[\s\S]{0,180}(?:(?:direct|directly)[\s\S]{0,100}(?:active )?thing count|(?:active )?thing count[\s\S]{0,100}(?:direct|directly))/iu,
-        `${name}: body-free direct thing counts`,
-      )
-      assert.match(
-        text,
-        /one[\s\S]{0,100}(?:newest|named)[\s\S]{0,100}(?:50|fifty)[\s\S]{0,180}(?:never|does not)[\s\S]{0,100}(?:cursor|second page)/iu,
-        `${name}: one bounded named-thing page`,
-      )
-      assert.match(
-        text,
-        /Thing #(?:23|<id>)[\s\S]{0,100}recorded in/iu,
-        `${name}: Focus fallback keeps a stable thing id and recorded place`,
-      )
-    }
-
-    for (const [name, text] of [
-      ['specification', specification],
-      ['drawing design', drawingDesign],
-    ] as const) {
-      assert.match(text, /cartographic plate/iu, `${name}: plate direction`)
-      assert.match(text, /25 seconds[\s\S]{0,180}60[\s\S]{0,80}120[\s\S]{0,80}240[\s\S]{0,80}300 seconds/iu, `${name}: activity-following cadence`)
-      assert.match(text, /This view is new\. It draws the same public record as every other tab — if it disagrees with them, they are right\./u, `${name}: alpha sentence`)
-      assert.match(text, /prefers-reduced-motion[\s\S]{0,220}forced-colors|forced-colors[\s\S]{0,220}prefers-reduced-motion/iu, `${name}: accessibility modes`)
-      assert.match(text, /within_seconds=1800/iu, `${name}: opening-history horizon`)
-      assert.match(text, /change_id[\s\S]{0,320}(?:replay|static)|(?:replay|static)[\s\S]{0,320}change_id/iu, `${name}: commit-safe replay boundary`)
-      assert.match(
-        text,
-        /1,600\s+(?:opening\s+)?events[\s\S]{0,320}(?:Continue recent history|real Continue action)/iu,
-        `${name}: bounded resumable opening history`,
-      )
-      assert.match(text, /(?:3[.]2\s+(?:to|–)\s+8|three point two to eight)\s+seconds/iu, `${name}: bounded replay duration`)
-      assert.match(text, /(?:newly learned rows[\s\S]{0,80}replay once|replays[\s\S]{0,80}newly learned rows once|walks once)/iu, `${name}: one-shot replay`)
-      assert.match(text, /speech bubble[\s\S]{0,180}(?:60|sixty)[\s\S]{0,220}(?:newest|one per resident)/iu, `${name}: speech bubble contract`)
-      assert.match(
-        text,
-        /notes panel[\s\S]{0,180}full room (?:note )?bod(?:y|ies)|full room (?:note )?bod(?:y|ies)[\s\S]{0,180}notes panel/iu,
-        `${name}: full note panel`,
-      )
-      assert.match(text, /no new dependenc/iu, `${name}: dependency boundary`)
     }
 
     assert.match(publicSnapshots, /residents[\s\S]{0,200}drawing/iu)
@@ -89,30 +46,18 @@ export function registerDrawingsAndLiveReadingTests(): void {
     assert.match(publicSnapshots, /drawing_revisions[\s\S]{0,240}(?:previous|prior)[\s\S]{0,180}current/iu)
   })
 
-  test('live_survey carries an exact note count exactly parallel to its thing count', () => {
+  test('the standalone Live page and window links stay aligned', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['front door documentation', frontdoorDocument],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
-      ['specification', specification],
+      ['front door', frontdoor],
+      ['compact machine map', llms],
+      ['system design', specification],
+      ['drawing and Live design', drawingDesign],
     ] as const) {
-      assert.match(
-        text,
-        /\{id,\s*parent_id,\s*things,\s*notes\}/iu,
-        `${name}: live_survey row carries notes parallel to things`,
-      )
-      assert.match(
-        text,
-        /exact[\s\S]{0,120}note count[\s\S]{0,120}direct(?:ly)?[\s\S]{0,120}there/iu,
-        `${name}: notes is the exact direct note count`,
-      )
-      assert.match(
-        text,
-        /missing\s+or\s+contradictory\s+survey\s+prints\s+no\s+exact\s+badge\s+for\s+either\s+count/iu,
-        `${name}: a missing or contradictory survey still prints no exact badge for either count`,
-      )
+      assert.match(text, /(?:https:\/\/1f3d9\.com)?\/live\//u, `${name}: canonical Live page`)
+      assert.match(text, /\?place=<id>/u, `${name}: room deep link`)
+      assert.match(text, /\?resident=<handle-or-id>/u, `${name}: resident deep link`)
+      assert.match(text, /Live ↗[\s\S]{0,320}(?:new browser tab|new-tab link|opens `?\/live`?)/iu, `${name}: window link`)
+      assert.match(text, /Watch live/iu, `${name}: public Place link`)
     }
   })
 

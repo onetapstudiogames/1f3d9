@@ -1,5 +1,5 @@
 export const PART_38_REFRESH_CITY = `  async function refreshCity() {
-    if (state.refreshing || state.live.proofScene) return
+    if (state.refreshing) return
     const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
@@ -14,8 +14,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       // presence read is unavailable, the complete bounded snapshot remains the
       // safe fallback.
       const changeState = await checkPublicChanges()
-      if (state.live.proofScene) return
-      nextDelay = commitLiveChangeRead(changeState)
       if (state.hasSnapshot && changeState.status === 'unchanged' &&
           state.changeMarker === changeState.marker) {
         try {
@@ -24,7 +22,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
             changeState.marker,
           )
           if (navigationRevision !== navigationRevisionAtStart) {
-            state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
             await finishWatchingPublicStreets()
             return
           }
@@ -35,7 +32,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
               ...state,
               changeMarker: changeState.marker,
               failures: 0,
-              live: { ...state.live, lookingWitnessAllowed: true },
             }
             await finishWatchingPublicStreets()
             return
@@ -58,7 +54,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           await finishWatchingPublicStreets()
           return
         } catch {
-          state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
           // Presence is time-derived. If its small read fails, continue into a
           // marker-covered authored snapshot instead of retaining an unproven
           // mixed refresh.
@@ -66,7 +61,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       }
       const requiredMarker = changeState.marker || state.changeMarker
       const payload = await getSnapshot(controller.signal, requiredMarker)
-      if (state.live.proofScene) return
       const freshSnapshot = normalizeSnapshot(payload)
       if (requiredMarker && !markerCovers(freshSnapshot.changeMarker, requiredMarker)) {
         throw new Error('public snapshot does not cover the requested change marker')
@@ -77,7 +71,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         ? freshSnapshotNavigation(freshSnapshot)
         : await mergeFreshNavigation(freshSnapshot, controller.signal)
       if (navigationRevision !== navigationRevisionAtStart) {
-        state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
         await finishWatchingPublicStreets()
         return
       }
@@ -94,7 +87,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           controller.signal,
         )
         if (navigationRevision !== navigationRevisionAtStart) {
-          state = { ...state, live: { ...state.live, lookingWitnessAllowed: false } }
           await finishWatchingPublicStreets()
           return
         }
@@ -106,8 +98,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
             hasMore: false, loading: false, initialized: false, error: null,
           }
         : state.archive
-      const invalidateSnapshotCaches = hadSnapshot && replaceAuthored &&
-        changeState.status !== 'changed'
       const invalidatedRecordKeys = changedViewerRecordKeys(changeState.changes)
       const fullBodies = replaceAuthored
         ? retainedViewerFullBodies(state.fullBodies, invalidatedRecordKeys)
@@ -130,13 +120,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         thingLookup: replaceAuthored
           ? { query: '', rows: [], hasMore: false, loading: false, error: false }
           : state.thingLookup,
-        live: invalidateSnapshotCaches
-          ? {
-              ...state.live,
-              drawings: {},
-              noteBodies: {},
-            }
-          : state.live,
         fullBodies,
         details: replaceAuthored ? {} : state.details,
         detailDrawings: replaceAuthored ? {} : state.detailDrawings,
@@ -160,18 +143,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       await finishWatchingPublicStreets()
     } catch {
       const failures = state.failures + 1
-      state = {
-        ...state,
-        failures,
-        live: {
-          ...state.live,
-          // A failed snapshot did not prove the new rows belong to a completed
-          // view. Re-read them from the last completed marker; queued keys stay
-          // held and cannot replay twice when the covering snapshot succeeds.
-          streamMarker: state.changeMarker,
-          lookingWitnessAllowed: false,
-        },
-      }
+      state = { ...state, failures }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)
       if (state.hasSnapshot) {
         renderGlobalReadRetry(

@@ -1,3 +1,6 @@
+> **Retired on 2026-09-09.** Historical mock brief for the removed window Live panel;
+> current implementation lives in `onetapstudiogames/1f3d9-live` at `/live/`.
+
 Fifth round on live-stage.html (PROMPT.md and FIX1-4.md are the history). The owner watched version 4 and found two defects and asked two questions; the answers become behaviours in this mock. Fix and add exactly these, nothing else, keep the file under 1,600 lines. Before you change anything, write back in three sentences what you understand the work to be.
 
 Defects:

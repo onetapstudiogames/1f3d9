@@ -1,15 +1,15 @@
 // Fourth review pass on row 75 (docs/DECISIONS.md row 75, resolving issue #73's
 // recurring leaks): three prior review passes each fixed the specific rows a
-// human reviewer happened to spot — the directory search box and the Live
-// roster's dataset markers were both shipped, reviewed twice more, and still
+// human reviewer happened to spot — the directory search box's dataset
+// markers shipped, were reviewed twice more, and still
 // missed. This file replaces "spot the leak" with a mechanical inventory: it
 // greps the shipped window client for every DOM write that could carry a
 // resident handle, a thing name, or a note body — textContent, innerText,
 // dataset, setAttribute, title=, aria-label, option/select values, href
 // fragments, and the shared identity-rendering helpers (residentNode,
-// portraitNode for a resident or thing, openDetailLink, openDrawingDetailButton)
+// portraitNode for a resident or thing, and openDetailLink)
 // — and requires every single occurrence to be either provably guarded by an
-// isQuietPlace (or liveLedgerQuietPlace) call earlier in its own function, or
+// isQuietPlace call earlier in its own function, or
 // named on the explicit allow-list below with a one-line reason a reviewer can
 // check. A new identity-carrying DOM write added anywhere in the file without
 // updating one of the two either fails outright (unguarded, unlisted) or shows
@@ -84,7 +84,7 @@ function extractTopLevelFunctions(fileSource: string): readonly ClientFunction[]
 // calling them is to print a resident's handle or a thing's name/link, so no
 // further content check is needed once one of these appears.
 const ALWAYS_IDENTITY_SINK =
-  /(residentNode\(|openDetailLink\(|openDrawingDetailButton\(|portraitNode\(\s*['"](?:resident|thing)['"])/u
+  /(residentNode\(|openDetailLink\(|portraitNode\(\s*['"](?:resident|thing)['"])/u
 
 // Generic DOM-write APIs named in the task: textContent, innerText, dataset,
 // setAttribute, title=, aria-label, option/select value=, and href
@@ -108,7 +108,7 @@ const IDENTITY_BEARING_VALUE =
 // liveLedgerQuietPlace (which is isQuietPlace applied to a move's two
 // places, or a record's one place, and used by every Live trail/ledger
 // surface in place of calling isQuietPlace by hand).
-const QUIET_GUARD_CALL = /isQuietPlace\(|liveLedgerQuietPlace\(/u
+const QUIET_GUARD_CALL = /isQuietPlace\(/u
 
 type Flag = Readonly<{ functionName: string; line: number; text: string }>
 
@@ -136,9 +136,6 @@ function functionBody(fileSource: string, fn: ClientFunction): string {
 // A reason is required to be genuinely explanatory (not just "safe") so a
 // future reviewer can check the claim without re-deriving it.
 const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
-  ['renderLiveResidentLabels',
-    'Re-labels portraits already rendered by livePortraitGrid from liveVisibleResidentsAt-filtered ' +
-    'residents; a quiet resident never has a DOM portrait here for this function to read back.'],
   ['archiveResultCard',
     'Archive search reads the whole public archive by keyword; decision #75 keeps notes and things ' +
     '"readable at their addresses, because the city keeps public books", and this card shows only a ' +
@@ -158,23 +155,10 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
   ['renderResidentPage',
     'dataset.focusFallbackKey is an internal keyboard-focus lookup key on the Load More button, never ' +
     'rendered as visible text; handles are already public in the directory regardless of quiet.'],
-  ['livePortraitGrid',
-    'Every caller passes residents pre-filtered by liveVisibleResidentsAt; livePortraitGrid has no ' +
-    'place context of its own to check.'],
-  ['liveThingShelf',
-    'Things come from liveThingPresentation, which calls liveDisplayedThings and filters isQuietPlace ' +
-    'per row before this function ever sees them.'],
-  ['renderLive',
-    'openDrawingDetailButton("place", focus.id, focus.name, ...) names only the focused place\'s own ' +
-    'identity, and this line is unreachable when focus itself is quiet: renderLive returns via ' +
-    'renderLiveQuietPlate before reaching it.'],
   ['residentNode',
     'This is the shared sink helper\'s own implementation; it renders whatever caller-supplied handle ' +
     'it is given and has no place context of its own. Every call site is audited separately.'],
   ['openDetailLink',
-    'This is the shared sink helper\'s own implementation; it renders whatever caller-supplied label ' +
-    'it is given and has no place context of its own. Every call site is audited separately.'],
-  ['openDrawingDetailButton',
     'This is the shared sink helper\'s own implementation; it renders whatever caller-supplied label ' +
     'it is given and has no place context of its own. Every call site is audited separately.'],
   ['drawingHistoryNode',
@@ -199,13 +183,6 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
     'unchanged... because the city keeps public books", and e2e/public-window-interactions.spec.ts ' +
     'explicitly asserts an actor\'s handle and a quiet place\'s name both appear in Happenings entries ' +
     'for moves into and out of it.'],
-  ['liveItemPopoverContent',
-    'Step 4: builds the single reusable Live item popover from facts and a name its caller already ' +
-    'resolved through liveItemPopoverFacts, which calls isQuietPlace per item before this function ever ' +
-    'runs; like livePortraitGrid and liveThingShelf above, it has no place context of its own to check.'],
-  ['liveSpeechBubbleNode',
-    'Receives only note records already filtered by the Live plate quiet-room gates; this shared sink ' +
-    'has no snapshot or place context of its own to check again.'],
 ])
 
 test('the window client source actually contains identity-bearing DOM writes for this scan to find', () => {
@@ -216,7 +193,7 @@ test('the window client source actually contains identity-bearing DOM writes for
   const functions = extractTopLevelFunctions(clientSource)
   assert.ok(functions.length > 200, 'expected well over 200 top-level client functions')
   const flags = findIdentityDomWrites(clientSource, functions)
-  assert.ok(flags.length > 80, 'expected well over 80 flagged identity-bearing DOM writes')
+  assert.ok(flags.length > 50, 'expected well over 50 flagged identity-bearing DOM writes')
 })
 
 test('every identity-bearing DOM write in the window client is isQuietPlace-guarded or explicitly allow-listed', () => {
@@ -234,7 +211,7 @@ test('every identity-bearing DOM write in the window client is isQuietPlace-guar
   assert.deepEqual(
     unaccounted.map(flag => flag.functionName + ':' + String(flag.line) + ': ' + flag.text),
     [],
-    'Every DOM write above must either call isQuietPlace (or liveLedgerQuietPlace) earlier in its own ' +
+    'Every DOM write above must either call isQuietPlace earlier in its own ' +
     'function, or have its function name added to ALLOW_LIST in this file with a one-line reason.',
   )
 })

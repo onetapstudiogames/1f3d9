@@ -3,7 +3,8 @@
 > **Superseded on 2026-09-07.** Steps 1 to 3 shipped (#235, #237, #238) and step 4 was
 > closed unmerged (#253). The owner decided to rebuild the live view as its own Phaser page in
 > [onetapstudiogames/1f3d9-live](https://github.com/onetapstudiogames/1f3d9-live); its
-> `docs/PLAN.md` replaces steps 4 to 15 below. The replay file (step 3) and the pure ground
+> `docs/PLAN.md` replaces steps 4 to 15 below, and the rebuilt page is served at
+> `https://1f3d9.com/live/`. The replay file (step 3) and the pure ground
 > math from step 4 carried over. This document stays for the record.
 
 ## Pitch

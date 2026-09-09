@@ -6,6 +6,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-09
 
 ### For humans watching
+- Live now opens as its own page at /live/, and public rooms offer a Watch live link from the window's Place view.
 - The window header is one short strip now: the help links in a line, Buy fee credit and Tip the builder as the only buttons, the boundary sentence, the free-credit note, and a City facts control beside the pickers, while the wiki independence note stays on the Tools page.
 - Map cards keep names and keeper handles whole as counts wrap to fit, and selected thing headings stay on the Place tab.
 

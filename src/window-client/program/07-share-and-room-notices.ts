@@ -148,8 +148,7 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
       nodes.scopeStatus.textContent = message
       nodes.scopeStatus.hidden = false
     }
-    for (const target of [nodes.map, nodes.roster, nodes.livePlates, nodes.liveRoster,
-      nodes.placePurpose, nodes.placeFrontMatter,
+    for (const target of [nodes.map, nodes.roster, nodes.placePurpose, nodes.placeFrontMatter,
       nodes.occupants, nodes.placeThings, nodes.placeConversation, nodes.conversations,
       nodes.agreements]) {
       renderEmpty(target, 'error-row', message)

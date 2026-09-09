@@ -142,12 +142,6 @@ test('the window client honours quiet with the exact sentence in every content t
     /if \(isQuietPlace\(place\)\) \{\s*renderQuietRoom\(nodes\.occupants, place\)\s*renderQuietRoom\(nodes\.placeThings, place\)\s*renderQuietRoom\(nodes\.placeConversation, place\)/mu,
   )
 
-  // Live: the focused place's resident roster withholds.
-  assert.match(
-    WINDOW_JS,
-    /function renderLiveRoster\(snapshot, focus, records, interactionThings\) \{\s*if \(!nodes\.liveRoster\) return\s*if \(focus && focus\.quiet\) \{\s*renderQuietRoom\(nodes\.liveRoster, focus\)/mu,
-  )
-
   // Things tab: a scoped quiet place withholds its heading list.
   assert.match(WINDOW_JS, /if \(scopedPlace && scopedPlace\.quiet\) \{/u)
 
@@ -159,18 +153,6 @@ test('the window client honours quiet with the exact sentence in every content t
   )
   assert.doesNotMatch(WINDOW_JS, /if \(place && place\.quiet && !state\.resident\) \{/u)
 
-  // Live: the main plate (walker portraits and thing specimens) withholds
-  // just like the roster, and the notes panel prints only the quiet line.
-  assert.match(
-    WINDOW_JS,
-    /if \(focus\.quiet\) \{[\s\S]{0,900}renderLiveQuietPlate\(snapshot, focus\)/mu,
-  )
-  assert.match(WINDOW_JS, /function renderLiveQuietPlate\(snapshot, focus\) \{/u)
-  assert.match(
-    WINDOW_JS,
-    /if \(isQuietPlace\(place\)\) \{[\s\S]{0,220}nodes\.liveNotesList\.replaceChildren\(quietRoomNotice\(place\)\)/mu,
-  )
-
   // The client never gates the underlying HTTP reads on `quiet`; only
   // rendering changes, exactly matching the unchanged-API contract.
   assert.doesNotMatch(WINDOW_JS, /quiet[^\n]{0,40}method:\s*['"](?:POST|PUT|PATCH|DELETE)/iu)
@@ -178,7 +160,7 @@ test('the window client honours quiet with the exact sentence in every content t
 
 // Second adversarial review pass on row 75: the window honoured quiet only
 // when the exact selected place was quiet, and leaked everywhere else — the
-// Live plate for an ancestor's own plot, the Rooms Occupants panel and the
+// the Rooms Occupants panel and the
 // Map tab's place cards (both recurse through every descendant), and both
 // city-wide feeds (Things and Conversations) with no place selected at all.
 // The fix is one shared predicate, isQuietPlace, that every listing path
@@ -210,8 +192,7 @@ test('every path that lists a resident, thing, or note resolves quiet through is
   // Table-driven so a future listing path added without this call is a
   // missing table row, not a silent gap — enumerated by the second review's
   // own grep list: residentsAt, placeScopeSet, renderThingIndex,
-  // renderOccupants, livePlacePlot, mountLivePlaceDetail, renderLiveLedger,
-  // notes lists, the Live roster, and the map's place cards.
+  // renderOccupants, notes lists, and the map's place cards.
   const paths: ReadonlyArray<{ readonly name: string; readonly pattern: RegExp }> = [
     {
       name: 'Things heading list (renderThingIndex): scoped-with-descendants and city-wide',
@@ -233,18 +214,6 @@ test('every path that lists a resident, thing, or note resolves quiet through is
       name: "occupantLine: the Map tab's place cards, recursive across descendants",
       pattern: /function occupantLine\(place, occupants, placeOf\) \{[\s\S]{0,700}if \(!isQuietPlace\(residentPlace\)\) return true/u,
     },
-    {
-      name: 'renderLiveRoster: the Live tab roster, recursive across descendants',
-      pattern: /const place = placeReference\(snapshot, resident\.current_place_id\)\s*\n\s*if \(isQuietPlace\(place\)\) \{\s*\n\s*row\.classList\.add\('resident-row-quiet'\)/u,
-    },
-    {
-      name: 'mountLivePlaceDetail: a detailed child plot on an ancestor Live plate',
-      pattern: /if \(isQuietPlace\(place\)\) \{\s*\n\s*card\.append\(quietRoomNotice\(place\)\)\s*\n\s*card\.dataset\.liveDetailMounted = 'true'/u,
-    },
-    {
-      name: 'liveLedgerQuietPlace: a recorded action pointing at a quiet place (move, note, make, use)',
-      pattern: /function liveLedgerQuietPlace\(snapshot, record\) \{[\s\S]{0,700}return isQuietPlace\(place\) \? place : null/u,
-    },
     // Third review pass: mountLivePlaceDetail checked isQuietPlace(place)
     // only for the exact plotted place — a quiet place nested two or more
     // levels below it (the plot's grandchild or deeper) still leaked
@@ -252,38 +221,14 @@ test('every path that lists a resident, thing, or note resolves quiet through is
     // subtree with no per-row check. liveVisibleResidentsAt and
     // liveDisplayedThings are the fix: every row they return is resolved at
     // its own place, never at the plotted place, before a caller can render it.
-    {
-      name: 'liveVisibleResidentsAt: the one path a detailed Live plot may use to list residents',
-      pattern: /function liveVisibleResidentsAt\(snapshot, placeId\) \{\s*\n\s*return residentsAt\(snapshot, placeId\)\.filter\(resident =>\s*\n\s*!isQuietPlace\(placeReference\(snapshot, resident\.current_place_id\)\)\)/u,
-    },
-    {
-      name: 'mountLivePlaceDetail uses liveVisibleResidentsAt, not raw residentsAt, past its own quiet guard',
-      pattern: /const residents = liveVisibleResidentsAt\(snapshot, place\.id\)/u,
-    },
-    {
-      name: 'liveDisplayedThings: every Live thing list, direct or recursive, filters its own row',
-      pattern: /function liveDisplayedThings\(snapshot, placeId, focusId, includeDescendants = false\) \{[\s\S]{0,400}!isQuietPlace\(placeReference\(snapshot, thing\.place_id\)\)/u,
-    },
     // Third review pass: liveFocusInteractionsPanel printed the exact
     // current place name for a resident standing outside the drilled plate,
     // and the exact current/recorded place name for every interaction
     // thing, with no quiet check at all.
-    {
-      name: "liveFocusInteractionsPanel's outside-plate resident card withholds a quiet location",
-      pattern: /const quiet = isQuietPlace\(currentPlace\)[\s\S]{0,1500}if \(quiet\) card\.append\(quietRoomNotice\(currentPlace\)\)/u,
-    },
-    {
-      name: "liveFocusInteractionsPanel's thing list collapses a thing pointing at a quiet place",
-      pattern: /const quietPlace = isQuietPlace\(place\) \? place : isQuietPlace\(recordedPlace\) \? recordedPlace : null\s*\n\s*if \(quietPlace\) \{/u,
-    },
     // Step 4: the single reusable Live item popover resolves a resident's
     // current place quiet mark itself -- placeReference at the resident's
     // own row, then isQuietPlace -- before ever building a location fact,
     // exactly like every other listing path above.
-    {
-      name: 'liveItemPopoverFacts: the Live item popover resolves a resident location quiet at its own row',
-      pattern: /function liveItemPopoverFacts\(kind, item, snapshot\) \{[\s\S]{0,400}locationQuiet: isQuietPlace\(place\)/u,
-    },
   ]
   for (const path of paths) {
     assert.match(WINDOW_JS, path.pattern, path.name + ' must resolve quiet through isQuietPlace')
@@ -296,19 +241,8 @@ test('every path that lists a resident, thing, or note resolves quiet through is
     .map(match => match[0])
   const allowedBespokeChecks = new Set([
     "if (scopedPlace && scopedPlace.quiet)",
-    "if (focus && focus.quiet)",
-    "if (liveFocus.quiet)",
-    "if (focus.quiet)",
     "if (place.quiet)",
     "if (place && place.quiet)",
-    // Step 4: windowLiveItemFacts is the pure, unit-tested content
-    // assembler for the Live item popover (src/window-client/live-popover.ts).
-    // It receives an already-identified place row from its one caller,
-    // liveItemPopoverFacts, which is the function that actually resolves
-    // *which* place to check via placeReference/isQuietPlace (see the path
-    // table above). This is the terminal read of that already-resolved
-    // place's own quiet mark, not a second independent quiet decision.
-    "if (place.quiet === true)",
   ])
   for (const check of bespokeQuietChecks) {
     assert.ok(

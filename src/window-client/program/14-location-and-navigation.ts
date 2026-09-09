@@ -26,8 +26,6 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
       ? Object.freeze({ kind: pathKind, id: pathId })
       : null
     const pathPlaceId = pathKind === 'place' ? pathId : null
-    const liveNotesOpen = selectedView === 'live' && Boolean(
-      (pathPlaceId || safeId(params.get('place'))) && params.get('notes') === 'open')
     return {
       view: selectedView,
       placeId: pathPlaceId || safeId(params.get('place')),
@@ -67,7 +65,6 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
         : state.gazette,
       gazetteIssueId,
       detail,
-      liveNotesOpen,
     }
   }
 
@@ -86,7 +83,6 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
       }),
       gazetteIssueId: state.gazetteIssueId,
       detail: state.detail,
-      notesOpen: state.liveNotesOpen,
     })
   }
 
@@ -112,15 +108,6 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
   let rovingTabActivation = false
   function navigate(next) {
     const previousView = state.view
-    const nextView = Object.hasOwn(next, 'view') ? next.view : state.view
-    const nextResident = Object.hasOwn(next, 'resident') ? next.resident : state.resident
-    if (!Object.hasOwn(next, 'liveNotesOpen') && (
-      (Object.hasOwn(next, 'view') && next.view !== 'live') ||
-      (Object.hasOwn(next, 'placeId') && next.placeId !== state.placeId)
-    )) {
-      next = { ...next, liveNotesOpen: false }
-    }
-    const clearsLiveFocus = nextView === 'live' && Boolean(nextResident)
     const openingDetail = Boolean(next?.detail && (
       state.detail?.kind !== next.detail.kind || state.detail?.id !== next.detail.id
     ))
@@ -130,24 +117,13 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
       detailDrawingHistoryRequestRevision += 1
     }
     resetShareFeedback()
-    const leavesReplayPlate = previousView === 'live' && (
-      (Object.hasOwn(next, 'view') && next.view !== 'live') ||
-      (Object.hasOwn(next, 'placeId') && next.placeId !== state.placeId) ||
-      (Object.hasOwn(next, 'resident') && next.resident !== state.resident)
-    )
-    if (leavesReplayPlate && liveReplayHeldKeys().size) settleLiveReplays()
-    if (clearsLiveFocus && state.live.focusResident) storeLiveFocusResident(null)
-    state = {
-      ...state,
-      ...next,
-      live: clearsLiveFocus ? { ...state.live, focusResident: null } : state.live,
-    }
+    state = { ...state, ...next }
     writeLocation(!rovingTabActivation, openingDetail ? { windowDetailEntry: true } : null)
     renderAll()
     void ensureFocusedSelection()
     void ensureDetail()
     if (state.view !== previousView) {
-      scheduleRefresh(state.view === 'live' && !document.hidden ? 0 : BASE_REFRESH_MS)
+      scheduleRefresh(BASE_REFRESH_MS)
     }
     loadSharedGazette()
   }

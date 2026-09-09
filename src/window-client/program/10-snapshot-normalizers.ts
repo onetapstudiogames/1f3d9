@@ -301,9 +301,9 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
     })
   }
 
-  function normalizeLiveChanges(values) {
+  function normalizePublicChanges(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, LIVE_OPENING_PAGE_LIMIT).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const changeId = safeChangeMarker(raw.change_id)
       const actor = safeHandle(raw.actor)
@@ -329,6 +329,13 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
     })
   }
 
+  function mergePublicChanges(current, incoming) {
+    const rows = new Map(current.map(row => [row.change_id, row]))
+    for (const row of incoming) rows.set(row.change_id, row)
+    return Object.freeze([...rows.values()].sort((left, right) =>
+      Number(BigInt(right.change_id) - BigInt(left.change_id))))
+  }
+
   function normalizeLiveTransferDetail(kind, source, detail) {
     if (kind !== 'transfer') return detail
     const assetType = ['place', 'thing', 'kind'].includes(source.asset_type)
@@ -338,13 +345,6 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
     return assetType && assetId
       ? { ...detail, asset_type: assetType, asset_id: assetId }
       : detail
-  }
-
-  function mergeLiveChanges(current, incoming) {
-    const rows = new Map(current.map(row => [row.change_id, row]))
-    for (const row of incoming) rows.set(row.change_id, row)
-    return Object.freeze([...rows.values()].sort((left, right) =>
-      Number(BigInt(right.change_id) - BigInt(left.change_id))))
   }
 
 `

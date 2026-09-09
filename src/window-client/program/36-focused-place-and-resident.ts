@@ -229,7 +229,6 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
 
     if (explicitPlaceId &&
         !state.snapshot.flatPlaces.some(place => place.id === explicitPlaceId)) {
-      if (liveSurveyCoversPlace(state.snapshot, explicitPlaceId)) return
       const entry = state.focusedPlaces[String(explicitPlaceId)]
       if (!entry || (forcePlace && Boolean(entry.place))) {
         await loadFocusedPlace(explicitPlaceId, forcePlace)
@@ -242,7 +241,6 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       const currentPlaceId = resident?.current_place_id || null
       if (currentPlaceId &&
           !state.snapshot.flatPlaces.some(place => place.id === currentPlaceId)) {
-        if (liveSurveyCoversPlace(state.snapshot, currentPlaceId)) return
         const entry = state.focusedPlaces[String(currentPlaceId)]
         if (!entry || (forcePlace && Boolean(entry.place))) {
           await loadFocusedPlace(currentPlaceId, forcePlace)

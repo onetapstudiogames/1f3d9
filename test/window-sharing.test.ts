@@ -24,7 +24,6 @@ const BASE_STATE: WindowShareState = Object.freeze({
   archive: Object.freeze({ query: '', mode: 'words', type: 'all' }),
   gazetteIssueId: null,
   detail: null,
-  notesOpen: false,
 })
 
 function gazetteShareState(issue: number | null): WindowShareState {
@@ -74,19 +73,6 @@ test('share metadata uses only Vercel’s exact injected Preview deployment orig
 
 test('window share paths are clean, stable, and preserve the reproducible public question', () => {
   assert.equal(windowSharePath(BASE_STATE), '/window/map')
-  assert.equal(windowSharePath({ ...BASE_STATE, view: 'live', placeId: 310 }),
-    '/window/live?place=310')
-  const liveNotesPath = windowSharePath({
-    ...BASE_STATE,
-    view: 'live',
-    placeId: 422,
-    notesOpen: true,
-  })
-  assert.equal(liveNotesPath, '/window/live?place=422&notes=open')
-  const liveNotes = parseWindowShareRequest('/window/live', '?place=422&notes=open')
-  assert.equal(liveNotes?.canonicalPath, liveNotesPath)
-  assert.equal(liveNotes?.state.placeId, 422)
-  assert.equal(liveNotes?.state.notesOpen, true)
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things' }), '/window/things')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things', placeId: 310 }),
     '/window/things?place=310')
@@ -132,7 +118,7 @@ test('window share paths are clean, stable, and preserve the reproducible public
   }), '/window/note/301')
   const placeDrawingRecipient = windowDetailShareState({
     ...BASE_STATE,
-    view: 'live',
+    view: 'place',
     placeId: 1,
     detail: Object.freeze({ kind: 'place', id: 310 }),
   })
@@ -141,7 +127,7 @@ test('window share paths are clean, stable, and preserve the reproducible public
   assert.equal(placeDrawingRecipient.detail, null)
   assert.equal(windowDetailShareState({
     ...BASE_STATE,
-    view: 'live',
+    view: 'place',
     detail: Object.freeze({ kind: 'resident', id: 5 }),
   } as unknown as WindowShareState), null)
 })
@@ -294,11 +280,8 @@ test('shared Archive questions use the public search byte, normalization, and le
 })
 
 test('server-visible share requests round-trip canonical paths and reject unknown shapes', () => {
-  const live = parseWindowShareRequest('/window/live', '?place=310')
-  assert.ok(live)
-  assert.equal(live.canonicalPath, '/window/live?place=310')
-  assert.equal(live.state.view, 'live')
-  assert.equal(live.state.placeId, 310)
+  assert.equal(parseWindowShareRequest('/window/live', '?place=310'), null)
+  assert.equal(parseWindowShareRequest('/window/map', '?notes=open'), null)
 
   const things = parseWindowShareRequest('/window/things', '?place=310')
   assert.ok(things)
