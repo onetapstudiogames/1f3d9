@@ -231,7 +231,7 @@ export function registerPublicWindowFocusedNavigation() {
 
   test('scope forgets an older focused place when a new focused place becomes active', async ({ page }) => {
     await page.locator('#place-filter').selectOption('77')
-    await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).toContainText('currently loaded 3 of 5 places')
 
     await page.route('**/api/map**', route => {
       const url = new URL(route.request().url())
@@ -257,8 +257,8 @@ export function registerPublicWindowFocusedNavigation() {
 
     await expect(page.getByRole('button', { name: 'active_gallery', exact: true })).toBeVisible()
     await expect(page.locator('#place-filter option[value="78"]')).toContainText('active_gallery')
-    await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
-    await expect(page.locator('#view-scope')).not.toContainText('currently loaded 4 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).toContainText('currently loaded 3 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).not.toContainText('currently loaded 4 of 5 places')
   })
 
   test('explicit place scope excludes the followed resident previous focused place', async ({ page }) => {
@@ -269,7 +269,7 @@ export function registerPublicWindowFocusedNavigation() {
     })
     await page.locator('#resident-filter').selectOption('far-walker')
     await residentFocus
-    await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).toContainText('currently loaded 3 of 5 places')
 
     await page.route('**/api/map**', route => {
       const url = new URL(route.request().url())
@@ -297,8 +297,8 @@ export function registerPublicWindowFocusedNavigation() {
 
     await expect(page.locator('#resident-filter')).toHaveValue('far-walker')
     await expect(page.getByRole('button', { name: 'active_gallery', exact: true })).toBeVisible()
-    await expect(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
-    await expect(page.locator('#view-scope')).not.toContainText('currently loaded 4 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).toContainText('currently loaded 3 of 5 places')
+    await expect(page.locator('#city-facts #view-scope')).not.toContainText('currently loaded 4 of 5 places')
   })
 
   test('scope counts the active filtered history instead of hidden earlier filters', async ({ page }) => {
@@ -352,7 +352,7 @@ export function registerPublicWindowFocusedNavigation() {
     const stream = page.locator('#conversation-stream')
     await expect(stream).toContainText('Only the active selected resident said this.')
     await expect(stream).not.toContainText('Only the first selected resident said this.')
-    await expect(page.locator('#view-scope')).toContainText('Showing 1 fetched note')
-    await expect(page.locator('#view-scope')).not.toContainText(/\b\d+ of 3 conversations\b/)
+    await expect(page.locator('#city-facts #view-scope')).toContainText('Showing 1 fetched note')
+    await expect(page.locator('#city-facts #view-scope')).not.toContainText(/\b\d+ of 3 conversations\b/)
   })
 }

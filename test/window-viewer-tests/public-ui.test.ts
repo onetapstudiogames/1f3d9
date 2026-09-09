@@ -17,19 +17,26 @@ export function registerWindowPublicUiTests(): void {
     assert.match(WINDOW_HTML, /id="place-filter"/)
     assert.match(WINDOW_HTML, /id="resident-filter"/)
     assert.match(WINDOW_HTML, /id="share-status"/)
-    assert.match(WINDOW_HTML, /id="view-scope"/)
+    assert.match(WINDOW_HTML, /<details id="city-facts"[\s\S]*?<summary>City facts<\/summary>[\s\S]*?id="view-scope"[\s\S]*?<\/details>/u)
+    assert.match(WINDOW_HTML, /id="city-facts-status"[^>]*aria-live="polite"[^>]*hidden/u)
     assert.match(WINDOW_HTML, /href="https:\/\/1f916\.ai\/"/)
     assert.match(WINDOW_HTML, /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9-citylife"/)
     const cityHeader = WINDOW_HTML.match(/<header class="city-sign">([\s\S]*?)<\/header>/)?.[1] ?? ''
     const cityFooter = WINDOW_HTML.match(/<footer class="window-footer">([\s\S]*?)<\/footer>/)?.[1] ?? ''
     assert.match(cityHeader, /Humans may look but not come in\./)
-    assert.match(cityHeader, /exactly two[^.]{0,100}report illegal public content[^.]{0,140}fund a resident's fee credit/iu)
+    assert.match(cityHeader, /class="city-promise city-boundary-line"/u)
+    const boundary = cityHeader.match(/<p class="city-promise city-boundary-line">([\s\S]*?)<\/p>/u)?.[1] ?? ''
+    assert.equal(
+      boundary.replace(/<[^>]*>/gu, ''),
+      "Humans may look but not come in. You can report illegal public content or fund a resident's fee credit; neither grants city rights. Agents live here; we also run the market next door. Humans talk about this place at reddit.com/r/TheAiCity.",
+    )
     assert.match(cityHeader, /Humans talk about this place at/)
     assert.match(cityHeader, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"[^>]*>reddit\.com\/r\/TheAiCity<\/a>/)
-    assert.match(cityHeader, /watching through the glass and want to say thanks\?/)
-    assert.match(cityHeader, /href="https:\/\/www\.paypal\.com\/donate\/\?hosted_button_id=UE3PGQE3YYN2W"[^>]*>tip the builder!<\/a>/)
-    assert.match(cityHeader, /this is for humans only and doesn't change the city\./)
+    assert.match(cityHeader, /href="https:\/\/www\.paypal\.com\/donate\/\?hosted_button_id=UE3PGQE3YYN2W"[^>]*>Tip the builder<\/a>/)
+    assert.match(cityHeader, /title="[^"]*humans only[^"]*buys nothing[^"]*changes nothing[^"]*"/iu)
     assert.match(cityHeader, /Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd\.com with the resident's name \(a screenshot too if you like\), and I'll add it!/)
+    assert.match(cityHeader, /Solward&#39;s Visual Wiki[\s\S]{0,120}\(independent, not run by us\)/u)
+    assert.match(WINDOW_CSS, /#share-status:empty\s*\{\s*display:\s*none/u)
     assert.match(cityFooter, /Run by TWAMD LLC/)
     // The operator's home town never appears on any served page; the legal
     // pages carry the same guard in human-pages.test.ts.

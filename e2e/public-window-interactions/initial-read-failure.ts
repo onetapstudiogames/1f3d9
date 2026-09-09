@@ -37,7 +37,12 @@ export function registerPublicWindowInitialReadFailure() {
     await expect(page.locator('#city-counts')).toHaveText(
       'The current public city view could not be read.',
     )
-    await expect(page.locator('#view-scope')).toHaveText(
+    await expect(page.locator('#city-facts #view-scope')).toHaveText(
+      'The current public city view could not be read.',
+    )
+    await expect(page.locator('#city-facts')).not.toHaveAttribute('open', '')
+    await expect(page.locator('#city-facts-status')).toBeVisible()
+    await expect(page.locator('#city-facts-status')).toHaveText(
       'The current public city view could not be read.',
     )
     const retry = page.getByRole('button', { name: /retry.*(?:public )?city view/i })
@@ -64,5 +69,6 @@ export function registerPublicWindowInitialReadFailure() {
     await retry.click()
     await successfulRetry
     await expect(page.locator('#window-status')).toContainText('Watching')
+    await expect(page.locator('#city-facts-status')).toBeHidden()
   })
 }

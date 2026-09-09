@@ -329,7 +329,7 @@ export function registerPublicWindowHappenings() {
 
     await page.locator('#resident-filter').selectOption('far-walker')
     await page.getByRole('tab', { name: 'Conversations' }).click()
-    const scope = page.locator('#view-scope')
+    const scope = page.locator('#city-facts #view-scope')
     await expect(scope).toContainText('Loading that public read.')
     await expect(scope).not.toContainText('Showing 0 fetched notes')
     await expect(scope).not.toContainText('0 of 3 conversations')

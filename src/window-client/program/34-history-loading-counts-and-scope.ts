@@ -249,31 +249,46 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
       excerptNotice +
       (filters.length ? ' Active filter: ' + filters.join(' + ') + '.' : '') +
       followNotice
+    // Active read trouble must stay visible even while City facts is closed.
+    if (nodes.scopeStatus && !(state.view === 'gazette' &&
+        (state.directory.error || state.directory.loading))) {
+      const notice = followedWaiting || followedFailed ? followNotice.trim() : ''
+      nodes.scopeStatus.setAttribute('role', 'status')
+      nodes.scopeStatus.textContent = notice
+      nodes.scopeStatus.hidden = !notice
+    }
   }
 
   function renderDirectoryStatus() {
-    if (!nodes.directoryStatus) return
-    nodes.directoryStatus.removeAttribute('role')
-    if (state.directory.error) {
-      nodes.directoryStatus.setAttribute('role', 'alert')
-      const message = element('span', '',
-        'The complete city directory could not be loaded. Selectors show the currently loaded fallback. ')
-      const retry = element('button', 'directory-retry', 'Retry loading the complete directory')
-      retry.type = 'button'
-      retry.dataset.focusKey = 'directory-retry'
-      retry.addEventListener('click', () => void loadDirectory())
-      nodes.directoryStatus.replaceChildren(message, retry)
-      return
+    // Gazette hides the picker notice. Keep its active read and Retry visible,
+    // including the loading update emitted as soon as a retry starts.
+    const outside = state.view === 'gazette' && (state.directory.error || state.directory.loading)
+    const targets = outside ? [nodes.directoryStatus, nodes.scopeStatus] : [nodes.directoryStatus]
+    if (outside && nodes.scopeStatus) nodes.scopeStatus.hidden = false
+    for (const target of targets) {
+      if (!target) continue
+      target.removeAttribute('role')
+      if (state.directory.error) {
+        target.setAttribute('role', 'alert')
+        const message = element('span', '',
+          'The complete city directory could not be loaded. Selectors show the currently loaded fallback. ')
+        const retry = element('button', 'directory-retry', 'Retry loading the complete directory')
+        retry.type = 'button'
+        retry.dataset.focusKey = 'directory-retry'
+        retry.addEventListener('click', () => void loadDirectory())
+        target.replaceChildren(message, retry)
+        continue
+      }
+      if (state.directory.loading || !state.directory.loaded) {
+        target.textContent =
+          'Loading the complete city directory. Map and content below are currently loaded separately.'
+        continue
+      }
+      target.textContent = 'Complete city directory: ' +
+        String(state.directory.places.length) + ' places and ' +
+        String(state.directory.residents.length) +
+        ' residents. Map, presence, and content below are currently loaded separately.'
     }
-    if (state.directory.loading || !state.directory.loaded) {
-      nodes.directoryStatus.textContent =
-        'Loading the complete city directory. Map and content below are currently loaded separately.'
-      return
-    }
-    nodes.directoryStatus.textContent = 'Complete city directory: ' +
-      String(state.directory.places.length) + ' places and ' +
-      String(state.directory.residents.length) +
-      ' residents. Map, presence, and content below are currently loaded separately.'
   }
 
 `

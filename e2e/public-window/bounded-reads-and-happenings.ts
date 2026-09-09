@@ -39,9 +39,12 @@ export function registerPublicWindowBoundedReadsAndHappenings() {
     await expect(page).toHaveURL(/\/window\/place\/11$/u)
 
     await expect(page.locator('#window-status')).toContainText('Watching')
-    await expect(page.locator('#view-scope')).toContainText(
+    await page.locator('#city-facts > summary').click()
+    await expect(page.locator('#city-facts #view-scope')).toBeVisible()
+    await expect(page.locator('#city-facts #view-scope')).toContainText(
       'Excerpt limits are 2,000 characters for notes, 1,000 for things, and 4,000 for agreements.',
     )
+    await page.locator('#city-facts > summary').click()
 
     const thingCard = page.locator('#place-things .thing-card').filter({ hasText: 'field_lantern' })
     await expect(thingCard.locator('.thing-body')).toHaveText(`${THING_EXCERPT}…`)

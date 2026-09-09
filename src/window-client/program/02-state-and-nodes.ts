@@ -2,6 +2,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     status: document.getElementById('window-status'),
     counts: document.getElementById('city-counts'),
     scope: document.getElementById('view-scope'),
+    scopeStatus: document.getElementById('city-facts-status'),
     readingNotice: document.getElementById('window-reading-notice'),
     liveAlpha: document.getElementById('live-alpha'),
     liveAlphaNote: document.getElementById('live-alpha-note'),

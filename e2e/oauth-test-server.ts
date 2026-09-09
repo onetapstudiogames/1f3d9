@@ -83,7 +83,7 @@ function readPublicWindowShareRecord(detail: WindowShareDetail): Promise<unknown
 }
 
 function renderPublicWindowPage(c: Context): Promise<Response> {
-  return windowPage(c, false, readPublicWindowShareRecord, environment)
+  return windowPage(c, c.req.header('X-E2E-Credit-Ready') === 'true', readPublicWindowShareRecord, environment)
 }
 const store = makeMemoryStore()
 

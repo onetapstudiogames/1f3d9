@@ -1679,7 +1679,7 @@ export async function windowPage(
   const baseHtml = creditPurchasesReady
     ? WINDOW_HTML.replace(
         '      <!-- WINDOW_BUY_LINK -->',
-        '      <a href="/buy">Buy fee credit</a>',
+        '      <a class="window-strip-button" href="/buy">Buy fee credit</a>',
       ).replace(
         '      <a href="/terms">Terms</a>',
         '      <a href="/buy">Buy fee credit</a>\n      <a href="/terms">Terms</a>',

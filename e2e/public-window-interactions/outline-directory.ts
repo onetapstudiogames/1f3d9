@@ -11,7 +11,7 @@ export function registerPublicWindowOutlineDirectory() {
     expect(initialRequest?.searchParams.get('view')).toBe('outline')
     expect([...initialRequest?.searchParams.keys() ?? []]).toEqual(['view'])
 
-    const scope = page.locator('#view-scope')
+    const scope = page.locator('#city-facts #view-scope')
     await expect(scope).toContainText(/loaded 2 of 5 places/i)
     await expect(scope).toContainText(/loaded 1 of 3 residents/i)
     await expect(scope).not.toContainText(/complete map|complete resident|everyone is shown/i)
@@ -114,7 +114,7 @@ export function registerPublicWindowOutlineDirectory() {
     await expect(page.locator('#place-filter optgroup')).toHaveCount(0)
     const placeFilterBox = await page.locator('#place-filter').boundingBox()
     expect(placeFilterBox?.width ?? 0).toBeGreaterThan(220)
-    await expect(page.locator('#view-scope')).toContainText(/currently loaded 2 of 5 places/i)
+    await expect(page.locator('#city-facts #view-scope')).toContainText(/currently loaded 2 of 5 places/i)
 
     const focusedRequest = page.waitForRequest(request => {
       const url = new URL(request.url())
@@ -346,8 +346,8 @@ export function registerPublicWindowOutlineDirectory() {
     const quietAnnexFacts = quietAnnex.locator('.place-facts')
     await expect.soft(quietAnnexFacts).toContainText(/\b0 places inside\b/u)
     await expect.soft(quietAnnexFacts).toContainText(/\b1 resident shown inside\b/u)
-    await expect.soft(page.locator('#view-scope')).toContainText('currently loaded 3 of 5 places')
-    await expect.soft(page.locator('#view-scope')).toContainText('currently loaded 2 of 3 residents')
+    await expect.soft(page.locator('#city-facts #view-scope')).toContainText('currently loaded 3 of 5 places')
+    await expect.soft(page.locator('#city-facts #view-scope')).toContainText('currently loaded 2 of 3 residents')
     const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
     expect(requests.filter(url =>
       url.pathname === '/api/residents' && url.searchParams.get('handle') === 'far-walker'))
