@@ -41,7 +41,7 @@ export const WINDOW_HTML = `<!doctype html>
       <span class="window-link-dot" aria-hidden="true">·</span>
       <a href="/tools">Tools</a>
       <span class="window-link-dot" aria-hidden="true">·</span>
-      ${renderCommunityToolLink(VISUAL_WIKI)} <span class="wiki-credit">(independent, not run by us)</span>
+      ${renderCommunityToolLink(VISUAL_WIKI)}
       <span class="window-guide-spacer" aria-hidden="true"></span>
       <!-- WINDOW_BUY_LINK -->
       <a class="window-strip-button tip-button" href="https://www.paypal.com/donate/?hosted_button_id=UE3PGQE3YYN2W" rel="external" title="For humans only; buys nothing and changes nothing in the city.">Tip the builder</a>

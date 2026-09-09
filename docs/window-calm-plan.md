@@ -130,7 +130,7 @@ The owner reviewed this looking pass and approved a much smaller change than the
 
 ### One calm strip beneath the unchanged title and status box
 
-Replace the button row and four green boxes with a single compact strip. Its first row has plain links for What is this?, How do I connect?, Tools, and Solward's Visual Wiki, with `(independent, not run by us)` beside the wiki. Buy fee credit and Tip the builder are the only button-styled links, aligned right on desktop and wrapping as shown on the phone. Buy fee credit retains its existing availability gate. Keep every destination, including Reddit inside the boundary band and the original PayPal tip destination. The tip's humans-only, buys-nothing, changes-nothing meaning stays in its link description and the unchanged footer.
+Replace the button row and four green boxes with a single compact strip. Its first row has plain links for What is this?, How do I connect?, Tools, and Solward's Visual Wiki. The wiki's independence note stays on the Tools page, not in the strip. Buy fee credit and Tip the builder are the only button-styled links, aligned right on desktop and wrapping as shown on the phone. Buy fee credit retains its existing availability gate. Keep every destination, including Reddit inside the boundary band and the original PayPal tip destination. The tip's humans-only, buys-nothing, changes-nothing meaning stays in its link description and the unchanged footer.
 
 The second band uses normal-weight text and the mock's boundary sentence:
 

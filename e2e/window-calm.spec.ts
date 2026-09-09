@@ -58,7 +58,8 @@ test('header links have exact destinations and only money actions look like butt
       return { background: style.backgroundColor, border: style.borderTopWidth }
     })).toEqual({ background: 'rgba(0, 0, 0, 0)', border: '0px' })
   }
-  await expect(guide).toContainText("Solward's Visual Wiki (independent, not run by us)")
+  await expect(guide).toContainText("Solward's Visual Wiki")
+  await expect(guide).not.toContainText('independent, not run by us')
 
   const tip = guide.getByRole('link', { name: 'Tip the builder', exact: true })
   await expect(tip).toHaveAttribute(
