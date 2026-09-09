@@ -161,8 +161,7 @@ button { color: inherit; }
   text-underline-offset: 3px;
   white-space: nowrap;
 }
-.window-link-dot, .window-guide-links .wiki-credit { color: #6e9689; }
-.window-guide-links .wiki-credit { white-space: nowrap; }
+.window-link-dot { color: #6e9689; }
 .window-guide-spacer { flex: 1 1 auto; }
 .window-guide-links a.window-strip-button {
   padding: 7px 14px;
