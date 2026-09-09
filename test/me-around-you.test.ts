@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mapAroundYou } from '../src/me-around-you.ts'
+import { AROUND_YOU_SQL, mapAroundYou } from '../src/me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from '../src/me-around-you-limit.ts'
 
 const empty = () => ({ count: 0, records: [] })
@@ -8,6 +8,27 @@ const snapshot = () => ({
   after_change_id: '15', through_change_id: '100',
   notes_in_owned_places: empty(), new_things_in_owned_places: empty(),
   new_agreement_signers: empty(), mentions: empty(),
+})
+
+test('both place categories include ownership or current presence within the same bounded summary statement', () => {
+  const sql = AROUND_YOU_SQL.replace(/\s+/gu, ' ')
+  assert.match(sql, /ELSE \( WITH reader_presence AS MATERIALIZED \( SELECT presence\.current_place_id FROM resident_presence presence WHERE presence\.resident_id = \$1::integer \), window_events/u)
+  for (const placeJoin of ['place.id = note.place_id', 'event.place_id = place.id']) {
+    assert.ok(sql.includes(`JOIN places place ON ${placeJoin} AND ( place.owner_id = $1::integer OR place.id = (SELECT current_place_id FROM reader_presence) )`))
+  }
+  // A single OR predicate on each place's primary-key join cannot duplicate an
+  // owned room's records when the reader is also standing in that room.
+  assert.equal(sql.match(/FROM reader_presence/gu)?.length, 2)
+  assert.doesNotMatch(sql, /presence\.home_place_id|presence\.last_place_id/u)
+})
+
+test('the existing category names explain that your places include the room where you read', () => {
+  const report = mapAroundYou(snapshot())
+  assert.ok(report.available)
+  assert.ok(report.scope.includes('"Your places" means places you own plus the place you are standing in when you read.'))
+  assert.ok(report.scope.includes('descendants and earlier visits do not expand this scope'))
+  assert.ok('notes_in_owned_places' in report)
+  assert.ok('new_things_in_owned_places' in report)
 })
 
 test('a migrated resident establishes a public baseline independently of their prior visit time', () => {
