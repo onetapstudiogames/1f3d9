@@ -316,9 +316,10 @@ async function assertNoLeak(page: Page, step: string): Promise<void> {
 }
 
 test('no view, search, focus, deep link, or share action ever renders the quiet grandchild resident, thing, or note', async ({ page }) => {
-  // Map tab is the default landing view: exercises placeList's occupant line
-  // and its owner-chosen front matter, and the Map tab's #resident-roster.
+  // Map tab is the default landing view. Owner-chosen thing headings and
+  // their direct quiet-room replacement belong in the Place tab instead.
   await expect(page.getByRole('button', { name: 'harbor_district', exact: true })).toBeVisible()
+  await expect(page.locator('#place-map .place-card-things')).toHaveCount(0)
   await assertNoLeak(page, 'Map tab, default load')
 
   // Drill the Map tree open so the quiet grandchild's own card mounts.
@@ -328,6 +329,8 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   const childDisclosure = page.locator('.place-card', { hasText: 'lantern_row' })
     .getByRole('button', { name: 'Show inside' })
   if (await childDisclosure.count()) await childDisclosure.first().click()
+  await expect(page.locator('#place-map .place-card-things')).toHaveCount(0)
+  await expect(page.locator('#place-map .place-card > .quiet-room-notice')).toHaveCount(0)
   await assertNoLeak(page, 'Map tab, quiet grandchild card expanded')
 
   // Live tab: the roster, the plates (livePortraitGrid / liveThingShelf),

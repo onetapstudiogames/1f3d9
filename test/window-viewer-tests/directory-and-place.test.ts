@@ -179,7 +179,13 @@ export function registerWindowDirectoryAndPlaceTests(): void {
     assert.match(WINDOW_JS, /rawPlace\.front_matter/)
     assert.match(WINDOW_JS, /place\.purpose/)
     assert.match(WINDOW_JS, /place\.front_matter/)
-    assert.match(WINDOW_JS, /place\.front_matter\.map\(/)
+    assert.equal(WINDOW_JS.match(/place\.front_matter\.map\(/gu)?.length, 1)
+    const mapRenderer = WINDOW_JS.slice(
+      WINDOW_JS.indexOf('function placeList('),
+      WINDOW_JS.indexOf('function mapRoots('),
+    )
+    assert.doesNotMatch(mapRenderer, /front_matter|quietRoomNotice/u)
+    assert.match(mapRenderer, /occupantLine\(/u)
     assert.match(WINDOW_JS, /link\.href\s*=\s*['"]\/window\/['"]\s*\+\s*kind\s*\+\s*['"]\/['"]\s*\+\s*String\(id\)/)
     assert.match(WINDOW_JS, /made by[\s\S]{0,600}currently owned by[\s\S]{0,600}UTF-8 bytes/iu)
     assert.doesNotMatch(WINDOW_JS, /front_matter\.(?:sort|toSorted|reverse|splice)\(/)

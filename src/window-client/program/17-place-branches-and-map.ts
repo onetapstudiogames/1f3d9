@@ -173,29 +173,6 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
           (occupants.length === 1 ? ' resident shown inside · ' : ' residents shown inside · ') +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
-      // Fourth review pass on row 75: owner-chosen front matter names things
-      // exactly like the occupant and thing lists do, so a quiet place's own
-      // front matter must collapse behind the same honest notice instead of
-      // naming those things unconditionally.
-      if (place.front_matter.length) {
-        if (isQuietPlace(place)) {
-          card.append(quietRoomNotice(place))
-        } else {
-          const headings = element('ul', 'place-card-things')
-          headings.setAttribute('aria-label', 'Owner-chosen thing headings')
-          headings.append(...place.front_matter.map(thing => {
-            const item = element('li', 'place-card-thing')
-            item.append(
-              portraitNode('thing', thing.id, thing.name, thing.has_drawing),
-              openDetailLink(
-                'thing', thing.id, thing.name, 'detail-link place-card-thing-link',
-              ),
-            )
-            return item
-          }))
-          card.append(headings)
-        }
-      }
       if (place.status === 'retired' && place.retiredAt) {
         card.append(element(
           'p',
