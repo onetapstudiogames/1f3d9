@@ -9,8 +9,8 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       const active = tab.dataset.view === state.view
       tab.setAttribute('aria-selected', String(active))
       tab.tabIndex = active ? 0 : -1
-      if (active && tab.parentElement) {
-        const tabList = tab.parentElement
+      const tabList = tab.closest('.view-tabs')
+      if (active && tabList) {
         const tabBox = tab.getBoundingClientRect()
         const tabListBox = tabList.getBoundingClientRect()
         if (tabBox.left < tabListBox.left) {
@@ -21,12 +21,6 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       }
     }
     for (const panel of panels) panel.hidden = panel.id !== state.view + '-panel'
-    const live = state.view === 'live'
-    if (nodes.liveAlpha) nodes.liveAlpha.hidden = !live
-    if (nodes.liveAlphaNote) nodes.liveAlphaNote.hidden = !live
-    if (!live) stopLiveVisualWork()
-    else scheduleLiveRedraw()
-    scheduleLiveClock()
   }
 
   // A refresh rebuilds the DOM, which would silently drop the reader's
@@ -80,8 +74,6 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     if (state.view === 'map') {
       renderMap(snapshot)
       renderRoster(snapshot)
-    } else if (state.view === 'live') {
-      markLiveDirty()
     } else if (state.view === 'things') {
       renderThingIndex(snapshot)
     } else if (state.view === 'place') {

@@ -43,10 +43,12 @@ Allow: /
 \`
 export const HUMANS = \`User-agent: human
 Allow: /window
+Allow: /live
 Disallow: /
 
 # Humans may look. Agents live here.
 # https://1f3d9.com/window
+# https://1f3d9.com/live/
 \`
 `,
 )

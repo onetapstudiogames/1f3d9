@@ -4,33 +4,6 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     scope: document.getElementById('view-scope'),
     scopeStatus: document.getElementById('city-facts-status'),
     readingNotice: document.getElementById('window-reading-notice'),
-    liveAlpha: document.getElementById('live-alpha'),
-    liveAlphaNote: document.getElementById('live-alpha-note'),
-    liveClock: document.getElementById('live-clock'),
-    liveBreadcrumbs: document.getElementById('live-breadcrumbs'),
-    liveHistoryStatus: document.getElementById('live-history-status'),
-    liveViewport: document.getElementById('live-viewport'),
-    liveStage: document.getElementById('live-stage'),
-    liveLabelLayer: document.getElementById('live-label-layer'),
-    liveItemPopover: document.getElementById('live-item-popover'),
-    liveWorldGround: document.querySelector('#live-stage > .live-world-ground'),
-    liveZoomIn: document.getElementById('live-zoom-in'),
-    liveZoomOut: document.getElementById('live-zoom-out'),
-    liveCenter: document.getElementById('live-center'),
-    liveFullscreen: document.getElementById('live-fullscreen'),
-    liveProof: document.getElementById('live-proof'),
-    livePause: document.getElementById('live-pause'),
-    liveFocusStatus: document.getElementById('live-focus-status'),
-    liveMapCaption: document.getElementById('live-map-caption'),
-    livePlates: document.getElementById('live-plates'),
-    liveNotesPanel: document.getElementById('live-notes-panel'),
-    liveNotesTitle: document.getElementById('live-notes-title'),
-    liveNotesStatus: document.getElementById('live-notes-status'),
-    liveNotesList: document.getElementById('live-notes-list'),
-    liveNotesPage: document.getElementById('live-notes-page'),
-    liveNotesClose: document.getElementById('live-notes-close'),
-    liveRoster: document.getElementById('live-roster'),
-    liveResidentPage: document.getElementById('live-resident-page'),
     map: document.getElementById('place-map'),
     roster: document.getElementById('resident-roster'),
     residentPage: document.getElementById('resident-page'),
@@ -52,6 +25,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     detailClose: document.getElementById('record-detail-close'),
     placeTitle: document.getElementById('place-focus-title'),
     placeSummary: document.getElementById('place-focus-summary'),
+    placeWatchLive: document.getElementById('place-watch-live'),
     placeDescription: document.getElementById('place-description'),
     placePurposeLabel: document.getElementById('place-purpose-title'),
     placePurpose: document.getElementById('place-purpose'),
@@ -86,8 +60,6 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     directorySearchField: document.querySelector('.directory-search-field'),
     viewFilters: document.querySelector('.view-filters'),
   }
-  const liveStageNodes = new Map()
-  let liveStageNextNodeKeys = null
   const tabs = [...document.querySelectorAll('[role="tab"][data-view]')]
   const panels = [...document.querySelectorAll('[role="tabpanel"]')]
   const viewShareButtons = [...document.querySelectorAll('[data-share-scope="view"]')]
@@ -108,9 +80,6 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let detailDrawingRequestRevision = 0
   let detailDrawingHistoryRequestRevision = 0
   let shareFeedbackRevision = 0
-  let liveNotesRequestRevision = 0
-  let liveNotesController = null
-  let liveNotesReturnFocus = null
   let state = {
     failures: 0,
     refreshing: false,
@@ -176,188 +145,6 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     placeId: null,
     resident: null,
     conversationContext: false,
-    liveNotesOpen: false,
-    live: {
-      openingMarker: null, openingEvents: [], openingLoaded: false, openingLoading: false,
-      openingComplete: false, openingPaused: false, openingError: false,
-      openingReplaySuppressed: false,
-      openingNextBeforeId: null, streamError: false, streamMarker: null,
-      changes: [], drawings: {}, noteBodies: {},
-      highlightedKey: null, quietReads: 0, nextReadAt: null,
-      lastChangeAt: null, clockTimer: 0,
-      replayQueues: {}, replayActive: {}, replayPositions: {},
-      replayReadyAtByActor: {},
-      replaySeenKeys: [], replayRevealedKeys: [], residueKeys: [], residueKeySet: new Set(),
-      focusResident: null, paused: false, absorptionEndsAtByPlaceId: {}, trailStarts: {},
-      raisedItemKey: null, expandedResidentPlaceIds: [], expandedThingPlaceIds: [],
-      focusRestoreKey: null, focusRestoreFallbackId: null,
-      suppressReplayOnNextRead: false,
-      proofScene: false, proofFailure: false, proofRetrySucceeded: false,
-      notesPanel: Object.freeze({
-        placeId: null, rows: Object.freeze([]), total: 0, nextBeforeId: null,
-        hasMore: false, initialized: false, loading: false, error: false,
-      }),
-      proofNotesByPlaceId: Object.freeze({}),
-      lookingBurstsByHandle: {}, lookingActiveHandles: [], lookingAnnouncements: [],
-      lookingWitnessAllowed: false,
-    },
-  }
-  let liveCamera = Object.freeze({
-    scale: LIVE_CAMERA_CENTER_SCALE, offsetX: 0, offsetY: 0, stageId: null,
-    panStart: null, pinchStart: null,
-  })
-  let liveFullscreenHistoryEntry = false
-  let liveProofRestore = null
-  let liveProofScriptedMoveTimer = 0
-  let liveProofFrame = 0
-  let liveProofFrameTimes = Object.freeze([])
-  let liveNotesTargetId = null
-  let liveCameraFrame = 0
-  let liveLabelFrame = 0
-  let liveLabelNeedsFullRefresh = true
-  let liveLabelLastFullRefresh = 0
-  let liveLabelRefreshTimer = 0
-  const liveLabelDimensions = new WeakMap()
-  let liveReplayCompletionTimer = 0
-  let liveReplayCompletionDeadlines = Object.freeze([])
-  let liveReplayStartTimer = 0
-  let liveReplayVisibilityTimer = 0
-  let liveFootstepWakeTimer = 0
-  let liveFootstepMarks = Object.freeze([])
-  let liveFootstepLastAtByKey = Object.freeze({})
-  let liveFootstepSequence = 0
-  let liveDetailedMoveActors = new Set()
-  let liveRenderFrame = 0
-  let liveMotionDirty = false
-  let liveTraceRenderContext = null
-  let liveRenderDirtyRevision = 0
-  let liveRenderPaintedRevision = 0
-  let liveVisibilityRevision = 0
-  let liveWasHidden = document.hidden
-  let liveTrailExpiryTimer = 0
-  let livePointers = Object.freeze({})
-  // Step 4: the single reusable Live item popover's own anchor/key/rect,
-  // deliberately module-level rather than state.live -- every state
-  // replacement feeds render paths, and opening a popover must never
-  // schedule a plate render.
-  let liveItemPopoverAnchor = null
-  let liveItemPopoverKey = null
-  let liveItemPopoverRect = null
-  let liveItemPopoverSuppressOpen = false
-  let liveItemPopoverPressWasInside = false
-  let liveResidentVisibleIdsByPlaceId = Object.freeze({})
-  let liveThingVisibleIdsByPlaceId = Object.freeze({})
-  let liveResidentPointsByPlaceId = Object.freeze({})
-  let liveThingPointsByPlaceId = Object.freeze({})
-  const liveFloorTiles = new Map()
-  const liveProofFloorTiles = new Map()
-  const liveFloorTileLoads = new Map()
-  let livePlotDetailContext = null
-  let livePendingRevealPlaceId = null
-  let livePendingRevealTarget = null
-  let liveNoteQueue = Object.freeze([])
-  let liveNoteFetches = 0
-  const LIVE_PROOF_ROOT_ID = 9101
-  const LIVE_PROOF_GARDEN_ID = 9102
-  const LIVE_PROOF_WORKSHOP_ID = 9103
-  const LIVE_PROOF_RETRY_ROOM_ID = 9104
-  const LIVE_PROOF_SCRIPTED_MOVE_DELAY_MS = 5000
-
-  function livePanelIsVisible() {
-    const panel = document.getElementById('live-panel')
-    return Boolean(panel && !panel.hidden)
-  }
-
-  function paintLiveMotion() {
-    const current = nodes.livePlates?.querySelector('.live-trace-layer')
-    const context = liveTraceRenderContext
-    if (!current || !context || context.snapshot !== state.snapshot) {
-      markLiveDirty()
-      return
-    }
-    const active = document.activeElement
-    const focusKey = active?.dataset?.focusKey || null
-    const focusFallbackKey = active?.dataset?.focusFallbackKey || null
-    const movesFocus = current.contains(active)
-    const next = renderLiveTraceLayer(
-      context.snapshot,
-      context.focus,
-      context.children,
-      context.records,
-      context.bubbles,
-      context.survey,
-      context.renderContext,
-    )
-    current.replaceWith(next)
-    if (stageNodeReconcileOpen()) {
-      finishStageNodeReconcile(drawnStageNodeKeys(nodes.livePlates))
-    }
-    if (movesFocus) {
-      restoreFocus(focusKey, focusFallbackKey, 'live-viewport')
-    }
-  }
-
-  function scheduleLiveRedraw() {
-    if (!windowLiveShouldScheduleRedraw(Object.freeze({
-      liveViewActive: state.view === 'live',
-      documentVisible: !document.hidden,
-      panelVisible: livePanelIsVisible(),
-      framePending: Boolean(liveRenderFrame),
-    }))) return
-    liveRenderFrame = window.requestAnimationFrame(() => {
-      liveRenderFrame = 0
-      if (!windowLiveShouldScheduleRedraw(Object.freeze({
-        liveViewActive: state.view === 'live',
-        documentVisible: !document.hidden,
-        panelVisible: livePanelIsVisible(),
-        framePending: false,
-      }))) return
-      if (liveRenderDirtyRevision > liveRenderPaintedRevision) {
-        const revision = liveRenderDirtyRevision
-        if (state.snapshot) renderLive(state.snapshot)
-        liveRenderPaintedRevision = Math.max(liveRenderPaintedRevision, revision)
-        liveMotionDirty = false
-      } else if (liveMotionDirty) {
-        liveMotionDirty = false
-        paintLiveMotion()
-      }
-      scheduleLiveRedraw()
-    })
-  }
-
-  function markLiveDirty() {
-    liveRenderDirtyRevision += 1
-    scheduleLiveRedraw()
-  }
-
-  function stopLiveVisualWork() {
-    if (liveRenderFrame) window.cancelAnimationFrame(liveRenderFrame)
-    if (liveLabelFrame) window.cancelAnimationFrame(liveLabelFrame)
-    if (liveCameraFrame) window.cancelAnimationFrame(liveCameraFrame)
-    if (liveProofFrame) window.cancelAnimationFrame(liveProofFrame)
-    liveRenderFrame = 0
-    liveMotionDirty = false
-    liveLabelFrame = 0
-    liveCameraFrame = 0
-    liveProofFrame = 0
-    liveProofFrameTimes = Object.freeze([])
-    window.clearTimeout(liveLabelRefreshTimer)
-    window.clearTimeout(liveTrailExpiryTimer)
-    window.clearTimeout(liveReplayStartTimer)
-    window.clearTimeout(liveReplayCompletionTimer)
-    window.clearTimeout(liveReplayVisibilityTimer)
-    window.clearTimeout(liveFootstepWakeTimer)
-    liveLabelRefreshTimer = 0
-    liveTrailExpiryTimer = 0
-    liveReplayStartTimer = 0
-    liveReplayCompletionTimer = 0
-    liveReplayCompletionDeadlines = Object.freeze([])
-    liveReplayVisibilityTimer = 0
-    liveFootstepWakeTimer = 0
-    for (const animation of document.getElementById('live-panel')?.getAnimations(
-      { subtree: true }) || []) animation.cancel()
-    for (const node of nodes.livePlates?.querySelectorAll(
-      '.live-replay-portrait, .live-footstep') || []) node.remove()
   }
 
 `

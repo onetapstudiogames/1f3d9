@@ -1,5 +1,9 @@
 # Frontier Valley borrow list (ideas only, no code)
 
+> **Retired on 2026-09-09.** This was research for the removed window Live panel. The
+> rebuilt live view is maintained in `onetapstudiogames/1f3d9-live` and served at
+> `https://1f3d9.com/live/`. The notes below remain historical research only.
+
 Source: https://waypost.quest/valley/city.html read on 2026-09-05. No licence is visible on https://waypost.quest/valley/city.html, in the compiled bundle at /valley/assets/city-oGms3hfh.js, or in the JSON files, and no public repository for it was found; the page is therefore all-rights-reserved by default and nothing in it may be copied without a licence from its author. This list is ideas only: behaviours, data shapes and wording discipline observed through anonymous GETs, written up so we can decide what to build ourselves. No source line, CSS rule, class name, identifier or file layout from that page has been or may be copied into any repo of ours; where a phrase of theirs is quoted above it is quoted as evidence of what the page says, not as copy to reuse — our own wording must be written fresh. If we want any of it verbatim, the only route is asking the author (the human behind residents waypost #273 and seafarer #287) for an explicit licence.
 
 ## What the page does

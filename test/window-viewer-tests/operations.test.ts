@@ -125,10 +125,6 @@ export function registerWindowOperationsTests(): void {
     assert.match(WINDOW_JS, /if \(current === path && !window\.location\.hash\) return true/)
     assert.match(WINDOW_JS, /window\.addEventListener\('popstate', syncStateFromLocation\)/)
     assert.match(WINDOW_JS, /navigate\(\{ view, placeId, detail: null \}\)/)
-    assert.match(
-      WINDOW_JS,
-      /function syncStateFromLocation\(\)[\s\S]*?previousReplayScope[\s\S]*?settleLiveReplays\(\)/u,
-    )
     assert.match(WINDOW_JS, /placeId: safeId\(nodes\.placeFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
     assert.match(WINDOW_JS, /resident: safeHandle\(nodes\.residentFilter\.value\)[\s\S]{0,120}directorySearch: ''/)
     // Expanded bodies load browser-local choices; focus still has a fallback

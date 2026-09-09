@@ -150,6 +150,11 @@ export function registerPublicWindowOutlineDirectory() {
     await expect(page.locator('#place-conversation')).toContainText(
       'root_plaza / inner_hall / quiet_annex',
     )
+    const watchLive = page.getByRole('link', { name: 'Watch live' })
+    await expect(watchLive).toBeVisible()
+    await expect(watchLive).toHaveAttribute('href', '/live/?place=77')
+    await expect(watchLive).toHaveAttribute('target', '_blank')
+    await expect(watchLive).toHaveAttribute('rel', 'noopener')
 
     const requests = (API_REQUESTS.get(page) ?? []).map(value => new URL(value))
     expect(requests.filter(url =>
@@ -158,11 +163,22 @@ export function registerPublicWindowOutlineDirectory() {
       url.pathname === '/api/window' && url.searchParams.get('within_place_id') === '77'))
       .toHaveLength(2)
 
+    const liveLink = page.getByRole('link', { name: 'Live', exact: true })
+    await expect(liveLink).toHaveAttribute('href', '/live')
+    await expect(liveLink).toHaveAttribute('target', '_blank')
+    await expect(liveLink).toHaveAttribute('rel', 'noopener')
+    await expect(page.getByRole('tab', { name: /Live/u })).toHaveCount(0)
+
+    await page.getByRole('tab', { name: 'Map' }).focus()
+    await page.keyboard.press('Tab')
+    await expect(liveLink).toBeFocused()
+    await page.getByRole('tab', { name: 'Things' }).click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(liveLink).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('tab', { name: 'Things' })).toBeFocused()
     await page.getByRole('tab', { name: 'Map' }).focus()
     await page.getByRole('tab', { name: 'Map' }).press('ArrowRight')
-    await expect(page.getByRole('tab', { name: 'Live' })).toBeFocused()
-    await expect(page.getByRole('tab', { name: 'Live' })).toHaveAttribute('aria-selected', 'true')
-    await page.getByRole('tab', { name: 'Live' }).press('ArrowRight')
     await expect(page.getByRole('tab', { name: 'Things' })).toBeFocused()
     await expect(page.getByRole('tab', { name: 'Things' })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: 'Things' }).press('ArrowRight')

@@ -88,24 +88,36 @@ export const PART_03_ELEMENTS_PORTRAITS_DRAWINGS = `  function element(tagName, 
     return shell
   }
 
-  // Decision #62 / step 2 ruling: the sprite on the ground is the drawing
-  // alone -- an authored thumbnail when one exists, or a small neutral
-  // marker when it does not. No state or provenance chip renders here;
-  // step 4 makes that state and provenance reachable through the single
-  // Live item popover (hover, keyboard focus, or the first touch tap) and
-  // the unchanged drawing-detail button, not through a title attribute --
-  // the shell above is aria-hidden and the marker below was reachable only
-  // by mouse hover, so a title never actually carried this to keyboard or
-  // touch users.
-  function liveSpriteNode(type, id, label, hasDrawing) {
-    if (hasDrawing) {
-      return portraitNode(type, id, label, true, 'live-entity-portrait')
-    }
-    const marker = element('span',
-      'drawing-grid drawing-undrawn live-neutral-marker live-entity-portrait')
-    marker.setAttribute('role', 'img')
-    marker.setAttribute('aria-label', label + ' has no drawing')
-    return marker
+  function paintedDrawingNode(drawing, pixelWidth, pixelHeight) {
+    const normalized = normalizeWindowDrawing(drawing)
+    if (!normalized) return null
+    const shell = element('span', 'drawing-grid drawing-authored-shell')
+    const canvas = document.createElement('canvas')
+    canvas.className = 'drawing-authored'
+    canvas.width = 8 * pixelWidth
+    canvas.height = 8 * pixelHeight
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    context.imageSmoothingEnabled = false
+    normalized.indices.forEach((paletteIndex, index) => {
+      if (paletteIndex === null) return
+      context.fillStyle = normalized.palette[paletteIndex]
+      context.fillRect(
+        (index % 8) * pixelWidth,
+        Math.floor(index / 8) * pixelHeight,
+        pixelWidth,
+        pixelHeight,
+      )
+    })
+    shell.append(canvas)
+    return shell
+  }
+
+  function applyDrawingData(node, snapshot) {
+    node.dataset.drawingState = snapshot.state
+    node.dataset.drawingPresentationState = snapshot.presentation_state
+    node.dataset.drawingSource = snapshot.source
+    node.classList.add('drawing-' + snapshot.presentation_state)
   }
 
   function drawingRowsFor(drawing) {

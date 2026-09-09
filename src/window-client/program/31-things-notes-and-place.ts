@@ -308,6 +308,16 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     const followed = selectedResident(snapshot)
     const place = selectedPlace(snapshot) ||
       (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
+    if (nodes.placeWatchLive) {
+      const watchable = Boolean(place && !place.moderated &&
+        place.status !== 'retired' && !isQuietPlace(place))
+      nodes.placeWatchLive.hidden = !watchable
+      if (watchable) {
+        nodes.placeWatchLive.href = '/live/?place=' + encodeURIComponent(String(place.id))
+      } else {
+        nodes.placeWatchLive.removeAttribute('href')
+      }
+    }
     if (!place) {
       const issue = selectionIssue(snapshot, true)
       if (issue) {

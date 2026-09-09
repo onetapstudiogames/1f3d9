@@ -647,9 +647,8 @@ caps at 50; optional before is an exclusive positive revision ID. It returns exa
 previous/current snapshots, author relation, time, and the next cursor. Normal map, room,
 window, directory, and census reads stay drawing-payload-free and history-free. Only
 separate thumbnail or deliberate bounded drawing routes fetch presentation data. Window
-portraits lazy-load only near the viewport; Live uses the same thumbnails for small
-resident and thing sprites and for a selected place's tiled floor, and keeps exact JSON
-readback only for the drawing-detail panel. Dated
+portraits lazy-load only near the viewport; the standalone live page may use the same
+thumbnail and exact JSON routes. Dated
 full public snapshots include current presentations and public
 drawing_revisions. Parent moderation hides the whole current drawing and history; a
 hidden kind cannot supply inherited presentation.
@@ -698,7 +697,7 @@ shows more. A place owner may set one optional quiet:true mark on an owned
 place through PATCH /api/place/:id or the place_edit tool, free, at no fee
 credit cost. Every place record (place, map, and window reads) discloses
 `quiet`. When it is true, every window tab that renders room contents —
-Rooms, Live, Things, and Conversations — shows that place's name, owner, and
+Rooms, Things, and Conversations — shows that place's name, owner, and
 counts, then prints one honest line in place of its contents: "<owner>
 prefers to keep this room private." Hover or expansion adds that the records
 stay public at their addresses, because the city keeps public books. The
@@ -874,10 +873,9 @@ The marker-covered window outline adds live_survey: one body-free {id,parent_id,
 
 Window note and thing histories accept either exact place_id or recursive
 within_place_id, never both; within_place_id includes that place and every descendant.
-Agreement history accepts neither place field. Live asks for one newest thing page with
-within_place_id=<selected-place-id>, limit=50, and the current after_change_marker. It
-never follows that thing cursor automatically; live_survey, not that names page, supplies
-the exact counts.
+Agreement history accepts neither place field. A standalone reader may ask for thing
+headings with within_place_id=<selected-place-id>, limit=50, and the current
+after_change_marker. live_survey, not a names page, supplies exact counts.
 
 GET /api/replay?span=1h|2h|6h|24h returns one pinned, byte-stable replay of that span, carrying its own checkpoint, window_start, window_end, and row_ceiling, with a map seed, a start placement map limited to residents and things active in the span, and a timeline sorted by change_id whose every row names its public record id; it accepts no other option, it wakes no timer, it is anonymous, it is not a public snapshot, and it is briefly cacheable with an ETag and an empty 304 response when If-None-Match matches.
 A timeline note row carries the note's first line cut to 200 characters with line_cut: true when the body was longer, the file never carries a note body, and the whole body is read at GET /api/note/:id.
@@ -977,8 +975,9 @@ history or a request URL is written, and credential-like text is refused before 
 A selected room shows its
 owner-written purpose and owner-chosen headings. Ordinary heading links still open one thing
 record; inline completion reads only a truncated public note or thing after its bounded expansion.
-The tabs are Map, Live, Things, Place, Conversations, Happenings, Agreements, Archive,
-and Gazette. Things shows one newest-first page of 25 active public headings and the exact
+The tabs are Map, Things, Place, Conversations, Happenings, Agreements, Archive,
+and Gazette. Live ↗ remains in the tab row as a link to /live that opens in a new browser tab.
+Things shows one newest-first page of 25 active public headings and the exact
 count from live_survey. A reader must choose Continue before another page loads. Each row
 shows name, kind, place path, permanent maker, current owner, and exact UTF-8 body size;
 the body remains closed until that thing is opened. The place picker narrows this tab to
@@ -1021,125 +1020,25 @@ marker; it rebuilds when the available snapshot is behind. If the small presence
 fails, it requests that bounded fallback.
 A real change replaces previously loaded authored pages before the browser saves the marker.
 
-Every named thing in the window carries the same lazy 32x32 portrait used by Live: place
-contents, owner-chosen map-card headings, Things rows, Live specimens and interaction
-references, Happenings references, and Archive thing results. Portraits have no backing
+Every named thing in the window carries the same lazy 32x32 portrait: place
+contents, owner-chosen map-card headings, Things rows, Happenings references, and Archive
+thing results. Portraits have no backing
 box, so transparent pixels show the page ground. Notes never receive portraits.
 
-THE LIVE CARTOGRAPHIC PLATE
----------------------------
-The canonical /window/live is a tab in the same /window observatory; Map remains
-unchanged. It keeps the city sign, green console strip, cream frame, square ink borders,
-hard shadow, mono captions, footer, and read-only promise. It is a cartographic plate of
-the verified recent past, not a game viewport or simulated present.
+THE STANDALONE LIVE PAGE
+------------------------
+The canonical live view is https://1f3d9.com/live/. It is a read-only presentation of
+the same public city record. Add ?place=<id> to open a room or
+?resident=<handle-or-id> to follow a resident. The window keeps Live ↗ in its tab row as
+a link that opens the page in a new browser tab; Live is not a window panel. A public
+room's Place view offers Watch live for that room.
 
-The selected focus place supplies one bounded surveyed ground. Its drawing tiles that
-ground at reduced opacity so residents and things read clearly on top; an ordinary
-unset place gets plain paper ground instead, deliberately blank stays blank, and the
-immutable world tiles its stored founder-authored drawing the same way. After the complete
-lightweight directory loads, direct children receive natural, non-grid rectangular plots
-in creation-id order. Allocation is append-stable: a later place takes open ground and
-never moves an existing plot. Direct residents and named things use stable, naturally
-scattered positions across the available ground; adding a later ID does not move an older
-mark. Plot coordinates are browser presentation, not city records.
-
-Residents walk above the ground and plots. Wheel or visible +/- zoom, two-pointer pinch,
-one-pointer or arrow-key pan, and the visible Center control run from a hard furthest-out
-scale of 0.8 through 2.2. Center or 0 returns to scale 1 around the focused resident or
-raised item when one exists, otherwise around readable home ground for the current place;
-it never shrinks the whole survey into view. The controls remain viewer-only, and there is
-no Fit control or slider. At a readable zoom, pointer hover or keyboard focus brings the
-complete covered item and its label above every peer. On touch screens, the first tap
-brings that complete unit forward and the second tap opens it. A shown tag carries the
-complete untruncated handle. Plot nameplates keep a single-line ellipsis; hovering,
-keyboard-focusing, or the first tap on a resident, thing, or plot nameplate also opens one
-small popover beside it, carrying that item's public facts (including the complete place
-name a nameplate ellipsis truncates) plus one control that opens its record. It never
-covers the item, stays inside the viewer's plate, and closes on Escape, a press elsewhere,
-or when its item leaves the plate; opening, moving, or closing it costs no request.
-Detailed plots paint only in and just beyond the visible camera; every farther plot remains
-a finger-sized reachable marker. Live never draws every detailed plot at once, and camera
-budgeting changes no fixed ground, selection, exact count, or public record.
-Click a plot to drill through shareable tree breadcrumbs. An unoverflowed place shows up
-to six residents and six things. Overflow protects control ground, leaving four resident
-walker positions and five thing specimens, and reports every omission as an exact +N more
-control. Show more reveals the omitted loaded residents or named things, continues a
-pending thing-names page when one exists, and rearranges the scene so every represented
-item remains reachable. Browser-local Focus and shareable Follow clear one
-another. Finite plate positions prioritize the chosen resident and only interaction
-residents and things safely named by public records; the remaining +N stays exact. The
-complete Live roster marks every safely identified resident partner, and the Focus /
-Interactions board lists every safely identified interacted thing outside those finite
-positions. If the focused resident leaves a drilled plate, the board names the actual
-outside location instead of drawing the resident on the wrong ground or changing the URL.
-Before named metadata arrives, an interaction stays listed as Thing #<id> · recorded in
-<place>. A later move does not erase it; loaded metadata can name both places.
-
-Live automatically reads at most eight 200-resident pages, or 1,600 residents, before
-printing exact crowd overflow. Exact thing counts instead sum live_survey across each
-displayed subtree. Live paints before thing names finish and requests one newest page of
-at most 50 named things. It follows that cursor only after Show more asks for the missing
-names. Loading or failure
-leaves the plate and exact +N visible with a named retry; a missing or contradictory survey
-prints no exact badge for either count. If another resident page remains, Live keeps the verified cursor
-and offers a real Continue action. Hidden tabs pause that automatic continuation.
-Each displayed place also has a small notes · N control only when the sum of every
-live_survey notes count exactly equals the snapshot conversation total. N is that place's
-exact direct-note count. The control opens an in-page panel at
-/window/live?place=<id>&notes=open. It reads one newest-first page of at most 50 direct
-room notes when opened, reads another only when the reader chooses Continue, and reports
-Showing N of N. Closing, leaving Live, or hiding the tab stops further note reads. A quiet
-room keeps its exact control but the panel shows only the quiet-room line, never note bodies.
-Live does not block on a redundant focused-place outline when the complete directory and
-survey already contain the selected place. Every actually required focused-place,
-directory, census, history, thing-names, or drawing failure retains its own Retry action.
-
-The first Live read automatically follows at most eight 200-row marker-covered
-/api/events?within_seconds=1800 pages, or 1,600 opening events. If another page remains,
-it keeps the verified cursor and offers Continue recent history; it does not call history
-complete until the viewer continues. Each event carries its commit-safe change_id, so
-opening history and later /api/changes rows share one deduplicated order. Opening rows
-paint settled residue without replay. Later rows learned while the tab stays visible replay
-once in ascending change order for each resident; the first successful catch-up after a
-hidden tab also settles directly without stale replay. Every mover reaches its endpoint.
-The followed resident, hovered residents, and nearest six movers use door-aware routes,
-two or three footsteps that fade over two seconds, and eligible bubbles. Other movers glide
-at a constant rate with no route or bubble and regain detail when capacity is free. Only the
-followed resident keeps a full route, fading for 4.5 seconds after settlement. Changed visual
-state is batched into one animation frame and completions into 250 ms; hidden tabs, hidden
-plates, and off-camera routes schedule no animation frame. Confirmed floor tiles survive
-unrelated redraws. This presentation budget changes no verified row, order, or history. Notes make
-numbered 10-minute footnote marks and one square speech bubble with an opaque paper fill,
-ink border, and drop tail. Its first line is capped at 60 characters with an honest ellipsis;
-the newest revealed note wins one bubble per resident. Selecting the bubble opens the notes
-panel at that focused row, where the exact full room note bodies remain. A newly observed make gets one 600 ms place pulse. Use pulses only the displayed
-source_thing_id at its committed place_id; an unavailable exact specimen gets no guessed
-visual. Give keeps its typed transfer event and consume keeps its typed thing_withdrawn
-event; neither receives an invented Live mark. The only drawn-in position is the disclosed
-straight frame between recorded move endpoints.
-
-The ordinary window reads every 60 seconds. While Live is visible, a read with events
-schedules 25 seconds; quiet reads back off through 60, 120, 240, then 300 seconds. Reads
-pause in a hidden tab. The honesty clock names the last change and next read, or says the
-city has been still and moves only when residents act.
-
-Exactly one ALPHA chip says: This view is new. It draws the same public record as every
-other tab — if it disagrees with them, they are right.
-
-Vercel previews, and only previews, expose a visible repeatable proof-scene control. It
-resets an in-memory scene showing concurrent recorded movement, speech, thing use, a crowded
-room, both inline Show more controls, forced place-load failure, working Retry, and
-reduced-motion evidence without waiting for live traffic. Its workshop has 52 notes so the
-notes control, first 50 rows, Continue, and final 52 of 52 state can be checked directly.
-
-At the existing mobile breakpoint, plate, notes panel, and roster stack vertically while the
-bounded plate keeps visible zoom, Center, pinch, pan, and a CSS full-screen Live mode with
-a clear exit and Back support. The same hard 0.8 to 2.2 zoom bounds apply. Under
-prefers-reduced-motion, replay and pulses stop while final trails, note marks, and bubbles
-appear immediately. Under forced-colors, borders, trails, marks, bubbles, focus,
-and labels remain distinct. Cut absolutely: infinite or full-viewport terrain, a zoom
-slider, idle animation, looping sprite movement, interpolation beyond one recorded endpoint
-glide, guessed routes, and any new dependency.
+The live page uses the city's existing public APIs. Marker-covered outline reads may add
+live_survey, one body-free {id,parent_id,things,notes} row for every public place; things
+and notes are exact direct counts at that checkpoint. Full and directory responses omit
+live_survey. GET /api/replay?span=1h|2h|6h|24h remains the bounded, checkpoint-pinned
+replay read. Drawing JSON, drawing history, and thumbnail routes remain the canonical
+public drawing reads.
 
 ACTION REQUESTS
 ---------------

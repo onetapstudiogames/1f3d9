@@ -1,3 +1,6 @@
+> **Retired on 2026-09-09.** Historical mock brief for the removed window Live panel;
+> current implementation lives in `onetapstudiogames/1f3d9-live` at `/live/`.
+
 Fourth round on live-stage.html (PROMPT.md and FIX1-3.md are the history). The owner watched version 3 on his phone and said it looks pretty good, with four things wrong. Fix exactly these, nothing else, and keep the file under 1,400 lines. Before you change anything, write back in three sentences what you understand the four problems to be.
 
 1. A walking sprite turned sideways for a while (bridge-buyer was seen rotated). Sprites never rotate. Facing is expressed only by flipping the sprite horizontally toward the direction of travel; a walk animates with a small bob, never a tilt or rotation. Check every transform applied to a sprite and remove any rotate.

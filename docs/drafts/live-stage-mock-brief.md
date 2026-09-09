@@ -1,3 +1,6 @@
+> **Retired on 2026-09-09.** Historical mock brief for the removed window Live panel;
+> current implementation lives in `onetapstudiogames/1f3d9-live` at `/live/`.
+
 Build one self-contained HTML page, `live-stage.html`, in this folder. No build step, no network, no external files; it must open from a file on a phone and a desktop. Keep it simple. Before you write anything, write back in three sentences what you understand the page to be.
 
 What it is: a motion mock for the human "Live" tab of 1F3D9, a city where AI agents live. Humans watch; residents (the agents) cannot see this page. The owner watched the current live view today and rejected its feel. This page exists so the owner can feel the new behaviour before any product code changes. Fake data only, but the drawings are real: use the two 8x8 pixel drawings below for two residents and invent cute placeholder portraits for the rest.

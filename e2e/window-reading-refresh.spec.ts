@@ -478,7 +478,7 @@ test('a failed older-history check keeps its held copy while the city and detail
   }
 })
 
-for (const view of ['Map', 'Live'] as const) {
+for (const view of ['Map'] as const) {
   test(`${view} refresh never rechecks a complete body in a hidden reading tab`, async ({ page, baseURL }) => {
     const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
     violationsByPage.set(page, fixture.networkViolations)

@@ -7,6 +7,84 @@ const CREDENTIAL_RECOVERY_INSTRUCTION =
   'That looks like a credential. Never put it in a public URL. If it is a resident key, replace it now; if it is a recovery code, create a fresh recovery set.'
 
 export function registerPublicWindowDetailHistoryAndSafety() {
+  test('record detail stays open for content clicks and closes on its backdrop', async ({ page }) => {
+    await page.goto('/window/thing/401')
+    const detail = page.locator('#record-detail')
+    await expect(detail.locator('#record-detail-title')).toHaveText('field_lantern')
+
+    await detail.locator('article').click()
+    await expect(detail).toBeVisible()
+
+    await page.mouse.click(1, 1)
+    await expect(detail).toBeHidden()
+  })
+
+  test('thing drawing readback is exact and history loads only when requested', async ({ page }) => {
+    const drawing = { palette: ['#174d3c'], indices: Array.from({ length: 64 }, () => 0) }
+    const snapshot = {
+      state: 'complete', presentation_state: 'complete', description: 'A green lantern.',
+      drawing, rows: Array.from({ length: 8 }, () => '0 0 0 0 0 0 0 0'), source: 'thing',
+    }
+    let currentReads = 0
+    let historyReads = 0
+    await page.route('**/api/drawing/thing/401', route => {
+      currentReads += 1
+      return route.fulfill({ json: { type: 'thing', id: 401, ...snapshot } })
+    })
+    await page.route('**/api/drawing/thing/401/history**', route => {
+      historyReads += 1
+      return route.fulfill({ json: {
+        type: 'thing', id: 401,
+        revisions: [{
+          id: 18, slot_variant_name: null,
+          previous: { ...snapshot, state: 'undrawn', presentation_state: 'undrawn',
+            description: null, drawing: null, rows: null, source: 'none' },
+          current: snapshot,
+          author: { id: 49, handle: 'browser-resident', relation: 'self' },
+          created_at: '2026-08-28T15:04:05.000Z',
+        }],
+        page: { limit: 20, has_more: false, next_before: null },
+      } })
+    })
+
+    await page.goto('/window/place/11')
+    await expect(page.locator('#window-status')).toContainText('Watching')
+    await page.locator('#place-things .thing-detail-link', { hasText: 'field_lantern' }).click()
+    const detail = page.locator('#record-detail')
+    await expect(detail.locator('.drawing-exact-readback')).toBeVisible()
+    await expect(detail.locator('[data-drawing-palette="true"]')).toHaveText('#174d3c')
+    await expect(detail.locator('[data-drawing-indices="true"]')).toHaveText(
+      JSON.stringify(drawing.indices),
+    )
+    const rows = detail.locator('[data-drawing-row="true"]')
+    await expect(rows).toHaveCount(8)
+    expect(await rows.allTextContents()).toEqual(snapshot.rows)
+    const canvas = detail.locator('.drawing-detail-canvas canvas').first()
+    await expect(canvas).toBeVisible()
+    expect(await canvas.evaluate(node => {
+      const drawingCanvas = node as HTMLCanvasElement
+      const context = drawingCanvas.getContext('2d')
+      return {
+        width: drawingCanvas.width,
+        height: drawingCanvas.height,
+        pixel: context ? [...context.getImageData(0, 0, 1, 1).data] : [],
+      }
+    })).toEqual({ width: 8, height: 8, pixel: [23, 77, 60, 255] })
+    expect(currentReads).toBe(1)
+    expect(historyReads).toBe(0)
+
+    await detail.getByRole('button', { name: 'Show drawing history' }).click()
+    const revision = detail.locator('.drawing-history-revision')
+    await expect(revision).toHaveCount(1)
+    await expect(revision.getByRole('heading', { name: 'Revision #18' })).toBeVisible()
+    await expect(revision.locator('.drawing-history-meta')).toContainText(
+      'by browser-resident · self',
+    )
+    await expect(revision.getByRole('heading', { name: 'Before' })).toBeVisible()
+    await expect(revision.getByRole('heading', { name: 'After' })).toBeVisible()
+    expect(historyReads).toBe(1)
+  })
+
   test('Archive refuses a credential without searching or changing its address', async ({ page }) => {
     const searchRequests: string[] = []
     page.on('request', request => {

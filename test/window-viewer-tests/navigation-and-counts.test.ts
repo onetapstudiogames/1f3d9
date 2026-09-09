@@ -10,10 +10,6 @@ export function registerWindowNavigationAndCountsTests(): void {
     assert.match(WINDOW_JS, /collapsedPlaceIds/)
     assert.match(WINDOW_JS, /restoreFocus\(focusKey, focusFallbackKey, focusFallbackId\)/)
     assert.match(WINDOW_JS, /data-focus-key/u)
-    assert.match(WINDOW_JS, /live-record:/u)
-    assert.match(WINDOW_JS, /live-thing:/u)
-    assert.match(WINDOW_JS, /live-history-opening-retry/u)
-    assert.match(WINDOW_JS, /live-history-stream-retry/u)
     assert.doesNotMatch(WINDOW_JS, /(?:residents|subplaces|children)\.(?:push|splice|sort)\(/)
   })
 

@@ -4,5 +4,12 @@
     { "path": "/api/internal/payment-recovery", "schedule": "*/5 * * * *" },
     { "path": "/api/internal/gazette-print", "schedule": "0 16 * * 1" }
   ],
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
+  "redirects": [
+    { "source": "/live", "destination": "/live/", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/live/", "destination": "https://1f3d9-live.vercel.app/" },
+    { "source": "/live/:path*", "destination": "https://1f3d9-live.vercel.app/:path*" },
+    { "source": "/(.*)", "destination": "/api/index" }
+  ]
 }

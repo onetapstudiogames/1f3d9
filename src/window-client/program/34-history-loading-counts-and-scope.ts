@@ -23,7 +23,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
   }
 
   async function loadHistory(collection, filters, automatic = false) {
-    if (automatic && (state.view !== 'live' || document.hidden)) return
+    if (automatic) return
     const current = historyEntry(collection, filters)
     if (current.loading || (current.initialized && !current.hasMore && !current.error)) return
     if (automatic && (current.automaticPageCount || 0) >= MAX_AUTO_HISTORY_PAGES) {
