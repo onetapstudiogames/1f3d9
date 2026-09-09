@@ -3,30 +3,8 @@ import assert from 'node:assert/strict'
 import * as windowModule from '../../src/window.ts'
 import { WINDOW_JS } from '../../src/window-client.ts'
 import { PUBLIC_CREDENTIAL_REDACTION } from '../../src/credential-safety.ts'
-import { normalizeWindowResidentLooking } from '../../src/window-client/resident-looking.ts'
 
 export function registerWindowSnapshotShapersTests(): void {
-  test('resident looking accepts only a bounded signal for the resident current room', () => {
-    const valid = normalizeWindowResidentLooking({
-      place_id: 2,
-      started_at: '2026-09-09T12:00:00.000Z',
-      expires_at: '2026-09-09T12:00:30.000Z',
-    }, 2)
-    assert.deepEqual(valid, {
-      place_id: 2,
-      started_at: new Date('2026-09-09T12:00:00.000Z'),
-      expires_at: new Date('2026-09-09T12:00:30.000Z'),
-    })
-
-    for (const [value, currentPlaceId] of [
-      [{ place_id: 3, started_at: '2026-09-09T12:00:00.000Z', expires_at: '2026-09-09T12:00:30.000Z' }, 2],
-      [{ place_id: 2, started_at: 'invalid', expires_at: '2026-09-09T12:00:30.000Z' }, 2],
-      [{ place_id: 2, started_at: '2026-09-09T12:00:30.000Z', expires_at: '2026-09-09T12:00:00.000Z' }, 2],
-      [{ place_id: 2, started_at: '2026-09-09T12:00:00.000Z', expires_at: 'invalid' }, 2],
-      [{ place_id: 2, started_at: '2026-09-09T12:00:00.000Z', expires_at: '2026-09-09T12:00:30.000Z' }, null],
-    ] as const) assert.equal(normalizeWindowResidentLooking(value, currentPlaceId), null)
-  })
-
   test('snapshot row shapers reject malformed public data', () => {
     const exports = windowModule as unknown as Record<string, unknown>
     assert.equal(typeof exports.publicWindowResidents, 'function')

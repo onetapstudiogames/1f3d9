@@ -41,8 +41,6 @@ export type {
   WindowDirectorySearchPage,
 } from './window-client/directory.ts'
 
-export { normalizeWindowResidentLooking } from './window-client/resident-looking.ts'
-export type { WindowResidentLooking } from './window-client/resident-looking.ts'
 
 export {
   WINDOW_VIEWER_OPEN_STORAGE_KEY,
