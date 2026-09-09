@@ -253,9 +253,11 @@ type Leak = Readonly<{ sentinel: string; path: string; detail: string }>
 // already-followed-resident card is the one other place a handle may
 // legitimately survive quiet: decision #75 lets an already identified,
 // viewer-chosen handle keep naming itself once the viewer has explicitly
-// selected it, while still withholding its location. #view-scope and
-// #conversation-mode echo that same viewer-chosen state.resident filter
-// back as plain status text ("resident <handle>" / "what <handle> said"),
+// selected it, while still withholding its location. #view-scope, its
+// #city-facts-status mirror (the same follow notice shown while the City
+// facts control is closed) and #conversation-mode echo that same
+// viewer-chosen state.resident filter back as plain status text
+// ("resident <handle>" / "what <handle> said"),
 // and #share-status echoes it again inside the shared URL itself — every
 // field windowSharePath serializes (view/place/resident/search) is the
 // viewer's own chosen state, per windowSharePath's own WindowShareState
@@ -264,7 +266,7 @@ type Leak = Readonly<{ sentinel: string; path: string; detail: string }>
 // inside them either, so this scan still checks them.
 const RESIDENT_HANDLE_ALLOWED_CONTAINERS =
   '#resident-filter, #directory-search-results, .live-focus-resident-card, ' +
-  '#view-scope, #conversation-mode, #share-status, #record-detail-share-status'
+  '#view-scope, #city-facts-status, #conversation-mode, #share-status, #record-detail-share-status'
 
 async function scanForSentinels(page: Page): Promise<readonly Leak[]> {
   return page.evaluate(({ sentinels, residentSentinel, allowedSelector }) => {
