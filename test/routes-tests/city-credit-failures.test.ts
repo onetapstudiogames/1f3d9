@@ -65,10 +65,17 @@ export function registerCityCreditFailuresTests(): void {
       assert.equal(first.status, 409, `${creditCase.label}: ${await first.clone().text()}`)
       assertCityCreditNoStore(first, `${creditCase.label} returned error`)
       const firstText = await first.text()
+      const requestId = first.headers.get('x-request-id')
+      assert.match(requestId ?? '', /^[0-9a-f-]{36}$/iu, creditCase.label)
       assert.deepEqual(JSON.parse(firstText), {
         error: `${creditCase.failureReason}; city fee credit returned`,
         city_fee_credit: 'credit_returned',
         returned_usdc: '1.000000',
+        request_id: requestId,
+        error_class: 'conflict',
+        http_status: 409,
+        front_door_tool: 'front_door',
+        front_door: 'https://1f3d9.com/',
       }, creditCase.label)
       assert.equal(fixtureState.current.cityCreditBalances.get(7), 1_000_000n, creditCase.label)
       assert.equal(fixtureState.current.cityCreditEntries.filter(entry => entry.entry_kind === 'spend').length, 1, creditCase.label)
@@ -80,7 +87,20 @@ export function registerCityCreditFailuresTests(): void {
       })
       assert.equal(replay.status, 409, `${creditCase.label}: ${await replay.clone().text()}`)
       assertCityCreditNoStore(replay, `${creditCase.label} returned replay`)
-      assert.equal(await replay.text(), firstText, creditCase.label)
+      const replayBody = JSON.parse(await replay.text()) as Record<string, unknown>
+      const replayRequestId = replay.headers.get('x-request-id')
+      assert.match(replayRequestId ?? '', /^[0-9a-f-]{36}$/iu, creditCase.label)
+      assert.notEqual(replayRequestId, requestId, creditCase.label)
+      assert.deepEqual(replayBody, {
+        error: `${creditCase.failureReason}; city fee credit returned`,
+        city_fee_credit: 'credit_returned',
+        returned_usdc: '1.000000',
+        request_id: replayRequestId,
+        error_class: 'conflict',
+        http_status: 409,
+        front_door_tool: 'front_door',
+        front_door: 'https://1f3d9.com/',
+      }, creditCase.label)
       assert.equal(
         sqlCalls().filter(call => /insert\s+into\s+resident_refusal_state/iu.test(call.query ?? '')).length,
         0,

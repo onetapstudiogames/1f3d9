@@ -10,6 +10,19 @@ import {
   postRaw,
 } from '../helpers/paypal-credit-route-fixtures/route-harness.ts'
 
+async function assertUnverifiedWebhookFailure(response: Response): Promise<void> {
+  const requestId = response.headers.get('x-request-id')
+  assert.match(requestId ?? '', /^[0-9a-f-]{36}$/iu)
+  assert.deepEqual(await response.json(), {
+    error: 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
+    request_id: requestId,
+    error_class: 'auth_required',
+    http_status: 401,
+    front_door_tool: 'front_door',
+    front_door: 'https://1f3d9.com/',
+  })
+}
+
 export function registerWebhookVerificationTests(): void {
   test('unverified PayPal webhooks cannot create credit, ledger rows, or delivery evidence', async t => {
     const cases = [
@@ -100,9 +113,7 @@ export function registerWebhookVerificationTests(): void {
     ))
 
     assert.equal(response.status, 401, await response.clone().text())
-    assert.deepEqual(await response.json(), {
-      error: 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
-    })
+    await assertUnverifiedWebhookFailure(response)
     assert.equal(paypal.calls.length, 0, 'unsigned evidence must not reach PayPal')
     assert.equal(database.purchases.size, 0)
     assert.equal(database.events.size, 0)
@@ -137,9 +148,7 @@ export function registerWebhookVerificationTests(): void {
         ))
 
         assert.equal(response.status, 401, await response.clone().text())
-        assert.deepEqual(await response.json(), {
-          error: 'PayPal webhook signature was not verified; PayPal should retry with its current signed transmission headers.',
-        })
+        await assertUnverifiedWebhookFailure(response)
         assert.equal(paypal.calls.length, 0, 'malformed evidence must not reach PayPal')
         assert.equal(database.purchases.size, 0)
         assert.equal(database.events.size, 0)

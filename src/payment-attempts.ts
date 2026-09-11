@@ -230,32 +230,28 @@ async function runQuery(
 export async function paymentResponseReplayReady(
   database: PaymentAttemptDatabase,
 ): Promise<boolean> {
-  try {
-    const row = (await runQuery(database, `
-      /* payment-attempts:response-replay-ready */
-      SELECT (
-        EXISTS (
-          SELECT 1
-          FROM pg_catalog.pg_attribute attribute
-          JOIN pg_catalog.pg_class relation
-            ON relation.oid = attribute.attrelid
-          JOIN pg_catalog.pg_namespace namespace
-            ON namespace.oid = relation.relnamespace
-          WHERE namespace.nspname = 'public'
-            AND relation.relname = 'payment_attempts'
-            AND attribute.attname = 'response_body_bytes'
-            AND attribute.attnum > 0
-            AND NOT attribute.attisdropped
-        )
-        AND to_regprocedure(
-          'public.complete_payment_attempt(text,text,jsonb,smallint,jsonb,bytea)'
-        ) IS NOT NULL
-      ) AS ready
-    `, []))[0] as Record<string, unknown> | undefined
-    return row?.ready === true || row?.ready === 't'
-  } catch {
-    return false
-  }
+  const row = (await runQuery(database, `
+    /* payment-attempts:response-replay-ready */
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_attribute attribute
+        JOIN pg_catalog.pg_class relation
+          ON relation.oid = attribute.attrelid
+        JOIN pg_catalog.pg_namespace namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = 'public'
+          AND relation.relname = 'payment_attempts'
+          AND attribute.attname = 'response_body_bytes'
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+      )
+      AND to_regprocedure(
+        'public.complete_payment_attempt(text,text,jsonb,smallint,jsonb,bytea)'
+      ) IS NOT NULL
+    ) AS ready
+  `, []))[0] as Record<string, unknown> | undefined
+  return row?.ready === true || row?.ready === 't'
 }
 
 function integer(value: unknown): number | null {

@@ -6,6 +6,7 @@ import {
 } from './credential-safety.ts'
 import { IDENTITY_JSON_DOOR_PATHS } from './identity-api.ts'
 import { PAIR_DOOR_PATH } from './pair.ts'
+import { apiFailureResponse } from './api-failure.ts'
 
 const PRIVATE_API_READS = new Set(['/api/me'])
 // Derived from the same constants identity-api.ts and pair.ts mount their
@@ -34,6 +35,15 @@ function readablePublicContentType(value: string): boolean {
   return /(?:^|\s|;)(?:application\/(?:[^;]+\+)?json|text\/plain)(?:\s|;|$)/i.test(value)
 }
 
+function publicWithheldFailure(c: Context): Response {
+  c.res.headers.delete('Content-Length')
+  c.header('Cache-Control', 'no-store')
+  return apiFailureResponse(c, 500, {
+    error: PUBLIC_RESPONSE_WITHHELD,
+    error_name: 'public_response_withheld',
+  }, { event: 'public_response_withheld' })
+}
+
 /**
  * Last response boundary for public HTTP APIs. It preserves status and headers
  * when field-level redaction succeeds and returns a generic 500 only when a
@@ -50,6 +60,11 @@ export async function publicResponseSafety(c: Context, next: Next): Promise<void
   const guarded = safeguardPublicPayload(rawText, contentType)
   if (!guarded.changed) return
 
+  if (guarded.withheld) {
+    c.res = publicWithheldFailure(c)
+    return
+  }
+
   const headers = new Headers(c.res.headers)
   headers.delete('content-length')
   c.res = new Response(guarded.text, {
@@ -62,6 +77,6 @@ export async function publicResponseSafety(c: Context, next: Next): Promise<void
 export function publicJson(c: Context, value: unknown) {
   const sanitized = sanitizePublicValue(value)
   return sanitized.withheld
-    ? c.json({ error: PUBLIC_RESPONSE_WITHHELD }, 500)
+    ? publicWithheldFailure(c)
     : c.json(sanitized.value)
 }

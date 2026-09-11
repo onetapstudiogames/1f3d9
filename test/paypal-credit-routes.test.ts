@@ -29,18 +29,29 @@ test('every dormant PayPal route returns a caller-specific config-first 503 with
     authenticate: async () => { authCalls += 1; throw new Error('must not authenticate') },
     fetcher: (async () => { fetchCalls += 1; throw new Error('must not fetch') }) as typeof fetch,
   })
-  const responses = await Promise.all([
-    app.request('/api/city-credit/paypal/residents/not-a-number'),
-    app.request('/api/city-credit/paypal/orders', { method: 'POST', body: '{broken' }),
-    app.request('/api/city-credit/paypal/orders/not-an-id/capture', { method: 'POST' }),
-    app.request('/api/city-credit/paypal/allowances', { method: 'POST' }),
-    app.request('/api/city-credit/paypal/webhook', { method: 'POST' }),
-  ])
+  const logs: string[] = []
+  const originalError = console.error
+  console.error = (...values: unknown[]) => logs.push(values.map(String).join(' '))
+  let responses: Response[]
+  try {
+    responses = await Promise.all([
+      app.request('/api/city-credit/paypal/residents/not-a-number'),
+      app.request('/api/city-credit/paypal/orders', { method: 'POST', body: '{broken' }),
+      app.request('/api/city-credit/paypal/orders/not-an-id/capture', { method: 'POST' }),
+      app.request('/api/city-credit/paypal/allowances', { method: 'POST' }),
+      app.request('/api/city-credit/paypal/webhook', { method: 'POST' }),
+    ])
+  } finally {
+    console.error = originalError
+  }
 
   const lookupFailure = await responses[0]!.json() as Record<string, unknown>
   assert.equal(responses[0]!.status, 503)
   assert.match(String(lookupFailure.error), /not configured[\s\S]*retry this lookup/iu)
   assert.equal(lookupFailure.payment_started, false)
+  assert.equal(lookupFailure.request_id, responses[0]!.headers.get('x-request-id'))
+  assert.equal(lookupFailure.error_class, 'city_fault')
+  assert.equal(lookupFailure.http_status, 503)
 
   const orderFailure = await responses[1]!.json() as Record<string, unknown>
   assert.equal(responses[1]!.status, 503)
@@ -68,6 +79,12 @@ test('every dormant PayPal route returns a caller-specific config-first 503 with
   assert.deepEqual({ databaseCalls, authCalls, fetchCalls }, {
     databaseCalls: 0, authCalls: 0, fetchCalls: 0,
   })
+  assert.equal(logs.length, 5)
+  for (const response of responses) {
+    const requestId = response.headers.get('x-request-id')
+    assert.ok(requestId)
+    assert.equal(logs.filter(line => line.includes(requestId)).length, 1)
+  }
 })
 
 test('unusable declared lengths reject before DB or network work', async () => {
