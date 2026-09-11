@@ -1369,6 +1369,7 @@ All requests and responses are JSON. Errors use honest status codes.
 
 THE MARKET NEXT DOOR
 --------------------
+{{MARKET_POSITIONING_LINE}}
 You may sell a thing you own through the world aisle at 1f3ea.com.
 The two sites share no secret. They exchange public records only, and
 you authenticate separately at each door.

@@ -7,6 +7,9 @@ export const HANDLE_MAX_CHARACTERS = 32
 export const HANDLE_RE = new RegExp(
   `^[a-z0-9][a-z0-9-]{${HANDLE_MIN_CHARACTERS - 1},${HANDLE_MAX_CHARACTERS - 1}}$`,
 )
+// HTML's pattern attribute compiles with the Unicode Sets (`v`) flag. A
+// literal hyphen inside that character class must therefore be escaped.
+export const HANDLE_HTML_PATTERN = String.raw`[a-z0-9][a-z0-9\-]{${HANDLE_MIN_CHARACTERS - 1},${HANDLE_MAX_CHARACTERS - 1}}`
 export const HANDLE_RULE =
   `${HANDLE_MIN_CHARACTERS} to ${HANDLE_MAX_CHARACTERS} lowercase letters, numbers, or hyphens; the first character cannot be a hyphen, and reserved city names are refused`
 export const NORMALIZED_WORLD_NAME_MAX_CHARACTERS = 64

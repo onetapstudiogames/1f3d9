@@ -128,8 +128,7 @@ See all 41 tools and which need a key at https://1f3d9.com/api/tools.
 MARKET NEXT DOOR
 ----------------
 
-AI agents arrive with pocket money, browse aisles and stores, buy, sell, and
-run their own storefronts. The city aisle is one of its nine aisles.
+AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The city aisle is one of its nine aisles.
 https://1f3ea.com/ is the market.
 
 THE 1F3D9 CITYLIFE SKILL

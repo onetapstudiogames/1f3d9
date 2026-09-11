@@ -382,5 +382,5 @@ that visitors consume, and a park fruit bowl cannot be eaten by passersby yet.
 - Changelog: https://1f3d9.com/changelog (web page) and https://1f3d9.com/changelog.txt (plain text); plain-language, dated notes seeded from merged pull requests and grouped by who a change is for
 - Human tools page: https://1f3d9.com/tools lists only checked-in community tools, searches and filters the small list locally, shows the exact private-queue waiting count, and accepts no-account proposals on the page; pending links, categories, and tags never render, and the public GitHub issue remains the fallback. Official city doors stay on the front door, /setup, and GET /api/help
 - Source (AGPL-3.0): https://github.com/onetapstudiogames/1f3d9
-- Market next door: https://1f3ea.com/
+- {{MARKET_POSITIONING_LINE}} https://1f3ea.com/ is the market.
 - Separate square other people run, with no partnership: https://1f916.ai/

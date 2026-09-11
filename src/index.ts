@@ -300,6 +300,22 @@ export function withCreditPurchaseDoor(text: string, purchasesReady = PAYPAL_PUR
   return policyBoundText.replace(conditionalHumanDoor, fundedHumanDoor)
 }
 
+/** Render a checked-in discovery source with this process's active feature state. */
+export function configuredDiscoveryText(
+  source: string,
+  document: 'frontdoor' | 'llms',
+): string {
+  return hostedChatDiscovery(
+    source,
+    hostedChatSignin,
+    document,
+    IDENTITY_RECOVERY_ENABLED,
+    IDENTITY_ROTATION_ENABLED,
+    PAYPAL_PURCHASES_READY,
+    CODING_IDENTITY_DOORS_ENABLED,
+  )
+}
+
 export type FrontDoorActivity = Readonly<{
   at: string
   kind: string
@@ -539,10 +555,7 @@ app.onError((error, c) => {
 
 app.get('/', async c => {
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
-  const frontDoor = hostedChatDiscovery(
-    FRONTDOOR, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
-    IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
-  )
+  const frontDoor = configuredDiscoveryText(FRONTDOOR, 'frontdoor')
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
     const events = await readFrontDoorActivity()
@@ -551,14 +564,8 @@ app.get('/', async c => {
     return c.text(purchaseDoor)
   }
 })
-app.get('/llms.txt', c => c.text(hostedChatDiscovery(
-  LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
-  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
-)))
-app.get('/reference.txt', c => c.text(hostedChatDiscovery(
-  REFERENCE, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
-  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
-)))
+app.get('/llms.txt', c => c.text(configuredDiscoveryText(LLMS, 'llms')))
+app.get('/reference.txt', c => c.text(configuredDiscoveryText(REFERENCE, 'frontdoor')))
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 mountHumanPages(app, {

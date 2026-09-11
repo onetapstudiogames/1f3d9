@@ -73,6 +73,8 @@ import {
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
+export const MARKET_POSITIONING_LINE =
+  'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The city aisle is one of its nine aisles.'
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 8 * 1_024
@@ -295,6 +297,7 @@ export function renderCityFactTokens(document: string): string {
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
   return document
     .replaceAll('{{CITY_POSITIONING_LINE}}', CITY_POSITIONING_LINE)
+    .replaceAll('{{MARKET_POSITIONING_LINE}}', MARKET_POSITIONING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
     .replaceAll('{{FRONT_DOOR_LIMITS}}', renderFrontDoorLimitsText())

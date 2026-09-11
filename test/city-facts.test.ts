@@ -12,6 +12,7 @@ import {
   CITY_TOOL_CATALOG,
   FULL_TOOL_CATALOG_PATH,
   FRONT_DOOR_MAX_BYTES,
+  MARKET_POSITIONING_LINE,
   PAID_ACTIONS,
   OTHER_BASIC_ACTION_TOOLS,
   SKILL_VERSION_RECOMMENDED,
@@ -26,7 +27,12 @@ import { publicOfficialFacts, publicPhysicsFacts } from '../src/public-reference
 import { mcp } from '../src/mcp.ts'
 import { hostedChatDiscovery } from '../src/hosted-chat-discovery.ts'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
-import app, { appendFrontDoorActivity, withCreditPurchaseDoor } from '../src/index.ts'
+import { RESIDENT_LOOKING_TTL_SECONDS } from '../src/resident-looking-limits.ts'
+import app, {
+  appendFrontDoorActivity,
+  configuredDiscoveryText,
+  withCreditPurchaseDoor,
+} from '../src/index.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
@@ -46,6 +52,14 @@ test('one facts module drives current positioning, versions, paid actions, and e
   assert.match(CITY_FEE_RAILS_LINE, /USDC or one fee credit[^.]*frontier/iu)
   assert.match(CITY_FEE_RAILS_LINE, /one prepaid credit[^.]*place_rename/iu)
   assert.doesNotMatch(CITY_LIMIT_LINES.join('\n'), /Every city fee[^\n]*USDC or 1 fee credit/iu)
+  assert.equal(
+    MARKET_POSITIONING_LINE,
+    'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The city aisle is one of its nine aisles.',
+  )
+  for (const surface of [FRONTDOOR, LLMS, REFERENCE, CITY_HELP_DOORS.join('\n')]) {
+    assert.ok(surface.includes(MARKET_POSITIONING_LINE))
+  }
+  assert.match(CITY_HELP_DOORS.join('\n'), new RegExp(`for ${RESIDENT_LOOKING_TTL_SECONDS} seconds\\.`))
 
   for (const surface of [FRONTDOOR, LLMS]) {
     assert.match(surface, new RegExp(CITY_POSITIONING_LINE, 'u'))
@@ -192,15 +206,25 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   assert.match(front, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
   for (const line of CITY_LIMIT_LINES) assert.ok(front.includes(`- ${line}`), line)
 
-  const expectedLlms = hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, false, false, false)
   const llmsResponse = await app.request('/llms.txt')
   assert.equal(llmsResponse.status, 200)
-  assert.equal(await llmsResponse.text(), expectedLlms)
+  const llms = await llmsResponse.text()
+  assert.equal(llms, configuredDiscoveryText(LLMS, 'llms'))
+  assert.doesNotMatch(llms, /\{\{[^}]+\}\}/u)
+  assert.match(llms, new RegExp(CITY_POSITIONING_LINE, 'u'))
+  assert.ok(llms.includes(MARKET_POSITIONING_LINE))
+  for (const line of CITY_LIMIT_LINES) assert.ok(llms.includes(`- ${line}`), line)
 
-  const expectedReference = hostedChatDiscovery(REFERENCE, { ready: false }, 'frontdoor', false, false, false, false)
   const referenceResponse = await app.request('/reference.txt')
   assert.equal(referenceResponse.status, 200)
-  assert.equal(await referenceResponse.text(), expectedReference)
+  const reference = await referenceResponse.text()
+  assert.equal(reference, configuredDiscoveryText(REFERENCE, 'frontdoor'))
+  assert.doesNotMatch(reference, /\{\{[^}]+\}\}/u)
+  assert.match(reference, new RegExp(CITY_POSITIONING_LINE, 'u'))
+  assert.ok(reference.includes(MARKET_POSITIONING_LINE))
+  assert.ok(reference.includes(FULL_TOOL_CATALOG_PATH))
+  assert.match(reference, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
+  for (const line of CITY_HELP_DOORS) assert.ok(reference.includes(`- ${line}`), line)
 
   const helpResponse = await app.request('/api/help')
   assert.equal(helpResponse.status, 200)

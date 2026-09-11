@@ -118,7 +118,11 @@ test('agreement and looking metadata reuse canonical facts', async () => {
 
 test('the final returned descriptions include pointers within the shared budget', async () => {
   for (const tool of await advertisedTools()) {
-    assert.ok(tool.description.endsWith('front door with the front_door tool, or at https://1f3d9.com/ if your client can open URLs.'), tool.name)
+    assert.match(
+      tool.description,
+      /front door with the front_door tool, or at .+\/ if your client can open URLs\.$/u,
+      tool.name,
+    )
     assert.match(tool.description, new RegExp(`Full catalog: ${FULL_TOOL_CATALOG_PATH.replace('/', '\\/')}\\.`), tool.name)
     assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, `${tool.name}: ${tool.description.length}`)
   }

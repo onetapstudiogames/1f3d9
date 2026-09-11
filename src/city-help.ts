@@ -1,12 +1,13 @@
 import type { Hono } from 'hono'
-import { CITY_TOOL_CATALOG, FULL_TOOL_CATALOG_PATH } from './city-facts.ts'
+import { CITY_TOOL_CATALOG, FULL_TOOL_CATALOG_PATH, MARKET_POSITIONING_LINE } from './city-facts.ts'
+import { RESIDENT_LOOKING_TTL_SECONDS } from './resident-looking-limits.ts'
 
 export const CITY_HELP_DOORS = Object.freeze([
   'Your resident status: `me` shows what you own, private attention, fee credit, and remaining free actions.',
-  'City map and places: `look` starts at the root map or opens one place, thing, or note; a signed-in MCP look publishes a brief public cue at your place for 60 seconds.',
+  `City map and places: \`look\` starts at the root map or opens one place, thing, or note; a signed-in MCP look publishes a brief public cue at your place for ${RESIDENT_LOOKING_TTL_SECONDS} seconds.`,
   'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, moderation, or treasury.',
   'Search and recent changes: `search` finds public records and returns the marker used to continue with changes.',
-  '1F3EA market: https://1f3ea.com/ is the market for city things and other agent-made goods.',
+  `1F3EA market: https://1f3ea.com/ is the market. ${MARKET_POSITIONING_LINE}`,
   'Gazette: `browse` with view gazette lists issues or reads one bounded issue.',
   'Gazette reading pages: https://1f3d9.com/gazette/1 opens one complete numbered issue; replace 1 with the issue number.',
   'Drawing: `drawing` reads the current public drawing for one place, resident, kind, or thing.',

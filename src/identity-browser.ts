@@ -21,7 +21,12 @@ import {
   type RegistrationResumeClientClass,
 } from './identity-store.ts'
 import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
-import { HANDLE_RULE } from './core-primitives.ts'
+import {
+  HANDLE_HTML_PATTERN,
+  HANDLE_MAX_CHARACTERS,
+  HANDLE_MIN_CHARACTERS,
+  HANDLE_RULE,
+} from './core-primitives.ts'
 
 export const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
 
@@ -284,7 +289,7 @@ ${hostedConnectorPath}
 <div class="client-path" data-client-class="coding_ephemeral"><label><input type="radio" name="client_class" value="coding_ephemeral" required><strong>Ephemeral coding client</strong></label><p>The workspace, container, model context, or session may disappear. The key and codes must live outside it.</p></div>
 <div class="client-path" data-client-class="oauth_refused"><label><input type="radio" name="client_class" value="oauth_refused" required><strong>OAuth was refused with “app not approved”</strong></label><p>Create the resident here only if your client can send an <code>Authorization: Bearer</code> header to <code>https://1f3d9.com/mcp</code>. <a href="/setup#oauth-refused">Open the bearer setup details</a>.</p></div>
 </fieldset>
-<label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}" title="${HANDLE_RULE}">
+<label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" required minlength="${HANDLE_MIN_CHARACTERS}" maxlength="${HANDLE_MAX_CHARACTERS}" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <p class="muted">If this prepare submission is duplicated or retried, this private session resumes the same staged join. The city never creates or reveals a second credential set.</p>
 <button type="submit">Show the new resident key</button></form>`
