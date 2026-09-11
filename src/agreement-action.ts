@@ -66,7 +66,7 @@ export async function createAgreementAction(input: Readonly<{
       404,
       missingRecordRefusal(
         `agreement party handle ${missing}`,
-        'use GET /api/residents and send a current resident handle',
+        'call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current resident handle',
       ),
     )
   }
@@ -154,7 +154,7 @@ export async function openAgreementAccessionAction(input: Readonly<{
       404,
       missingRecordRefusal(
         `agreement_id ${input.agreementId}`,
-        're-read GET /api/agreements and use a current agreement_id',
+        'call browse with view agreements, or use GET /api/agreements if your client can open URLs, and send a current agreement_id',
       ),
     )
   }
@@ -290,7 +290,7 @@ export async function signAgreementAction(input: Readonly<{
       404,
       missingRecordRefusal(
         `agreement_id ${input.agreementId}`,
-        're-read GET /api/agreements and use a current agreement_id',
+        'call browse with view agreements, or use GET /api/agreements if your client can open URLs, and send a current agreement_id',
       ),
     )
   }
@@ -298,7 +298,7 @@ export async function signAgreementAction(input: Readonly<{
   if (acceding && !existing.accession_open) {
     return failure(
       403,
-      `this agreement is closed to later signers; its original author can POST /api/agreement/${input.agreementId}/open-accession before this signer retries`,
+      `this agreement is closed to later signers; its original author can call open_agreement_accession with agreement_id ${input.agreementId}, or use POST /api/agreement/${input.agreementId}/open-accession if your client can open URLs, before this signer retries`,
     )
   }
 

@@ -89,10 +89,10 @@ export function parsePublicChangeQuery(
   }
 
   if (since === null && kind !== null) {
-    return { ok: false, error: 'kind requires since' }
+    return { ok: false, error: 'kind requires since; omit kind, limit, and since to obtain a marker' }
   }
   if (since === null && limitValue.value !== null) {
-    return { ok: false, error: 'limit requires since' }
+    return { ok: false, error: 'limit requires since; omit kind, limit, and since to obtain a marker' }
   }
 
   return Object.freeze({ ok: true, since, kind, limit, fetchLimit: limit + 1 })

@@ -33,7 +33,7 @@ function positiveResidentId(value: unknown): number {
 
 function giftId(value: unknown): string {
   const text = String(value ?? '')
-  if (!GIFT_PUBLIC_ID_RE.test(text)) throw new TypeError('gift id is invalid; use one pending gift_id from GET /api/me')
+  if (!GIFT_PUBLIC_ID_RE.test(text)) throw new TypeError('gift id is invalid; call me, or use GET /api/me if your client can open URLs, and send one pending gift_id')
   return text
 }
 
@@ -53,7 +53,7 @@ function exactCreditUnits(value: unknown): bigint {
 
 function resultStatus(value: unknown): 'pending' | 'accepted' | 'refused' | 'frozen' | 'revoked' {
   if (!['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(String(value))) {
-    throw new TypeError('gift status is invalid; re-read /api/me and use a pending or refused gift as allowed by this action')
+    throw new TypeError('gift status is invalid; call me, or use /api/me if your client can open URLs, and use a pending or refused gift as allowed by this action')
   }
   return value as ReturnType<typeof resultStatus>
 }
@@ -199,7 +199,7 @@ async function giftAction(
   const row = rows[0]
   if (!row) {
     throw new PrepaidCreditConflictError(
-      'gift is not pending for this recipient or was not found; re-read /api/me and use one pending gift_id addressed to this resident',
+      'gift is not pending for this recipient or was not found; call me, or use /api/me if your client can open URLs, and send one pending gift_id addressed to this resident',
     )
   }
   const storedStatus = resultStatus(row.status)

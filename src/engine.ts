@@ -615,7 +615,7 @@ export async function moveResident(
   if (!destination) {
     throw new EngineError(
       404,
-      `destination place_id ${destinationId} was not found; use GET /api/map?view=outline&parent_id=${current.currentPlaceId} to choose a public adjacent destination`,
+      `destination place_id ${destinationId} was not found; call look with place_id ${current.currentPlaceId} and view outline, or use GET /api/map?view=outline&parent_id=${current.currentPlaceId} if your client can open URLs, to choose a public adjacent destination`,
     )
   }
   if (destination.retired_at != null) {

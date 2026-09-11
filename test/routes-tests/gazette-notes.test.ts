@@ -58,7 +58,7 @@ export function registerGazetteNotesTests(): void {
     const changed = await post('Exact Gazette submission. 🗞️ ')
     assert.equal(changed.status, 409)
     assert.deepEqual(await changed.json(), {
-      error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      error: 'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true',
     })
   })
 
@@ -167,7 +167,7 @@ export function registerGazetteNotesTests(): void {
       assert.equal(response.status, 500)
       const body = await response.json() as { error: string }
       assert.doesNotMatch(body.error, /identical[^.]*retry|retrying the identical|is safe/iu)
-      assert.match(body.error, /re-read[^.]*Gazette/iu)
+      assert.match(body.error, /Call browse with view gazette/iu)
       assert.match(body.error, /recent notes/iu)
       assert.equal(outerTransactions, 3, 'preflight, uncertain write, and canonical recovery all ran')
     } finally {
@@ -268,7 +268,7 @@ export function registerGazetteNotesTests(): void {
 
     assert.equal(response.status, 409)
     assert.deepEqual(await response.json(), {
-      error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      error: 'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true',
     })
     assert.equal(inserted('notes'), 0)
     assert.equal(inserted('events'), 0)

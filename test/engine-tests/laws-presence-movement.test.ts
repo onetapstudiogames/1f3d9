@@ -152,7 +152,7 @@ export function registerLawsPresenceMovementTests(): void {
     await assert.rejects(moveResident(7, 9, missing.db), (error: unknown) => (
       error instanceof EngineError
       && error.status === 404
-      && error.message === 'destination place_id 9 was not found; use GET /api/map?view=outline&parent_id=2 to choose a public adjacent destination'
+      && error.message === 'destination place_id 9 was not found; call look with place_id 2 and view outline, or use GET /api/map?view=outline&parent_id=2 if your client can open URLs, to choose a public adjacent destination'
     ))
   })
 

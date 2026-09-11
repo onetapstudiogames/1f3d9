@@ -25,7 +25,7 @@ test('city-credit refusals name the recovery path', () => {
     'city credit target key must be 1 to 240 safe non-secret bytes',
     'completed city credit response is unavailable because its stored response is missing; retry once, then contact the city operator',
     `operation is not eligible for city fee credit; use \${PAID_ACTIONS.join(', ')}`,
-    'resident was not found or city credit issuance conflicted; re-read GET /api/residents and retry with a current resident and the original source terms',
+    'resident was not found or city credit issuance conflicted; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current resident and the original source terms',
     'returned city credit response is unavailable because its stored response is missing; retry once, then contact the city operator',
   ])
 })
@@ -50,7 +50,7 @@ test('target-scope refusals name the usable target state', () => {
   expects('engine-target-scope.ts', [
     'database returned an invalid ${field}; retry once, then contact the city operator',
     'database returned an invalid result; retry once, then contact the city operator',
-    'kind target was not found; choose a current kind_id from GET /api/kinds',
+    'kind target was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and choose a current kind_id',
     'resident presence was not found; reconnect with the current resident key and retry',
     'target kind is not owned by you; choose a kind you own',
     'target place_id ${target.id} cannot be used because place_id is unset; send place_id and retry',

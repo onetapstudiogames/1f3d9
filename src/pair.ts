@@ -71,14 +71,14 @@ async function rejectNonEmptyBody(c: Context): Promise<Response | null> {
   } catch {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}',
+      'POST /api/pair takes an empty body, or {}, if your client can open URLs',
       'Retry with no body, or with exactly {}.',
     )
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length > 0) {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}',
+      'POST /api/pair takes an empty body, or {}, if your client can open URLs',
       'Retry with no body, or with exactly {}.',
     )
   }
@@ -96,7 +96,7 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
       return jsonError(
         c, 400, 'unexpected_form_fields',
         allowed.error,
-        'Retry POST /api/pair with no query string.',
+        'Retry POST /api/pair with no query string if your client can open URLs.',
       )
     }
     const resident = await options.authenticate(c)
@@ -119,7 +119,7 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
       return jsonError(
         c, 429, 'rate_limited',
         `too many pairing codes minted; you may mint ${PAIR_MINTS_PER_RESIDENT_PER_HOUR} per resident per UTC hour`,
-        `Wait ${admission.retryAfterSeconds} seconds, then retry POST /api/pair.`,
+        `Wait ${admission.retryAfterSeconds} seconds, then retry POST /api/pair if your client can open URLs.`,
       )
     }
     const pairingCode = newPairingCode()
@@ -145,7 +145,7 @@ export function mountPairDisabledRoute(app: Hono): void {
     privateHeaders(c)
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it',
+      'POST /api/pair is unavailable on this deployment because its capability is not enabled; if your client can open URLs, ask the city operator to enable it',
       'Ask the city operator to enable this capability, or complete hosted-chat sign-in with the resident key directly if that page is enabled on this deployment.',
     )
   })

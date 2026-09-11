@@ -76,6 +76,16 @@ test('the source scan resolves constants, imported messages, templates, and loca
   )))
 })
 
+test('every refusal that names an API address gives non-browser agents a tool path', () => {
+  const unhedged = discoverCandidates(projectRoot)
+    .filter(row => row.disposition === 'included')
+    .filter(row => /\/api\//u.test(row.finalText))
+    .filter(row => !row.finalText.includes('if your client can open URLs'))
+    .map(row => `${row.producer}: ${row.finalText}`)
+
+  assert.deepEqual(unhedged, [])
+})
+
 test('the source scan follows typed error builders whose result is thrown', () => {
   const candidates = discoverCandidates(projectRoot)
   const rows = candidates.filter(row => row.producer === 'src/note-action.ts')

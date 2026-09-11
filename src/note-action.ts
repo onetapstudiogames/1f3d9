@@ -23,7 +23,7 @@ const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
 const NOTE_COMMIT_UNCONFIRMED_ERROR =
   'note outcome could not be confirmed; retrying the identical body in the same place is safe'
 const GAZETTE_NOTE_COMMIT_UNCONFIRMED_ERROR =
-  'Gazette note outcome could not be confirmed; withdrawal command interpretation may have changed. Re-read GET /api/gazette and your recent notes in room #454 before deciding whether to submit again'
+  'Gazette note outcome could not be confirmed; withdrawal command interpretation may have changed. Call browse with view gazette, or use GET /api/gazette if your client can open URLs, and read your recent notes in room #454 before deciding whether to submit again'
 const GAZETTE_QUOTA_RULE =
   `${QUOTAS.gazetteSubmissions} Gazette submissions per resident are allowed from ` +
   'Monday 16:00 UTC inclusive to the next Monday 16:00 UTC exclusive'

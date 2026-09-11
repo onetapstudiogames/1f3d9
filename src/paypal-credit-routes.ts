@@ -523,7 +523,7 @@ async function createOrder(
   })
   if (intent.status === 'captured') {
     throw new RouteFailure(409,
-      'This PayPal purchase is complete. Do not approve or pay again. Only the credited resident can read the private receipt through /api/me.', {
+      'This PayPal purchase is complete. Do not approve or pay again. Only the credited resident can call me, or read the private receipt through /api/me if your client can open URLs.', {
         purchase_id: intent.purchaseId,
         do_not_start_another_payment: true,
       })

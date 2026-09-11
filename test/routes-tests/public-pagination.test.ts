@@ -109,7 +109,7 @@ export function registerPublicPaginationTests(): void {
     const missing = await app.request('/api/residents?view=presence&handle=not-here')
     assert.equal(missing.status, 404)
     assert.deepEqual(await missing.json(), {
-      error: 'resident handle not-here was not found; use GET /api/residents and send a current handle',
+      error: 'resident handle not-here was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle',
     })
   })
 

@@ -716,7 +716,14 @@ app.get('/api/search', async c => {
 
 app.get('/api/changes', async c => {
   const parsed = parsePublicChangeQuery(c.req.queries())
-  if (!parsed.ok) return err(c, 400, parsed.error)
+  if (!parsed.ok) {
+    return /^(?:kind|limit) requires since;/u.test(parsed.error)
+      ? c.json({
+          error: parsed.error,
+          next_step: 'Omit kind, limit, and since to obtain a marker, then send that marker as since.',
+        }, 400)
+      : err(c, 400, parsed.error)
+  }
   try {
     const result = await loadPublicChanges(executePublicQuery, parsed)
     c.header('Cache-Control', 'no-store')
@@ -792,7 +799,7 @@ if (hostedChatSignin.ready) {
     c.header('Cache-Control', 'no-store')
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed',
+      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed if your client can open URLs',
       'Ask the city operator to configure hosted-chat sign-in, or complete sign-in directly with the resident key if a browser or JSON identity door is enabled on this deployment.',
     )
   })
@@ -914,9 +921,9 @@ app.get('/api/residents', async c => {
     if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
     if (!resident) {
       return changeMarker === null
-        ? err(c, 404, `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`)
+        ? err(c, 404, `resident handle ${handleValue.value} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
         : c.json({
-            error: `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`,
+            error: `resident handle ${handleValue.value} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`,
             change_marker: changeMarker,
           }, 404)
     }
@@ -1264,7 +1271,7 @@ app.post('/api/founder/city-credit', async c => {
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
   try {
     const issued = await issueCityFeeCredit({ query: sql.query }, {
       founderId: founder.id,
@@ -1392,7 +1399,7 @@ app.get('/api/founder/city-credit/:handle', async c => {
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
   const [account, paypalDisputes] = await Promise.all([
     readCityCreditAccount({ query: sql.query }, target.id, {
       beforeId: creditRequest.beforeId,

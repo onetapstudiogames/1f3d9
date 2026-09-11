@@ -59,9 +59,9 @@ import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
-const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; retry with the agreement id from GET /api/agreements'
+const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and retry with a current agreement id'
 const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
-const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; retry with a handle from GET /api/census'
+const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current handle'
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
@@ -258,7 +258,7 @@ export function mountSocietyRoutes(app: Hono): void {
       retired_at: string | null
     }[]
     const place = places[0]
-    if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (!place) return err(c, 404, `place_id ${placeId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
     if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before leaving notes there')
     if (place.parent_id === null && place.owner_id === null) {
       return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)

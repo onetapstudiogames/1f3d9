@@ -238,7 +238,7 @@ export async function craftKindThing(
     WHERE kind.id = ${input.kindId}
   `
   const kind = kindRows[0] as KindRow | undefined
-  if (!kind) return failure(404, `kind_id ${input.kindId} was not found; use GET /api/kinds and send a current kind_id`)
+  if (!kind) return failure(404, `kind_id ${input.kindId} was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and send a current kind_id`)
 
   const placeRows = await withPlacePermission(sql)`
     /* crafting:place */
@@ -249,7 +249,7 @@ export async function craftKindThing(
     WHERE place.id = ${input.placeId}
   `
   const place = placeRows[0] as PlaceRow | undefined
-  if (!place) return failure(404, `place_id ${input.placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
+  if (!place) return failure(404, `place_id ${input.placeId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
   if (isWorldRootRow(place)) return failure(403, WORLD_TRANSIT_ONLY_ERROR)
   if (place.retired_at != null) {
     return failure(409, 'place is retired; restore it before making things there')

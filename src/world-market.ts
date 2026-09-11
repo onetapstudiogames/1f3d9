@@ -32,7 +32,7 @@ const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
 const MARKET_RESPONSE_BYTES = 256 * 1024
 const MARKET_TIMEOUT_MS = 4_000
-const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; retry with an offer_id from GET /api/world-market'
+const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; use GET /api/world-market if your client can open URLs, and retry with a current offer_id'
 
 type JsonObject = Record<string, unknown>
 type QueryRow = Record<string, unknown>
@@ -620,7 +620,7 @@ export function mountWorldMarketRoutes(
     if (!allowed.ok) return err(c, 400, allowed.error)
     const handle = c.req.param('handle')
     if (!HANDLE_RE.test(handle)) {
-      return err(c, 404, `resident handle ${handle} was not found; use GET /api/residents and send a current handle`)
+      return err(c, 404, `resident handle ${handle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     }
     const rows = await dependencies.query(`
       /* world-market:resident */
@@ -628,7 +628,7 @@ export function mountWorldMarketRoutes(
     `, [handle])
     return rows[0]?.handle === handle
       ? c.json({ resident: { handle } })
-      : err(c, 404, `resident handle ${handle} was not found; use GET /api/residents and send a current handle`)
+      : err(c, 404, `resident handle ${handle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
   })
 
   app.get('/api/world/offer/:offerId', async c => {
@@ -722,7 +722,7 @@ export function mountWorldMarketRoutes(
       const offerId = integerValue(rows[0]?.id)
       if (!offerId) return err(c, 409, 'ownership or lock state changed; re-read the thing')
       const offer = await readOffer(dependencies, offerId)
-      if (!offer) return err(c, 500, `world offer result is unavailable after listing; re-read GET /api/world/offer/${offerId} before deciding whether to retry`)
+      if (!offer) return err(c, 500, `world offer result is unavailable after listing; use GET /api/world/offer/${offerId} if your client can open URLs before deciding whether to retry`)
       return c.json({ offer: publicOffer(offer, dependencies.now()) }, 201)
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
@@ -917,7 +917,7 @@ export function mountWorldMarketRoutes(
       const reservingOfferId = offer.id
       offer = await readOffer(dependencies, reservingOfferId)
       if (!offer || !reservationActive(offer, dependencies.now())) {
-        return err(c, 409, `the five-minute reservation could not be opened; re-read GET /api/world/offer/${reservingOfferId} before retrying`)
+        return err(c, 409, `the five-minute reservation could not be opened; use GET /api/world/offer/${reservingOfferId} if your client can open URLs before retrying`)
       }
       return challenge(c, offer)
     }
@@ -1047,7 +1047,7 @@ export function mountWorldMarketRoutes(
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
-          error: `that payment transaction is already reserved; inspect GET /api/world/offer/${offer.id} and do not pay again`,
+          error: `that payment transaction is already reserved; use GET /api/world/offer/${offer.id} if your client can open URLs, and do not pay again`,
           do_not_pay_again: true,
         }, 409)
       }
@@ -1075,7 +1075,7 @@ export function mountWorldMarketRoutes(
     if (
       !paymentPending(offer) || offer.buyer_id == null
       || offer.pending_payment_attempt_id == null
-    ) return err(c, 409, `this world offer has no durable payment to reconcile; re-read GET /api/world/offer/${offer.id} and reconcile only payment_pending offers`)
+    ) return err(c, 409, `this world offer has no durable payment to reconcile; use GET /api/world/offer/${offer.id} if your client can open URLs, and call reconcile_world only after a read shows payment_pending`)
 
     const attempt = await dependencies.findPayment({ query: dependencies.query }, {
       actorId: offer.buyer_id,
@@ -1146,7 +1146,7 @@ export function mountWorldMarketRoutes(
     } catch (error) {
       if (postgresErrorCode(error) === '23505') {
         return c.json({
-          error: `that payment transaction is already reserved; inspect GET /api/world/offer/${offer.id} and do not pay again`,
+          error: `that payment transaction is already reserved; use GET /api/world/offer/${offer.id} if your client can open URLs, and do not pay again`,
           do_not_pay_again: true,
         }, 409)
       }
@@ -1169,7 +1169,7 @@ export function mountWorldMarketRoutes(
       return err(c, 409, 'claimed world offer cannot be canceled; the completed sale is permanent, so list another owned thing instead')
     }
     if (paymentPending(offer)) {
-      return err(c, 409, `a settled payment is pending; the thing stays locked for its buyer, who can retry claim or POST /api/world/offer/${offer.id}/reconcile without paying again`)
+      return err(c, 409, `a settled payment is pending; the thing stays locked for its buyer, who can call reconcile_world with offer_id ${offer.id}, or use POST /api/world/offer/${offer.id}/reconcile if your client can open URLs, without paying again`)
     }
     if (!paymentInvalid(offer) && !paymentTerminal(offer) && reservationActive(offer, dependencies.now())) {
       return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
@@ -1271,7 +1271,7 @@ export function mountWorldMarketRoutes(
     `, [offer.id, seller.id, seller.handle, offer.market_draft_id])
     if (!rows[0]) return err(c, 409, 'offer, reservation, or ownership changed before cancellation; re-read the offer before retrying')
     offer = await readOffer(dependencies, offer.id)
-    if (!offer) return err(c, 500, `canceled world record is unavailable; re-read GET /api/world/offer/${offerId} and do not repeat cancellation until its state is visible`)
+    if (!offer) return err(c, 500, `canceled world record is unavailable; use GET /api/world/offer/${offerId} if your client can open URLs, and do not repeat cancellation until its state is visible`)
     return c.json({ offer: publicOffer(offer, dependencies.now()) })
   })
 }

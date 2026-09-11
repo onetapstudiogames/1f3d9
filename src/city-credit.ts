@@ -347,7 +347,7 @@ export async function issueCityFeeCredit(
     `, [sourceKey])
     row = replayRows[0]
   }
-  if (!row) throw new CityCreditConflictError('resident was not found or city credit issuance conflicted; re-read GET /api/residents and retry with a current resident and the original source terms')
+  if (!row) throw new CityCreditConflictError('resident was not found or city credit issuance conflicted; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current resident and the original source terms')
   if (
     String(row.entry_kind) !== 'founder_issue'
     || integerValue(row.resident_id, 'credit resident') !== residentId

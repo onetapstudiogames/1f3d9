@@ -363,9 +363,9 @@ export function mountWorldRoutes(app: Hono): void {
       }
       if (!outline) {
         return changeMarker === null
-          ? err(c, 404, `place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`)
+          ? err(c, 404, `place_id ${parentId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current parent_id`)
           : c.json({
-              error: `place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`,
+              error: `place_id ${parentId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current parent_id`,
               change_marker: changeMarker,
             }, 404)
       }
@@ -442,7 +442,7 @@ export function mountWorldRoutes(app: Hono): void {
         })
       : textLimits
     const publicPlace = await loadPublicPlaceRecord(id)
-    if (!publicPlace) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (!publicPlace) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
 
     if (publicPlace.status === 'retired') {
       const collections = await loadPublicPlaceCollectionRows(executePublicQuery, id, {
@@ -707,7 +707,7 @@ export function mountWorldRoutes(app: Hono): void {
         retired_at?: string | null
       }>
       const parent = parents[0]
-      if (!parent) return err(c, 404, `parent place_id ${parentId} was not found; use GET /api/map?view=outline and send a current parent_id`)
+      if (!parent) return err(c, 404, `parent place_id ${parentId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current parent_id`)
       if (parent.retired_at != null) return err(c, 409, 'parent place is retired; restore it before building there')
       if (isWorldRootRow(parent)) {
         // An explicit world parent is the same paid frontier operation as the
@@ -999,7 +999,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
       return err(c, 400, rejected.length > 0
-        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Set a place's laws with PUT /api/place/:id/laws {"traits":[names]} or the laws tool.`
+        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
         : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch')
     }
 
@@ -1035,7 +1035,7 @@ export function mountWorldRoutes(app: Hono): void {
       retired_at?: string | null
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, `place_id ${id} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (!existing) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
     if (existing.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the place owner may edit it')
     if (existing.retired_at != null) return err(c, 409, 'place is retired; restore it before editing')
@@ -1321,7 +1321,7 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
     }
     if (!await everyTraitExists(traits)) {
-      return err(c, 400, 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+      return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
 
     const fee = await treasuryFee(
@@ -1370,7 +1370,7 @@ export function mountWorldRoutes(app: Hono): void {
           fee,
           resident.id,
           unknownTrait
-            ? 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait'
+            ? 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs'
             : message ?? 'kind invention failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
@@ -1389,7 +1389,7 @@ export function mountWorldRoutes(app: Hono): void {
           attemptId: fee.attemptId,
           status: 400,
         }, error)
-        return err(c, 400, 'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+        return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
       }
       if (message) {
         const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
@@ -1454,7 +1454,7 @@ export function mountWorldRoutes(app: Hono): void {
       WHERE k.id = ${id}
     `) as Array<KindRow & { active_offer_id: number | null; has_open_offer?: boolean }>
     const current = currentRows[0]
-    if (!current) return err(c, 404, `kind_id ${id} was not found; use GET /api/kinds and send a current kind_id`)
+    if (!current) return err(c, 404, `kind_id ${id} was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and send a current kind_id`)
     if (current.owner_id !== resident.id) return err(c, 403, 'only the kind owner may revise it')
     if (current.active_offer_id != null || openOffer(current)) {
       return err(c, 409, 'kind cannot be revised while it has an open sale offer; close that offer before revising the kind')
@@ -1478,7 +1478,7 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'recipe must be a unique list of {kind, quantity} ingredients within the hard limits')
     }
     if (!await everyTraitExists(traits)) {
-      return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+      return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
@@ -1537,7 +1537,7 @@ export function mountWorldRoutes(app: Hono): void {
           fee,
           resident.id,
           unknownTrait
-            ? 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait'
+            ? 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs'
             : message ?? 'kind revision failed before completion',
           unknownTrait ? 400 : message ? 409 : 503,
         ) as Response
@@ -1556,7 +1556,7 @@ export function mountWorldRoutes(app: Hono): void {
           attemptId: fee.attemptId,
           status: 400,
         }, error)
-        return err(c, 400, 'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait')
+        return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
       }
       if (message) {
         const response = await reconcileTreasuryCompletionNoEffect(c, fee, resident.id, message)
@@ -1714,7 +1714,7 @@ export function mountWorldRoutes(app: Hono): void {
       retired_at: string | null
     }>
     const place = placeRows[0]
-    if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (!place) return err(c, 404, `place_id ${placeId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
     if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before making things there')
     if (isWorldRootRow(place)) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (place.place_permits_things !== true) {
