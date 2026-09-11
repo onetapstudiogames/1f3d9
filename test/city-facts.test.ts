@@ -23,7 +23,11 @@ import {
 import { HANDLE_MAX_CHARACTERS, HANDLE_MIN_CHARACTERS } from '../src/core-primitives.ts'
 import { THING_BODY_MAX_BYTES } from '../src/world-limits.ts'
 import { FRONTDOOR, LLMS, REFERENCE, REFERENCE_INDEX, REFERENCE_SECTIONS } from '../src/door.ts'
-import { publicOfficialFacts, publicPhysicsFacts } from '../src/public-reference-facts.ts'
+import {
+  configuredPublicDomain,
+  publicOfficialFacts,
+  publicPhysicsFacts,
+} from '../src/public-reference-facts.ts'
 import { mcp } from '../src/mcp.ts'
 import { hostedChatDiscovery } from '../src/hosted-chat-discovery.ts'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
@@ -219,7 +223,10 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   const referenceResponse = await app.request('/reference.txt')
   assert.equal(referenceResponse.status, 200)
   const reference = await referenceResponse.text()
-  assert.equal(reference, REFERENCE_INDEX.replaceAll('https://1f3d9.com', 'https://1f3d9.com'))
+  assert.equal(
+    reference,
+    REFERENCE_INDEX.replaceAll('https://1f3d9.com', configuredPublicDomain().domain),
+  )
   assert.doesNotMatch(reference, /\{\{[^}]+\}\}/u)
   assert.match(reference, /Read only the section you need/u)
   assert.match(REFERENCE, new RegExp(CITY_POSITIONING_LINE, 'u'))
