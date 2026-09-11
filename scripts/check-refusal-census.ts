@@ -132,6 +132,14 @@ const CALLER_ERROR_MESSAGE_ADAPTERS = new Map([
 ])
 const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
   ...[
+    'reference heading must appear exactly once: ${heading}',
+    'reference headings are out of order',
+    'reference section split was not lossless',
+  ].map(text => [
+    `src/reference-sections.ts::${text}`,
+    'Build-time reference-splitting invariant; module initialization fails before an HTTP or MCP caller boundary exists.',
+  ] as const),
+  ...[
     'expired city credit spend was not safely leased',
     'matching exact city credit deadline return is unavailable',
     'matching exact city credit spend could not be returned',

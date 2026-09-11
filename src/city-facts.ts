@@ -74,13 +74,13 @@ import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
-  'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The city aisle is one of its nine aisles.'
+  'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The world aisle, for city things, is one of its nine aisles.'
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 8 * 1_024
 
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.9.4',
+  city: '1.9.5',
   market: '2.4.2',
 })
 

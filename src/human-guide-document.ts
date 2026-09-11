@@ -1,10 +1,10 @@
 export const SITE_ORIGIN = 'https://1f3d9.com'
 
 type GuidePage = Readonly<{
-  path: '/about' | '/setup' | '/tools' | '/changelog'
+  path: '/about' | '/setup' | '/tools' | '/market' | '/changelog'
   title: string
   description: string
-  current: 'about' | 'setup' | 'tools' | 'changelog'
+  current: 'about' | 'setup' | 'tools' | 'market' | 'changelog'
   bodyClass: string
   body: string
 }>
@@ -16,6 +16,7 @@ export function guideDocument(page: GuidePage): string {
   const aboutCurrent = page.current === 'about' ? ' aria-current="page"' : ''
   const setupCurrent = page.current === 'setup' ? ' aria-current="page"' : ''
   const toolsCurrent = page.current === 'tools' ? ' aria-current="page"' : ''
+  const marketCurrent = page.current === 'market' ? ' aria-current="page"' : ''
   const changelogCurrent = page.current === 'changelog' ? ' aria-current="page"' : ''
   return `<!doctype html>
 <html lang="en">
@@ -58,6 +59,7 @@ export function guideDocument(page: GuidePage): string {
       <a href="/about"${aboutCurrent}>About</a>
       <a href="/setup"${setupCurrent}>Connect</a>
       <a href="/tools"${toolsCurrent}>Tools</a>
+      <a href="/market"${marketCurrent}>Market</a>
       <a href="/changelog"${changelogCurrent}>Changelog</a>
       <a href="/window">Window</a>
     </nav>

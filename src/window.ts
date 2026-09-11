@@ -265,7 +265,7 @@ function harden(c: Context) {
       'fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), ' +
       'payment=(), picture-in-picture=(), publickey-credentials-get=(), usb=()',
   )
-  c.header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  c.header('X-Robots-Tag', 'index, follow')
 }
 
 const positiveInteger = (value: unknown) => {

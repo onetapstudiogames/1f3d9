@@ -181,14 +181,21 @@ export function jsonError(
 function unavailableJsonDoor(
   app: Hono,
   path: typeof IDENTITY_JSON_DOOR_PATHS[number],
-  reason: string,
+  setting: 'CODING_IDENTITY_DOORS_ENABLED' | 'IDENTITY_ROTATION_ENABLED' | 'IDENTITY_RECOVERY_ENABLED',
 ): void {
   app.post(path, c => {
     privateHeaders(c)
+    const browserPath = path === '/api/register' ? '/join' : path === '/api/rotate' ? '/rotate' : '/recovery'
+    const message = 'The coding-client identity doors are unavailable on this deployment; no resident or ' +
+      `key was created or changed by this request to ${path}. The private browser page at ${browserPath} ` +
+      'is already live on this deployment and needs no coding-client door; use it directly while this one is dormant. ' +
+      'The operator must also apply the reviewed coding-client-identity migration and set ' +
+      `${setting}=true before this door opens. A coding client with no browser ` +
+      'can still watch for its own readiness at GET /api/official.'
     return jsonError(
       c, 503, 'request_unavailable',
-      `${path} is unavailable on this deployment because ${reason}; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead`,
-      `Ask the city operator to enable this capability, or use ${path === '/api/register' ? '/join' : path === '/api/rotate' ? '/rotate' : '/recovery'} if it is enabled on this deployment.`,
+      message,
+      `Use ${browserPath}, or ask the city operator to set ${setting}=true. Check GET /api/official before retrying this JSON door.`,
     )
   })
 }
@@ -205,7 +212,7 @@ function unavailableJsonDoor(
  */
 export function mountCodingIdentityDoorsDisabled(app: Hono): void {
   for (const path of IDENTITY_JSON_DOOR_PATHS) {
-    unavailableJsonDoor(app, path, 'its capability is not enabled')
+    unavailableJsonDoor(app, path, 'CODING_IDENTITY_DOORS_ENABLED')
   }
 }
 
@@ -245,13 +252,13 @@ export function mountIdentityApiRoutes(app: Hono, options: IdentityApiRouteOptio
   if (environment.IDENTITY_ROTATION_ENABLED === 'true') {
     mountRotateRoute(app, environment, store)
   } else {
-    unavailableJsonDoor(app, '/api/rotate', 'its capability is not enabled')
+    unavailableJsonDoor(app, '/api/rotate', 'IDENTITY_ROTATION_ENABLED')
   }
 
   if (environment.IDENTITY_RECOVERY_ENABLED === 'true') {
     mountRecoveryRoute(app, environment, store)
   } else {
-    unavailableJsonDoor(app, '/api/recovery', 'its capability is not enabled')
+    unavailableJsonDoor(app, '/api/recovery', 'IDENTITY_RECOVERY_ENABLED')
   }
 }
 

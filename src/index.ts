@@ -20,7 +20,7 @@ import {
 } from './core.ts'
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
-import { FRONTDOOR, HUMANS, LLMS, REFERENCE, ROBOTS } from './door.ts'
+import { FRONTDOOR, HUMANS, LLMS, REFERENCE_INDEX, REFERENCE_SECTIONS, ROBOTS } from './door.ts'
 import { mountCityToolCatalogRoute } from './city-facts.ts'
 import {
   hostedChatDiscovery,
@@ -99,7 +99,6 @@ import {
   reviewCommunityToolSubmission,
   submitCommunityTool,
 } from './community-tool-submissions.ts'
-import { cachedPublicDirectory } from './public-directory.ts'
 import { mountCityHelpRoute } from './city-help.ts'
 import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
@@ -303,7 +302,7 @@ export function withCreditPurchaseDoor(text: string, purchasesReady = PAYPAL_PUR
 /** Render a checked-in discovery source with this process's active feature state. */
 export function configuredDiscoveryText(
   source: string,
-  document: 'frontdoor' | 'llms',
+  document: 'frontdoor' | 'llms' | 'reference',
 ): string {
   return hostedChatDiscovery(
     source,
@@ -565,18 +564,27 @@ app.get('/', async c => {
   }
 })
 app.get('/llms.txt', c => c.text(configuredDiscoveryText(LLMS, 'llms')))
-app.get('/reference.txt', c => c.text(configuredDiscoveryText(REFERENCE, 'frontdoor')))
+app.get('/reference.txt', c => c.text(
+  REFERENCE_INDEX.replaceAll('https://1f3d9.com', configuredPublicDomain().domain),
+))
+app.get('/reference/:section', c => {
+  const file = c.req.param('section')
+  if (!file.endsWith('.txt')) return c.notFound()
+  const slug = file.slice(0, -4)
+  if (!Object.hasOwn(REFERENCE_SECTIONS, slug)) return c.notFound()
+  return c.text(configuredDiscoveryText(
+    REFERENCE_SECTIONS[slug as keyof typeof REFERENCE_SECTIONS],
+    'reference',
+  ))
+})
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
 mountHumanPages(app, {
   hostedChatSigninReady: () => hostedChatSignin.ready,
   publicOrigin: configuredPublicDomain().domain,
   readCommunityToolsPageState: async () => {
-    const [waitingCount, directory] = await Promise.all([
-      readCommunityToolWaitingCount(executeCommunityToolQuery),
-      cachedPublicDirectory(),
-    ])
-    return { waitingCount, residents: directory.residents }
+    const waitingCount = await readCommunityToolWaitingCount(executeCommunityToolQuery)
+    return { waitingCount }
   },
   submitCommunityTool: async (submission, ipHash) =>
     await submitCommunityTool(executeCommunityToolQuery, submission, ipHash),
@@ -1012,10 +1020,13 @@ app.get('/api/me', async c => {
   ] = await Promise.all([
     executePublicQuery(`
       /* public:me_places */
-      SELECT id, parent_id, name, created_at
-      FROM places
-      WHERE owner_id = $1::integer AND ($2::integer IS NULL OR id < $2::integer)
-      ORDER BY id DESC LIMIT $3::integer
+      SELECT place.id, place.parent_id, place.name, place.created_at,
+        (SELECT count(*)::int FROM things thing
+          WHERE thing.place_id = place.id AND thing.withdrawn_at IS NULL) AS thing_count,
+        (SELECT count(*)::int FROM notes note WHERE note.place_id = place.id) AS note_count
+      FROM places place
+      WHERE place.owner_id = $1::integer AND ($2::integer IS NULL OR place.id < $2::integer)
+      ORDER BY place.id DESC LIMIT $3::integer
     `, [resident.id, placeRequest.cursor, placeRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_things */
