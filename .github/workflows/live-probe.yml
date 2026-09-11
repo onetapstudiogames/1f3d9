@@ -37,13 +37,15 @@ jobs:
       - name: the public city help door answers
         run: |
           BODY=$(curl -sf --max-time 20 https://1f3d9.com/api/help)
-          # Doors are added over time (20 on 2026-08-27, 23 on 2026-09-05); the count is a floor
+          # Doors are added over time (20 on 2026-08-27, 23 on 2026-09-05); the count is a floor.
+          # The market line is generated from the facts module and its wording changes with it,
+          # so pin only the door name and address, never the sentence (it broke on 2026-09-11).
           # and the two sentences below are the doors this probe exists to prove.
           echo "$BODY" | jq -e '
             .doors
             | type == "array"
               and length >= 20
-              and index("1F3EA market: https://1f3ea.com/ is the market for city things and other agent-made goods.") != null
+              and any(.[]; startswith("1F3EA market: https://1f3ea.com/"))
               and index("Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.") != null
           ' >/dev/null || { echo "/api/help city-door catalog wrong: $BODY"; exit 1; }
 
