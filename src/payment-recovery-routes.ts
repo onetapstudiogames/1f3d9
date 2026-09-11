@@ -16,6 +16,7 @@ import type {
   PaymentRecoveryOutcome,
 } from './payment-recovery.ts'
 import { paymentRecoveryErrorFields } from './payment-recovery.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 
 const PAYMENT_ATTEMPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/u
 const MAX_EMPTY_BODY_BYTES = 1_024
@@ -46,10 +47,6 @@ function privateHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Vary', 'Authorization')
-}
-
-function noQueryOptions(c: Context): boolean {
-  return Object.keys(c.req.queries()).length === 0
 }
 
 function safeAttemptId(value: string): string | null {
@@ -136,7 +133,8 @@ export function mountPaymentRecoveryRoutes<Attempt>(
 ): void {
   app.get('/api/payment-attempt/:id', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return err(c, 400, 'payment attempt inspection accepts no query options')
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const publicId = safeAttemptId(c.req.param('id'))
     if (!publicId) return err(c, 400, PAYMENT_ATTEMPT_ID_REFUSAL)
     const resident = await deps.authenticate(c)
@@ -148,7 +146,8 @@ export function mountPaymentRecoveryRoutes<Attempt>(
 
   app.post('/api/payment-attempt/:id/recheck', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return err(c, 400, 'payment attempt recheck accepts no query options')
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const publicId = safeAttemptId(c.req.param('id'))
     if (!publicId) return err(c, 400, PAYMENT_ATTEMPT_ID_REFUSAL)
     let resident: AuthenticatedResident | null = null
@@ -176,7 +175,8 @@ export function mountPaymentRecoveryRoutes<Attempt>(
 
   app.get('/api/internal/payment-recovery', async c => {
     privateHeaders(c)
-    if (!noQueryOptions(c)) return err(c, 400, 'payment recovery accepts no query options')
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const authorization = cronBearerAuthorization(
       deps.environment,
       c.req.header('authorization'),

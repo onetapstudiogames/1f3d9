@@ -87,6 +87,10 @@ export async function registerTransfersAndRoutesTests(
     try {
       const refused = await requestPlaceGift(610)
       assert.equal(refused.status, 409, await refused.clone().text())
+      assert.equal(
+        (await refused.json() as { error: string }).error,
+        'place_id 611 blocks this place gift because it has an open transfer offer; resolve that place before retrying',
+      )
     } finally {
       setEngineTransactionRunnerForTests(null)
     }
@@ -112,7 +116,12 @@ export async function registerTransfersAndRoutesTests(
       setEngineTransactionRunnerForTests(null)
     }
     assert.equal(completed.status, 200, await completed.clone().text())
-    assert.deepEqual((await completed.json() as { attention: readonly string[] }).attention, [
+    const completedBody = await completed.json() as {
+      attention: readonly string[]
+      transfer: { id: unknown }
+    }
+    assert.equal(typeof completedBody.transfer.id, 'number')
+    assert.deepEqual(completedBody.attention, [
       'Your home was inside place_id 610 and was cleared when you transferred that place. Set a new home with home.',
     ])
     assert.deepEqual((await database!.query(`
@@ -141,6 +150,10 @@ export async function registerTransfersAndRoutesTests(
       await competing.query('COMMIT')
       const refused = await pendingTransfer
       assert.equal(refused.status, 409, await refused.clone().text())
+      assert.equal(
+        (await refused.json() as { error: string }).error,
+        'place_id 611 blocks this place gift because its owner is not the gifting resident; resolve that place before retrying',
+      )
     } finally {
       await competing.query('ROLLBACK').catch(() => undefined)
       competing.release()

@@ -95,7 +95,7 @@ test('public change query keeps bigint markers as decimal strings', () => {
   })
 
   for (const kind of PUBLIC_EVENT_KINDS) {
-    assert.equal(validQuery({ kind: [kind] }).kind, kind)
+    assert.equal(validQuery({ since: ['0'], kind: [kind] }).kind, kind)
   }
 })
 
@@ -111,6 +111,8 @@ test('public change query rejects duplicate, malformed, future-sized, and unknow
     [{ kind: ['NOTE'] }, /kind must be one of the public event kinds/iu],
     [{ kind: [''] }, /kind must be one of the public event kinds/iu],
     [{ kind: ['not-a-public-event'] }, /kind must be one of the public event kinds/iu],
+    [{ kind: ['note'] }, /kind requires since/iu],
+    [{ limit: ['1'] }, /limit requires since/iu],
     [{ id: ['5'] }, /unsupported query option: id/iu],
     [{ action_id: ['5'] }, /unsupported query option: action_id/iu],
     [{ since: ['1'], limit: ['0'] }, /limit must be between 1 and 200/iu],
@@ -161,9 +163,12 @@ test('a request without since returns only a caller-held checkpoint', async () =
     { checkpoint: '12', ...eventSix },
   ])
 
-  const result = await loadPublicChanges(database.query, validQuery({ kind: ['note'] }))
+  const result = await loadPublicChanges(database.query, validQuery({}))
 
-  assert.deepEqual(result, { change_marker: '12' })
+  assert.deepEqual(result, {
+    change_marker: '12',
+    next_step: 'Send change_marker back as since to read changes after that point.',
+  })
   assert.equal(database.calls.length, 1)
   assert.match(database.calls[0]!.text, /public_change_state/iu)
   assert.doesNotMatch(JSON.stringify(result), /thing_edited|alice|thing_id/iu)

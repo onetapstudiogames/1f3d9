@@ -482,8 +482,15 @@ export const CREDIT_BUY_JS = `(() => {
     return value
   }
 
-  const showError = message => {
+  const showError = (message, humanHref = null) => {
     errorLine.textContent = message
+    if (humanHref === '/window') {
+      errorLine.append(document.createTextNode(' '))
+      const link = document.createElement('a')
+      link.href = humanHref
+      link.textContent = 'Open the city window.'
+      errorLine.append(link)
+    }
     errorLine.hidden = false
     statusLine.textContent = ''
     errorLine.focus()
@@ -547,6 +554,7 @@ export const CREDIT_BUY_JS = `(() => {
       error.httpStatus = response.status
       error.freshRequestRequired = payload.do_not_approve_old_order === true
       error.doNotRetryWithChangedTerms = payload.do_not_retry_with_changed_terms === true
+      error.humanHref = payload.human_href === '/window' ? '/window' : null
       throw error
     }
     return payload
@@ -638,7 +646,10 @@ export const CREDIT_BUY_JS = `(() => {
       statusLine.textContent = 'Handle found. Confirm that this is the intended resident before continuing.'
       showOnly(termsStep, byId('terms-heading'), 'terms')
     } catch (error) {
-      showError(error instanceof Error ? error.message : 'The resident could not be checked. No payment was started.')
+      showError(
+        error instanceof Error ? error.message : 'The resident could not be checked. No payment was started.',
+        error instanceof Error ? error.humanHref : null,
+      )
     } finally {
       setBusy(button, false, '')
     }

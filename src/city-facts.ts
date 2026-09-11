@@ -1,6 +1,7 @@
 import type { Hono } from 'hono'
 import { HANDLE_RULE, NORMALIZED_WORLD_NAME_MAX_CHARACTERS } from './core-primitives.ts'
 import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 import {
   CREDIT_ONLY_PAID_ACTIONS,
   DUAL_RAIL_PAID_ACTIONS,
@@ -339,9 +340,8 @@ export function duplicateParagraphs(files: readonly TextFile[]) {
 
 export function mountCityToolCatalogRoute(app: Hono): void {
   app.get(FULL_TOOL_CATALOG_PATH, c => {
-    if (Object.keys(c.req.queries()).length > 0) {
-      return c.json({ error: 'unknown query parameter; omit query options from this route' }, 400)
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({ count: CITY_TOOL_CATALOG.length, tools: CITY_TOOL_CATALOG })
   })

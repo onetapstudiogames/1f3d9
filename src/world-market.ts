@@ -26,6 +26,7 @@ import {
 import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -290,7 +291,8 @@ export async function publicMarketGet(
 
 function missingMarketRecord(path: string): string {
   const match = /^\/api\/(?:world\/)?(draft|checkout|listing)\/([1-9]\d*)$/u.exec(path)
-  return match ? `no such market ${match[1]} ${match[2]}` : 'no such market public record'
+  const record = match ? `no such market ${match[1]} ${match[2]}` : 'no such market public record'
+  return `${record}; re-read the matching 1F3EA world listing and send its current city record id`
 }
 
 function configuredMarketOrigin(): string {
@@ -670,7 +672,7 @@ export function mountWorldMarketRoutes(
       FROM things WHERE id = $1
     `, [thingId])
     const thing = thingRows[0]
-    if (!thing) return err(c, 404, `thing_id ${thingId} was not found; use GET /api/things and send a current active thing_id`)
+    if (!thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${thingId}`))
     if (integerValue(thing.owner_id) !== seller.id) return err(c, 403, 'only the thing owner may list it')
     if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed; choose another active thing because withdrawal is permanent')
     if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer; close its current offer before listing it again')

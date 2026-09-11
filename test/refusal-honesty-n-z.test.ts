@@ -39,7 +39,7 @@ test('PayPal route refusals name the usable source or retry', () => {
     'The PayPal request Content-Type is not application/json. Send one application/json body. No payment was started.',
     'The PayPal request JSON is invalid. Send one valid JSON object. No payment was started.',
     '${label} does not match a PayPal identifier; resend the exact identifier returned by PayPal. No new payment was started.',
-    'That resident number was not found. Use a current number from GET /api/residents. No payment was started.',
+    'That resident number was not found. Open the city window and choose a current resident number. No payment was started.',
     'PayPal callbacks are unavailable. Retry later with the same request_id. No payment was started.',
     'PayPal purchase id is invalid. Use the purchase_id from the original city response. No payment was started.',
     'PayPal allowance setup is temporarily unavailable. Retry later with the same request_id. No payment was started.',

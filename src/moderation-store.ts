@@ -382,7 +382,7 @@ export async function moderationHistory(
         coalesce(sum(octet_length(reason)), 0)::bigint AS total_text_bytes
       FROM moderation_actions
     )
-    SELECT page.id, page.target_type, page.target_id, page.action,
+    SELECT page.id::integer AS id, page.target_type, page.target_id, page.action,
       page.reason, page.created_at, page.actor,
       totals.total_items, totals.total_text_bytes
     FROM totals

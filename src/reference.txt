@@ -391,8 +391,9 @@ reference in X-Request-ID. The HTML page shows the reason and request ID too.
 
 The stable X-1F3D9-Reason values are: browser_cookie_mismatch,
 browser_cookie_missing, client_not_approved, confirmation_not_ready,
-confirmation_rejected, credential_rejected, handle_taken, invalid_form,
-invalid_identity, invalid_request, pairing_code_rejected, rate_limited, request_expired,
+confirmation_rejected, credential_rejected, drawing_not_found, drawing_unavailable, handle_taken,
+invalid_drawing_request, invalid_form, invalid_identity, invalid_request, looking_beacon_rejected,
+pairing_code_rejected, rate_limited, request_expired,
 request_unavailable, reserved_handle, resident_key_rejected, storage_unavailable,
 unexpected_form_fields, and untrusted_browser_request. pairing_code_rejected covers only
 the pairing-code fieldset on the hosted sign-in page (decision row 74). Standalone /join distinguishes

@@ -1,5 +1,7 @@
 import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
 
+export const CREDIT_GIFT_REQUEST_ID_HTML_PATTERN = String.raw`[A-Za-z0-9][A-Za-z0-9_.\:\-]{7,127}`
+
 export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
       <summary>Redirect a pending or refused gift</summary>
       <div class="redirect-body">
@@ -14,6 +16,7 @@ export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
             autocomplete="off"
             spellcheck="false"
             pattern="city_gift_[0-9a-f]{32}"
+            title="Enter a complete city gift receipt ID."
             maxlength="42"
             aria-describedby="redirect-gift-help"
             required
@@ -28,6 +31,7 @@ export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
             autocomplete="off"
             spellcheck="false"
             pattern="gift_claim_[0-9a-f]{64}"
+            title="Enter a complete private gift claim key."
             maxlength="75"
             aria-describedby="redirect-claim-help"
             required
@@ -41,7 +45,8 @@ export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
             type="text"
             autocomplete="off"
             spellcheck="false"
-            pattern="[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}"
+            pattern="${CREDIT_GIFT_REQUEST_ID_HTML_PATTERN}"
+            title="Use 8 to 128 letters, numbers, dots, underscores, colons, or hyphens."
             maxlength="128"
             aria-describedby="redirect-request-help"
             required
@@ -58,6 +63,7 @@ export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
               inputmode="numeric"
               autocomplete="off"
               pattern="[1-9][0-9]{0,9}"
+              title="Enter one positive resident number."
               maxlength="10"
               aria-describedby="redirect-resident-help"
               required

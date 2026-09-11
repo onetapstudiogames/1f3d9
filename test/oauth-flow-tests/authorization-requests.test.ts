@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { sha256 } from '../../src/core.ts'
+import { HANDLE_HTML_PATTERN } from '../../src/core-primitives.ts'
 import { mountOAuthRoutes } from '../../src/oauth.ts'
 import { EXISTING_KEY, MemoryOAuthStore } from './memory-oauth-store.ts'
 import {
@@ -25,6 +26,11 @@ export function registerAuthorizationRequestTests(): void {
     const session = await begin(app)
     assert.match(session.cookie, /^__Host-1f3d9_oauth=/u)
     assert.match(session.html, /name="resident_key"[^>]*type="password"/iu)
+    assert.match(session.html, new RegExp(`name="handle"[^>]*pattern="${HANDLE_HTML_PATTERN.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'))
+    for (const [, pattern, title] of session.html.matchAll(/<input\b[^>]*\bpattern="([^"]+)"[^>]*\btitle="([^"]+)"[^>]*>/gu)) {
+      assert.doesNotThrow(() => new RegExp(`^(?:${pattern})$`, 'v'))
+      assert.ok(title?.trim())
+    }
     const retryContract = session.html.indexOf('If “Prepare resident” is submitted again')
     const registerSubmit = session.html.indexOf('name="action" value="register"')
     assert.ok(retryContract >= 0 && retryContract < registerSubmit)

@@ -1,4 +1,5 @@
 import type { Context, Hono } from 'hono'
+import { allowedPublicQuery } from './public-pagination.ts'
 import {
   CITY_CREDIT_PURCHASE_BODY_MAX_BYTES,
   CITY_CREDIT_PURCHASE_MAX_DOLLARS,
@@ -338,9 +339,8 @@ export function mountCityCreditPurchaseRoutes(
 ): void {
   app.post('/api/city-credit/purchase/x402', async c => {
     privateHeaders(c)
-    if (Object.keys(c.req.queries()).length > 0) {
-      return c.json({ error: 'credit purchase accepts no query options' }, 400)
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     const resident = await deps.authenticate(c)
     if (!resident) return c.json({ error: RESIDENT_AUTH_REFUSAL }, 401)
     if (declaredBodyLength(c.req.header('content-length'), MAX_PURCHASE_BODY_BYTES) === 'unusable') {

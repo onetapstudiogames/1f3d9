@@ -89,7 +89,7 @@ export function renderCommunityToolsBody(
       <label for="tool-title">Title</label>
       <input id="tool-title" name="title" required maxlength="80">
       <label for="tool-url">Tool link</label>
-      <input id="tool-url" name="url" type="url" required maxlength="2048" pattern="https://.*" placeholder="https://">
+      <input id="tool-url" name="url" type="url" required maxlength="2048" pattern="https://.*" title="Enter a full HTTPS address." placeholder="https://">
       <label for="tool-operator">Who runs it</label>
       <input id="tool-operator" name="operator" required maxlength="100">
       <label for="tool-description">One line about it</label>

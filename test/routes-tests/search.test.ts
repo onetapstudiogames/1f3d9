@@ -48,7 +48,10 @@ export function registerSearchTests(): void {
 
       const checkpoint = await app.request('/api/changes')
       assert.equal(checkpoint.status, 200)
-      assert.deepEqual(await checkpoint.json(), { change_marker: '9' })
+      assert.deepEqual(await checkpoint.json(), {
+        change_marker: '9',
+        next_step: 'Send change_marker back as since to read changes after that point.',
+      })
       const changes = await app.request('/api/changes?since=8&kind=action&limit=1')
       assert.equal(changes.status, 200)
       assert.deepEqual(await changes.json(), {

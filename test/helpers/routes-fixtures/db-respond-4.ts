@@ -104,6 +104,12 @@ export function respondToDatabaseStage4(
     }]
   }
   if (q.includes('society:place-gift-transfer')) {
+    if (fixtureState.current.scenario === 'nested gift owner blocker') {
+      return [{ id: null, blocker_id: 17, blocker_reason: 'owner', home_cleared: false }]
+    }
+    if (fixtureState.current.scenario === 'nested gift offer blocker') {
+      return [{ id: null, blocker_id: 18, blocker_reason: 'open_offer', home_cleared: false }]
+    }
     return [{ id: 91, created_at: '2026-08-11T00:00:00.000Z', home_cleared: true }]
   }
   if (q.includes('from resident_presence')) return [{

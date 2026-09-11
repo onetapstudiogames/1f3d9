@@ -32,6 +32,7 @@ export function registerPlaceLimitsTests(): void {
         stopped_for_text_limit: boolean
         next_item_id: number | null
         next_item_text_bytes: number | null
+        next_step: string
       }
       things_page: {
         returned_items: number
@@ -42,6 +43,7 @@ export function registerPlaceLimitsTests(): void {
         stopped_for_text_limit: boolean
         next_item_id: number | null
         next_item_text_bytes: number | null
+        next_step: string
       }
       notes_page: {
         returned_items: number
@@ -52,6 +54,7 @@ export function registerPlaceLimitsTests(): void {
         stopped_for_text_limit: boolean
         next_item_id: number | null
         next_item_text_bytes: number | null
+        next_step: string
       }
     }
 
@@ -76,6 +79,9 @@ export function registerPlaceLimitsTests(): void {
     assert.equal(body.things_page.next_item_id, 259)
     assert.equal(body.notes_page.next_before_note_id, 359)
     assert.equal(body.notes_page.next_item_id, 358)
+    assert.match(body.subplaces_page.next_step, /place_id 160|\/api\/place\/160/iu)
+    assert.match(body.things_page.next_step, /thing_id 259|\/api\/thing\/259/iu)
+    assert.match(body.notes_page.next_step, /note_id 358|\/api\/note\/358/iu)
     assert.equal(
       body.things_page.returned_text_bytes,
       body.things.reduce((total, thing) => total + Buffer.byteLength(thing.body, 'utf8'), 0),

@@ -563,6 +563,11 @@ function routeError(c: Context, status: 400 | 404, message: string, robots: Gaze
   return c.text(message, status)
 }
 
+function readingPageError(c: Context, status: 400 | 404, message: string, robots: GazetteReadingRobots): Response {
+  responseHeaders(c, robots, 'no-store')
+  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gazette issue unavailable — 1F3D9</title></head><body><main><h1>Gazette issue unavailable</h1><p>${message}</p><p><a href="/window">Open the city window</a></p></main></body></html>`, status)
+}
+
 export function mountGazetteReadingRoutes(
   app: Hono,
   dependencies: GazetteReadingDependencies,
@@ -570,10 +575,10 @@ export function mountGazetteReadingRoutes(
   app.get('/gazette/:issue_number', async c => {
     const issueNumber = parseIssueNumber(c.req.param('issue_number'))
     if (issueNumber === null) {
-      return routeError(c, 400, 'Gazette issue number must be a positive integer', dependencies.robots)
+      return readingPageError(c, 400, 'The Gazette issue number must be a positive integer.', dependencies.robots)
     }
     const result = await dependencies.readIssue(issueNumber)
-    if (!result) return routeError(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`, dependencies.robots)
+    if (!result) return readingPageError(c, 404, `Gazette issue ${issueNumber} was not found.`, dependencies.robots)
     // Issue bodies reflect current moderation. Never let an intermediary retain a
     // body after the public display has been removed.
     responseHeaders(c, dependencies.robots, 'no-store')
@@ -586,7 +591,7 @@ export function mountGazetteReadingRoutes(
       return routeError(c, 400, 'Gazette issue number must be a positive integer', dependencies.robots)
     }
     const facts = await dependencies.readIssueFacts(issueNumber)
-    if (!facts) return routeError(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`, dependencies.robots)
+    if (!facts) return routeError(c, 404, `Gazette issue ${issueNumber} was not found. Open /window to choose a current issue number.`, dependencies.robots)
     responseHeaders(c, dependencies.robots, 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400')
     c.header('Cross-Origin-Resource-Policy', 'cross-origin')
     return c.body(issueCard(facts), 200, { 'Content-Type': 'image/png' })

@@ -78,6 +78,7 @@ import { loadPublicPlaceRecord, loadPublicThingRecord } from './public-records.t
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 import {
   parsePublicChangeMarker,
   PublicChangeFutureError,
@@ -483,6 +484,9 @@ export function mountWorldRoutes(app: Hono): void {
             stopped_for_text_limit: notesPage.stoppedForTextLimit,
             next_item_id: notesPage.nextItemId,
             next_item_text_bytes: notesPage.nextItemTextBytes,
+            ...(notesPage.stoppedForTextLimit ? {
+              next_step: `The note byte limit stopped this page. Raise note_text_limit_bytes, call look with note_id ${notesPage.nextItemId}, or use GET /api/note/${notesPage.nextItemId} if your client can open URLs.`,
+            } : {}),
             ...(noteTextLimit.value == null ? { server_text_limit_applied: true } : {}),
           }),
         },
@@ -587,6 +591,9 @@ export function mountWorldRoutes(app: Hono): void {
           stopped_for_text_limit: subplacesPage.stoppedForTextLimit,
           next_item_id: subplacesPage.nextItemId,
           next_item_text_bytes: subplacesPage.nextItemTextBytes,
+          ...(subplacesPage.stoppedForTextLimit ? {
+            next_step: `The subplace byte limit stopped this page. Raise subplace_text_limit_bytes, call look with place_id ${subplacesPage.nextItemId}, or use GET /api/place/${subplacesPage.nextItemId} if your client can open URLs.`,
+          } : {}),
           ...(subplaceTextLimit.value == null ? { server_text_limit_applied: true } : {}),
         }),
       },
@@ -602,6 +609,9 @@ export function mountWorldRoutes(app: Hono): void {
           stopped_for_text_limit: thingsPage.stoppedForTextLimit,
           next_item_id: thingsPage.nextItemId,
           next_item_text_bytes: thingsPage.nextItemTextBytes,
+          ...(thingsPage.stoppedForTextLimit ? {
+            next_step: `The thing byte limit stopped this page. Raise thing_text_limit_bytes, call look with thing_id ${thingsPage.nextItemId}, or use GET /api/thing/${thingsPage.nextItemId} if your client can open URLs.`,
+          } : {}),
           ...(thingTextLimit.value == null ? { server_text_limit_applied: true } : {}),
         }),
       },
@@ -617,6 +627,9 @@ export function mountWorldRoutes(app: Hono): void {
           stopped_for_text_limit: notesPage.stoppedForTextLimit,
           next_item_id: notesPage.nextItemId,
           next_item_text_bytes: notesPage.nextItemTextBytes,
+          ...(notesPage.stoppedForTextLimit ? {
+            next_step: `The note byte limit stopped this page. Raise note_text_limit_bytes, call look with note_id ${notesPage.nextItemId}, or use GET /api/note/${notesPage.nextItemId} if your client can open URLs.`,
+          } : {}),
           ...(noteTextLimit.value == null ? { server_text_limit_applied: true } : {}),
         }),
       },
@@ -629,7 +642,7 @@ export function mountWorldRoutes(app: Hono): void {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const thing = await loadPublicThingRecord(id)
-    if (!thing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
+    if (!thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     return publicJson(c, { thing })
   })
 
@@ -1786,7 +1799,7 @@ export function mountWorldRoutes(app: Hono): void {
       has_open_offer?: boolean
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
+    if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be edited while it has an open sale offer; close that offer before editing the thing')
@@ -2056,7 +2069,7 @@ export function mountWorldRoutes(app: Hono): void {
       has_open_offer?: boolean
     }>
     const existing = existingRows[0]
-    if (!existing) return err(c, 404, `thing_id ${id} was not found; use GET /api/things and send a current active thing_id`)
+    if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may upgrade it')
     if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {

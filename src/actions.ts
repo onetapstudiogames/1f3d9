@@ -232,6 +232,9 @@ async function runResidentAction(
       status: result.status,
       place_id: placeId,
       effects_applied: result.effectsApplied,
+      ...(action === 'use' && result.status === 'noop' ? {
+        reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
+      } : {}),
       ...(carryThingId === null ? {} : { carried_thing_id: carryThingId }),
       ...(result.error === null ? {} : { error: result.error }),
     }

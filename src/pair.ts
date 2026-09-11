@@ -10,6 +10,7 @@ import { RESIDENT_AUTH_REFUSAL, sha256 } from './core.ts'
 import { jsonError, withIdentityApiStorageErrors } from './identity-api.ts'
 import { type OAuthAttemptKind, postgresOAuthStore } from './oauth-store.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 
 export const PAIRING_CODE_PREFIX = '1f3d9_pc_'
 export const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
@@ -90,10 +91,11 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
 
   app.post(PAIR_DOOR_PATH, c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
-    if (Object.keys(c.req.queries()).length > 0) {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) {
       return jsonError(
         c, 400, 'unexpected_form_fields',
-        'pairing-code minting accepts no query options',
+        allowed.error,
         'Retry POST /api/pair with no query string.',
       )
     }

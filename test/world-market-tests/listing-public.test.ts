@@ -5,6 +5,7 @@ import { makeHarness, jsonHeaders } from '../helpers/world-market-fixtures/harne
 import { MARKET, SELLER_SECRET, BUYER_SECRET, BUYER_WALLET, TX, NOW, type FakeOffer, draft, checkout, openOffer } from '../helpers/world-market-fixtures/offers.ts'
 
 export function registerListingAndPublicRecordTests(): void {
+  const missingPointer = '; re-read the matching 1F3EA world listing and send its current city record id'
   test('seller locks an owned active thing from a valid pending market draft', async () => {
     const harness = makeHarness()
     const response = await harness.app.request('/api/world/listing', {
@@ -35,7 +36,7 @@ export function registerListingAndPublicRecordTests(): void {
         name: 'missing draft',
         fetcher: async () => Response.json({ error: 'no such world draft' }, { status: 404 }),
         status: 404,
-        error: 'no such market draft 71',
+        error: `no such market draft 71${missingPointer}`,
       },
       {
         name: 'transport failure',
@@ -139,7 +140,7 @@ export function registerListingAndPublicRecordTests(): void {
       body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
     })
     assert.equal(checkoutResponse.status, 404)
-    assert.deepEqual(await checkoutResponse.json(), { error: 'no such market checkout 81' })
+    assert.deepEqual(await checkoutResponse.json(), { error: `no such market checkout 81${missingPointer}` })
 
     const missingListing = makeHarness(
       { offer: openOffer(), thingLocked: true },
@@ -154,7 +155,7 @@ export function registerListingAndPublicRecordTests(): void {
       body: JSON.stringify({ market_checkout_id: 81, buyer_wallet: BUYER_WALLET }),
     })
     assert.equal(listingResponse.status, 404)
-    assert.deepEqual(await listingResponse.json(), { error: 'no such market draft 71' })
+    assert.deepEqual(await listingResponse.json(), { error: `no such market draft 71${missingPointer}` })
 
     const missingCancellation = makeHarness(
       { offer: openOffer(), thingLocked: true },
@@ -167,7 +168,7 @@ export function registerListingAndPublicRecordTests(): void {
       body: JSON.stringify({}),
     })
     assert.equal(cancellationResponse.status, 404)
-    assert.deepEqual(await cancellationResponse.json(), { error: 'no such market draft 71' })
+    assert.deepEqual(await cancellationResponse.json(), { error: `no such market draft 71${missingPointer}` })
   })
 
   test('listing rejects nonowners, mismatched drafts, unknown fields, and unavailable records', async () => {

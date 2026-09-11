@@ -19,6 +19,7 @@ import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -966,7 +967,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
   if (!thing || thing.withdrawnAt !== null) {
-    throw new EngineError(404, 'thing_id was not found or is withdrawn; use a current active thing_id from GET /api/things')
+    throw new EngineError(404, missingActiveThingRefusal())
   }
   const sharedUse = input.action === 'use' && thing.ownerId !== input.actorId && thing.openToUse === true
   if (thing.ownerId !== input.actorId && !sharedUse) {

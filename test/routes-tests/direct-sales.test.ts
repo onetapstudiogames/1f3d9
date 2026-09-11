@@ -27,6 +27,27 @@ export function registerDirectSalesTests(): void {
     test,
   } = getRoutesTestContext()
 
+  test('transfer offers name the first invalid field', async () => {
+    const valid = {
+      type: 'thing', id: 41, to_handle: 'neighbor', price_usdc: 2, seller_wallet: SELLER_WALLET,
+    }
+    for (const [field, value, expected] of [
+      ['type', 'unknown', /^type must/iu],
+      ['id', 0, /^id must/iu],
+      ['to_handle', '', /^to_handle must/iu],
+      ['price_usdc', 0, /^price_usdc must/iu],
+      ['seller_wallet', 'bad', /^seller_wallet must/iu],
+    ] as const) {
+      reset({ scenario: 'transfers' })
+      const response = await app.request('/api/transfer/offer', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ ...valid, [field]: value }),
+      })
+      assert.equal(response.status, 400, field)
+      assert.match((await response.json() as { error: string }).error, expected, field)
+    }
+  })
+
 
   test('a gift moves immediately, while an open sale offer locks the asset', async () => {
     reset({ scenario: 'transfers' })
@@ -111,6 +132,25 @@ export function registerDirectSalesTests(): void {
     assert.match(write.query ?? '', /update\s+places[\s\S]*owner_id\s*=\s*recipient\.id/iu)
     assert.match(write.query ?? '', /update\s+resident_presence[\s\S]*home_place_id\s*=\s*null/iu)
     assert.match(write.query ?? '', /presence\.home_place_id\s+in\s*\(select\s+id\s+from\s+moved_asset\)/iu)
+  })
+
+  test('a nested place gift names the first blocking place and exact cause', async () => {
+    for (const [scenario, placeId, cause] of [
+      ['nested gift owner blocker', 17, 'its owner is not the gifting resident'],
+      ['nested gift offer blocker', 18, 'it has an open transfer offer'],
+    ] as const) {
+      reset({ scenario })
+      const response = await app.request('/api/transfer', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ type: 'place', id: 2, to_handle: 'neighbor' }),
+      })
+      assert.equal(response.status, 409)
+      const body = await response.json() as { error: string }
+      assert.equal(
+        body.error,
+        `place_id ${placeId} blocks this place gift because ${cause}; resolve that place before retrying`,
+      )
+    }
   })
 
   test('generic transfer claim and cancel routes cannot operate on a world offer', async () => {

@@ -185,13 +185,13 @@ function residentKeyRetryForm(
   button: string,
 ): string {
   return `<form method="post" action="${path}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">${escapeHtml(button)}</button></form>`
 }
 
 function recoveryCodeRetryForm(csrf: string): string {
   return `<form method="post" action="/recovery"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}">
+<label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}" title="Enter a complete unused recovery code.">
 <button type="submit">Try this recovery code</button></form>`
 }
 
@@ -339,7 +339,7 @@ ${CAPTURE_BEFORE_SUBMIT}
 <p>This resident has not been created. Re-enter the key to prove it was captured correctly. Proving you captured it is not the same as having saved it.</p>
 <p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Create this resident</button></form>
 <form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>`
 }
@@ -400,12 +400,12 @@ function recoveryStart(csrf: string): string {
 <fieldset><legend><strong>Create a fresh recovery set</strong></legend>
 <p>Use the current permanent resident key. Eight one-use recovery codes replace every older set and are shown once.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="generate"><input type="hidden" name="csrf" value="${safeCsrf}">
-<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Create recovery codes</button></form></fieldset>
 <fieldset><legend><strong>Replace a lost resident key</strong></legend>
 <p>The code is not consumed and the old key remains active until the replacement key is saved and re-entered.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${safeCsrf}">
-<label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}">
+<label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}" title="Enter a complete unused recovery code.">
 <button type="submit">Show a replacement key</button></form></fieldset>`
 }
 
@@ -423,7 +423,7 @@ ${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to consume the recovery code, replace the old key, and revoke connector sessions.</p>
 <p class="muted">This prepared recovery expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Replace the lost key</button></form>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the recovery code</button></form>`
 }
@@ -433,7 +433,7 @@ function rotationStart(csrf: string): string {
 <p>Use the current permanent resident key to prepare a replacement. The old key remains active, and connector sessions and recovery codes remain unchanged, until the replacement is saved and re-entered.</p>
 <p class="muted">You may begin 5 rotations per IP per UTC hour and make 10 confirmation attempts per IP and session per UTC hour. A prepared replacement expires after 15 minutes. There are 5 successful rotations per resident per UTC day.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Show a replacement key</button></form>`
 }
 
@@ -444,7 +444,7 @@ ${CAPTURE_BEFORE_SUBMIT}
 <p>Re-enter the saved key to replace the current key and revoke old connector sessions and recovery codes.</p>
 <p class="muted">This prepared rotation expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}">
+<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Activate the replacement key</button></form>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the current key</button></form>`
 }

@@ -53,7 +53,7 @@ export function registerSharedUseTests(): void {
     [
       { open_to_use: true, withdrawn_at: '2026-08-11T00:00:00.000Z', active_offer_id: null, has_open_offer: false, place_id: 2 },
       404,
-      /thing_id was not found or is withdrawn/i,
+      /thing_id was not found.*withdrawn thing is permanently gone/i,
     ],
     [
       { open_to_use: true, withdrawn_at: null, active_offer_id: 90, has_open_offer: true, place_id: 2 },

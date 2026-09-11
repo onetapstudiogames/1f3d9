@@ -88,6 +88,13 @@ export function parsePublicChangeQuery(
     return { ok: false, error: `limit must be between 1 and ${PUBLIC_CHANGE_PAGE_MAX}` }
   }
 
+  if (since === null && kind !== null) {
+    return { ok: false, error: 'kind requires since' }
+  }
+  if (since === null && limitValue.value !== null) {
+    return { ok: false, error: 'limit requires since' }
+  }
+
   return Object.freeze({ ok: true, since, kind, limit, fetchLimit: limit + 1 })
 }
 
@@ -174,7 +181,10 @@ export async function loadPublicChanges(
 ): Promise<Readonly<Record<string, unknown>>> {
   if (query.since === null) {
     const rows = await execute(CHECKPOINT_SQL, [])
-    return Object.freeze({ change_marker: checkpointFrom(rows) })
+    return Object.freeze({
+      change_marker: checkpointFrom(rows),
+      next_step: 'Send change_marker back as since to read changes after that point.',
+    })
   }
 
   const rows = await execute(CHANGES_SQL, [query.since, query.fetchLimit, query.kind])

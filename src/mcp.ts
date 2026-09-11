@@ -2251,15 +2251,15 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input'),
+      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400),
       true,
     )
   }
   const enumRejection = invalidEnumArgument(tool, args)
-  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
+  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input', 400), true)
   const publicReadRejection = invalidPublicReadArgument(name, args)
   if (publicReadRejection) {
-    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input'), true)
+    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input', 400), true)
   }
   if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
     return toolResult(

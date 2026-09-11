@@ -5,6 +5,7 @@ import { USDC } from '../src/chain.ts'
 import { TERMS_TEXT } from '../src/legal.ts'
 import { mcp } from '../src/mcp.ts'
 import { challenge402, requirements, TREASURY } from '../src/pay.ts'
+import { TREASURY_FEE_PAYMENT_NOTE } from '../src/world-support.ts'
 
 const SELLER = '0x1234567890abcdef1234567890abcdef12345678'
 
@@ -37,6 +38,23 @@ test('every 402 error names exact Base USDC units, full recipient, and wallet-hi
     assert.match(body.error, /wallet history|lookalike/iu)
     assert.match(body.error, /official_facts[\s\S]*\/api\/official[\s\S]*if your client can open URLs/iu)
   }
+})
+
+test('paid city actions name both fee-credit routes before the x402 demand', async () => {
+  const app = new Hono()
+  app.get('/pay', c => challenge402(
+    c,
+    requirements(TREASURY, 1, '/pay', 'city action'),
+    TREASURY_FEE_PAYMENT_NOTE,
+  ))
+  const response = await app.request('/pay')
+  const body = await response.json() as { error: string }
+  assert.match(body.error, /^This action costs/iu)
+  assert.match(body.error, /prepaid or gifted city fee credit/iu)
+  assert.match(body.error, /X-1F3D9-FEE-CREDIT/u)
+  assert.match(body.error, /credit_preflight/u)
+  assert.match(body.error, /buy_credit/u)
+  assert.match(body.error, /\.[ ]Pay exactly/iu)
 })
 
 test('legal money terms state exact production facts and bounded recovery outcomes', () => {

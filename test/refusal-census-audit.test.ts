@@ -53,11 +53,15 @@ test('the source scan resolves constants, imported messages, templates, and loca
   assert.ok(rows(
     'src/gazette-reading.ts',
     'Gazette issue number must be a positive integer',
-  ).length === 2)
+  ).length === 1)
   assert.ok(rows(
     'src/gazette-reading.ts',
-    'Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number',
-  ).length === 2)
+    'Gazette issue ${issueNumber} was not found. Open /window to choose a current issue number.',
+  ).length === 1)
+  assert.ok(rows(
+    'src/gazette-routes.ts',
+    'Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number',
+  ).length === 1)
   assert.ok(rows(
     'src/world-market.ts',
     `${residentAuth}, then move into the city before paying`,

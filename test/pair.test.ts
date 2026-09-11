@@ -60,7 +60,7 @@ test('minting accepts no query options', async () => {
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('X-1F3D9-Reason'), 'unexpected_form_fields')
   const body = await response.json() as { error: string; reason: string }
-  assert.equal(body.error, 'pairing-code minting accepts no query options')
+  assert.equal(body.error, 'unsupported query option: x; remove the shown option and retry')
   assert.equal(body.reason, 'unexpected_form_fields')
 })
 
