@@ -5,7 +5,6 @@ import { mcp } from '../../src/mcp.ts'
 import { PUBLIC_EVENT_KINDS } from '../../src/public-events.ts'
 import {
   LEGACY_SECRET,
-  assertGazetteWithdrawalCommandInterpretation,
   OAUTH_ACCESS_TOKEN,
   setHostedChatFlag,
   createHarness,
@@ -25,11 +24,9 @@ export function registerToolDescriptionTests(): void {
 
     assert.match(
       browse.description,
-      /view=gazette without issue_number[\s\S]*submission_room[\s\S]*place_id 454[\s\S]*submissions_open and withdrawals_open[\s\S]*complete withdrawal_contract/iu,
+      /Gazette without issue_number[\s\S]*submission_room[\s\S]*complete withdrawal_contract/iu,
     )
-    assert.match(browse.description, /WITHDRAW #<your-note-id>/u)
-    assert.match(browse.description, /complete refusals[\s\S]*HTTP 400[\s\S]*HTTP 404[\s\S]*HTTP 403[\s\S]*already withdrawn/iu)
-    assertGazetteWithdrawalCommandInterpretation(browse.description, 'browse')
+    assert.match(browse.description, /Room #454[\s\S]*browse with view=gazette and no issue_number/iu)
   })
 
   test('MCP descriptions state enforced caller contracts before use', async () => {
@@ -62,8 +59,7 @@ export function registerToolDescriptionTests(): void {
         /1 to 256 UTF-8 bytes/iu,
         `${path}: q byte limit`,
       )
-      assert.match(look.description, /GET \/api\/place\/:id defaults full/iu, `${path}: raw place-read default`)
-      assert.match(look.description, /look place read defaults outline/iu, `${path}: connector place-read default`)
+      assert.match(look.description, /GET \/api\/place\/:id[^.]*look place read default to outline/iu, `${path}: place-read defaults`)
       assert.match(found.description, /name[^.]*1[^.]*120/iu, `${path}: found name limit`)
       assert.match(found.description, /description[^.]*4,?000/iu, `${path}: found description limit`)
       assert.match(found.description, /defaults?[^.]*closed[^.]*notes[^.]*things[^.]*building/iu, `${path}: found permission defaults`)
@@ -79,7 +75,7 @@ export function registerToolDescriptionTests(): void {
       assert.match(make.description, /open_to_use[^.]*defaults? false/iu, `${path}: make open_to_use default`)
       assert.match(make.description, /ingredient_ids[^.]*empty unless kind_id/iu, `${path}: kindless ingredient rule`)
       assert.match(make.description, /crafted makes return consumed_ingredient_ids[^.]*kindless makes omit/iu, `${path}: make response shape`)
-      assert.match(make.description, /place_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected make destination`)
+      assert.match(make.description, /Room #454[\s\S]*browse with view=gazette and no issue_number/iu, `${path}: protected make destination`)
       assert.equal(
         (make.inputSchema.properties?.open_to_use as { default?: unknown }).default,
         false,
@@ -115,9 +111,13 @@ export function registerToolDescriptionTests(): void {
       assert.match(act.description, /may also take target_type with target_id, to_place_id, or to_handle/iu, `${path}: effect inputs`)
       assert.match(act.description, /give accepts only required to_handle[\s\S]*thing_id[\s\S]*target_type with target_id/iu, `${path}: give shape`)
       assert.match(act.description, /target_type and target_id always appear together/iu, `${path}: target pair`)
-      assert.match(act.description, /move a thing into room #454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected thing movement`)
-      assert.match(found.description, /parent_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected child place`)
-      assert.match(laws.description, /place_id 454[\s\S]*HTTP 409[\s\S]*even owner #1 is not exempt/iu, `${path}: protected local laws`)
+      for (const [name, description] of [
+        ['act', act.description],
+        ['found', found.description],
+        ['laws', laws.description],
+      ] as const) {
+        assert.match(description, /Room #454[\s\S]*browse with view=gazette and no issue_number/iu, `${path}: protected ${name}`)
+      }
       assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
       assert.match(act.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
       assert.match(listWorld.description, /thing[^.]*owned by you[^.]*not withdrawn[^.]*unlocked/iu, `${path}: world thing state`)
@@ -147,11 +147,8 @@ export function registerToolDescriptionTests(): void {
         true,
         `${path}: agreement unique parties`,
       )
-      assert.match(me.description, /agreements and notes include bodies/iu, `${path}: me full records`)
-      assert.match(me.description, /places omit descriptions/iu, `${path}: me place headings`)
-      assert.match(me.description, /things omit bodies/iu, `${path}: me thing headings`)
-      assert.match(me.description, /kinds omit descriptions/iu, `${path}: me kind headings`)
-      assert.match(me.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
+      assert.match(me.description, /owned places with thing and note counts/iu, `${path}: me place counts`)
+      assert.match(me.description, /reference\/public-history\.txt/iu, `${path}: me reference`)
     }
 
     setHostedChatFlag(false)

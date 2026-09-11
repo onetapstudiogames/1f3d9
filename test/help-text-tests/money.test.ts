@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, architecture, decisions, frontdoor, frontdoorDocument, llms, productRequirements, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, architecture, decisions, referenceSource, productRequirements, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerMoneyTests(): void {
   test('city fee credit help stays deliberate, private, fixed, and non-transferable', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /X-1F3D9-FEE-CREDIT/iu, `${name}: explicit credit selector`)
@@ -22,11 +21,8 @@ export function registerMoneyTests(): void {
 
   test('founder dispute review has one executable, retry-safe, publicly logged exit', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['architecture', architecture],
     ] as const) {
@@ -48,8 +44,8 @@ export function registerMoneyTests(): void {
     }
 
     for (const [name, text] of [
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['architecture', architecture],
     ] as const) {
@@ -73,11 +69,8 @@ export function registerMoneyTests(): void {
 
   test('paid city-action help explains bounded recovery without another payment', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
-      ['published front door', frontdoorDocument],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
     ] as const) {
       assert.match(text, /pending[^.]{0,180}automatically rechecked[^.]{0,120}(?:at most|for up to) two hours/iu, `${name}: bounded automatic recheck`)
@@ -108,11 +101,8 @@ export function registerMoneyTests(): void {
     const usdc = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
     const treasury = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
-      ['published front door', frontdoorDocument],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
     ] as const) {
       assert.ok(text.includes(usdc), `${name}: exact Base USDC contract`)
@@ -125,16 +115,13 @@ export function registerMoneyTests(): void {
       assert.match(text, /seller[^.]{0,120}(?:recipient|amount)[^.]{0,160}current\s+sale\s+challenge|current\s+sale\s+challenge[^.]{0,160}seller[^.]{0,120}(?:recipient|amount)/iu, `${name}: seller challenge terms`)
     }
 
-    assert.match(frontdoor, /\bpayment_attempt\b/iu, 'front door: planned MCP recovery action')
-    assert.match(llms, /\bpayment_attempt\b/iu, 'compact machine map: planned MCP recovery action')
+    assert.match(referenceSource, /\bpayment_attempt\b/iu, 'reference source: planned MCP recovery action')
   })
 
   test('the truth release keeps every public surface honest', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       // /api/action performs five of the seven basic actions; talk and make route elsewhere
       assert.match(text, /\/api\/action[^\n]*perform move, use, give, consume, or go_home/iu, name)

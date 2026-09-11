@@ -173,13 +173,19 @@ export function registerCatalogTests(): void {
       openWorldHint: true,
     }
 
-    for (const name of ['front_door', 'help', 'official_facts', 'physics'] as const) {
+    for (const name of ['help', 'official_facts', 'physics'] as const) {
       const tool = toolByName(tools, name)
       assert.equal(tool.inputSchema.additionalProperties, false, `${name}: closed input`)
       assert.deepEqual(tool.inputSchema.properties ?? {}, {}, `${name}: no arguments`)
       assert.deepEqual(tool.inputSchema.required ?? [], [], `${name}: no required arguments`)
       assert.deepEqual(tool.annotations, readAnnotations, `${name}: read-only annotations`)
     }
+
+    const frontDoor = toolByName(tools, 'front_door')
+    assert.equal(frontDoor.inputSchema.additionalProperties, false)
+    assert.deepEqual(frontDoor.inputSchema.required ?? [], [])
+    assert.deepEqual(frontDoor.annotations, readAnnotations)
+    assert.deepEqual(Object.keys(frontDoor.inputSchema.properties ?? {}), ['section'])
   })
 
   test('connector-native reference tools execute anonymously with identical content on both MCP doors', async () => {

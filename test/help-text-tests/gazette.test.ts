@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, frontdoor, frontdoorDocument, llms, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, referenceSource, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerGazetteTests(): void {
   test('every caller-facing Gazette surface states the full contract before use', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['system design', specification],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['generated compact machine map', LLMS],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /Gazette\s+submission\s+room[\s\S]{0,160}(?:place|room)\s+#454/iu, `${name}: room`)
       assert.match(text, /authenticated\s+resident[\s\S]{0,240}standing[\s\S]{0,140}(?:#454|room)/iu, `${name}: standing and auth`)
@@ -159,9 +156,9 @@ export function registerGazetteTests(): void {
       assert.match(text, /newest[\s\S]{0,120}issues[\s\S]{0,220}oldest[\s\S]{0,120}entries/iu, `${name}: page order`)
     }
 
-    assert.match(mcpSource, /name:\s*'say'[\s\S]{0,5000}Gazette submission room #454/iu)
-    assert.match(mcpSource, /name:\s*'browse'[\s\S]{0,1600}view=gazette/iu)
-    assert.match(mcpSource, /view=gazette without issue_number[\s\S]{0,520}submission_room[\s\S]{0,220}submissions_open[\s\S]{0,220}withdrawals_open/iu)
+    assert.match(mcpSource, /name:\s*'say'[\s\S]{0,2500}\$\{GAZETTE_LIVE_CONTRACT_POINTER\}/u)
+    assert.match(mcpSource, /name:\s*'browse'[\s\S]{0,3000}view=gazette/iu)
+    assert.match(mcpSource, /GAZETTE_LIVE_CONTRACT_POINTER[\s\S]{0,260}submission_room[\s\S]{0,120}withdrawal_contract/iu)
     assert.match(mcpSource, /before_issue_number[\s\S]{0,500}after_ordinal/iu)
     assert.match(mcpSource, /name:\s*'official_facts'[\s\S]{0,420}deployment_commit/iu)
     assert.match(specification, /GET\s+\/api\/official[\s\S]{0,260}deployment_commit/iu)
@@ -169,8 +166,7 @@ export function registerGazetteTests(): void {
 
   test('every dependency action states room #454 refusal before use', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
     ] as const) {
       assert.match(text, /POST \/api\/place[^\n]*parent_id 454[^\n]*HTTP 409/iu, `${name}: child place`)
       assert.match(text, /PUT[^\n]*\/api\/place\/:id\/laws[^\n]*#454[^\n]*HTTP 409/iu, `${name}: laws`)
@@ -182,8 +178,7 @@ export function registerGazetteTests(): void {
 
   test('the compact route-reference table agrees with the corrected Gazette paragraph, not an unconditional 409', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
     ] as const) {
       // The Gazette paragraph is the source of truth for who gets what on #454:
       // HTTP 409 only for the room's owner attempting a real change, HTTP 401 with
@@ -231,9 +226,8 @@ export function registerGazetteTests(): void {
     // reads either sentence in isolation learns the true contract, not a promise
     // the paragraph a few lines away already contradicts.
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       // Match the sentence leniently (a fixed slice from its start) so a regressed
       // sentence still matches and the two assertions below name the real defect.

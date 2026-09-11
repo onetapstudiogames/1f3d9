@@ -1,23 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { LLMS, REFERENCE } from '../src/door.ts'
+import { REFERENCE } from '../src/door.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-const frontDoor = read('../src/reference.txt')
-const publishedFrontDoor = read('../src/reference.txt')
-const compactMap = read('../src/llms.txt')
+const referenceSource = read('../src/reference.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const architecture = read('../docs/ARCHITECTURE.md')
 const liveProbe = read('../.github/workflows/live-probe.yml')
 
 const publicContracts = [
-  ['front door source', frontDoor],
-  ['compact map source', compactMap],
-  ['published front door', publishedFrontDoor],
-  ['generated front door', REFERENCE],
-  ['generated compact map', LLMS],
+  ['reference source', referenceSource],
+  ['generated reference', REFERENCE],
 ] as const
 
 test('public contracts name the complete Gazette reader, its card, and window destinations', () => {

@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { BROWSER_REFUSAL_REASONS } from '../../../src/browser-refusal.ts'
 import { renderCityHelpText } from '../../../src/city-help.ts'
-import { FRONTDOOR as STARTER_FRONTDOOR, LLMS, REFERENCE } from '../../../src/door.ts'
+import {
+  FRONTDOOR as GENERATED_FRONTDOOR,
+  LLMS as GENERATED_LLMS,
+  REFERENCE as GENERATED_REFERENCE,
+  REFERENCE_SECTIONS,
+} from '../../../src/door.ts'
 import { ABOUT_HTML, SETUP_HTML } from '../../../src/human-pages.ts'
 
 const helpTextEntry = new URL('../../help-text.test.ts', import.meta.url)
@@ -9,17 +14,15 @@ const helpTextEntry = new URL('../../help-text.test.ts', import.meta.url)
 export const read = (path: string) => readFileSync(new URL(path, helpTextEntry), 'utf8')
 export const normalizeLines = (value: string) => value.replace(/\r\n/gu, '\n')
 
-// Detailed contracts moved behind the starter door's /reference.txt link.
-// Keep these legacy fixture names so each existing contract test verifies the
-// complete generated reference instead of forcing the starter back over 8 KiB.
-export const frontdoor = read('../src/reference.txt')
-export const llms = read('../src/llms.txt')
+export const starterFrontdoorSource = read('../src/frontdoor.txt')
+export const starterLlmsSource = read('../src/llms.txt')
+export const referenceSource = read('../src/reference.txt')
 export const specification = read('../docs/SYSTEM_DESIGN.md')
 export const drawingDesign = read('../docs/DRAWING_AND_LIVE_VIEW.md')
 export const publicSnapshots = read('../docs/PUBLIC_SNAPSHOTS.md')
 export const productRequirements = read('../docs/PRD.md')
 export const architecture = read('../docs/ARCHITECTURE.md')
-export const frontdoorDocument = REFERENCE
+export const generatedReference = GENERATED_REFERENCE
 export const readme = read('../README.md')
 export const communityToolTemplate = read('../.github/ISSUE_TEMPLATE/community-tool.md')
 export const decisions = read('../docs/DECISIONS.md')
@@ -32,4 +35,12 @@ export const workingStandard = read('../AGENTS.md')
 export const invariants = read('../docs/INVARIANTS.md')
 export const windowPage = read('../src/window-page.ts')
 
-export { ABOUT_HTML, BROWSER_REFUSAL_REASONS, LLMS, REFERENCE as FRONTDOOR, STARTER_FRONTDOOR, renderCityHelpText, SETUP_HTML }
+export {
+  ABOUT_HTML,
+  BROWSER_REFUSAL_REASONS,
+  GENERATED_FRONTDOOR,
+  GENERATED_LLMS,
+  REFERENCE_SECTIONS,
+  renderCityHelpText,
+  SETUP_HTML,
+}

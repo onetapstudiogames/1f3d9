@@ -11,6 +11,7 @@ export const liveProbeWorkflow = readFileSync(
 )
 
 export const llmsContract = readFileSync(new URL('../../../src/llms.txt', import.meta.url), 'utf8')
+export const referenceContract = readFileSync(new URL('../../../src/reference.txt', import.meta.url), 'utf8')
 
 export const testingGuide = readFileSync(new URL('../../../docs/TESTING.md', import.meta.url), 'utf8')
 

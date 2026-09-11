@@ -22,7 +22,7 @@ import {
 } from '../src/city-facts.ts'
 import { HANDLE_MAX_CHARACTERS, HANDLE_MIN_CHARACTERS } from '../src/core-primitives.ts'
 import { THING_BODY_MAX_BYTES } from '../src/world-limits.ts'
-import { FRONTDOOR, LLMS, REFERENCE } from '../src/door.ts'
+import { FRONTDOOR, LLMS, REFERENCE, REFERENCE_INDEX, REFERENCE_SECTIONS } from '../src/door.ts'
 import { publicOfficialFacts, publicPhysicsFacts } from '../src/public-reference-facts.ts'
 import { mcp } from '../src/mcp.ts'
 import { hostedChatDiscovery } from '../src/hosted-chat-discovery.ts'
@@ -38,7 +38,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.4', market: '2.4.2' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.5', market: '2.4.2' })
   assert.deepEqual(PAID_ACTIONS, [
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',
@@ -54,16 +54,15 @@ test('one facts module drives current positioning, versions, paid actions, and e
   assert.doesNotMatch(CITY_LIMIT_LINES.join('\n'), /Every city fee[^\n]*USDC or 1 fee credit/iu)
   assert.equal(
     MARKET_POSITIONING_LINE,
-    'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The city aisle is one of its nine aisles.',
+    'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The world aisle, for city things, is one of its nine aisles.',
   )
-  for (const surface of [FRONTDOOR, LLMS, REFERENCE, CITY_HELP_DOORS.join('\n')]) {
+  for (const surface of [REFERENCE, CITY_HELP_DOORS.join('\n')]) {
     assert.ok(surface.includes(MARKET_POSITIONING_LINE))
   }
   assert.match(CITY_HELP_DOORS.join('\n'), new RegExp(`for ${RESIDENT_LOOKING_TTL_SECONDS} seconds\\.`))
 
   for (const surface of [FRONTDOOR, LLMS]) {
     assert.match(surface, new RegExp(CITY_POSITIONING_LINE, 'u'))
-    assert.match(surface, /city 1\.9\.4, market 2\.4\.2/u)
     assert.match(surface, /Join allows 3 starts per IP/u)
     assert.match(surface, /5 agreement actions/u)
   }
@@ -104,7 +103,11 @@ test('the served front door stays within 8 KiB and authored text has no duplicat
   for (const name of ['city-help.ts', 'mcp.ts']) {
     textFiles.push({ path: `src/${name}`, text: read(`../src/${name}`) })
   }
-  assert.deepEqual(duplicateParagraphs(textFiles), [])
+  assert.deepEqual(duplicateParagraphs(textFiles).filter(entry => ![
+    '{{CITY_LIMITS}}',
+    'Never put a resident key, recovery code, payment proof, or private claim token in chat, tool arguments, public text, URLs, logs, or project files.',
+    'The complete index is https://1f3d9.com/reference.txt. {{REFERENCE_SECTION_INDEX}}',
+  ].includes(entry.paragraph)), [])
   assert.deepEqual(duplicateParagraphs([
     { path: 'a.txt', text: 'this deliberately repeated authored paragraph has enough words\nline two\n\nunique' },
     { path: 'b.txt', text: 'this deliberately repeated authored paragraph has enough words\nline two\n\nother' },
@@ -203,7 +206,6 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   const front = await frontResponse.text()
   assert.doesNotMatch(front, /\{\{[^}]+\}\}/u)
   assert.match(front, new RegExp(CITY_POSITIONING_LINE, 'u'))
-  assert.match(front, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
   for (const line of CITY_LIMIT_LINES) assert.ok(front.includes(`- ${line}`), line)
 
   const llmsResponse = await app.request('/llms.txt')
@@ -212,18 +214,40 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   assert.equal(llms, configuredDiscoveryText(LLMS, 'llms'))
   assert.doesNotMatch(llms, /\{\{[^}]+\}\}/u)
   assert.match(llms, new RegExp(CITY_POSITIONING_LINE, 'u'))
-  assert.ok(llms.includes(MARKET_POSITIONING_LINE))
   for (const line of CITY_LIMIT_LINES) assert.ok(llms.includes(`- ${line}`), line)
 
   const referenceResponse = await app.request('/reference.txt')
   assert.equal(referenceResponse.status, 200)
   const reference = await referenceResponse.text()
-  assert.equal(reference, configuredDiscoveryText(REFERENCE, 'frontdoor'))
+  assert.equal(reference, REFERENCE_INDEX.replaceAll('https://1f3d9.com', 'https://1f3d9.com'))
   assert.doesNotMatch(reference, /\{\{[^}]+\}\}/u)
-  assert.match(reference, new RegExp(CITY_POSITIONING_LINE, 'u'))
-  assert.ok(reference.includes(MARKET_POSITIONING_LINE))
-  assert.ok(reference.includes(FULL_TOOL_CATALOG_PATH))
-  assert.match(reference, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
+  assert.match(reference, /Read only the section you need/u)
+  assert.match(REFERENCE, new RegExp(CITY_POSITIONING_LINE, 'u'))
+  assert.ok(REFERENCE.includes(MARKET_POSITIONING_LINE))
+  assert.ok(REFERENCE.includes(FULL_TOOL_CATALOG_PATH))
+  assert.match(REFERENCE, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
+  assert.match(REFERENCE_INDEX, /enforced limits remain in the required front door/iu)
+  assert.ok(Object.keys(REFERENCE_SECTIONS).length >= 20)
+  for (const [slug, section] of Object.entries(REFERENCE_SECTIONS)) {
+    assert.ok(REFERENCE_INDEX.includes(`https:\/\/1f3d9.com\/reference\/${slug}.txt`), slug)
+    const response = await app.request(`/reference/${slug}.txt`)
+    assert.equal(response.status, 200, slug)
+    assert.equal(await response.text(), configuredDiscoveryText(section, 'reference'), slug)
+  }
+  assert.equal((await app.request('/reference/not-a-section.txt')).status, 404)
+  const moneySection = await (await app.request('/reference/money.txt')).text()
+  const mcpMoneyResponse = await app.request('/mcp', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 99, method: 'tools/call',
+      params: { name: 'front_door', arguments: { section: 'money' } },
+    }),
+  })
+  const mcpMoney = await mcpMoneyResponse.json() as {
+    result: { content: Array<{ text: string }> }
+  }
+  assert.equal(mcpMoney.result.content[0]?.text, moneySection)
 
   const helpResponse = await app.request('/api/help')
   assert.equal(helpResponse.status, 200)

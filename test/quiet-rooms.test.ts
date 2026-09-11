@@ -8,6 +8,7 @@ import test from 'node:test'
 import { publicPlaceTree } from '../src/window.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { SKILL_VERSION_RECOMMENDED } from '../src/skill-versions.ts'
+import { REFERENCE } from '../src/door.ts'
 
 function source(path: string): string {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
@@ -70,11 +71,10 @@ test('place_edit accepts the free quiet switch and states its contract before us
   assert.match(mcp, /quiet: \{ type: 'boolean' \}/u)
   assert.match(mcp, /quiet is an optional boolean/iu)
 
-  const frontdoor = source('src/reference.txt')
-  assert.match(frontdoor, /QUIET ROOMS/u)
-  assert.match(frontdoor, /prefers to keep this room private/u)
-  const llms = source('src/llms.txt')
-  assert.match(llms, /Quiet rooms:/u)
+  const referenceSource = source('src/reference.txt')
+  assert.match(referenceSource, /QUIET ROOMS/u)
+  assert.match(referenceSource, /prefers to keep this room private/u)
+  assert.match(REFERENCE, /QUIET ROOMS/u)
 
   const decisions = source('docs/DECISIONS.md')
   assert.match(
@@ -88,31 +88,13 @@ test('place_edit accepts the free quiet switch and states its contract before us
 // row carries only type, id, parent_id, and name — stale the moment quiet
 // was added to every directory place row. Every mirror must agree.
 test('the directory shape sentence discloses quiet, everywhere it is stated', () => {
-  const frontdoorSource = source('src/reference.txt')
+  const referenceSource = source('src/reference.txt')
   assert.match(
-    frontdoorSource,
+    referenceSource,
     /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
   )
-  const llms = source('src/llms.txt')
   assert.match(
-    llms,
-    /each place has only `type: "place"`, stable `id`, `parent_id`, `name`, and `quiet`/u,
-  )
-  const door = source('src/door.ts')
-  assert.match(
-    door,
-    /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
-  )
-  // src/door.ts embeds llms.txt through embed-door.mjs's escapeTemplate,
-  // which backslash-escapes every backtick, so the source backticks above
-  // survive here as \` rather than plain `.
-  assert.match(
-    door,
-    /each place has only \\?`type: "place"\\?`, stable \\?`id\\?`, \\?`parent_id\\?`, \\?`name\\?`, and \\?`quiet\\?`/u,
-  )
-  const frontdoorDocument = source('src/door.ts')
-  assert.match(
-    frontdoorDocument,
+    REFERENCE,
     /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
   )
   // The public directory response itself actually carries the field this
@@ -253,12 +235,11 @@ test('every path that lists a resident, thing, or note resolves quiet through is
 })
 
 test('official_facts and /api/official state the maintainer-recommended skill versions', () => {
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.4', market: '2.4.2' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.5', market: '2.4.2' })
   const facts = source('src/public-reference-facts.ts')
   assert.match(facts, /skill_version_recommended: SKILL_VERSION_RECOMMENDED/u)
   const mcp = source('src/mcp.ts')
   assert.match(mcp, /skill_version_recommended/u)
-  const frontdoor = source('src/door.ts')
-  assert.match(frontdoor, /skill_version_recommended/u)
-  assert.match(frontdoor, /city 1\.9\.4, market 2\.4\.2/u)
+  assert.match(REFERENCE, /skill_version_recommended/u)
+  assert.match(REFERENCE, /city 1\.9\.5, market 2\.4\.2/u)
 })

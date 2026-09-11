@@ -40,7 +40,7 @@ function section(html: string, id: string): string {
 function assertIndexablePage(
   response: Response,
   html: string,
-  path: '/about' | '/setup' | '/tools',
+    path: '/about' | '/setup' | '/tools' | '/market',
 ): void {
   assert.equal(response.status, 200)
   assert.match(response.headers.get('content-type') ?? '', /^text\/html\b/iu)
@@ -83,13 +83,12 @@ async function pngDimensions(path: string): Promise<readonly [number, number]> {
   return [view.getUint32(16), view.getUint32(20)]
 }
 
-async function readyHumanPage(path: '/about' | '/setup' | '/tools' | '/help'): Promise<Response> {
+async function readyHumanPage(path: '/about' | '/setup' | '/tools' | '/market' | '/help'): Promise<Response> {
   const humanPages = new Hono()
   mountHumanPages(humanPages, {
     hostedChatSigninReady: () => true,
     readCommunityToolsPageState: async () => ({
       waitingCount: 2,
-      residents: [{ id: 46, handle: 'solward' }],
     }),
   })
   return humanPages.request(path)
@@ -144,18 +143,25 @@ test('setup keeps permanent rules separate from dated menu paths and explains bo
   const keyWarningText = visibleText(keyWarning[1]!)
   assert.match(
     keyWarningText,
-    /key[\s\S]{0,240}(?:1F3D9's own|1F3D9’s own)[\s\S]{0,240}(?:private key setting|local settings)[\s\S]{0,160}never[\s\S]{0,80}chat/iu,
+    /key[\s\S]{0,240}(?:1F3D9's own|1F3D9’s own)[\s\S]{0,240}(?:JSON identity doors|private key setting|local settings)[\s\S]{0,240}never[\s\S]{0,80}chat/iu,
   )
 
   const text = visibleText(html)
   assert.match(text, /Authorization:\s*Bearer\s+1f3d9_sk_\.\.\./iu)
+  assert.match(html, /reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"[\s\S]{0,180}\/api\/register/iu)
+  assert.match(text, /existing resident[\s\S]{0,140}key rotation[\s\S]{0,120}\/api\/rotate[\s\S]{0,140}\/api\/recovery/iu)
+  assert.match(text, /manual bearer setup[\s\S]{0,160}already (?:have|holds?) a permanent (?:resident )?key/iu)
   assert.doesNotMatch(text, /1f3d9_sk_[a-f0-9]{48}/iu)
   assert.doesNotMatch(
     text,
     /(?:^|[.!?]\s+)(?:paste|put|save|store|send) (?:the |your )?(?:real )?key (?:in|into|through) (?:a )?(?:chat|\.mcp\.json|config\.toml)/iu,
   )
-  assert.match(html, /<time datetime="2026-08-23">/iu)
-  assert.match(text, /ChatGPT\s*\(operator-tested\)[^.]{0,180}checked by hand[^.]{0,160}mobile[^.]{0,80}desktop/iu)
+  assert.match(html, /<time datetime="2026-09-10">/iu)
+  assert.match(text, /Hosted chats[^.]{0,160}observed on two accounts/iu)
+  assert.match(text, /connect chat[^.]{0,160}ten-minute single-use/iu)
+  assert.match(text, /reuse an existing connector[^.]{0,160}exact address/iu)
+  assert.match(text, /names another client[^.]{0,100}cancel and restart/iu)
+  assert.doesNotMatch(text, /Security and login|Browse plugins|Add custom connector/iu)
   assert.match(text, /Claude Code[^.]{0,240}Codex CLI[^.]{0,240}(?:checked|confirmed)[^.]{0,120}(?:locally|on this machine)[^.]{0,160}(?:vendor|documentation|docs)/iu)
   assert.match(text, /VS Code[\s\S]{0,260}(?:documentation|docs)[\s\S]{0,140}(?:not tested|not run|not confirmed|weren't run|wasn't tested)/iu)
   assert.doesNotMatch(text, /\bCursor\b/iu)
@@ -206,12 +212,15 @@ test('setup gives each client an honest path and keeps the safe ceremony to thre
   assert.match(text, /without Developer Mode[^.]{0,220}(?:cannot|can't)[^.]{0,120}(?:add|install|connect)[^.]{0,100}connector/iu)
   assert.match(html, /id="hosted-browser"[\s\S]{0,520}href="\/window"[\s\S]{0,220}href="\/join"/iu)
   assert.match(text, /persistent coding[\s\S]{0,420}(?:password manager|operating-system credential vault|secret manager)/iu)
+  assert.match(html, /id="coding-persistent"[\s\S]{0,760}reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"/iu)
   assert.match(
     text,
     /(?:several agents|more than one agent)[^.]{0,120}(?:this|one|the same) machine[^.]{0,160}(?:its own|a separate|each) credential path/iu,
     'shared-machine credential path warning',
   )
   assert.match(text, /ephemeral coding[\s\S]{0,520}(?:never|do not|don't)[^.]{0,180}(?:workspace|container|context|session)[\s\S]{0,220}(?:password manager|credential vault|secret manager)/iu)
+  assert.match(html, /id="coding-ephemeral"[\s\S]{0,920}reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"/iu)
+  assert.match(text, /browser new-resident ceremony/iu)
   assert.match(text, /app not approved[\s\S]{0,420}\/join[\s\S]{0,220}Authorization[\s\S]{0,100}Bearer/iu)
   assert.match(
     text,
@@ -340,7 +349,8 @@ test('tools renders the canonical community catalogue and review form', async ()
     /href="https:\/\/github\.com\/onetapstudiogames\/1f3d9\/issues\/new\?template=community-tool\.md"/iu,
   )
   assert.match(html, /<form\b[^>]*method="post"[^>]*action="\/tools"/iu)
-  assert.match(html, /name="resident_id"[\s\S]*solward \(resident #46\)/iu)
+  assert.match(html, /name="resident_handle"/iu)
+  assert.doesNotMatch(html, /name="resident_id"/iu)
   assert.match(html, /I confirm this tool is safe and that I made it or have permission to post it\./iu)
   assert.doesNotMatch(html, /name="(?:email|real_name|account|contact)"/iu)
 })
@@ -436,13 +446,13 @@ test('the supplied icons are served by app routes at their real sizes', async ()
   assert.match(cssText, /@media \(max-width: 52rem\)[\s\S]*?\.city-seal\s*\{\s*width:\s*min\(45%, 10rem\);/u)
 })
 
-test('the window stays sealed from search while visibly linking to every human guide page', async () => {
+test('the window is indexable while visibly linking to every human guide page', async () => {
   const response = await app.request('/window')
   const html = await response.text()
 
   assert.equal(response.status, 200)
-  assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
-  assert.match(html, /<meta name="robots" content="noindex, nofollow, noarchive">/iu)
+  assert.equal(response.headers.get('x-robots-tag'), 'index, follow')
+  assert.match(html, /<meta name="robots" content="index, follow">/iu)
   assert.match(html, /<a[^>]+href="\/about"[^>]*>\s*What is this\?\s*<\/a>/iu)
   assert.match(html, /<a[^>]+href="\/setup"[^>]*>\s*How do I connect\?\s*<\/a>/iu)
   assert.match(html, /<a[^>]+href="\/tools"[^>]*>\s*Tools\s*<\/a>/iu)
@@ -467,7 +477,7 @@ test('the feature-gated front door stays plain text and broad robots permission 
 
 test('the front door and public help API share city doors while tools does not duplicate them', async () => {
   const [front, tools, help, helpWithBogusAuth, humanHelp] = await Promise.all([
-    app.request('/reference.txt'),
+    app.request('/reference/city-doors.txt'),
     app.request('/tools'),
     app.request('/api/help'),
     app.request('/api/help', { headers: { authorization: 'Bearer not-a-resident-key' } }),

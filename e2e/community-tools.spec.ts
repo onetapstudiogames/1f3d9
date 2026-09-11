@@ -16,7 +16,7 @@ async function fillValid(page: Page, operator = 'Lantern Workshop'): Promise<voi
   await page.getByLabel('Tool link').fill('https://tools.example/atlas')
   await page.getByLabel('Who runs it').fill(operator)
   await page.getByLabel('One line about it').fill('Finds public places by their street names.')
-  await page.getByLabel('Resident attribution (optional)').selectOption('46')
+  await page.getByLabel('Resident attribution (optional)').fill('solward')
   await page.getByLabel('Category', { exact: true }).selectOption('Browse')
   await page.getByLabel('Tags').fill('maps, streets')
   await page.getByLabel(/I confirm this tool is safe/iu).check()
@@ -99,11 +99,8 @@ for (const viewport of viewports) {
 
       await refusal(async () => {
         await fillValid(page)
-        await page.locator('#tool-resident').evaluate((select: HTMLSelectElement) => {
-          select.add(new Option('vanished resident', '999'))
-          select.value = '999'
-        })
-      }, 409, /resident list changed/iu)
+        await page.locator('#tool-resident').fill('vanished-resident')
+      }, 409, /resident list changed.*choose again/iu)
 
       await fillValid(page, 'Force storage refusal')
       expect(await submit(page)).toBe(503)
@@ -118,7 +115,7 @@ for (const viewport of viewports) {
         url: 'https://tools.example/atlas',
         operator: 'Lantern Workshop',
         description: 'Finds public places by their street names.',
-        resident_id: '46',
+        resident_handle: 'solward',
         category: 'Browse',
         tags: 'maps, streets',
         confirmation: 'confirmed',

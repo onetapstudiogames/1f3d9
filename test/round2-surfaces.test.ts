@@ -75,14 +75,14 @@ test('MCP advertises every round-two control without accepting bearer arguments'
     'before_thing_id', 'thing_limit',
     'before_note_id', 'note_limit',
   ]) assert.ok(property in (look.inputSchema.properties ?? {}), `${property} should be advertised`)
-  assert.match(look.description, /recent.*default/i)
+  assert.match(look.description, /(?:recent|newest)[^\n]*default/i)
   assert.match(look.description, /continue|older/i)
   const me = tools.find(tool => tool.name === 'me')!
   for (const singular of ['place', 'thing', 'kind', 'agreement', 'note', 'offer']) {
     assert.ok(`before_${singular}_id` in (me.inputSchema.properties ?? {}))
     assert.ok(`${singular}_limit` in (me.inputSchema.properties ?? {}))
   }
-  assert.match(me.description, /recent.*default/i)
+  assert.match(me.description, /(?:recent|newest)[^\n]*default/i)
   assert.equal(tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)
 })
 
@@ -176,7 +176,7 @@ test('MCP me forwards every independent holdings cursor', async () => {
 
 test('round-two discovery text names the frozen vocabulary, canonical routes, and active timer triggers', () => {
   assert.match(FRONTDOOR, /reference\.txt/u)
-  for (const text of [REFERENCE, LLMS]) {
+  for (const text of [REFERENCE]) {
     for (const action of ACTIONS) assert.match(text, new RegExp(`\\b${action}\\b`))
     for (const brick of BRICKS) assert.match(text, new RegExp(`\\b${brick}\\b`))
     for (const route of [

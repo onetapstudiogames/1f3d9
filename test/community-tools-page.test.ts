@@ -6,9 +6,9 @@ import { Hono } from 'hono'
 import { COMMUNITY_TOOL_CATEGORIES, type CommunityToolQueueResult } from '../src/community-tool-submissions.ts'
 import { mountHumanPages } from '../src/human-pages.ts'
 
-const pageState = { waitingCount: 7, residents: [{ id: 46, handle: 'solward' }] }
+const pageState = { waitingCount: 7 }
 const COMMUNITY_TOOL_IP_HASH_KEY = '12'.repeat(32)
-const RESIDENT_CLAIM_SENTENCE = 'A chosen resident is a self-reported claim that the maintainer checks before listing.'
+const RESIDENT_CLAIM_SENTENCE = 'Enter the exact resident handle. Attribution is a self-reported claim that the maintainer checks before listing.'
 
 function humanApp(outcome: CommunityToolQueueResult['outcome'] = 'queued') {
   const app = new Hono()
@@ -42,7 +42,7 @@ function validForm(csrf: string) {
     url: 'https://tools.example/atlas',
     operator: 'Lantern Workshop',
     description: 'Finds public places by their street names.',
-    resident_id: '46',
+    resident_handle: 'solward',
     category: COMMUNITY_TOOL_CATEGORIES[0],
     tags: 'maps, streets',
     confirmation: 'confirmed',
@@ -60,10 +60,11 @@ test('/tools is only the searchable community list and its private queue form', 
   assert.match(html, /<script src="\/tools\.js" defer><\/script>/u)
   assert.doesNotMatch(html, /1f3d9\.com\/mcp|1f3ea\.com\/mcp|renderCityHelp/iu)
 
-  for (const name of ['title', 'url', 'operator', 'description', 'resident_id', 'category', 'tags']) {
+  for (const name of ['title', 'url', 'operator', 'description', 'resident_handle', 'category', 'tags']) {
     assert.match(html, new RegExp(`name="${name}"`, 'u'), name)
   }
-  assert.match(html, /<option value="46">solward \(resident #46\)<\/option>/u)
+  assert.match(html, /<input id="tool-resident" name="resident_handle"/u)
+  assert.doesNotMatch(html, /<option value="46">/u)
   assert.match(html, new RegExp(RESIDENT_CLAIM_SENTENCE.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
   assert.match(html, /I confirm this tool is safe and that I made it or have permission to post it\./u)
   assert.doesNotMatch(html, /name="(?:email|real_name|account|contact)"/iu)

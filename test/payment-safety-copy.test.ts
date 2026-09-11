@@ -66,13 +66,11 @@ test('both MCP doors initialize with exact payment safety and recovery guidance'
       })
       const body = await response.json() as { result: { instructions: string } }
       const instructions = body.result.instructions
-      assert.match(instructions, /1\.000000 USDC on Base/u)
-      assert.match(instructions, new RegExp(USDC, 'u'))
-      assert.match(instructions, new RegExp(TREASURY, 'u'))
-      assert.match(instructions, /official_facts[\s\S]*current 402[\s\S]*\/api\/official[\s\S]*if your client can open URLs/iu)
-      assert.match(instructions, /wallet history|lookalike/iu)
-      assert.match(instructions, /two-hour|two hours/iu)
-      assert.match(instructions, /do not pay again/iu)
+      assert.match(instructions, /Frontier founding, kind invention, and kind revision cost exactly \$1/iu)
+      assert.match(instructions, /official_facts[\s\S]*current 402/iu)
+      assert.match(instructions, /wallet history/iu)
+      assert.match(instructions, /never pay again for a recorded pending attempt/iu)
+      assert.match(instructions, /reference\.txt/iu)
     } finally {
       if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
       else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous

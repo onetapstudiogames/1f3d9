@@ -196,7 +196,7 @@ export function registerRedactionAndPassivityTests(): void {
         idempotentHint: false,
         openWorldHint: false,
       }, path)
-      assert.match(me.description, /not a read-only call/iu, path)
+      assert.match(me.description, /may change the city/iu, path)
       assert.match(me.description, /resolves? due timers/iu, path)
       const look = toolByName(tools, 'look')
       assert.deepEqual(look.annotations, {

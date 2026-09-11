@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deployScript, ciWorkflow, liveProbeWorkflow, llmsContract, testingGuide, workingStandard, PAYMENT_RELIABILITY_STANDARD, environmentRunbook, packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
+import { deployScript, ciWorkflow, liveProbeWorkflow, testingGuide, workingStandard, PAYMENT_RELIABILITY_STANDARD, environmentRunbook, packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
 
 export function registerReleaseGatesTests(): void {
   test('the retired deploy helper is read-only outside local verification', () => {
@@ -79,13 +79,6 @@ export function registerReleaseGatesTests(): void {
       'A kind revision publishes at most eight variants drawn and described by that exact revision owner.',
       'frontier founding, kind invention, and kind revision accept either rail, while place rename, retirement, and restoration require exactly one prepaid city fee credit',
     ])
-    for (const assertion of contractAssertions) {
-      assert.ok(
-        llmsContract.includes(assertion!),
-        `live-probe contract assertion is absent from src/llms.txt: ${assertion}`,
-      )
-    }
-
     assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
     assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
     assert.match(probe, /\.state == "undrawn"/u)

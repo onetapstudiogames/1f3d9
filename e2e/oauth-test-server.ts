@@ -117,11 +117,11 @@ const communityToolsPageState = async () => ({
   ]),
 })
 const submitCommunityToolForBrowserTest = async (
-  submission: { residentId: number | null; operator: string },
+  submission: { residentHandle: string | null; operator: string },
   ipHash: string,
 ) => {
   if (submission.operator === 'Force storage refusal') throw new Error('e2e storage refusal')
-  if (submission.residentId !== null && ![46, 49].includes(submission.residentId)) {
+  if (submission.residentHandle !== null && !['solward', 'browser-resident'].includes(submission.residentHandle)) {
     return { outcome: 'resident_not_found' as const }
   }
   const used = communityToolAttempts.get(ipHash) ?? 0

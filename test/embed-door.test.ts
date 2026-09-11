@@ -14,9 +14,13 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { withoutInheritedGitEnvironment } from '../scripts/child-process-environment.ts'
+import { REFERENCE_SECTION_CATALOG } from '../src/reference-sections.ts'
 
 const generatorPath = fileURLToPath(new URL('../scripts/embed-door.mjs', import.meta.url))
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
+const fixtureReference = `FULL REFERENCE\n\n${REFERENCE_SECTION_CATALOG.slice(1)
+  .map(([, title]) => `${title.toUpperCase()}\n${'-'.repeat(title.length)}\nsection\n\n`)
+  .join('')}`
 
 const createFixture = (
   frontdoorDocument: string,
@@ -26,8 +30,9 @@ const createFixture = (
   mkdirSync(join(root, 'src'))
   mkdirSync(join(root, 'docs', 'published'), { recursive: true })
   writeFileSync(join(root, 'src', 'frontdoor.txt'), frontdoor)
-  writeFileSync(join(root, 'src', 'reference.txt'), 'FULL REFERENCE\n')
+  writeFileSync(join(root, 'src', 'reference.txt'), fixtureReference)
   writeFileSync(join(root, 'src', 'llms.txt'), 'COMPACT MAP\n')
+  copyFileSync(join(projectRoot, 'src', 'reference-sections.ts'), join(root, 'src', 'reference-sections.ts'))
   writeFileSync(join(root, 'docs', 'published', 'FRONTDOOR.md'), frontdoorDocument)
   return root
 }
@@ -85,7 +90,8 @@ test('embed-door regenerates the fenced published mirror without changing its wr
     )
     const generatedDoor = readFileSync(join(root, 'src', 'door.ts'), 'utf8')
     assert.match(generatedDoor, /export const FRONTDOOR = `NEW FRONT DOOR\n`/u)
-    assert.match(generatedDoor, /export const REFERENCE = `FULL REFERENCE\n`/u)
+    assert.match(generatedDoor, /export const REFERENCE = `FULL REFERENCE/u)
+    assert.match(generatedDoor, /export const REFERENCE_SECTIONS = Object\.freeze/u)
     assert.match(generatedDoor, /export const LLMS = `COMPACT MAP\n`/u)
   } finally {
     rmSync(root, { force: true, recursive: true })

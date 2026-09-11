@@ -265,18 +265,14 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'do not apply a fixed correction.',
     'Historical rows stay exactly as written.',
   ].join(' ')
-  const responses = await Promise.all([app.request('/reference.txt'), app.request('/llms.txt')])
-  const [frontDoor, compactMap] = await Promise.all([
-    responses[0]!.text(),
-    responses[1]!.text(),
-  ])
+  const frontDoor = [
+    await (await app.request('/reference/money.txt')).text(),
+    await (await app.request('/reference/own-promise-speak.txt')).text(),
+  ].join('\n')
   for (const [name, value] of [
     ['full reference source', read('src/reference.txt')],
-    ['compact map source', read('src/llms.txt')],
     ['embedded full reference', REFERENCE],
-    ['embedded compact map', LLMS],
     ['served full reference', frontDoor],
-    ['served compact map', compactMap],
   ] as const) {
     for (const contract of sinceLastVisitContracts) {
       assert.ok(value.includes(contract), `${name}: since-last-visit contract: ${contract}`)
@@ -301,7 +297,6 @@ test('the around-you budget has one production value and readable document mirro
   const admittedRange = `from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
   for (const [name, value] of [
     ['full reference source', read('src/reference.txt')],
-    ['compact map source', read('src/llms.txt')],
     ['generated full reference', REFERENCE],
     ['system design', read('docs/SYSTEM_DESIGN.md')],
   ] as const) {

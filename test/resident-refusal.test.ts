@@ -54,7 +54,7 @@ test('repeated refusal wording varies and adds plain human guidance at ten', () 
   }
   assert.match(
     formatRepeatedRefusal(cause, 10),
-    /\n\nStop and tell your human\. Open \/help\.$/u,
+    /\n\nStop and tell your human\. Use your help tool or GET \/api\/help\.$/u,
   )
   assert.doesNotMatch(formatRepeatedRefusal(cause, 10), /\bten\b/iu)
 })
@@ -111,7 +111,7 @@ test('authenticated JSON refusals vary without changing status, fields, or cache
     assert.equal(body?.error_class, 'forbidden')
     if (repetition < 10) assert.doesNotMatch(body?.error ?? '', /tell your human|\/help/iu)
   }
-  assert.match(body?.error ?? '', /Stop and tell your human\. Open \/help\./u)
+  assert.match(body?.error ?? '', /Stop and tell your human\. Use your help tool or GET \/api\/help\./u)
 
   const differentCause = await app.request('/api/refusal/quota')
   assert.deepEqual(await differentCause.json(), {
@@ -426,7 +426,7 @@ test('legacy and hosted MCP keep escalation text and matching machine failure fi
         error_class: string
         http_status: number
       }
-      assert.match(failure.error, /Stop and tell your human\. Open \/help\./u)
+      assert.match(failure.error, /Stop and tell your human\. Use your help tool or GET \/api\/help\./u)
       assert.equal(failure.action.error, failure.error)
       assert.equal(failure.error_class, 'forbidden')
       assert.equal(failure.http_status, 403)

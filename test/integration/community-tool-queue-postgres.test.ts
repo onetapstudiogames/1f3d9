@@ -51,12 +51,12 @@ async function postgres(): Promise<{ pool: Pool; container: string }> {
   }
 }
 
-const submission = (residentId: number | null): CommunityToolSubmission => Object.freeze({
+const submission = (residentHandle: string | null): CommunityToolSubmission => Object.freeze({
   title: 'Pocket city atlas',
   url: 'https://tools.example/atlas',
   operator: 'Lantern Workshop',
   description: 'Finds public places by their street names.',
-  residentId,
+  residentHandle,
   category: COMMUNITY_TOOL_CATEGORIES[0],
   tags: Object.freeze(['maps', 'streets']),
 })
@@ -92,11 +92,11 @@ test('PostgreSQL keeps submissions private, bounded, attributable, and operator-
     await server.pool.query(privacyDdl)
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      assert.deepEqual(await submitCommunityTool(query, submission(46), 'a'.repeat(64)), { outcome: 'queued' })
+      assert.deepEqual(await submitCommunityTool(query, submission('solward'), 'a'.repeat(64)), { outcome: 'queued' })
     }
-    assert.deepEqual(await submitCommunityTool(query, submission(46), 'a'.repeat(64)), { outcome: 'rate_limited' })
+    assert.deepEqual(await submitCommunityTool(query, submission('solward'), 'a'.repeat(64)), { outcome: 'rate_limited' })
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      assert.deepEqual(await submitCommunityTool(query, submission(999), 'b'.repeat(64)), { outcome: 'resident_not_found' })
+      assert.deepEqual(await submitCommunityTool(query, submission('missing-resident'), 'b'.repeat(64)), { outcome: 'resident_not_found' })
     }
     assert.deepEqual(await submitCommunityTool(query, submission(null), 'b'.repeat(64)), { outcome: 'rate_limited' })
     assert.deepEqual(await submitCommunityTool(query, submission(null), 'c'.repeat(64)), { outcome: 'queued' })

@@ -1,16 +1,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { renderCityFactTokens } from '../../src/city-facts.ts'
-import { FRONTDOOR, LLMS, SETUP_HTML, STARTER_FRONTDOOR, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, normalizeLines, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { CITY_LIMIT_LINES, CITY_POSITIONING_LINE, renderCityFactTokens } from '../../src/city-facts.ts'
+import { renderReferenceSectionIndex } from '../../src/reference-sections.ts'
+import { generatedReference, GENERATED_FRONTDOOR, GENERATED_LLMS, SETUP_HTML, referenceSource, hostedSignin, mcpSource, normalizeLines, read, renderCityHelpText, specification, starterFrontdoorSource, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerOnboardingTests(): void {
+  test('the actual short door sources and generated copies keep the required first-read truths', () => {
+    for (const [name, source] of [
+      ['front door source', starterFrontdoorSource],
+      ['llms source', starterLlmsSource],
+    ] as const) {
+      assert.match(source, /Land, things, ownership, unenforced public agreements, and speech in places/u, `${name}: five real things`)
+      assert.match(source, /agents are never property[\s\S]{0,180}every block[\s\S]{0,180}going home[\s\S]{0,180}your land is yours/iu, `${name}: four rights`)
+      assert.match(source, /\/mcp[\s\S]{0,180}\/mcp\/connect/iu, `${name}: connector doors`)
+      assert.match(source, /\/join/iu, `${name}: browser move-in path`)
+      assert.match(source, /POST \/api\/register/iu, `${name}: coding move-in path`)
+      assert.match(source, /POST \/api\/pair/iu, `${name}: chat pairing path`)
+      assert.match(source, /credit_preflight[\s\S]{0,220}official_facts|official_facts[\s\S]{0,220}credit_preflight/iu, `${name}: fee rails`)
+      assert.match(source, /Never put a resident key, recovery code, payment proof, or private claim token/iu, `${name}: secret safety`)
+    }
+
+    for (const [name, generated] of [
+      ['generated front door', GENERATED_FRONTDOOR],
+      ['generated llms', GENERATED_LLMS],
+    ] as const) {
+      assert.match(generated, new RegExp(CITY_POSITIONING_LINE, 'u'), `${name}: positioning`)
+      for (const limit of CITY_LIMIT_LINES) assert.ok(generated.includes(limit), `${name}: ${limit}`)
+    }
+  })
+
   test('served onboarding contracts are key-first, resumable, and honest for every client class', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['hosted sign-in guide', hostedSignin],
     ] as const) {
@@ -38,8 +60,7 @@ export function registerOnboardingTests(): void {
 
     for (const [name, text] of [
       ['setup page', SETUP_HTML],
-      ['front door source', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
     ] as const) {
       assert.match(text, /hosted (?:chat )?(?:with|that has)[^\n.]{0,100}connector/iu, `${name}: hosted connector`)
       assert.match(text, /hosted (?:chat )?(?:without|that has no)[^\n.]{0,120}Developer Mode/iu, `${name}: hosted browser`)
@@ -51,8 +72,7 @@ export function registerOnboardingTests(): void {
 
   test('public help states the speech-location and permanent-handle rules', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /must be standing in (?:the|a) place to (?:talk|speak) there/iu, name)
@@ -61,7 +81,7 @@ export function registerOnboardingTests(): void {
   })
 
   test('canonical and generated discovery text stays synchronized', () => {
-    const starterSource = read('../src/frontdoor.txt')
+    const starterSource = starterFrontdoorSource
     const publishedStarter = read('../docs/published/FRONTDOOR.md')
     const fenceStart = publishedStarter.indexOf('```\n')
     const fenceEnd = publishedStarter.lastIndexOf('\n```')
@@ -69,9 +89,11 @@ export function registerOnboardingTests(): void {
     const fencedCopy = `${publishedStarter.slice(fenceStart + 4, fenceEnd)}\n`
 
     const renderedFrontdoor = renderCityFactTokens(starterSource)
+      .replace('{{REFERENCE_SECTION_INDEX}}', renderReferenceSectionIndex())
     assert.equal(normalizeLines(fencedCopy), normalizeLines(renderedFrontdoor))
-    assert.equal(normalizeLines(STARTER_FRONTDOOR), normalizeLines(renderedFrontdoor))
-    assert.equal(normalizeLines(LLMS), normalizeLines(renderCityFactTokens(llms)))
+    assert.equal(normalizeLines(GENERATED_FRONTDOOR), normalizeLines(renderedFrontdoor))
+    assert.equal(normalizeLines(GENERATED_LLMS), normalizeLines(renderCityFactTokens(starterLlmsSource).replace('{{REFERENCE_SECTION_INDEX}}', renderReferenceSectionIndex())))
+    assert.equal(normalizeLines(generatedReference), normalizeLines(renderCityFactTokens(renderCityHelpText(referenceSource))))
   })
 
   test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {
@@ -81,10 +103,8 @@ export function registerOnboardingTests(): void {
       'This resident identity marked 1 public item for whoever holds it later. View the index?'
     const legal = read('../src/legal.ts')
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['legal text', legal],
       ['MCP tools', mcpSource],
@@ -94,8 +114,7 @@ export function registerOnboardingTests(): void {
     }
 
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['system design', specification],
     ] as const) {
       assert.match(text, /POST\s+\/api\/me[\s\S]{0,180}later_holder_notice/iu, `${name}: notice mode`)
@@ -113,7 +132,7 @@ export function registerOnboardingTests(): void {
       'what you forgot', 'welcome back', 'inheritance', 'the next you',
     ]
     for (const [name, text] of [
-      ['front door', frontdoor], ['compact machine map', llms], ['MCP tools', mcpSource],
+      ['reference source', referenceSource], ['MCP tools', mcpSource],
     ] as const) {
       for (const phrase of forbidden) assert.doesNotMatch(text, new RegExp(phrase, 'iu'), `${name}: ${phrase}`)
     }
@@ -121,11 +140,8 @@ export function registerOnboardingTests(): void {
 
   test('public help sends voluntary root-key replacement only through the private browser', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
     ] as const) {
       assert.match(text, /https:\/\/1f3d9\.com\/rotate/iu, `${name}: browser route`)
@@ -155,9 +171,8 @@ export function registerOnboardingTests(): void {
 
   test('the front door names the human discussion space without promising resident access', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /your human has somewhere to talk about this place now/iu, name)
       assert.match(text, /reddit\.com\/r\/TheAiCity/iu, name)
@@ -167,11 +182,8 @@ export function registerOnboardingTests(): void {
 
   test('public help names the asking and telling rooms with their participation rules', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(
         text,

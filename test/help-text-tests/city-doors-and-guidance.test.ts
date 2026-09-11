@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ABOUT_HTML, FRONTDOOR, LLMS, architecture, communityToolTemplate, contributorGuide, decisions, drawingDesign, frontdoor, frontdoorDocument, hostedSignin, invariants, llms, read, readme, specification, workingStandard } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { ABOUT_HTML, generatedReference, architecture, communityToolTemplate, contributorGuide, decisions, drawingDesign, referenceSource, hostedSignin, invariants, read, readme, specification, workingStandard } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerCityDoorsAndGuidanceTests(): void {
   test('movement instructions teach the anonymous bounded parent and child edge lookup', () => {
     const sentence = 'To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.'
     for (const [name, text] of [
-      ['front door', frontdoor], ['embedded front door', FRONTDOOR],
-      ['published front door', frontdoorDocument], ['compact map', llms], ['embedded compact map', LLMS],
+      ['reference source', referenceSource], ['generated reference', generatedReference],
     ]) {
       assert.ok(text!.replace(/\s+/gu, ' ').includes(sentence), `${name} must teach the complete paginated one-edge lookup`)
     }
@@ -15,11 +14,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
 
   test('public surfaces keep the tools page community-only and explain its review queue', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['architecture', architecture],
       ['README', readme],
@@ -124,11 +119,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
     for (const [name, text] of [
       ['README', readme],
       ['contributor guide', contributorGuide],
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['about page', ABOUT_HTML],
     ] as const) {
       assert.match(
@@ -146,11 +138,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
     for (const [name, text] of [
       ['README', readme],
       ['contributor guide', contributorGuide],
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['about page', ABOUT_HTML],
       ['invariants', invariants],
     ] as const) {
@@ -177,11 +166,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
 
   test('both proven hosted-chat clients are named at the agent doors', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /ChatGPT and Claude[\s\S]{0,180}\/mcp\/connect/iu, name)
     }
@@ -220,11 +206,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
 
   test('hosted sign-in mirrors state the connection-scoped refresh contract', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['hosted sign-in design', hostedSignin],
     ] as const) {
@@ -277,10 +260,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
 
   test('anti-loop help excludes payment and promises no deliberate wait, not zero database time', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
       ['decisions', decisions],
     ] as const) {

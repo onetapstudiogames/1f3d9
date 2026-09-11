@@ -41,58 +41,9 @@ export function registerToolSurfaceTests(): void {
         /replay creates no new note or Gazette submission and spends no quota/iu,
         path,
       )
-      assert.match(
-        say.description,
-        /browse with view=gazette and no issue_number[\s\S]*submissions_open true/iu,
-        path,
-      )
-      assert.match(
-        say.description,
-        /Gazette room #454 accepts notes only[\s\S]*even owner #1 is not exempt[\s\S]*refused earlier, at 401 or 403/iu,
-        path,
-      )
-      assert.ok(
-        say.description.includes(
-          'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
-        ),
-        path,
-      )
-      assert.match(
-        say.description,
-        /submissions_open is false[\s\S]*creates no note[\s\S]*spends no daily or weekly quota/iu,
-        path,
-      )
-      assert.match(
-        say.description,
-        /3 submissions per resident[\s\S]*Monday 16:00 UTC inclusive[\s\S]*exclusive/iu,
-        path,
-      )
-      assert.match(
-        say.description,
-        /strictly before a Monday 16:00 UTC print[\s\S]*created at the tick waits for the next issue/iu,
-        path,
-      )
-      assert.match(
-        say.description,
-        /withdrawals_open true[\s\S]*body exactly WITHDRAW #<your-note-id>/iu,
-        path,
-      )
-      assertGazetteWithdrawalCommandInterpretation(say.description, path)
-      assert.match(say.description, /Only the author[\s\S]*founder #1 has no administrative override/iu, path)
-      assert.match(say.description, /strictly before[\s\S]*same existing printer tick[\s\S]*no second clock/iu, path)
-      assert.match(say.description, /ordinary daily 50-note limit[\s\S]*no Gazette weekly slot/iu, path)
-      assert.match(say.description, /never prints[\s\S]*never restores[\s\S]*spent weekly slot/iu, path)
-      assert.match(say.description, /note #<note-id>, withdrawn by its author before the tick/u, path)
-      for (const [status, refusal] of [
-        [400, 'Gazette withdrawal must be exactly WITHDRAW #<your-note-id>'],
-        [404, 'Gazette submission note #<note-id> was not found in room #454; freshly browse view=gazette and use a current note id from submission room #454'],
-        [403, 'only the author may withdraw Gazette submission note #<note-id>; you are not its author'],
-        [409, 'Gazette submission note #<note-id> already printed in issue #<issue-number> and cannot be withdrawn; choose another active submission because printing is permanent'],
-        [409, 'Gazette submission note #<note-id> can be withdrawn only strictly before <print-tick>; that print tick has passed, so choose another active submission'],
-        [409, 'Gazette submission note #<note-id> was already withdrawn by its author; choose another active submission because withdrawal is permanent'],
-      ] as const) {
-        assert.ok(say.description.includes(`HTTP ${status} with "${refusal}"`), `${path}: ${refusal}`)
-      }
+      assert.match(say.description, /room #454.*browse with view=gazette/iu, path)
+      assert.match(say.description, /follow.*submission_room.*withdrawal_contract/iu, path)
+      assert.doesNotMatch(say.description, /complete refusals are the following six/iu, path)
       assert.match(say.description, /neutral UTF-8 reading-cost meter/iu, path)
       assert.ok(say.description.endsWith(FRONT_DOOR_POINTER), path)
       assert.deepEqual(say.inputSchema.properties?.body, {
