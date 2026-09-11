@@ -13,6 +13,177 @@ export async function registerTransfersAndRoutesTests(
     | 'resetDatabase' | 'setEngineTransactionRunnerForTests' | 'sql' | 'transactionSql'
   >,
 ): Promise<void> {
+  const runRouteTransactions = (): void => {
+    setEngineTransactionRunnerForTests(async (_db, work) => {
+      const connection = await database!.connect()
+      try {
+        await connection.query('BEGIN')
+        const result = await work(transactionSql(connection), true)
+        await connection.query('COMMIT')
+        return result
+      } catch (error) {
+        await connection.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        connection.release()
+      }
+    })
+  }
+
+  const requestPlaceGift = async (placeId: number): Promise<Response> => app.request('/api/transfer', {
+    method: 'POST',
+    headers: { ...bearer(founderSecret), 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'place', id: placeId, to_handle: 'neighbor' }),
+  })
+
+  const seedNestedPlaces = async (): Promise<void> => {
+    const roomId = await resetDatabase()
+    const continentId = Number((await database!.query<{ parent_id: number }>(
+      'SELECT parent_id FROM places WHERE id = $1',
+      [roomId],
+    )).rows[0]!.parent_id)
+    await database!.query(`
+      INSERT INTO places (id, parent_id, place_kind, name, description, owner_id)
+      VALUES
+        (610, $1, 'place', 'gift parent', 'the transferred root', 1),
+        (611, 610, 'place', 'gift child', 'the transferred child', 1),
+        (612, 611, 'place', 'gift grandchild', 'the transferred grandchild', 1)
+    `, [continentId])
+    await database!.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, 612), (2, $1, 610)
+      ON CONFLICT (resident_id) DO UPDATE
+      SET current_place_id = EXCLUDED.current_place_id,
+        home_place_id = EXCLUDED.home_place_id,
+        updated_at = clock_timestamp()
+    `, [roomId])
+  }
+
+  const waitForGiftLock = async (): Promise<void> => {
+    for (let check = 0; check < 100; check += 1) {
+      const activity = await database!.query<{ waiting: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE '%places%'
+        ) AS waiting
+      `)
+      if (activity.rows[0]?.waiting) return
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.fail('the place gift did not wait on the held place lock')
+  }
+
+  await t.test('place gifts refuse a descendant offer, then move the whole tree and clear homes', async () => {
+    await seedNestedPlaces()
+    const offer = await database!.query<{ id: number }>(`
+      INSERT INTO transfer_offers (
+        asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet
+      ) VALUES ('place', 611, 1, 2, 1, $1)
+      RETURNING id
+    `, [`0x${'1'.repeat(40)}`])
+    await database!.query('UPDATE places SET active_offer_id = $1 WHERE id = 611', [offer.rows[0]!.id])
+
+    runRouteTransactions()
+    try {
+      const refused = await requestPlaceGift(610)
+      assert.equal(refused.status, 409, await refused.clone().text())
+    } finally {
+      setEngineTransactionRunnerForTests(null)
+    }
+    assert.deepEqual((await database!.query(`
+      SELECT array_agg(owner_id ORDER BY id) AS owners,
+        (SELECT count(*)::int FROM transfers WHERE asset_type = 'place' AND asset_id = 610)
+          AS transfer_count,
+        (SELECT array_agg(home_place_id ORDER BY resident_id)
+          FROM resident_presence WHERE resident_id IN (1, 2)) AS homes
+      FROM places WHERE id IN (610, 611, 612)
+    `)).rows[0], { owners: [1, 1, 1], transfer_count: 0, homes: [612, 610] })
+
+    await database!.query(`
+      UPDATE transfer_offers SET status = 'canceled', canceled_at = clock_timestamp()
+      WHERE id = $1
+    `, [offer.rows[0]!.id])
+    await database!.query('UPDATE places SET active_offer_id = NULL WHERE id = 611')
+    runRouteTransactions()
+    let completed: Response
+    try {
+      completed = await requestPlaceGift(610)
+    } finally {
+      setEngineTransactionRunnerForTests(null)
+    }
+    assert.equal(completed.status, 200, await completed.clone().text())
+    assert.deepEqual((await completed.json() as { attention: readonly string[] }).attention, [
+      'Your home was inside place_id 610 and was cleared when you transferred that place. Set a new home with home.',
+    ])
+    assert.deepEqual((await database!.query(`
+      SELECT array_agg(owner_id ORDER BY id) AS owners,
+        (SELECT count(*)::int FROM transfers WHERE asset_type = 'place' AND asset_id = 610)
+          AS transfer_count,
+        (SELECT array_agg(home_place_id ORDER BY resident_id)
+          FROM resident_presence WHERE resident_id IN (1, 2)) AS homes,
+        (SELECT detail ? 'home_cleared' FROM events
+          WHERE kind = 'transfer' AND (detail->>'asset_id')::int = 610) AS leaks_home
+      FROM places WHERE id IN (610, 611, 612)
+    `)).rows[0], { owners: [2, 2, 2], transfer_count: 1, homes: [null, null], leaks_home: false })
+  })
+
+  await t.test('place gift locks descendants and refuses after a concurrent owner change', async () => {
+    await seedNestedPlaces()
+    const competing = await database!.connect()
+    await competing.query('BEGIN')
+    await competing.query('SELECT id FROM places WHERE id = 611 FOR UPDATE')
+
+    runRouteTransactions()
+    try {
+      const pendingTransfer = requestPlaceGift(610)
+      await waitForGiftLock()
+      await competing.query('UPDATE places SET owner_id = 2 WHERE id = 611')
+      await competing.query('COMMIT')
+      const refused = await pendingTransfer
+      assert.equal(refused.status, 409, await refused.clone().text())
+    } finally {
+      await competing.query('ROLLBACK').catch(() => undefined)
+      competing.release()
+      setEngineTransactionRunnerForTests(null)
+    }
+    assert.deepEqual((await database!.query(`
+      SELECT array_agg(owner_id ORDER BY id) AS owners,
+        (SELECT count(*)::int FROM transfers WHERE asset_type = 'place' AND asset_id = 610)
+          AS transfer_count,
+        (SELECT array_agg(home_place_id ORDER BY resident_id)
+          FROM resident_presence WHERE resident_id IN (1, 2)) AS homes
+      FROM places WHERE id IN (610, 611, 612)
+    `)).rows[0], { owners: [1, 2, 1], transfer_count: 0, homes: [612, 610] })
+  })
+
+  await t.test('place gift discovers a child committed while it waits for the root lock', async () => {
+    await seedNestedPlaces()
+    const building = await database!.connect()
+    await building.query('BEGIN')
+    await building.query('SELECT id FROM places WHERE id = 610 FOR UPDATE')
+
+    runRouteTransactions()
+    try {
+      const pendingTransfer = requestPlaceGift(610)
+      await waitForGiftLock()
+      await building.query(`
+        INSERT INTO places (id, parent_id, place_kind, name, description, owner_id)
+        VALUES (613, 610, 'place', 'concurrent child', 'created before the gift lock', 1)
+      `)
+      await building.query('COMMIT')
+      const completed = await pendingTransfer
+      assert.equal(completed.status, 200, await completed.clone().text())
+    } finally {
+      await building.query('ROLLBACK').catch(() => undefined)
+      building.release()
+      setEngineTransactionRunnerForTests(null)
+    }
+    assert.deepEqual((await database!.query(`
+      SELECT array_agg(owner_id ORDER BY id) AS owners
+      FROM places WHERE id IN (610, 611, 612, 613)
+    `)).rows[0], { owners: [2, 2, 2, 2] })
+  })
+
   await t.test('gift and effect transfers publish their interaction resident and place', async () => {
     const roomId = await resetDatabase()
     await database!.query(`

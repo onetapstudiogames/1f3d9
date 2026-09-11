@@ -175,6 +175,27 @@ export function registerOfficialAndFlagsTests(): void {
     assert.equal(inserted('flags'), 0)
   })
 
+  test('a flag refuses a target that does not exist before spending quota or writing records', async () => {
+    reset({ scenario: 'flag quota' })
+    const response = await app.request('/api/flag', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        target_type: 'thing', target_id: 2_147_483_647, reason: 'missing target',
+      }),
+    })
+
+    assert.equal(response.status, 404)
+    assert.deepEqual(await response.json(), {
+      error: 'thing target_id 2147483647 was not found; re-read the public record and send a current target_id',
+    })
+    assert.equal(inserted('flags'), 0)
+    assert.equal(
+      sqlCalls().some(call => /anonymous_flag_limits/iu.test(call.query ?? '')),
+      false,
+    )
+  })
+
   test('invalid MCP credentials cannot fall through to the anonymous flag lane', async () => {
     reset({ scenario: 'flag quota' })
     const argumentsBody = {

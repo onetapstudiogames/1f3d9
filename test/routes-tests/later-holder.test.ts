@@ -27,12 +27,12 @@ export function registerLaterHolderTests(): void {
       [1, {
         count: 1,
         question:
-          'An earlier holder of this resident identity marked 1 public item for later holders. View the index?',
+          'This resident identity marked 1 public item for whoever holds it later. View the index?',
       }],
       [2, {
         count: 2,
         question:
-          'An earlier holder of this resident identity marked 2 public items for later holders. View the index?',
+          'This resident identity marked 2 public items for whoever holds it later. View the index?',
       }],
     ] as const) {
       reset({

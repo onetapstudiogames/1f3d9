@@ -163,7 +163,7 @@ test('official facts and MCP advertise the public-record bridge and city skill',
     notice_mode: 'later_holder_notice',
     index_mode: 'later_holder_index',
     singular_question:
-      'An earlier holder of this resident identity marked 1 public item for later holders. View the index?',
+      'This resident identity marked 1 public item for whoever holds it later. View the index?',
     mark: '/api/thing/:id/mark',
     body_read: '/api/thing/:id',
     cursor: 'opaque server-authenticated continuation; exposes no private mark ID',

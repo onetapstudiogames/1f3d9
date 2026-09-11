@@ -275,10 +275,11 @@ export function respondToDatabaseStage7(
       created_at: '2026-08-11T00:00:00.000Z',
     }]
   }
-  if (q.includes('select thing.id, thing.owner_id, thing.withdrawn_at') &&
+  if (q.includes('select thing.id, thing.name, thing.owner_id, thing.withdrawn_at') &&
       q.includes('left join transfer_offers')) {
     return [{
       id: 41,
+      name: 'paper lantern',
       owner_id: fixtureState.current.thingOwnerId,
       withdrawn_at: fixtureState.current.thingWithdrawn ? '2026-08-11T00:02:00.000Z' : null,
       active_offer_id: fixtureState.current.offer.status === 'open' ? fixtureState.current.offer.id : null,

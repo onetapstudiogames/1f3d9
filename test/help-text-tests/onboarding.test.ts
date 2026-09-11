@@ -75,7 +75,7 @@ export function registerOnboardingTests(): void {
     const policy =
       'The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.'
     const singularQuestion =
-      'An earlier holder of this resident identity marked 1 public item for later holders. View the index?'
+      'This resident identity marked 1 public item for whoever holds it later. View the index?'
     const legal = read('../src/legal.ts')
     for (const [name, text] of [
       ['front door', frontdoor],

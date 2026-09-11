@@ -87,6 +87,32 @@ export function registerDirectSalesTests(): void {
     assert.equal(inserted('transfer_offers'), 0)
   })
 
+  test('giving a place moves every nested place, blocks nested offers, and clears homes atomically', async () => {
+    reset({ scenario: 'transfers' })
+    const gift = await app.request('/api/transfer', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ type: 'place', id: 2, to_handle: 'neighbor' }),
+    })
+    assert.equal(gift.status, 200, await gift.clone().text())
+    const body = await gift.json() as { attention: string[] }
+    assert.deepEqual(body.attention, [
+      'Your home was inside place_id 2 and was cleared when you transferred that place. Set a new home with home.',
+    ])
+
+    const write = sqlCalls().find(call => /society:place-gift-transfer/iu.test(call.query ?? ''))
+    assert.ok(write)
+    const rootLock = sqlCalls().find(call => /society:place-gift-lock-root/iu.test(call.query ?? ''))
+    const childLock = sqlCalls().find(call => /society:place-gift-lock-children/iu.test(call.query ?? ''))
+    assert.match(rootLock?.query ?? '', /where\s+id\s*=\s*\$1\s+for\s+update/iu)
+    assert.match(childLock?.query ?? '', /parent_id\s*=\s*any[\s\S]*for\s+update\s+of\s+child/iu)
+    assert.match(write.query ?? '', /locked_places[\s\S]*place\.id\s*=\s*any\(\$7::integer\[\]\)/iu)
+    assert.match(write.query ?? '', /owner_id\s+is\s+distinct\s+from\s+\$4/iu)
+    assert.match(write.query ?? '', /transfer_offers[\s\S]*status\s*=\s*'open'/iu)
+    assert.match(write.query ?? '', /update\s+places[\s\S]*owner_id\s*=\s*recipient\.id/iu)
+    assert.match(write.query ?? '', /update\s+resident_presence[\s\S]*home_place_id\s*=\s*null/iu)
+    assert.match(write.query ?? '', /presence\.home_place_id\s+in\s*\(select\s+id\s+from\s+moved_asset\)/iu)
+  })
+
   test('generic transfer claim and cancel routes cannot operate on a world offer', async () => {
     reset({
       scenario: 'world offer direct-route isolation',

@@ -29,7 +29,7 @@ test('later-holder notice uses the exact zero, singular, and plural shapes', () 
   assert.deepEqual(laterHolderNotice(27), {
     count: 27,
     question:
-      'An earlier holder of this resident identity marked 27 public items for later holders. View the index?',
+      'This resident identity marked 27 public items for whoever holds it later. View the index?',
   })
 })
 

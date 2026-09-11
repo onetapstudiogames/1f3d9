@@ -103,6 +103,9 @@ export function respondToDatabaseStage4(
       updated_at: '2026-08-11T00:05:00.000Z',
     }]
   }
+  if (q.includes('society:place-gift-transfer')) {
+    return [{ id: 91, created_at: '2026-08-11T00:00:00.000Z', home_cleared: true }]
+  }
   if (q.includes('from resident_presence')) return [{
     resident_id: fixtureState.current.actorId,
     current_place_id: fixtureState.current.currentPlaceId,
@@ -209,7 +212,7 @@ export function respondToDatabaseStage4(
   if (q.includes('select exists') && (
     q.includes('from residents') || q.includes('from places')
       || q.includes('from kinds') || q.includes('from things')
-  )) return [{ exists: true }]
+  )) return [{ exists: Number(params[0]) !== 2_147_483_647 }]
   if (q.includes('from places place') && q.includes('place.id = any')) {
     return [
       selectedPlacePermission(placeRow(2, 1), q),

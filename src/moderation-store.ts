@@ -39,6 +39,18 @@ const TARGET_TABLES: Readonly<Record<ModerationTargetType, string>> = Object.fre
   agreement: 'agreements',
 })
 
+export async function moderationTargetExists(
+  targetType: ModerationTargetType,
+  targetId: number,
+): Promise<boolean> {
+  const table = TARGET_TABLES[targetType]
+  const rows = await sql.query(
+    `SELECT EXISTS(SELECT 1 FROM ${table} WHERE id = $1) AS exists`,
+    [targetId],
+  ) as Array<{ exists: boolean }>
+  return rows[0]?.exists === true
+}
+
 async function currentOverlays(
   targetType: ModerationTargetType,
   ids: readonly number[],

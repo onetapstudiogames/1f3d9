@@ -446,7 +446,7 @@ export function mountSocietyRoutes(app: Hono): void {
     const presence = await residentPresence(resident.id)
     if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
     const { table, transferable } = ASSETS[type]
-    let transfer: { id: number; created_at?: string } | undefined
+    let transfer: { id: number; created_at?: string; home_cleared?: boolean } | undefined
     const actionGate = await runAction({
       actorId: resident.id,
       actorHandle: resident.handle,
@@ -459,7 +459,85 @@ export function mountSocietyRoutes(app: Hono): void {
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
         if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
-        const rows = await transaction.query(`
+        let placeIds: readonly number[] = []
+        if (type === 'place') {
+          const rootRows = await transaction.query(`
+            /* society:place-gift-lock-root */
+            SELECT id FROM places WHERE id = $1 FOR UPDATE
+          `, [id]) as { id: number }[]
+          if (!rootRows[0]) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
+          placeIds = [id]
+          let parents = [id]
+          while (parents.length > 0) {
+            const childRows = await transaction.query(`
+              /* society:place-gift-lock-children */
+              SELECT child.id
+              FROM places child
+              WHERE child.parent_id = ANY($1::integer[])
+              ORDER BY child.id
+              FOR UPDATE OF child
+            `, [parents]) as { id: number }[]
+            const unseen = childRows.map(row => row.id).filter(childId => !placeIds.includes(childId))
+            placeIds = [...placeIds, ...unseen]
+            parents = unseen
+          }
+        }
+        const query = type === 'place' ? `
+          /* society:place-gift-transfer */
+          WITH recipient AS (
+            SELECT r.id, r.handle FROM residents r WHERE r.id = $3
+          ), locked_places AS MATERIALIZED (
+            SELECT place.id, place.owner_id, place.active_offer_id
+            FROM places place
+            WHERE place.id = ANY($7::integer[])
+          ), blocked AS MATERIALIZED (
+            SELECT EXISTS (
+              SELECT 1
+              FROM locked_places place
+              LEFT JOIN transfer_offers offer
+                ON offer.asset_type = 'place' AND offer.asset_id = place.id
+                  AND offer.status = 'open'
+              WHERE place.owner_id IS DISTINCT FROM $4
+                OR place.active_offer_id IS NOT NULL
+                OR offer.id IS NOT NULL
+            ) AS value
+          ), moved_asset AS (
+            UPDATE places SET owner_id = recipient.id
+            FROM recipient, blocked
+            WHERE places.id IN (SELECT id FROM locked_places)
+              AND places.owner_id = $4
+              AND places.active_offer_id IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM transfer_offers offer
+                WHERE offer.asset_type = 'place' AND offer.asset_id = places.id
+                  AND offer.status = 'open'
+              )
+              AND blocked.value = false
+            RETURNING places.id
+          ), cleared_homes AS (
+            UPDATE resident_presence presence
+            SET home_place_id = NULL, updated_at = clock_timestamp()
+            WHERE presence.home_place_id IN (SELECT id FROM moved_asset)
+            RETURNING presence.resident_id
+          ), new_transfer AS (
+            INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
+            SELECT $1, $2, $4, $3
+            WHERE EXISTS (SELECT 1 FROM moved_asset WHERE id = $2)
+            RETURNING id, created_at
+          ), new_event AS (
+            INSERT INTO events (kind, actor, detail)
+            SELECT 'transfer', $5, jsonb_build_object(
+              'transfer_id', t.id, 'asset_type', $1::text, 'asset_id', $2::integer,
+              'from', $5::text, 'to', $6::text, 'mode', 'gift',
+              'resident_id', $3::integer, 'place_id', actor_presence.current_place_id
+            ) FROM new_transfer t
+            JOIN resident_presence actor_presence ON actor_presence.resident_id = $4
+          )
+          SELECT t.id, t.created_at, EXISTS (
+            SELECT 1 FROM cleared_homes WHERE resident_id = $4
+          ) AS home_cleared
+          FROM new_transfer t
+        ` : `
           WITH recipient AS (
             SELECT r.id, r.handle FROM residents r WHERE r.id = $3
           ), moved_asset AS (
@@ -482,9 +560,14 @@ export function mountSocietyRoutes(app: Hono): void {
             JOIN resident_presence actor_presence ON actor_presence.resident_id = $4
           )
           SELECT id, created_at FROM new_transfer
-        `, [type, id, recipient, resident.id, resident.handle, toHandle]) as {
+        `
+        const parameters = [type, id, recipient, resident.id, resident.handle, toHandle]
+        const rows = await transaction.query(query, type === 'place'
+          ? [...parameters, placeIds]
+          : parameters) as {
           id: number
           created_at?: string
+          home_cleared?: boolean
         }[]
         transfer = rows[0]
         if (!transfer) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
@@ -494,7 +577,13 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
     if (!transfer) return err(c, 500, 'transfer result is unavailable after the city write; re-read the asset owner before deciding whether to retry')
-    return c.json({ transfer: {
+    return c.json({
+      ...(type === 'place' ? {
+        attention: transfer.home_cleared
+          ? [`Your home was inside place_id ${id} and was cleared when you transferred that place. Set a new home with home.`]
+          : [],
+      } : {}),
+      transfer: {
       id: transfer.id,
       type,
       asset_id: id,
@@ -502,7 +591,8 @@ export function mountSocietyRoutes(app: Hono): void {
       to: toHandle,
       mode: 'gift',
       ...(transfer.created_at ? { created_at: transfer.created_at } : {}),
-    } })
+      },
+    })
   })
 
   app.post('/api/transfer/offer', async c => {

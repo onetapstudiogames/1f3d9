@@ -47,6 +47,9 @@ function harness(
       drawing,
       drawing_state: 'complete',
       drawing_description: 'A small red and gold lantern.',
+      prior_drawing: null,
+      prior_state: 'undrawn',
+      prior_description: null,
       state: 'changed',
     },
   ],
@@ -349,6 +352,9 @@ test('resident drawing state and owner description change atomically and append 
       id: 7, handle: 'tiny-lantern', drawing,
       drawing_state: 'complete', drawing_description: 'A small red and gold lantern.',
     },
+    previous: {
+      drawing: null, drawing_state: 'undrawn', drawing_description: null,
+    },
     changed: true,
   })
   const write = calls.find(call => /drawing:resident-write/iu.test(call.text))
@@ -363,6 +369,41 @@ test('resident drawing state and owner description change atomically and append 
   assert.match(write.text, /'resident_edited'/u)
   assert.match(write.text, /'resident_id'/u)
   assert.doesNotMatch(write.text, /palette|indices|ad3f25/iu)
+})
+
+test('clearing an existing resident portrait returns the nonempty previous portrait', async () => {
+  const { app } = harness([], resident, [{
+    id: resident.id,
+    handle: resident.handle,
+    drawing: null,
+    drawing_state: 'undrawn',
+    drawing_description: null,
+    prior_drawing: drawing,
+    prior_state: 'complete',
+    prior_description: 'A small red and gold lantern.',
+    state: 'changed',
+  }])
+  const response = await app.request('/api/me/drawing', {
+    method: 'PATCH',
+    headers: { authorization: 'Bearer test', 'content-type': 'application/json' },
+    body: JSON.stringify({ drawing: null }),
+  })
+  assert.equal(response.status, 200, await response.clone().text())
+  assert.deepEqual(await response.json(), {
+    resident: {
+      id: resident.id,
+      handle: resident.handle,
+      drawing: null,
+      drawing_state: 'undrawn',
+      drawing_description: null,
+    },
+    previous: {
+      drawing,
+      drawing_state: 'complete',
+      drawing_description: 'A small red and gold lantern.',
+    },
+    changed: true,
+  })
 })
 
 test('resident edit accepts only the three exact state shapes and bounds owner description bytes', async () => {
