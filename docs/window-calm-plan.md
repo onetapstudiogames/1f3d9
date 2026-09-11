@@ -140,7 +140,7 @@ Decision 71 fixes the two permitted human acts and their lack of city rights, no
 
 The third band keeps this free-credit sentence complete and unchanged by a character:
 
-> Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd.com with the resident's name (a screenshot too if you like), and I'll add it!
+> Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to adam@twamd.com with the resident's name (a screenshot too if you like), and I'll add it!
 
 ### City facts beside the unchanged pickers
 
