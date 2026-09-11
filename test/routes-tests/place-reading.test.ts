@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
+import { missingActiveThingRefusal } from '../../src/refusal-text.ts'
 
 
 export function registerPlaceReadingTests(): void {
@@ -10,6 +11,17 @@ export function registerPlaceReadingTests(): void {
     sqlCalls,
     test,
   } = getRoutesTestContext()
+
+  test('the missing-thing recovery address resolves to the mounted place reader', async () => {
+    const refusal = missingActiveThingRefusal('thing_id 42')
+    const route = /GET (\/api\/place\/:id)/u.exec(refusal)?.[1]
+    assert.equal(route, '/api/place/:id')
+
+    reset({ scenario: 'public pagination' })
+    const response = await app.request(route.replace(':id', '2'))
+    assert.equal(response.status, 200)
+    assert.equal((await response.json() as { place?: { id?: number } }).place?.id, 2)
+  })
 
 
   test('events keep the public contract while paging stably by kind and id', async () => {
