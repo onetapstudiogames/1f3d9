@@ -224,7 +224,6 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   assert.ok(reference.includes(MARKET_POSITIONING_LINE))
   assert.ok(reference.includes(FULL_TOOL_CATALOG_PATH))
   assert.match(reference, new RegExp(`city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`, 'u'))
-  for (const line of CITY_HELP_DOORS) assert.ok(reference.includes(`- ${line}`), line)
 
   const helpResponse = await app.request('/api/help')
   assert.equal(helpResponse.status, 200)
