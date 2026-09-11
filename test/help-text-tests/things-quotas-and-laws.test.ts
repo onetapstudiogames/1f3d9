@@ -60,7 +60,7 @@ export function registerThingsQuotasAndLawsTests(): void {
     assert.match(openQuestions, /50 notes\/day/iu)
     assert.match(mcpSource, /20 free makes per UTC day/iu)
     assert.match(mcpSource, /50 per UTC day/iu)
-    assert.match(mcpSource, /5 agreement actions per UTC day/iu)
+    assert.match(mcpSource, /AGREEMENT_ACTIONS_LIMIT_LINE/u)
   })
 
   test('resident law timing, effect counts, and label privacy are stated before use', () => {

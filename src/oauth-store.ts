@@ -5,6 +5,8 @@ import {
   utcToday,
   type Resident,
 } from './core.ts'
+import { PAIRING_LIMITS } from './pairing-limits.ts'
+import { OAUTH_LIMITS } from './oauth-limits.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type OAuthAttemptKind = 'authorize' | 'resident_key' | 'token' | 'refresh' | 'revoke' | 'pair_mint'
@@ -157,7 +159,7 @@ export async function createAuthorizationRequest(input: AuthorizationRequestInpu
     ) VALUES (
       ${input.sessionHash}, ${input.csrfHash}, ${input.clientId}, ${input.clientName},
       ${input.redirectUri}, ${input.resource}, ${input.scope}, ${input.state},
-      ${input.codeChallenge}, 'S256', now() + interval '15 minutes'
+      ${input.codeChallenge}, 'S256', now() + make_interval(mins => ${OAUTH_LIMITS.authorizationRequestMinutes})
     )
   `
 }
@@ -294,7 +296,7 @@ export async function approveExistingResidentAndIssueAuthorizationCode(input: {
         scope, code_challenge, code_challenge_method, expires_at
       )
       SELECT id, ${input.authorizationCodeHash}, resident_id, client_id, redirect_uri,
-        resource, scope, code_challenge, 'S256', now() + interval '5 minutes'
+        resource, scope, code_challenge, 'S256', now() + make_interval(mins => ${OAUTH_LIMITS.authorizationCodeMinutes})
       FROM consumed_request
       RETURNING request_id
     ), completed AS MATERIALIZED (
@@ -518,7 +520,7 @@ export async function confirmNewResidentAndIssueAuthorizationCode(input: {
             scope, code_challenge, code_challenge_method, expires_at
           )
           SELECT id, ${input.authorizationCodeHash}, resident_id, client_id, redirect_uri,
-            resource, scope, code_challenge, 'S256', now() + interval '5 minutes'
+            resource, scope, code_challenge, 'S256', now() + make_interval(mins => ${OAUTH_LIMITS.authorizationCodeMinutes})
           FROM consumed_request
           WHERE EXISTS (
             SELECT 1 FROM new_event WHERE actor = consumed_request.handle
@@ -642,7 +644,7 @@ export async function mintPairingCode(input: {
     ), inserted AS (
       INSERT INTO pairing_codes (resident_id, code_hash, secret_hash_at_mint, expires_at)
       SELECT ${input.residentId}, ${input.codeHash}, current_secret.secret_hash,
-        now() + interval '10 minutes'
+        now() + make_interval(mins => ${PAIRING_LIMITS.ttlMinutes})
       FROM current_secret
       RETURNING expires_at
     )
@@ -750,7 +752,7 @@ export async function approveExistingResidentByPairingCodeAndIssueAuthorizationC
         scope, code_challenge, code_challenge_method, expires_at
       )
       SELECT id, ${input.authorizationCodeHash}, resident_id, client_id, redirect_uri,
-        resource, scope, code_challenge, 'S256', now() + interval '5 minutes'
+        resource, scope, code_challenge, 'S256', now() + make_interval(mins => ${OAUTH_LIMITS.authorizationCodeMinutes})
       FROM consumed_request
       RETURNING request_id
     ), completed AS MATERIALIZED (
@@ -798,17 +800,17 @@ export async function exchangeAuthorizationCode(input: CodeExchangeInput): Promi
       INSERT INTO oauth_token_families (
         resident_id, client_id, resource, scope, expires_at
       )
-      SELECT resident_id, client_id, resource, scope, now() + interval '30 days'
+      SELECT resident_id, client_id, resource, scope, now() + make_interval(days => ${OAUTH_LIMITS.refreshTokenDays})
       FROM consumed_code
       RETURNING id
     ), new_access AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
-      SELECT ${input.accessTokenHash}, 'access', id, now() + interval '10 minutes'
+      SELECT ${input.accessTokenHash}, 'access', id, now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes})
       FROM new_family
       RETURNING id
     ), new_refresh AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
-      SELECT ${input.refreshTokenHash}, 'refresh', id, now() + interval '30 days'
+      SELECT ${input.refreshTokenHash}, 'refresh', id, now() + make_interval(days => ${OAUTH_LIMITS.refreshTokenDays})
       FROM new_family
       RETURNING id
     )
@@ -918,7 +920,7 @@ export async function rotateRefreshToken(input: RefreshRotationInput): Promise<R
     ), new_access AS (
       INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at)
       SELECT ${input.accessTokenHash}, 'access', consumed.family_id,
-        LEAST(now() + interval '10 minutes', family.expires_at)
+        LEAST(now() + make_interval(mins => ${OAUTH_LIMITS.accessTokenMinutes}), family.expires_at)
       FROM consumed_refresh consumed
       JOIN oauth_token_families family ON family.id = consumed.family_id
       RETURNING id

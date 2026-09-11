@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isoTimestamp } from './timestamp.ts'
+import { PAYMENT_RECOVERY_WINDOW_MILLISECONDS } from './payment-limits.ts'
 
 const WALLET_RE = /^0x[0-9a-f]{40}$/u
 const HASH_RE = /^0x[0-9a-f]{64}$/u
@@ -11,7 +12,7 @@ const MAX_FACILITATOR_RESPONSE_BYTES = 65_536
 const MAX_PAYMENT_RESPONSE_HEADER_LENGTH = 4 * Math.ceil(MAX_FACILITATOR_RESPONSE_BYTES / 3)
 const MAX_PAYMENT_RESPONSE_BODY_BYTES = 200_000
 const DURABLE_X402_RESPONSE_KEY = '__1f3d9_x402_response_v1'
-export const PAYMENT_RECOVERY_WINDOW_MILLISECONDS = 2 * 60 * 60 * 1_000
+export { PAYMENT_RECOVERY_WINDOW_MILLISECONDS } from './payment-limits.ts'
 export const MAX_RECOVERABLE_PAYMENT_ATTEMPTS = 100
 
 const PAYMENT_ATTEMPT_OPERATIONS = [
@@ -947,8 +948,8 @@ export async function bindPaymentEvidence(
       recovery_started_at = coalesce(recovery_started_at, statement_timestamp()),
       recovery_deadline_at = coalesce(
         recovery_deadline_at,
-        recovery_started_at + interval '2 hours',
-        statement_timestamp() + interval '2 hours'
+        recovery_started_at + (${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint * interval '1 millisecond'),
+        statement_timestamp() + (${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint * interval '1 millisecond')
       ),
       response_json = CASE
         WHEN $8::text IS NULL THEN response_json
@@ -1166,8 +1167,8 @@ export async function markPaymentAttemptNeedsReview(
       recovery_started_at = coalesce(recovery_started_at, statement_timestamp()),
       recovery_deadline_at = coalesce(
         recovery_deadline_at,
-        recovery_started_at + interval '2 hours',
-        statement_timestamp() + interval '2 hours'
+        recovery_started_at + (${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint * interval '1 millisecond'),
+        statement_timestamp() + (${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint * interval '1 millisecond')
       ),
       lease_owner = NULL,
       lease_expires_at = NULL,

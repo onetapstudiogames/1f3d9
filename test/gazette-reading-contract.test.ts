@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { LLMS, REFERENCE } from '../src/door.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
-const frontDoor = read('../src/frontdoor.txt')
-const publishedFrontDoor = read('../docs/published/FRONTDOOR.md')
+const frontDoor = read('../src/reference.txt')
+const publishedFrontDoor = read('../src/reference.txt')
 const compactMap = read('../src/llms.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const architecture = read('../docs/ARCHITECTURE.md')
@@ -16,7 +16,7 @@ const publicContracts = [
   ['front door source', frontDoor],
   ['compact map source', compactMap],
   ['published front door', publishedFrontDoor],
-  ['generated front door', FRONTDOOR],
+  ['generated front door', REFERENCE],
   ['generated compact map', LLMS],
 ] as const
 

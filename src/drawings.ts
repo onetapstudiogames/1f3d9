@@ -2,6 +2,8 @@ import type { Context, Hono } from 'hono'
 import { err, type Resident } from './core.ts'
 import {
   DRAWING_BODY_MAX_BYTES,
+  DRAWING_HISTORY_MAX,
+  RESIDENT_DRAWING_CHANGES_PER_MINUTE,
   drawingPresentationState,
   drawingRows,
   parseDrawing,
@@ -22,7 +24,7 @@ const DRAWING_SOURCES: ReadonlySet<string> = new Set([
   'none', 'resident', 'place', 'thing', 'kind_base', 'kind_variant',
 ])
 const DRAWING_HISTORY_DEFAULT = 20
-const DRAWING_HISTORY_MAX = 50
+export { DRAWING_HISTORY_MAX, RESIDENT_DRAWING_CHANGES_PER_MINUTE }
 
 export type DrawingRecordType = typeof DRAWING_RECORD_TYPES[number]
 
@@ -602,7 +604,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
         WHERE would_change
         ON CONFLICT (resident_id, minute) DO UPDATE
         SET used = resident_drawing_rate_limits.used + 1
-        WHERE resident_drawing_rate_limits.used < 6
+        WHERE resident_drawing_rate_limits.used < ${RESIDENT_DRAWING_CHANGES_PER_MINUTE}
         RETURNING resident_id
       ), changed AS (
         UPDATE residents target
@@ -673,7 +675,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     const writeState = row.write_state ?? row.state
     if (writeState === 'rate_limited') {
       c.header('Retry-After', '60')
-      return err(c, 429, 'resident drawing allows 6 changed edits per UTC minute; retry after 60 seconds')
+      return err(c, 429, `resident drawing allows ${RESIDENT_DRAWING_CHANGES_PER_MINUTE} changed edits per UTC minute; retry after 60 seconds`)
     }
     const publicDrawing = publicStoredDrawing({
       id: Number(row.id),

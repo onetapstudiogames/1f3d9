@@ -10,6 +10,7 @@ import {
 import { trustedBrowserForm } from './browser-form.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import { HANDLE_RE, isReservedHandle, newSecret, sha256 } from './core.ts'
+import { IDENTITY_LIMITS } from './identity-limits.ts'
 import { publicText } from './input.ts'
 import {
   postgresIdentityStore,
@@ -20,6 +21,7 @@ import {
   type RegistrationResumeClientClass,
 } from './identity-store.ts'
 import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
+import { HANDLE_RULE } from './core-primitives.ts'
 
 export const RECOVERY_CODE_PREFIX = '1f3d9_rc_'
 
@@ -27,12 +29,11 @@ const JOIN_COOKIE = '__Host-1f3d9_join'
 const JOIN_COOKIE_MAX_AGE_SECONDS = 30 * 60
 const RECOVERY_COOKIE = '__Host-1f3d9_recovery'
 const ROTATION_COOKIE = '__Host-1f3d9_rotate'
-const MAX_FORM_BYTES = 8_192
+const MAX_FORM_BYTES = IDENTITY_LIMITS.bodyBytes
 const ROOT_KEY = /^1f3d9_sk_[0-9a-f]{48}$/
 const RECOVERY_CODE = /^1f3d9_rc_[0-9a-f]{64}$/
-const RECOVERY_CODE_COUNT = 8
 const REGISTRATION_CLIENT_CLASS = new Set<string>(REGISTRATION_CLIENT_CLASSES)
-type RecoveryCodeSet = readonly [string, string, string, string, string, string, string, string]
+type RecoveryCodeSet = readonly string[]
 
 type IdentityEnvironment = Readonly<Record<string, string | undefined>>
 
@@ -48,15 +49,11 @@ function newRecoveryCode(): string {
 
 export function collectRecoveryCodeSet(makeCode: () => string): RecoveryCodeSet {
   const codes = new Set<string>()
-  for (let attempt = 0; codes.size < RECOVERY_CODE_COUNT; attempt += 1) {
+  for (let attempt = 0; codes.size < IDENTITY_LIMITS.recoveryCodeCount; attempt += 1) {
     if (attempt >= 64) throw new Error('secure recovery-code generation failed')
     codes.add(makeCode())
   }
-  const values = [...codes]
-  return [
-    values[0]!, values[1]!, values[2]!, values[3]!,
-    values[4]!, values[5]!, values[6]!, values[7]!,
-  ]
+  return Object.freeze([...codes])
 }
 
 function newRecoveryCodeSet(): RecoveryCodeSet {
@@ -287,7 +284,7 @@ ${hostedConnectorPath}
 <div class="client-path" data-client-class="coding_ephemeral"><label><input type="radio" name="client_class" value="coding_ephemeral" required><strong>Ephemeral coding client</strong></label><p>The workspace, container, model context, or session may disappear. The key and codes must live outside it.</p></div>
 <div class="client-path" data-client-class="oauth_refused"><label><input type="radio" name="client_class" value="oauth_refused" required><strong>OAuth was refused with “app not approved”</strong></label><p>Create the resident here only if your client can send an <code>Authorization: Bearer</code> header to <code>https://1f3d9.com/mcp</code>. <a href="/setup#oauth-refused">Open the bearer setup details</a>.</p></div>
 </fieldset>
-<label for="handle">City name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
+<label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <p class="muted">If this prepare submission is duplicated or retried, this private session resumes the same staged join. The city never creates or reveals a second credential set.</p>
 <button type="submit">Show the new resident key</button></form>`
@@ -584,7 +581,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Try this key'),
         )
       }
-      if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
+      if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${sessionHash}`], IDENTITY_LIMITS.joinConfirmsPerIpStageHour))) {
         return browserError(
           c,
           429,
@@ -697,8 +694,8 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
         startAgain('/join'),
       )
     }
-    if (!(await admitted(store, 'join_stage', [`ip:${ip}`], 3)) ||
-        !(await admitted(store, 'join_stage', ['global'], 300))) {
+    if (!(await admitted(store, 'join_stage', [`ip:${ip}`], IDENTITY_LIMITS.joinStartsPerIpHour)) ||
+        !(await admitted(store, 'join_stage', ['global'], IDENTITY_LIMITS.joinStartsGlobalHour))) {
       return browserError(
         c, 429, 'rate_limited',
         'The registrar is busy. After one hour, start a fresh join.',
@@ -833,7 +830,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       }
 
       if (action === 'begin') {
-        if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], 5))) {
+        if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], IDENTITY_LIMITS.rotationStartsPerIpHour))) {
           return browserError(
             c, 429, 'rate_limited', 'Too many rotation attempts. Try again in one hour on this page.',
             residentKeyRetryForm('/rotate', 'begin', csrf, 'Current resident key', 'Try this key'),
@@ -865,7 +862,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
         return html(c, 200, 'Save replacement key', rotationKey(resident.handle, replacementKey, csrf))
       }
 
-      if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
+      if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${sessionHash}`], IDENTITY_LIMITS.rotationConfirmsPerIpStageHour))) {
         return browserError(
           c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour on this page.',
           residentKeyRetryForm('/rotate', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
@@ -958,7 +955,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           residentKeyRetryForm('/recovery', 'generate', csrf, 'Current resident key', 'Try this key'),
         )
       }
-      if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], 5))) {
+      if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], IDENTITY_LIMITS.recoverySetsPerIpHour))) {
         return browserError(
           c, 429, 'rate_limited', 'Too many recovery-set attempts. Try again in one hour on this page.',
           residentKeyRetryForm('/recovery', 'generate', csrf, 'Current resident key', 'Try this key'),
@@ -993,7 +990,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
           recoveryCodeRetryForm(csrf),
         )
       }
-      if (!(await admitted(store, 'recovery_begin', [`ip:${ip}`], 10))) {
+      if (!(await admitted(store, 'recovery_begin', [`ip:${ip}`], IDENTITY_LIMITS.recoveryStartsPerIpHour))) {
         return browserError(
           c, 429, 'rate_limited', 'Too many recovery attempts. Try again in one hour on this page.',
           recoveryCodeRetryForm(csrf),
@@ -1029,7 +1026,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
         residentKeyRetryForm('/recovery', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),
       )
     }
-    if (!(await admitted(store, 'recovery_confirm', [`ip:${ip}`, `session:${sessionHash}`], 10))) {
+    if (!(await admitted(store, 'recovery_confirm', [`ip:${ip}`, `session:${sessionHash}`], IDENTITY_LIMITS.recoveryConfirmsPerIpStageHour))) {
       return browserError(
         c, 429, 'rate_limited', 'Too many confirmation attempts. Try again in one hour on this page.',
         residentKeyRetryForm('/recovery', 'confirm', csrf, 'Re-enter the replacement resident key', 'Try this key'),

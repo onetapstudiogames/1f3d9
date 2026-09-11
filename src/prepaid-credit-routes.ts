@@ -10,10 +10,9 @@ import {
   refuseCreditGift,
 } from './prepaid-credit.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
+import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
 
 const GIFT_PUBLIC_ID_RE = /^city_gift_[0-9a-f]{32}$/u
-const MAX_ACTION_BODY_BYTES = 1_024
-const GIFT_REDIRECTS_PER_CALLER_HOUR = 30
 
 type AuthenticatedResident = Readonly<{ id: number; handle?: string }>
 
@@ -60,7 +59,7 @@ async function requireGiftRedirectRateSlot(
   if (await takePayPalCreditRateLimit(
     dependencies.database,
     callerHash,
-    GIFT_REDIRECTS_PER_CALLER_HOUR,
+    CREDIT_GIFT_LIMITS.redirectsPerCallerHour,
   )) return null
   c.header('Retry-After', '3600')
   return c.json({
@@ -76,11 +75,11 @@ type BoundedBodyResult =
 async function boundedBody(c: Context): Promise<BoundedBodyResult> {
   // An absent Content-Length is what the production edge forwards; the
   // enforced bound is the actual byte count below.
-  if (declaredBodyLength(c.req.header('content-length'), MAX_ACTION_BODY_BYTES) === 'unusable') {
+  if (declaredBodyLength(c.req.header('content-length'), CREDIT_GIFT_LIMITS.actionBodyBytes) === 'unusable') {
     return { state: 'unusable_declaration' }
   }
   const raw = await c.req.text()
-  return Buffer.byteLength(raw, 'utf8') <= MAX_ACTION_BODY_BYTES
+  return Buffer.byteLength(raw, 'utf8') <= CREDIT_GIFT_LIMITS.actionBodyBytes
     ? { state: 'ok', raw }
     : { state: 'oversized' }
 }
@@ -94,11 +93,11 @@ function bodyBoundFailure(
 ): Response {
   if (state === 'unusable_declaration') {
     return c.json({
-      error: `this gift request declared an unusable Content-Length; declare one decimal byte count no larger than ${MAX_ACTION_BODY_BYTES}, or omit the header`,
+      error: `this gift request declared an unusable Content-Length; declare one decimal byte count no larger than ${CREDIT_GIFT_LIMITS.actionBodyBytes}, or omit the header`,
     }, 400)
   }
   return c.json({
-    error: `gift request bodies are limited to ${MAX_ACTION_BODY_BYTES} bytes`,
+    error: `gift request bodies are limited to ${CREDIT_GIFT_LIMITS.actionBodyBytes} bytes`,
   }, 400)
 }
 

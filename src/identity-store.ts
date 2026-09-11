@@ -1,5 +1,6 @@
 import { sql } from './db.ts'
 import { postgresErrorCode, postgresErrorConstraint } from './core.ts'
+import { IDENTITY_LIMITS, IDENTITY_STAGE_INTERVAL } from './identity-limits.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 
 export type IdentityAttemptKind =
@@ -92,11 +93,11 @@ export async function retryIdentityDeadlockOnce<T>(operation: () => Promise<T>):
 
 function requireRecoveryCodeHashes(hashes: readonly string[]): void {
   if (
-    hashes.length !== 8 ||
-    new Set(hashes).size !== 8 ||
+    hashes.length !== IDENTITY_LIMITS.recoveryCodeCount ||
+    new Set(hashes).size !== IDENTITY_LIMITS.recoveryCodeCount ||
     hashes.some(hash => !SHA256_HASH.test(hash))
   ) {
-    throw new Error('exactly eight unique sha256 recovery-code hashes are required')
+    throw new Error(`exactly ${IDENTITY_LIMITS.recoveryCodeCount} unique sha256 recovery-code hashes are required`)
   }
 }
 
@@ -148,7 +149,7 @@ export async function stageResidentRegistration(
         )
         SELECT ${input.sessionHash}, ${input.csrfHash}, ${input.ipHash}, ${input.handle},
           ${input.model}, ${input.clientClass}, ${input.residentSecretHash},
-          now() + interval '15 minutes'
+          now() + ${IDENTITY_STAGE_INTERVAL}::interval
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
         RETURNING session_hash, handle
@@ -165,7 +166,7 @@ export async function stageResidentRegistration(
       SELECT
         EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle}) AS handle_taken,
         (SELECT handle FROM staged
-          WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
+          WHERE (SELECT count(*) FROM staged_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}) AS handle
   `) as { handle_taken: boolean; handle: string | null }[]
   const result = rows[0]
   if (result?.handle) return { status: 'staged', handle: result.handle }
@@ -193,7 +194,7 @@ export async function getResidentRegistrationProgress(input: {
         AND pending.handle IS NOT NULL AND pending.model IS NOT NULL
         AND pending.secret_hash IS NOT NULL
         AND (SELECT count(*) FROM pending_resident_registration_recovery_codes code
-             WHERE code.registration_session_hash = pending.session_hash) = 8
+             WHERE code.registration_session_hash = pending.session_hash) = ${IDENTITY_LIMITS.recoveryCodeCount}
         THEN 'staged'
       ELSE 'unavailable'
     END AS status,
@@ -306,7 +307,8 @@ export async function confirmResidentRegistration(input: {
       ), valid_code_set AS MATERIALIZED (
         SELECT count(*) AS code_count
         FROM pending_codes
-        HAVING count(*) = 8 AND count(DISTINCT code_hash) = 8
+        HAVING count(*) = ${IDENTITY_LIMITS.recoveryCodeCount}
+          AND count(DISTINCT code_hash) = ${IDENTITY_LIMITS.recoveryCodeCount}
       ), world_root AS MATERIALIZED (
         SELECT place.id FROM places place
         WHERE place.parent_id IS NULL AND place.owner_id IS NULL
@@ -382,8 +384,8 @@ export async function confirmResidentRegistration(input: {
         SELECT consumed.id AS resident_id, consumed.handle
         FROM consumed
         WHERE EXISTS (SELECT 1 FROM new_presence)
-          AND (SELECT count(*) FROM inserted_recovery_codes) = 8
-          AND (SELECT count(*) FROM scrubbed_pending_codes) = 8
+          AND (SELECT count(*) FROM inserted_recovery_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}
+          AND (SELECT count(*) FROM scrubbed_pending_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}
           AND EXISTS (SELECT 1 FROM registration_log)
           AND EXISTS (SELECT 1 FROM new_event)
       )
@@ -411,7 +413,7 @@ export async function confirmResidentRegistration(input: {
       UNION ALL
       SELECT 'handle_taken'::text, NULL::integer, NULL::text
       WHERE EXISTS (SELECT 1 FROM canceled_handle_conflict)
-        AND (SELECT count(*) FROM scrubbed_conflict_codes) = 8
+        AND (SELECT count(*) FROM scrubbed_conflict_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}
     `) as {
       status: 'confirmed' | 'credential_rejected' | 'handle_taken' | 'request_unavailable'
       resident_id: number | null
@@ -538,7 +540,7 @@ export async function generateRecoveryCodes(input: {
     )
     SELECT advanced.id AS resident_id, advanced.handle, advanced.recovery_generation AS generation
     FROM advanced
-    WHERE (SELECT count(*) FROM inserted) = 8
+    WHERE (SELECT count(*) FROM inserted) = ${IDENTITY_LIMITS.recoveryCodeCount}
   `) as { resident_id: number; handle: string; generation: number }[]
   const resident = rows[0]
   return resident ? {
@@ -580,7 +582,7 @@ export async function stageRootRecovery(input: {
       SET recovery_session_hash = ${input.sessionHash},
           recovery_csrf_hash = ${input.csrfHash},
           replacement_secret_hash = ${input.replacementSecretHash},
-          recovery_expires_at = now() + interval '15 minutes',
+          recovery_expires_at = now() + ${IDENTITY_STAGE_INTERVAL}::interval,
           staged_at = now()
       FROM eligible
       WHERE code.id = eligible.id
@@ -822,7 +824,7 @@ export async function stageRootRotation(input: {
         )
         SELECT proven.id, proven.recovery_generation, ${input.sessionHash},
           ${input.csrfHash}, proven.secret_hash, ${input.replacementSecretHash},
-          now() + interval '15 minutes'
+          now() + ${IDENTITY_STAGE_INTERVAL}::interval
         FROM proven
         WHERE proven.secret_hash <> ${input.replacementSecretHash}
         ON CONFLICT DO NOTHING
@@ -924,7 +926,7 @@ async function confirmRootRotationOnce(input: {
             replacement_secret_hash = NULL
         FROM admission
         WHERE rotation.id = admission.rotation_id
-          AND admission.daily_successes >= 5
+          AND admission.daily_successes >= ${IDENTITY_LIMITS.rotationsPerResidentDay}
         RETURNING rotation.id, rotation.resident_id
       ), changed AS (
         UPDATE residents resident
@@ -932,7 +934,7 @@ async function confirmRootRotationOnce(input: {
             recovery_generation = resident.recovery_generation + 1
         FROM admission
         WHERE resident.id = admission.resident_id
-          AND admission.daily_successes < 5
+          AND admission.daily_successes < ${IDENTITY_LIMITS.rotationsPerResidentDay}
           AND resident.secret_hash = admission.resident_secret_hash
           AND resident.recovery_generation = admission.recovery_generation
         RETURNING resident.id, resident.handle

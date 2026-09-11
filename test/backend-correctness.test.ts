@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { PUBLIC_ACTION_LIMITS } from '../src/public-action-limits.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { setHomeAndRecordEvent } from '../src/actions.ts'
@@ -136,6 +137,7 @@ test('registration model and flag reason use the shared public-text gate', () =>
   )
   assert.match(
     indexSource,
-    /reasonCandidate\s*=\s*String\(body\?\.reason[\s\S]*?reasonText\s*=\s*publicText\(reasonCandidate,\s*\{\s*maximumCharacters:\s*500\s*\}\)/i,
+    new RegExp(`reasonCandidate\\s*=\\s*String\\(body\\?\\.reason[\\s\\S]*?reasonText\\s*=\\s*publicText\\(reasonCandidate,\\s*\\{\\s*maximumCharacters:\\s*PUBLIC_ACTION_LIMITS\\.flagReasonCharacters\\s*\\}\\)[\\s\\S]*?`, 'i'),
   )
+  assert.equal(PUBLIC_ACTION_LIMITS.flagReasonCharacters, 500)
 })

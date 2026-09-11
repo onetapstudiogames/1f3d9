@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { Context } from 'hono'
 import { NETWORK, USDC, toUnits } from './chain.ts'
+import { CLAIM_FEE_USDC, CLAIM_WINDOW_SECONDS } from './fee-limits.ts'
 
 export const TREASURY = (
   process.env.TREASURY_ADDRESS ?? '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
 ).toLowerCase()
-export const CLAIM_FEE_USDC = 1
-export const CLAIM_WINDOW_SECONDS = 300
+export { CLAIM_FEE_USDC, CLAIM_WINDOW_SECONDS }
 
 const FACILITATOR = process.env.FACILITATOR_URL ?? 'https://facilitator.payai.network'
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/

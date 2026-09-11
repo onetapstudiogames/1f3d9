@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { cityToolFacts } from '../../src/city-facts.ts'
 import {
   AROUND_YOU_ADMISSION_CHANGE_THRESHOLD,
   AROUND_YOU_CHANGE_LIMIT,
@@ -34,7 +35,12 @@ export function registerToolContractTests(): void {
       for (const [catalog, tool] of [['legacy', legacyTool], ['hosted', hostedTool]] as const) {
         assert.equal(tool.title, expected.title, `${catalog} ${name} title`)
         assert.deepEqual(tool.inputSchema, expected.inputSchema, `${catalog} ${name} schema`)
-        assert.deepEqual(tool.annotations, expected.annotations, `${catalog} ${name} annotations`)
+        const facts = cityToolFacts(name)
+        assert.deepEqual(tool.annotations, {
+          ...expected.annotations,
+          readOnlyHint: facts.readOnlyHint,
+          destructiveHint: facts.destructiveHint,
+        }, `${catalog} ${name} annotations`)
       }
       assert.equal(legacyTool.securitySchemes, undefined, `${name} legacy security metadata`)
       const hostedSchemes = ['help', 'browse', 'drawing', 'drawing_history'].includes(name)

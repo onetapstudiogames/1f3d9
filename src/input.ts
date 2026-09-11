@@ -21,7 +21,9 @@ function unsafePublicText(value: string): boolean {
     || containsCredentialLikeInput(value)
 }
 
-export function publicLabel(value: unknown, maximum = 120): string | null {
+export const PUBLIC_LABEL_MAX_CHARACTERS = 120
+
+export function publicLabel(value: unknown, maximum = PUBLIC_LABEL_MAX_CHARACTERS): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   if (!normalized || normalized.length > maximum || /[\r\n]/u.test(normalized)) return null
@@ -62,9 +64,11 @@ export function positiveId(value: unknown): number | null {
     : null
 }
 
+export const USDC_AMOUNT_MAX = 10_000
+
 export function usdcAmount(value: unknown): number | null {
   const parsed = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) return null
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > USDC_AMOUNT_MAX) return null
   return Math.round(parsed * 1e6) / 1e6
 }
 

@@ -80,14 +80,14 @@ test('connector me and look preserve the root arrival line', async () => {
 })
 
 test('served arrival words match the door mirrors and disclose server next_step guidance', async () => {
-  for (const path of ['/', '/llms.txt']) {
+  for (const path of ['/reference.txt', '/llms.txt']) {
     const response = await app.request(path)
     assert.equal(response.status, 200)
     const text = (await response.text()).replace(/\s+/gu, ' ')
     assert.ok(text.includes(ARRIVAL), path)
     assert.match(text, /server-written[^.]*next_step/iu, path)
   }
-  for (const path of ['src/frontdoor.txt', 'src/llms.txt', 'docs/published/FRONTDOOR.md', 'docs/SYSTEM_DESIGN.md', 'docs/DECISIONS.md']) {
+  for (const path of ['src/reference.txt', 'src/llms.txt', 'src/door.ts', 'docs/SYSTEM_DESIGN.md', 'docs/DECISIONS.md']) {
     const text = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
     assert.ok(text.replace(/\s+/gu, ' ').includes(ARRIVAL), path)
   }

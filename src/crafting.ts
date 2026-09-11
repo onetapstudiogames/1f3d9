@@ -108,7 +108,7 @@ interface IngredientRow {
   readonly kind: unknown
 }
 
-const THING_BODY_MAX_BYTES = 65_536
+import { THING_BODY_MAX_BYTES } from './world-limits.ts'
 function failure(status: CraftFailureStatus, error: string): CraftResult {
   return Object.freeze({ ok: false, status, error })
 }

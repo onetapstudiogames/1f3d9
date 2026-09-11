@@ -1,4 +1,9 @@
 import type { Context, Hono } from 'hono'
+import {
+  CITY_CREDIT_PURCHASE_BODY_MAX_BYTES,
+  CITY_CREDIT_PURCHASE_MAX_DOLLARS,
+  CITY_CREDIT_PURCHASE_MIN_DOLLARS,
+} from './city-credit-purchase-limits.ts'
 import { declaredBodyLength } from './bounded-body.ts'
 import { NETWORK, USDC } from './chain.ts'
 import { CITY_FEE_CREDIT_UNITS, formatUsdcUnits } from './city-credit.ts'
@@ -26,10 +31,9 @@ import {
   type PaymentRequirements,
 } from './pay.ts'
 
-export const CITY_CREDIT_PURCHASE_MIN_DOLLARS = 1n
-export const CITY_CREDIT_PURCHASE_MAX_DOLLARS = 10_000n
+export { CITY_CREDIT_PURCHASE_MAX_DOLLARS, CITY_CREDIT_PURCHASE_MIN_DOLLARS }
 const PURCHASE_RESOURCE = '/api/city-credit/purchase/x402'
-const MAX_PURCHASE_BODY_BYTES = 1_024
+const MAX_PURCHASE_BODY_BYTES = CITY_CREDIT_PURCHASE_BODY_MAX_BYTES
 
 type QueryRow = Record<string, unknown>
 type AuthenticatedResident = Readonly<{ id: number }>

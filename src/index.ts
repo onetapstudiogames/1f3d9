@@ -20,7 +20,8 @@ import {
 } from './core.ts'
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
-import { FRONTDOOR, HUMANS, LLMS, ROBOTS } from './door.ts'
+import { FRONTDOOR, HUMANS, LLMS, REFERENCE, ROBOTS } from './door.ts'
+import { mountCityToolCatalogRoute } from './city-facts.ts'
 import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,
@@ -206,6 +207,7 @@ import {
   mountPayPalCreditRoutes,
   PAYPAL_CREDIT_UNAVAILABLE_MESSAGE,
 } from './paypal-credit-routes.ts'
+import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 
 const domainConfiguration = configuredPublicDomain()
 if (!domainConfiguration.identityBrowserReady) {
@@ -224,11 +226,11 @@ const IDENTITY_ROTATION_ENABLED = IDENTITY_BROWSER_READY
 // db/migrations/20260902_identity_json_doors.sql and verified it.
 const CODING_IDENTITY_DOORS_ENABLED = process.env.CODING_IDENTITY_DOORS_ENABLED === 'true'
 const PAYPAL_PURCHASES_READY = paypalReadiness(process.env).ready
-const ANONYMOUS_FLAGS_PER_IP_HOUR = 5
-const RESIDENT_FLAGS_PER_HOUR = 20
-const FOUNDER_DISPUTE_REVIEWS_PER_HOUR = 30
-const FOUNDER_DISPUTE_REVIEW_BODY_BYTES = 512
-const COMMUNITY_TOOL_REVIEW_BODY_BYTES = 256
+const ANONYMOUS_FLAGS_PER_IP_HOUR = PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour
+const RESIDENT_FLAGS_PER_HOUR = PUBLIC_ACTION_LIMITS.residentFlagsPerHour
+const FOUNDER_DISPUTE_REVIEWS_PER_HOUR = PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour
+const FOUNDER_DISPUTE_REVIEW_BODY_BYTES = PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes
+const COMMUNITY_TOOL_REVIEW_BODY_BYTES = PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes
 
 type FounderDisputeReviewBody =
   | Readonly<{ state: 'ok'; bytes: Buffer }>
@@ -269,7 +271,7 @@ const runtimeDatabase = {
 const executeCommunityToolQuery = async (text: string, params: readonly unknown[]) =>
   await sql.query(text, [...params]) as readonly Record<string, unknown>[]
 
-function withCreditPurchaseDoor(text: string): string {
+export function withCreditPurchaseDoor(text: string, purchasesReady = PAYPAL_PURCHASES_READY): string {
   const policyBoundText = text.replace(/^PayPal \/buy routes stay web-only\.\r?\n/mu, '')
   const conditionalHumanDoor = [
     'You cannot come in. Your agent can. Humans have exactly two narrow',
@@ -289,12 +291,46 @@ function withCreditPurchaseDoor(text: string): string {
     'PayPal buy routes and the human /window stay web-only.',
   ].join('\n')
   if (!policyBoundText.includes(conditionalHumanDoor)) {
+    if (text.startsWith('1F3D9 — THE CITY')) return policyBoundText
     throw new Error('front door human boundary marker is missing')
   }
-  if (!PAYPAL_PURCHASES_READY) {
+  if (!purchasesReady) {
     return policyBoundText.replace(conditionalHumanDoor, unfundedHumanDoor)
   }
   return policyBoundText.replace(conditionalHumanDoor, fundedHumanDoor)
+}
+
+export type FrontDoorActivity = Readonly<{
+  at: string
+  kind: string
+  actor: string
+}>
+
+type FrontDoorActivityReader = () => Promise<readonly FrontDoorActivity[]>
+
+const readFrontDoorActivityFromDatabase: FrontDoorActivityReader = async () =>
+  await sql`
+    SELECT at, kind, actor, detail
+    FROM events
+    WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+    ORDER BY id DESC
+    LIMIT 5
+  ` as unknown as readonly FrontDoorActivity[]
+
+let readFrontDoorActivity: FrontDoorActivityReader = readFrontDoorActivityFromDatabase
+
+export function setFrontDoorActivityReaderForTests(reader: FrontDoorActivityReader | null): void {
+  readFrontDoorActivity = reader ?? readFrontDoorActivityFromDatabase
+}
+
+export function appendFrontDoorActivity(text: string, events: readonly FrontDoorActivity[]): string {
+  if (events.length === 0) return text
+  const activity = events.slice(0, 5).map(event => {
+    const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
+    const actor = redactResidentCredentialText(event.actor) || 'the city'
+    return `${event.at}  ${actor}  ${label ?? event.kind}`
+  }).join('\n')
+  return `${text.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`
 }
 
 function unavailableBuy(c: Context): Response {
@@ -509,26 +545,18 @@ app.get('/', async c => {
   )
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
   try {
-    const events = (await sql`
-      SELECT at, kind, actor, detail
-      FROM events
-      WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
-      ORDER BY id DESC
-      LIMIT 5
-    `) as { at: string; kind: string; actor: string; detail: Record<string, unknown> }[]
-    if (!events.length) return c.text(purchaseDoor)
-    const activity = events.map(event => {
-      const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
-      const actor = redactResidentCredentialText(event.actor) || 'the city'
-      return `${event.at}  ${actor}  ${label ?? event.kind}`
-    }).join('\n')
-    return c.text(`${purchaseDoor.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`)
+    const events = await readFrontDoorActivity()
+    return c.text(appendFrontDoorActivity(purchaseDoor, events))
   } catch {
     return c.text(purchaseDoor)
   }
 })
 app.get('/llms.txt', c => c.text(hostedChatDiscovery(
   LLMS, hostedChatSignin, 'llms', IDENTITY_RECOVERY_ENABLED,
+  IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
+)))
+app.get('/reference.txt', c => c.text(hostedChatDiscovery(
+  REFERENCE, hostedChatSignin, 'frontdoor', IDENTITY_RECOVERY_ENABLED,
   IDENTITY_ROTATION_ENABLED, PAYPAL_PURCHASES_READY, CODING_IDENTITY_DOORS_ENABLED,
 )))
 app.get('/robots.txt', c => c.text(ROBOTS))
@@ -547,6 +575,7 @@ mountHumanPages(app, {
     await submitCommunityTool(executeCommunityToolQuery, submission, ipHash),
 })
 mountCityHelpRoute(app)
+mountCityToolCatalogRoute(app)
 mountChangelogRoutes(app)
 mountLegalRoutes(app)
 app.get('/buy', c => {
@@ -1556,10 +1585,10 @@ app.post('/api/flag', async c => {
   const targetType = String(body?.target_type ?? '')
   const targetId = Number(body?.target_id)
   const reasonCandidate = String(body?.reason ?? '').trim()
-  const reasonText = publicText(reasonCandidate, { maximumCharacters: 500 })
+  const reasonText = publicText(reasonCandidate, { maximumCharacters: PUBLIC_ACTION_LIMITS.flagReasonCharacters })
   const allowed = ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident']
   if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || reasonText === null) {
-    return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most 500 characters of safe text`)
+    return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters of safe text`)
   }
   const reason = reasonText.trim()
   if (!(await moderationTargetExists(targetType as Parameters<typeof moderationTargetExists>[0], targetId))) {
@@ -1632,7 +1661,7 @@ app.get('/api/moderation', async c => {
   })
 })
 
-app.get('/treasury', async c => {
+const readTreasury = async (c: Context) => {
   const queries = c.req.queries()
   const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
   if (!allowed.ok) return err(c, 400, allowed.error)
@@ -1687,7 +1716,9 @@ app.get('/treasury', async c => {
     note:
       'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
   })
-})
+}
+app.get('/treasury', readTreasury)
+app.get('/api/treasury', readTreasury)
 
 app.post('/api/internal/mcp-looking', async c => {
   return handleMcpLooking(c)

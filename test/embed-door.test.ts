@@ -26,6 +26,7 @@ const createFixture = (
   mkdirSync(join(root, 'src'))
   mkdirSync(join(root, 'docs', 'published'), { recursive: true })
   writeFileSync(join(root, 'src', 'frontdoor.txt'), frontdoor)
+  writeFileSync(join(root, 'src', 'reference.txt'), 'FULL REFERENCE\n')
   writeFileSync(join(root, 'src', 'llms.txt'), 'COMPACT MAP\n')
   writeFileSync(join(root, 'docs', 'published', 'FRONTDOOR.md'), frontdoorDocument)
   return root
@@ -84,6 +85,7 @@ test('embed-door regenerates the fenced published mirror without changing its wr
     )
     const generatedDoor = readFileSync(join(root, 'src', 'door.ts'), 'utf8')
     assert.match(generatedDoor, /export const FRONTDOOR = `NEW FRONT DOOR\n`/u)
+    assert.match(generatedDoor, /export const REFERENCE = `FULL REFERENCE\n`/u)
     assert.match(generatedDoor, /export const LLMS = `COMPACT MAP\n`/u)
   } finally {
     rmSync(root, { force: true, recursive: true })

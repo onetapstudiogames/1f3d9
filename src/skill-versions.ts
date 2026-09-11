@@ -16,7 +16,4 @@
  * files reachable under src/**; see AGENTS.md's known deployment
  * constraints and src/changelog-source.ts for the same reasoning.
  */
-export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.5.3',
-  market: '2.4.1',
-})
+export { SKILL_VERSION_RECOMMENDED } from './city-facts.ts'

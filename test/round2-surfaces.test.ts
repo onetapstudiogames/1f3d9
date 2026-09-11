@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
-import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { FRONTDOOR, LLMS, REFERENCE } from '../src/door.ts'
 import { mcp } from '../src/mcp.ts'
 import { MAX_CRAFT_INGREDIENTS } from '../src/physics.ts'
 import { PUBLIC_EVENT_KINDS, publicPlaceTree } from '../src/window.ts'
@@ -11,7 +11,7 @@ const BRICKS = ['destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_
 
 function mcpRequest(body: Record<string, unknown>, authorization?: string) {
   const app = new Hono()
-  app.post('/mcp', c => mcp(c, app))
+  app.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (authorization) headers.authorization = authorization
   return app.request('/mcp', { method: 'POST', headers, body: JSON.stringify(body) })
@@ -175,7 +175,8 @@ test('MCP me forwards every independent holdings cursor', async () => {
 })
 
 test('round-two discovery text names the frozen vocabulary, canonical routes, and active timer triggers', () => {
-  for (const text of [FRONTDOOR, LLMS]) {
+  assert.match(FRONTDOOR, /reference\.txt/u)
+  for (const text of [REFERENCE, LLMS]) {
     for (const action of ACTIONS) assert.match(text, new RegExp(`\\b${action}\\b`))
     for (const brick of BRICKS) assert.match(text, new RegExp(`\\b${brick}\\b`))
     for (const route of [

@@ -48,6 +48,8 @@ import {
 } from './oauth-diagnostics.ts'
 import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
 import { PAIRING_CODE_RE } from './pair.ts'
+import { PAIRING_LIMITS } from './pairing-limits.ts'
+import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import {
   postgresOAuthStore,
   resolveOAuthAccessTokenPassive,
@@ -79,14 +81,9 @@ export type {
 export { collectRecoveryCodeSet } from './oauth-recovery.ts'
 
 const SESSION_COOKIE = '__Host-1f3d9_oauth'
-const MAX_FORM_BYTES = 8_192
 const MAX_UI_LOCALES = 256
 const UI_LOCALES = /^[A-Za-z0-9-]{1,35}(?: [A-Za-z0-9-]{1,35}){0,9}$/
-const ACCESS_TOKEN_SECONDS = 10 * 60
-const REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
-const PAIRING_CODE_REJECTION_MESSAGE = 'Pairing codes work once and expire ten minutes after your coding agent creates them; this rejected code will not work again, so ask your coding agent for a fresh code and paste it here.'
-const REFRESH_ATTEMPTS_PER_CONNECTION_PER_HOUR = 120
-const JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR = 120
+const PAIRING_CODE_REJECTION_MESSAGE = `Pairing codes work once and expire ${PAIRING_LIMITS.ttlMinutesText} minutes after your coding agent creates them; this rejected code will not work again, so ask your coding agent for a fresh code and paste it here.`
 type OAuthStore = typeof postgresOAuthStore
 
 export interface OAuthRouteOptions {
@@ -318,9 +315,9 @@ async function form(c: Context): Promise<URLSearchParams | null> {
   const contentType = c.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType !== 'application/x-www-form-urlencoded') return null
   const declared = Number(c.req.header('content-length') ?? 0)
-  if (Number.isFinite(declared) && declared > MAX_FORM_BYTES) return null
+  if (Number.isFinite(declared) && declared > OAUTH_LIMITS.formBodyBytes) return null
   const raw = await c.req.text()
-  if (Buffer.byteLength(raw, 'utf8') > MAX_FORM_BYTES) return null
+  if (Buffer.byteLength(raw, 'utf8') > OAUTH_LIMITS.formBodyBytes) return null
   return new URLSearchParams(raw)
 }
 
@@ -366,7 +363,7 @@ function consentPage(request: {
   const csrf = escapeHtml(request.csrf)
   const pairingFieldset = request.pairingEnabled
     ? `<fieldset><legend><strong>Have a pairing code instead</strong></legend>
-<p class="muted">Pairing codes work once and expire ten minutes after the coding agent creates them with POST /api/pair; they never reveal the resident key.</p>
+<p class="muted">Pairing codes work once and expire ${PAIRING_LIMITS.ttlMinutesText} minutes after the coding agent creates them with POST /api/pair; they never reveal the resident key.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
 <label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
@@ -376,7 +373,7 @@ function consentPage(request: {
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
 <p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
-<p class="muted">This sign-in request expires after 15 minutes; the one-time authorization code issued after approval expires after 5 minutes. There are 60 sign-ins per IP and client per UTC hour and 10 shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows 3 starts per IP per UTC hour, 300 total and 300 per client per UTC hour, and 10 confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
+<p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
 <fieldset><legend><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
@@ -413,7 +410,7 @@ ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p>Do not paste it into chat, a note, a thing, or public content.</p>
 <h2>Step 3 — Re-enter the saved resident key</h2>
 <p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
-<p class="muted">This staged signup expires 15 minutes after the sign-in request began. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
+<p class="muted">This staged signup expires ${OAUTH_LIMITS.authorizationRequestMinutes} minutes after the sign-in request began. Confirmation is limited to ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} attempts per IP and session per UTC hour.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
@@ -585,9 +582,9 @@ function tokenResponse(c: Context, accessToken: string, refreshToken: string) {
   return c.json({
     access_token: accessToken,
     token_type: 'Bearer',
-    expires_in: ACCESS_TOKEN_SECONDS,
+    expires_in: OAUTH_ACCESS_TOKEN_SECONDS,
     refresh_token: refreshToken,
-    refresh_token_expires_in: REFRESH_TOKEN_SECONDS,
+    refresh_token_expires_in: OAUTH_REFRESH_TOKEN_SECONDS,
     scope: OAUTH_SCOPE,
   })
 }
@@ -757,7 +754,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         oauth.store,
         [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.clientId}`],
         'authorize',
-        60,
+        OAUTH_LIMITS.authorizationAttemptsPerIpClientHour,
       )
     } catch {
       c.header('Retry-After', '1')
@@ -948,7 +945,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`signup-confirm-ip:${clientAddress(c, oauth.environment)}`, `signup-confirm-session:${sessionHash}`],
           'resident_key',
-          10,
+          OAUTH_LIMITS.signupConfirmsPerIpSessionHour,
         ))) {
           return fail(
             429,
@@ -1018,7 +1015,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
           'resident_key',
-          10,
+          OAUTH_LIMITS.credentialAttemptsPerIpClientHour,
         ))) {
           return fail(
             429,
@@ -1073,7 +1070,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
           'resident_key',
-          10,
+          OAUTH_LIMITS.credentialAttemptsPerIpClientHour,
         ))) {
           return fail(
             429,
@@ -1116,7 +1113,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${request.client_id}`],
           'resident_key',
-          10,
+          OAUTH_LIMITS.credentialAttemptsPerIpClientHour,
         ))) {
           return fail(
             429,
@@ -1179,7 +1176,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         oauth.store,
         [`signup-ip:${clientAddress(c, oauth.environment)}`],
         'authorize',
-        3,
+        OAUTH_LIMITS.signupStartsPerIpHour,
       ))) {
         return fail(
           429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
@@ -1190,7 +1187,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         oauth.store,
         ['signup-global'],
         'authorize',
-        300,
+        OAUTH_LIMITS.signupStartsGlobalHour,
       ))) {
         return fail(
           429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
@@ -1201,7 +1198,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         oauth.store,
         [`signup-client:${request.client_id}`],
         'authorize',
-        300,
+        OAUTH_LIMITS.signupStartsPerClientHour,
       ))) {
         return fail(
           429, 'rate_limited', 'The registrar is busy. This sign-in will expire before the one-hour wait ends.',
@@ -1302,7 +1299,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
           'token',
-          120,
+          OAUTH_LIMITS.tokenExchangesPerIpClientHour,
         ))) return fail('invalid_grant', 'rate_limited')
         const rawCode = one(values, 'code', 100)
         const redirectUri = one(values, 'redirect_uri', 4_096)
@@ -1345,7 +1342,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             oauth.store,
             [junkBucket],
             'refresh',
-            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+            OAUTH_LIMITS.junkRefreshesPerNetworkHour,
           )
           if (!admission.admitted) return throttled(admission.retryAfterSeconds)
           return fail('invalid_grant')
@@ -1361,7 +1358,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             oauth.store,
             [junkBucket],
             'refresh',
-            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+            OAUTH_LIMITS.junkRefreshesPerNetworkHour,
           )
           if (!admission.admitted) return throttled(admission.retryAfterSeconds)
           return fail('invalid_grant')
@@ -1371,7 +1368,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             oauth.store,
             [`connection:${subject.connectionKey}`],
             'refresh',
-            REFRESH_ATTEMPTS_PER_CONNECTION_PER_HOUR,
+            OAUTH_LIMITS.refreshesPerConnectionHour,
           )
           if (!admission.admitted) return throttled(admission.retryAfterSeconds)
         }
@@ -1383,7 +1380,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             oauth.store,
             [junkBucket],
             'refresh',
-            JUNK_REFRESH_ATTEMPTS_PER_NETWORK_PER_HOUR,
+            OAUTH_LIMITS.junkRefreshesPerNetworkHour,
           )
         }
         const accessToken = opaque(OAUTH_ACCESS_TOKEN_PREFIX)
@@ -1428,7 +1425,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           oauth.store,
           [`ip:${clientAddress(c, oauth.environment)}`, `client:${clientId}`],
           'revoke',
-          120,
+          OAUTH_LIMITS.revocationsPerIpClientHour,
         ))) {
           recordFailure(oauth, trace, 'revocation', 'rate_limited', 200)
         } else {

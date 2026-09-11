@@ -180,7 +180,8 @@ export function registerRedactionAndPassivityTests(): void {
   test('me and MCP look disclose their bounded side effects on both doors', async () => {
     // GET /api/me resolves due timers where the resident stands (label, block,
     // even destroy effects can apply), so the status check must never claim to
-    // be read-only. Public look does not authenticate or wake those timers.
+    // be read-only. Signed-in MCP look publishes an ephemeral public cue, so
+    // the single public-or-permanent-write rule also marks it destructive.
     for (const [hosted, path, authorization] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
       [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
@@ -200,7 +201,7 @@ export function registerRedactionAndPassivityTests(): void {
       const look = toolByName(tools, 'look')
       assert.deepEqual(look.annotations, {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
       }, path)

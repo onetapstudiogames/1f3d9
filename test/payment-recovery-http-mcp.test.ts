@@ -422,7 +422,7 @@ test('MCP exposes one protected no-store inspect/recheck tool and never accepts 
     body: await c.req.json(),
   }, 202))
   const gateway = new Hono()
-  gateway.post('/mcp', c => mcp(c, city))
+  gateway.post('/mcp', c => mcp(c, city, { authenticateLegacyCatalog: async () => true }))
 
   const listedResponse = await gateway.request('/mcp', {
     method: 'POST',

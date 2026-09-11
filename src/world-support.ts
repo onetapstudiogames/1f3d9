@@ -36,10 +36,11 @@ import {
   returnCityCreditSpend,
 } from './city-credit.ts'
 import type { DrawingState, DrawingVariant } from './drawing.ts'
+import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-export const DESCRIPTION_MAX = 4_000
-export const THING_BODY_MAX_BYTES = 65_536
+export const DESCRIPTION_MAX = WORLD_DESCRIPTION_MAX_CHARACTERS
+export { THING_BODY_MAX_BYTES }
 
 export type JsonObject = Record<string, unknown>
 

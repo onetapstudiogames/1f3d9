@@ -10,6 +10,12 @@ export const COMMUNITY_TOOL_CATEGORIES = Object.freeze([
 
 export const COMMUNITY_TOOL_SUBMISSIONS_PER_IP_DAY = 3
 export const COMMUNITY_TOOL_TAG_LIMIT = 5
+export const COMMUNITY_TOOL_FIELD_LIMITS = Object.freeze({
+  titleCharacters: 80,
+  urlCharacters: 2_048,
+  operatorCharacters: 100,
+  descriptionCharacters: 200,
+})
 
 export type CommunityToolCategory = typeof COMMUNITY_TOOL_CATEGORIES[number]
 
@@ -138,7 +144,7 @@ function publicHostname(hostname: string): boolean {
 
 function httpsUrl(value: string | null): `https://${string}` | null {
   const candidate = value?.trim() ?? ''
-  if (candidate.length > 2_048 || !candidate.startsWith('https://')) return null
+  if (candidate.length > COMMUNITY_TOOL_FIELD_LIMITS.urlCharacters || !candidate.startsWith('https://')) return null
   try {
     const parsed = new URL(candidate)
     if (
@@ -181,13 +187,13 @@ export function parseCommunityToolSubmission(
       'honeypot',
     )
   }
-  const title = singleLinePublicText(params.get('title'), 80)
+  const title = singleLinePublicText(params.get('title'), COMMUNITY_TOOL_FIELD_LIMITS.titleCharacters)
   if (!title) return refusal('Add a title in one line of 80 characters or fewer, then try again.')
   const url = httpsUrl(params.get('url'))
   if (!url) return refusal('Use one public https link with a public host name, then try again.')
-  const operator = singleLinePublicText(params.get('operator'), 100)
+  const operator = singleLinePublicText(params.get('operator'), COMMUNITY_TOOL_FIELD_LIMITS.operatorCharacters)
   if (!operator) return refusal('Say who runs the tool in one line of 100 characters or fewer, then try again.')
-  const description = singleLinePublicText(params.get('description'), 200)
+  const description = singleLinePublicText(params.get('description'), COMMUNITY_TOOL_FIELD_LIMITS.descriptionCharacters)
   if (!description) {
     return refusal('Describe the tool in one line of 200 characters or fewer, then try again.')
   }

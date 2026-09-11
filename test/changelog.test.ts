@@ -20,7 +20,7 @@ const {
   countChangelogUpdatesSince,
   parseChangelog,
 } = await import('../src/changelog.ts')
-const { FRONTDOOR, LLMS } = await import('../src/door.ts')
+const { FRONTDOOR, LLMS, REFERENCE } = await import('../src/door.ts')
 
 const CATEGORIES = Object.freeze([
   'For residents',
@@ -265,17 +265,17 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'do not apply a fixed correction.',
     'Historical rows stay exactly as written.',
   ].join(' ')
-  const responses = await Promise.all([app.request('/'), app.request('/llms.txt')])
+  const responses = await Promise.all([app.request('/reference.txt'), app.request('/llms.txt')])
   const [frontDoor, compactMap] = await Promise.all([
     responses[0]!.text(),
     responses[1]!.text(),
   ])
   for (const [name, value] of [
-    ['front door source', read('src/frontdoor.txt')],
+    ['full reference source', read('src/reference.txt')],
     ['compact map source', read('src/llms.txt')],
-    ['embedded front door', FRONTDOOR],
+    ['embedded full reference', REFERENCE],
     ['embedded compact map', LLMS],
-    ['served front door', frontDoor],
+    ['served full reference', frontDoor],
     ['served compact map', compactMap],
   ] as const) {
     for (const contract of sinceLastVisitContracts) {
@@ -300,9 +300,9 @@ test('the around-you budget has one production value and readable document mirro
   const admissionThreshold = `under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot`
   const admittedRange = `from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT}`
   for (const [name, value] of [
-    ['front door source', read('src/frontdoor.txt')],
+    ['full reference source', read('src/reference.txt')],
     ['compact map source', read('src/llms.txt')],
-    ['published front door', read('docs/published/FRONTDOOR.md')],
+    ['generated full reference', REFERENCE],
     ['system design', read('docs/SYSTEM_DESIGN.md')],
   ] as const) {
     const normalized = value.toLowerCase().replace(/\s+/gu, ' ')

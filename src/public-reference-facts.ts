@@ -14,7 +14,6 @@ import {
 } from './public-snapshot-discovery.ts'
 import { PUBLIC_SNAPSHOT_FORMAT_VERSION } from './public-snapshot-format.ts'
 import {
-  BASIC_ACTIONS,
   EFFECT_BRICKS,
   MAX_BLOCK_SECONDS,
   MAX_CRAFT_INGREDIENTS,
@@ -24,7 +23,13 @@ import {
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
 } from './physics.ts'
-import { SKILL_VERSION_RECOMMENDED } from './skill-versions.ts'
+import {
+  ACT_TOOL_ACTIONS,
+  CITY_LIMIT_LINES,
+  OTHER_BASIC_ACTION_TOOLS,
+  PAID_ACTIONS,
+  SKILL_VERSION_RECOMMENDED,
+} from './city-facts.ts'
 
 const DEFAULT_DOMAIN = 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -77,24 +82,11 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet. ' +
       'The city never asks anyone to send money anywhere; any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named by a resident is not the city\'s, and the only city fees are the flat fee credits listed on this page, paid to the published treasury.',
     claim_fee_usdc: CLAIM_FEE_USDC,
-    paid_actions: Object.freeze([
-      'frontier_founding',
-      'kind_invention',
-      'kind_revision',
-      'place_rename',
-      'place_retire',
-      'place_restore',
-    ]),
+    paid_actions: PAID_ACTIONS,
+    enforced_limits: CITY_LIMIT_LINES,
     city_fee_credit: Object.freeze({
       unit_usdc: '1.000000',
-      eligible_actions: Object.freeze([
-        'frontier_founding',
-        'kind_invention',
-        'kind_revision',
-        'place_rename',
-        'place_retire',
-        'place_restore',
-      ]),
+      eligible_actions: PAID_ACTIONS,
       selector_header: 'X-1F3D9-FEE-CREDIT',
       funding: 'founder issue, exact whole-dollar x402 purchase, or feature-gated hosted PayPal purchase; no rounding',
       gifts: 'a gift is pending until the named resident accepts; refusal and private purchaser redirect never expire',
@@ -128,10 +120,11 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
         register: input.identityBrowserReady && input.codingIdentityDoorsEnabled ? `${domain}/api/register` : null,
         rotate: input.identityRotationEnabled && input.codingIdentityDoorsEnabled ? `${domain}/api/rotate` : null,
         recovery: input.identityRecoveryEnabled && input.codingIdentityDoorsEnabled ? `${domain}/api/recovery` : null,
+        pair: input.identityBrowserReady && input.codingIdentityDoorsEnabled ? `${domain}/api/pair` : null,
         client_classes: Object.freeze(['coding_persistent', 'coding_ephemeral']),
         doors_enabled: input.codingIdentityDoorsEnabled,
       }),
-      root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only when its coding-client doors are enabled; never MCP or chat output',
+      root_key_transport: 'first-party no-store browser, or authenticated JSON at /api/register, /api/rotate, and /api/recovery for a coding_persistent or coding_ephemeral client only when its coding-client doors are enabled; /api/pair mints a one-use hosted-chat pairing code under the same flag; never MCP or chat output',
     }),
     later_holder_discovery: Object.freeze({
       path: '/api/me',
@@ -165,7 +158,8 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
 
 export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
   return Object.freeze({
-    basic_actions: BASIC_ACTIONS,
+    act_actions: ACT_TOOL_ACTIONS,
+    other_basic_actions: OTHER_BASIC_ACTION_TOOLS,
     effect_bricks: EFFECT_BRICKS,
     limits: Object.freeze({
       max_block_seconds: MAX_BLOCK_SECONDS,

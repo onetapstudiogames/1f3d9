@@ -34,7 +34,9 @@ export function connectorHarness(
 ) {
   const calls: BackingCall[] = []
   const app = new Hono()
-  app.post('/mcp', c => mcp(c, app))
+  app.post('/mcp', c => mcp(c, app, {
+    authenticateLegacyCatalog: async context => context.req.header('authorization') === AUTHORIZATION,
+  }))
   app.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
   app.all('*', async c => {
     const method = c.req.method

@@ -30,10 +30,11 @@ import {
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { MAX_DUE_EFFECTS_PER_OBSERVATION } from './engine-limits.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
-export const MAX_DUE_EFFECTS_PER_OBSERVATION = MAX_PENDING_EFFECTS_PER_PLACE
+export { MAX_DUE_EFFECTS_PER_OBSERVATION }
 export const SHARED_SOURCE_MUTATION_ERROR =
   'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
 export interface LawAuthority {

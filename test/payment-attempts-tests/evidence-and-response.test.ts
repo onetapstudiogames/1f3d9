@@ -6,6 +6,7 @@ import {
   completePaymentAttempt,
   findPaymentAttempt,
   type PaymentAttemptRecord,
+  PAYMENT_RECOVERY_WINDOW_MILLISECONDS,
 } from '../../src/payment-attempts.ts'
 import { BLOCK_HASH, EXACT_RESPONSE_BODY, FACILITATOR_RESPONSE_HEADER, TX, QueuedDatabase, row } from '../helpers/payment-attempts-fixtures/attempt-records.ts'
 
@@ -39,7 +40,10 @@ export function registerEvidenceAndResponseTests(): void {
     assert.match(database.calls[0]?.text ?? '', /finalized_block_hash\s+IS\s+NULL\s+OR\s+finalized_block_hash\s*=\s*\$\d+/iu)
     assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*\$\d+/iu)
     assert.match(database.calls[0]?.text ?? '', /recovery_started_at\s*=\s*coalesce\s*\(\s*recovery_started_at/iu)
-    assert.match(database.calls[0]?.text ?? '', /interval\s+'2 hours'/iu)
+    assert.match(
+      database.calls[0]?.text ?? '',
+      new RegExp(`${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint\\s*\\*\\s*interval\\s+'1 millisecond'`, 'iu'),
+    )
   })
 
   test('facilitator response bytes survive evidence binding and durable row reload', async () => {

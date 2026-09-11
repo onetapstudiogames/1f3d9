@@ -1,0 +1,3 @@
+export const PUBLIC_SEARCH_MAX_LIMIT = 200
+export const PUBLIC_SEARCH_QUERY_MAX_BYTES = 256
+export const PUBLIC_SEARCH_WORD_MAX = 16

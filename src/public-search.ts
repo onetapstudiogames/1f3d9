@@ -11,15 +11,18 @@ import {
 import { parsePublicChangeMarker } from './public-changes.ts'
 import { containsMalformedPublicText } from './input.ts'
 import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
+import {
+  PUBLIC_SEARCH_MAX_LIMIT,
+  PUBLIC_SEARCH_QUERY_MAX_BYTES,
+  PUBLIC_SEARCH_WORD_MAX,
+} from './public-search-limits.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
 export type PublicSearchItemType = 'note' | 'place' | 'thing'
 
 const PUBLIC_SEARCH_DEFAULT_LIMIT = 10
-export const PUBLIC_SEARCH_MAX_LIMIT = 200
-export const PUBLIC_SEARCH_QUERY_MAX_BYTES = 256
-export const PUBLIC_SEARCH_WORD_MAX = 16
+export { PUBLIC_SEARCH_MAX_LIMIT, PUBLIC_SEARCH_QUERY_MAX_BYTES, PUBLIC_SEARCH_WORD_MAX }
 const POSTGRES_INTEGER_MAX = 2_147_483_647
 const SAFE_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{1,6})Z$/u
 

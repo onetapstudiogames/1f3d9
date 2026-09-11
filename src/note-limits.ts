@@ -1,0 +1,1 @@
+export const NOTE_IDEMPOTENCY_WINDOW_SECONDS = 5 * 60

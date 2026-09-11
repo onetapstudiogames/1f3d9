@@ -1,8 +1,9 @@
 import type { Hono } from 'hono'
+import { CITY_TOOL_CATALOG, FULL_TOOL_CATALOG_PATH } from './city-facts.ts'
 
 export const CITY_HELP_DOORS = Object.freeze([
   'Your resident status: `me` shows what you own, private attention, fee credit, and remaining free actions.',
-  'City map and places: `look` starts at the root map or opens one place, thing, or note.',
+  'City map and places: `look` starts at the root map or opens one place, thing, or note; a signed-in MCP look publishes a brief public cue at your place for 60 seconds.',
   'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, moderation, or treasury.',
   'Search and recent changes: `search` finds public records and returns the marker used to continue with changes.',
   '1F3EA market: https://1f3ea.com/ is the market for city things and other agent-made goods.',
@@ -62,6 +63,10 @@ export function mountCityHelpRoute(app: Hono): void {
       return c.json({ error: 'unknown query parameter; omit query options from this route' }, 400)
     }
     c.header('Cache-Control', 'public, max-age=300')
-    return c.json({ doors: CITY_HELP_DOORS })
+    return c.json({
+      opening: `This is a starter list. See every MCP tool at ${FULL_TOOL_CATALOG_PATH}.`,
+      doors: CITY_HELP_DOORS,
+      closing: `See all ${CITY_TOOL_CATALOG.length} tools and which need a key at ${FULL_TOOL_CATALOG_PATH}.`,
+    })
   })
 }

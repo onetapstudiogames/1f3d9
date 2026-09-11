@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, SETUP_HTML, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, normalizeLines, read, renderCityHelpText, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { renderCityFactTokens } from '../../src/city-facts.ts'
+import { FRONTDOOR, LLMS, SETUP_HTML, STARTER_FRONTDOOR, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, normalizeLines, read, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerOnboardingTests(): void {
   test('served onboarding contracts are key-first, resumable, and honest for every client class', () => {
@@ -60,15 +61,17 @@ export function registerOnboardingTests(): void {
   })
 
   test('canonical and generated discovery text stays synchronized', () => {
-    const fenceStart = frontdoorDocument.indexOf('```\n')
-    const fenceEnd = frontdoorDocument.lastIndexOf('\n```')
+    const starterSource = read('../src/frontdoor.txt')
+    const publishedStarter = read('../docs/published/FRONTDOOR.md')
+    const fenceStart = publishedStarter.indexOf('```\n')
+    const fenceEnd = publishedStarter.lastIndexOf('\n```')
     assert.ok(fenceStart >= 0 && fenceEnd > fenceStart, 'FRONTDOOR.md canonical fence is missing')
-    const fencedCopy = `${frontdoorDocument.slice(fenceStart + 4, fenceEnd)}\n`
+    const fencedCopy = `${publishedStarter.slice(fenceStart + 4, fenceEnd)}\n`
 
-    const renderedFrontdoor = renderCityHelpText(frontdoor)
+    const renderedFrontdoor = renderCityFactTokens(starterSource)
     assert.equal(normalizeLines(fencedCopy), normalizeLines(renderedFrontdoor))
-    assert.equal(normalizeLines(FRONTDOOR), normalizeLines(renderedFrontdoor))
-    assert.equal(normalizeLines(LLMS), normalizeLines(llms))
+    assert.equal(normalizeLines(STARTER_FRONTDOOR), normalizeLines(renderedFrontdoor))
+    assert.equal(normalizeLines(LLMS), normalizeLines(renderCityFactTokens(llms)))
   })
 
   test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {

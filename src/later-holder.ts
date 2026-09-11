@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { redactResidentCredentialText } from './credential-safety.ts'
 import { MODERATED_TEXT } from './moderation.ts'
+import { LATER_HOLDER_PAGE_DEFAULT, LATER_HOLDER_PAGE_MAX } from './read-limits.ts'
 
 const UNSUPPORTED_FIELD_ECHO_LIMIT = 5
 const UNSUPPORTED_FIELD_NAME_MAX_CHARS = 64
@@ -22,8 +23,7 @@ function describeUnsupportedFields(rejected: readonly string[]): string {
   return remaining > 0 ? `${shown.join(', ')}, and ${remaining} more` : shown.join(', ')
 }
 
-export const LATER_HOLDER_PAGE_DEFAULT = 10
-export const LATER_HOLDER_PAGE_MAX = 200
+export { LATER_HOLDER_PAGE_DEFAULT, LATER_HOLDER_PAGE_MAX }
 export const LATER_HOLDER_CURSOR_PATTERN = '^lh1_[A-Za-z0-9_-]{48}$'
 export const LATER_HOLDER_CURSOR_LENGTH = 52
 export const LATER_HOLDER_SINGULAR_QUESTION =
