@@ -1,19 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { err } from './core.ts'
+import { REDACTED_LOG_TEXT, redactLogSecrets } from './log-redaction.ts'
 import type { RuntimeLogRecord } from './runtime-logs.ts'
 
 const LOG_DRAIN_SECRET = /^[0-9a-f]{64}$/u
 const VERCEL_SIGNATURE = /^[0-9a-f]{40}$/u
 const VERCEL_CHALLENGE = /^[\x21-\x7e]{1,512}$/u
-const CITY_CREDENTIAL = /\b1f3(?:d9|ea)_(?:sk|at|rt|ac|rc)_[A-Za-z0-9_-]{24,256}\b/giu
-const BEARER_CREDENTIAL = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,2048}/giu
-const DATABASE_URL = /\b(?:postgres|postgresql):\/\/[^\s"'<>]+/giu
-const CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:"'<>]{1,512}:[^\s/@"'<>]{1,512}@/giu
-const COMMON_TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,512}|github_pat_[A-Za-z0-9_]{16,512}|gh[pousr]_[A-Za-z0-9]{16,512}|xox[baprs]-[A-Za-z0-9-]{16,512}|AKIA[A-Z0-9]{16})\b/gu
-const SENSITIVE_HEADER = /(?:^|[^A-Za-z0-9_-])(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*[:=]|(?:^|[^A-Za-z0-9_-])(?:authorization|proxy-authorization)\s+(?:Basic|Bearer|Digest|ApiKey|Token)\b/iu
-const ASSIGNED_KEY = /(?:^|[^A-Za-z0-9_-])["']?([A-Za-z][A-Za-z0-9_-]{0,511})["']?\s*[:=]/gu
-const REDACTED_LOG_TEXT = '[redacted: log text contained credential material]'
 const EARLIEST_LOG_TIMESTAMP = Date.UTC(2000, 0, 1)
 const LATEST_LOG_TIMESTAMP = Date.UTC(2200, 0, 1)
 
@@ -49,27 +42,6 @@ function configuredSecret(
 ): string | null {
   const secret = environment.LOG_DRAIN_SECRET
   return secret && LOG_DRAIN_SECRET.test(secret) ? secret : null
-}
-
-function containsSensitiveAssignment(value: string): boolean {
-  for (const match of value.matchAll(ASSIGNED_KEY)) {
-    const normalizedKey = (match[1] ?? '')
-      .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1_$2')
-      .replace(/([a-z0-9])([A-Z])/gu, '$1_$2')
-      .replace(/-/gu, '_')
-      .toLowerCase()
-    const segments = normalizedKey.split('_').filter(Boolean)
-    const compact = segments.join('')
-    if (
-      segments.some(segment => [
-        'password', 'passwd', 'secret', 'token', 'session', 'sessionid', 'credential',
-      ].includes(segment))
-      || ['apikey', 'privatekey', 'accesskey', 'databaseurl'].some(
-        suffix => compact.endsWith(suffix),
-      )
-    ) return true
-  }
-  return false
 }
 
 function validChallenge(value: string | undefined): value is string {
@@ -130,34 +102,20 @@ function truncateUtf8(value: string, maximumBytes: number): string {
   return result
 }
 
-function redactSecrets(value: string, secret: string): string {
-  const normalized = value.replace(/\0/gu, '')
-  if (SENSITIVE_HEADER.test(normalized) || containsSensitiveAssignment(normalized)) {
-    return REDACTED_LOG_TEXT
-  }
-  return normalized
-    .split(secret).join('[redacted log-drain secret]')
-    .replace(CITY_CREDENTIAL, '[redacted city credential]')
-    .replace(BEARER_CREDENTIAL, 'Bearer [redacted]')
-    .replace(DATABASE_URL, '[redacted database URL]')
-    .replace(CREDENTIAL_URL, '$1[redacted]@')
-    .replace(COMMON_TOKEN, '[redacted token]')
-}
-
 function boundedText(
   value: unknown,
   maximumBytes: number,
   secret: string,
 ): string | null {
   if (typeof value !== 'string') return null
-  const bounded = truncateUtf8(redactSecrets(value, secret), maximumBytes)
+  const bounded = truncateUtf8(redactLogSecrets(value, secret), maximumBytes)
   return bounded || null
 }
 
 function boundedRequiredIdentifier(value: unknown, maximumBytes: number, secret: string): string | null {
   if (typeof value !== 'string' || value.length === 0) return null
   if (Buffer.byteLength(value, 'utf8') > maximumBytes || value.includes('\0')) return null
-  const redacted = redactSecrets(value, secret)
+  const redacted = redactLogSecrets(value, secret)
   return redacted === value ? value : null
 }
 
