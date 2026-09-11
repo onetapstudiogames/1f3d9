@@ -26,9 +26,9 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, PUBLIC_REPLAY_ROW_CEILING } from './read-limits.ts'
 
-export const PUBLIC_REPLAY_ROW_CEILING = 800
-export const PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES = 512_000
+export { PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, PUBLIC_REPLAY_ROW_CEILING }
 const PUBLIC_REPLAY_NOTE_LINE_CHARACTERS = 200
 const PUBLIC_REPLAY_CACHE_MS = 30_000
 const POSTGRES_INTEGER_MAX = 2_147_483_647

@@ -9,6 +9,7 @@ import type { Context, Hono } from 'hono'
 import { RESIDENT_AUTH_REFUSAL, sha256 } from './core.ts'
 import { jsonError, withIdentityApiStorageErrors } from './identity-api.ts'
 import { type OAuthAttemptKind, postgresOAuthStore } from './oauth-store.ts'
+import { PAIRING_LIMITS } from './pairing-limits.ts'
 
 export const PAIRING_CODE_PREFIX = '1f3d9_pc_'
 export const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
@@ -22,8 +23,9 @@ export const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
  */
 export const PAIR_DOOR_PATH = '/api/pair'
 
-const PAIR_MINTS_PER_RESIDENT_PER_HOUR = 20
-const MAX_PAIR_JSON_BYTES = 4_096
+export const PAIR_MINTS_PER_RESIDENT_PER_HOUR = PAIRING_LIMITS.mintsPerResidentHour
+export const MAX_PAIR_JSON_BYTES = PAIRING_LIMITS.bodyBytes
+export const PAIRING_CODE_TTL_MINUTES = PAIRING_LIMITS.ttlMinutes
 
 export interface PairAuthenticatedResident {
   id: number
@@ -124,7 +126,7 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
       status: 'minted',
       pairing_code: pairingCode,
       expires_at: minted.expiresAt,
-      next_step: 'This code is shown once, expires in ten minutes, and works once. Give it to the human completing hosted-chat sign-in; they enter it on the sign-in page in place of the resident key. It never reveals the key.',
+      next_step: `This code is shown once, expires in ${PAIRING_CODE_TTL_MINUTES} minutes, and works once. Give it to the human completing hosted-chat sign-in; they enter it on the sign-in page in place of the resident key. It never reveals the key.`,
     }, 200)
   }))
 }

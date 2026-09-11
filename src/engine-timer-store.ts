@@ -1,7 +1,10 @@
 import { EngineError, type TaggedSql } from './engine.ts'
+import {
+  MAX_PENDING_EFFECTS_PER_ACTOR,
+  MAX_PENDING_EFFECTS_PER_PLACE,
+} from './engine-limits.ts'
 
-export const MAX_PENDING_EFFECTS_PER_PLACE = 512
-export const MAX_PENDING_EFFECTS_PER_ACTOR = 1_024
+export { MAX_PENDING_EFFECTS_PER_ACTOR, MAX_PENDING_EFFECTS_PER_PLACE }
 
 const PLACE_QUEUE_LOCK_NAMESPACE = 0x1f3d9001
 const ACTOR_QUEUE_LOCK_NAMESPACE = 0x1f3d9002

@@ -3,9 +3,11 @@ import { postgresErrorCode } from './core-primitives.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { PAID_ACTIONS } from './city-fee-facts.ts'
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
+import { CITY_CREDIT_HISTORY_DEFAULT, CITY_CREDIT_HISTORY_MAX } from './read-limits.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
   CITY_FEE_CREDIT_USDC,
@@ -21,8 +23,7 @@ export {
   returnCityCreditSpend,
   returnExpiredCityCreditSpend,
 }
-export const CITY_CREDIT_HISTORY_DEFAULT = 20
-export const CITY_CREDIT_HISTORY_MAX = 50
+export { CITY_CREDIT_HISTORY_DEFAULT, CITY_CREDIT_HISTORY_MAX }
 const SINCE_LAST_VISIT_ITEM_LIMIT = 10
 if (CITY_FEE_CREDIT_UNITS !== 1_000_000n) throw new Error('city fee credit unit invariant changed')
 
@@ -244,11 +245,8 @@ function safeTargetKey(value: unknown): string {
 }
 
 function eligibleOperation(value: unknown): CityFeeCreditOperation {
-  if (![
-    'frontier', 'kind_invention', 'kind_revision',
-    'place_rename', 'place_retire', 'place_restore',
-  ].includes(String(value))) {
-    throw new TypeError('operation is not eligible for city fee credit; use frontier, kind_invention, kind_revision, place_rename, place_retire, or place_restore')
+  if (!(PAID_ACTIONS as readonly string[]).includes(String(value))) {
+    throw new TypeError(`operation is not eligible for city fee credit; use ${PAID_ACTIONS.join(', ')}`)
   }
   return value as CityFeeCreditOperation
 }
@@ -1272,10 +1270,7 @@ export async function readCityCreditPreflight(
     pending_gifts_count: pendingGiftsCount,
     can_confirm: canConfirm,
     observed_at: observed.toISOString(),
-    applies_to: Object.freeze([
-      'frontier', 'kind_invention', 'kind_revision',
-      'place_rename', 'place_retire', 'place_restore',
-    ] as const),
+    applies_to: PAID_ACTIONS,
     freshness: 'read_only_snapshot' as const,
   })
 }

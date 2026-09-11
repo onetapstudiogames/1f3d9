@@ -10,6 +10,8 @@ export const DRAWING_BODY_MAX_BYTES = 4_096
 // 132 KiB preserves the existing 65,536-byte thing-body contract even when
 // every valid backslash needs JSON escaping, with room for drawing and keys.
 export const DRAWING_RECORD_BODY_MAX_BYTES = 135_168
+export const DRAWING_HISTORY_MAX = 50
+export const RESIDENT_DRAWING_CHANGES_PER_MINUTE = 6
 
 const DRAWING_COLOUR = /^#[0-9a-f]{6}$/u
 const DRAWING_FIELDS = Object.freeze(['indices', 'palette'])

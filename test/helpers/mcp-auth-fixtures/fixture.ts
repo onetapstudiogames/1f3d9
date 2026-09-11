@@ -156,7 +156,10 @@ export function createHarness() {
   })
 
   const gateway = new Hono()
-  gateway.post('/mcp', c => mcp(c, city))
+  gateway.post('/mcp', c => mcp(c, city, {
+    authenticateLegacyCatalog: async context =>
+      context.req.header('authorization') === `Bearer ${LEGACY_SECRET}`,
+  }))
   gateway.post('/mcp/connect', c => mcp(c, city, {
     hostedChat: true,
     forwardUnauthorizedStatus: false,
@@ -197,7 +200,10 @@ export function createAuthenticatedLookHarness(payload: Record<string, unknown>)
   })
 
   const gateway = new Hono()
-  gateway.post('/mcp', c => mcp(c, city))
+  gateway.post('/mcp', c => mcp(c, city, {
+    authenticateLegacyCatalog: async context =>
+      context.req.header('authorization') === `Bearer ${LEGACY_SECRET}`,
+  }))
   gateway.post('/mcp/connect', c => mcp(c, city, {
     hostedChat: true,
     forwardUnauthorizedStatus: false,

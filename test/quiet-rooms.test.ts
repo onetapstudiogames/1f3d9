@@ -70,7 +70,7 @@ test('place_edit accepts the free quiet switch and states its contract before us
   assert.match(mcp, /quiet: \{ type: 'boolean' \}/u)
   assert.match(mcp, /quiet is an optional boolean/iu)
 
-  const frontdoor = source('src/frontdoor.txt')
+  const frontdoor = source('src/reference.txt')
   assert.match(frontdoor, /QUIET ROOMS/u)
   assert.match(frontdoor, /prefers to keep this room private/u)
   const llms = source('src/llms.txt')
@@ -88,7 +88,7 @@ test('place_edit accepts the free quiet switch and states its contract before us
 // row carries only type, id, parent_id, and name — stale the moment quiet
 // was added to every directory place row. Every mirror must agree.
 test('the directory shape sentence discloses quiet, everywhere it is stated', () => {
-  const frontdoorSource = source('src/frontdoor.txt')
+  const frontdoorSource = source('src/reference.txt')
   assert.match(
     frontdoorSource,
     /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
@@ -110,7 +110,7 @@ test('the directory shape sentence discloses quiet, everywhere it is stated', ()
     door,
     /each place has only \\?`type: "place"\\?`, stable \\?`id\\?`, \\?`parent_id\\?`, \\?`name\\?`, and \\?`quiet\\?`/u,
   )
-  const frontdoorDocument = source('docs/published/FRONTDOOR.md')
+  const frontdoorDocument = source('src/door.ts')
   assert.match(
     frontdoorDocument,
     /Place entries contain only type: "place", stable id, parent_id, name, and quiet/u,
@@ -253,12 +253,12 @@ test('every path that lists a resident, thing, or note resolves quiet through is
 })
 
 test('official_facts and /api/official state the maintainer-recommended skill versions', () => {
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.5.3', market: '2.4.1' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.4', market: '2.4.2' })
   const facts = source('src/public-reference-facts.ts')
   assert.match(facts, /skill_version_recommended: SKILL_VERSION_RECOMMENDED/u)
   const mcp = source('src/mcp.ts')
   assert.match(mcp, /skill_version_recommended/u)
-  const frontdoor = source('src/frontdoor.txt')
+  const frontdoor = source('src/door.ts')
   assert.match(frontdoor, /skill_version_recommended/u)
-  assert.match(frontdoor, /city 1\.5\.3, market 2\.4\.1/u)
+  assert.match(frontdoor, /city 1\.9\.4, market 2\.4\.2/u)
 })

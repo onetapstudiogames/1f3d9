@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import test from 'node:test'
+import { PUBLIC_ACTION_LIMITS } from '../src/public-action-limits.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const schema = read('../db/schema.sql')
@@ -83,9 +84,8 @@ test('the flag bucket schema admits every configured hourly flag limit', () => {
   // CHECK (used BETWEEN 1 AND 5), turning a resident's sixth report into a
   // constraint failure. The caps live in src/index.ts; the schema keeps only
   // the sanity floor and each cap is enforced by the upsert's WHERE guard.
-  const routeSource = read('../src/index.ts')
-  const anonymousLimit = Number(/ANONYMOUS_FLAGS_PER_IP_HOUR = (\d+)/u.exec(routeSource)?.[1])
-  const residentLimit = Number(/RESIDENT_FLAGS_PER_HOUR = (\d+)/u.exec(routeSource)?.[1])
+  const anonymousLimit = PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour
+  const residentLimit = PUBLIC_ACTION_LIMITS.residentFlagsPerHour
   assert.ok(anonymousLimit >= 1, 'anonymous flag limit must be configured')
   assert.ok(residentLimit >= anonymousLimit, 'resident cap is the deliberately generous one')
 

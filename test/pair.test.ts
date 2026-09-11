@@ -107,7 +107,7 @@ test('an empty body and an empty-object body both mint a code', async () => {
     assert.match(parsed.pairing_code, PAIRING_CODE_RE)
     assert.ok(!Number.isNaN(Date.parse(parsed.expires_at)))
     assert.match(parsed.next_step, /shown once/iu)
-    assert.match(parsed.next_step, /expires in ten minutes/iu)
+    assert.match(parsed.next_step, /expires in 10 minutes/iu)
     assert.match(parsed.next_step, /works once/iu)
     assert.match(parsed.next_step, /never reveals the key/iu)
     assert.equal(store.minted.length, 1)

@@ -467,7 +467,7 @@ test('the feature-gated front door stays plain text and broad robots permission 
 
 test('the front door and public help API share city doors while tools does not duplicate them', async () => {
   const [front, tools, help, helpWithBogusAuth, humanHelp] = await Promise.all([
-    app.request('/'),
+    app.request('/reference.txt'),
     app.request('/tools'),
     app.request('/api/help'),
     app.request('/api/help', { headers: { authorization: 'Bearer not-a-resident-key' } }),
@@ -481,7 +481,7 @@ test('the front door and public help API share city doors while tools does not d
   assert.deepEqual(helpPayload.doors, CITY_HELP_DOORS)
   assert.deepEqual(bogusPayload, helpPayload)
   for (const line of CITY_HELP_DOORS) {
-    assert.equal(frontText.split(line).length - 1, 1, `front door: ${line}`)
+    assert.equal(frontText.split(line).length - 1, 1, `reference door: ${line}`)
     assert.equal(toolsText.split(line).length - 1, 0, `tools page omits: ${line}`)
   }
   assert.equal(humanHelp.status, 302)

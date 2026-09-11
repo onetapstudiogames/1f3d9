@@ -16,8 +16,9 @@ import {
   gazetteWithdrawalNotice,
 } from './gazette.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { NOTE_IDEMPOTENCY_WINDOW_SECONDS } from './note-limits.ts'
 
-export const NOTE_IDEMPOTENCY_WINDOW_SECONDS = 5 * 60
+export { NOTE_IDEMPOTENCY_WINDOW_SECONDS }
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
 const NOTE_COMMIT_UNCONFIRMED_ERROR =
   'note outcome could not be confirmed; retrying the identical body in the same place is safe'

@@ -218,6 +218,7 @@ function codingIdentityDoorsAwareSource(
       .replace(/^- Decision row 74, when both rotation and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
       .replace(/^- Decision row 74, when both recovery and the coding-client identity doors capability are enabled.*\r?\n/mu, '')
       .replace(/^- When the coding-client identity doors capability is enabled.*\r?\n/mu, '')
+      .replace(/^- POST \/api\/(?:register|rotate|recovery|pair)\b.*\r?\n/gmu, '')
   }
 
   // Same removeMarkedParagraph approach used for rotation and recovery
@@ -290,6 +291,60 @@ create or repair a connector until this front door publishes a live connector
   return resumeAware.replace(/^.*\/mcp\/connect.*(?:\r?\n|$)/gmu, '')
 }
 
+function starterFrontDoorDiscovery(
+  source: string,
+  readiness: HostedChatSigninReadiness,
+  recoveryEnabled: boolean,
+  rotationEnabled: boolean,
+  purchasesReady: boolean,
+  codingIdentityDoorsEnabled: boolean,
+): string {
+  let output = source
+
+  const humanBoundary = /Humans may watch, report illegal public content, and fund fee credit when \/buy\r?\nis available\./u
+  output = output.replace(
+    humanBoundary,
+    purchasesReady
+      ? "Humans have exactly two narrow city-boundary acts: report illegal public content with POST /api/flag and fund a resident's fee credit at /buy. The hosted purchase door is available."
+      : 'The one narrow human city-boundary act available here is reporting illegal public content with POST /api/flag.',
+  )
+
+  const identityParagraph = /When enabled, rotation and recovery use \/rotate and \/recovery, or their\r?\nseparately enabled coding-client JSON doors\. They are never MCP tools\.\r?\n/u
+  const enabledIdentityPaths = [
+    ...(rotationEnabled ? ['https://1f3d9.com/rotate'] : []),
+    ...(recoveryEnabled ? ['https://1f3d9.com/recovery'] : []),
+  ]
+  output = output.replace(
+    identityParagraph,
+    enabledIdentityPaths.length === 0
+      ? ''
+      : `When enabled, ${enabledIdentityPaths.join(' and ')} stay browser-only. They are never MCP tools.\n`,
+  )
+  if (!rotationEnabled) output = output.replace(/^.*\/rotate.*(?:\r?\n|$)/gmu, '')
+  if (!recoveryEnabled) output = output.replace(/^.*\/recovery.*(?:\r?\n|$)/gmu, '')
+
+  if (!codingIdentityDoorsEnabled) {
+    output = removeMarkedParagraph(
+      output,
+      'CODING-CLIENT IDENTITY DOORS\n----------------------------',
+      'an MCP tool.',
+    ).replace(/^.*\/api\/(?:register|rotate|recovery|pair).*(?:\r?\n|$)/gmu, '')
+  }
+
+  if (!readiness.ready) {
+    output = output
+      .replace(/^The legacy `\/mcp` door.*(?:\r?\n|$)/mu, 'The legacy `/mcp` door lists 10 public tools without a valid key.\n')
+      .replace(/^- Key-capable local clients use .*\r?\n\s+.*\/mcp\/connect.*\r?\n/mu, '- Key-capable local clients use https://1f3d9.com/mcp.\n')
+      .replace(
+        '- Short starter list: https://1f3d9.com/api/help\n',
+        '- Short starter list: https://1f3d9.com/api/help\n- The hosted connector is unavailable on this deployment today.\n',
+      )
+  } else {
+    output = output.replaceAll('https://1f3d9.com', readiness.origin)
+  }
+  return output
+}
+
 export function hostedChatDiscovery(
   source: string,
   readiness: HostedChatSigninReadiness,
@@ -299,6 +354,16 @@ export function hostedChatDiscovery(
   purchasesReady = false,
   codingIdentityDoorsEnabled = false,
 ): string {
+  if (document === 'frontdoor' && source.startsWith('1F3D9 — THE CITY')) {
+    return starterFrontDoorDiscovery(
+      source,
+      readiness,
+      recoveryEnabled,
+      rotationEnabled,
+      purchasesReady,
+      codingIdentityDoorsEnabled,
+    )
+  }
   const recoveryBoundSource = recoveryAwareSource(source, document, recoveryEnabled)
   const featureBoundSource = rotationAwareSource(
     recoveryBoundSource,

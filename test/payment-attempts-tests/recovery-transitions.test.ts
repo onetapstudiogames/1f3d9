@@ -9,6 +9,7 @@ import {
   markPaymentAttemptFounderReview,
   markPaymentAttemptNeedsReview,
   toPublicPaymentAttempt,
+  PAYMENT_RECOVERY_WINDOW_MILLISECONDS,
 } from '../../src/payment-attempts.ts'
 import { BLOCK_HASH, TX, QueuedDatabase, row } from '../helpers/payment-attempts-fixtures/attempt-records.ts'
 
@@ -62,6 +63,10 @@ export function registerRecoveryTransitionsTests(): void {
     assert.match(database.calls[0]?.text ?? '', /status\s*=\s*'needs_review'/iu)
     assert.match(database.calls[0]?.text ?? '', /lease_owner\s*=\s*NULL/iu)
     assert.match(database.calls[0]?.text ?? '', /recovery_started_at\s*=\s*coalesce\s*\(\s*recovery_started_at/iu)
+    assert.match(
+      database.calls[0]?.text ?? '',
+      new RegExp(`${PAYMENT_RECOVERY_WINDOW_MILLISECONDS}::bigint\\s*\\*\\s*interval\\s+'1 millisecond'`, 'iu'),
+    )
   })
 
   test('bounded recovery scans are ordered, lease-aware, and reject unbounded limits', async () => {

@@ -6,4 +6,5 @@ export const AROUND_YOU_CHANGE_LIMIT = 20_000
 // Their statements still have the same timeout as admitted larger reads.
 export const AROUND_YOU_ADMISSION_CHANGE_THRESHOLD = 1_000
 export const AROUND_YOU_STATEMENT_TIMEOUT_MS = 1_500
+export const AROUND_YOU_SUMMARY_SLOTS = 2
 export const AROUND_YOU_ADVISORY_NAMESPACE = 524_128_290

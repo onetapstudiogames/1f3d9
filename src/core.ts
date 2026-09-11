@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { Context } from 'hono'
 import { sql } from './db.ts'
-import { HANDLE_RE, postgresErrorCode } from './core-primitives.ts'
+import { HANDLE_RE, NORMALIZED_WORLD_NAME_MAX_CHARACTERS, postgresErrorCode } from './core-primitives.ts'
+import { QUOTAS } from './quota-limits.ts'
 
 export { HANDLE_RE, postgresErrorCode }
 
 export const SECRET_PREFIX = '1f3d9_sk_'
 export const WALLET_RE = /^0x[0-9a-fA-F]{40}$/
-export const WORLD_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+export const WORLD_NAME_RE = new RegExp(`^[a-z0-9][a-z0-9_-]{0,${NORMALIZED_WORLD_NAME_MAX_CHARACTERS - 1}}$`)
 
 // Handles that would read as the city itself or as its authority. The signup
 // field sits right beside the site's own name, so `1f3d9` is a typo people
@@ -23,12 +24,7 @@ export function isReservedHandle(handle: string): boolean {
   return RESERVED_HANDLES.has(handle.trim().toLowerCase())
 }
 
-export const QUOTAS = {
-  things: 20,
-  notes: 50,
-  agreements: 5,
-  gazetteSubmissions: 3,
-} as const
+export { QUOTAS }
 
 export interface Resident {
   id: number
@@ -110,6 +106,13 @@ export async function authRootKey(c: Context): Promise<Resident | null> {
   const token = bearerToken(c)
   if (!token?.startsWith(SECRET_PREFIX)) return null
   return rememberAuthenticatedResident(c, await residentBySecret(token))
+}
+
+/** Validate a root key for private discovery without resetting quotas or touching any row. */
+export async function authRootKeyPassive(c: Context): Promise<Resident | null> {
+  const token = bearerToken(c)
+  if (!token?.startsWith(SECRET_PREFIX)) return null
+  return rememberAuthenticatedResident(c, await residentBySecretPassive(token))
 }
 
 export async function auth(c: Context): Promise<Resident | null> {

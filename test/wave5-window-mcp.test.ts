@@ -277,6 +277,7 @@ test('anonymous MCP preserves a bounded Retry-After duration on rate-limit error
     error_class: 'rate_limited',
     front_door_tool: 'front_door',
     front_door: 'https://1f3d9.com/',
+    all_tools: '/api/tools',
     http_status: 429,
     retry_after_seconds: 5,
   })

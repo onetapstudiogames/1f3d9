@@ -233,7 +233,7 @@ test('/api/me is the private balance/history surface and public windows do not e
 
 test('MCP found advertises a non-secret credit request id and forwards it only as the fee header', async () => {
   const app = new Hono()
-  app.post('/mcp', c => mcp(c, app))
+  app.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
   app.post('/api/place', async c => c.json({
     path: c.req.path,
     credit: c.req.header(CREDIT_HEADER),
@@ -361,7 +361,7 @@ test('MCP me independently forwards private receipt and pending-gift pages', asy
 
 test('MCP recipients can accept or refuse a pending credit gift without exposing buyer secrets', async () => {
   const app = new Hono()
-  app.post('/mcp', c => mcp(c, app))
+  app.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
   app.post('/api/city-credit/gifts/:giftId/:action', async c => c.json({
     gift_id: c.req.param('giftId'),
     action: c.req.param('action'),

@@ -92,7 +92,8 @@ export function registerFrontDoorAndPhysicsTests(): void {
     const response = await app.request('/api/physics')
     assert.equal(response.status, 200)
     const body = await response.json() as {
-      basic_actions: string[]
+      act_actions: string[]
+      other_basic_actions: Record<string, string>
       effect_bricks: string[]
       limits: {
         max_block_seconds: number
@@ -104,7 +105,8 @@ export function registerFrontDoorAndPhysicsTests(): void {
         max_due_effects_per_observation: number
       }
     }
-    assert.deepEqual(body.basic_actions, ['talk', 'move', 'use', 'give', 'consume', 'make', 'go_home'])
+    assert.deepEqual(body.act_actions, ['move', 'use', 'give', 'consume', 'go_home'])
+    assert.deepEqual(body.other_basic_actions, { talk: 'say', make: 'make' })
     assert.deepEqual(body.effect_bricks, ['destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label'])
     assert.equal(body.limits.max_block_seconds, 86_400)
     assert.equal(body.limits.max_generation, 8)

@@ -1,9 +1,18 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
+import {
+  RESIDENT_LOOKING_READ_LIMIT,
+  RESIDENT_LOOKING_READ_TIMEOUT_MS,
+  RESIDENT_LOOKING_REFRESH_SECONDS,
+  RESIDENT_LOOKING_TTL_SECONDS,
+} from './resident-looking-limits.ts'
 
-export const RESIDENT_LOOKING_TTL_SECONDS = 60
-export const RESIDENT_LOOKING_REFRESH_SECONDS = 5
-export const RESIDENT_LOOKING_READ_TIMEOUT_MS = 250
+export {
+  RESIDENT_LOOKING_READ_LIMIT,
+  RESIDENT_LOOKING_READ_TIMEOUT_MS,
+  RESIDENT_LOOKING_REFRESH_SECONDS,
+  RESIDENT_LOOKING_TTL_SECONDS,
+}
 
 export interface ResidentLooking {
   readonly place_id: number
@@ -92,7 +101,7 @@ export async function readResidentLooking(
   }
 }
 
-export async function readLookingResidentsAtPlace(placeId: number, limit = 200, database: typeof sql = sql): Promise<Readonly<{
+export async function readLookingResidentsAtPlace(placeId: number, limit = RESIDENT_LOOKING_READ_LIMIT, database: typeof sql = sql): Promise<Readonly<{
   residents: readonly Readonly<{ id: number; handle: string; looking: ResidentLooking }>[]
   total: number
   has_more: boolean

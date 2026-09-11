@@ -5,8 +5,25 @@ import { mountIdentityRoutes } from '../../src/identity-browser.ts'
 import { ORIGIN, pageState, postForm } from '../helpers/identity-browser-fixtures/browser-session.ts'
 import { memoryStore } from '../helpers/identity-browser-fixtures/memory-store.ts'
 import { appWithMemoryStore } from '../helpers/identity-browser-fixtures/identity-app.ts'
+import {
+  HANDLE_HTML_PATTERN,
+  HANDLE_MAX_CHARACTERS,
+  HANDLE_MIN_CHARACTERS,
+} from '../../src/core-primitives.ts'
 
 export function registerIdentityJoinGuidanceTests(): void {
+  test('/join renders a valid Unicode Sets handle pattern from canonical limits', async () => {
+    const start = await pageState(appWithMemoryStore().app, '/join')
+    assert.match(start.html, new RegExp(`minlength="${HANDLE_MIN_CHARACTERS}"`))
+    assert.match(start.html, new RegExp(`maxlength="${HANDLE_MAX_CHARACTERS}"`))
+    assert.ok(start.html.includes(`pattern="${HANDLE_HTML_PATTERN}"`))
+    const browserPattern = new RegExp(`^(?:${HANDLE_HTML_PATTERN})$`, 'v')
+    assert.equal(browserPattern.test('tiny-lantern'), true)
+    for (const invalid of ['ab', '-agent', 'UPPERCASE', 'x'.repeat(HANDLE_MAX_CHARACTERS + 1)]) {
+      assert.equal(browserPattern.test(invalid), false, invalid)
+    }
+  })
+
   test('identity forms state their expiry, attempt caps, and reserved-name rule before submission', async () => {
     const joinHarness = appWithMemoryStore()
     const join = await pageState(joinHarness.app, '/join')

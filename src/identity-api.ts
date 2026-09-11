@@ -15,6 +15,7 @@
 // party to ride along on and no CSRF proof to check.
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { IDENTITY_LIMITS } from './identity-limits.ts'
 import {
   newBrowserSessionCookie,
   parseSessionToken,
@@ -31,7 +32,7 @@ import {
 } from './identity-store.ts'
 import { publicOrigin as configuredPublicOrigin } from './oauth-config.ts'
 
-const MAX_JSON_BODY_BYTES = 8_192
+const MAX_JSON_BODY_BYTES = IDENTITY_LIMITS.bodyBytes
 const ROOT_KEY = /^1f3d9_sk_[0-9a-f]{48}$/u
 const RECOVERY_CODE = /^1f3d9_rc_[0-9a-f]{64}$/u
 const CODING_CLIENT_CLASSES = new Set<RegistrationClientClass>([
@@ -326,8 +327,8 @@ function mountRegisterRoute(
         )
       }
       if (
-        !(await admitted(store, 'join_stage', [`ip:${ip}`], 3)) ||
-        !(await admitted(store, 'join_stage', ['global'], 300))
+        !(await admitted(store, 'join_stage', [`ip:${ip}`], IDENTITY_LIMITS.joinStartsPerIpHour)) ||
+        !(await admitted(store, 'join_stage', ['global'], IDENTITY_LIMITS.joinStartsGlobalHour))
       ) {
         return jsonError(
           c, 429, 'rate_limited',
@@ -398,7 +399,7 @@ function mountRegisterRoute(
           'Read the key back from durable storage and retry action "confirm" with the exact value shown by action "stage".',
         )
       }
-      if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], 10))) {
+      if (!(await admitted(store, 'join_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], IDENTITY_LIMITS.joinConfirmsPerIpStageHour))) {
         return jsonError(
           c, 429, 'rate_limited',
           'too many confirmation attempts for this stage_token',
@@ -503,7 +504,7 @@ function mountRotateRoute(app: Hono, environment: IdentityEnvironment, store: Id
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
         return jsonError(c, 403, 'credential_rejected', 'that current resident key could not be verified', 'Retry action "begin" with the current saved resident key.')
       }
-      if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], 5))) {
+      if (!(await admitted(store, 'rotation_begin', [`ip:${ip}`], IDENTITY_LIMITS.rotationStartsPerIpHour))) {
         return jsonError(c, 429, 'rate_limited', 'too many rotation attempts; you may begin 5 rotations per IP per UTC hour', 'Wait for the next UTC hour, then retry action "begin".')
       }
       const replacementKey = newSecret()
@@ -540,7 +541,7 @@ function mountRotateRoute(app: Hono, environment: IdentityEnvironment, store: Id
     if (!residentKey || !ROOT_KEY.test(residentKey)) {
       return jsonError(c, 403, 'credential_rejected', 'that replacement key could not be verified', 'Read the replacement key back from durable storage and retry action "confirm".')
     }
-    if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], 10))) {
+    if (!(await admitted(store, 'rotation_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], IDENTITY_LIMITS.rotationConfirmsPerIpStageHour))) {
       return jsonError(c, 429, 'rate_limited', 'too many confirmation attempts for this stage_token', 'Wait for the next UTC hour, then retry action "begin" for a fresh rotation.')
     }
     const resident = await store.confirmRootRotation({
@@ -609,7 +610,7 @@ function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: 
       if (!residentKey || !ROOT_KEY.test(residentKey)) {
         return jsonError(c, 403, 'credential_rejected', 'that resident key could not be verified', 'Retry action "generate" with the current saved resident key.')
       }
-      if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], 5))) {
+      if (!(await admitted(store, 'recovery_generate', [`ip:${ip}`], IDENTITY_LIMITS.recoverySetsPerIpHour))) {
         return jsonError(c, 429, 'rate_limited', 'too many recovery-set attempts; you may create 5 recovery sets per IP per UTC hour', 'Wait for the next UTC hour, then retry action "generate".')
       }
       const codes = collectRecoveryCodeSet(newRecoveryCode)
@@ -636,7 +637,7 @@ function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: 
       if (!code || !RECOVERY_CODE.test(code)) {
         return jsonError(c, 403, 'credential_rejected', 'that recovery code could not be verified', 'Retry action "begin" with an unused recovery code.')
       }
-      if (!(await admitted(store, 'recovery_begin', [`ip:${ip}`], 10))) {
+      if (!(await admitted(store, 'recovery_begin', [`ip:${ip}`], IDENTITY_LIMITS.recoveryStartsPerIpHour))) {
         return jsonError(c, 429, 'rate_limited', 'too many recovery attempts; you may begin 10 recoveries per IP per UTC hour', 'Wait for the next UTC hour, then retry action "begin".')
       }
       const replacementKey = newSecret()
@@ -670,7 +671,7 @@ function mountRecoveryRoute(app: Hono, environment: IdentityEnvironment, store: 
     if (!residentKey || !ROOT_KEY.test(residentKey)) {
       return jsonError(c, 403, 'credential_rejected', 'that replacement key could not be verified', 'Read the replacement key back from durable storage and retry action "confirm".')
     }
-    if (!(await admitted(store, 'recovery_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], 10))) {
+    if (!(await admitted(store, 'recovery_confirm', [`ip:${ip}`, `session:${token.sessionHash}`], IDENTITY_LIMITS.recoveryConfirmsPerIpStageHour))) {
       return jsonError(c, 429, 'rate_limited', 'too many confirmation attempts for this stage_token', 'Wait for the next UTC hour, then retry action "begin" with an unused recovery code.')
     }
     const resident = await store.confirmRootRecovery({

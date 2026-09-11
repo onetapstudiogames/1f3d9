@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { LLMS, REFERENCE } from '../src/door.ts'
 import { readGazetteIssue, type GazetteQueryDatabase } from '../src/gazette-store.ts'
 import {
   effectivePublicPlaceTextLimit,
@@ -21,8 +21,8 @@ import {
 } from '../src/public-pagination.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const frontdoor = read('../src/frontdoor.txt')
-const published = read('../docs/published/FRONTDOOR.md')
+const frontdoor = read('../src/reference.txt')
+const published = read('../src/reference.txt')
 const llms = read('../src/llms.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const mcpSource = read('../src/mcp.ts')
@@ -47,7 +47,7 @@ const browseToolDescription = browseToolMatch[1]!
 const publicSurfaces = [
   ['front door', frontdoor],
   ['published front door', published],
-  ['generated front door', FRONTDOOR],
+  ['generated front door', REFERENCE],
   ['compact map', llms],
   ['generated compact map', LLMS],
 ] as const

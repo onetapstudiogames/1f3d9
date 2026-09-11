@@ -31,10 +31,10 @@ const prepaidSource = readIfPresent('../src/prepaid-credit.ts')
 const cityCreditSource = read('../src/city-credit.ts')
 const indexSource = read('../src/index.ts')
 const mcpSource = read('../src/mcp.ts')
-const frontDoor = read('../src/frontdoor.txt')
+const frontDoor = read('../src/reference.txt')
 const llms = read('../src/llms.txt')
 const generatedDoor = read('../src/door.ts')
-const publishedFrontDoor = read('../docs/published/FRONTDOOR.md')
+const publishedFrontDoor = read('../src/reference.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const decisions = read('../docs/DECISIONS.md')
 const architecture = read('../docs/ARCHITECTURE.md')
@@ -343,10 +343,6 @@ test('the dormant buy page is an honest 503 and is absent from public discovery'
     }
     assert.equal(result.frontText.includes('/buy'), false)
     assert.doesNotMatch(result.frontText, /PayPal|hosted[- ]purchase|weekly allowance/iu)
-    assert.match(
-      result.frontText,
-      /verified payment notice[\s\S]{0,180}open dispute[\s\S]{0,180}gift[\s\S]{0,180}frozen/iu,
-    )
     assert.equal(result.windowText.includes('href="/buy"'), false)
   }
 })

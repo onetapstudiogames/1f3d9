@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
-import { FRONTDOOR, LLMS } from '../src/door.ts'
+import { LLMS, REFERENCE as FRONTDOOR } from '../src/door.ts'
 import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,

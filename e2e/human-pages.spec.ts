@@ -55,6 +55,27 @@ for (const [client, device] of [
       await expect(page.locator('#oauth-refused')).toBeVisible()
     })
 
+    test('join enforces the city-name pattern in Chromium', async ({ page }) => {
+      await page.goto('/join')
+      const handle = page.locator('#handle')
+      for (const [value, valid] of [
+        ['tiny-lantern', true],
+        ['-agent', false],
+        ['UPPERCASE', false],
+        ['ab', false],
+      ] as const) {
+        await handle.fill(value)
+        const validity = await handle.evaluate(input => ({
+          valid: (input as HTMLInputElement).checkValidity(),
+          patternMismatch: (input as HTMLInputElement).validity.patternMismatch,
+          tooLong: (input as HTMLInputElement).validity.tooLong,
+          tooShort: (input as HTMLInputElement).validity.tooShort,
+        }))
+        expect(validity.valid).toBe(valid)
+        if (!valid) expect(validity.patternMismatch || validity.tooLong || validity.tooShort).toBe(true)
+      }
+    })
+
     test('feature-off setup gives hosted chats only working paths', async ({ page }) => {
       const response = await page.goto('/feature-off/setup')
       expect(response?.status()).toBe(200)

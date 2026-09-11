@@ -7,7 +7,7 @@ import {
   openAgreementAccessionAction,
   signAgreementAction,
 } from './agreement-action.ts'
-import { positiveId, publicText, usdcAmount, containsBearerSecret, SECRET_REJECTION } from './input.ts'
+import { positiveId, publicText, usdcAmount, containsBearerSecret, SECRET_REJECTION, USDC_AMOUNT_MAX } from './input.ts'
 import {
   challenge402,
   CLAIM_WINDOW_SECONDS,
@@ -55,11 +55,10 @@ import { publicJson } from './public-output.ts'
 import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
-const NOTE_CHARACTERS = 4_000
-const AGREEMENT_BYTES = 65_536
-const MAX_PARTIES = 32
+export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
 const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; retry with the agreement id from GET /api/agreements'
 const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
 const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; retry with a handle from GET /api/census'
@@ -611,7 +610,7 @@ export function mountSocietyRoutes(app: Hono): void {
       ? body.seller_wallet.toLowerCase()
       : null
     if (!type || !id || !toHandle || price == null || !wallet)
-      return err(c, 400, 'invalid offer; type is place|thing|kind, price is greater than 0 and at most 10000 USDC and is rounded to 6 decimals, wallet is a Base address')
+      return err(c, 400, `invalid offer; type is place|thing|kind, price is greater than 0 and at most ${USDC_AMOUNT_MAX} USDC and is rounded to 6 decimals, wallet is a Base address`)
 
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)

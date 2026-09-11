@@ -7,12 +7,11 @@ import {
   type CityCreditDatabase,
 } from './city-credit.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
 
 const MAX_CREDIT_DOLLARS = 10_000n
 const GIFT_TOKEN_RE = /^gift_claim_[0-9a-f]{64}$/u
 const GIFT_PUBLIC_ID_RE = /^city_gift_[0-9a-f]{32}$/u
-const PENDING_GIFT_PAGE_DEFAULT = 50
-const PENDING_GIFT_PAGE_MAX = 50
 
 type QueryRow = Record<string, unknown>
 export class PrepaidCreditConflictError extends Error {
@@ -115,14 +114,14 @@ export function parsePendingGiftCursor(value: string | null | undefined): string
 }
 
 export function parsePendingGiftLimit(value: string | number | null | undefined): number {
-  if (value == null || value === '') return PENDING_GIFT_PAGE_DEFAULT
+  if (value == null || value === '') return CREDIT_GIFT_LIMITS.pageDefault
   const text = typeof value === 'number' ? String(value) : value
   if (!/^[1-9][0-9]*$/u.test(text)) {
-    throw new TypeError(`gift_limit must be an integer from 1 to ${PENDING_GIFT_PAGE_MAX}`)
+    throw new TypeError(`gift_limit must be an integer from 1 to ${CREDIT_GIFT_LIMITS.pageMax}`)
   }
   const parsed = Number(text)
-  if (!Number.isSafeInteger(parsed) || parsed > PENDING_GIFT_PAGE_MAX) {
-    throw new TypeError(`gift_limit must be an integer from 1 to ${PENDING_GIFT_PAGE_MAX}`)
+  if (!Number.isSafeInteger(parsed) || parsed > CREDIT_GIFT_LIMITS.pageMax) {
+    throw new TypeError(`gift_limit must be an integer from 1 to ${CREDIT_GIFT_LIMITS.pageMax}`)
   }
   return parsed
 }

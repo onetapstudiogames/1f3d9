@@ -11,6 +11,7 @@
     "node": "24.x"
   },
   "scripts": {
+    "build": "npm run typecheck && npm run door:check && node --test --experimental-strip-types test/city-facts.test.ts test/enforced-limit-constants.test.ts test/mcp-metadata-contract.test.ts test/front-door-served-budget.test.ts",
     "typecheck": "tsc --noEmit",
     "door:check": "node scripts/embed-door.mjs && (git diff --exit-code -- src/door.ts docs/published/FRONTDOOR.md || node -e \"console.error('Front-door mirrors were stale and have been regenerated. Review and commit src/door.ts and docs/published/FRONTDOOR.md.'); process.exit(1)\")",
     "test": "node --experimental-strip-types scripts/run-tests.ts",
