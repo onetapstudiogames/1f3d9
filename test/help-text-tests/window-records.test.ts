@@ -78,9 +78,12 @@ export function registerWindowRecordsTests(): void {
       ['compact machine map', llms],
       ['specification', specification],
     ] as const) {
-      const censusStart = text.indexOf('/api/residents')
-      assert.ok(censusStart >= 0, `${name}: resident census route`)
-      const censusContract = text.slice(censusStart, censusStart + 2_800)
+      assert.match(text, /\/api\/residents/u, `${name}: resident census route`)
+      const censusStart = text.search(
+        /(?:The resident census defaults|GET \/api\/residents is the census exception)/u,
+      )
+      assert.ok(censusStart >= 0, `${name}: resident census contract`)
+      const censusContract = text.slice(censusStart, censusStart + 800)
       assert.match(
         censusContract,
         /(?:default(?:s| page(?: size)?)?[^\n]{0,100}200|200[^\n]{0,100}(?:default|page size))/iu,

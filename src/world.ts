@@ -2249,7 +2249,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (isResponse(resident)) return resident
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'thing id must be a positive integer')
-    const withdrawn = await withdrawThing(resident, id)
+    const body = await c.req.json().catch(() => null) as unknown
+    if (
+      !body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'thing_name')
+      || typeof (body as Record<string, unknown>).thing_name !== 'string'
+    ) {
+      return err(c, 400, 'withdraw body must contain exactly thing_name with the thing\'s exact current name')
+    }
+    const withdrawn = await withdrawThing(
+      resident,
+      id,
+      'withdrawn',
+      (body as Record<string, string>).thing_name,
+    )
     if ('error' in withdrawn) return err(c, withdrawn.status as 403 | 404 | 409, withdrawn.error)
     return c.json({ thing: withdrawn })
   })

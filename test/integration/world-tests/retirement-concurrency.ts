@@ -34,7 +34,7 @@ export async function registerRetirementConcurrencyTests(
     try {
       for (const arrival of ['subplace', 'thing', 'resident'] as const) {
         const roomId = await resetDatabase()
-        const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+        const withdrawn = await withdrawThing(actor, 1, 'withdrawn', 'test-object')
         assert.equal('error' in withdrawn, false)
         await issueCityFeeCredit({
           query: async (text, params = []) => (

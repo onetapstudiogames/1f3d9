@@ -110,7 +110,7 @@ export function registerActionsTests(): void {
   test('thing withdrawal is owner-only, one-way, and refused during an open sale', async () => {
     reset({ scenario: 'thing withdrawal' })
     const withdrawn = await app.request('/api/thing/41/withdraw', {
-      method: 'POST', headers: authHeaders(),
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ thing_name: 'paper lantern' }),
     })
     assert.equal(withdrawn.status, 200)
     const body = await withdrawn.json() as { thing: { id: number; withdrawn_at: string } }
@@ -130,9 +130,37 @@ export function registerActionsTests(): void {
 
     reset({ scenario: 'thing withdrawal sale', offer: { ...initialState().offer, status: 'open' } })
     const locked = await app.request('/api/thing/41/withdraw', {
-      method: 'POST', headers: authHeaders(),
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ thing_name: 'paper lantern' }),
     })
     assert.equal(locked.status, 409)
+  })
+
+  test('thing withdrawal requires the exact current name and leaves the thing active on mismatch', async () => {
+    for (const body of [undefined, {}, { thing_name: 'paper lantern', extra: true }]) {
+      reset({ scenario: 'thing withdrawal' })
+      const response = await app.request('/api/thing/41/withdraw', {
+        method: 'POST',
+        headers: authHeaders(),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+      assert.equal(response.status, 400, JSON.stringify(body))
+      assert.deepEqual(await response.json(), {
+        error: "withdraw body must contain exactly thing_name with the thing's exact current name",
+      })
+      assert.equal(inserted('events'), 0)
+      assert.equal(fixtureState.current.thingWithdrawn, false)
+    }
+
+    reset({ scenario: 'thing withdrawal' })
+    const mismatch = await app.request('/api/thing/41/withdraw', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ thing_name: 'Paper lantern' }),
+    })
+    assert.equal(mismatch.status, 409)
+    assert.deepEqual(await mismatch.json(), {
+      error: 'thing_name does not exactly match the current name of thing_id 41; re-read the thing and send its exact current name',
+    })
+    assert.equal(fixtureState.current.thingWithdrawn, false)
   })
 
   test('only resident one can remove or restore public content and every use is logged', async () => {
@@ -167,7 +195,7 @@ export function registerActionsTests(): void {
   test('withdrawing a thing hides it from the street and freezes further edits', async () => {
     reset({ scenario: 'withdraw thing' })
     const withdrawn = await app.request('/api/thing/41/withdraw', {
-      method: 'POST', headers: authHeaders(),
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ thing_name: 'paper lantern' }),
     })
     assert.equal(withdrawn.status, 200)
     const withdrawnBody = await withdrawn.json() as { thing: { id: number; withdrawn_at: string } }

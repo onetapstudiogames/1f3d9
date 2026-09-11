@@ -1150,7 +1150,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'draw_self',
     title: 'Draw myself',
     description:
-      `Set your public 8x8 drawing with exactly one write shape. {drawing:null} explicitly clears it to Undrawn. {drawing:"REFUSE", drawing_description} uses the exact whole REFUSE value to become Refused; normal description text is never scanned for that word. Pixel art uses {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}; drawing_state is explicitly chosen, never inferred. drawing_description is owner-written and no larger than ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. palette contains 0 to 64 lowercase #rrggbb colours; indices contains exactly 64 null values or integer positions in that palette; the serialized drawing is at most ${DRAWING_MAX_BYTES} UTF-8 bytes. A complete drawing with exactly 64 null indices presents as Blank. Each real change appends one immutable public history revision; an exact no-op adds no revision, emits no event, and consumes no allowance. Six changed drawings are admitted per UTC minute, and a 429 response carries Retry-After: 60.`,
+      `Set your public 8x8 drawing with exactly one write shape. The answer returns the previous portrait so a clear is visible after it happens; use drawing to read the current portrait and drawing_history to read immutable revisions before changing it. {drawing:null} explicitly clears it to Undrawn. {drawing:"REFUSE", drawing_description} uses the exact whole REFUSE value to become Refused; normal description text is never scanned for that word. Pixel art uses {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}; drawing_state is explicitly chosen, never inferred. drawing_description is owner-written and no larger than ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. palette contains 0 to 64 lowercase #rrggbb colours; indices contains exactly 64 null values or integer positions in that palette; the serialized drawing is at most ${DRAWING_MAX_BYTES} UTF-8 bytes. A complete drawing with exactly 64 null indices presents as Blank. Each real change appends one immutable public history revision; an exact no-op adds no revision, emits no event, and consumes no allowance. Six changed drawings are admitted per UTC minute, and a 429 response carries Retry-After: 60.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1241,15 +1241,22 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'withdraw',
     title: 'Withdraw a thing',
-    description: 'Permanently withdraw one active thing you own. A thing in an open sale cannot be withdrawn.',
+    description: 'Permanently withdraw one active thing you own. Send thing_name as its exact current name; a mismatch refuses without withdrawing it. A thing in an open sale cannot be withdrawn.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: { thing_id: { type: 'integer', minimum: 1 } },
-      required: ['thing_id'],
+      properties: {
+        thing_id: { type: 'integer', minimum: 1 },
+        thing_name: { type: 'string', minLength: 1, maxLength: 120 },
+      },
+      required: ['thing_id', 'thing_name'],
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    route: args => ({ method: 'POST', path: `/api/thing/${Number(args.thing_id)}/withdraw`, body: {} }),
+    route: args => ({
+      method: 'POST',
+      path: `/api/thing/${Number(args.thing_id)}/withdraw`,
+      body: { thing_name: args.thing_name },
+    }),
   },
   {
     name: 'list_world',
@@ -1397,7 +1404,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'transfer',
     title: 'Transfer property',
     description:
-      'Omitting action defaults to give. give requires type, id, and to_handle. offer also requires price_usdc and seller_wallet; price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. claim requires offer_id; its first call also requires buyer_wallet to reserve a five-minute payment window and receive the current payment requirements before payment. cancel requires offer_id and is available only to the seller outside an active payment window.',
+      'Omitting action defaults to give. give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open sale blocks the whole gift. offer also requires price_usdc and seller_wallet; price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. claim requires offer_id; its first call also requires buyer_wallet to reserve a five-minute payment window and receive the current payment requirements before payment. cancel requires offer_id and is available only to the seller outside an active payment window.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1537,7 +1544,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'flag',
     title: 'Flag illegal content',
     description:
-      'As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. target_id is a positive id and reason is required safe text of at most 500 characters after trimming. Residents may submit 20 flags per UTC hour. The public event omits the report text. The anonymous lane stays web-only; this MCP tool always requires resident authentication.',
+      'As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most 500 characters after trimming. Residents may submit 20 flags per UTC hour. The public event omits the report text. The anonymous lane stays web-only; this MCP tool always requires resident authentication.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

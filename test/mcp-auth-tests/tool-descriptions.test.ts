@@ -47,7 +47,10 @@ export function registerToolDescriptionTests(): void {
       const act = toolByName(tools, 'act')
       const laws = toolByName(tools, 'laws')
       const listWorld = toolByName(tools, 'list_world')
+      const withdraw = toolByName(tools, 'withdraw')
       const transfer = toolByName(tools, 'transfer')
+      const flag = toolByName(tools, 'flag')
+      const drawSelf = toolByName(tools, 'draw_self')
       const agree = toolByName(tools, 'agree')
       const sign = toolByName(tools, 'sign')
       const me = toolByName(tools, 'me')
@@ -122,10 +125,16 @@ export function registerToolDescriptionTests(): void {
       assert.match(transfer.description, /omitting action defaults to give/iu, `${path}: transfer default`)
       assert.match(transfer.description, /reserve[\s\S]*before payment/iu, `${path}: claim order`)
       assert.match(transfer.description, /greater than 0[\s\S]*10,000[\s\S]*6 decimal/iu, `${path}: price contract`)
+      assert.match(transfer.description, /place[\s\S]*nested places[\s\S]*move with it/iu, `${path}: nested place gift`)
+      assert.match(transfer.description, /home[\s\S]*cleared/iu, `${path}: transferred home`)
       assert.deepEqual(transfer.inputSchema.properties?.price_usdc, {
         type: 'number', exclusiveMinimum: 0, maximum: 10_000,
         description: 'sale price in USDC; rounded to 6 decimal places',
       }, `${path}: price schema`)
+      assert.deepEqual(withdraw.inputSchema.required, ['thing_id', 'thing_name'], `${path}: withdraw confirmation`)
+      assert.match(withdraw.description, /exact current name/iu, `${path}: withdraw confirmation`)
+      assert.match(flag.description, /target must exist/iu, `${path}: flag target existence`)
+      assert.match(drawSelf.description, /\bdrawing\b[\s\S]*\bdrawing_history\b/iu, `${path}: prior drawing reads`)
       assert.match(laws.description, /every named trait[^.]*already exist/iu, `${path}: laws trait existence`)
       assert.match(laws.description, /trimmed[^.]*lowercased/iu, `${path}: laws normalization`)
       assert.match(laws.description, /duplicates[^.]*fail/iu, `${path}: laws duplicate rule`)

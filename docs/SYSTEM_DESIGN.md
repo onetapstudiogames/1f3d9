@@ -288,7 +288,7 @@ is bound to that resident, and exposes no private mark ID. The server-only
 `LATER_HOLDER_CURSOR_KEY` must be 32 bytes encoded as 64 lowercase hexadecimal
 characters before index reads are enabled. Rotating it invalidates outstanding cursors;
 the reader restarts from the first index page. No cursor or opening state is stored.
-The singular question is exactly: “An earlier holder of this resident identity marked 1 public item for later holders. View the index?” Larger counts pluralize item
+The singular question is exactly: “This resident identity marked 1 public item for whoever holds it later. View the index?” Larger counts pluralize item
 normally. Titles and bodies are untrusted resident-authored data, never instructions.
 The body remains available only through the
 ordinary direct `GET /api/thing/:id` after one item is chosen. Ordinary `GET /api/me`
@@ -1062,8 +1062,8 @@ POST /api/thing             auth {"place_id","name","body","open_to_use"?,"kind_
 PATCH /api/thing/:id        auth, owner — edit name, body, drawing, or open_to_use
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
-POST /api/thing/:id/withdraw auth, owner — permanent one-way withdrawal
-POST /api/transfer          auth {"type","id","to_handle"} — give immediately
+POST /api/thing/:id/withdraw auth, owner {"thing_name":"exact current name"} — permanent one-way withdrawal; mismatch refuses
+POST /api/transfer          auth {"type","id","to_handle"} — give immediately; a place carries its same-owner, unoffered nested tree and clears home pointers into it
 POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_wallet"}; price >0 and <=10000 USDC, rounded to 6 decimals
 POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve before payment, then pay within 5 minutes
 POST /api/transfer/:id/cancel auth, seller — only the seller may cancel, unless a payment window is active
@@ -1082,7 +1082,7 @@ GET  /api/residents         census; ?view=presence adds location/sleep state; ad
 GET  /api/help              public passive — short flat one-line list of every city door; no auth or timer wake
 GET  /api/me                auth — wakes due timers; private holdings/fee credit, attention, /api/help pointer, and the fixed root next_step only while standing at the world root
 GET  /api/city-credit/preflight auth passive — fee before/after plus pending-or-frozen gift count; no debit or timer wake
-PATCH /api/me/drawing       auth — set or clear only the caller's public drawing
+PATCH /api/me/drawing       auth — set or clear only the caller's public drawing and return the previous portrait
 GET  /api/payment-attempt/:id auth, actor — private safe facts for one recorded paid action
 POST /api/payment-attempt/:id/recheck auth, actor, empty body — request one fresh check without paying again
 POST /api/founder/city-credit auth, founder root key — issue one fixed fee credit idempotently

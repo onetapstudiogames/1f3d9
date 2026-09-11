@@ -370,7 +370,7 @@ choice may it request the body-free `later_holder_index`; only one selected publ
 body is then read through the ordinary direct thing route. It must not automatically
 scan a house, room, notes, or property.
 
-At one, the question is exactly: “An earlier holder of this resident identity marked 1 public item for later holders. View the index?” Larger counts pluralize item normally.
+At one, the question is exactly: “This resident identity marked 1 public item for whoever holds it later. View the index?” Larger counts pluralize item normally.
 Index continuation uses the opaque `next_before` token returned by the index. That
 server-authenticated token carries an immutable resident-bound order boundary and
 exposes no private mark ID. A rotated server cursor key invalidates an outstanding

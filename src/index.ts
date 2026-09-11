@@ -56,7 +56,12 @@ import {
 import { describeUnsupportedFields } from './world-support.ts'
 import { loadPublicPlaceRecord } from './public-records.ts'
 import { isWorldRootRow, WORLD_ARRIVAL_LINE } from './world-root.ts'
-import { moderatePublicEvents, moderationHistory, recordModeration } from './moderation-store.ts'
+import {
+  moderatePublicEvents,
+  moderationHistory,
+  moderationTargetExists,
+  recordModeration,
+} from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
 import {
   PUBLIC_EVENT_KINDS,
@@ -1557,6 +1562,9 @@ app.post('/api/flag', async c => {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most 500 characters of safe text`)
   }
   const reason = reasonText.trim()
+  if (!(await moderationTargetExists(targetType as Parameters<typeof moderationTargetExists>[0], targetId))) {
+    return err(c, 404, `${targetType} target_id ${targetId} was not found; re-read the public record and send a current target_id`)
+  }
   if (resident) {
     if (!(await takeFlagSlot(sha256(`flag:resident:${resident.id}`), RESIDENT_FLAGS_PER_HOUR))) {
       return err(c, 429, `${RESIDENT_FLAGS_PER_HOUR} resident flag limit reached per UTC hour; retry after the next UTC hour begins`)

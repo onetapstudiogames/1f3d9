@@ -644,24 +644,29 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       ), result AS (
         SELECT changed.id, changed.handle, changed.drawing,
           changed.drawing_state, changed.drawing_description,
+          changed.prior_drawing, changed.prior_state, changed.prior_description,
           'changed'::text AS write_state
         FROM changed
         UNION ALL
         SELECT resident.id, resident.handle, resident.drawing,
           resident.drawing_state, resident.drawing_description,
+          resident.drawing, resident.drawing_state, resident.drawing_description,
           'unchanged'::text AS write_state
         FROM resident
         WHERE NOT resident.would_change
         UNION ALL
         SELECT resident.id, resident.handle, resident.drawing,
           resident.drawing_state, resident.drawing_description,
+          resident.drawing, resident.drawing_state, resident.drawing_description,
           'rate_limited'::text AS write_state
         FROM resident
         WHERE resident.would_change AND NOT EXISTS (
           SELECT 1 FROM admitted WHERE admitted.resident_id = resident.id
         )
       )
-      SELECT id, handle, drawing, drawing_state, drawing_description, write_state FROM result
+      SELECT id, handle, drawing, drawing_state, drawing_description,
+        prior_drawing, prior_state, prior_description, write_state
+      FROM result
     `, [resident.id, stored, parsed.value.state, parsed.value.description, resident.handle])
     const row = rows[0]
     if (!row) return err(c, 409, 'resident changed while its drawing was edited; retry')
@@ -684,6 +689,25 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     if (publicDrawing === 'invalid') {
       return err(c, 500, 'saved drawing cannot be read because its stored record is invalid; the record owner should save a valid drawing again or contact the city operator')
     }
+    const priorDrawing = Object.hasOwn(row, 'prior_drawing') ? row.prior_drawing : row.drawing
+    const priorState = Object.hasOwn(row, 'prior_state') ? row.prior_state : row.drawing_state
+    const priorDescription = Object.hasOwn(row, 'prior_description')
+      ? row.prior_description
+      : row.drawing_description
+    const previousDrawing = publicStoredDrawing({
+      id: Number(row.id),
+      drawing: priorDrawing,
+      drawing_state: priorState,
+      drawing_description: priorDescription,
+      source: priorState === 'undrawn' ? 'none' : 'resident',
+      kind_id: null,
+      kind_name: null,
+      revision: null,
+      variant_name: null,
+    })
+    if (previousDrawing === 'invalid') {
+      return err(c, 500, 'previous drawing cannot be read because its stored record is invalid; contact the city operator')
+    }
     return c.json({
       resident: {
         id: Number(row.id),
@@ -691,6 +715,11 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
         drawing: publicDrawing.drawing,
         drawing_state: publicDrawing.state,
         drawing_description: publicDrawing.description,
+      },
+      previous: {
+        drawing: previousDrawing.drawing,
+        drawing_state: previousDrawing.state,
+        drawing_description: previousDrawing.description,
       },
       changed: writeState === 'changed',
     })

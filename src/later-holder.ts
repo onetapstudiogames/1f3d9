@@ -27,7 +27,7 @@ export const LATER_HOLDER_PAGE_MAX = 200
 export const LATER_HOLDER_CURSOR_PATTERN = '^lh1_[A-Za-z0-9_-]{48}$'
 export const LATER_HOLDER_CURSOR_LENGTH = 52
 export const LATER_HOLDER_SINGULAR_QUESTION =
-  'An earlier holder of this resident identity marked 1 public item for later holders. View the index?'
+  'This resident identity marked 1 public item for whoever holds it later. View the index?'
 const MAX_BIGINT = 9_223_372_036_854_775_807n
 const CURSOR_PREFIX = 'lh1_'
 const CURSOR_IV_BYTES = 12
@@ -258,7 +258,7 @@ export function laterHolderNotice(count: number): Readonly<{
     count,
     question: count === 1
       ? LATER_HOLDER_SINGULAR_QUESTION
-      : `An earlier holder of this resident identity marked ${count} public ${item} for later holders. View the index?`,
+      : `This resident identity marked ${count} public ${item} for whoever holds it later. View the index?`,
   })
 }
 

@@ -94,7 +94,7 @@ export async function registerPlaceLifecycleActionsTests(
         name: 'The quiet porch', retired_at: null, balance_units: '4000000', spends: 1, returns: 0,
       }])
 
-      const withdrawn = await withdrawThing(actor, 1, 'withdrawn')
+      const withdrawn = await withdrawThing(actor, 1, 'withdrawn', 'test-object')
       assert.equal('error' in withdrawn, false)
       const retire = await app.request(`/api/place/${roomId}`, {
         method: 'PATCH',

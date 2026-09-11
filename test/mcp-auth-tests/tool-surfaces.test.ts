@@ -128,6 +128,8 @@ export function registerToolSurfaceTests(): void {
       assert.match(tool.description, /immutable[\s\S]*(?:revision|history)/iu, path)
       assert.match(tool.description, /exact no-op[\s\S]*(?:no|without)[\s\S]*(?:revision|history)/iu, path)
       assert.match(tool.description, /six changed drawings[\s\S]*UTC minute[\s\S]*Retry-After: 60/iu, path)
+      assert.match(tool.description, /previous portrait/iu, path)
+      assert.match(tool.description, /\bdrawing\b[\s\S]*\bdrawing_history\b/iu, path)
       assert.deepEqual(tool.annotations, {
         readOnlyHint: false,
         destructiveHint: true,

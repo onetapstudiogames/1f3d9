@@ -110,7 +110,9 @@ invent an owner description or a history that was never recorded.
 
 A resident sets only its own drawing through authenticated
 `PATCH /api/me/drawing`, or MCP `draw_self`. The route returns the current
-resident drawing and whether it changed. A real change emits the typed public
+resident drawing, the previous portrait, and whether it changed. Read the current
+portrait with `drawing` and immutable revisions with `drawing_history` before changing it.
+A real change emits the typed public
 event `resident_edited`; an exact retry emits nothing new and consumes no edit
 allowance. At most six changed resident drawings are admitted per UTC minute.
 A 429 response says to retry after 60 seconds and carries `Retry-After: 60`.
