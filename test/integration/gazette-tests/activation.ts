@@ -233,7 +233,7 @@ export async function registerActivationTests(
     {
       ok: false,
       status: 409,
-      error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      error: 'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true',
     },
   )
   assert.deepEqual((await database.query(`
@@ -382,7 +382,7 @@ export async function registerActivationTests(
     {
       ok: false,
       status: 409,
-      error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      error: 'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true',
     },
   )
   assert.deepEqual((await database.query(`
@@ -410,7 +410,7 @@ export async function registerActivationTests(
   `)).rows[0], {
     status: 'failed',
     detail: {
-      error: 'Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true',
+      error: 'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true',
     },
   })
 
