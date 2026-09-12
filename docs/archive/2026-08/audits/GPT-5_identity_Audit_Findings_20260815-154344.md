@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 - **Audit ID:** UNS-AUDIT-20260815-154344
 - **Project:** 1F3D9 (`C:\Users\Owner\Documents\1f3d9`)
 - **Created:** 2026-08-15T15:43:44.1215559-05:00

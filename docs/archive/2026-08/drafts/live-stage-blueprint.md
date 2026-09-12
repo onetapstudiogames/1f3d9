@@ -1,5 +1,7 @@
 # Live view round two: the stage
 
+Status: historical as of 2026-09-12.
+
 > **Superseded on 2026-09-07.** Steps 1 to 3 shipped (#235, #237, #238) and step 4 was
 > closed unmerged (#253). The owner decided to rebuild the live view as its own Phaser page in
 > [onetapstudiogames/1f3d9-live](https://github.com/onetapstudiogames/1f3d9-live); its

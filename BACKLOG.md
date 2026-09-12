@@ -1,8 +1,10 @@
 # Backlog
 
+Status: current.
+
 This is the local mirror of every issue currently open on the city and market
 trackers. Status and evidence come from the tracker reconciliation in
-[`docs/audits/2026-09-parity-audit.md`](docs/audits/2026-09-parity-audit.md).
+[`docs/archive/2026-08/audits/2026-09-parity-audit.md`](docs/archive/2026-08/audits/2026-09-parity-audit.md).
 `SHIPPED` does not mean the issue was closed. No issue was changed while making
 this file.
 
@@ -19,7 +21,7 @@ this file.
 | City #86: Page inventory and matrix | STILL OPEN | PR #122 fixed a subset; the parity audit supplies the matrix, but PR #162 rows remain in flight. Audit: `Open city issues` and `Preserved issue-86 branch and worktree`. |
 | City #85: Window audit | SHIPPED | The audit, owner visibility decision, and PR #110 fixes exist; re-check after PR #162 merges before closing. Audit: `Open city issues`. |
 | City #83: Universality review | STILL OPEN | No requested census, design, or owner decision exists. Audit: `Open city issues`. |
-| City #82: Documentation overhaul | STILL OPEN | Partial: several fixes shipped, but 28 point-in-time audit files and root wave docs remain unreconciled. Audit: `Open city issues`. |
+| City #82: Documentation overhaul | STILL OPEN | The B4 review branch indexes and archives all 29 point-in-time audit files and seven wave records and adds the build guard. Keep the issue open until that pull request merges and the guard passes on main. Audit: `Open city issues`. |
 | City #79: Split the window client | STILL OPEN | Phase 1 (mechanical split into `src/window-client/**.ts`; `WINDOW_JS` byte-identical, sha256 `8388f3b9b32ccb8b0c4c5c97ca9bd40a9d24e895c2abaaebbc69d0a60845f178`) shipped; see `docs/DRAWING_AND_LIVE_VIEW.md#9-client-source-layout-issue-79-phase-1`. Phase 2, the typed accessor layer over `state` that stops a renderer reading the raw caches, remains open. |
 | City #78: Setup sentences | STILL OPEN | Half shipped: the stale-tool-cache sentence exists; the shared-machine per-agent credential warning does not. Audit: `Open city issues`. |
 | City #77: Typed identity outcomes | STILL OPEN | `generateRecoveryCodes` still returned `Promise<RecoveryGenerationResult | null>` at `src/identity-store.ts:459`. Audit: `Open city issues`. |

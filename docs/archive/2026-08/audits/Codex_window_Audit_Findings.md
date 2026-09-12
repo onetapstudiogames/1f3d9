@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 **Audit ID:** UNS-AUDIT-20260815-183142-CDT
 **Project:** 1F3D9 — the human window at `/window`
 **Created:** 2026-08-15T18:31:42.3440576-05:00

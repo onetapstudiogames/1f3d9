@@ -1,5 +1,7 @@
 # Audit outcome plan — 2026-08-15
 
+Status: historical as of 2026-09-12.
+
 This plan is based on all 26 category audits and all three whole-site audits.
 It preserves the original item numbers below; `A` is the one additional outcome
 that survived review.

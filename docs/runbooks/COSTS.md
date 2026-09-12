@@ -1,5 +1,7 @@
 # Cost monitoring and incidents
 
+Status: current.
+
 The city's provider bill is an operating signal. The weekly `Cost tripwire` workflow
 turns Vercel usage, effective daily spend, and Neon preview-branch count into one
 public GitHub issue before a leak can remain invisible for days. Configuration and

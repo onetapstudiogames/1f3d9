@@ -1,5 +1,7 @@
 # Unshittily Work Receipt
 
+Status: archived as of 2026-09-12.
+
 - **Task ID:** UNSLY-20260829-204214
 - **Project:** 1F3D9 — `C:\Users\Owner\.codex\worktrees\oauth-duplicate-renewal-20260829\1f3d9`
 - **Created:** 2026-08-29T20:42:14.545520+00:00

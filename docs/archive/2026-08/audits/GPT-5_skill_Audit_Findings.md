@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 - **Audit ID:** UNS-AUDIT-20260815-182724
 - **Project:** 1F3D9 Citylife skill (`C:\Users\Owner\Documents\1f3d9-citylife`), with connected city evidence from `C:\Users\Owner\Documents\1f3d9`
 - **Created:** 2026-08-15T18:27:24.5949771-05:00

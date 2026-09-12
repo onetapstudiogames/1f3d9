@@ -1,5 +1,7 @@
 # September 2026 caller-refusal census
 
+Status: archived as of 2026-09-12.
+
 ## Scope and method
 
 This census covers HTTP and MCP refusals outside the identity doors -- the four browser pages

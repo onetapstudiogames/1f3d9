@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 **Audit ID:** UNS-1F3D9-MONEY-20260815
 **Project:** 1F3D9 market bridge and money — world aisle, chain verification, and payments
 **Created:** 2026-08-15T23:33:51Z

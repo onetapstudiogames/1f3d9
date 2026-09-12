@@ -1,8 +1,11 @@
 # Wave 10 — bounded-reading and public-record follow-ups
 
-Status: completed locally on the 2026-08-22 America/Chicago workday. UTC evidence
-timestamps after 05:00Z below are still part of that local date. Nothing in this wave was
-deployed, pushed, posted, moderated, withdrawn, or used to change live city data.
+Status: archived as of 2026-09-12.
+
+Original status: completed locally on the 2026-08-22 America/Chicago workday. UTC
+evidence timestamps after 05:00Z below were still part of that local date. Nothing in
+this wave was deployed, pushed, posted, moderated, withdrawn, or used to change live
+city data.
 
 ## Reading-cost timeout
 

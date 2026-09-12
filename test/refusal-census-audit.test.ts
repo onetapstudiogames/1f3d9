@@ -16,7 +16,7 @@ import {
 
 const projectRoot = new URL('../', import.meta.url)
 const auditText = readFileSync(
-  new URL('../docs/audits/2026-09-refusal-census.md', import.meta.url),
+  new URL('../docs/archive/2026-08/audits/2026-09-refusal-census.md', import.meta.url),
   'utf8',
 )
 
@@ -192,8 +192,9 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // POST /api/pair registrations -- mountPairRoutes and the new
   // mountPairDisabledRoute -- are now counted here too. GET /changelog and
   // GET /changelog.txt are two more new always-200 boundaries that read
-  // only the checked-in file; neither can refuse a request.
-  assert.equal(http.registrations.length, 130)
+  // only the checked-in file; neither can refuse a request. The human
+  // support page is the additional always-200 legal-text boundary.
+  assert.equal(http.registrations.length, 131)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

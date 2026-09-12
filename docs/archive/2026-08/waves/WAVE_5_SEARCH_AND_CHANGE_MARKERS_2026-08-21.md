@@ -1,6 +1,8 @@
 # Wave 5 — Search and caller-held change markers
 
-Status: completed and verified locally on 2026-08-21. Not deployed.
+Status: archived as of 2026-09-12.
+
+Original status: completed and verified locally on 2026-08-21. Not deployed.
 
 ## Delivered behavior
 

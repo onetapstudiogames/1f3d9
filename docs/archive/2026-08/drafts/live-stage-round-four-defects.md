@@ -1,3 +1,5 @@
+Status: historical as of 2026-09-12.
+
 > **Retired on 2026-09-09.** Historical mock brief for the removed window Live panel;
 > current implementation lives in `onetapstudiogames/1f3d9-live` at `/live/`.
 

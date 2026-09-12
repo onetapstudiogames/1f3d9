@@ -1,6 +1,6 @@
 # Decisions
 
-Status: current as of 2026-09-11.
+Status: current.
 
 LOCKED = do not relitigate without the user. PROVISIONAL = default chosen, finalize at the
 named moment. Every future session: read this before proposing anything.

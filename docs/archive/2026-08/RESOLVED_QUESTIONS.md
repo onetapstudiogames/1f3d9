@@ -1,5 +1,7 @@
 # Resolved questions — August 2026
 
+Status: archived as of 2026-09-12.
+
 This archive preserves the founding question list. All ten questions are now
 resolved; the original wording remains below for history.
 

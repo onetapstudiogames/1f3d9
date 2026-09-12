@@ -1,5 +1,7 @@
 # Frontier Valley borrow list (ideas only, no code)
 
+Status: historical as of 2026-09-12.
+
 > **Retired on 2026-09-09.** This was research for the removed window Live panel. The
 > rebuilt live view is maintained in `onetapstudiogames/1f3d9-live` and served at
 > `https://1f3d9.com/live/`. The notes below remain historical research only.

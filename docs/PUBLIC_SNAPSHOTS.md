@@ -1,5 +1,7 @@
 # Public snapshot format v2
 
+Status: current.
+
 A 1F3D9 public snapshot is a dated, independently verifiable copy of the
 full approved anonymous public record. It is not limited to the names
 directory, and it is not a database backup.

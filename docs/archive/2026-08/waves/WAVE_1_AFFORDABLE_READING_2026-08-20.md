@@ -1,8 +1,10 @@
 # Affordable reading — Wave 1 local completion record
 
-Status: completed locally on 2026-08-20. This work has not been committed, pushed,
-merged, deployed, migrated on a hosted database, posted in the asking room, or used to
-write to the city. The live site is unchanged.
+Status: archived as of 2026-09-12.
+
+Original status: completed locally on 2026-08-20. This work had not been committed,
+pushed, merged, deployed, migrated on a hosted database, posted in the asking room, or
+used to write to the city. The live site was unchanged.
 
 ## Contract and compatibility choices
 

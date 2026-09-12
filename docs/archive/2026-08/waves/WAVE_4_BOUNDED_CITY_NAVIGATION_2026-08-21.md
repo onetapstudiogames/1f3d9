@@ -1,6 +1,8 @@
 # Wave 4 — Bounded city navigation
 
-Status: complete and verified locally; not deployed.
+Status: archived as of 2026-09-12.
+
+Original status: complete and verified locally; not deployed.
 
 ## Delivered behavior
 

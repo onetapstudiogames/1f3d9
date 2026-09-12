@@ -1,5 +1,7 @@
 # Window calm: looking pass and cut list
 
+Status: historical as of 2026-09-12.
+
 The city is mostly hidden behind its own introduction. In the desktop Map capture, the first content frame only begins at the bottom edge, around pixel 875; there is no place drawing, resident, or map mark to look at. Switching tabs usually changes a yellow label while leaving the same wall of explanation in front of the content.
 
 **The looking-pass evidence below records the original window.** The approved scope that follows is limited to the compact information strip and City facts disclosure.
@@ -22,7 +24,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Map after selecting the tab, desktop](window-calm/map-1280.png) | ![Map after selecting the tab, phone](window-calm/map-375.png) |
+| ![Map after selecting the tab, desktop](../../window-calm/map-1280.png) | ![Map after selecting the tab, phone](../../window-calm/map-375.png) |
 
 ### Live
 
@@ -32,7 +34,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Live opening with ALPHA explanation, desktop](window-calm/live-1280.png) | ![Live selected with controls before the scene, phone](window-calm/live-375.png) |
+| ![Live opening with ALPHA explanation, desktop](../../window-calm/live-1280.png) | ![Live selected with controls before the scene, phone](../../window-calm/live-375.png) |
 
 ### Things
 
@@ -42,7 +44,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Things selected with reading-memory notice, desktop](window-calm/things-1280.png) | ![Things selected before any thing row appears, phone](window-calm/things-375.png) |
+| ![Things selected with reading-memory notice, desktop](../../window-calm/things-1280.png) | ![Things selected before any thing row appears, phone](../../window-calm/things-375.png) |
 
 ### Place: the world
 
@@ -52,7 +54,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Place with the world selected, desktop](window-calm/place-1280.png) | ![Place with the world selected, phone](window-calm/place-375.png) |
+| ![Place with the world selected, desktop](../../window-calm/place-1280.png) | ![Place with the world selected, phone](../../window-calm/place-375.png) |
 
 ### Place: the populated square
 
@@ -62,7 +64,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Populated square selected in Place, desktop](window-calm/place-square-1280.png) | ![Populated square capture beginning at the masthead, phone](window-calm/place-square-375.png) |
+| ![Populated square selected in Place, desktop](../../window-calm/place-square-1280.png) | ![Populated square capture beginning at the masthead, phone](../../window-calm/place-square-375.png) |
 
 ### Conversations
 
@@ -72,7 +74,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Conversations selected before any speech appears, desktop](window-calm/conversations-1280.png) | ![Conversations selected in the shifted tab strip, phone](window-calm/conversations-375.png) |
+| ![Conversations selected before any speech appears, desktop](../../window-calm/conversations-1280.png) | ![Conversations selected in the shifted tab strip, phone](../../window-calm/conversations-375.png) |
 
 ### Happenings
 
@@ -82,7 +84,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Happenings opening with shared controls, desktop](window-calm/happenings-1280.png) | ![Happenings selected before activity is visible, phone](window-calm/happenings-375.png) |
+| ![Happenings opening with shared controls, desktop](../../window-calm/happenings-1280.png) | ![Happenings selected before activity is visible, phone](../../window-calm/happenings-375.png) |
 
 ### Agreements
 
@@ -92,7 +94,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Agreements selected with no agreement in frame, desktop](window-calm/agreements-1280.png) | ![Agreements selected in the clipped tab strip, phone](window-calm/agreements-375.png) |
+| ![Agreements selected with no agreement in frame, desktop](../../window-calm/agreements-1280.png) | ![Agreements selected in the clipped tab strip, phone](../../window-calm/agreements-375.png) |
 
 ### Archive: opening
 
@@ -102,7 +104,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Archive opening before its own search form, desktop](window-calm/archive-1280.png) | ![Archive opening showing the global search instead, phone](window-calm/archive-375.png) |
+| ![Archive opening before its own search form, desktop](../../window-calm/archive-1280.png) | ![Archive opening showing the global search instead, phone](../../window-calm/archive-375.png) |
 
 ### Archive: searching square
 
@@ -112,7 +114,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Archive after searching square, desktop](window-calm/archive-search-1280.png) | ![Archive square search with exact totals and note results, phone](window-calm/archive-search-375.png) |
+| ![Archive after searching square, desktop](../../window-calm/archive-search-1280.png) | ![Archive square search with exact totals and note results, phone](../../window-calm/archive-search-375.png) |
 
 ### Gazette
 
@@ -122,7 +124,7 @@ The capture notes identify the automatically selected world as place #195, Gazet
 
 | 1280 wide | 375 wide |
 | --- | --- |
-| ![Gazette opening reaching its red masthead, desktop](window-calm/gazette-1280.png) | ![Gazette masthead below the global loaded-view paragraph, phone](window-calm/gazette-375.png) |
+| ![Gazette opening reaching its red masthead, desktop](../../window-calm/gazette-1280.png) | ![Gazette masthead below the global loaded-view paragraph, phone](../../window-calm/gazette-375.png) |
 
 ## Approved scope
 

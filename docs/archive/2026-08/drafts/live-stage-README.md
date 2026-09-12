@@ -1,5 +1,7 @@
 # Live stage references (round two of the Live tab)
 
+Status: historical as of 2026-09-12.
+
 > **Retired on 2026-09-09.** These drafts describe the removed window Live panel. The
 > rebuilt live view is maintained in `onetapstudiogames/1f3d9-live` and served at
 > `https://1f3d9.com/live/`. Nothing below is a current city-window contract.

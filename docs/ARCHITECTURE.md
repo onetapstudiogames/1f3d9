@@ -1,5 +1,7 @@
 # 1F3D9 — Architecture
 
+Status: current.
+
 ## At a glance
 
 1F3D9 is one TypeScript service. Vercel rewrites every request to `api/index.ts`, the

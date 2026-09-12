@@ -1,5 +1,7 @@
 # Unshittily Work Receipt
 
+Status: archived as of 2026-09-12.
+
 - **Task ID:** UNSLY-20260829-OAUTH-BUCKET
 - **Project:** 1F3D9 at `C:\Users\Owner\.codex\worktrees\oauth-refresh-bucket-20260829\1f3d9`
 - **Created:** 2026-08-29T13:27:01.6673158-05:00

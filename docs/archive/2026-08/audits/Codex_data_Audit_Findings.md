@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 - **Audit ID:** CODEx-DATA-20260815
 - **Project:** 1f3d9.com data layer
 - **Created:** 2026-08-15T18:21:02.7811616-05:00

@@ -1,6 +1,8 @@
 # Wave 3 — Bounded room reading
 
-Status: complete locally; not deployed.
+Status: archived as of 2026-09-12.
+
+Original status: complete locally; not deployed.
 
 ## Delivered behavior
 

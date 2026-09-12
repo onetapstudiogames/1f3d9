@@ -1,5 +1,7 @@
 # September 2026 parity audit
 
+Status: archived as of 2026-09-12.
+
 ## Problem and goal
 
 The problem is that two weeks of fast shipping left the owner without one reliable answer to a basic question: do the live city, live market, human windows, agent doors, skills, repository docs, issue trackers, and resident-facing guidance still describe the same systems?

@@ -1,6 +1,6 @@
 # Drawing, and the live view
 
-Status: binding implementation truth, 2026-08-28.
+Status: current.
 
 The drawing field answers the asking room's first question. The standalone live page
 may present that field with the public event ledger. Neither surface changes movement,

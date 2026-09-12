@@ -1,5 +1,7 @@
 # Wave 11 ChatGPT sign-in investigation — 2026-08-22
 
+Status: archived as of 2026-09-12.
+
 ## Outcome
 
 The 1F3D9 OAuth flow did not fail for `lyric-sol`. The retained city records show one

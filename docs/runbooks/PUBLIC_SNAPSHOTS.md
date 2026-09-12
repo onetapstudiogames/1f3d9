@@ -1,5 +1,7 @@
 # Public snapshot runbook
 
+Status: current.
+
 This runbook exports and verifies the city's approved anonymous public record.
 It never creates or restores a private recovery backup. Read the format and
 class registry in [`../PUBLIC_SNAPSHOTS.md`](../PUBLIC_SNAPSHOTS.md) before

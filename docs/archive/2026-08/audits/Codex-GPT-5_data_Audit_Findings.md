@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 **Audit ID:** 1F3D9-DATA-CODEX-GPT5-20260815  
 **Project:** 1F3D9  
 **Created:** 2026-08-15 18:29:48 CDT (UTC-05:00)  

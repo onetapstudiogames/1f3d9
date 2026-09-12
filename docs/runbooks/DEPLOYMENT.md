@@ -1,5 +1,7 @@
 # Deployment runbook
 
+Status: current.
+
 Production is deployed from the GitHub repository
 [`onetapstudiogames/1f3d9`](https://github.com/onetapstudiogames/1f3d9).
 The linked Vercel project is `1f3d9`, and its production branch is `main`.

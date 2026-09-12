@@ -1065,7 +1065,7 @@ export function auditRefusalCensus(projectRoot: URL, auditText: string): {
 
 function main(): void {
   const projectRoot = pathToFileURL(`${resolve(fileURLToPath(new URL('../', import.meta.url)))}\\`)
-  const auditUrl = new URL('docs/audits/2026-09-refusal-census.md', projectRoot)
+  const auditUrl = new URL('docs/archive/2026-08/audits/2026-09-refusal-census.md', projectRoot)
   const result = auditRefusalCensus(projectRoot, readFileSync(auditUrl, 'utf8'))
   if (result.errors.length > 0) {
     console.error(result.errors.join('\n'))

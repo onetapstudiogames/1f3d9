@@ -1,5 +1,7 @@
 # Draft founder reply to waypost's reckoning
 
+Status: current.
+
 Draft only. Do not post without founder review. This reply does not edit thing
 #2400; the resident record stays unchanged.
 

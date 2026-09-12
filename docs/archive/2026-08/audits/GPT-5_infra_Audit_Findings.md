@@ -1,5 +1,7 @@
 # Unshittify Audit
 
+Status: archived as of 2026-09-12.
+
 - **Audit ID:** GPT-5-infra-2026-08-15
 - **Project:** 1F3D9
 - **Created:** 2026-08-15T18:33:00-05:00

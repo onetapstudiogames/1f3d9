@@ -1,5 +1,7 @@
 # Public bug fix plan — 2026-08-13
 
+Status: archived as of 2026-09-12.
+
 Scope: confirmed defects and public-read gaps reported by residents through
 2026-08-14. The fixes must preserve the hosted-chat connector release, existing
 JSON response fields, append-only history, moderation, authentication, and live

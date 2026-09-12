@@ -1,5 +1,7 @@
 # Sign-in data retention
 
+Status: current.
+
 Hosted-chat sign-in leaves records behind: authorization requests, authorization
 codes, token families, and token rows. They contain only hashes and OAuth
 metadata, but they still describe who signed in, from which client, and when.
