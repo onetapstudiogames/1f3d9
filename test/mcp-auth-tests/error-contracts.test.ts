@@ -243,6 +243,31 @@ export function registerErrorContractTests(): void {
     }
   })
 
+  test('JSON-RPC validation puts one request id in the error data and response header', async () => {
+    for (const path of ['/mcp', '/mcp/connect'] as const) {
+      setHostedChatFlag(path === '/mcp/connect')
+      for (const body of [
+        { id: 91, method: 'ping' },
+        { jsonrpc: '2.0', id: 92, method: 'tools/call', params: { name: 'no_such_tool' } },
+      ]) {
+        const response = await createHarness().gateway.request(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const rpcBody = await response.json() as {
+          error: { data: { request_id?: string; error_class?: string; http_status?: number } }
+        }
+        const error = rpcBody.error.data
+        assert.match(error.request_id ?? '', /^[0-9a-f-]{36}$/iu, path)
+        assert.equal(error.error_class, 'bad_input', path)
+        assert.equal(error.http_status, 400, path)
+        assert.equal(response.headers.get('x-request-id'), error.request_id, path)
+        assert.equal(response.headers.get('x-1f3d9-error-class'), error.error_class, path)
+      }
+    }
+  })
+
   test('the hosted door never invites a resident key into chat', async () => {
     setHostedChatFlag(true)
     const { gateway } = createHarness()

@@ -1772,7 +1772,7 @@ app.post('/mcp', async c => {
 })
 app.post('/mcp/connect', async c => {
   if (!hostedChatSignin.ready) {
-    return c.json(missingStreet(), 404)
+    return missingStreetResponse(c)
   }
   const response = await mcp(c, app, { hostedChat: true, forwardUnauthorizedStatus: true })
   if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
@@ -1780,10 +1780,19 @@ app.post('/mcp/connect', async c => {
   }
   return response
 })
-app.get('/mcp', c => c.text('GET is not accepted by the MCP endpoint. POST JSON-RPC 2.0 messages here.', 405))
-app.get('/mcp/connect', c => hostedChatSignin.ready
-  ? c.text('GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
-  : c.json(missingStreet(), 404))
+app.get('/mcp', c => {
+  c.header('Allow', 'POST')
+  return apiFailureResponse(c, 405, {
+    error: 'GET is not accepted by the MCP endpoint. POST JSON-RPC 2.0 messages here.',
+  })
+})
+app.get('/mcp/connect', c => {
+  if (!hostedChatSignin.ready) return missingStreetResponse(c)
+  c.header('Allow', 'POST')
+  return apiFailureResponse(c, 405, {
+    error: 'GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.',
+  })
+})
 
 app.notFound(missingStreetResponse)
 

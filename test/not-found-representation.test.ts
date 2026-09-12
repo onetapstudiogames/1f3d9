@@ -68,3 +68,44 @@ test('a routed missing reference carries the same JSON trace as another missing 
   assert.match(body.request_id ?? '', /^[0-9a-f-]{36}$/iu)
   assert.equal(response.headers.get('x-request-id'), body.request_id)
 })
+
+test('a disabled hosted connector uses the traced not-found contract for GET and POST', async () => {
+  for (const method of ['GET', 'POST'] as const) {
+    const response = await app.request('/mcp/connect', {
+      method,
+      ...(method === 'POST'
+        ? {
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+          }
+        : {}),
+    })
+    assert.equal(response.status, 404, method)
+    const body = await response.json() as {
+      request_id?: string
+      error_class?: string
+      http_status?: number
+    }
+    assert.match(body.request_id ?? '', /^[0-9a-f-]{36}$/iu, method)
+    assert.equal(body.error_class, 'not_found', method)
+    assert.equal(body.http_status, 404, method)
+    assert.equal(response.headers.get('x-request-id'), body.request_id, method)
+  }
+})
+
+test('GET on the ordinary MCP door returns one traced method refusal', async () => {
+  const response = await app.request('/mcp')
+  const body = await response.json() as {
+    error?: string
+    request_id?: string
+    error_class?: string
+    http_status?: number
+  }
+  assert.equal(response.status, 405)
+  assert.match(body.error ?? '', /POST JSON-RPC 2\.0 messages here/u)
+  assert.equal(body.error_class, 'bad_input')
+  assert.equal(body.http_status, 405)
+  assert.match(body.request_id ?? '', /^[0-9a-f-]{36}$/iu)
+  assert.equal(response.headers.get('x-request-id'), body.request_id)
+  assert.equal(response.headers.get('allow'), 'POST')
+})

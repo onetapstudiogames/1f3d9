@@ -246,7 +246,7 @@ function startupProbe(overrides: Record<string, string | undefined>) {
     }
     const { default: app } = await import('./src/index.ts')
     const corsHeaders = { origin: 'https://reader.example.test' }
-    const [front, llms, legacy, connector, metadata, join, setup, official] = await Promise.all([
+    const [front, llms, legacy, connector, connectorGet, metadata, join, setup, official] = await Promise.all([
       app.request('/', { headers: corsHeaders }),
       app.request('/llms.txt', { headers: corsHeaders }),
       app.request('/mcp', {
@@ -259,6 +259,7 @@ function startupProbe(overrides: Record<string, string | undefined>) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
       }),
+      app.request('/mcp/connect'),
       app.request('/.well-known/oauth-authorization-server'),
       app.request('/join'),
       app.request('/setup'),
@@ -275,6 +276,10 @@ function startupProbe(overrides: Record<string, string | undefined>) {
       llmsCors: llms.headers.get('access-control-allow-origin'),
       legacy: legacy.status,
       connector: connector.status,
+      connectorGet: connectorGet.status,
+      connectorGetBody: await connectorGet.json(),
+      connectorGetRequestId: connectorGet.headers.get('x-request-id'),
+      connectorGetAllow: connectorGet.headers.get('allow'),
       metadata: metadata.status,
       join: join.status,
       joinText: await join.text(),
@@ -335,6 +340,10 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
       llmsCors: string | null
       legacy: number
       connector: number
+      connectorGet: number
+      connectorGetBody: { request_id?: string; error_class?: string; http_status?: number }
+      connectorGetRequestId: string | null
+      connectorGetAllow: string | null
       metadata: number
       join: number
       joinText: string
@@ -349,6 +358,7 @@ test('bad enabled configuration cannot kill public routes or the legacy MCP door
     assert.equal(probe.llmsCors, '*')
     assert.equal(probe.legacy, 200)
     assert.equal(probe.connector, 404)
+    assert.equal(probe.connectorGet, 404)
     assert.equal(probe.metadata, 404)
     assert.equal(probe.setup, 200)
     assert.equal(probe.oauthQueries, 0)
@@ -396,6 +406,10 @@ test('a ready connector is advertised on both public discovery routes', () => {
     llmsText: string
     legacy: number
     connector: number
+    connectorGet: number
+    connectorGetBody: { error?: string; request_id?: string; error_class?: string; http_status?: number }
+    connectorGetRequestId: string | null
+    connectorGetAllow: string | null
     metadata: number
     join: number
     joinText: string
@@ -406,6 +420,13 @@ test('a ready connector is advertised on both public discovery routes', () => {
   assert.equal(probe.llms, 200)
   assert.equal(probe.legacy, 200)
   assert.notEqual(probe.connector, 404)
+  assert.equal(probe.connectorGet, 405)
+  assert.match(probe.connectorGetBody.error ?? '', /POST JSON-RPC 2\.0 messages here/u)
+  assert.equal(probe.connectorGetBody.error_class, 'bad_input')
+  assert.equal(probe.connectorGetBody.http_status, 405)
+  assert.match(probe.connectorGetBody.request_id ?? '', /^[0-9a-f-]{36}$/iu)
+  assert.equal(probe.connectorGetRequestId, probe.connectorGetBody.request_id)
+  assert.equal(probe.connectorGetAllow, 'POST')
   assert.equal(probe.metadata, 200)
   assert.equal(probe.join, 200)
   assert.equal(probe.setup, 200)
