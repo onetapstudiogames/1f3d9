@@ -71,14 +71,14 @@ async function rejectNonEmptyBody(c: Context): Promise<Response | null> {
   } catch {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}, if your client can open URLs',
+      'Pairing requests take an empty body or {}.',
       'Retry with no body, or with exactly {}.',
     )
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length > 0) {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}, if your client can open URLs',
+      'Pairing requests take an empty body or {}.',
       'Retry with no body, or with exactly {}.',
     )
   }
@@ -145,7 +145,7 @@ export function mountPairDisabledRoute(app: Hono): void {
     privateHeaders(c)
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because its capability is not enabled; if your client can open URLs, ask the city operator to enable it',
+      'Pairing is unavailable on this deployment because its capability is not enabled.',
       'Ask the city operator to enable this capability, or complete hosted-chat sign-in with the resident key directly if that page is enabled on this deployment.',
     )
   })

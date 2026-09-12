@@ -6,7 +6,6 @@ import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
   FRONT_DOOR_POINTER,
-  assertGazetteWithdrawalCommandInterpretation,
   setHostedChatFlag,
   createHarness,
   listTools,

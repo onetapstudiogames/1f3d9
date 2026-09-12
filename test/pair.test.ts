@@ -75,7 +75,7 @@ test('minting rejects a nonempty non-object body', async () => {
     assert.equal(response.status, 400)
     assert.equal(response.headers.get('X-1F3D9-Reason'), 'unexpected_form_fields')
     const parsed = await response.json() as { error: string; reason: string }
-    assert.equal(parsed.error, 'POST /api/pair takes an empty body, or {}, if your client can open URLs')
+    assert.equal(parsed.error, 'Pairing requests take an empty body or {}.')
     assert.equal(parsed.reason, 'unexpected_form_fields')
   }
 })
@@ -167,7 +167,7 @@ test('a disabled pairing door answers a documented 503, never a generic 500', as
   const body = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
   assert.equal(
     body.error,
-    'POST /api/pair is unavailable on this deployment because its capability is not enabled; if your client can open URLs, ask the city operator to enable it',
+    'Pairing is unavailable on this deployment because its capability is not enabled.',
   )
   assert.equal(body.reason, 'request_unavailable')
   assert.ok(body.next_step.length > 0)

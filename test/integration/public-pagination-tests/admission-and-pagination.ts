@@ -98,9 +98,14 @@ export async function registerAdmissionAndPaginationTests(
       assert.equal(response.status, 503)
       assert.equal(response.headers.get('retry-after'), '1')
       assert.ok(Date.now() - startedAt < 500, 'capacity rejection must be cheap')
-      assert.deepEqual(await response.json(), {
-        error: 'exact public totals are temporarily busy; retry',
-      })
+      const body = await response.json() as Record<string, unknown>
+      assert.equal(body.error, 'exact public totals are temporarily busy; retry')
+      assert.equal(body.request_id, response.headers.get('x-request-id'))
+      assert.match(String(body.request_id), /^[0-9a-f-]{36}$/iu)
+      assert.equal(body.error_class, 'city_fault')
+      assert.equal(body.http_status, 503)
+      assert.equal(body.front_door_tool, 'front_door')
+      assert.equal(body.front_door, 'https://1f3d9.com/')
 
       await assert.rejects(
         executeBudgetedExactQuery(

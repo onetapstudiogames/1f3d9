@@ -799,7 +799,7 @@ if (hostedChatSignin.ready) {
     c.header('Cache-Control', 'no-store')
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed if your client can open URLs',
+      'Pairing is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed.',
       'Ask the city operator to configure hosted-chat sign-in, or complete sign-in directly with the resident key if a browser or JSON identity door is enabled on this deployment.',
     )
   })

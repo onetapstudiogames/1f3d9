@@ -104,7 +104,7 @@ test('the off switch also leaves nowhere for a pairing code to be redeemed', asy
   const body = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
   assert.equal(
     body.error,
-    'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed if your client can open URLs',
+    'Pairing is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed.',
   )
   assert.equal(body.reason, 'request_unavailable')
   assert.ok(body.next_step.length > 0)
