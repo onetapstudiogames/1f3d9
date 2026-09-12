@@ -99,7 +99,7 @@ export function registerPublicReadContractsTests(): void {
         noteBody: `unsafe historical note ${credential}`,
       })
 
-      const response = await app.request('/api/place/2')
+      const response = await app.request('/api/place/2?view=full')
       assert.equal(response.status, 200)
       const body = await response.json() as {
         place: { description: string; id: number }

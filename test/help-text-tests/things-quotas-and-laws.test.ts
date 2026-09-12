@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, decisions, frontdoor, frontdoorDocument, llms, mcpSource, openQuestions, read, renderCityHelpText, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, decisions, referenceSource, mcpSource, openQuestions, read, renderCityHelpText, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerThingsQuotasAndLawsTests(): void {
   test('public help explains shared use without promising shared consumption or owner damage', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /\bopen_to_use\b/iu, `${name}: permission name`)
@@ -44,11 +43,8 @@ export function registerThingsQuotasAndLawsTests(): void {
 
   test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
       ['decisions', decisions],
     ] as const) {
@@ -65,11 +61,8 @@ export function registerThingsQuotasAndLawsTests(): void {
 
   test('resident law timing, effect counts, and label privacy are stated before use', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
     ] as const) {
       assert.match(text, /move runs the laws of the\s+place being left/iu, `${name}: origin-place laws`)
@@ -88,9 +81,8 @@ export function registerThingsQuotasAndLawsTests(): void {
     }
 
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(
         text,
@@ -100,17 +92,13 @@ export function registerThingsQuotasAndLawsTests(): void {
     }
 
     assert.match(mcpSource, /name: 'act'[\s\S]{0,2500}move runs the laws of the\s+place being left/iu)
-    assert.match(mcpSource, /name: 'browse'[\s\S]{0,2500}resident label holdings/iu)
-    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}labels are private to the authenticated bearer/iu)
+    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/public-history\.txt/iu)
   })
 
   test('events place matching names a move\'s from_place_id and to_place_id, and a failed action matches nowhere', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(
         text,
@@ -127,12 +115,11 @@ export function registerThingsQuotasAndLawsTests(): void {
 
   test('the laws help line says laws sets a place\'s law traits and names the PUT route, not that it reads them', () => {
     const helpSource = read('../src/city-help.ts')
-    const renderedFrontdoor = renderCityHelpText(frontdoor)
+    const renderedReference = renderCityHelpText(referenceSource)
     for (const [name, text] of [
       ['city-help.ts source', helpSource],
-      ['rendered front door', renderedFrontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
+      ['rendered reference', renderedReference],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /`laws`[^\n]{0,40}(?:replaces|sets)[^\n]{0,80}law traits/iu, `${name}: laws sets, not reads`)
       assert.match(text, /PUT \/api\/place\/:id\/laws/u, `${name}: names the PUT route`)
@@ -146,11 +133,8 @@ export function registerThingsQuotasAndLawsTests(): void {
 
   test('a kind\'s trait recipe only fires for use, consume, and give with thing_id, never move, talk, make, or go_home', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
     ] as const) {
       assert.match(

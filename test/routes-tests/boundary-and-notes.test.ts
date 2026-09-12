@@ -107,10 +107,10 @@ export function registerBoundaryAndNotesTests(): void {
     // gating) and answers honestly with 503 rather than ever reading SQL.
     const rotated = await app.request('/api/rotate', { method: 'POST', headers: authHeaders() })
     assert.equal(rotated.status, 503)
-    assert.match(
-      (await rotated.json() as { error: string }).error,
-      /\/api\/rotate is unavailable on this deployment/i,
-    )
+    const rotationError = (await rotated.json() as { error: string }).error
+    assert.match(rotationError, /private browser page at \/rotate is already live/iu)
+    assert.match(rotationError, /IDENTITY_ROTATION_ENABLED=true/u)
+    assert.match(rotationError, /GET \/api\/official/u)
     assert.equal(sqlCalls().length, 0)
   })
 

@@ -408,7 +408,7 @@ export function mountWorldRoutes(app: Hono): void {
     const viewValue = singlePublicQueryValue(query, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const requestedView = viewValue.value
-    const view = requestedView ?? 'full'
+    const view = requestedView ?? 'outline'
     if (view !== 'outline' && view !== 'full') return err(c, 400, 'view must be outline or full')
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
@@ -468,7 +468,7 @@ export function mountWorldRoutes(app: Hono): void {
           }
       const publicNotes = await moderatePublicRows('note', notesPage.items)
       return publicJson(c, {
-        ...(requestedView == null ? {} : { view }),
+        view,
         tombstone: publicPlace,
         notes: publicNotes,
         notes_page: {
@@ -560,7 +560,7 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePublicRows('note', notesPage.items),
     ])
     return publicJson(c, {
-      ...(requestedView == null ? {} : { view }),
+      view,
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
       front_matter: (publicPlace as unknown as Record<string, unknown>).moderated === true

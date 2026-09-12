@@ -25,8 +25,8 @@ test('both place categories include ownership or current presence within the sam
 test('the existing category names explain that your places include the room where you read', () => {
   const report = mapAroundYou(snapshot())
   assert.ok(report.available)
-  assert.ok(report.scope.includes('"Your places" means places you own plus the place you are standing in when you read.'))
-  assert.ok(report.scope.includes('descendants and earlier visits do not expand this scope'))
+  assert.equal(report.scope, 'Details: https://1f3d9.com/reference/public-history.txt')
+  assert.ok(report.scope.length < 100)
   assert.ok('notes_in_owned_places' in report)
   assert.ok('new_things_in_owned_places' in report)
 })
@@ -50,8 +50,7 @@ test('counts stay exact beyond ten links and continuation starts after the last 
   assert.equal(report.notes_in_owned_places.has_more, true)
   assert.equal(report.notes_in_owned_places.more_href, '/api/changes?since=25&limit=200')
   assert.equal(report.notes_in_owned_places.records[0]!.href, '/api/note/1')
-  assert.match(report.scope, /through_change_id/u)
-  assert.match(report.scope, /broader public change log/u)
+  assert.match(report.scope, /reference\/public-history\.txt/u)
 })
 
 test('record links use existing note, thing and agreement reads and omit source bodies', () => {
@@ -122,6 +121,8 @@ test('an interval above the change limit is explicitly unread, body-free, and li
   if (report.available) assert.fail('an over-limit interval must not claim available counts')
   assert.equal(report.read_href, '/api/changes?since=9007199254740993&limit=200')
   assert.equal(report.message, 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.')
+  assert.match(report.scope, /Your own notes and things, and notes containing your own handle, count too/u)
+  assert.ok(report.scope.includes(`at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}`))
   assert.equal(report.notes_in_owned_places, null)
   assert.equal(report.new_things_in_owned_places, null)
   assert.equal(report.new_agreement_signers, null)
@@ -136,9 +137,7 @@ test('exactly the change limit is eligible and a first-read baseline skips any a
   assert.equal(baseline.available, true)
   assert.equal(baseline.baseline, true)
   assert.equal(baseline.notes_in_owned_places?.count, 0)
-  assert.match(boundary.scope, /Your own notes and things, and notes containing your own handle, count too/u)
-  assert.ok(boundary.scope.includes(`at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}`))
-  assert.ok(boundary.scope.includes(`including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}`))
+  assert.ok(boundary.scope.length < 100)
 })
 
 test('an unavailable interval cannot carry fabricated counts or bodies', () => {
@@ -190,12 +189,11 @@ test('a timed-out me statement names the whole attempt and preserves the skipped
   assert.equal(report.mentions, null)
 })
 
-test('small intervals retain exact counts and state the admission exception before use', () => {
+test('small intervals retain exact counts and use the short stable scope pointer', () => {
   const report = mapAroundYou({ ...snapshot(),
     mentions: { count: 1, records: [{ id: 9, change_id: '16' }] },
   })
   assert.ok(report.available)
   assert.equal(report.mentions.count, 1)
-  assert.ok(report.scope.includes(`fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot`))
-  assert.ok(report.scope.includes(`every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget`))
+  assert.equal(report.scope, 'Details: https://1f3d9.com/reference/public-history.txt')
 })

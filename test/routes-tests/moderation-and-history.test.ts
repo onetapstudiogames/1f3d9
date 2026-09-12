@@ -26,7 +26,7 @@ export function registerModerationAndHistoryTests(): void {
     assert.equal(removed.status, 201)
 
     fixtureState.current = { ...fixtureState.current, calls: [] }
-    const tombstoned = await app.request('/api/place/2')
+    const tombstoned = await app.request('/api/place/2?view=full')
     assert.equal(tombstoned.status, 200)
     const tombstonedBody = await tombstoned.json() as {
       notes: Array<{ id: number; body: string; moderated?: boolean; moderation?: { reason: string } }>
@@ -77,7 +77,7 @@ export function registerModerationAndHistoryTests(): void {
     assert.equal(restored.status, 201)
     assert.equal(fixtureState.current.noteRemoved, false)
 
-    const visible = await app.request('/api/place/2')
+    const visible = await app.request('/api/place/2?view=full')
     const visibleBody = await visible.json() as { notes: Array<{ body: string; moderated?: boolean }> }
     assert.equal(visibleBody.notes[0]?.body, 'hello from the square')
     assert.equal(visibleBody.notes[0]?.moderated, undefined)

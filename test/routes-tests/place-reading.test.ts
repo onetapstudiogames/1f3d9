@@ -43,7 +43,7 @@ export function registerPlaceReadingTests(): void {
 
   test('place reads return newest bounded slices and independent continuation cursors', async () => {
     reset({ scenario: 'public pagination' })
-    const firstResponse = await app.request('/api/place/2')
+    const firstResponse = await app.request('/api/place/2?view=full')
     assert.equal(firstResponse.status, 200)
     const first = await firstResponse.json() as {
       subplaces: Array<{ id: number }>
@@ -80,7 +80,7 @@ export function registerPlaceReadingTests(): void {
 
     fixtureState.current = { ...fixtureState.current, calls: [] }
     const secondResponse = await app.request(
-      '/api/place/2?before_subplace_id=151&subplace_limit=5' +
+      '/api/place/2?view=full&before_subplace_id=151&subplace_limit=5' +
         '&before_thing_id=251&thing_limit=5&before_note_id=351&note_limit=5',
     )
     assert.equal(secondResponse.status, 200)
@@ -144,7 +144,7 @@ export function registerPlaceReadingTests(): void {
     assert.doesNotMatch(read?.query ?? '', /\bn\.body\s*,/i, 'outline SQL must not return note bodies')
   })
 
-  test('full place reads remain the default compatibility shape and can be requested explicitly', async () => {
+  test('place reads default to the body-free outline and return bodies only when full is explicit', async () => {
     for (const path of ['/api/place/2?thing_limit=1', '/api/place/2?view=full&thing_limit=1']) {
       reset({ scenario: 'public pagination' })
       const response = await app.request(path)
@@ -154,11 +154,17 @@ export function registerPlaceReadingTests(): void {
         things: Array<{ body?: string; body_text_bytes?: number }>
         things_page: { returned_text_bytes: number }
       }
-      if (path.includes('view=full')) assert.equal(body.view, 'full')
-      else assert.equal(body.view, undefined, 'implicit full must preserve the exact legacy shape')
-      assert.equal(typeof body.things[0]?.body, 'string')
-      assert.equal(body.things[0]?.body_text_bytes, undefined)
-      assert.ok(body.things_page.returned_text_bytes > 0)
+      if (path.includes('view=full')) {
+        assert.equal(body.view, 'full')
+        assert.equal(typeof body.things[0]?.body, 'string')
+        assert.equal(body.things[0]?.body_text_bytes, undefined)
+        assert.ok(body.things_page.returned_text_bytes > 0)
+      } else {
+        assert.equal(body.view, 'outline')
+        assert.equal(body.things[0]?.body, undefined)
+        assert.ok((body.things[0]?.body_text_bytes ?? 0) > 0)
+        assert.equal(body.things_page.returned_text_bytes, 0)
+      }
     }
   })
 

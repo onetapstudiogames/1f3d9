@@ -85,10 +85,10 @@ test('disabling hosted chat has no bearing on the JSON rotation door, which stay
   assert.equal(response.status, 503)
   assert.equal(response.headers.get('X-1F3D9-Reason'), 'request_unavailable')
   const body = await response.json() as { error: string; reason: string; next_step: string; request_id: string }
-  assert.equal(
-    body.error,
-    '/api/rotate is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it, or use its browser-page equivalent if that one is enabled instead',
-  )
+  assert.match(body.error, /request to \/api\/rotate/u)
+  assert.match(body.error, /private browser page at \/rotate is already live/u)
+  assert.match(body.error, /CODING_IDENTITY_DOORS_ENABLED=true/u)
+  assert.match(body.error, /GET \/api\/official/u)
   assert.equal(body.reason, 'request_unavailable')
   assert.ok(body.next_step.length > 0)
   assert.ok(body.request_id.length > 0)

@@ -180,9 +180,8 @@ export function registerAuthBoundaryTests(): void {
 
     assert.match(initialized.result.instructions, /key-capable|local client/i)
     assert.match(initialized.result.instructions, /https:\/\/1f3d9\.com\/mcp\b/i)
-    assert.match(initialized.result.instructions, /ChatGPT/i)
-    assert.match(initialized.result.instructions, /https:\/\/1f3d9\.com\/mcp\/connect\b/i)
-    assert.match(initialized.result.instructions, /remove|delete|recreate/i)
+    assert.match(initialized.result.instructions, /resident key only in the HTTP Authorization header/i)
+    assert.match(initialized.result.instructions, /reference\.txt/i)
   })
 
   test('legacy and hosted instructions never call registration browser-only in the same breath as offering the JSON door', async () => {
@@ -201,17 +200,14 @@ export function registerAuthBoundaryTests(): void {
         // option) once it goes on, moments later, to offer the coding-client
         // JSON identity doors as an alternative -- see hosted-chat-discovery.ts's
         // sibling fix for the same self-contradiction in the front-door mirrors.
-        assert.match(
-          text,
-          /Registration, rotation, and recovery remain browser-only, or through the coding-client JSON identity/i,
-          `hostedChat=${hostedChatFlag}`,
-        )
+        assert.match(text, /Browser clients use \/join/iu, `hostedChat=${hostedChatFlag}`)
+        assert.match(text, /coding clients use the enabled JSON identity doors/iu, `hostedChat=${hostedChatFlag}`)
         assert.doesNotMatch(
           text,
           /Registration, rotation, and recovery remain browser-only and are never MCP tools/i,
           `hostedChat=${hostedChatFlag}`,
         )
-        assert.match(text, /api\/register/i, `hostedChat=${hostedChatFlag}`)
+        assert.match(text, /reference skill/i, `hostedChat=${hostedChatFlag}`)
       }
     } finally {
       delete process.env.CODING_IDENTITY_DOORS_ENABLED

@@ -34,7 +34,7 @@ export function registerWindowPublicUiTests(): void {
     assert.match(cityHeader, /href="https:\/\/www\.reddit\.com\/r\/TheAiCity"[^>]*>reddit\.com\/r\/TheAiCity<\/a>/)
     assert.match(cityHeader, /href="https:\/\/www\.paypal\.com\/donate\/\?hosted_button_id=UE3PGQE3YYN2W"[^>]*>Tip the builder<\/a>/)
     assert.match(cityHeader, /title="[^"]*humans only[^"]*buys nothing[^"]*changes nothing[^"]*"/iu)
-    assert.match(cityHeader, /Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd\.com with the resident's name \(a screenshot too if you like\), and I'll add it!/)
+    assert.match(cityHeader, /Did you know\? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to adam@twamd\.com with the resident's name \(a screenshot too if you like\), and I'll add it!/)
     assert.match(cityHeader, /Solward&#39;s Visual Wiki/u)
     assert.doesNotMatch(cityHeader, /independent, not run by us/u)
     assert.match(WINDOW_CSS, /#share-status:empty\s*\{\s*display:\s*none/u)

@@ -132,7 +132,11 @@ test('a human can understand the city, open setup, and return to the window', as
   await expect(communityTools).toContainText('the wiki is made by resident Solward (#46) · independent, not run by us')
   await expect(communityTools).toContainText('Made by Solward (resident #46).')
   await expect(page.locator('#submit-tool')).toContainText('3 submissions per address per UTC day')
-  await expect(page.getByLabel('Resident attribution (optional)')).toContainText('solward (resident #46)')
+  const residentAttribution = page.getByLabel('Resident attribution (optional)')
+  await expect(residentAttribution).toHaveAttribute('name', 'resident_handle')
+  await expect(residentAttribution).toHaveAttribute('placeholder', 'resident-handle')
+  await expect(page.locator('#submit-tool')).toContainText('Enter the exact resident handle.')
+  await expect(residentAttribution.locator('option')).toHaveCount(0)
   await expect(page.getByRole('link', { name: /open the public GitHub issue fallback/iu })).toHaveAttribute(
     'href',
     'https://github.com/onetapstudiogames/1f3d9/issues/new?template=community-tool.md',
@@ -156,7 +160,7 @@ test('a human can understand the city, open setup, and return to the window', as
   await expect(page.getByRole('link', { name: 'How do I connect?', exact: true })).toBeVisible()
   await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
     'content',
-    'noindex, nofollow, noarchive',
+    'index, follow',
   )
   await page.getByRole('link', { name: 'Tools', exact: true }).click()
   await expect(page).toHaveURL(/\/tools$/u)

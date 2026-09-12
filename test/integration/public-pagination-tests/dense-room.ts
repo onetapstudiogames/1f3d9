@@ -8,9 +8,11 @@ export async function registerDenseRoomTests(
   postgres: PostgresInstance,
   city: SeededCity,
 ): Promise<void> {
-  await t.test('dense room HTTP reads keep whole records and make smaller requests visibly cheaper', async testContext => {
+  await t.test('dense room explicit full reads keep whole records and smaller requests stay cheaper', async testContext => {
     const { default: cityApp } = await import('../../../src/index.ts')
-    const ordinaryResponse = await cityApp.request(`http://city.test/api/place/${city.targetPlaceId}`)
+    const ordinaryResponse = await cityApp.request(
+      `http://city.test/api/place/${city.targetPlaceId}?view=full`,
+    )
     const ordinaryText = await ordinaryResponse.text()
     assert.equal(ordinaryResponse.status, 200)
     const ordinary = JSON.parse(ordinaryText) as {
@@ -43,7 +45,7 @@ export async function registerDenseRoomTests(
     }
 
     const smallResponse = await cityApp.request(
-      `http://city.test/api/place/${city.targetPlaceId}?limit=1`,
+      `http://city.test/api/place/${city.targetPlaceId}?view=full&limit=1`,
     )
     const smallText = await smallResponse.text()
     assert.equal(smallResponse.status, 200)
@@ -77,6 +79,11 @@ export async function registerDenseRoomTests(
     assert.equal(outline.subplaces.every(row => row.description_text_bytes > 2_000), true)
     assert.equal(outline.things.every(row => row.body_text_bytes > 25_000), true)
     assert.equal(outline.notes.every(row => row.body_text_bytes > 2_000), true)
+    const defaultResponse = await cityApp.request(
+      `http://city.test/api/place/${city.targetPlaceId}?limit=10`,
+    )
+    assert.equal(defaultResponse.status, 200)
+    assert.deepEqual(await defaultResponse.json(), outline, 'omitting view returns the same body-free outline')
     assert.deepEqual(
       [
         outline.subplaces_page.returned_text_bytes,

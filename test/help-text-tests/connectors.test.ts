@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { BROWSER_REFUSAL_REASONS, FRONTDOOR, LLMS, SETUP_HTML, frontdoor, frontdoorDocument, hostedDiscoverySource, hostedSignin, llms, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { BROWSER_REFUSAL_REASONS, generatedReference, SETUP_HTML, referenceSource, hostedDiscoverySource, hostedSignin, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerConnectorTests(): void {
   test('connector parity tools and deliberate browser-only gaps are stated on every applicable mirror', () => {
@@ -9,10 +9,8 @@ export function registerConnectorTests(): void {
       'revise_kind', 'browse', 'buy_credit', 'flag',
     ]
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
     ] as const) {
       for (const toolName of toolNames) {
@@ -22,16 +20,15 @@ export function registerConnectorTests(): void {
     }
 
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['specification', specification],
-      ['hosted sign-in guide', hostedSignin],
     ] as const) {
-      assert.match(text, /registration[^\n]{0,180}browser-only[^\n]{0,180}\/join|registration[^\n]{0,180}\/join[^\n]{0,180}browser-only/iu, `${name}: registration policy`)
-      assert.match(text, /rotation[^\n]{0,180}browser-only[^\n]{0,180}\/rotate|rotation[^\n]{0,180}\/rotate[^\n]{0,180}browser-only/iu, `${name}: rotation policy`)
-      assert.match(text, /recovery[^\n]{0,180}browser-only[^\n]{0,180}\/recovery|recovery[^\n]{0,180}\/recovery[^\n]{0,180}browser-only/iu, `${name}: recovery policy`)
+      assert.match(text, /\/join/iu, `${name}: browser registration path`)
+      assert.match(text, /\/rotate/iu, `${name}: browser rotation path`)
+      assert.match(text, /\/recovery/iu, `${name}: browser recovery path`)
+      assert.match(text, /\/api\/register/iu, `${name}: coding-client registration path`)
+      assert.match(text, /never[^\n]{0,180}MCP tool|never appear[^\n]{0,180}MCP tool/iu, `${name}: identity tools excluded`)
       assert.match(text, /gift[^\n]{0,180}claim token[^\n]{0,180}(?:browser-only|never[^\n]*MCP)/iu, `${name}: gift-token policy`)
       assert.match(text, /PayPal[^\n]{0,180}(?:\/buy|buy routes)[^\n]{0,180}web-only/iu, `${name}: PayPal policy`)
       assert.match(text, /(?:human )?window[^\n]{0,180}web-only/iu, `${name}: window policy`)
@@ -40,11 +37,8 @@ export function registerConnectorTests(): void {
 
   test('public help states note replay and transfer price behavior before use', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /new note[^\n]{0,100}201/iu, `${name}: new note status`)
       assert.match(text, /identical[^\n]{0,180}same (?:resident|place)[^\n]{0,180}five minutes[^\n]{0,100}200/iu, `${name}: duplicate note status`)
@@ -70,11 +64,8 @@ export function registerConnectorTests(): void {
       'Historical rows stay exactly as written.',
     ].join(' ')
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['published front door', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
     ] as const) {
       assert.equal(
@@ -122,21 +113,15 @@ export function registerConnectorTests(): void {
 
   test('public route maps include the kind catalog and every dedicated action alias', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /GET\s+\/api\/kinds\b/iu, `${name}: kind catalog`)
     }
 
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       for (const route of ['/api/go-home', '/api/thing/:id/use', '/api/thing/:id/consume']) {
         assert.ok(text.includes(route), `${name}: ${route}`)
@@ -146,11 +131,8 @@ export function registerConnectorTests(): void {
 
   test('ChatGPT setup keeps the hosted door distinct and explains stale wrong-address recovery', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['hosted sign-in guide', hostedSignin],
       ['MCP descriptions', mcpSource],
     ] as const) {
@@ -170,18 +152,18 @@ export function registerConnectorTests(): void {
 
   test('served visit guidance prefers connector reference tools to optional URL reads', () => {
     assert.doesNotMatch(
-      frontdoor,
+      referenceSource,
       /Otherwise it may\s+watch \/window but cannot act as the resident today\./iu,
       'front door must not assume an OAuth-refused host can open /window',
     )
     for (const [name, text] of [
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
     ] as const) {
       assert.match(
         text,
-        /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,220}https:\/\/1f3d9\.com\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
+        /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}(?:connector[\s\S]{0,80}\bfront_door\b|\bfront_door\b[\s\S]{0,80}(?:connector|tool))[\s\S]{0,220}https:\/\/1f3d9\.com\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
         `${name}: connector-first front door read`,
       )
       assert.doesNotMatch(
@@ -192,11 +174,8 @@ export function registerConnectorTests(): void {
     }
 
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
     ] as const) {
       for (const tool of ['front_door', 'official_facts', 'physics']) {
@@ -217,11 +196,8 @@ export function registerConnectorTests(): void {
 
   test('ChatGPT setup does not invent a mobile support restriction absent from official guidance', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['generated front door', FRONTDOOR],
-      ['published front door', frontdoorDocument],
-      ['compact machine map', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
       ['system design', specification],
       ['hosted sign-in guide', hostedSignin],
       ['runtime discovery copy', hostedDiscoverySource],
@@ -231,16 +207,16 @@ export function registerConnectorTests(): void {
   })
 
   test('ChatGPT setup distinguishes browser-only setup from use after configuration', () => {
-    assert.match(SETUP_HTML, /initial connector setup[^.]*browser at chatgpt\.com/iu)
-    assert.match(SETUP_HTML, /mobile browser is fine/iu)
-    assert.match(SETUP_HTML, /not inside the ChatGPT mobile app/iu)
-    assert.match(SETUP_HTML, /Once the connector is configured, it works in both the app and the browser/iu)
+    assert.match(SETUP_HTML, /Menu names and availability differ by account/iu)
+    assert.match(SETUP_HTML, /Use exactly[\s\S]{0,100}https:\/\/1f3d9\.com\/mcp\/connect/iu)
+    assert.match(SETUP_HTML, /ten-minute single-use code made by[\s\S]{0,100}connect chat/iu)
+    assert.match(SETUP_HTML, /names another client, cancel and restart/iu)
   })
 
   test('public doors name every accepted browser form proof before attempt counters', () => {
     for (const [name, text] of [
-      ['front door', FRONTDOOR],
-      ['compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /exact same-origin Origin/iu, `${name}: Origin proof`)
       assert.match(text, /Origin[^.]{0,120}(?:absent|missing|not sent)[^.]{0,80}null[^.]{0,160}exact same-origin Referer/iu, `${name}: Referer fallback`)
@@ -264,14 +240,13 @@ export function registerConnectorTests(): void {
   })
 
   test('ChatGPT setup labels operator testing and the embedded-browser automation gap', () => {
-    assert.match(SETUP_HTML, /ChatGPT[^.]{0,180}operator-tested/iu)
-    assert.match(SETUP_HTML, /no automated test[^.]{0,160}embedded ChatGPT browser/iu)
+    assert.match(SETUP_HTML, /observed on two accounts on September 10, 2026/iu)
+    assert.match(SETUP_HTML, /available controls differed/iu)
   })
 
   test('public help gives exact action shapes and required combinations', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       for (const shape of ACTION_SHAPES) {

@@ -92,6 +92,10 @@ test('the explicit credit selector branches before x402 without changing the hea
   assert.match(feeSources, /(?:cannot|must not|choose one|one payment)[^\n]{0,180}(?:x-payment|city fee credit)/iu)
   assert.match(feeSources, /beginCityCreditSpend/iu)
   assert.match(worldSupportSource, /runDurableX402/iu)
+  assert.match(
+    worldSupportSource,
+    /prepaid or gifted city fee credit[\s\S]{0,180}X-1F3D9-FEE-CREDIT[\s\S]{0,180}credit_preflight[\s\S]{0,180}buy_credit/iu,
+  )
   assert.match(worldSupportSource, /replayTreasuryFee/iu)
 
   // Four reviewed call sites cover the three existing fee actions plus the

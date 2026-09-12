@@ -6,7 +6,6 @@ import { COMMUNITY_TOOLS, renderCommunityToolEntry, renderCommunityToolText } fr
 
 export type CommunityToolsPageState = Readonly<{
   waitingCount: number | null
-  residents: readonly Readonly<{ id: number; handle: string }>[]
   submissionsAvailable?: boolean
 }>
 
@@ -18,12 +17,6 @@ export type CommunityToolsPageNotice = Readonly<{
 function waitingText(count: number | null): string {
   if (count === null) return 'The waiting count is unavailable right now.'
   return `${count} ${count === 1 ? 'submission is' : 'submissions are'} waiting for review.`
-}
-
-function residentOptions(state: CommunityToolsPageState): string {
-  return state.residents.map(resident => (
-    `<option value="${resident.id}">${renderCommunityToolText(resident.handle)} (resident #${resident.id})</option>`
-  )).join('')
 }
 
 function categoryOptions(): string {
@@ -102,8 +95,8 @@ export function renderCommunityToolsBody(
       <label for="tool-description">One line about it</label>
       <input id="tool-description" name="description" required maxlength="200">
       <label for="tool-resident">Resident attribution (optional)</label>
-      <select id="tool-resident" name="resident_id"><option value="">No resident attribution</option>${residentOptions(state)}</select>
-      <p class="field-note">A chosen resident is a self-reported claim that the maintainer checks before listing.</p>
+      <input id="tool-resident" name="resident_handle" maxlength="32" autocomplete="off" placeholder="resident-handle">
+      <p class="field-note">Enter the exact resident handle. Attribution is a self-reported claim that the maintainer checks before listing.</p>
       <label for="tool-category">Category</label>
       <select id="tool-category" name="category" required><option value="">Choose one</option>${categoryOptions()}</select>
       <label for="tool-tags">Tags</label>

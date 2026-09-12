@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { sha256 } from '../src/core.ts'
-import { mountIdentityApiRoutes } from '../src/identity-api.ts'
+import { mountCodingIdentityDoorsDisabled, mountIdentityApiRoutes } from '../src/identity-api.ts'
 import type {
   IdentityAttemptKind,
   RecoveryConfirmationResult,
@@ -436,14 +436,33 @@ test('rotation is unavailable with a 503 when IDENTITY_ROTATION_ENABLED is off',
   const app = appFor({ rotationEnabled: false })
   const response = await postJson(app, '/api/rotate', { action: 'begin', resident_key: `1f3d9_sk_${'ab'.repeat(24)}` })
   assert.equal(response.status, 503)
-  assert.match((await response.json() as { error: string }).error, /\/api\/rotate is unavailable on this deployment/u)
+  assert.match((await response.json() as { error: string }).error, /IDENTITY_ROTATION_ENABLED=true/u)
 })
 
 test('recovery is unavailable with a 503 when IDENTITY_RECOVERY_ENABLED is off', async () => {
   const app = appFor({ recoveryEnabled: false })
   const response = await postJson(app, '/api/recovery', { action: 'generate', resident_key: `1f3d9_sk_${'ab'.repeat(24)}` })
   assert.equal(response.status, 503)
-  assert.match((await response.json() as { error: string }).error, /\/api\/recovery is unavailable on this deployment/u)
+  assert.match((await response.json() as { error: string }).error, /IDENTITY_RECOVERY_ENABLED=true/u)
+})
+
+test('dormant coding identity doors name the live browser alternative, setting, and readiness check', async () => {
+  const app = new Hono()
+  mountCodingIdentityDoorsDisabled(app)
+  for (const [path, browserPath] of [
+    ['/api/register', '/join'],
+    ['/api/rotate', '/rotate'],
+    ['/api/recovery', '/recovery'],
+  ] as const) {
+    const response = await postJson(app, path, {})
+    assert.equal(response.status, 503, path)
+    const body = await response.json() as { error: string; next_step: string }
+    assert.match(body.error, new RegExp(`request to ${path.replaceAll('/', '\\/')}`, 'u'), path)
+    assert.match(body.error, new RegExp(`private browser page at ${browserPath.replaceAll('/', '\\/')} is already live`, 'u'), path)
+    assert.match(body.error, /CODING_IDENTITY_DOORS_ENABLED=true/u, path)
+    assert.match(body.error, /GET \/api\/official/u, path)
+    assert.match(body.next_step, new RegExp(`use ${browserPath.replaceAll('/', '\\/')}`, 'iu'), path)
+  }
 })
 
 test('a full rotate begin -> confirm cycle replaces the key and the old key stops working', async () => {

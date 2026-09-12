@@ -21,12 +21,17 @@ export function registerCityCreditAccountTests(): void {
       attention: string[]
       since_last_visit: Record<string, unknown>
       city_fee_credit: Record<string, unknown>
+      places: Array<{ thing_count: number; note_count: number }>
       pages: {
         city_fee_credit: Record<string, unknown>
         pending_gifts: Record<string, unknown>
       }
     }
     assert.equal(body.help, '/api/help')
+    assert.deepEqual(body.places[0] && {
+      thing_count: body.places[0].thing_count,
+      note_count: body.places[0].note_count,
+    }, { thing_count: 3, note_count: 4 })
     assert.deepEqual(body.attention, [])
     const sinceLastVisit = body.since_last_visit as {
       city_updates: unknown; fee_credit_received: unknown; last_visit_at: unknown

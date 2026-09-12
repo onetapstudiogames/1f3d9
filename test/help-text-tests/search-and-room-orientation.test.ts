@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decisions, frontdoor, llms, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { decisions, referenceSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerSearchAndRoomOrientationTests(): void {
   test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /\/api\/search/iu, `${name}: public search route`)
@@ -28,8 +27,7 @@ export function registerSearchAndRoomOrientationTests(): void {
 
   test('Wave 7 help keeps room purpose and owner-chosen front matter neutral and body-free', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(
@@ -78,8 +76,7 @@ export function registerSearchAndRoomOrientationTests(): void {
 
   test('Wave 2 public truth separates permanent maker from current owner', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
       ['decisions', decisions],
     ] as const) {

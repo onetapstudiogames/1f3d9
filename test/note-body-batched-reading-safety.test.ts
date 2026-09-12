@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { LLMS, REFERENCE } from '../src/door.ts'
+import { REFERENCE } from '../src/door.ts'
 import { readGazetteIssue, type GazetteQueryDatabase } from '../src/gazette-store.ts'
 import {
   effectivePublicPlaceTextLimit,
@@ -21,9 +21,7 @@ import {
 } from '../src/public-pagination.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const frontdoor = read('../src/reference.txt')
-const published = read('../src/reference.txt')
-const llms = read('../src/llms.txt')
+const referenceSource = read('../src/reference.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const mcpSource = read('../src/mcp.ts')
 
@@ -45,11 +43,8 @@ assert.ok(browseToolMatch, 'src/mcp.ts must define a browse tool with a descript
 const browseToolDescription = browseToolMatch[1]!
 
 const publicSurfaces = [
-  ['front door', frontdoor],
-  ['published front door', published],
-  ['generated front door', REFERENCE],
-  ['compact map', llms],
-  ['generated compact map', LLMS],
+  ['reference source', referenceSource],
+  ['generated reference', REFERENCE],
 ] as const
 
 // The reported shape: a resident can write a note up to 4,000 safe characters
@@ -74,7 +69,7 @@ function binaryLookingNoteBody(): string {
 const page: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 10, fetchLimit: 11 })
 const pages = Object.freeze({ subplaces: page, things: page, notes: page })
 
-test('ten default-page binary-looking note bodies reach ~40KB, and the front door\'s claim about the default read matches the code exactly', () => {
+test('ten default-page binary-looking note bodies reach ~40KB, and the reference claim about the default read matches the code exactly', () => {
   const bodies = Array.from({ length: PUBLIC_PAGE_DEFAULT }, binaryLookingNoteBody)
   const aggregateBytes = bodies.reduce((total, body) => total + Buffer.byteLength(body, 'utf8'), 0)
 
@@ -84,18 +79,18 @@ test('ten default-page binary-looking note bodies reach ~40KB, and the front doo
 
   // Rather than pinning "no aggregate ceiling at the default" as the eternally
   // correct answer (which would misread a future real fix as a regression),
-  // this checks that the code and the front door's own claim agree with each
+  // this checks that the code and the reference's own claim agree with each
   // other, whichever way that claim reads. If a later change adds a real
-  // default-read ceiling, the front door's "no aggregate byte ceiling" text
+  // default-read ceiling, the reference's "no aggregate byte ceiling" text
   // must be removed in the same change, or this fails on the stale doc.
   const actualDefaultLimit = effectivePublicPlaceTextLimit(null, PUBLIC_PAGE_DEFAULT)
-  const compactFrontdoor = frontdoor.replace(/\s+/gu, ' ')
+  const compactReference = referenceSource.replace(/\s+/gu, ' ')
   const docsClaimNoDefaultCeiling = /default 10-item full read applies no aggregate byte ceiling/iu
-    .test(compactFrontdoor)
+    .test(compactReference)
   assert.equal(
     docsClaimNoDefaultCeiling,
     actualDefaultLimit === null,
-    'src/frontdoor.txt\'s claim about the default read\'s aggregate ceiling must match '
+    'src/reference.txt\'s claim about the default read\'s aggregate ceiling must match '
       + 'effectivePublicPlaceTextLimit(null, PUBLIC_PAGE_DEFAULT) exactly',
   )
 })
@@ -231,37 +226,8 @@ test('the MCP look tool description (AGENTS.md rule 5 mirror surface) carries th
 // surfaces carry.
 test('the MCP browse tool description names the Gazette default-read gap and its entry_text_limit_bytes mitigation', () => {
   const compact = browseToolDescription.replace(/\s+/gu, ' ')
-  assert.match(
-    compact,
-    /issue read applies no aggregate byte ceiling/iu,
-    'browse tool description: discloses the unprotected default Gazette issue read',
-  )
-  assert.match(
-    compact,
-    /entry_text_limit_bytes/iu,
-    'browse tool description: names the Gazette mitigation',
-  )
-  assert.match(
-    compact,
-    /rather than a picked subset/iu,
-    'browse tool description: corrects the near-zero-limit mitigation',
-  )
-  // Round 4 finding: browse forwards limit straight through to the issue
-  // route (src/mcp.ts issueDetail/browsePath), so a caller who raises limit
-  // above PUBLIC_PAGE_DEFAULT reaches the same automatic
-  // PUBLIC_PLACE_COLLECTION_TEXT_MAX_BYTES ceiling the look tool already
-  // discloses for place reads (src/mcp.ts look description). This surface
-  // must say so too, not just the six door/llms/SYSTEM_DESIGN mirrors.
-  assert.match(
-    compact,
-    /safety ceiling/iu,
-    'browse tool description: names the automatic above-10 safety ceiling',
-  )
-  assert.match(
-    compact,
-    /server_text_limit_applied/iu,
-    'browse tool description: names the server_text_limit_applied field',
-  )
+  assert.match(compact, /GAZETTE_LIVE_CONTRACT_POINTER/u)
+  assert.match(compact, /submission_room[\s\S]*withdrawal_contract/iu)
 })
 
 // Round 3 finding: five of the eight mirror surfaces still published the

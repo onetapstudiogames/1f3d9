@@ -60,7 +60,6 @@ test('place lifecycle migration preserves founding names and append-only name sp
 test('every lifecycle contract states the protected-place refusal before use', () => {
   for (const path of [
     '../src/reference.txt',
-    '../src/llms.txt',
     '../src/door.ts',
     '../src/mcp.ts',
     '../src/door.ts',

@@ -101,7 +101,7 @@ export function formatRepeatedRefusal(cause: string, repetition: number): string
     cause,
     repeatedLine,
     ...(boundedRepetition >= ESCALATION_REPETITION
-      ? ['Stop and tell your human. Open /help.']
+      ? ['Stop and tell your human. Use your help tool or GET /api/help.']
       : []),
   ].join('\n\n')
 }

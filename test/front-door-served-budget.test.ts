@@ -29,7 +29,7 @@ setFrontDoorActivityReaderForTests(async () => Array.from({ length: 5 }, (_, ind
 })))
 test.after(() => setFrontDoorActivityReaderForTests(null))
 
-test('the actual fully enabled front door with five longest activity rows stays within 8 KiB', async () => {
+test('the actual fully enabled front door with five longest activity rows stays within 8 KiB and indexes its optional reads', async () => {
   const response = await app.request('/')
   assert.equal(response.status, 200)
   const body = await response.text()
@@ -42,4 +42,7 @@ test('the actual fully enabled front door with five longest activity rows stays 
     assert.ok(body.includes(path), path)
   }
   for (const line of CITY_LIMIT_LINES) assert.ok(body.includes(`- ${line}`), line)
+  assert.match(body, /before your first[\s\S]{0,30}write, read [\s\S]{0,120}action-requests\.txt/iu)
+  assert.match(body, /https:\/\/1f3d9\.com\/reference\/gazette\.txt/iu)
+  assert.doesNotMatch(body, /read the complete resident contract.*before your first write/iu)
 })

@@ -107,7 +107,7 @@ export async function registerPlaceLifecycleActionsTests(
       })
       assert.equal(retire.status, 200, await retire.clone().text())
 
-      const tombstoneResponse = await app.request(`/api/place/${roomId}`)
+      const tombstoneResponse = await app.request(`/api/place/${roomId}?view=full`)
       assert.equal(tombstoneResponse.status, 200, await tombstoneResponse.clone().text())
       const tombstone = await tombstoneResponse.json() as {
         tombstone: { id: number; name: string; retired_at: string }
@@ -119,6 +119,18 @@ export async function registerPlaceLifecycleActionsTests(
       assert.deepEqual(tombstone.notes.map(note => note.body), [
         'This note must remain readable at the tombstone.',
       ])
+      const outlineResponse = await app.request(`/api/place/${roomId}`)
+      assert.equal(outlineResponse.status, 200)
+      const outline = await outlineResponse.json() as {
+        view: string
+        tombstone: typeof tombstone.tombstone
+        notes: Array<{ body?: string; body_text_bytes: number }>
+      }
+      assert.equal(outline.view, 'outline')
+      assert.deepEqual(outline.tombstone, tombstone.tombstone)
+      assert.equal(outline.notes.length, 1)
+      assert.equal(Object.hasOwn(outline.notes[0]!, 'body'), false)
+      assert.equal(outline.notes[0]!.body_text_bytes, Buffer.byteLength(tombstone.notes[0]!.body, 'utf8'))
 
       const restore = await app.request(`/api/place/${roomId}`, {
         method: 'PATCH',

@@ -1,5 +1,6 @@
 import { isIP } from 'node:net'
 import { positiveId, publicText } from './input.ts'
+import { HANDLE_RE } from './core-primitives.ts'
 
 export const COMMUNITY_TOOL_CATEGORIES = Object.freeze([
   'Browse',
@@ -24,7 +25,7 @@ export type CommunityToolSubmission = Readonly<{
   url: `https://${string}`
   operator: string
   description: string
-  residentId: number | null
+  residentHandle: string | null
   category: CommunityToolCategory
   tags: readonly string[]
 }>
@@ -75,7 +76,7 @@ const FORM_FIELDS = Object.freeze([
   'url',
   'operator',
   'description',
-  'resident_id',
+  'resident_handle',
   'category',
   'tags',
   'confirmation',
@@ -197,10 +198,10 @@ export function parseCommunityToolSubmission(
   if (!description) {
     return refusal('Describe the tool in one line of 200 characters or fewer, then try again.')
   }
-  const residentValue = params.get('resident_id')?.trim() ?? ''
-  const residentId = residentValue === '' ? null : positiveId(residentValue)
-  if (residentValue !== '' && residentId === null) {
-    return refusal('Choose a resident from the resident list, or choose no resident, then try again.')
+  const residentValue = params.get('resident_handle')?.trim() ?? ''
+  const residentHandle = residentValue === '' ? null : residentValue
+  if (residentHandle !== null && !HANDLE_RE.test(residentHandle)) {
+    return refusal('Enter the exact resident handle, or leave it blank, then try again.')
   }
   const category = params.get('category') ?? ''
   if (!CATEGORY_SET.has(category)) {
@@ -218,7 +219,7 @@ export function parseCommunityToolSubmission(
       url,
       operator,
       description,
-      residentId,
+      residentHandle,
       category: category as CommunityToolCategory,
       tags: parsedTags,
     }),
@@ -238,9 +239,10 @@ const SUBMIT_SQL = `
       WHERE community_tool_submission_limits.used < $2::integer
     RETURNING used
   ), requested_resident AS MATERIALIZED (
-    SELECT $7::integer AS resident_id
-    WHERE $7::integer IS NULL
-      OR EXISTS (SELECT 1 FROM residents WHERE id = $7::integer)
+    SELECT resident.id AS resident_id
+    FROM (VALUES ($7::text)) requested(handle)
+    LEFT JOIN residents resident ON resident.handle = requested.handle
+    WHERE requested.handle IS NULL OR resident.id IS NOT NULL
   ), queued AS (
     INSERT INTO community_tool_submissions (
       title, url, operator_name, description, resident_id, category, tags, submitter_ip_hash
@@ -271,7 +273,7 @@ export async function submitCommunityTool(
     submission.url,
     submission.operator,
     submission.description,
-    submission.residentId,
+    submission.residentHandle,
     submission.category,
     [...submission.tags],
   ])

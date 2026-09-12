@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import { splitSqlStatements } from '../scripts/migrate.ts'
+import { REFERENCE } from '../src/door.ts'
 import { readDirTree as readDirTreeFrom } from './helpers/read-dir-tree.ts'
 
 const read = (relativePath: string) => readFileSync(
@@ -31,10 +32,7 @@ const prepaidSource = readIfPresent('../src/prepaid-credit.ts')
 const cityCreditSource = read('../src/city-credit.ts')
 const indexSource = read('../src/index.ts')
 const mcpSource = read('../src/mcp.ts')
-const frontDoor = read('../src/reference.txt')
-const llms = read('../src/llms.txt')
-const generatedDoor = read('../src/door.ts')
-const publishedFrontDoor = read('../src/reference.txt')
+const referenceSource = read('../src/reference.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const decisions = read('../docs/DECISIONS.md')
 const architecture = read('../docs/ARCHITECTURE.md')
@@ -215,7 +213,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
   const meToolEnd = mcpSource.indexOf("\n    name: '", meToolStart + 10)
   const meTool = mcpSource.slice(meToolStart, meToolEnd < 0 ? undefined : meToolEnd)
   assert.match(meTool, /pending gift/iu)
-  assert.match(meTool, /receipt/iu)
+  assert.match(meTool, /reference\/public-history\.txt/iu)
   assert.match(meTool, /before_gift_id/iu)
   assert.match(meTool, /gift_limit/iu)
 
@@ -390,10 +388,7 @@ test('all resident-facing contract mirrors carry the consultation promises', () 
     ['existing crypto rail', /x402|crypto/iu],
   ] as const) assert.match(fullContract, pattern, `decisions/system design: ${label}`)
 
-  for (const [name, text] of [
-    ['llms.txt', llms],
-    ['MCP descriptions', mcpSource],
-  ] as const) {
+  for (const [name, text] of [['reference source', referenceSource]] as const) {
     assert.match(text, /purchase/iu, `${name}: credit purchase`)
     assert.match(text, /whole dollar|exact dollar|no round|never round/iu, `${name}: exact units`)
     assert.match(text, /never expire|no expiry/iu, `${name}: no expiry`)
@@ -403,7 +398,7 @@ test('all resident-facing contract mirrors carry the consultation promises', () 
     assert.match(text, /receipt/iu, `${name}: durable receipts`)
     assert.match(text, /x402|crypto/iu, `${name}: existing crypto rail`)
   }
-  assert.match(llms, /gift redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu)
+  assert.match(referenceSource, /gift redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu)
   assert.match(systemDesign, /gift redirect[\s\S]{0,240}30[\s\S]{0,120}(?:caller|hour)/iu)
 
   assert.match(architecture, /append-only|durable[\s\S]{0,120}receipt/iu)
@@ -415,9 +410,8 @@ test('all resident-facing contract mirrors carry the consultation promises', () 
   assert.match(prd, /x402/iu)
 
   for (const [name, text] of [
-    ['front door', frontDoor],
-    ['generated door', generatedDoor],
-    ['published front door', publishedFrontDoor],
+    ['reference source', referenceSource],
+    ['generated reference', REFERENCE],
   ] as const) {
     assert.match(text, /purchase|\/buy/iu, `${name}: actionable prepaid credit`)
     assert.match(text, /gift[\s\S]{0,320}accept/iu, `${name}: gift acceptance`)

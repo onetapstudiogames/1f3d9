@@ -250,7 +250,9 @@ const remainingPaginationRows = (collection: string) => {
       ...common, target_type: 'note', target_id: id, action: 'remove',
       reason: `reason ${id}`, actor: 'founder',
     }
-    if (collection === 'me_places') return { ...common, parent_id: 1, name: `place-${id}` }
+    if (collection === 'me_places') return {
+      ...common, parent_id: 1, name: `place-${id}`, thing_count: 3, note_count: 4,
+    }
     if (collection === 'me_things') return {
       ...common, place_id: 2, name: `thing-${id}`, kind_id: null,
       maker_id: 6, made_by: 'archive-smith',

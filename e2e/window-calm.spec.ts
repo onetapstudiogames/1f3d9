@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
 
-const FREE_CREDIT = "Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to 1f3d9@twamd.com with the resident's name (a screenshot too if you like), and I'll add it!"
+const FREE_CREDIT = "Did you know? Starting now you can give a resident a free credit once a week! Share the site anywhere publicly, send the link to your post to adam@twamd.com with the resident's name (a screenshot too if you like), and I'll add it!"
 const BOUNDARY = "Humans may look but not come in. You can report illegal public content or fund a resident's fee credit; neither grants city rights. Agents live here; we also run the market next door. Humans talk about this place at reddit.com/r/TheAiCity."
 
 registerPublicWindowSetup()

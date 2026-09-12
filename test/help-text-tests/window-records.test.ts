@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FRONTDOOR, LLMS, decisions, frontdoor, frontdoorDocument, hostedSignin, llms, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, decisions, referenceSource, hostedSignin, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerWindowRecordsTests(): void {
   test('public help describes the human window combined search and flat numbered place picker', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /standalone search[\s\S]{0,220}places?[\s\S]{0,80}residents?/iu, `${name}: combined search`)
       assert.match(text, /results? list[\s\S]{0,100}(?:below|under)/iu, `${name}: separate results list`)
@@ -23,11 +20,8 @@ export function registerWindowRecordsTests(): void {
 
   test('public help states the enabled public-snapshot schedule', () => {
     for (const [name, text] of [
-      ['front door source', frontdoor],
-      ['front door documentation', frontdoorDocument],
-      ['generated front door', FRONTDOOR],
-      ['compact machine-map source', llms],
-      ['generated compact machine map', LLMS],
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /enabled[\s\S]{0,180}(?:daily[\s\S]{0,80}08:17 UTC|08:17 UTC[\s\S]{0,80}daily)/iu, name)
       assert.match(text, /17 8 \* \* \*/u, `${name}: cron expression`)
@@ -37,8 +31,7 @@ export function registerWindowRecordsTests(): void {
 
   test('public help explains bounded listings and how to continue into older public records', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /recent(?:-first)?[^\n]{0,120}10/iu, `${name}: default page size`)
@@ -53,8 +46,7 @@ export function registerWindowRecordsTests(): void {
     }
 
     for (const cursor of ['before_subplace_id', 'before_thing_id', 'before_note_id']) {
-      assert.ok(frontdoor.includes(cursor), `front door is missing ${cursor}`)
-      assert.ok(llms.includes(cursor), `compact machine map is missing ${cursor}`)
+      assert.ok(referenceSource.includes(cursor), `reference source is missing ${cursor}`)
       assert.ok(specification.includes(cursor), `specification is missing ${cursor}`)
     }
 
@@ -66,16 +58,14 @@ export function registerWindowRecordsTests(): void {
       'before_note_id',
       'before_offer_id',
     ]) {
-      assert.ok(frontdoor.includes(cursor), `front door is missing /api/me cursor ${cursor}`)
-      assert.ok(llms.includes(cursor), `compact machine map is missing /api/me cursor ${cursor}`)
+      assert.ok(referenceSource.includes(cursor), `reference source is missing /api/me cursor ${cursor}`)
       assert.ok(specification.includes(cursor), `specification is missing /api/me cursor ${cursor}`)
     }
   })
 
   test('public help states the complete resident census contract', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /\/api\/residents/u, `${name}: resident census route`)
@@ -97,8 +87,7 @@ export function registerWindowRecordsTests(): void {
 
   test('Wave 1 size, omission, writer-meter, and input-error truths stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       for (const field of [
@@ -125,15 +114,14 @@ export function registerWindowRecordsTests(): void {
 
   test('Wave 2 lightweight room, passive look, and compatibility truths stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /view=outline|`view=outline`/iu, `${name}: outline choice`)
       assert.match(text, /view=full|`view=full`/iu, `${name}: full compatibility choice`)
       assert.match(text, /body_text_bytes/iu, `${name}: thing body size`)
-      assert.match(text, /official[^\n]{0,80}look[^\n]{0,120}(?:defaults|uses)[^\n]{0,80}(?:view=outline|`view=outline`)/iu, `${name}: official lightweight default`)
-      assert.match(text, /(?:raw HTTP|HTTP place)[^\n]{0,100}(?:defaults|default)[^\n]{0,100}(?:view=full|`view=full`|legacy full)|(?:view=full|`view=full`)[^\n]{0,100}(?:legacy|compatib)/iu, `${name}: raw compatibility default`)
+      assert.match(text, /raw (?:HTTP )?place reads?[\s\S]{0,60}defaults? to (?:`?view=)?outline/iu, `${name}: raw lightweight default`)
+      assert.match(text, /view=full|`view=full`/iu, `${name}: explicit full compatibility`)
       assert.match(
         text,
         /enter(?:ing|s)?[^\n]{0,100}interact(?:ing|s)?[^\n]{0,100}check(?:ing|s)?[^\n]{0,40}(?:`?me`?)[^\n]{0,100}(?:due )?timers?/iu,

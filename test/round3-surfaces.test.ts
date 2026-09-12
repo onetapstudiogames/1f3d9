@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { renderCityFactTokens } from '../src/city-facts.ts'
 import { FRONTDOOR, LLMS, REFERENCE } from '../src/door.ts'
+import { renderReferenceSectionIndex } from '../src/reference-sections.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const normalize = (value: string) => value.replace(/\r\n/gu, '\n')
@@ -14,14 +15,13 @@ const reference = read('../src/reference.txt')
 const publicSurfaces = [
   ['full reference', reference],
   ['generated full reference', REFERENCE],
-  ['compact map', llms],
-  ['generated compact map', LLMS],
 ] as const
 
 test('the published front-door fence exactly mirrors its source', () => {
   const match = normalize(published).match(/```\n([\s\S]*?)\n```/u)
   assert.ok(match, 'published front door has no fenced source mirror')
-  assert.equal(match[1], normalize(renderCityFactTokens(frontdoor)).trimEnd())
+  assert.equal(match[1], normalize(renderCityFactTokens(frontdoor)
+    .replace('{{REFERENCE_SECTION_INDEX}}', renderReferenceSectionIndex())).trimEnd())
 })
 
 test('raw authoring and edit contracts state examples, normalization, limits, and locks', () => {

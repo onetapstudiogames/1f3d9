@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
-import { LLMS, REFERENCE as FRONTDOOR } from '../src/door.ts'
+import { FRONTDOOR, LLMS, REFERENCE_SECTIONS } from '../src/door.ts'
 import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,
@@ -24,12 +24,7 @@ test('feature-off discovery does not advertise the unavailable hosted connector'
     assert.doesNotMatch(output, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu, name)
     assert.match(output, /hosted connector[^.]*unavailable on this deployment/iu, name)
     assert.match(output, /(?:read (?:this|the) front door|watch \/window)/iu, name)
-    assert.match(output, /do not (?:add|create|repair) (?:a |the )?connector/iu, name)
-    assert.match(
-      output,
-      /Hosted chat without Developer Mode[\s\S]{0,240}cannot add[\s\S]{0,180}watch \/window[\s\S]{0,180}\/join/iu,
-      name,
-    )
+    assert.match(output, /do not add or repair a connector/iu, name)
   }
 })
 
@@ -38,16 +33,10 @@ test('recovery-off discovery does not advertise an unavailable browser route', (
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],
     ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, true)],
   ] as const) {
-    assert.equal(output.includes('/recovery'), false, name)
+    assert.equal(output.includes('/api/recovery'), false, name)
     assert.equal(output.includes('/join'), true, name)
     assert.equal(output.includes('/rotate'), true, name)
-    assert.match(
-      output,
-      /Recovery stays browser-only and is never an MCP tool; no recovery page is enabled on this deployment/iu,
-      name,
-    )
-    assert.match(output, /permanent (?:resident )?keys? never/iu, name)
-    assert.match(output, /Every enabled first-party identity or sign-in (?:door|GET)/iu, name)
+    assert.doesNotMatch(output, /Browser clients use[^.]*\/recovery/iu, name)
   }
 })
 
@@ -56,15 +45,10 @@ test('rotation-off discovery strips only unavailable replacement guidance', () =
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, false)],
     ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, false)],
   ] as const) {
-    assert.equal(output.includes('/rotate'), false, name)
+    assert.equal(output.includes('/api/rotate'), false, name)
     assert.equal(output.includes('/join'), true, name)
     assert.equal(output.includes('/recovery'), true, name)
-    assert.match(
-      output,
-      /Rotation stays browser-only and is never an MCP tool; no rotation page is enabled on this deployment/iu,
-      name,
-    )
-    assert.match(output, /Every enabled first-party identity or sign-in (?:door|GET)/iu, name)
+    assert.doesNotMatch(output, /Browser clients use[^.]*\/rotate/iu, name)
   }
 })
 
@@ -81,7 +65,7 @@ test('rotation-off discovery removes the whole coding-client JSON-door paragraph
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', true, false)],
     ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', true, false)],
   ] as const) {
-    assert.equal(output.includes('/rotate'), false, name)
+    assert.equal(output.includes('/api/rotate'), false, name)
     assert.equal(
       output.includes('Voluntary root-key replacement, when enabled, works the same way'),
       false,
@@ -97,7 +81,7 @@ test('recovery-off discovery removes the whole coding-client JSON-door paragraph
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],
     ['llms.txt', hostedChatDiscovery(LLMS, { ready: false }, 'llms', false, true)],
   ] as const) {
-    assert.equal(output.includes('/recovery'), false, name)
+    assert.equal(output.includes('/api/recovery'), false, name)
     assert.equal(
       output.includes('Lost-key recovery, when enabled, works the same way'),
       false,
@@ -111,16 +95,16 @@ test('recovery and rotation discovery gates are independent', () => {
   for (const document of ['frontdoor', 'llms'] as const) {
     const source = document === 'frontdoor' ? FRONTDOOR : LLMS
     const neither = hostedChatDiscovery(source, { ready: false }, document, false, false)
-    assert.equal(neither.includes('/recovery'), false, document)
-    assert.equal(neither.includes('/rotate'), false, document)
+    assert.equal(neither.includes('/api/recovery'), false, document)
+    assert.equal(neither.includes('/api/rotate'), false, document)
 
     const rotationOnly = hostedChatDiscovery(source, { ready: false }, document, false, true)
-    assert.equal(rotationOnly.includes('/recovery'), false, document)
-    assert.equal(rotationOnly.includes('/rotate'), true, document)
+    assert.equal(rotationOnly.includes('/api/recovery'), false, document)
+    assert.match(rotationOnly, /Browser clients use[^.]*\/rotate/iu, document)
 
     const recoveryOnly = hostedChatDiscovery(source, { ready: false }, document, true, false)
-    assert.equal(recoveryOnly.includes('/recovery'), true, document)
-    assert.equal(recoveryOnly.includes('/rotate'), false, document)
+    assert.match(recoveryOnly, /Browser clients use[^.]*\/recovery/iu, document)
+    assert.equal(recoveryOnly.includes('/api/rotate'), false, document)
   }
 })
 
@@ -148,7 +132,36 @@ test('coding-identity-doors-on discovery still advertises the four flag-gated JS
   ] as const) {
     assert.match(output, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/register/iu, name)
     assert.match(output, /POST\s+(?:https:\/\/1f3d9\.com)?\/api\/pair/iu, name)
+    assert.match(output, /Identity routes are never MCP tools/iu, name)
   }
+})
+
+test('reference sections bind deployment readiness without losing their stable address', () => {
+  const disabledIdentity = hostedChatDiscovery(
+    REFERENCE_SECTIONS['coding-identity'],
+    { ready: false },
+    'reference',
+    false,
+    false,
+    false,
+    false,
+  )
+  assert.match(disabledIdentity, /^CODING-CLIENT IDENTITY DOORS/mu)
+  assert.match(disabledIdentity, /unavailable on this deployment/iu)
+  assert.match(disabledIdentity, /never MCP tools/iu)
+  assert.doesNotMatch(disabledIdentity, /POST \/api\/(?:register|rotate|recovery|pair)/u)
+
+  const readyCityDoors = hostedChatDiscovery(
+    REFERENCE_SECTIONS['city-doors'],
+    { ready: true, origin: PREVIEW_ORIGIN },
+    'reference',
+    true,
+    true,
+    true,
+    true,
+  )
+  assert.ok(readyCityDoors.includes(PREVIEW_ORIGIN))
+  assert.equal(readyCityDoors.includes('https://1f3d9.com'), false)
 })
 
 test('the coding-identity-doors flag defaults off and is independent of the other identity flags', () => {
@@ -159,8 +172,8 @@ test('the coding-identity-doors flag defaults off and is independent of the othe
 
     const doorsOnlyOn = hostedChatDiscovery(source, { ready: false }, document, false, false, false, true)
     assert.equal(doorsOnlyOn.includes('/api/register'), true, document)
-    assert.equal(doorsOnlyOn.includes('/recovery'), false, document)
-    assert.equal(doorsOnlyOn.includes('/rotate'), false, document)
+    assert.equal(doorsOnlyOn.includes('/api/recovery'), false, document)
+    assert.equal(doorsOnlyOn.includes('/api/rotate'), false, document)
   }
 })
 
@@ -176,64 +189,13 @@ test('feature-on discovery points at the exact safe PUBLIC_ORIGIN', () => {
     ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true)],
     ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true, true)],
   ] as const) {
-    assert.match(output, /compatible hosted chats/iu, name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp/connect`), name)
     assert.ok(output.includes(`${PREVIEW_ORIGIN}/mcp`), name)
-    assert.ok(output.includes(`${PREVIEW_ORIGIN}/join`), name)
-    assert.ok(output.includes(`${PREVIEW_ORIGIN}/recovery`), name)
-    assert.ok(output.includes(`${PREVIEW_ORIGIN}/rotate`), name)
-    assert.match(
-      output,
-      /read (?:the|this) (?:live |plain-text )?front door[\s\S]{0,180}\bfront_door\b[\s\S]{0,100}(?:connector|tool)[\s\S]{0,180}https:\/\/signin-preview\.example\.test\/[\s\S]{0,120}(?:if|when)[^\n.]{0,100}(?:client|host)[^\n.]{0,100}open URLs?/iu,
-      `${name}: connector-first front door read`,
-    )
-    assert.match(
-      output,
-      /(?:\bofficial_facts\b[\s\S]{0,180}\/api\/official|\/api\/official[\s\S]{0,180}\bofficial_facts\b)/iu,
-      `${name}: connector-native official facts`,
-    )
-    assert.match(
-      output,
-      /(?:\bphysics\b[\s\S]{0,180}\/api\/physics|\/api\/physics[\s\S]{0,180}\bphysics\b)/iu,
-      `${name}: connector-native physics`,
-    )
-    assert.match(output, /browser sign-in/iu, name)
-    assert.match(output, /never paste (?:a |your )?resident key into chat/iu, name)
-    assert.match(output, /(?:local|key-capable) clients/iu, name)
-    assert.match(output, /nothing (?:needs to be|is) downloaded/iu, name)
-    assert.match(output, /guide (?:the )?human/iu, name)
-    assert.match(output, /chatgpt/iu, name)
-    assert.ok(
-      output.includes('https://developers.openai.com/plugins/deploy/connect-chatgpt'),
-      `${name}: official OpenAI connect guide leads`,
-    )
-    assert.match(output, /official connect guide/iu, name)
-    assert.match(output, /security and login/iu, name)
-    assert.match(output, /developer mode/iu, name)
-    assert.match(output, /chatgpt plugins/iu, name)
-    assert.doesNotMatch(output, /advanced settings|scan tools/iu, name)
-    assert.match(output, /claude/iu, name)
-    assert.match(output, /add custom connector/iu, name)
-    assert.match(output, /organization settings\s*->\s*connectors\s*->\s*add\s*->\s*custom\s*->\s*web/iu, name)
-    assert.match(output, /members?[^\n]*customize\s*->\s*connectors[^\n]*connect/iu, name)
-    assert.match(output, /menu names can change/iu, name)
-    assert.match(output, /official (?:custom-)?connector (?:instructions|documentation)/iu, name)
-    assert.match(output, /review (?:each )?tool permission/iu, name)
-    assert.match(
-      output,
-      /tools\s+ever\s+look[^.]{0,120}(?:out of date|stale|outdated)[\s\S]{0,200}remove\s+the\s+connector\s+completely[^.]{0,160}add\s+it\s+again/iu,
-      `${name}: stale connector tool-list remedy reaches the agent`,
-    )
-    assert.doesNotMatch(
-      output,
-      /It may read https:\/\/signin-preview\.example\.test\/ and watch https:\/\/signin-preview\.example\.test\/window\. A human/iu,
-      `${name}: no unconditional URL-only fallback`,
-    )
-    assert.match(
-      output,
-      /cannot add (?:the (?:city )?)?connector[\s\S]{0,180}read (?:https:\/\/signin-preview\.example\.test\/|the front door)[\s\S]{0,180}only if (?:its|the) host can open (?:those )?URLs/iu,
-      `${name}: unavailable host names the URL capability gate`,
-    )
+    assert.match(output, /account controls vary/iu, name)
+    assert.match(output, /September 10, 2026/iu, name)
+    assert.match(output, /reuse a matching connector/iu, name)
+    assert.match(output, /names another client, cancel and restart/iu, name)
+    assert.match(output, /ten-minute single-use code from connect chat/iu, name)
     assert.equal(output.includes('https://1f3d9.com/mcp/connect'), false, name)
     assert.equal(output.includes('https://1f3d9.com/join'), false, name)
     assert.equal(output.includes('https://1f3d9.com/recovery'), false, name)
@@ -451,8 +413,8 @@ test('a ready connector is advertised on both public discovery routes', () => {
   assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/mcp/connect`))
   assert.ok(probe.joinText.includes('https://1f3d9.com/mcp/connect'))
   assert.ok(probe.setupText.includes('https://1f3d9.com/mcp/connect'))
-  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/recovery`))
-  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/recovery`))
-  assert.ok(probe.frontText.includes(`${PREVIEW_ORIGIN}/rotate`))
-  assert.ok(probe.llmsText.includes(`${PREVIEW_ORIGIN}/rotate`))
+  assert.match(probe.frontText, /Browser clients use[^.]*\/recovery/iu)
+  assert.match(probe.llmsText, /Browser clients use[^.]*\/recovery/iu)
+  assert.match(probe.frontText, /Browser clients use[^.]*\/rotate/iu)
+  assert.match(probe.llmsText, /Browser clients use[^.]*\/rotate/iu)
 })

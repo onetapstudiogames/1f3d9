@@ -165,6 +165,9 @@ export function respondToDatabaseStage6(
   if (q.includes('society:place-gift-lock-children')) return []
   if (q.includes('update places set'))
     return fixtureState.current.actorId === fixtureState.current.placeOwnerId ? [{ ...placeRow(2, 1), description: 'changed by its owner' }] : []
+  if (q.includes('/* public:me_places */')) {
+    return [{ ...placeRow(2, 1), thing_count: 3, note_count: 4 }]
+  }
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [selectedPlacePermission(placeRow(2, 1), q)]
   }

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { decisions, drawingDesign, frontdoor, llms, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { decisions, drawingDesign, referenceSource, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerDrawingsAndLiveReadingTests(): void {
   test('drawing, feed, and snapshot contracts stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
       ['drawing design', drawingDesign],
     ] as const) {
@@ -48,8 +47,7 @@ export function registerDrawingsAndLiveReadingTests(): void {
 
   test('the standalone Live page and window links stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['system design', specification],
       ['drawing and Live design', drawingDesign],
     ] as const) {
@@ -63,8 +61,7 @@ export function registerDrawingsAndLiveReadingTests(): void {
 
   test('Wave 9 complete names and bounded window truths stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /\/api\/window\?view=directory/iu, `${name}: directory route`)
@@ -115,8 +112,7 @@ export function registerDrawingsAndLiveReadingTests(): void {
 
   test('Wave 3 room text limits, strict omissions, and continuation truths stay aligned', () => {
     for (const [name, text] of [
-      ['front door', frontdoor],
-      ['compact machine map', llms],
+      ['reference source', referenceSource],
       ['specification', specification],
     ] as const) {
       assert.match(text, /description_text_bytes/iu, `${name}: child description size`)

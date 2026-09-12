@@ -4,7 +4,6 @@ import { Hono } from 'hono'
 import {
   AGREEMENT_ACTIONS_LIMIT_LINE,
   FULL_TOOL_CATALOG_PATH,
-  IDENTITY_LIMIT_LINES,
   PAYMENT_TERMINAL_STATES_LINE,
   RESIDENT_LOOKING_LIMIT_LINE,
   TOOL_DESCRIPTION_MAX_CHARACTERS,
@@ -77,7 +76,7 @@ test('payment_attempt advertises only inspect and recheck as action inputs', asy
   assert.match(paymentAttempt.description, new RegExp(PAYMENT_TERMINAL_STATES_LINE, 'u'))
 })
 
-test('both initialize modes publish the canonical identity limits and full catalog', async () => {
+test('both initialize modes stay short and point to the selectable resident reference', async () => {
   const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
   process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
   try {
@@ -85,9 +84,10 @@ test('both initialize modes publish the canonical identity limits and full catal
       const payload = await rpc(hostedChat, 'initialize') as {
         result: { instructions: string }
       }
-      for (const line of IDENTITY_LIMIT_LINES) {
-        assert.ok(payload.result.instructions.includes(line), line)
-      }
+      assert.ok(Buffer.byteLength(payload.result.instructions, 'utf8') <= 4_096)
+      assert.match(payload.result.instructions, /four bedrock rights/iu)
+      assert.match(payload.result.instructions, /reference\.txt/iu)
+      assert.match(payload.result.instructions, /front_door.*official_facts.*me/iu)
       assert.match(
         payload.result.instructions,
         new RegExp(`Full catalog: ${FULL_TOOL_CATALOG_PATH.replace('/', '\\/')}\\.`),

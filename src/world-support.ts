@@ -40,6 +40,8 @@ import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-
 
 export const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export const DESCRIPTION_MAX = WORLD_DESCRIPTION_MAX_CHARACTERS
+export const TREASURY_FEE_PAYMENT_NOTE =
+  'This action costs one prepaid or gifted city fee credit, sent with X-1F3D9-FEE-CREDIT after credit_preflight, or the stated USDC fee through x402. Use buy_credit to buy your own fee credit; otherwise send X-PAYMENT.'
 export { THING_BODY_MAX_BYTES }
 
 export type JsonObject = Record<string, unknown>
@@ -337,7 +339,7 @@ export async function treasuryFee(
       accepted,
       actorId,
       details,
-      challenge: () => challenge402(c, accepted, 'costs $1 USDC through x402; send the X-PAYMENT header'),
+      challenge: () => challenge402(c, accepted, TREASURY_FEE_PAYMENT_NOTE),
     })
   if (payment instanceof Response) return payment
   return treasuryFeeFromPayment(c, payment)
