@@ -67,7 +67,7 @@ export function registerOfficialAndFlagsTests(): void {
     assert.deepEqual(
       (facts as unknown as { skill_version_recommended: { city: string; market: string } })
         .skill_version_recommended,
-      { city: '1.9.6', market: '2.4.3' },
+      { city: '1.9.7', market: '2.4.3' },
     )
 
     const [events, residents, treasury] = await Promise.all([

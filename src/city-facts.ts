@@ -81,7 +81,7 @@ export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 8 * 1_024
 
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.9.6',
+  city: '1.9.7',
   market: '2.4.3',
 })
 
