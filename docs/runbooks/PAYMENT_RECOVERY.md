@@ -1,5 +1,7 @@
 # Payment recovery operator runbook
 
+Status: current.
+
 Next action: run the read-only preflight only after the Wave 15 release is ready.
 
 The command is dry-run-first. It reads fresh production facts and Base finality,

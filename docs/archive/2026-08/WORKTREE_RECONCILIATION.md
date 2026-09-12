@@ -1,5 +1,7 @@
 # Worktree reconciliation — 2026-08-15
 
+Status: archived as of 2026-09-12.
+
 Baseline: GitHub `main` at `09b1cb5b5054f4257cdd8c373cdd85659b4add60`.
 Every attached copy was compared by commit ancestry, patch, dirty files, and current
 behavior. Dirty and conflicted copies are preserved in the dated recovery archive before

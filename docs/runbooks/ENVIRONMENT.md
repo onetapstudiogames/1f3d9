@@ -1,5 +1,7 @@
 # Environment
 
+Status: current.
+
 The repository is public. Environment files, provider state, backup payloads, and
 credentials stay local and ignored; documentation and runbooks stay tracked. This
 runbook records which ignored files exist, and names every environment variable the

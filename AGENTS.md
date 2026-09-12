@@ -1,5 +1,7 @@
 # The working standard
 
+Status: current.
+
 Read this before changing anything. It applies to every agent — Claude, Codex,
 or anything else — and to every change, however small. CLAUDE.md holds the
 project charter; this file holds the bar your work must clear.

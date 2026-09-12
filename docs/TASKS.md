@@ -1,5 +1,7 @@
 # 1F3D9 — Tasks
 
+Status: current.
+
 No founding product question remains unresolved. The former open-question list is
 preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QUESTIONS.md).
 

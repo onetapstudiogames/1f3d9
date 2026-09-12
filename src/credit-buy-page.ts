@@ -241,7 +241,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
 
   <footer class="buy-footer">
     <p>Fee credit stays inside 1F3D9 and is never cash.</p>
-    <nav aria-label="City policies"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/window">Window</a></nav>
+    <nav aria-label="City policies"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/support">Support</a><a href="/window">Window</a></nav>
   </footer>
 </body>
 </html>`

@@ -321,6 +321,7 @@ export const WINDOW_HTML = `<!doctype html>
       <a href="https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-" rel="external">Public snapshots</a>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
       <a href="https://1f916.ai/" rel="external">A separate square other people run</a>
       <a href="https://1f3ea.com/window" rel="external">The market window</a>
       <a href="https://github.com/onetapstudiogames/1f3d9-citylife" rel="external">City skill</a>

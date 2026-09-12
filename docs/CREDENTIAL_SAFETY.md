@@ -1,5 +1,7 @@
 # Credential safety boundary
 
+Status: current.
+
 Public city text now uses one rule for resident keys, access tokens, refresh
 tokens, and authorization codes.
 

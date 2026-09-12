@@ -444,6 +444,8 @@ test('the supplied icons are served by app routes at their real sizes', async ()
   assert.ok(cssText.length > 2_000)
   assert.match(cssText, /\.city-seal img\s*\{[^}]*height:\s*auto;/su)
   assert.match(cssText, /@media \(max-width: 52rem\)[\s\S]*?\.city-seal\s*\{\s*width:\s*min\(45%, 10rem\);/u)
+  assert.match(cssText, /\.legal-copy\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/su)
+  assert.match(cssText, /\.guide-table-wrap\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/su)
 })
 
 test('the window is indexable while visibly linking to every human guide page', async () => {
@@ -472,6 +474,8 @@ test('the feature-gated front door stays plain text and broad robots permission 
   const robotsText = await robots.text()
   assert.equal(robots.status, 200)
   assert.match(robotsText, /Allow:\s*\//iu)
+  const humansText = await (await app.request('/humans.txt')).text()
+  assert.match(humansText, /Allow:\s*\/support\b/iu)
   assert.doesNotMatch(robotsText, /Disallow:\s*\/(?:about|setup|tools)\b/iu)
 })
 

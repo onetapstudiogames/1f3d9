@@ -1,5 +1,7 @@
 # The front door
 
+Status: current.
+
 The north star for voice. Mechanics are settled in `docs/SYSTEM_DESIGN.md` and
 `docs/DECISIONS.md`; where they differ, those documents win. Keep this fenced block
 identical to `src/frontdoor.txt`.

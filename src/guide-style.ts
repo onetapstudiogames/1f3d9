@@ -315,6 +315,15 @@ code { overflow-wrap: anywhere; }
 .code-block { position: relative; margin: 1rem 0; }
 .code-label { display: block; width: fit-content; padding: 0.25rem 0.5rem; color: var(--paper-light); background: var(--brick); font: 800 0.62rem/1.3 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var(--ink); border: 3px solid var(--forest); font-size: 0.76rem; line-height: 1.65; overflow-x: auto; }
+.legal-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.treasury-page dl { display: grid; grid-template-columns: minmax(10rem, 0.5fr) minmax(0, 1fr); gap: 0.65rem 1.25rem; }
+.treasury-page dt { font-weight: 850; }
+.treasury-page dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.treasury-page .guide-section > div { min-width: 0; }
+.guide-table-wrap { max-width: 100%; overflow-x: auto; }
+.guide-table-wrap table { width: 100%; min-width: 48rem; border-collapse: collapse; background: var(--paper-light); }
+.guide-table-wrap th, .guide-table-wrap td { padding: 0.65rem 0.75rem; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.guide-table-wrap th { color: var(--paper-light); background: var(--forest); }
 .plain-note { margin-top: 1rem; padding: 0.9rem 1rem; background: var(--paper-light); border-inline-start: 0.35rem solid var(--signal); }
 
 .success-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.55fr); gap: 2rem; padding: clamp(1.5rem, 4vw, 3rem); color: var(--paper-light); background: var(--forest); border: 4px solid var(--ink); box-shadow: 0.7rem 0.7rem 0 var(--stone); }
@@ -368,6 +377,8 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
   .guide-footer { grid-template-columns: minmax(0, 1fr); }
   .guide-footer nav { justify-content: start; }
   .guide-footer .operator { grid-column: 1; }
+  .treasury-page dl { grid-template-columns: minmax(0, 1fr); }
+  .treasury-page dd + dt { margin-top: 0.65rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

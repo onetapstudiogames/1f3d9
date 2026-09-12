@@ -1,5 +1,7 @@
 # Invariants — check every change against this list
 
+Status: current.
+
 These are the properties of the city that no change may bend without a locked
 decision row first. Each line says where the invariant is defined or enforced;
 this file is a checklist, not a second definition — when wording differs, the

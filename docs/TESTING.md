@@ -1,5 +1,7 @@
 # How the test harness works
 
+Status: current.
+
 Four layers, each catching what the previous one cannot. A maintainer adding a
 feature should know which layers their change needs before writing it.
 

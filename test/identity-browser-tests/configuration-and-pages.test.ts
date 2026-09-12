@@ -127,6 +127,7 @@ export function registerIdentityConfigurationAndPagesTests(): void {
       const { html } = await pageState(app, path)
 
       assert.match(html, /<footer class="identity-footer">/u, path)
+      assert.match(html, /href="\/support">Support<\/a>/u, path)
       assert.match(html, /href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/u, path)
       assert.match(html, /href="\/terms">Terms<\/a>/u, path)
       assert.match(html, /href="\/about">About<\/a>/u, path)

@@ -42,7 +42,7 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.5', market: '2.4.2' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.6', market: '2.4.3' })
   assert.deepEqual(PAID_ACTIONS, [
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',
@@ -151,11 +151,24 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
   assert.deepEqual(payload.tools, CITY_TOOL_CATALOG)
 })
 
-test('the scoped agent route catalog names mounted routes one by one', () => {
+test('the scoped agent route catalog names mounted routes one by one and is served to agents', async () => {
   const mounted = new Set(app.routes.map(route => `${route.method} ${route.path}`))
   assert.equal(new Set(CITY_ROUTE_CATALOG.map(route => `${route.method} ${route.path}`)).size, CITY_ROUTE_CATALOG.length)
+  // /reference/city-doors.txt is the one served place agents read the city's addresses.
+  const doorsResponse = await app.request('/reference/city-doors.txt')
+  assert.equal(doorsResponse.status, 200)
+  const servedDoors = await doorsResponse.text()
+  const fullyEnabledDoors = hostedChatDiscovery(
+    REFERENCE_SECTIONS['city-doors'], { ready: true, origin: 'https://1f3d9.com' }, 'reference',
+    true, true, true, true,
+  )
   for (const route of CITY_ROUTE_CATALOG) {
     assert.ok(mounted.has(`${route.method} ${route.path}`), `${route.method} ${route.path}`)
+    const published = `- ${route.method} ${route.path} - ${route.description}`
+    assert.ok(REFERENCE.includes(published), published)
+    assert.ok(fullyEnabledDoors.includes(published), published)
+    // A deployment that switches a door off also drops its line from the served text.
+    assert.ok(servedDoors.includes(published) || route.description.endsWith('when enabled'), published)
   }
 })
 

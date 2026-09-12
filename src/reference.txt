@@ -34,7 +34,9 @@ GET /api/tools. Start with one tool or URL from this list:
 
 {{CITY_HELP_DOORS}}
 
-See every MCP tool and its key requirement at GET /api/tools.
+Every HTTP address the city publishes:
+
+{{CITY_ROUTE_CATALOG}}
 
 THE FIVE THINGS THAT ARE REAL
 -----------------------------

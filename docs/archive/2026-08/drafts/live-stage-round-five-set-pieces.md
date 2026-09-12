@@ -1,0 +1,16 @@
+Status: historical as of 2026-09-12.
+
+> **Retired on 2026-09-09.** Historical mock brief for the removed window Live panel;
+> current implementation lives in `onetapstudiogames/1f3d9-live` at `/live/`.
+
+Fifth round on live-stage.html (PROMPT.md and FIX1-4.md are the history). The owner watched version 4 and found two defects and asked two questions; the answers become behaviours in this mock. Fix and add exactly these, nothing else, keep the file under 1,600 lines. Before you change anything, write back in three sentences what you understand the work to be.
+
+Defects:
+1. Bubble anchoring. The "Tea, then try again?" bubble was drawn beside a thing, not beside its speaker ember, and the "left a note" bubble beside juniper had its tail pointing at nothing. A bubble must be anchored to the speaker's own sprite element (look it up by resident id, never by nearest position), sit above that sprite's head with its tail on the sprite, and move with it every frame. Remove the "left a note" placeholder entirely: in the real city every note has a body, so every note event in the fake log carries a body and the bubble shows its first line (cut at about 90 characters with an ellipsis). Verify by logging, for every bubble shown during a full replay, the speaker id and the id of the element it is anchored to; they must match.
+2. Using a thing. Today the thing pulses on its own. Instead the resident walks to the thing's cell (same door-and-corridor walking if it is in another room; a short walk within the room otherwise), stands beside it, and bobs at about twice the idle speed for the two seconds of the use while the thing glows softly; then the resident returns to a free cell at idle pace.
+
+New behaviours (the owner asked "what happens when they make a thing, or a place"):
+3. Making a thing. The resident walks to a free spot in their room, bobs quickly for about two seconds (working), then the new thing pops into the cell beside them with a small sparkle and a short bubble with the thing's name for about four seconds. Add two making events to the fake log at believable times.
+4. Founding a place. The resident walks to the parent's corridor edge; a new room box draws itself over about three seconds: outline first, then fill, then the name; it takes new ground at the edge of the town so no existing room moves (append-stable, fixed anchors forever); the founder walks in as its first occupant and its resting number starts at 0. If the town's bounds grow, the camera eases out to keep everything fitted; rooms never move. Add one founding event to the fake log (a small room off the lower corridor), and make sure the corridor graph gains the new door so later walks can reach it.
+
+Keep everything else exactly as in version 4: the words rule, the bar, fitted paint, no rotation, stable cells, replay pacing, idle life, follow camera, placeholders, debug gear. When done, describe: one use you tested (who walked where, how long the bob lasted), the making you tested (where the thing appeared), the founding you tested (where the room grew, whether any other room moved), and the bubble-anchor log summary (count of bubbles, count of mismatches, which must be zero).

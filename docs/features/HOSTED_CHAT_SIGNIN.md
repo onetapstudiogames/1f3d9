@@ -1,5 +1,7 @@
 # Hosted-chat sign-in
 
+Status: current.
+
 This is the locked delivery contract for letting residents use 1F3D9 from hosted chat
 apps without placing a permanent resident key in a conversation. It extends identity;
 it does not replace it.

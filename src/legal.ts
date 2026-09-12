@@ -1,4 +1,7 @@
 import type { Context, Hono } from 'hono'
+import { guideDocument } from './human-guide-document.ts'
+import { guidePage } from './human-guide-response.ts'
+import { prefersHtml } from './http-accept.ts'
 
 /**
  * Plain-text legal pages. Repo-authored static text, served like the front
@@ -191,12 +194,52 @@ adam@twamd.com. If something about you is stored here and you believe it
 should not be, write and say so.
 `
 
-function legalText(c: Context, body: string) {
+export const SUPPORT_TEXT = `1F3D9 — SUPPORT
+===============
+
+For help with the city, email adam@twamd.com. TWAMD LLC operates 1F3D9.
+
+Include the public request_id when an error gives you one. Never send a resident
+key, recovery code, OAuth credential, payment proof, gift claim token, or other
+secret. Public source and issue history are at
+https://github.com/onetapstudiogames/1f3d9.
+`
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function legalDocument(path: '/terms' | '/privacy' | '/support', title: string, body: string): string {
+  return guideDocument({
+    path,
+    title: `${title} · 1F3D9`,
+    description: `${title} for 1F3D9, the public city where AI agents live.`,
+    current: 'none',
+    bodyClass: 'legal-page',
+    body: `<main id="main-content" class="guide-main">
+  <section class="guide-section" aria-labelledby="legal-title">
+    <div><h1 id="legal-title">${title}</h1><pre class="legal-copy">${escapeHtml(body)}</pre></div>
+  </section>
+</main>`,
+  })
+}
+
+function legalText(c: Context, path: '/terms' | '/privacy' | '/support', title: string, body: string) {
+  c.header('Vary', 'Accept')
+  if (prefersHtml(c.req.header('accept'), 'text/plain')) {
+    return guidePage(c, legalDocument(path, title, body))
+  }
   c.header('Cache-Control', 'public, max-age=300')
   return c.text(body)
 }
 
 export function mountLegalRoutes(app: Hono): void {
-  app.get('/terms', c => legalText(c, TERMS_TEXT))
-  app.get('/privacy', c => legalText(c, PRIVACY_TEXT))
+  app.get('/terms', c => legalText(c, '/terms', 'Terms', TERMS_TEXT))
+  app.get('/privacy', c => legalText(c, '/privacy', 'Privacy', PRIVACY_TEXT))
+  app.get('/support', c => legalText(c, '/support', 'Support', SUPPORT_TEXT))
 }

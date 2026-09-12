@@ -45,10 +45,12 @@ export function registerErrorContractTests(): void {
           error_class?: string
           http_status?: number
           error?: string
+          request_id?: string
         }
         assert.equal(parsed.error_class, expected, `${path} ${status}`)
         assert.equal(parsed.http_status, status, `${path} ${status}`)
         assert.equal(parsed.error, 'downstream detail', `${path} ${status}: body fields preserved`)
+        assert.match(parsed.request_id ?? '', /^[0-9a-f-]{36}$/iu, `${path} ${status}`)
       }
     }
   })
@@ -157,9 +159,11 @@ export function registerErrorContractTests(): void {
         const payload = JSON.parse(rejected.result.content[0]?.text ?? '{}') as {
           error_class?: string
           http_status?: number
+          request_id?: string
         }
         assert.equal(payload.error_class, 'bad_input', `${path}: ${call.name}`)
         assert.equal(payload.http_status, 400, `${path}: ${call.name}`)
+        assert.match(payload.request_id ?? '', /^[0-9a-f-]{36}$/iu, `${path}: ${call.name}`)
       }
     }
 
@@ -207,6 +211,59 @@ export function registerErrorContractTests(): void {
         assert.equal(response.result.isError, false)
         assert.match(JSON.parse(text).place?.description ?? '', /redacted.*resident credential/i)
         assert.doesNotMatch(text, new RegExp(credential, 'i'))
+      }
+    }
+  })
+
+  test('connector-local validation puts one request id in the body and response header', async () => {
+    for (const path of ['/mcp', '/mcp/connect'] as const) {
+      setHostedChatFlag(path === '/mcp/connect')
+      const harness = createHarness()
+      const response = await harness.gateway.request(path, {
+        method: 'POST',
+        headers: {
+          authorization: path === '/mcp/connect'
+            ? `Bearer ${OAUTH_ACCESS_TOKEN}`
+            : `Bearer ${LEGACY_SECRET}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 91, method: 'tools/call',
+          params: { name: 'drawing', arguments: { type: 'unsupported', id: 2 } },
+        }),
+      })
+      const rpcBody = await response.json() as { result: ToolResult }
+      const error = JSON.parse(rpcBody.result.content[0]?.text ?? '{}') as {
+        request_id?: string
+        error_class?: string
+      }
+      assert.match(error.request_id ?? '', /^[0-9a-f-]{36}$/iu, path)
+      assert.equal(response.headers.get('x-request-id'), error.request_id, path)
+      assert.equal(response.headers.get('x-1f3d9-error-class'), error.error_class, path)
+    }
+  })
+
+  test('JSON-RPC validation puts one request id in the error data and response header', async () => {
+    for (const path of ['/mcp', '/mcp/connect'] as const) {
+      setHostedChatFlag(path === '/mcp/connect')
+      for (const body of [
+        { id: 91, method: 'ping' },
+        { jsonrpc: '2.0', id: 92, method: 'tools/call', params: { name: 'no_such_tool' } },
+      ]) {
+        const response = await createHarness().gateway.request(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const rpcBody = await response.json() as {
+          error: { data: { request_id?: string; error_class?: string; http_status?: number } }
+        }
+        const error = rpcBody.error.data
+        assert.match(error.request_id ?? '', /^[0-9a-f-]{36}$/iu, path)
+        assert.equal(error.error_class, 'bad_input', path)
+        assert.equal(error.http_status, 400, path)
+        assert.equal(response.headers.get('x-request-id'), error.request_id, path)
+        assert.equal(response.headers.get('x-1f3d9-error-class'), error.error_class, path)
       }
     }
   })

@@ -20,25 +20,12 @@ import {
 } from './community-tools-page.ts'
 import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
+import { guideHeaders, guidePage } from './human-guide-response.ts'
 
 const TOOLS_COOKIE = '__Host-1f3d9_tools'
 const TOOLS_COOKIE_SECONDS = 30 * 60
 const MAX_TOOLS_FORM_BYTES = 8_192
 const COMMUNITY_TOOL_IP_HASH_KEY = /^[0-9a-f]{64}$/u
-const GUIDE_CSP = [
-  "default-src 'none'",
-  "base-uri 'none'",
-  "object-src 'none'",
-  "frame-ancestors 'none'",
-  "form-action 'none'",
-  "script-src 'none'",
-  "style-src 'self'",
-  "img-src 'self'",
-  "font-src 'none'",
-  "connect-src 'none'",
-  "manifest-src 'none'",
-].join('; ')
-
 const TOOLS_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -600,23 +587,6 @@ const ICON_SVG = readFileSync(new URL('./assets/1f3d9-icon.svg', import.meta.url
 const ICON_32 = readImage(new URL('./assets/1f3d9-32.png', import.meta.url))
 const ICON_180 = readImage(new URL('./assets/1f3d9-180.png', import.meta.url))
 const ICON_512 = readImage(new URL('./assets/1f3d9-512.png', import.meta.url))
-
-function guideHeaders(c: Context): void {
-  c.header('Cache-Control', 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400')
-  c.header('Content-Security-Policy', GUIDE_CSP)
-  c.header('X-Content-Type-Options', 'nosniff')
-  c.header('Referrer-Policy', 'no-referrer')
-  c.header('X-Frame-Options', 'DENY')
-  c.header('Cross-Origin-Opener-Policy', 'same-origin')
-  c.header('Cross-Origin-Resource-Policy', 'same-origin')
-  c.header('Permissions-Policy', 'accelerometer=(), autoplay=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()')
-  c.header('X-Robots-Tag', 'index, follow')
-}
-
-function guidePage(c: Context, html: string): Response {
-  guideHeaders(c)
-  return c.html(html)
-}
 
 function toolsHeaders(c: Context): void {
   guideHeaders(c)

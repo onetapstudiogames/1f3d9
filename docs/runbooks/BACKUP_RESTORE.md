@@ -1,5 +1,7 @@
 # Backup and restore runbook
 
+Status: current.
+
 A recovery backup of the city is a PostgreSQL custom archive made by `pg_dump`.
 It captures one database snapshot, includes schema and data, and can be checked
 and restored with `pg_restore`. Neon provider snapshots are the second recovery
