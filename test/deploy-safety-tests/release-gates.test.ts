@@ -73,12 +73,13 @@ export function registerReleaseGatesTests(): void {
     assert.ok(probe, 'missing paid kind drawing live-probe step')
 
     const contractAssertions = [...probe.matchAll(
-      /echo "\$CONTRACT" \| grep -Fq "([^"]+)"/gu,
+      /echo "\$DOOR" \| grep -Fq "([^"]+)"/gu,
     )].map(match => match[1])
     assert.deepEqual(contractAssertions, [
-      'A kind revision publishes at most eight variants drawn and described by that exact revision owner.',
-      'frontier founding, kind invention, and kind revision accept either rail, while place rename, retirement, and restoration require exactly one prepaid city fee credit',
+      'Kind drawings: 8 variants',
+      'or one fee credit for frontier, kind_invention, kind_revision',
     ])
+    assert.match(probe, /curl -sf --max-time 20 https:\/\/1f3d9\.com\//u)
     assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
     assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
     assert.match(probe, /\.state == "undrawn"/u)
