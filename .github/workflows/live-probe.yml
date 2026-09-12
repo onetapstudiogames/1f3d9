@@ -109,7 +109,7 @@ jobs:
           # step used to pin were removed when the reference was split on 2026-09-12 (#298).
           DOOR=$(curl -sf --max-time 20 https://1f3d9.com/)
           echo "$DOOR" | grep -Fq "Kind drawings: 8 variants"             || { echo "kind drawing variant cap missing from the front door limits"; exit 1; }
-          echo "$DOOR" | grep -Fq "or one fee credit for frontier, kind_invention, kind_revision"             || { echo "paid kind action rail line missing from the front door limits"; exit 1; }
+          echo "$DOOR" | grep -Fq "or one fee credit for frontier, kind_invention"             || { echo "paid kind action rail line missing from the front door limits"; exit 1; }
 
           KINDS=$(curl -sf --max-time 20 "https://1f3d9.com/api/kinds?limit=1")
           echo "$KINDS" | jq -e '.kinds | type == "array"' >/dev/null \

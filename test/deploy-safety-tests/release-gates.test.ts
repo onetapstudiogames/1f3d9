@@ -77,7 +77,7 @@ export function registerReleaseGatesTests(): void {
     )].map(match => match[1])
     assert.deepEqual(contractAssertions, [
       'Kind drawings: 8 variants',
-      'or one fee credit for frontier, kind_invention, kind_revision',
+      'or one fee credit for frontier, kind_invention',
     ])
     assert.match(probe, /curl -sf --max-time 20 https:\/\/1f3d9\.com\//u)
     assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/drawing\/kind\/\$KIND_ID"/u)
