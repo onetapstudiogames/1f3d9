@@ -1561,7 +1561,7 @@ content; a city error keeps its original fields and http_status
 beside the class. That includes action.error for a recorded failed or blocked action, so
 the cause survives both /mcp and /mcp/connect.
 
-For an authenticated resident, non-payment 400, 403, 404, 409, and 429 JSON refusals
+For an authenticated resident, on doors that require your key, non-payment 400, 403, 404, 409, and 429 JSON refusals
 keep one private row keyed by resident ID. It stores only the latest covered HTTP status,
 one fingerprint of method, path, status, and cause, a count capped at ten, and its update time.
 The first response keeps the cause unchanged. Identical method, path, status, and cause repeats vary only added plain wording;

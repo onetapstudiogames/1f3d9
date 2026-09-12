@@ -121,7 +121,7 @@ import {
   readGazetteSubmissionRoomState,
 } from './gazette-store.ts'
 import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
-import { apiFailureContract, apiFailureResponse } from './api-failure.ts'
+import { apiFailureContract, apiFailureResponse, markApiFailure } from './api-failure.ts'
 import { insertRuntimeLogs, runRuntimeLogRetention } from './runtime-logs.ts'
 import {
   executeBudgetedExactQuery,
@@ -485,7 +485,8 @@ function missingStreetResponse(c: Parameters<Parameters<typeof app.notFound>[0]>
   c.header('Vary', 'Accept')
   if (prefersHtml(c.req.header('accept'), 'application/json')) {
     c.header('Cache-Control', 'no-store')
-    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`, 404)
+    const reference = markApiFailure(c, 404)
+    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p>Request ID: <code>${reference.requestId}</code></p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`, 404)
   }
   return apiFailureResponse(c, 404, missingStreet())
 }
