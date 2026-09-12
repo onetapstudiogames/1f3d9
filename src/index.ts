@@ -137,6 +137,7 @@ import {
 } from './public-search.ts'
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import { errorClassForStatus } from './error-class.ts'
+import { apiFailureContract } from './api-failure.ts'
 import {
   loadPublicChanges,
   parsePublicChangeMarker,
@@ -477,6 +478,46 @@ function missingStreet() {
   }
 }
 
+function acceptedQuality(accept: string, mediaType: string): number {
+  const [wantedType, wantedSubtype] = mediaType.toLowerCase().split('/')
+  let best = { specificity: -1, quality: 0 }
+  for (const rawRange of accept.split(',')) {
+    const [rawMedia = '', ...parameters] = rawRange.trim().split(';')
+    const [rangeType, rangeSubtype] = rawMedia.trim().toLowerCase().split('/')
+    if (!rangeType || !rangeSubtype) continue
+    const specificity = rangeType === wantedType && rangeSubtype === wantedSubtype
+      ? 2
+      : rangeType === wantedType && rangeSubtype === '*'
+        ? 1
+        : rangeType === '*' && rangeSubtype === '*'
+          ? 0
+          : -1
+    if (specificity < 0) continue
+    const q = parameters
+      .map(parameter => /^\s*q\s*=\s*(0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\s*$/iu.exec(parameter))
+      .find(match => match !== null)
+    const quality = q ? Number(q[1]) : 1
+    if (specificity > best.specificity || (specificity === best.specificity && quality > best.quality)) {
+      best = { specificity, quality }
+    }
+  }
+  return best.quality
+}
+
+function missingStreetResponse(c: Parameters<Parameters<typeof app.notFound>[0]>[0]) {
+  c.header('Vary', 'Accept')
+  const accept = c.req.header('accept')
+  if (accept) {
+    const htmlQuality = acceptedQuality(accept, 'text/html')
+    const jsonQuality = acceptedQuality(accept, 'application/json')
+    if (htmlQuality > 0 && htmlQuality > jsonQuality) {
+      c.header('Cache-Control', 'no-store')
+      return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`, 404)
+    }
+  }
+  return c.json(missingStreet(), 404)
+}
+
 app.use('/oauth/*', async (c, next) => {
   if (c.req.method === 'OPTIONS') {
     c.header('Cache-Control', 'no-store')
@@ -511,6 +552,7 @@ app.use('*', async (c, next) => {
 // This outer middleware sees only the credential-guarded response produced by
 // publicResponseSafety as Hono unwinds the chain.
 app.use('*', residentRefusalGuidance())
+app.use('*', apiFailureContract())
 app.use('*', publicResponseSafety)
 app.onError((error, c) => {
   if (isPublicExactReadBusy(error)) {
@@ -674,7 +716,14 @@ app.get('/api/search', async c => {
 
 app.get('/api/changes', async c => {
   const parsed = parsePublicChangeQuery(c.req.queries())
-  if (!parsed.ok) return err(c, 400, parsed.error)
+  if (!parsed.ok) {
+    return /^(?:kind|limit) requires since;/u.test(parsed.error)
+      ? c.json({
+          error: parsed.error,
+          next_step: 'Omit kind, limit, and since to obtain a marker, then send that marker as since.',
+        }, 400)
+      : err(c, 400, parsed.error)
+  }
   try {
     const result = await loadPublicChanges(executePublicQuery, parsed)
     c.header('Cache-Control', 'no-store')
@@ -750,7 +799,7 @@ if (hostedChatSignin.ready) {
     c.header('Cache-Control', 'no-store')
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed',
+      'Pairing is unavailable on this deployment because hosted-chat sign-in is not configured, so there is nowhere for a pairing code to be redeemed.',
       'Ask the city operator to configure hosted-chat sign-in, or complete sign-in directly with the resident key if a browser or JSON identity door is enabled on this deployment.',
     )
   })
@@ -872,9 +921,9 @@ app.get('/api/residents', async c => {
     if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
     if (!resident) {
       return changeMarker === null
-        ? err(c, 404, `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`)
+        ? err(c, 404, `resident handle ${handleValue.value} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
         : c.json({
-            error: `resident handle ${handleValue.value} was not found; use GET /api/residents and send a current handle`,
+            error: `resident handle ${handleValue.value} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`,
             change_marker: changeMarker,
           }, 404)
     }
@@ -1222,7 +1271,7 @@ app.post('/api/founder/city-credit', async c => {
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
   try {
     const issued = await issueCityFeeCredit({ query: sql.query }, {
       founderId: founder.id,
@@ -1247,9 +1296,8 @@ app.post('/api/founder/city-credit/disputes/:disputeId/resolve', async c => {
     return err(c, 403,
       'only founder resident #1 may resolve an ambiguous PayPal credit dispute')
   }
-  if (Object.keys(c.req.queries()).length !== 0) {
-    return err(c, 400, 'this founder PayPal dispute route accepts no query options')
-  }
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const disputeId = c.req.param('disputeId')
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,254}$/u.test(disputeId)) {
     return err(c, 400, 'PayPal dispute id must be 1 to 255 letters, numbers, or hyphens')
@@ -1351,7 +1399,7 @@ app.get('/api/founder/city-credit/:handle', async c => {
     SELECT id FROM residents WHERE handle = ${residentHandle} LIMIT 1
   ` as Array<{ id: number }>
   const target = residents[0]
-  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; use GET /api/residents and send a current handle`)
+  if (!target) return err(c, 404, `resident handle ${residentHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
   const [account, paypalDisputes] = await Promise.all([
     readCityCreditAccount({ query: sql.query }, target.id, {
       beforeId: creditRequest.beforeId,
@@ -1373,9 +1421,8 @@ app.get('/api/founder/community-tool-submissions', async c => {
   if (founder.id !== 1) {
     return err(c, 403, 'only founder resident #1 may read community tool submissions')
   }
-  if (Object.keys(c.req.queries()).length !== 0) {
-    return err(c, 400, 'the community tool queue accepts no query options')
-  }
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const queue = await readCommunityToolQueue(executeCommunityToolQuery)
   return c.json({
     waiting_count: queue.waitingCount,
@@ -1390,9 +1437,8 @@ app.post('/api/founder/community-tool-submissions/:id/review', async c => {
   if (founder.id !== 1) {
     return err(c, 403, 'only founder resident #1 may finish community tool review')
   }
-  if (Object.keys(c.req.queries()).length !== 0) {
-    return err(c, 400, 'the community tool review route accepts no query options')
-  }
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
   const submissionId = positiveId(c.req.param('id'))
   if (submissionId === null) return err(c, 400, 'submission id must be a positive integer')
   if (declaredBodyLength(
@@ -1760,6 +1806,6 @@ app.get('/mcp/connect', c => hostedChatSignin.ready
   ? c.text('GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.', 405)
   : c.json(missingStreet(), 404))
 
-app.notFound(c => c.json(missingStreet(), 404))
+app.notFound(missingStreetResponse)
 
 export default app

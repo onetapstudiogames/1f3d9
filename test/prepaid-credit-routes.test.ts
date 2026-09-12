@@ -134,7 +134,7 @@ test('gift action conflicts name the current pending-gift recovery', async () =>
   })
   assert.equal(response.status, 409)
   assert.deepEqual(await response.json(), {
-    error: 'gift is not pending for this recipient or was not found; re-read /api/me and use one pending gift_id addressed to this resident',
+    error: 'gift is not pending for this recipient or was not found; call me, or use /api/me if your client can open URLs, and send one pending gift_id addressed to this resident',
     do_not_retry_with_changed_terms: true,
   })
 })

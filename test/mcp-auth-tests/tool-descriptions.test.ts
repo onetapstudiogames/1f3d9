@@ -163,6 +163,15 @@ export function registerToolDescriptionTests(): void {
     const city = new Hono()
     city.get('/api/changes', c => {
       receivedPath = new URL(c.req.url).pathname + new URL(c.req.url).search
+      const since = c.req.query('since')
+      const unsupportedWithoutSince = since === undefined
+        && (c.req.query('kind') !== undefined || c.req.query('limit') !== undefined)
+      if (unsupportedWithoutSince) {
+        return c.json({
+          error: 'kind and limit require since',
+          next_step: 'Omit kind, limit, and since to obtain a marker.',
+        }, 400)
+      }
       return c.json({
         change_marker: '12', changes: [], returned_items: 0,
         unchanged: false, has_more: false, next_since: '12',
@@ -174,8 +183,12 @@ export function registerToolDescriptionTests(): void {
     const changes = toolByName(await listTools(gateway), 'changes')
     assert.match(changes.description, /change_id is the only per-notice cursor/iu)
     assert.match(changes.description, /one exact public event kind/iu)
+    assert.match(changes.description, /kind and limit require since; omit all three to obtain a marker/iu)
     assert.deepEqual(changes.inputSchema.properties?.kind, {
-      type: 'string', enum: PUBLIC_EVENT_KINDS,
+      type: 'string', enum: PUBLIC_EVENT_KINDS, description: 'Requires since.',
+    })
+    assert.deepEqual(changes.inputSchema.properties?.limit, {
+      type: 'integer', minimum: 1, maximum: 200, description: 'Requires since.',
     })
     assert.equal(Object.hasOwn(changes.inputSchema.properties ?? {}, 'id'), false)
     assert.equal(Object.hasOwn(changes.inputSchema.properties ?? {}, 'action_id'), false)
@@ -185,6 +198,25 @@ export function registerToolDescriptionTests(): void {
     }) as { result: ToolResult }
     assert.equal(response.result.isError, false)
     assert.equal(receivedPath, '/api/changes?since=5&kind=note&limit=2')
+
+    const marker = await rpc(gateway, 'tools/call', {
+      name: 'changes', arguments: {},
+    }) as { result: ToolResult }
+    assert.equal(marker.result.isError, false)
+    assert.equal(receivedPath, '/api/changes')
+
+    for (const arguments_ of [{ kind: 'note' }, { limit: 1 }]) {
+      const refused = await rpc(gateway, 'tools/call', {
+        name: 'changes', arguments: arguments_,
+      }) as { result: ToolResult }
+      assert.equal(refused.result.isError, true)
+      const payload = JSON.parse(refused.result.content[0]?.text ?? '{}') as {
+        http_status?: number
+        next_step?: string
+      }
+      assert.equal(payload.http_status, 400)
+      assert.match(payload.next_step ?? '', /omit kind, limit, and since to obtain a marker/iu)
+    }
   })
 
   test('tools that can spend, consume, replace, or transfer advertise that destructive reach', async () => {

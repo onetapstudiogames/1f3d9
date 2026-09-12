@@ -10,6 +10,7 @@ import { RESIDENT_AUTH_REFUSAL, sha256 } from './core.ts'
 import { jsonError, withIdentityApiStorageErrors } from './identity-api.ts'
 import { type OAuthAttemptKind, postgresOAuthStore } from './oauth-store.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 
 export const PAIRING_CODE_PREFIX = '1f3d9_pc_'
 export const PAIRING_CODE_RE = /^1f3d9_pc_[0-9a-f]{64}$/u
@@ -70,14 +71,14 @@ async function rejectNonEmptyBody(c: Context): Promise<Response | null> {
   } catch {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}',
+      'Pairing requests take an empty body or {}.',
       'Retry with no body, or with exactly {}.',
     )
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length > 0) {
     return jsonError(
       c, 400, 'unexpected_form_fields',
-      'POST /api/pair takes an empty body, or {}',
+      'Pairing requests take an empty body or {}.',
       'Retry with no body, or with exactly {}.',
     )
   }
@@ -90,11 +91,12 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
 
   app.post(PAIR_DOOR_PATH, c => withIdentityApiStorageErrors(c, async () => {
     privateHeaders(c)
-    if (Object.keys(c.req.queries()).length > 0) {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) {
       return jsonError(
         c, 400, 'unexpected_form_fields',
-        'pairing-code minting accepts no query options',
-        'Retry POST /api/pair with no query string.',
+        allowed.error,
+        'Retry POST /api/pair with no query string if your client can open URLs.',
       )
     }
     const resident = await options.authenticate(c)
@@ -117,7 +119,7 @@ export function mountPairRoutes(app: Hono, options: PairRouteOptions): void {
       return jsonError(
         c, 429, 'rate_limited',
         `too many pairing codes minted; you may mint ${PAIR_MINTS_PER_RESIDENT_PER_HOUR} per resident per UTC hour`,
-        `Wait ${admission.retryAfterSeconds} seconds, then retry POST /api/pair.`,
+        `Wait ${admission.retryAfterSeconds} seconds, then retry POST /api/pair if your client can open URLs.`,
       )
     }
     const pairingCode = newPairingCode()
@@ -143,7 +145,7 @@ export function mountPairDisabledRoute(app: Hono): void {
     privateHeaders(c)
     return jsonError(
       c, 503, 'request_unavailable',
-      'POST /api/pair is unavailable on this deployment because its capability is not enabled; ask the city operator to enable it',
+      'Pairing is unavailable on this deployment because its capability is not enabled.',
       'Ask the city operator to enable this capability, or complete hosted-chat sign-in with the resident key directly if that page is enabled on this deployment.',
     )
   })

@@ -99,7 +99,7 @@ export function registerAgreementsTests(): void {
     const blocked = await app.request('/api/agreement/61/sign', { method: 'POST', headers: authHeaders() })
     assert.equal(blocked.status, 403)
     assert.deepEqual(await blocked.json(), {
-      error: 'this agreement is closed to later signers; its original author can POST /api/agreement/61/open-accession before this signer retries',
+      error: 'this agreement is closed to later signers; its original author can call open_agreement_accession with agreement_id 61, or use POST /api/agreement/61/open-accession if your client can open URLs, before this signer retries',
     })
     assert.equal(inserted('agreement_parties'), 0)
     assert.equal(inserted('agreement_signatures'), 0)
@@ -199,7 +199,7 @@ export function registerAgreementsTests(): void {
     })
     assert.equal(missing.status, 404)
     assert.deepEqual(await missing.json(), {
-      error: 'agreement_id 61 was not found; re-read GET /api/agreements and use a current agreement_id',
+      error: 'agreement_id 61 was not found; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and send a current agreement_id',
     })
 
     reset({ scenario: 'agreements', quota: { things: true, notes: true, agreements: false } })

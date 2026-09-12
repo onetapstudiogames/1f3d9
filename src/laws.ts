@@ -41,7 +41,7 @@ export async function replacePlaceLaws(
     return Object.freeze({
       error: missingRecordRefusal(
         `place_id ${placeId}`,
-        'use GET /api/map?view=outline and send a current place_id',
+        'call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id',
       ),
       status: 404,
     })
@@ -65,7 +65,7 @@ export async function replacePlaceLaws(
     return Object.freeze({
       error: missingRecordRefusal(
         `trait name ${missing.join(', ')}`,
-        'use GET /api/traits and send only current trait names',
+        'call browse with view traits, or use GET /api/traits if your client can open URLs, and send only current trait names',
       ),
       status: 404,
     })

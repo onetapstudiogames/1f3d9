@@ -1,6 +1,8 @@
 import { createHash, createHmac } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { declaredBodyLength } from './bounded-body.ts'
+import { apiFailureResponse, type ApiFailureStatus } from './api-failure.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
@@ -98,11 +100,11 @@ const CALLER_FAILURES = Object.freeze({
 })
 function unavailable(c: Context, operation: PayPalRouteOperation): Response {
   const failure = CALLER_FAILURES[operation]
-  return c.json({
+  return apiFailureResponse(c, 503, {
     error: failure.unavailable, ...failure.details,
     ...(['lookup', 'order', 'allowance'].includes(operation)
       ? { payment_started: false } : {}),
-  }, 503)
+  }, { event: 'paypal_credit_route_failure' })
 }
 function routeReadiness(c: Context, dependencies: PayPalCreditRouteDependencies,
   operation: PayPalRouteOperation): ReadyPayPal | Response {
@@ -116,9 +118,8 @@ function isResponse(value: ReadyPayPal | Response): value is Response {
 }
 
 function queryless(c: Context): void {
-  if (Object.keys(c.req.queries()).length !== 0) {
-    throw new RouteFailure(400, 'This PayPal credit route accepts no query options.')
-  }
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) throw new RouteFailure(400, allowed.error)
 }
 
 function assertDeclaredBodyFits(c: Context, maximumBytes: number): void {
@@ -242,7 +243,9 @@ async function confirmRecipient(
   expectedHandle: string,
 ) {
   const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-  if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Use a current number from GET /api/residents. No payment was started.')
+  if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Open the city window and choose a current resident number. No payment was started.', {
+    human_href: '/window',
+  })
   if (recipient.residentHandle !== expectedHandle) {
     throw new RouteFailure(409,
       'That resident number now has a different handle. Confirm the shown handle before paying.', {
@@ -394,52 +397,56 @@ function responseFailure(
   error: unknown,
   operation: PayPalRouteOperation,
 ): Response {
+  const failure = (
+    status: ApiFailureStatus,
+    payload: Readonly<Record<string, unknown>>,
+  ) => apiFailureResponse(c, status, payload, { event: 'paypal_credit_route_failure' })
   if (error instanceof PayPalWebhookApplicationError) {
     const message = error.status === 503 && !/retry this exact event/iu.test(error.message)
       ? `${error.message} PayPal should retry this exact event.`
       : error.message
-    return c.json({ error: message }, error.status)
+    return failure(error.status, { error: message })
   }
   if (error instanceof RouteFailure) {
-    return c.json({
+    return failure(error.status, {
       error: operation === 'capture'
         ? captureSafeMessage(error.message)
         : error.message,
       ...error.details,
-    }, error.status)
+    })
   }
   if (error instanceof PayPalCreditStoreConflictError || error instanceof PrepaidCreditConflictError) {
     if (operation === 'webhook') {
-      return c.json({
+      return failure(409, {
         error: `${error.message} The city owner must resolve this durable PayPal evidence conflict; do not send a changed replacement event.`,
         owner_review_required: true,
         do_not_retry_with_changed_event: true,
-      }, 409)
+      })
     }
-    return c.json({
+    return failure(409, {
       error: operation === 'capture'
         ? `${error.message} Reload this return page with the same purchase_id and paypal_order_id; do not start another payment.`
         : error.message,
       do_not_start_another_payment: true,
-    }, 409)
+    })
   }
   if (error instanceof TypeError) {
     if (operation === 'webhook') {
-      return c.json({
+      return failure(503, {
         error: CALLER_FAILURES.webhook.temporary,
         ...CALLER_FAILURES.webhook.details,
-      }, 503)
+      })
     }
     const message = operation === 'capture'
       ? 'The PayPal capture request is invalid. Capture was not attempted. Reload the PayPal return page and use its purchase_id and paypal_order_id; do not create another payment.'
       : 'The PayPal credit request is invalid. No payment was started.'
-    return c.json({ error: message }, 400)
+    return failure(400, { error: message })
   }
-  const failure = CALLER_FAILURES[operation]
-  return c.json({
-    error: failure.temporary,
-    ...failure.details,
-  }, 503)
+  const callerFailure = CALLER_FAILURES[operation]
+  return failure(503, {
+    error: callerFailure.temporary,
+    ...callerFailure.details,
+  })
 }
 
 function orderCreateBody(value: JsonRecord): Readonly<{
@@ -516,7 +523,7 @@ async function createOrder(
   })
   if (intent.status === 'captured') {
     throw new RouteFailure(409,
-      'This PayPal purchase is complete. Do not approve or pay again. Only the credited resident can read the private receipt through /api/me.', {
+      'This PayPal purchase is complete. Do not approve or pay again. Only the credited resident can call me, or read the private receipt through /api/me if your client can open URLs.', {
         purchase_id: intent.purchaseId,
         do_not_start_another_payment: true,
       })
@@ -775,7 +782,9 @@ export function mountPayPalCreditRoutes(
       await requireRateSlot(c, dependencies, null, 'prepare')
       const number = residentNumber(c.req.param('number'))
       const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Use a current number from GET /api/residents. No payment was started.')
+      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Open the city window and choose a current resident number. No payment was started.', {
+        human_href: '/window',
+      })
       return c.json({
         resident_number: recipient.residentNumber,
         resident_handle: recipient.residentHandle,

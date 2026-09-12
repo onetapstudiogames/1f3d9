@@ -11,6 +11,7 @@ import {
 } from './prepaid-credit.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
 import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 
 const GIFT_PUBLIC_ID_RE = /^city_gift_[0-9a-f]{32}$/u
 
@@ -26,10 +27,6 @@ function privateHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Vary', 'Authorization')
-}
-
-function hasNoQueryOptions(c: Context): boolean {
-  return Object.keys(c.req.queries()).length === 0
 }
 
 function safeGiftId(value: string): string | null {
@@ -208,9 +205,8 @@ export function mountPrepaidCreditGiftRoutes(
 ): void {
   app.get('/api/city-credit/gifts/residents/:number', async c => {
     privateHeaders(c)
-    if (!hasNoQueryOptions(c)) {
-      return c.json({ error: 'gift resident lookup accepts no query options' }, 400)
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     const number = positiveResidentNumber(c.req.param('number'))
     if (number == null) {
       return c.json({ error: 'resident number must be one positive integer' }, 400)
@@ -229,12 +225,13 @@ export function mountPrepaidCreditGiftRoutes(
   for (const action of ['accept', 'refuse'] as const) {
     app.post(`/api/city-credit/gifts/:giftId/${action}`, async c => {
       privateHeaders(c)
-      if (!hasNoQueryOptions(c)) return c.json({ error: 'gift actions accept no query options' }, 400)
+      const allowed = allowedPublicQuery(c.req.queries(), [])
+      if (!allowed.ok) return c.json({ error: allowed.error }, 400)
       const resident = await deps.authenticate(c)
       if (!resident) return c.json({ error: RESIDENT_AUTH_REFUSAL }, 401)
       const giftId = safeGiftId(c.req.param('giftId'))
       if (!giftId) return c.json({
-        error: 'gift id was rejected because it does not match a city gift id; retry with the gift id from GET /api/me',
+        error: 'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id',
       }, 400)
       const bodyFailure = await emptyActionBodyFailure(c, action)
       if (bodyFailure) return bodyFailure
@@ -251,10 +248,11 @@ export function mountPrepaidCreditGiftRoutes(
 
   app.post('/api/city-credit/gifts/:giftId/redirect', async c => {
     privateHeaders(c)
-    if (!hasNoQueryOptions(c)) return c.json({ error: 'gift redirect accepts no query options' }, 400)
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     const giftId = safeGiftId(c.req.param('giftId'))
     if (!giftId) return c.json({
-      error: 'gift id was rejected because it does not match a city gift id; retry with the gift id from GET /api/me',
+      error: 'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id',
     }, 400)
     const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
     if (rateLimitResponse) return rateLimitResponse

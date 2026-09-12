@@ -236,7 +236,7 @@ export async function withIdentityApiStorageErrors(
     return jsonError(
       c, 503, 'storage_unavailable',
       'this request could not be finished and its final state could not be verified',
-      'Re-read GET /api/residents to check whether this attempt actually landed, or re-authenticate with both the old key and the replacement key to see which one is now active; do not assume nothing changed.',
+      'Call browse with view residents, or re-read GET /api/residents if your client can open URLs, to check whether this attempt actually landed; otherwise re-authenticate with both the old key and the replacement key to see which one is now active; do not assume nothing changed.',
     )
   }
 }

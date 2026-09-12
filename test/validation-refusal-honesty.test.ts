@@ -9,12 +9,12 @@ function source(name: string): string {
 test('public validation refusals name the rejected shape and a concrete retry', () => {
   const society = source('society.ts')
   assert.doesNotMatch(society, /'bad (?:agreement id|offer id|party handle)'/u)
-  assert.match(society, /agreement id was rejected because it must be a positive whole number; retry with the agreement id from GET \/api\/agreements/u)
-  assert.match(society, /party was rejected because it must be a resident handle; retry with a handle from GET \/api\/census/u)
+  assert.match(society, /agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET \/api\/agreements if your client can open URLs/u)
+  assert.match(society, /party was rejected because it must be a resident handle; call browse with view residents, or use GET \/api\/residents if your client can open URLs/u)
 
   const worldMarket = source('world-market.ts')
   assert.doesNotMatch(worldMarket, /'bad world offer id'/u)
-  assert.match(worldMarket, /world offer id was rejected because it must be a positive whole number; retry with an offer_id from GET \/api\/world-market/u)
+  assert.match(worldMarket, /world offer id was rejected because it must be a positive whole number; use GET \/api\/world-market if your client can open URLs/u)
 
   const crafting = source('crafting.ts')
   assert.doesNotMatch(crafting, /'invalid crafting request'/u)
@@ -57,7 +57,7 @@ test('repeated numeric and provider validation families state cause and next ste
 test('route, stored-record, operator, and internal refusals give a safe recovery', () => {
   const giftRoutes = source('prepaid-credit-routes.ts')
   assert.doesNotMatch(giftRoutes, /'gift id is invalid'/u)
-  assert.match(giftRoutes, /gift id was rejected because it does not match a city gift id; retry with the gift id from GET \/api\/me/u)
+  assert.match(giftRoutes, /gift id was rejected because it does not match a city gift id; call me, or use GET \/api\/me if your client can open URLs, and send a current gift id/u)
 
   const world = source('world.ts')
   assert.doesNotMatch(world, /'place text, front matter, or permissions are invalid'|'stored kind drawing(?: variants)? are? invalid'/u)

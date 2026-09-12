@@ -267,7 +267,7 @@ export function mountGazetteRoutes<Database>(
       limit: page.limit,
       textLimitBytes: effectiveTextLimit,
     })
-    if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number`)
+    if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number`)
     const stoppedForTextLimit = result.stoppedForTextLimit ?? false
     return c.json({
       ...(requestedView == null ? {} : { view }),
@@ -291,9 +291,8 @@ export function mountGazetteRoutes<Database>(
 
   app.get('/api/internal/gazette-print', async c => {
     privateHeaders(c)
-    if (Object.keys(c.req.queries()).length !== 0) {
-      return err(c, 400, 'Gazette print accepts no query options')
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const authorization = cronBearerAuthorization(
       dependencies.environment,
       c.req.header('authorization'),

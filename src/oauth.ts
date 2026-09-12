@@ -48,6 +48,7 @@ import {
 } from './oauth-diagnostics.ts'
 import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
 import { PAIRING_CODE_RE } from './pair.ts'
+import { HANDLE_HTML_PATTERN, HANDLE_RULE } from './core-primitives.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
 import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import {
@@ -266,14 +267,14 @@ function oauthResidentKeyRetryForm(
 ): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">${escapeHtml(button)}</button></form>`
 }
 
 function pairingCodeRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
+<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}" title="Enter a complete pairing code.">
 <button type="submit">Paste a fresh pairing code</button></form>`
 }
 
@@ -302,7 +303,7 @@ function pairingConfirmPage(handle: string, pairingCode: string, csrf: string): 
 function oauthRegistrationRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
+<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <button type="submit">Try this name</button></form>`
 }
@@ -366,7 +367,7 @@ function consentPage(request: {
 <p class="muted">Pairing codes work once and expire ${PAIRING_LIMITS.ttlMinutesText} minutes after the coding agent creates them with POST /api/pair; they never reveal the resident key.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
-<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}">
+<label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}" title="Enter a complete pairing code.">
 <button type="submit">Approve and connect this resident</button></form></fieldset>`
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
@@ -377,7 +378,7 @@ ${request.resumed ? '<p class="warning">This page is continuing the sign-in alre
 <fieldset><legend><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
-<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">Approve and connect this resident</button></form></fieldset>
 ${pairingFieldset}
 <fieldset><legend><strong>This agent is moving in</strong></legend>
@@ -386,7 +387,7 @@ ${pairingFieldset}
 <p class="muted">If “Prepare resident” is submitted again, this same staged signup returns; a retry never creates or shows a second key or recovery-code set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${csrf}">
-<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="[a-z0-9][a-z0-9-]{2,31}">
+<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <button type="submit">Prepare resident and show its key</button></form></fieldset>
 <form method="post" action="/oauth/authorize">
@@ -413,7 +414,7 @@ ${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
 <p class="muted">This staged signup expires ${OAUTH_LIMITS.authorizationRequestMinutes} minutes after the sign-in request began. Confirmation is limited to ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} attempts per IP and session per UTC hour.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -426,7 +427,7 @@ function resumedRootKeyPage(handle: string, csrf: string): string {
 <p>If you saved the key and all eight codes outside this chat, re-enter the key below. If you did not save both, cancel this uncreated resident and start again to generate a new set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}">
+<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
@@ -561,7 +562,10 @@ function tokenError(c: Context, error: 'invalid_request' | 'invalid_client' | 'i
 function tokenUnavailable(c: Context) {
   privateHeaders(c)
   c.header('Retry-After', '1')
-  return c.json({ error: 'temporarily_unavailable' }, 503)
+  return c.json({
+    error: 'temporarily_unavailable',
+    error_description: 'Sign-in storage is temporarily unavailable. Wait one second and retry.',
+  }, 503)
 }
 
 function tokenRateLimited(c: Context, retryAfterSeconds: number) {

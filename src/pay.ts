@@ -17,6 +17,8 @@ const MAX_FACILITATOR_RESPONSE_BYTES = 65_536
 const FACILITATOR_TIMEOUT_MS = 8_000
 export const PAYMENT_CUSTODY_UNAVAILABLE =
   'payments are temporarily unavailable while durable payment custody is being upgraded; do not pay or retry yet'
+export const PAYMENT_CUSTODY_CHECK_FAILED =
+  'payments are temporarily unavailable because the city could not check durable payment custody; do not pay or retry until the city operator resolves the failed check'
 
 export function paymentCustodyReady(
   environment: Readonly<Record<string, string | undefined>> = process.env,

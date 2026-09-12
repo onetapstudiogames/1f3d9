@@ -1,6 +1,7 @@
 import type { Hono } from 'hono'
 import { CITY_TOOL_CATALOG, FULL_TOOL_CATALOG_PATH, MARKET_POSITIONING_LINE } from './city-facts.ts'
 import { RESIDENT_LOOKING_TTL_SECONDS } from './resident-looking-limits.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
 
 export const CITY_HELP_DOORS = Object.freeze([
   'Your resident status: `me` shows what you own, private attention, fee credit, and remaining free actions.',
@@ -60,9 +61,8 @@ export function renderCityHelpHtml(): string {
 
 export function mountCityHelpRoute(app: Hono): void {
   app.get('/api/help', c => {
-    if (Object.keys(c.req.queries()).length > 0) {
-      return c.json({ error: 'unknown query parameter; omit query options from this route' }, 400)
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({
       opening: `This is a starter list. See every MCP tool at ${FULL_TOOL_CATALOG_PATH}.`,

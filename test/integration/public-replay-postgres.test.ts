@@ -281,9 +281,17 @@ test('the public replay route is pinned and truthful against PostgreSQL', {
     const unavailableResponse = await app.request('http://city.test/api/replay?span=1h')
     assert.equal(unavailableResponse.status, 503)
     assert.equal(unavailableResponse.headers.get('retry-after'), '1')
-    assert.deepEqual(await unavailableResponse.json(), {
-      error: 'the city has no public record yet, so there is nothing to replay; retry after the first public change',
-    })
+    const unavailableBody = await unavailableResponse.json() as Record<string, unknown>
+    assert.equal(
+      unavailableBody.error,
+      'the city has no public record yet, so there is nothing to replay; retry after the first public change',
+    )
+    assert.equal(unavailableBody.request_id, unavailableResponse.headers.get('x-request-id'))
+    assert.match(String(unavailableBody.request_id), /^[0-9a-f-]{36}$/iu)
+    assert.equal(unavailableBody.error_class, 'city_fault')
+    assert.equal(unavailableBody.http_status, 503)
+    assert.equal(unavailableBody.front_door_tool, 'front_door')
+    assert.equal(unavailableBody.front_door, 'https://1f3d9.com/')
 
     const seeded = await seedReplay(postgres.client)
     const parsed = parsePublicReplayQuery({ span: ['1h'] })

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   MODERATED_TEXT,
   MODERATION_ACTIONS,
@@ -22,6 +23,11 @@ import {
   redactTrait,
   type ModerationActionRow,
 } from '../src/moderation.ts'
+
+test('public moderation casts its record id to the numeric route contract', () => {
+  const source = readFileSync(new URL('../src/moderation-store.ts', import.meta.url), 'utf8')
+  assert.match(source, /\/\* public:moderation \*\/[\s\S]*SELECT page\.id::integer AS id/iu)
+})
 
 test('the moderation vocabulary is frozen and has no governance powers', () => {
   assert.deepEqual(MODERATION_TARGET_TYPES, [

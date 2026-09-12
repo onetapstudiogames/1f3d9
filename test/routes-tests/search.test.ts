@@ -48,7 +48,19 @@ export function registerSearchTests(): void {
 
       const checkpoint = await app.request('/api/changes')
       assert.equal(checkpoint.status, 200)
-      assert.deepEqual(await checkpoint.json(), { change_marker: '9' })
+      assert.deepEqual(await checkpoint.json(), {
+        change_marker: '9',
+        next_step: 'Send change_marker back as since to read changes after that point.',
+      })
+      for (const query of ['kind=note', 'limit=1']) {
+        const refused = await app.request(`/api/changes?${query}`)
+        assert.equal(refused.status, 400, query)
+        const refusal = await refused.json() as { next_step?: string }
+        assert.match(refusal.next_step ?? '', /omit kind, limit, and since to obtain a marker/iu, query)
+      }
+      const malformed = await app.request('/api/changes?since=not-a-marker')
+      assert.equal(malformed.status, 400)
+      assert.equal(Object.hasOwn(await malformed.json(), 'next_step'), false)
       const changes = await app.request('/api/changes?since=8&kind=action&limit=1')
       assert.equal(changes.status, 200)
       assert.deepEqual(await changes.json(), {

@@ -152,13 +152,13 @@ test('invalid actor, output, kind, and place fields fail without a database quer
 test('missing kinds and places return 404 without attempting the atomic commit', async () => {
   const missingKind = makeSql({ kindRows: [] })
   assert.deepEqual(await craftKindThing(missingKind.sql, input), {
-    ok: false, status: 404, error: 'kind_id 9 was not found; use GET /api/kinds and send a current kind_id',
+    ok: false, status: 404, error: 'kind_id 9 was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and send a current kind_id',
   })
   assert.deepEqual(missingKind.calls.map(call => call.marker), ['kind'])
 
   const missingPlace = makeSql({ placeRows: [] })
   assert.deepEqual(await craftKindThing(missingPlace.sql, input), {
-    ok: false, status: 404, error: 'place_id 3 was not found; use GET /api/map?view=outline and send a current place_id',
+    ok: false, status: 404, error: 'place_id 3 was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id',
   })
   assert.deepEqual(missingPlace.calls.map(call => call.marker), ['kind', 'place'])
 })

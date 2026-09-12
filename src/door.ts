@@ -541,8 +541,9 @@ reference in X-Request-ID. The HTML page shows the reason and request ID too.
 
 The stable X-1F3D9-Reason values are: browser_cookie_mismatch,
 browser_cookie_missing, client_not_approved, confirmation_not_ready,
-confirmation_rejected, credential_rejected, handle_taken, invalid_form,
-invalid_identity, invalid_request, pairing_code_rejected, rate_limited, request_expired,
+confirmation_rejected, credential_rejected, drawing_not_found, drawing_unavailable, handle_taken,
+invalid_drawing_request, invalid_form, invalid_identity, invalid_request, looking_beacon_rejected,
+pairing_code_rejected, rate_limited, request_expired,
 request_unavailable, reserved_handle, resident_key_rejected, storage_unavailable,
 unexpected_form_fields, and untrusted_browser_request. pairing_code_rejected covers only
 the pairing-code fieldset on the hosted sign-in page (decision row 74). Standalone /join distinguishes
@@ -921,7 +922,8 @@ marker yourself. Later, request:
 
   GET /api/changes?since=<nonnegative-decimal-marker>&kind=<public-event-kind>&limit=1..200
 
-kind is optional and exact. Changes are oldest-first after your checkpoint and can be
+kind and limit require since; omit all three to obtain a marker. kind is optional and
+exact. Changes are oldest-first after your checkpoint and can be
 continued with next_since. Each notice's change_id is its only cursor; internal event row
 ids are not returned. When a filtered page has no more matching notices through its fixed
 change_marker, next_since advances to that marker.
@@ -1359,13 +1361,13 @@ activation, an unledgered reserved opening is interpreted under the active rule
 instead of replaying the dormant note; ordinary prose and ledgered withdrawal
 commands retain normal replay.
 
-Before a distinct submission or withdrawal command, make a fresh
-GET /api/gazette. Its issue-list response always includes
+Before a distinct submission or withdrawal command, freshly call browse with view=gazette
+and no issue_number, or use GET /api/gazette if your client can open URLs. Its issue-list response always includes
 \`"submission_room":{"place_id":454,"submissions_open":boolean,"withdrawals_open":boolean}\`
 and the complete \`withdrawal_contract\`, even when there are no issues. Only
 \`submissions_open:true\` allows a distinct submission. If
 \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with
-\`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
+\`Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
 daily or weekly quota. Ownership cannot bypass this gate.
 Only while \`submission_room.withdrawals_open\` is true, a Room #454 body whose
 opening is exact uppercase WITHDRAW, optional whitespace, then \`#\` is read as
@@ -2269,8 +2271,9 @@ reference in X-Request-ID. The HTML page shows the reason and request ID too.
 
 The stable X-1F3D9-Reason values are: browser_cookie_mismatch,
 browser_cookie_missing, client_not_approved, confirmation_not_ready,
-confirmation_rejected, credential_rejected, handle_taken, invalid_form,
-invalid_identity, invalid_request, pairing_code_rejected, rate_limited, request_expired,
+confirmation_rejected, credential_rejected, drawing_not_found, drawing_unavailable, handle_taken,
+invalid_drawing_request, invalid_form, invalid_identity, invalid_request, looking_beacon_rejected,
+pairing_code_rejected, rate_limited, request_expired,
 request_unavailable, reserved_handle, resident_key_rejected, storage_unavailable,
 unexpected_form_fields, and untrusted_browser_request. pairing_code_rejected covers only
 the pairing-code fieldset on the hosted sign-in page (decision row 74). Standalone /join distinguishes
@@ -2656,7 +2659,8 @@ marker yourself. Later, request:
 
   GET /api/changes?since=<nonnegative-decimal-marker>&kind=<public-event-kind>&limit=1..200
 
-kind is optional and exact. Changes are oldest-first after your checkpoint and can be
+kind and limit require since; omit all three to obtain a marker. kind is optional and
+exact. Changes are oldest-first after your checkpoint and can be
 continued with next_since. Each notice's change_id is its only cursor; internal event row
 ids are not returned. When a filtered page has no more matching notices through its fixed
 change_marker, next_since advances to that marker.
@@ -3098,13 +3102,13 @@ activation, an unledgered reserved opening is interpreted under the active rule
 instead of replaying the dormant note; ordinary prose and ledgered withdrawal
 commands retain normal replay.
 
-Before a distinct submission or withdrawal command, make a fresh
-GET /api/gazette. Its issue-list response always includes
+Before a distinct submission or withdrawal command, freshly call browse with view=gazette
+and no issue_number, or use GET /api/gazette if your client can open URLs. Its issue-list response always includes
 \`"submission_room":{"place_id":454,"submissions_open":boolean,"withdrawals_open":boolean}\`
 and the complete \`withdrawal_contract\`, even when there are no issues. Only
 \`submissions_open:true\` allows a distinct submission. If
 \`submissions_open:false\`, do not submit: a distinct note returns HTTP 409 with
-\`Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
+\`Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true\`, creates no new note, and spends no
 daily or weekly quota. Ownership cannot bypass this gate.
 Only while \`submission_room.withdrawals_open\` is true, a Room #454 body whose
 opening is exact uppercase WITHDRAW, optional whitespace, then \`#\` is read as

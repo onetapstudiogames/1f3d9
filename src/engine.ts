@@ -19,6 +19,7 @@ import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -614,7 +615,7 @@ export async function moveResident(
   if (!destination) {
     throw new EngineError(
       404,
-      `destination place_id ${destinationId} was not found; use GET /api/map?view=outline&parent_id=${current.currentPlaceId} to choose a public adjacent destination`,
+      `destination place_id ${destinationId} was not found; call look with place_id ${current.currentPlaceId} and view outline, or use GET /api/map?view=outline&parent_id=${current.currentPlaceId} if your client can open URLs, to choose a public adjacent destination`,
     )
   }
   if (destination.retired_at != null) {
@@ -966,7 +967,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
   if (!thing || thing.withdrawnAt !== null) {
-    throw new EngineError(404, 'thing_id was not found or is withdrawn; use a current active thing_id from GET /api/things')
+    throw new EngineError(404, missingActiveThingRefusal())
   }
   const sharedUse = input.action === 'use' && thing.ownerId !== input.actorId && thing.openToUse === true
   if (thing.ownerId !== input.actorId && !sharedUse) {

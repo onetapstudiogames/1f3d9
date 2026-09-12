@@ -75,7 +75,10 @@ export function registerBoundedFailureTests(): void {
     const exchange = await exchangeCode(exchangeApp, code)
     assert.equal(exchange.status, 503)
     assertPrivate(exchange)
-    assert.deepEqual(await exchange.json(), { error: 'temporarily_unavailable' })
+    assert.deepEqual(await exchange.json(), {
+      error: 'temporarily_unavailable',
+      error_description: 'Sign-in storage is temporarily unavailable. Wait one second and retry.',
+    })
     assert.deepEqual(exchangeDiagnostics.map(record => record.stage), ['token_exchange'])
 
     const refreshMemory = new MemoryOAuthStore()
@@ -97,7 +100,10 @@ export function registerBoundedFailureTests(): void {
     })
     assert.equal(refresh.status, 503)
     assertPrivate(refresh)
-    assert.deepEqual(await refresh.json(), { error: 'temporarily_unavailable' })
+    assert.deepEqual(await refresh.json(), {
+      error: 'temporarily_unavailable',
+      error_description: 'Sign-in storage is temporarily unavailable. Wait one second and retry.',
+    })
     assert.deepEqual(refreshDiagnostics.map(record => record.stage), ['token_refresh'])
 
     const revokeMemory = new MemoryOAuthStore()

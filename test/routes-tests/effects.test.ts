@@ -172,7 +172,7 @@ export function registerEffectsTests(): void {
     })
   }
 
-  test('an owned open kindless thing honestly noops without an invented failure cause', async () => {
+  test('an owned open kindless thing names why use had no effect', async () => {
     const thingId = 1600
     const placeId = 321
     reset({
@@ -195,6 +195,10 @@ export function registerEffectsTests(): void {
     }
     assert.equal(body.action.status, 'noop')
     assert.equal(body.action.effects_applied, 0)
+    assert.equal(
+      body.action.reason,
+      'no use effect applied: this thing has no applicable recipe or effect in the current place',
+    )
     assert.equal(Object.hasOwn(body, 'error'), false)
     assert.equal(Object.hasOwn(body.action, 'error'), false)
   })

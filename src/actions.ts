@@ -157,8 +157,8 @@ async function runResidentAction(
   if (!isBasicAction(action)) return err(c, 400, 'action is not in the frozen basic-action list')
   if (action === 'talk' || action === 'make') {
     return err(c, 400, action === 'talk'
-      ? 'talk uses its dedicated endpoint: POST /api/note'
-      : 'make uses its dedicated endpoint: POST /api/thing')
+      ? 'talk uses the say tool, or POST /api/note if your client can open URLs'
+      : 'make uses the make tool, or POST /api/thing if your client can open URLs')
   }
   const unsupported = unsupportedActionFields(action, body)
   if (unsupported.length > 0) {
@@ -192,7 +192,7 @@ async function runResidentAction(
   }
   const toResidentId = await recipientId(body.to_handle)
   if (toResidentId === undefined) {
-    return err(c, 404, 'recipient handle was not found; use GET /api/residents and send a current to_handle')
+    return err(c, 404, 'recipient handle was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current to_handle')
   }
 
   if (action === 'move' && destinationPlaceId === null) {
@@ -232,6 +232,9 @@ async function runResidentAction(
       status: result.status,
       place_id: placeId,
       effects_applied: result.effectsApplied,
+      ...(action === 'use' && result.status === 'noop' ? {
+        reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
+      } : {}),
       ...(carryThingId === null ? {} : { carried_thing_id: carryThingId }),
       ...(result.error === null ? {} : { error: result.error }),
     }

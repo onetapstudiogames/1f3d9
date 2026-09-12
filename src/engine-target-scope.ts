@@ -88,7 +88,7 @@ export async function requireCallerTargetScope(
   const rows = await queryRows<Record<string, unknown>>(db`
     SELECT owner_id FROM kinds WHERE id = ${target.id} FOR UPDATE
   `)
-  if (!rows[0]) throw new EngineError(404, 'kind target was not found; choose a current kind_id from GET /api/kinds')
+  if (!rows[0]) throw new EngineError(404, 'kind target was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and choose a current kind_id')
   if (positiveInteger(rows[0].owner_id, 'kind owner id') !== actorId) {
     throw new EngineError(403, 'target kind is not owned by you; choose a kind you own')
   }

@@ -147,6 +147,20 @@ export function registerErrorContractTests(): void {
         path,
       )
       assert.doesNotMatch(JSON.stringify(secret), new RegExp(LEGACY_SECRET, 'i'), path)
+
+      for (const call of [
+        { name: 'say', arguments: { place_id: 2, body: 'hello', invented: true } },
+        { name: 'act', arguments: { action: 'invented', thing_id: 2 } },
+        { name: 'drawing', arguments: { type: 'invented', id: 2 } },
+      ]) {
+        const rejected = await rpc(harness.gateway, 'tools/call', call, authorization, path) as { result: ToolResult }
+        const payload = JSON.parse(rejected.result.content[0]?.text ?? '{}') as {
+          error_class?: string
+          http_status?: number
+        }
+        assert.equal(payload.error_class, 'bad_input', `${path}: ${call.name}`)
+        assert.equal(payload.http_status, 400, `${path}: ${call.name}`)
+      }
     }
 
     // The public legacy door's unauthenticated pointer is its own auth_required.

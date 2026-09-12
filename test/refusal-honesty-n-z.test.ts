@@ -39,7 +39,7 @@ test('PayPal route refusals name the usable source or retry', () => {
     'The PayPal request Content-Type is not application/json. Send one application/json body. No payment was started.',
     'The PayPal request JSON is invalid. Send one valid JSON object. No payment was started.',
     '${label} does not match a PayPal identifier; resend the exact identifier returned by PayPal. No new payment was started.',
-    'That resident number was not found. Use a current number from GET /api/residents. No payment was started.',
+    'That resident number was not found. Open the city window and choose a current resident number. No payment was started.',
     'PayPal callbacks are unavailable. Retry later with the same request_id. No payment was started.',
     'PayPal purchase id is invalid. Use the purchase_id from the original city response. No payment was started.',
     'PayPal allowance setup is temporarily unavailable. Retry later with the same request_id. No payment was started.',
@@ -52,8 +52,8 @@ test('PayPal route refusals name the usable source or retry', () => {
 
 test('gift, pagination, and transfer refusals name accepted state', () => {
   expects('prepaid-credit.ts', [
-    'gift id is invalid; use one pending gift_id from GET /api/me',
-    'gift status is invalid; re-read /api/me and use a pending or refused gift as allowed by this action',
+    'gift id is invalid; call me, or use GET /api/me if your client can open URLs, and send one pending gift_id',
+    'gift status is invalid; call me, or use /api/me if your client can open URLs, and use a pending or refused gift as allowed by this action',
     'gift claim token is invalid; use the exact one-time claim_token from the original gift response',
   ])
   expects('public-pagination.ts', [
@@ -67,12 +67,12 @@ test('gift, pagination, and transfer refusals name accepted state', () => {
 test('world body refusals name the rejected field(s) by name and the accepted fields', () => {
   expects('world.ts', [
     'place body does not accept ${describeUnsupportedFields(rejected)}; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes',
-    'place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Set a place\'s laws with PUT /api/place/:id/laws {"traits":[names]} or the laws tool.',
+    'place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.',
     'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch',
     'kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
-    'kind names an unknown or duplicate trait; coin each trait first with POST /api/trait',
+    'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs',
     'kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
-    'kind revision names an unknown or duplicate trait; coin each trait first with POST /api/trait',
+    'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs',
     'trait body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, and an optional inert recipe',
     'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids',
     'thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name',

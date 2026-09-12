@@ -14,6 +14,8 @@ import {
 } from './drawing.ts'
 import { renderDrawingThumbnailPng } from './drawing-thumbnail.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
+import { allowedPublicQuery } from './public-pagination.ts'
+import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 
 const DRAWING_RECORD_TYPES = Object.freeze(['place', 'resident', 'kind', 'thing'] as const)
 const DRAWING_RECORD_TYPE_SET: ReadonlySet<string> = new Set(DRAWING_RECORD_TYPES)
@@ -422,7 +424,12 @@ function privateHeaders(c: Context): void {
   c.header('Vary', 'Authorization')
 }
 
-function thumbnailEmpty(c: Context, status: 400 | 404 | 500): Response {
+function thumbnailEmpty(
+  c: Context,
+  status: 400 | 404 | 500,
+  reason: BrowserRefusalReason,
+): Response {
+  markBrowserRefusal(c, status, reason)
   return c.body(null, status, {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
@@ -432,32 +439,32 @@ function thumbnailEmpty(c: Context, status: 400 | 404 | 500): Response {
 export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependencies): void {
   app.get('/api/drawing/:type/:id/thumb.png', async c => {
     const recordType = drawingRecordType(c.req.param('type'))
-    if (!recordType) return thumbnailEmpty(c, 400)
+    if (!recordType) return thumbnailEmpty(c, 400, 'invalid_drawing_request')
     const id = exactPositiveId(c.req.param('id'))
-    if (id === null) return thumbnailEmpty(c, 400)
+    if (id === null) return thumbnailEmpty(c, 400, 'invalid_drawing_request')
 
     const query = new URL(c.req.url).searchParams
     if ([...query.keys()].some(key => key !== 'rev') || query.getAll('rev').length > 1) {
-      return thumbnailEmpty(c, 400)
+      return thumbnailEmpty(c, 400, 'invalid_drawing_request')
     }
     const requestedRevisionValue = query.get('rev')
     const requestedRevision = requestedRevisionValue === null
       ? null
       : parsePublicChangeMarker(requestedRevisionValue)
     if (requestedRevisionValue !== null && requestedRevision === null) {
-      return thumbnailEmpty(c, 400)
+      return thumbnailEmpty(c, 400, 'invalid_drawing_request')
     }
 
     const rows = await dependencies.database.query(drawingThumbnailSql(recordType), [id])
     const row = rows[0] as StoredDrawingRow | undefined
-    if (!row || row.id == null) return thumbnailEmpty(c, 404)
+    if (!row || row.id == null) return thumbnailEmpty(c, 404, 'drawing_not_found')
     const checkpoint = parsePublicChangeMarker(String(row.checkpoint ?? ''))
-    if (checkpoint === null) return thumbnailEmpty(c, 500)
+    if (checkpoint === null) return thumbnailEmpty(c, 500, 'drawing_unavailable')
     const drawing = publicStoredDrawing(row)
-    if (drawing === 'invalid') return thumbnailEmpty(c, 500)
+    if (drawing === 'invalid') return thumbnailEmpty(c, 500, 'drawing_unavailable')
     if (
       drawing.drawing === null || drawing.state === 'undrawn' || drawing.state === 'refused'
-    ) return thumbnailEmpty(c, 404)
+    ) return thumbnailEmpty(c, 404, 'drawing_not_found')
 
     const canonical = `/api/drawing/${recordType}/${id}/thumb.png?rev=${checkpoint}`
     if (requestedRevision !== checkpoint) {
@@ -546,9 +553,8 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
 
   app.get('/api/drawing/:type/:id', async c => {
     c.header('Cache-Control', 'no-store')
-    if (new URL(c.req.url).searchParams.size > 0) {
-      return err(c, 400, 'drawing reads do not accept query options')
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const recordType = drawingRecordType(c.req.param('type'))
     if (!recordType) return err(c, 400, 'drawing type must be place, resident, kind, or thing')
     const id = exactPositiveId(c.req.param('id'))
@@ -569,9 +575,8 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     privateHeaders(c)
     const resident = await dependencies.authenticate(c)
     if (!resident) return err(c, 401, 'resident sign-in required to edit your drawing')
-    if (new URL(c.req.url).searchParams.size > 0) {
-      return err(c, 400, 'resident drawing edit does not accept query options')
-    }
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
     const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_BODY_MAX_BYTES)
     if (!decoded.ok) {
       return /no larger than/iu.test(decoded.error)

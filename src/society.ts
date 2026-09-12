@@ -59,9 +59,9 @@ import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
-const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; retry with the agreement id from GET /api/agreements'
+const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and retry with a current agreement id'
 const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
-const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; retry with a handle from GET /api/census'
+const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current handle'
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
@@ -258,7 +258,7 @@ export function mountSocietyRoutes(app: Hono): void {
       retired_at: string | null
     }[]
     const place = places[0]
-    if (!place) return err(c, 404, `place_id ${placeId} was not found; use GET /api/map?view=outline and send a current place_id`)
+    if (!place) return err(c, 404, `place_id ${placeId} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
     if (place.retired_at != null) return err(c, 409, 'place is retired; restore it before leaving notes there')
     if (place.parent_id === null && place.owner_id === null) {
       return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
@@ -440,7 +440,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const recipient = await residentId(toHandle)
-    if (!recipient) return err(c, 404, `recipient handle ${toHandle} was not found; use GET /api/residents and send a current handle`)
+    if (!recipient) return err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     if (recipient === resident.id) return err(c, 400, 'you already own this asset; send a different current resident in to_handle')
     const presence = await residentPresence(resident.id)
     if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
@@ -490,19 +490,21 @@ export function mountSocietyRoutes(app: Hono): void {
             FROM places place
             WHERE place.id = ANY($7::integer[])
           ), blocked AS MATERIALIZED (
-            SELECT EXISTS (
-              SELECT 1
-              FROM locked_places place
-              LEFT JOIN transfer_offers offer
-                ON offer.asset_type = 'place' AND offer.asset_id = place.id
-                  AND offer.status = 'open'
-              WHERE place.owner_id IS DISTINCT FROM $4
-                OR place.active_offer_id IS NOT NULL
-                OR offer.id IS NOT NULL
-            ) AS value
+            SELECT place.id AS blocker_id,
+              CASE WHEN place.owner_id IS DISTINCT FROM $4
+                THEN 'owner' ELSE 'open_offer' END AS blocker_reason
+            FROM locked_places place
+            LEFT JOIN transfer_offers offer
+              ON offer.asset_type = 'place' AND offer.asset_id = place.id
+                AND offer.status = 'open'
+            WHERE place.owner_id IS DISTINCT FROM $4
+              OR place.active_offer_id IS NOT NULL
+              OR offer.id IS NOT NULL
+            ORDER BY place.id
+            LIMIT 1
           ), moved_asset AS (
             UPDATE places SET owner_id = recipient.id
-            FROM recipient, blocked
+            FROM recipient
             WHERE places.id IN (SELECT id FROM locked_places)
               AND places.owner_id = $4
               AND places.active_offer_id IS NULL
@@ -511,7 +513,7 @@ export function mountSocietyRoutes(app: Hono): void {
                 WHERE offer.asset_type = 'place' AND offer.asset_id = places.id
                   AND offer.status = 'open'
               )
-              AND blocked.value = false
+              AND NOT EXISTS (SELECT 1 FROM blocked)
             RETURNING places.id
           ), cleared_homes AS (
             UPDATE resident_presence presence
@@ -534,8 +536,13 @@ export function mountSocietyRoutes(app: Hono): void {
           )
           SELECT t.id, t.created_at, EXISTS (
             SELECT 1 FROM cleared_homes WHERE resident_id = $4
-          ) AS home_cleared
+          ) AS home_cleared, NULL::integer AS blocker_id, NULL::text AS blocker_reason
           FROM new_transfer t
+          UNION ALL
+          SELECT NULL::integer AS id, NULL::timestamptz AS created_at,
+            false AS home_cleared, blocker_id, blocker_reason
+          FROM blocked
+          WHERE NOT EXISTS (SELECT 1 FROM new_transfer)
         ` : `
           WITH recipient AS (
             SELECT r.id, r.handle FROM residents r WHERE r.id = $3
@@ -564,11 +571,24 @@ export function mountSocietyRoutes(app: Hono): void {
         const rows = await transaction.query(query, type === 'place'
           ? [...parameters, placeIds]
           : parameters) as {
-          id: number
+          id: number | null
           created_at?: string
           home_cleared?: boolean
+          blocker_id?: number | null
+          blocker_reason?: 'owner' | 'open_offer' | null
         }[]
-        transfer = rows[0]
+        const result = rows[0]
+        if (result?.blocker_id != null) {
+          const reason = result.blocker_reason === 'owner'
+            ? 'its owner is not the gifting resident'
+            : 'it has an open transfer offer'
+          throw new EngineError(409, `place_id ${result.blocker_id} blocks this place gift because ${reason}; resolve that place before retrying`)
+        }
+        transfer = result?.id == null ? undefined : {
+          id: result.id,
+          ...(result.created_at ? { created_at: result.created_at } : {}),
+          ...(result.home_cleared == null ? {} : { home_cleared: result.home_cleared }),
+        }
         if (!transfer) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
       },
     })
@@ -609,8 +629,11 @@ export function mountSocietyRoutes(app: Hono): void {
     const wallet = typeof body.seller_wallet === 'string' && WALLET_RE.test(body.seller_wallet)
       ? body.seller_wallet.toLowerCase()
       : null
-    if (!type || !id || !toHandle || price == null || !wallet)
-      return err(c, 400, `invalid offer; type is place|thing|kind, price is greater than 0 and at most ${USDC_AMOUNT_MAX} USDC and is rounded to 6 decimals, wallet is a Base address`)
+    if (!type) return err(c, 400, 'type must be place, thing, or kind')
+    if (!id) return err(c, 400, 'id must be a positive whole number')
+    if (!toHandle) return err(c, 400, 'to_handle must be a current resident handle')
+    if (price == null) return err(c, 400, `price_usdc must be greater than 0 and at most ${USDC_AMOUNT_MAX}; the city rounds it to 6 decimals`)
+    if (!wallet) return err(c, 400, 'seller_wallet must be a Base address')
 
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
@@ -619,7 +642,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const buyerId = await residentId(toHandle)
-    if (!buyerId) return err(c, 404, `buyer handle ${toHandle} was not found; use GET /api/residents and send a current handle`)
+    if (!buyerId) return err(c, 404, `buyer handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself; choose another current resident in to_handle')
     const presence = await residentPresence(resident.id)
     if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)

@@ -5,6 +5,20 @@ const CLAIM_TOKEN = `gift_claim_${'cd'.repeat(32)}`
 const PURCHASE_ID = `city_paypal_${'ef'.repeat(16)}`
 const PAYPAL_ORDER_ID = 'ORDER-E2E-CREDIT-0001'
 
+test('gift redirect enforces its retry-id pattern in Chromium', async ({ page }) => {
+  await page.goto('/gift-redirect')
+  const requestId = page.getByLabel('Redirect retry ID')
+  for (const [value, valid] of [
+    ['retry:id-1', true],
+    ['a_b.c-d:e', true],
+    ['short', false],
+    ['invalid space', false],
+  ] as const) {
+    await requestId.fill(value)
+    expect(await requestId.evaluate(input => (input as HTMLInputElement).checkValidity())).toBe(valid)
+  }
+})
+
 test('gift purchase confirms the resident before exposing the one-time redirect key', async ({ page }) => {
   await page.goto('/buy')
 
@@ -24,6 +38,16 @@ test('gift purchase confirms the resident before exposing the one-time redirect 
   await expect(page.locator('#claim-token')).toHaveText(CLAIM_TOKEN)
   await expect(page.getByRole('button', { name: 'Continue to PayPal' })).toBeDisabled()
   await expect(page.getByText('/gift-redirect', { exact: true })).toBeVisible()
+})
+
+test('a missing resident gives the buyer a clickable city-window recovery', async ({ page }) => {
+  await page.goto('/buy')
+  await page.getByLabel('Resident number').fill('999')
+  await page.getByRole('button', { name: 'Find this resident' }).click()
+
+  const recovery = page.getByRole('link', { name: 'Open the city window.' })
+  await expect(recovery).toBeVisible()
+  await expect(recovery).toHaveAttribute('href', '/window')
 })
 
 test('standalone redirect confirms the new handle and clears the private key on success', async ({ page }) => {

@@ -27,7 +27,7 @@ export function registerGazetteTests(): void {
       assert.match(text, /replay[\s\S]{0,280}(?:print\s+boundary|across\s+the\s+print)/iu, `${name}: cross-boundary replay`)
       assert.match(
         text,
-        /fresh[\s\S]{0,80}GET \/api\/gazette[\s\S]{0,180}submission_room[\s\S]{0,100}place_id[\s\S]{0,40}454[\s\S]{0,100}submissions_open/iu,
+        /fresh[\s\S]{0,120}(?:browse[\s\S]{0,80}view[=:]gazette|GET \/api\/gazette)[\s\S]{0,220}submission_room[\s\S]{0,100}place_id[\s\S]{0,40}454[\s\S]{0,100}submissions_open/iu,
         `${name}: fresh public state before a distinct submission`,
       )
       assert.match(
@@ -41,7 +41,7 @@ export function registerGazetteTests(): void {
         `${name}: false state blocks submission`,
       )
       assert.ok(
-        text.includes('Gazette submission room #454 is not open; read GET /api/gazette and submit only when submission_room.submissions_open is true'),
+        text.includes('Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true'),
         `${name}: exact closed-room recovery`,
       )
       assert.match(

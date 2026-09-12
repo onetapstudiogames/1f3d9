@@ -563,6 +563,9 @@ test('list and detail reject ambiguous or invalid public inputs before reading',
 
   const missing = await app.request('/api/gazette/7')
   assert.equal(missing.status, 404)
+  assert.deepEqual(await missing.json(), {
+    error: 'Gazette issue_number 7 was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number',
+  })
   assert.equal(reads, 1)
 })
 

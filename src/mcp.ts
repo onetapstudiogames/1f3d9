@@ -577,7 +577,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'changes',
     title: 'Check public changes',
     description:
-      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. change_id is the only per-notice cursor. Optionally choose one exact public event kind. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
+      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. change_id is the only per-notice cursor. Optionally choose one exact public event kind. Kind and limit require since; omit all three to obtain a marker. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -587,8 +587,8 @@ const TOOLS: readonly ToolDefinition[] = [
           maxLength: MCP_CHANGE_MARKER_MAX_LENGTH,
           pattern: '^(?:0|[1-9][0-9]*)$',
         },
-        kind: { type: 'string', enum: PUBLIC_EVENT_KINDS },
-        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX },
+        kind: { type: 'string', enum: PUBLIC_EVENT_KINDS, description: 'Requires since.' },
+        limit: { type: 'integer', minimum: 1, maximum: PUBLIC_PAGE_MAX, description: 'Requires since.' },
       },
     },
     annotations: {
@@ -2251,15 +2251,15 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input'),
+      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400),
       true,
     )
   }
   const enumRejection = invalidEnumArgument(tool, args)
-  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input'), true)
+  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input', 400), true)
   const publicReadRejection = invalidPublicReadArgument(name, args)
   if (publicReadRejection) {
-    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input'), true)
+    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input', 400), true)
   }
   if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
     return toolResult(

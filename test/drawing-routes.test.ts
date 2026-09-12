@@ -274,6 +274,9 @@ test('thumbnail 404 states are empty, neutral-cache-safe, and include inherited 
     })
     assert.equal(response.status, 404)
     assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'drawing_not_found')
+    assert.equal(response.headers.get('x-1f3d9-error-class'), 'not_found')
+    assert.ok(response.headers.get('x-request-id'))
     assert.equal(response.headers.get('content-type'), null)
     assert.equal(await response.text(), '')
     assert.equal(authenticationCalls(), 0)
@@ -314,8 +317,25 @@ test('thumbnail validates its bounded public path and sole rev query before SQL'
   ]) {
     const response = await app.request(path)
     assert.equal(response.status, 400, path)
+    assert.equal(response.headers.get('x-1f3d9-reason'), 'invalid_drawing_request', path)
+    assert.equal(response.headers.get('x-1f3d9-error-class'), 'bad_input', path)
+    assert.ok(response.headers.get('x-request-id'), path)
   }
   assert.equal(calls.length, 0)
+})
+
+test('an unreadable stored thumbnail names a server-side drawing failure', async () => {
+  const { app } = harness([{
+    checkpoint: 'not-a-marker', id: 41, drawing: null, drawing_state: 'undrawn',
+    drawing_description: null, source: 'none', kind_id: null, revision: null,
+    variant_name: null,
+  }])
+  const response = await app.request('/api/drawing/thing/41/thumb.png')
+  assert.equal(response.status, 500)
+  assert.equal(response.headers.get('x-1f3d9-reason'), 'drawing_unavailable')
+  assert.equal(response.headers.get('x-1f3d9-error-class'), 'city_fault')
+  assert.ok(response.headers.get('x-request-id'))
+  assert.equal(await response.text(), '')
 })
 
 test('drawing reads reject unsupported types, malformed ids, and query inventions before SQL', async () => {

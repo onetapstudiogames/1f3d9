@@ -20,6 +20,7 @@ import {
   type PaymentAttemptRecord,
 } from './payment-attempts.ts'
 import {
+  PAYMENT_CUSTODY_CHECK_FAILED,
   PAYMENT_CUSTODY_UNAVAILABLE,
   parseX402Payment,
   paymentResponseHeader,
@@ -32,8 +33,26 @@ import {
   type X402VerificationResult,
 } from './pay.ts'
 import { invalidateSalePaymentTarget } from './payment-sale-operations.ts'
+import { postgresErrorCode } from './core-primitives.ts'
 
 const LEASE_MILLISECONDS = 30_000
+
+async function checkedCustodyReadiness(
+  database: PaymentAttemptDatabase,
+  check: PaymentFlowDependencies['custodyReady'],
+): Promise<boolean | null> {
+  try {
+    return await check(database)
+  } catch (error) {
+    const errorCode = postgresErrorCode(error)
+    console.error('payment_custody_check_failure', JSON.stringify({
+      event: 'payment_custody_check_failure',
+      ...(errorCode && /^[0-9A-Z]{5}$/u.test(errorCode) ? { error_code: errorCode } : {}),
+      error_type: error instanceof Error ? 'Error' : typeof error,
+    }))
+    return null
+  }
+}
 
 export interface DurableX402Input {
   database: PaymentAttemptDatabase
@@ -300,7 +319,9 @@ export async function resumeDurableX402(
   if (input.attempt.status === 'invalid' || input.attempt.status === 'expired') {
     return rejected(input.attempt.invalidReason ?? 'payment attempt is no longer valid', 409, true)
   }
-  if (!await deps.custodyReady(input.database)) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
+  const custodyReady = await checkedCustodyReadiness(input.database, deps.custodyReady)
+  if (custodyReady === null) return unavailable(PAYMENT_CUSTODY_CHECK_FAILED)
+  if (!custodyReady) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
   const leased = await deps.acquireLease(input.database, {
     publicId: input.attempt.publicId,
     actorId: input.actorId,
@@ -476,7 +497,9 @@ export async function runDurableX402(
   if (created.attempt.status === 'invalid' || created.attempt.status === 'expired') {
     return rejected(created.attempt.invalidReason ?? 'payment attempt is no longer valid', 409, true)
   }
-  if (!await deps.custodyReady(input.database)) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
+  const custodyReady = await checkedCustodyReadiness(input.database, deps.custodyReady)
+  if (custodyReady === null) return unavailable(PAYMENT_CUSTODY_CHECK_FAILED)
+  if (!custodyReady) return unavailable(PAYMENT_CUSTODY_UNAVAILABLE)
 
   const leased = await deps.acquireLease(
     input.database,

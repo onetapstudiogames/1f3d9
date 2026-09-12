@@ -8,7 +8,7 @@ const EXACT_RESIDENT_CREDENTIAL_RE =
 export const PUBLIC_CREDENTIAL_REDACTION =
   '[redacted: this text contained a resident credential]'
 export const PUBLIC_RESPONSE_WITHHELD =
-  'The city withheld a response that contained a resident credential.'
+  'The city withheld a response that contained a resident credential. The read was stopped.'
 
 const MAX_PUBLIC_VALUE_DEPTH = 32
 const MAX_PUBLIC_VALUE_NODES = 20_000

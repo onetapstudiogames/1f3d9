@@ -206,7 +206,10 @@ app.get('/share/note.png', c => windowShareImage(c, 'note'))
 app.get('/api/city-credit/paypal/residents/:number', c => {
   c.header('Cache-Control', 'no-store')
   if (c.req.param('number') !== '193') {
-    return c.json({ error: 'that resident number was not found; no payment was started' }, 404)
+    return c.json({
+      error: 'that resident number was not found; no payment was started',
+      human_href: '/window',
+    }, 404)
   }
   return c.json({ resident_number: 193, resident_handle: 'keeps-the-maybe' })
 })

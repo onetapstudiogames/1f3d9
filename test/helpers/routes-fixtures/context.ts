@@ -51,6 +51,81 @@ type App = (typeof import('../../../src/index.ts'))['default']
 type PublicRecords = typeof import('../../../src/public-records.ts')
 type Engine = typeof import('../../../src/engine.ts')
 
+const ERROR_CLASS_BY_STATUS: Readonly<Record<number, string>> = Object.freeze({
+  400: 'bad_input',
+  401: 'auth_required',
+  402: 'payment_required',
+  403: 'forbidden',
+  404: 'not_found',
+  405: 'bad_input',
+  409: 'conflict',
+  413: 'bad_input',
+  429: 'rate_limited',
+  500: 'city_fault',
+  502: 'city_fault',
+  503: 'city_fault',
+})
+
+function contractCheckedResponse(response: Response, apiRequest: boolean): Response {
+  if (!apiRequest || response.status < 400 || !/^application\/json\b/iu.test(
+    response.headers.get('content-type') ?? '',
+  )) return response
+
+  return new Proxy(response, {
+    get(target, property) {
+      if (property === 'json') {
+        return async () => {
+          const body = await target.json() as Record<string, unknown>
+          if (typeof body.error !== 'string') return body
+          const requestId = target.headers.get('x-request-id')
+          const errorClass = ERROR_CLASS_BY_STATUS[target.status]
+          assert.match(requestId ?? '', /^[0-9a-f-]{36}$/iu)
+          assert.equal(body.request_id, requestId)
+          assert.equal(body.error_class, errorClass)
+          assert.equal(body.http_status, target.status)
+          assert.equal(body.front_door_tool, 'front_door')
+          assert.equal(body.front_door, 'https://1f3d9.com/')
+          assert.equal(target.headers.get('x-1f3d9-error-class'), errorClass)
+          const {
+            request_id: _requestId,
+            error_class: _errorClass,
+            http_status: _httpStatus,
+            front_door_tool: _frontDoorTool,
+            front_door: _frontDoor,
+            ...routeFields
+          } = body
+          return routeFields
+        }
+      }
+      const value = Reflect.get(target, property, target) as unknown
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
+function contractCheckedApp(app: App): App {
+  return new Proxy(app, {
+    get(target, property) {
+      if (property === 'request') {
+        return async (...args: Parameters<App['request']>) => {
+          const requestTarget = args[0]
+          const path = typeof requestTarget === 'string'
+            ? requestTarget
+            : requestTarget instanceof URL
+              ? requestTarget.pathname
+              : new URL(requestTarget.url).pathname
+          return contractCheckedResponse(
+            await target.request(...args),
+            path.startsWith('/api/'),
+          )
+        }
+      }
+      const value = Reflect.get(target, property, target) as unknown
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
 type RoutesRuntime = Readonly<{
   app: App
   loadPublicNoteRecord: PublicRecords['loadPublicNoteRecord']
@@ -118,7 +193,7 @@ export function getRoutesTestContext() {
     X_PAYMENT,
     X_PAYMENT_NO_ID,
     allowedPublicQuery,
-    app: routesRuntime.app,
+    app: contractCheckedApp(routesRuntime.app),
     assert,
     assertPhaseAwareGazetteReplayReads,
     authHeaders,

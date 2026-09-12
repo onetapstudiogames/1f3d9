@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { requirements, parseX402Payment } from '../src/pay.ts'
+import {
+  PAYMENT_CUSTODY_CHECK_FAILED,
+  requirements,
+  parseX402Payment,
+} from '../src/pay.ts'
 import {
   resumeDurableX402,
   runDurableX402,
@@ -216,6 +220,34 @@ test('new payment fails closed before verification or settlement when byte repla
   assert.deepEqual(events, ['block', 'create', 'schema'])
   assert.equal(events.includes('verify'), false)
   assert.equal(events.includes('settle'), false)
+})
+
+test('a failed custody check is logged and reported differently from a real not-ready state', async () => {
+  const events: string[] = []
+  const logLines: string[] = []
+  const originalError = console.error
+  console.error = (...values: unknown[]) => logLines.push(values.map(String).join(' '))
+  try {
+    const result = await runDurableX402(input, dependencies(events, {
+      custodyReady: async () => {
+        events.push('schema')
+        throw Object.assign(new Error('database unavailable'), { code: '08006' })
+      },
+    }))
+
+    assert.equal(result.state, 'unavailable')
+    if (result.state !== 'unavailable') assert.fail('expected unavailable payment result')
+    assert.equal(result.body.error, PAYMENT_CUSTODY_CHECK_FAILED)
+    assert.doesNotMatch(result.body.error, /upgrad/iu)
+    assert.deepEqual(events, ['block', 'create', 'schema'])
+    assert.equal(events.includes('verify'), false)
+    assert.equal(logLines.length, 1)
+    assert.match(logLines[0]!, /payment_custody_check_failure/iu)
+    assert.match(logLines[0]!, /08006/u)
+    assert.doesNotMatch(logLines[0]!, /database unavailable/iu)
+  } finally {
+    console.error = originalError
+  }
 })
 
 test('a persisted transaction skips verification and settlement on retry', async () => {

@@ -53,11 +53,15 @@ test('the source scan resolves constants, imported messages, templates, and loca
   assert.ok(rows(
     'src/gazette-reading.ts',
     'Gazette issue number must be a positive integer',
-  ).length === 2)
+  ).length === 1)
   assert.ok(rows(
     'src/gazette-reading.ts',
-    'Gazette issue_number ${issueNumber} was not found; use GET /api/gazette and send a current issue_number',
-  ).length === 2)
+    'Gazette issue ${issueNumber} was not found. Open /window to choose a current issue number.',
+  ).length === 1)
+  assert.ok(rows(
+    'src/gazette-routes.ts',
+    'Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number',
+  ).length === 1)
   assert.ok(rows(
     'src/world-market.ts',
     `${residentAuth}, then move into the city before paying`,
@@ -70,6 +74,16 @@ test('the source scan resolves constants, imported messages, templates, and loca
   assert.ok(candidates.some(row => row.finalText.includes(
     'Wrong 1F3D9 connector address. ${publicOrigin()}/mcp is only for key-capable local clients.',
   )))
+})
+
+test('every refusal that names an API address gives non-browser agents a tool path', () => {
+  const unhedged = discoverCandidates(projectRoot)
+    .filter(row => row.disposition === 'included')
+    .filter(row => /\/api\//u.test(row.finalText))
+    .filter(row => !row.finalText.includes('if your client can open URLs'))
+    .map(row => `${row.producer}: ${row.finalText}`)
+
+  assert.deepEqual(unhedged, [])
 })
 
 test('the source scan follows typed error builders whose result is thrown', () => {

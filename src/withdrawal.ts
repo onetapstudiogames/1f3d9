@@ -1,5 +1,5 @@
 import type { Resident } from './core.ts'
-import { missingRecordRefusal } from './refusal-text.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 import { sql } from './db.ts'
 
 export type WithdrawalFailure = Readonly<{
@@ -39,10 +39,7 @@ export async function withdrawThing(
   const thing = states[0]
   if (!thing) {
     return Object.freeze({
-      error: missingRecordRefusal(
-        `thing_id ${thingId}`,
-        'use GET /api/things and send an active thing_id you own',
-      ),
+      error: missingActiveThingRefusal(`thing_id ${thingId}`),
       status: 404,
     })
   }
