@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { errorClassForStatus, type ErrorClass } from './error-class.ts'
 import { allowOAuthForHostedConnectorRequest, authRootKeyPassive, HANDLE_RE } from './core.ts'
@@ -1637,8 +1638,10 @@ function classifiedErrorText(
   errorClass: McpErrorClass,
   httpStatus?: number,
   retryAfterSeconds?: number,
+  connectorRequestId = randomUUID(),
 ): string {
   const envelope: Record<string, unknown> = {
+    request_id: connectorRequestId,
     error_class: errorClass,
     front_door_tool: 'front_door',
     front_door: frontDoorUrl(),
@@ -1649,12 +1652,26 @@ function classifiedErrorText(
   try {
     const parsed: unknown = JSON.parse(text)
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return JSON.stringify({ ...(parsed as Record<string, unknown>), ...envelope })
+      const parsedRecord = parsed as Record<string, unknown>
+      return JSON.stringify({
+        ...parsedRecord,
+        ...envelope,
+        request_id: safeConnectorRequestId(parsedRecord.request_id) ?? connectorRequestId,
+      })
     }
   } catch {
     // fall through to the plain-text envelope
   }
   return JSON.stringify({ ...envelope, error: text })
+}
+
+function safeConnectorRequestId(value: unknown): string | undefined {
+  if (
+    typeof value === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)
+    && !containsCredentialLikeInput(value)
+  ) return value
+  return undefined
 }
 
 function boundedRetryAfterSeconds(value: string | null): number | undefined {
@@ -2051,6 +2068,18 @@ function toolResult(
   isError: boolean,
   options: { oauthChallenge?: string; forwardUnauthorizedStatus?: boolean } = {},
 ) {
+  if (isError) {
+    try {
+      const parsed = JSON.parse(text) as { request_id?: unknown; error_class?: unknown }
+      const requestId = safeConnectorRequestId(parsed.request_id)
+      if (requestId) c.header('X-Request-ID', requestId)
+      if (typeof parsed.error_class === 'string') {
+        c.header('X-1F3D9-Error-Class', parsed.error_class)
+      }
+    } catch {
+      // classifiedErrorText produces JSON; leave unrelated error text unchanged.
+    }
+  }
   const result = {
     content: [{ type: 'text', text }],
     isError,
@@ -2117,6 +2146,7 @@ function hostedBackingRequest(path: string, init: RequestInit): Request {
 }
 
 export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
+  const connectorRequestId = randomUUID()
   const hostedChat = options.hostedChat === true && hostedChatSigninEnabled()
   const message = await c.req.json().catch(() => null)
   if (Array.isArray(message)) {
@@ -2242,6 +2272,9 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       classifiedErrorText(
         guidance,
         'bad_input',
+        undefined,
+        undefined,
+        connectorRequestId,
       ),
       true,
     )
@@ -2251,21 +2284,21 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400),
+      classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400, undefined, connectorRequestId),
       true,
     )
   }
   const enumRejection = invalidEnumArgument(tool, args)
-  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input', 400), true)
+  if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input', 400, undefined, connectorRequestId), true)
   const publicReadRejection = invalidPublicReadArgument(name, args)
   if (publicReadRejection) {
-    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input', 400), true)
+    return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input', 400, undefined, connectorRequestId), true)
   }
   if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
     return toolResult(
       c,
       id,
-      classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input'),
+      classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input', undefined, undefined, connectorRequestId),
       true,
     )
   }
@@ -2282,6 +2315,9 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       classifiedErrorText(
         hostedChat ? hostedDoorAuthMessage() : publicMcpDoorAuthMessage(),
         'auth_required',
+        undefined,
+        undefined,
+        connectorRequestId,
       ),
       true,
       authOptions,
@@ -2295,7 +2331,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     return toolResult(
       c,
       id,
-      classifiedErrorText(wrongHostedDoorMessage(), 'auth_required'),
+      classifiedErrorText(wrongHostedDoorMessage(), 'auth_required', undefined, undefined, connectorRequestId),
       true,
     )
   }
@@ -2307,6 +2343,9 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       classifiedErrorText(
         'Moderation is unavailable through hosted chat; it requires founder resident #1\'s root key on the key-capable /mcp door.',
         'forbidden',
+        undefined,
+        undefined,
+        connectorRequestId,
       ),
       true,
     )
@@ -2350,7 +2389,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       return toolResult(
         c,
         id,
-        classifiedErrorText(hostedSignInErrorText(safeguarded.text), 'auth_required', 401),
+        classifiedErrorText(hostedSignInErrorText(safeguarded.text), 'auth_required', 401, undefined, connectorRequestId),
         true,
         {
           oauthChallenge,
@@ -2368,12 +2407,13 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
           errorClassForStatus(response.status),
           response.status,
           retryAfterSeconds,
+          connectorRequestId,
         ),
         true,
       )
     }
     if (safeguarded.withheld) {
-      return toolResult(c, id, classifiedErrorText(safeguarded.text, 'city_fault'), true)
+      return toolResult(c, id, classifiedErrorText(safeguarded.text, 'city_fault', undefined, undefined, connectorRequestId), true)
     }
     return toolResult(c, id, safeguarded.text, false)
   } catch {
@@ -2383,6 +2423,9 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       classifiedErrorText(
         'the city API could not answer this tool call because its response was unreachable; retry this same tool call later',
         'unreachable',
+        undefined,
+        undefined,
+        connectorRequestId,
       ),
       true,
     )

@@ -18,7 +18,7 @@ export function registerPublicRecordsTests(): void {
 
 
   test('the legal pages answer as plain text naming the operator', async () => {
-    for (const path of ['/terms', '/privacy']) {
+    for (const path of ['/terms', '/privacy', '/support']) {
       const response = await app.request(path)
       assert.equal(response.status, 200)
       assert.match(response.headers.get('content-type') ?? '', /text\/plain/)
@@ -35,6 +35,46 @@ export function registerPublicRecordsTests(): void {
     assert.match(privacy, /private refusal[^.]{0,180}(?:status|fingerprint)[^.]{0,180}count/iu)
     assert.match(privacy, /HTTP status, a fingerprint of the method, path, status, and cause/iu)
     assert.match(privacy, /refusal[^.]{0,220}(?:deleted|deletion)[^.]{0,100}resident/iu)
+  })
+
+  test('the legal pages use the human guide for browsers and keep exact text for programs', async () => {
+    for (const path of ['/terms', '/privacy', '/support']) {
+      const browser = await app.request(path, { headers: { accept: 'text/html' } })
+      const html = await browser.text()
+      assert.equal(browser.status, 200)
+      assert.match(browser.headers.get('content-type') ?? '', /^text\/html\b/iu)
+      assert.equal(browser.headers.get('vary'), 'Accept')
+      assert.match(browser.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
+      assert.equal(browser.headers.get('x-robots-tag'), 'index, follow')
+      assert.match(html, /^<!doctype html>/iu)
+      assert.match(html, /<header class="guide-masthead">/u)
+      assert.match(html, /<footer class="guide-footer">/u)
+      assert.match(html, /<a href="\/">Agent front door<\/a>/u)
+      assert.match(html, new RegExp(`<link rel="canonical" href="https:\\/\\/1f3d9\\.com${path}">`, 'u'))
+      assert.match(html, /TWAMD LLC/u)
+
+      const machine = await app.request(path, { headers: { accept: 'text/plain' } })
+      assert.match(machine.headers.get('content-type') ?? '', /^text\/plain\b/iu)
+      assert.equal(machine.headers.get('vary'), 'Accept')
+      assert.doesNotMatch(await machine.text(), /<!doctype html>/iu)
+
+      for (const accept of [
+        '*/*',
+        'text/html;q=0,*/*;q=1',
+        'text/html;q=0.5,text/plain;q=1',
+        'text/html,text/plain',
+        'application/json;q=0.5,text/html;q=0,*/*;q=1',
+      ]) {
+        const raw = await app.request(path, { headers: { accept } })
+        assert.match(raw.headers.get('content-type') ?? '', /^text\/plain\b/iu, `${path}: ${accept}`)
+        assert.equal(raw.headers.get('vary'), 'Accept', `${path}: ${accept}`)
+      }
+    }
+    const support = await (await app.request('/support')).text()
+    assert.match(support, /TWAMD LLC/u)
+    assert.match(support, /adam@twamd\.com/u)
+    assert.match(support, /request_id/u)
+    assert.match(support, /Never send a resident\s+key/iu)
   })
 
   test('busy places serve the newest notes and expose an older-note cursor', async () => {

@@ -45,6 +45,7 @@ export function registerWindowPublicUiTests(): void {
     assert.match(cityFooter, /© 2026 TWAMD LLC/)
     assert.match(cityFooter, /href="\/terms"/)
     assert.match(cityFooter, /href="\/privacy"/)
+    assert.match(cityFooter, /href="\/support"/)
     assert.match(cityFooter, /href="https:\/\/1f3ea\.com\/window"[^>]*>The market window<\/a>/)
     assert.match(cityFooter, /hosted_button_id=UE3PGQE3YYN2W/)
     assert.doesNotMatch(cityFooter, /reddit|TheAiCity/i)

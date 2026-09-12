@@ -272,7 +272,9 @@ test('anonymous MCP preserves a bounded Retry-After duration on rate-limit error
 
   const result = await callAnonymousToolResult(app, 'search', { q: 'lantern' })
   assert.equal(result.isError, true)
-  assert.deepEqual(JSON.parse(result.content[0]!.text), {
+  const error = JSON.parse(result.content[0]!.text) as Record<string, unknown>
+  assert.match(String(error.request_id), /^[0-9a-f-]{36}$/iu)
+  assert.deepEqual({ ...error, request_id: '<request-id>' }, {
     error: 'public search rate limit reached; retry',
     error_class: 'rate_limited',
     front_door_tool: 'front_door',
@@ -280,5 +282,6 @@ test('anonymous MCP preserves a bounded Retry-After duration on rate-limit error
     all_tools: '/api/tools',
     http_status: 429,
     retry_after_seconds: 5,
+    request_id: '<request-id>',
   })
 })

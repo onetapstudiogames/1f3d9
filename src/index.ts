@@ -88,6 +88,9 @@ import {
 } from './public-pagination.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
+import { guidePage } from './human-guide-response.ts'
+import { prefersHtml } from './http-accept.ts'
+import { treasuryDocument, type TreasuryPageData } from './treasury-page.ts'
 import {
   CHANGELOG_ENTRIES,
   countChangelogUpdatesSince,
@@ -118,6 +121,7 @@ import {
   readGazetteSubmissionRoomState,
 } from './gazette-store.ts'
 import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
+import { apiFailureContract, apiFailureResponse } from './api-failure.ts'
 import { insertRuntimeLogs, runRuntimeLogRetention } from './runtime-logs.ts'
 import {
   executeBudgetedExactQuery,
@@ -137,7 +141,6 @@ import {
 } from './public-search.ts'
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import { errorClassForStatus } from './error-class.ts'
-import { apiFailureContract } from './api-failure.ts'
 import {
   loadPublicChanges,
   parsePublicChangeMarker,
@@ -478,44 +481,13 @@ function missingStreet() {
   }
 }
 
-function acceptedQuality(accept: string, mediaType: string): number {
-  const [wantedType, wantedSubtype] = mediaType.toLowerCase().split('/')
-  let best = { specificity: -1, quality: 0 }
-  for (const rawRange of accept.split(',')) {
-    const [rawMedia = '', ...parameters] = rawRange.trim().split(';')
-    const [rangeType, rangeSubtype] = rawMedia.trim().toLowerCase().split('/')
-    if (!rangeType || !rangeSubtype) continue
-    const specificity = rangeType === wantedType && rangeSubtype === wantedSubtype
-      ? 2
-      : rangeType === wantedType && rangeSubtype === '*'
-        ? 1
-        : rangeType === '*' && rangeSubtype === '*'
-          ? 0
-          : -1
-    if (specificity < 0) continue
-    const q = parameters
-      .map(parameter => /^\s*q\s*=\s*(0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\s*$/iu.exec(parameter))
-      .find(match => match !== null)
-    const quality = q ? Number(q[1]) : 1
-    if (specificity > best.specificity || (specificity === best.specificity && quality > best.quality)) {
-      best = { specificity, quality }
-    }
-  }
-  return best.quality
-}
-
 function missingStreetResponse(c: Parameters<Parameters<typeof app.notFound>[0]>[0]) {
   c.header('Vary', 'Accept')
-  const accept = c.req.header('accept')
-  if (accept) {
-    const htmlQuality = acceptedQuality(accept, 'text/html')
-    const jsonQuality = acceptedQuality(accept, 'application/json')
-    if (htmlQuality > 0 && htmlQuality > jsonQuality) {
-      c.header('Cache-Control', 'no-store')
-      return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`, 404)
-    }
+  if (prefersHtml(c.req.header('accept'), 'application/json')) {
+    c.header('Cache-Control', 'no-store')
+    return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`, 404)
   }
-  return c.json(missingStreet(), 404)
+  return apiFailureResponse(c, 404, missingStreet())
 }
 
 app.use('/oauth/*', async (c, next) => {
@@ -1762,7 +1734,7 @@ const readTreasury = async (c: Context) => {
   )
   const collected = Number(rawFeeRows[0]?.collected ?? 0)
   if (!Number.isFinite(collected) || collected < 0) throw new Error('treasury total is invalid')
-  return c.json({
+  const payload: TreasuryPageData = {
     address: TREASURY,
     network: NETWORK,
     usdc_balance_onchain: balance ?? 'rpc-unavailable — check the address yourself',
@@ -1779,7 +1751,14 @@ const readTreasury = async (c: Context) => {
     },
     note:
       'Every fee is verifiable on-chain. Sales never pass through here — they are peer-to-peer, wallet to wallet. Donations buy nothing.',
-  })
+  }
+  if (c.req.path === '/treasury') {
+    c.header('Vary', 'Accept')
+    if (prefersHtml(c.req.header('accept'), 'application/json')) {
+      return guidePage(c, treasuryDocument(payload), { cacheControl: 'no-store' })
+    }
+  }
+  return c.json(payload)
 }
 app.get('/treasury', readTreasury)
 app.get('/api/treasury', readTreasury)

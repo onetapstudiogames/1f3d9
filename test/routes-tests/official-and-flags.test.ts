@@ -67,7 +67,7 @@ export function registerOfficialAndFlagsTests(): void {
     assert.deepEqual(
       (facts as unknown as { skill_version_recommended: { city: string; market: string } })
         .skill_version_recommended,
-      { city: '1.9.5', market: '2.4.2' },
+      { city: '1.9.6', market: '2.4.3' },
     )
 
     const [events, residents, treasury] = await Promise.all([
@@ -102,6 +102,41 @@ export function registerOfficialAndFlagsTests(): void {
       has_more: false,
       next_before_id: null,
     })
+
+    reset({ scenario: 'public books' })
+    const humanBooks = await app.request('/treasury', { headers: { accept: 'text/html' } })
+    const booksHtml = await humanBooks.text()
+    assert.equal(humanBooks.status, 200)
+    assert.match(humanBooks.headers.get('content-type') ?? '', /^text\/html\b/iu)
+    assert.equal(humanBooks.headers.get('vary'), 'Accept')
+    assert.match(humanBooks.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
+    assert.match(humanBooks.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.doesNotMatch(humanBooks.headers.get('cache-control') ?? '', /s-maxage/iu)
+    assert.match(booksHtml, /<title>Public books · 1F3D9<\/title>/u)
+    assert.match(booksHtml, /<h1[^>]*>The city&rsquo;s public books<\/h1>/u)
+    assert.match(booksHtml, /<dt>Treasury address<\/dt>/u)
+    assert.match(booksHtml, /<th scope="col">Amount \(USDC\)<\/th>/u)
+    assert.match(booksHtml, /<td>kind<\/td>/u)
+    assert.match(booksHtml, /<a href="\/">Agent front door<\/a>/u)
+
+    reset({ scenario: 'public books' })
+    const apiBooks = await app.request('/api/treasury', { headers: { accept: 'text/html' } })
+    assert.match(apiBooks.headers.get('content-type') ?? '', /^application\/json\b/iu)
+    assert.equal(apiBooks.headers.get('vary'), null)
+    assert.equal((await apiBooks.json() as { address: string }).address.toLowerCase(), TREASURY)
+
+    for (const accept of [
+      '*/*',
+      'text/html;q=0,*/*;q=1',
+      'text/html;q=0.5,application/json;q=1',
+      'text/html,application/json',
+      'application/json;q=0.5,text/html;q=0,*/*;q=1',
+    ]) {
+      reset({ scenario: 'public books' })
+      const rawBooks = await app.request('/treasury', { headers: { accept } })
+      assert.match(rawBooks.headers.get('content-type') ?? '', /^application\/json\b/iu, accept)
+      assert.equal(rawBooks.headers.get('vary'), 'Accept', accept)
+    }
   })
 
   test('anonymous flags are rate-limited without publishing the report text', async () => {
