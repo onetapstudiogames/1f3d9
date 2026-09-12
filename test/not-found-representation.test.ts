@@ -53,6 +53,18 @@ test('an XHTML-only browser preference receives the human 404 page', async () =>
   assert.equal(response.headers.get('vary'), 'Accept')
 })
 
+test('the human 404 page shows the same request id as its response header', async () => {
+  const response = await app.request('/this-page-does-not-exist', {
+    headers: { accept: 'text/html' },
+  })
+  const requestId = response.headers.get('x-request-id')
+  const html = await response.text()
+
+  assert.match(requestId ?? '', /^[0-9a-f-]{36}$/iu)
+  assert.equal(response.headers.get('x-1f3d9-error-class'), 'not_found')
+  assert.ok(html.includes(`Request ID: <code>${requestId}</code>`))
+})
+
 test('a routed missing reference carries the same JSON trace as another missing street', async () => {
   const response = await app.request('/reference/no-such-section.txt', {
     headers: { accept: 'application/json' },
