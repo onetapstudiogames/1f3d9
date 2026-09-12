@@ -62,6 +62,7 @@ export function registerPublicRecordsTests(): void {
         '*/*',
         'text/html;q=0,*/*;q=1',
         'text/html;q=0.5,text/plain;q=1',
+        'text/html;q=0.5,text/plain;q=0.8,*/*;q=1',
         'text/html,text/plain',
         'application/json;q=0.5,text/html;q=0,*/*;q=1',
       ]) {

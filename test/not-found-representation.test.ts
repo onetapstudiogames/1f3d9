@@ -9,6 +9,7 @@ test('unmatched paths serve HTML only when the caller prefers acceptable HTML', 
     'application/json',
     'text/html;q=0,*/*;q=1',
     'application/json;q=1,text/html;q=0.5',
+    'text/html;q=0.5,application/json;q=0.8,*/*;q=1',
   ]) {
     const response = await app.request(
       '/this-page-does-not-exist',

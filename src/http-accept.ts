@@ -40,11 +40,7 @@ function exactQuality(accept: string, mediaType: string): number | null {
 
 export function prefersHtml(accept: string | undefined, machineType: string): boolean {
   if (!accept) return false
-  const exactHtmlQuality = exactQuality(accept, 'text/html')
-  const exactXhtmlQuality = exactQuality(accept, 'application/xhtml+xml')
-  const xhtmlQuality = exactHtmlQuality === 0 && exactXhtmlQuality === null
-    ? 0
-    : acceptedQuality(accept, 'application/xhtml+xml')
+  const xhtmlQuality = exactQuality(accept, 'application/xhtml+xml') ?? 0
   const htmlQuality = Math.max(
     acceptedQuality(accept, 'text/html'),
     xhtmlQuality,

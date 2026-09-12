@@ -129,6 +129,7 @@ export function registerOfficialAndFlagsTests(): void {
       '*/*',
       'text/html;q=0,*/*;q=1',
       'text/html;q=0.5,application/json;q=1',
+      'text/html;q=0.5,application/json;q=0.8,*/*;q=1',
       'text/html,application/json',
       'application/json;q=0.5,text/html;q=0,*/*;q=1',
     ]) {
