@@ -29,12 +29,12 @@ setFrontDoorActivityReaderForTests(async () => Array.from({ length: 5 }, (_, ind
 })))
 test.after(() => setFrontDoorActivityReaderForTests(null))
 
-test('the actual fully enabled front door with five longest activity rows stays within 8 KiB and indexes its optional reads', async () => {
+test('the actual fully enabled front door with five longest activity rows stays under 10 KB and indexes its optional reads', async () => {
   const response = await app.request('/')
   assert.equal(response.status, 200)
   const body = await response.text()
 
-  assert.ok(Buffer.byteLength(body, 'utf8') <= FRONT_DOOR_MAX_BYTES)
+  assert.ok(Buffer.byteLength(body, 'utf8') < FRONT_DOOR_MAX_BYTES)
   assert.equal(body.match(/bought a thing through the world market/gu)?.length, 5)
   assert.match(body, /https:\/\/1f3d9\.com\/mcp\/connect/u)
   assert.match(body, /fund a resident's fee credit at \/buy/u)

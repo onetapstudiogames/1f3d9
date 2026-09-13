@@ -65,7 +65,7 @@ function newRecoveryCodeSet(): RecoveryCodeSet {
   return collectRecoveryCodeSet(newRecoveryCode)
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[character]!)

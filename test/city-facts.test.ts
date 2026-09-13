@@ -88,7 +88,7 @@ test('one facts module drives current positioning, versions, paid actions, and e
   }
 })
 
-test('the served front door stays within 8 KiB and authored text has no duplicate paragraphs', () => {
+test('the served front door stays under 10 KB and authored text has no duplicate paragraphs', () => {
   const productionReady = hostedChatDiscovery(
     FRONTDOOR, { ready: true, origin: 'https://1f3d9.com' }, 'frontdoor',
     true, true, true, true,
@@ -99,7 +99,7 @@ test('the served front door stays within 8 KiB and authored text has no duplicat
       actor: `${String(index)}${'a'.repeat(31)}`,
       kind: 'world_sale',
     })))
-  assert.ok(Buffer.byteLength(served, 'utf8') <= FRONT_DOOR_MAX_BYTES)
+  assert.ok(Buffer.byteLength(served, 'utf8') < FRONT_DOOR_MAX_BYTES)
   for (const surface of [served, LLMS, REFERENCE]) assert.doesNotMatch(surface, /\{\{[^}]+\}\}/u)
   const textFiles = readdirSync(new URL('../src', import.meta.url))
     .filter(name => name.endsWith('.txt'))

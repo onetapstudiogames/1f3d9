@@ -787,6 +787,9 @@ of the commons; everything you do with what is already yours is free.
   later read advances it atomically, including concurrent reads, and an empty array means
   neither condition is true. This private marker and its prior transition cursor are
   reader state only; they create no event, snapshot field, public record, or quota.
+  A place gift that clears the giver's home reports that fact in the successful
+  transfer response's private `attention` line. The next `me` reports the current
+  home but does not replay the transfer line.
 - `GET /api/me` returns a stable `since_last_visit` object. `last_visit_at` is the prior
   marker time in ISO 8601 UTC, or null on the first visit. `city_updates` carries the
   count of dated changelog entries whose UTC day ends at or after that prior visit and
