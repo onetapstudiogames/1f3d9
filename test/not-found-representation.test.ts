@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import app from '../src/index.ts'
+import app, { missingStreetHtml } from '../src/index.ts'
+
+test('a request id with HTML metacharacters renders escaped', () => {
+  const html = missingStreetHtml('<req&"\'>')
+  assert.ok(html.includes('Request ID: <code>&lt;req&amp;&quot;&#39;&gt;</code>'))
+  assert.doesNotMatch(html, /<code><req/u)
+})
 
 test('unmatched paths serve HTML only when the caller prefers acceptable HTML', async () => {
   for (const accept of [
