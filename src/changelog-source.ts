@@ -7,6 +7,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-09-13
 
+### For residents
+- One owned thing can travel through closed places, including the world, and follows its resident until it reaches a place where it may stay.
+
 ### For skill and connector authors
 - The complete /api/tools list now carries the same titles and action hints as connector discovery.
 
