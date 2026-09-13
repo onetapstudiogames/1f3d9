@@ -513,7 +513,10 @@ the deployed branch preview at `/live/`,
   the place being left, with no open sale offer or market lock, no later-holder mark held
   by another resident, and no moderation hold. Resident and thing cross the same edge in
   one transaction or neither location changes. Carry does not change maker or owner,
-  spend quota, add a fee, or add to `effects_applied`.
+  spend quota, add a fee, or add to `effects_applied`. It may enter a closed place, including
+  the world, but stays held and follows the next move or `go_home`; it cannot be left,
+  transferred, used, consumed, marked, or offered until an owned or open place releases it.
+  The protected Gazette room #454 keeps carried luggage held even for its owner.
 - A place's building, thing, and note permissions apply only to that place. They do not
   inherit down the tree, so the world's permanently closed switches never override a
   continent or anything inside it.
@@ -1598,13 +1601,14 @@ also include the optional `carry_thing_id`. `carry_thing_id` must be one positiv
 one move carries at most one thing. The named thing must be active, owned by the mover,
 and in the place being left. The move refuses a thing that is not owned, is not there,
 has an open sale offer or market lock, has a later-holder mark held by another resident,
-or is under a moderation hold. Carry requires the destination owner to be the mover or its
-`open_to_things` to be true; `open_to_things` is false by default. A closed foreign
-destination refuses before either location changes: drop the carry and walk, or go where
-things are welcome. Resident and thing take the same one-edge move atomically
+or is under a moderation hold. Carry may enter any active place, including the world.
+In a closed foreign place the thing is held, follows the next move or `go_home`, and cannot
+be set down, transferred, used, consumed, marked, or offered for sale. It becomes ordinary
+in an owned or `open_to_things` place; protected Gazette room #454 keeps it held even for
+its owner. Resident and thing take the same one-edge move atomically
 under the origin's laws; either both arrive or neither does. Maker provenance and current
 ownership remain unchanged. Carry has no fee, spends no quota, and does not change
-`effects_applied`. Transfer and re-making remain legal.
+`effects_applied`. Once ordinary, transfer and re-making remain legal.
 use and consume require action and thing_id; either may also include a
 target_type/target_id pair, to_place_id, and/or to_handle when the thing's effects need
 them. give requires action, to_handle, and at least one of thing_id or a
@@ -1729,7 +1733,8 @@ The Gazette submission room is place #454. It starts as a founder-owned closed s
 opens only through the verified Gazette activation; its thing and building permissions
 remain closed. A database lifecycle guard makes it a protected city service rather than
 an ordinary place: it cannot be edited, transferred, traded, deleted, repurposed, given
-local laws, contain child places, or hold things, even by founder owner #1. Database
+local laws, contain child places, or store ordinary things, even by founder owner #1.
+One held thing may travel through with its resident, including founder #1. Database
 guards enforce those dependent-row rules across every write path. The same complete
 closed/open/withdrawals-open row classifier plus zero forbidden dependent rows controls
 activation, the public gates, note admission, withdrawal, and printing. An exact

@@ -1070,6 +1070,7 @@ CREATE TABLE IF NOT EXISTS things (
   body              TEXT NOT NULL DEFAULT '' CHECK (octet_length(body) <= 65536),
   owner_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   maker_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  held_by           INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
   open_to_use       BOOLEAN NOT NULL DEFAULT FALSE,
   kind_id           INTEGER REFERENCES kinds(id) ON DELETE RESTRICT,
   birth_revision    INTEGER,
@@ -1107,6 +1108,16 @@ CREATE INDEX IF NOT EXISTS things_public_search_phrase_active
 
 ALTER TABLE things ADD COLUMN IF NOT EXISTS active_offer_id INTEGER
   CHECK (active_offer_id > 0);
+ALTER TABLE things ADD COLUMN IF NOT EXISTS held_by INTEGER REFERENCES residents(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS things_one_held_per_resident
+  ON things (held_by) WHERE held_by IS NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'things_held_owner_active') THEN
+    ALTER TABLE things ADD CONSTRAINT things_held_owner_active CHECK (
+      held_by IS NULL OR (held_by = owner_id AND withdrawn_at IS NULL AND active_offer_id IS NULL)
+    );
+  END IF;
+END $$;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS open_to_use BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS drawing JSONB;
 -- Legacy loopback databases need the column before earlier schema maintenance
@@ -4237,6 +4248,17 @@ BEGIN
     WHERE id = candidate_place_id
       AND place_kind = 'world'
   ) THEN
+    IF TG_TABLE_NAME = 'things' THEN
+      IF NEW.held_by IS NOT NULL THEN
+        IF NEW.held_by = NEW.owner_id AND NEW.withdrawn_at IS NULL AND EXISTS (
+          SELECT 1 FROM resident_presence presence
+          WHERE presence.resident_id = NEW.held_by
+            AND presence.current_place_id = candidate_place_id
+        ) THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+    END IF;
     RAISE EXCEPTION 'the world is transit only'
       USING ERRCODE = '23514';
   END IF;
@@ -4263,6 +4285,22 @@ $function$;
 DROP TRIGGER IF EXISTS things_reject_world_place ON things;
 CREATE TRIGGER things_reject_world_place BEFORE INSERT OR UPDATE ON things
   FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
+
+CREATE OR REPLACE FUNCTION release_held_luggage_on_place_access() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE things SET held_by = NULL
+  WHERE place_id = NEW.id AND held_by IS NOT NULL
+    AND (NEW.open_to_things OR NEW.owner_id = held_by);
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS places_release_held_luggage ON places;
+CREATE TRIGGER places_release_held_luggage
+  AFTER UPDATE OF owner_id, open_to_things ON places
+  FOR EACH ROW
+  WHEN (OLD.owner_id IS DISTINCT FROM NEW.owner_id
+    OR OLD.open_to_things IS DISTINCT FROM NEW.open_to_things)
+  EXECUTE FUNCTION release_held_luggage_on_place_access();
 DROP TRIGGER IF EXISTS notes_reject_world_place ON notes;
 CREATE TRIGGER notes_reject_world_place BEFORE INSERT OR UPDATE ON notes
   FOR EACH ROW EXECUTE FUNCTION reject_world_place_content();
@@ -8105,7 +8143,12 @@ AS $$
   ) AND NOT EXISTS (
     SELECT 1 FROM places WHERE parent_id = 454
   ) AND NOT EXISTS (
-    SELECT 1 FROM things WHERE place_id = 454
+    SELECT 1 FROM things thing WHERE thing.place_id = 454
+      AND (thing.held_by IS NULL OR NOT EXISTS (
+        SELECT 1 FROM resident_presence presence
+        WHERE presence.resident_id = thing.held_by
+          AND presence.current_place_id = 454
+      ))
   )
 $$;
 
@@ -8121,7 +8164,7 @@ BEGIN
     RAISE EXCEPTION 'Gazette room #454 cannot contain child places'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_children';
   END IF;
-  IF EXISTS (SELECT 1 FROM things WHERE place_id = 454) THEN
+  IF NOT gazette_submission_room_has_no_forbidden_contents() THEN
     RAISE EXCEPTION 'Gazette room #454 cannot hold things'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_things';
   END IF;
@@ -8151,6 +8194,37 @@ BEGIN
     RAISE EXCEPTION 'Gazette room #454 is a protected city service and cannot contain child places'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_children';
   ELSIF touches_room AND TG_TABLE_NAME = 'things' THEN
+    IF TG_OP = 'UPDATE' THEN
+      -- Arrival is a resident-and-thing move, never ordinary storage.
+      IF NEW.place_id = 454 AND OLD.place_id IS DISTINCT FROM 454
+        AND NEW.held_by = NEW.owner_id AND NEW.withdrawn_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM resident_presence presence
+          WHERE presence.resident_id = NEW.held_by
+            AND presence.current_place_id = 454
+        )
+      THEN
+        RETURN NEW;
+      END IF;
+      IF NEW.place_id = 454 AND OLD.place_id = 454
+        AND NEW.held_by = OLD.held_by AND NEW.held_by = NEW.owner_id
+        AND NEW.withdrawn_at IS NULL AND NEW.owner_id = OLD.owner_id
+        AND NEW.id = OLD.id AND EXISTS (
+          SELECT 1 FROM resident_presence presence
+          WHERE presence.resident_id = NEW.held_by
+            AND presence.current_place_id = 454
+        )
+      THEN
+        RETURN NEW;
+      END IF;
+      -- The mover has already left when the luggage row moves out.
+      IF OLD.place_id = 454 AND NEW.place_id IS DISTINCT FROM 454
+        AND OLD.held_by = OLD.owner_id AND OLD.withdrawn_at IS NULL
+        AND NEW.owner_id = OLD.owner_id AND NEW.id = OLD.id
+      THEN
+        RETURN NEW;
+      END IF;
+    END IF;
     RAISE EXCEPTION 'Gazette room #454 is a protected city service and cannot hold things'
       USING ERRCODE = '23514', CONSTRAINT = 'gazette_submission_room_things';
   END IF;

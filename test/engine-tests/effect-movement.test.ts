@@ -203,9 +203,9 @@ export function registerEffectMovementTests(): void {
         position: 0,
       }]
       if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
-      if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
-        { id: 2, parent_id: 1 },
-        { id: 9, parent_id: 8 },
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+        { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false },
+        { id: 9, parent_id: 8, retired_at: null, owner_id: 8, open_to_things: false },
       ]
       if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 219 }]
       return []

@@ -138,5 +138,15 @@ export function registerPreparationReadinessTests(): void {
       /Production drawing-contract then world-root-drawing migrations ran in that order[\s\S]*drawing\/Gazette\/world postcondition checks were recorded[\s\S]*does not query Production/iu,
     )
     assert.equal(existsSync(fixture.commandLog), false)
+
+    for (const value of ['', 'APPLIED_TO_PREVIEW_AND_PRODUCTION']) {
+      const missingHeldLuggage = fixture.run({ CONFIRM_HELD_LUGGAGE_MIGRATION: value })
+      assert.notEqual(missingHeldLuggage.status, 0)
+      assert.match(
+        `${missingHeldLuggage.stdout}\n${missingHeldLuggage.stderr}`,
+        /held-luggage migration.*Preview and Production.*world and Gazette.*before.*rollout/iu,
+      )
+      assert.equal(existsSync(fixture.commandLog), false)
+    }
   })
 }

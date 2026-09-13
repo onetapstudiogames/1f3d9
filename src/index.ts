@@ -160,6 +160,7 @@ import {
   createLaterHolderCursorCodec,
   LaterHolderCursorError,
   LaterHolderMarkEligibilityError,
+  LaterHolderHeldThingError,
   LATER_HOLDER_SINGULAR_QUESTION,
   parseLaterHolderMarkInput,
   parseLaterHolderReadInput,
@@ -1211,6 +1212,7 @@ app.post('/api/thing/:id/mark', async c => {
       input.action === 'mark',
     ))
   } catch (error) {
+    if (error instanceof LaterHolderHeldThingError) return err(c, 409, error.message)
     if (
       error instanceof LaterHolderMarkEligibilityError ||
       ['23503', '23514'].includes(postgresErrorCode(error) ?? '')

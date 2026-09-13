@@ -433,10 +433,79 @@ future isolated Preview branch that has the base Gazette schema.
    fresh Production snapshot name. Once active, do not roll back below a
    withdrawal-capable application; repair with a forward deployment.
 
+### Held-luggage prerequisite
+
+Before code that writes `things.held_by` ships, apply the held-luggage migration
+to an isolated Preview database, verify it, then apply and verify it in
+Production. The migration changes the world and Gazette guards as well as the
+thing schema. Review the real PostgreSQL tests for held transit, ordinary
+things, the owner-only rule, world transit, Gazette room #454, and release when
+a place opens or changes owner. The known Gazette-less Preview cannot prove the
+Gazette case; use an isolated Preview branch with the current base schema.
+
+1. With the required Neon Preview target settings, apply the named migration:
+
+   ```sh
+   CONFIRM_PREVIEW_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW \
+   npm run migrate:preview:held-luggage
+   ```
+
+2. In Preview, run the read-only checks below. Require `held_by` to be nullable,
+   the `things_held_owner_active` check and `held_by` foreign key to be valid,
+   `things_one_held_per_resident` to be valid and unique, and the
+   `places_release_held_luggage` trigger to report `tgenabled = 'O'`. Read the four function
+   definitions returned by the second query against the reviewed migration;
+   all four must include the held case. Require zero held rows before the new
+   application writes any.
+
+   ```sql
+   SELECT column_name, is_nullable FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'things' AND column_name = 'held_by';
+   SELECT conname, convalidated FROM pg_constraint
+   WHERE conrelid = 'things'::regclass AND conname IN ('things_held_owner_active', 'things_held_by_fkey');
+   SELECT indexrelid::regclass AS index_name, indisunique, indisvalid FROM pg_index
+   WHERE indexrelid = to_regclass('things_one_held_per_resident');
+   SELECT tgname, tgenabled FROM pg_trigger
+   WHERE tgrelid = 'places'::regclass AND tgname = 'places_release_held_luggage';
+   SELECT proname, pg_get_functiondef(oid) FROM pg_proc
+   WHERE pronamespace = 'public'::regnamespace AND proname IN
+     ('reject_world_place_content', 'gazette_submission_room_has_no_forbidden_contents',
+      'protect_gazette_submission_room_dependents', 'release_held_luggage_on_place_access');
+   SELECT count(*) AS held_rows_before_rollout FROM things WHERE held_by IS NOT NULL;
+   SELECT gazette_submission_room_has_no_forbidden_contents() AS gazette_guard_still_holds;
+   ```
+
+3. Take a fresh required Production snapshot, then apply the same reviewed
+   migration before merging the application:
+
+   ```sh
+   CONFIRM_PRODUCTION_MIGRATION=APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION \
+   PRODUCTION_SNAPSHOT_NAME=<fresh-held-luggage-snapshot-name> \
+   npm run migrate:production:held-luggage
+   ```
+
+4. Run the same read-only checks in Production. Record the snapshot name and
+   results without credentials. Stop if a column, constraint, index, trigger,
+   or function differs, if any held row exists before rollout, or if the
+   Gazette guard reports false. Do not infer schema success from a green deploy.
+
+Only after Preview and Production evidence is recorded, set this non-secret
+release-preparation acknowledgement:
+
+```sh
+CONFIRM_HELD_LUGGAGE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_WORLD_AND_GAZETTE_CHECKS
+```
+
+`--prepare` checks that acknowledgement but does not query either database.
+After held things exist, old application code can strand them. Use a reviewed
+forward fix, or resolve held rows through an authorized owner-safe procedure
+and verify none remain before downgrade. Do not improvise a destructive down
+migration or clear markers without preserving owner access.
+
 For the first rollout and every later release preparation, re-confirm that the required
 provider keys remain configured, the maker and later-holder migrations remain applied in
 that order, and the resumable-registration, PayPal credit-disputes, resident refusal-state,
-and dormant Gazette schema migrations remain applied. For the first Gazette rollout, run
+and dormant Gazette schema and held-luggage migrations remain applied. For the first Gazette rollout, run
 this while room #454 is still closed in both databases. Then run preparation with these
 non-secret acknowledgements in the process environment:
 
@@ -452,6 +521,7 @@ CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION \
 CONFIRM_GAZETTE_SCHEMA_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_ROOM_CLOSED \
 CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION=APPLIED_TO_PRODUCTION_WITH_WITHDRAWALS_CLOSED_AND_REAL_POSTGRES_PROVEN \
 CONFIRM_PRODUCTION_DRAWING_RELEASE=DRAWING_CONTRACT_THEN_WORLD_ROOT_DRAWING_APPLIED_WITH_DOCUMENTED_DRAWING_GAZETTE_WORLD_POSTCONDITIONS_RECORDED \
+CONFIRM_HELD_LUGGAGE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_WORLD_AND_GAZETTE_CHECKS \
 scripts/deploy.sh --prepare
 ```
 

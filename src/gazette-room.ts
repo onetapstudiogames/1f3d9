@@ -1,7 +1,7 @@
 import { postgresErrorConstraint } from './core.ts'
 
 export const GAZETTE_ROOM_PROTECTED_ERROR =
-  'Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things'
+  'Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things'
 
 const GAZETTE_ROOM_CONSTRAINTS = new Set([
   'gazette_submission_room_lifecycle',

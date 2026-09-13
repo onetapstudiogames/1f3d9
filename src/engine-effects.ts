@@ -11,6 +11,7 @@ import {
   type RuntimeTarget,
   type TaggedSql,
 } from './engine.ts'
+import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
@@ -72,6 +73,7 @@ export interface ThingState {
   readonly activeOfferId: number | null
   readonly hasOpenOffer: boolean
   readonly openToUse: boolean
+  readonly heldBy: number | null
 }
 interface PendingRow {
   readonly id: number
@@ -182,7 +184,7 @@ export async function thingState(
   const rows = await queryRows<Record<string, unknown>>(options.forUpdate === true
     ? db`
       SELECT thing.id, thing.owner_id, thing.place_id,
-        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use, thing.held_by,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -194,7 +196,7 @@ export async function thingState(
     `
     : db`
       SELECT thing.id, thing.owner_id, thing.place_id,
-        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use, thing.held_by,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -213,6 +215,7 @@ export async function thingState(
     activeOfferId: nullableRowId(row.active_offer_id, 'thing offer id'),
     hasOpenOffer: row.has_open_offer === true,
     openToUse: row.open_to_use === true,
+    heldBy: nullableRowId(row.held_by, 'thing holder id'),
   }
 }
 
@@ -384,17 +387,22 @@ async function destroyThing(
 ): Promise<void> {
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
+  const ownedByActor = thing.ownerId === context.actorId
+  if (!ownedByActor && (context.placeId === null || thing.placeId !== context.placeId
+    || context.lawAuthority === null)) {
+    throw new EngineError(403, 'damage to another resident property requires an effective local law')
+  }
+  if (thing.heldBy !== null) throw new EngineError(409, HELD_THING_ERROR)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
-  const ownedByActor = thing.ownerId === context.actorId
   let rows: unknown[]
   if (ownedByActor) {
     rows = await queryRows(db`
       WITH changed AS (
         UPDATE things SET withdrawn_at = now()
         WHERE id = ${thing.id} AND owner_id = ${context.actorId}
-          AND withdrawn_at IS NULL AND active_offer_id IS NULL
+          AND withdrawn_at IS NULL AND active_offer_id IS NULL AND held_by IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers offer
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
@@ -431,7 +439,7 @@ async function destroyThing(
       ), changed AS (
         UPDATE things SET withdrawn_at = now()
         WHERE id = ${thing.id} AND place_id = ${context.placeId}
-          AND withdrawn_at IS NULL AND active_offer_id IS NULL
+           AND withdrawn_at IS NULL AND active_offer_id IS NULL AND held_by IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers offer
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
@@ -475,11 +483,14 @@ export async function withdrawOwnedThing(
 ): Promise<void> {
   const existing = await thingState(thingId, db)
   if (existing?.withdrawnAt !== null && existing?.ownerId === actorId) return
+  if (existing?.ownerId === actorId && existing.heldBy != null) {
+    throw new EngineError(409, HELD_THING_ERROR)
+  }
   const rows = await queryRows(db`
     WITH changed AS (
       UPDATE things SET withdrawn_at = now()
       WHERE id = ${thingId} AND owner_id = ${actorId}
-        AND withdrawn_at IS NULL AND active_offer_id IS NULL
+        AND withdrawn_at IS NULL AND active_offer_id IS NULL AND held_by IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
@@ -505,11 +516,11 @@ async function moveEffectTarget(
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
-      await goHome(target.id, db)
+       await goHome(target.id, db, context.actionId)
       return false
     }
     if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
-    await moveResident(target.id, context.destinationPlaceId, db)
+     await moveResident(target.id, context.destinationPlaceId, db, context.actionId)
     return false
   }
   if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
@@ -529,6 +540,7 @@ async function moveThing(
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
+  if (thing.heldBy !== null) throw new EngineError(409, HELD_THING_ERROR)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
@@ -559,7 +571,8 @@ async function moveThing(
     FROM places destination
     WHERE moving.id = ${thing.id} AND moving.owner_id = ${actorId}
       AND moving.place_id = ${thing.placeId}
-      AND moving.withdrawn_at IS NULL AND moving.active_offer_id IS NULL
+       AND moving.withdrawn_at IS NULL AND moving.active_offer_id IS NULL
+       AND moving.held_by IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM transfer_offers offer
         WHERE offer.asset_type = 'thing' AND offer.asset_id = moving.id
@@ -593,12 +606,19 @@ async function transferAsset(
 ): Promise<boolean> {
   if (target.type === 'resident') throw new EngineError(403, 'an agent is never property; transfer only a place, thing, or kind you own')
   if (actorId === recipientId) return false
+  if (target.type === 'thing') {
+    const thing = await thingState(target.id, db, { forUpdate: true })
+    if (thing?.ownerId === actorId && thing.heldBy != null) {
+      throw new EngineError(409, HELD_THING_ERROR)
+    }
+  }
   const conditions = target.type === 'thing'
     ? db`
       WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
         UPDATE things SET owner_id = ${recipientId} FROM recipient
         WHERE things.id = ${target.id} AND things.owner_id = ${actorId}
-          AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
+           AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
+           AND things.held_by IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers offer
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id

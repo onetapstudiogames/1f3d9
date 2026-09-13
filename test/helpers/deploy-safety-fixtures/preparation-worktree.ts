@@ -76,6 +76,8 @@ const laterHolderReleaseReady = Object.freeze({
   CONFIRM_RESIDENT_REFUSAL_STATE_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_RESIDENT_AWARENESS_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
+  CONFIRM_HELD_LUGGAGE_MIGRATION:
+    'APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_WORLD_AND_GAZETTE_CHECKS',
 })
 
 export function createPreparationFixture(): PreparationFixture {
@@ -166,6 +168,8 @@ export function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION',
     'CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION="${11-}"',
     'export CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION',
+    'CONFIRM_HELD_LUGGAGE_MIGRATION="${12-}"',
+    'export CONFIRM_HELD_LUGGAGE_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -191,6 +195,7 @@ export function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_PRODUCTION_DRAWING_RELEASE ?? '',
         readiness.CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION ?? '',
         readiness.CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION ?? '',
+        readiness.CONFIRM_HELD_LUGGAGE_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',

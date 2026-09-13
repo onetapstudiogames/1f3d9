@@ -32,6 +32,7 @@ import {
   PaymentSaleConflictError,
 } from './payment-sale-operations.ts'
 import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
+import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
   GAZETTE_ROOM_ID,
   GAZETTE_SUBMISSIONS_CLOSED_ERROR,
@@ -65,7 +66,7 @@ const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident h
 
 const ASSETS = {
   place: { table: 'places', transferable: '' },
-  thing: { table: 'things', transferable: ' AND withdrawn_at IS NULL' },
+  thing: { table: 'things', transferable: ' AND withdrawn_at IS NULL AND held_by IS NULL' },
   kind: { table: 'kinds', transferable: '' },
 } as const
 
@@ -76,6 +77,7 @@ interface OwnerRow {
   id: number
   owner_id: number | null
   active_offer_id?: number | null
+  held_by?: number | null
 }
 
 interface OfferRow {
@@ -123,9 +125,10 @@ function partyHandles(value: unknown): string[] | null {
 }
 
 async function ownerOf(type: AssetType, id: number): Promise<OwnerRow | null> {
-  const { table, transferable } = ASSETS[type]
+  const { table } = ASSETS[type]
   const rows = await sql.query(
-    `SELECT id, owner_id, active_offer_id FROM ${table} WHERE id = $1${transferable}`,
+    `SELECT id, owner_id, active_offer_id${type === 'thing' ? ', held_by' : ''} ` +
+      `FROM ${table} WHERE id = $1${type === 'thing' ? ' AND withdrawn_at IS NULL' : ''}`,
     [id],
   ) as OwnerRow[]
   return rows[0] ?? null
@@ -437,6 +440,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
     if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may transfer it`)
+    if (type === 'thing' && asset.held_by != null) return err(c, 409, HELD_THING_ERROR)
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const recipient = await residentId(toHandle)
@@ -639,6 +643,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
     if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
     if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may offer it`)
+    if (type === 'thing' && asset.held_by != null) return err(c, 409, HELD_THING_ERROR)
     if (asset.active_offer_id != null || await openOffer(type, id))
       return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
     const buyerId = await residentId(toHandle)

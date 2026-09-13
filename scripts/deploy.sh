@@ -127,8 +127,12 @@ verify_release_readiness() {
     echo "!! confirm the Production drawing-contract then world-root-drawing migrations ran in that order and all documented drawing/Gazette/world postcondition checks were recorded; --prepare does not query Production"
     return 1
   }
+  [ "${CONFIRM_HELD_LUGGAGE_MIGRATION:-}" = "APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_WORLD_AND_GAZETTE_CHECKS" ] || {
+    echo "!! confirm the held-luggage migration in Preview and Production with world and Gazette checks before application rollout; --prepare does not query either database"
+    return 1
+  }
 
-  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/me-public-checkpoint/Gazette schema/withdrawal schema/drawing release readiness acknowledged"
+  echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/me-public-checkpoint/Gazette schema/withdrawal schema/drawing/held-luggage release readiness acknowledged"
 }
 
 echo "== 1. verify pushed release candidate"

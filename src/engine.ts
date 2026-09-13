@@ -19,7 +19,7 @@ import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
-import { missingActiveThingRefusal } from './refusal-text.ts'
+import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -564,6 +564,13 @@ async function lockPresence(residentId: number, db: TaggedSql): Promise<Presence
   return presenceFromRow(rows[0], residentId)
 }
 
+async function lockCurrentPlace(presence: Presence, db: TaggedSql): Promise<void> {
+  if (presence.currentPlaceId === null) return
+  await queryRows(db`
+    SELECT id FROM places WHERE id = ${presence.currentPlaceId} FOR SHARE
+  `)
+}
+
 export async function setHome(
   residentId: number,
   placeId: number,
@@ -597,17 +604,18 @@ export async function moveResident(
   residentId: number,
   destinationPlaceId: number,
   db: TaggedSql = engineSql,
+  actionId: number | null = null,
 ): Promise<Presence> {
   const actorId = positiveId(residentId, 'resident id')
   const destinationId = positiveId(destinationPlaceId, 'destination place id')
-  const stored = await readPresence(actorId, db)
+  const stored = await lockPresence(actorId, db)
   const current = stored.currentPlaceId === null ? await ensurePresence(actorId, db) : stored
   if (current.currentPlaceId === null) {
     throw new EngineError(409, 'resident has no current place; reconnect with the current resident key and retry, then contact the city operator')
   }
   const requested = [current.currentPlaceId, destinationId]
-  const places = await queryRows<{ id?: unknown; parent_id?: unknown; retired_at?: unknown }>(db`
-    SELECT id, parent_id, retired_at FROM places
+  const places = await queryRows<{ id?: unknown; parent_id?: unknown; retired_at?: unknown; owner_id?: unknown; open_to_things?: unknown }>(db`
+    SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places
     WHERE id = ANY (${requested}::int[])
     FOR SHARE
   `)
@@ -621,7 +629,13 @@ export async function moveResident(
   if (destination.retired_at != null) {
     throw new EngineError(409, 'destination place is retired; restore it before moving there')
   }
-  if (current.currentPlaceId === destinationId) return current
+  if (current.currentPlaceId === destinationId) {
+    const heldAtCurrentPlace = await heldThingForResident(actorId, db)
+    if (heldAtCurrentPlace && heldAtCurrentPlace.placeId !== current.currentPlaceId) {
+      throw new EngineError(409, HELD_THING_ERROR)
+    }
+    return current
+  }
   const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
   const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
   const oldParent = oldPlace ? nullableRowId(oldPlace.parent_id, 'current parent id') : null
@@ -631,7 +645,55 @@ export async function moveResident(
       `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time`,
     )
   }
-  return writeResidentLocation(actorId, destinationId, db)
+  const held = await heldThingForResident(actorId, db)
+  if (held && held.placeId !== current.currentPlaceId) {
+    throw new EngineError(409, HELD_THING_ERROR)
+  }
+  const moved = await writeResidentLocation(actorId, destinationId, db)
+  if (held) {
+    await moveHeldThing(held.id, actorId, current.currentPlaceId, destinationId,
+      destinationId !== 454 && (destination.owner_id === actorId || destination.open_to_things === true),
+      actionId, db)
+  }
+  return moved
+}
+
+async function heldThingForResident(residentId: number, db: TaggedSql): Promise<{ id: number; placeId: number } | null> {
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT id, place_id FROM things WHERE held_by = ${residentId} FOR UPDATE
+  `)
+  return rows[0] ? {
+    id: rowId(rows[0].id, 'held thing id'),
+    placeId: rowId(rows[0].place_id, 'held thing place id'),
+  } : null
+}
+
+async function moveHeldThing(
+  thingId: number,
+  residentId: number,
+  originId: number,
+  destinationId: number,
+  destinationPermitsThings: boolean,
+  actionId: number | null,
+  db: TaggedSql,
+): Promise<void> {
+  const rows = await queryRows(db`
+    WITH moved AS (
+      UPDATE things SET place_id = ${destinationId},
+        held_by = ${destinationPermitsThings ? null : residentId}
+      WHERE id = ${thingId} AND owner_id = ${residentId}
+        AND held_by = ${residentId} AND place_id = ${originId}
+      RETURNING id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_moved', resident.handle, jsonb_build_object(
+        'thing_id', moved.id, 'action_id', ${actionId}::bigint, 'resident_id', ${residentId}::integer,
+        'mode', 'carry', 'from_place_id', ${originId}::integer,
+        'place_id', ${destinationId}::integer
+      ) FROM moved JOIN residents resident ON resident.id = ${residentId}
+    ) SELECT id FROM moved
+  `)
+  if (!rows[0]) throw new EngineError(409, HELD_THING_ERROR)
 }
 
 async function writeResidentLocation(residentId: number, destinationId: number, db: TaggedSql) {
@@ -644,9 +706,19 @@ async function writeResidentLocation(residentId: number, destinationId: number, 
   return presenceFromRow(rows[0], residentId)
 }
 
-export async function goHome(residentId: number, db: TaggedSql = engineSql): Promise<Presence> {
+export async function goHome(
+  residentId: number,
+  db: TaggedSql = engineSql,
+  actionId: number | null = null,
+): Promise<Presence> {
   const actorId = positiveId(residentId, 'resident id')
   await ensurePresence(actorId, db)
+  const before = await lockPresence(actorId, db)
+  await lockCurrentPlace(before, db)
+  const held = await heldThingForResident(actorId, db)
+  if (held && held.placeId !== before.currentPlaceId) {
+    throw new EngineError(409, HELD_THING_ERROR)
+  }
   const rows = await queryRows<Record<string, unknown>>(db`
     WITH usable_home AS MATERIALIZED (
       SELECT home.id
@@ -665,7 +737,14 @@ export async function goHome(residentId: number, db: TaggedSql = engineSql): Pro
       presence.home_place_id, presence.updated_at
   `)
   if (!rows[0]) throw new EngineError(409, 'home is unset or no longer owned; move normally or claim an owned home before using go_home')
-  return presenceFromRow(rows[0], actorId)
+  const home = presenceFromRow(rows[0], actorId)
+  if (held && before.currentPlaceId !== null && home.currentPlaceId !== null
+    && held.placeId !== home.currentPlaceId) {
+    if (held.placeId !== before.currentPlaceId) throw new EngineError(409, HELD_THING_ERROR)
+    await moveHeldThing(held.id, actorId, held.placeId, home.currentPlaceId,
+      home.currentPlaceId !== 454, actionId, db)
+  }
+  return home
 }
 
 export async function lawProgramsForAction(
@@ -979,6 +1058,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing_id has an open sale offer; cancel the offer or use another active thing')
   }
+  if (thing.heldBy !== null) throw new EngineError(409, HELD_THING_ERROR)
   if (sharedUse && input.placeId === null) {
     throw new EngineError(
       403,
@@ -1056,14 +1136,20 @@ async function moveResidentWithCarry(
 ): Promise<void> {
   if (input.destinationPlaceId === null) throw new EngineError(400, 'move needs a destination place')
   if (input.carryThingId === null) {
-    await moveResident(input.actorId, input.destinationPlaceId, db)
+    await moveResident(input.actorId, input.destinationPlaceId, db, actionId)
+    return
+  }
+  if (input.destinationPlaceId === input.placeId) {
+    throw new EngineError(400, 'carry_thing_id requires a move to a different adjacent place')
+  }
+  const held = await heldThingForResident(input.actorId, db)
+  if (held) {
+    if (held.id !== input.carryThingId) throw new EngineError(409, HELD_THING_ERROR)
+    await moveResident(input.actorId, input.destinationPlaceId, db, actionId)
     return
   }
   if (input.placeId === null) {
     throw new EngineError(409, 'you cannot carry a thing because your current place is unset; reconnect with the current resident key and retry')
-  }
-  if (input.destinationPlaceId === input.placeId) {
-    throw new EngineError(400, 'carry_thing_id requires a move to a different adjacent place')
   }
   const rows = await queryRows<Record<string, unknown>>(db`
     SELECT thing.id, thing.owner_id, thing.place_id, thing.withdrawn_at,
@@ -1119,13 +1205,6 @@ async function moveResidentWithCarry(
   if (destinations[0]?.retired_at != null) {
     throw new EngineError(409, 'destination place is retired; restore it before moving there')
   }
-  if (destinations[0] && destinations[0].destination_permits_things !== true) {
-    throw new EngineError(
-      403,
-      'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
-    )
-  }
-
   await moveResident(input.actorId, input.destinationPlaceId, db)
   const moved = await queryRows(db`
     WITH carry_request AS (
@@ -1135,7 +1214,9 @@ async function moveResidentWithCarry(
         ${input.destinationPlaceId}::integer AS destination_place_id,
         ${actionId}::bigint AS action_id
     ), carried AS (
-      UPDATE things carrying SET place_id = carry_request.destination_place_id
+      UPDATE things carrying SET place_id = carry_request.destination_place_id,
+        held_by = ${input.destinationPlaceId !== 454 && destinations[0]?.destination_permits_things === true
+          ? null : input.actorId}
       FROM carry_request
       WHERE carrying.id = carry_request.thing_id
         AND carrying.owner_id = carry_request.actor_id
@@ -1272,6 +1353,11 @@ export async function runAction(
     return await withEngineTransaction(db, async transaction => {
       if (input.action === 'go_home') await ensurePresence(input.actorId, transaction)
       const lockedPresence = await lockPresence(input.actorId, transaction)
+      if (input.action === 'move' || input.action === 'go_home') {
+        await lockCurrentPlace(lockedPresence, transaction)
+      }
+      const heldAtStart = input.action === 'move' || input.action === 'go_home'
+        ? await heldThingForResident(input.actorId, transaction) : null
       if (input.action !== 'go_home') {
         if (lockedPresence.currentPlaceId !== input.placeId) {
           const message = lockedPresence.currentPlaceId === null
@@ -1300,7 +1386,7 @@ export async function runAction(
         }
       }
       if (input.action === 'go_home') {
-        const home = await goHome(input.actorId, transaction)
+        const home = await goHome(input.actorId, transaction, actionId)
         await recordActionResolution(
           actionId,
           input.actorHandle,
@@ -1310,6 +1396,8 @@ export async function runAction(
             effects_applied: 0,
             from_place_id: lockedPresence.currentPlaceId,
             to_place_id: home.currentPlaceId,
+            ...(heldAtStart && heldAtStart.placeId !== home.currentPlaceId
+              ? { thing_id: heldAtStart.id, mode: 'carry' } : {}),
           },
           transaction,
         )
@@ -1401,9 +1489,10 @@ export async function runAction(
             ? {
                 from_place_id: input.placeId,
                 to_place_id: input.destinationPlaceId,
-                ...(input.carryThingId === null
-                  ? {}
-                  : { thing_id: input.carryThingId, mode: 'carry' }),
+                 ...((input.carryThingId ?? heldAtStart?.id) == null
+                   || input.placeId === input.destinationPlaceId
+                   ? {}
+                   : { thing_id: input.carryThingId ?? heldAtStart?.id, mode: 'carry' }),
               }
             : {}),
           ...(input.action === 'use' && input.sourceThingId !== null
