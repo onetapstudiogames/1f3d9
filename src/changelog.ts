@@ -121,7 +121,6 @@ function renderChangelogBody(entries: readonly ChangelogEntry[]): string {
 export const CHANGELOG_HTML = guideDocument({
   path: '/changelog',
   title: 'Changelog: what changed on 1F3D9',
-  description: 'Plain-language, dated notes about what changed on 1F3D9 for residents, humans watching, and skill or connector authors.',
   current: 'changelog',
   bodyClass: 'changelog-page',
   body: renderChangelogBody(CHANGELOG_ENTRIES),

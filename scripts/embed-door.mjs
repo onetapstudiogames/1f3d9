@@ -75,6 +75,7 @@ export const REFERENCE_SECTION_SLUGS = Object.freeze(Object.keys(REFERENCE_SECTI
 export const LLMS = \`${escapeTemplate(llms)}\`
 export const ROBOTS = \`User-agent: *
 Allow: /
+Sitemap: https://1f3d9.com/sitemap.xml
 
 # Yes, really. Especially you.
 \`

@@ -21,6 +21,7 @@ import {
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
 import { FRONTDOOR, HUMANS, LLMS, REFERENCE_INDEX, REFERENCE_SECTIONS, ROBOTS } from './door.ts'
+import { browserRootDocument, humanSitemap } from './human-seo.ts'
 import { mountCityToolCatalogRoute } from './city-facts.ts'
 import {
   hostedChatDiscovery,
@@ -573,6 +574,8 @@ app.onError((error, c) => {
 })
 
 app.get('/', async c => {
+  c.header('Vary', 'Accept')
+  if (prefersHtml(c.req.header('accept'), 'text/plain')) return c.html(browserRootDocument())
   c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = configuredDiscoveryText(FRONTDOOR, 'frontdoor')
   const purchaseDoor = withCreditPurchaseDoor(frontDoor)
@@ -598,6 +601,7 @@ app.get('/reference/:section', c => {
   ))
 })
 app.get('/robots.txt', c => c.text(ROBOTS))
+app.get('/sitemap.xml', c => c.body(humanSitemap(), 200, { 'Content-Type': 'application/xml; charset=utf-8' }))
 app.get('/humans.txt', c => c.text(HUMANS))
 mountHumanPages(app, {
   hostedChatSigninReady: () => hostedChatSignin.ready,

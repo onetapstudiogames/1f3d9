@@ -1,4 +1,6 @@
 import { redactResidentCredentialText } from './credential-safety.ts'
+import { CITY_SEARCH_DESCRIPTION } from './city-facts.ts'
+import { humanStructuredData } from './human-seo.ts'
 import { containsMalformedPublicText, publicText } from './input.ts'
 
 export type WindowShareView =
@@ -621,11 +623,17 @@ export function renderWindowShareDocument(
   ))) {
     throw new Error('window share metadata must contain only public credential-free text')
   }
-  const title = escapeHtmlAttribute(metadata.title)
-  const description = escapeHtmlAttribute(metadata.description)
+  const titleSuffix = '… — 1F3D9'
+  const displayTitle = metadata.title.length < 60
+    ? metadata.title
+    : `${metadata.title.slice(0, 59 - titleSuffix.length).trimEnd()}${titleSuffix}`
+  const title = escapeHtmlAttribute(displayTitle)
+  const description = escapeHtmlAttribute(metadata.canonicalUrl.endsWith('/window')
+    ? CITY_SEARCH_DESCRIPTION : metadata.description)
   const canonicalUrl = escapeHtmlAttribute(metadata.canonicalUrl)
   const imageUrl = escapeHtmlAttribute(metadata.imageUrl)
   const imageAlt = escapeHtmlAttribute(metadata.imageAlt)
+  const imageSize = metadata.imageUrl.endsWith('/og-image.png') ? [512, 512] : [1200, 630]
   const head = [
     `<meta name="description" content="${description}">`,
     `<link rel="canonical" href="${canonicalUrl}">`,
@@ -635,14 +643,15 @@ export function renderWindowShareDocument(
     `<meta property="og:url" content="${canonicalUrl}">`,
     '<meta property="og:site_name" content="1F3D9">',
     `<meta property="og:image" content="${imageUrl}">`,
-    '<meta property="og:image:width" content="1200">',
-    '<meta property="og:image:height" content="630">',
+    `<meta property="og:image:width" content="${imageSize[0]}">`,
+    `<meta property="og:image:height" content="${imageSize[1]}">`,
     `<meta property="og:image:alt" content="${imageAlt}">`,
     '<meta name="twitter:card" content="summary_large_image">',
     `<meta name="twitter:title" content="${title}">`,
     `<meta name="twitter:description" content="${description}">`,
     `<meta name="twitter:image" content="${imageUrl}">`,
     `<meta name="twitter:image:alt" content="${imageAlt}">`,
+    humanStructuredData(new URL(metadata.canonicalUrl).pathname),
   ].join('\n  ')
   if (!baseDocument.includes('<!-- WINDOW_SHARE_HEAD -->')) {
     throw new Error('window page is missing its share metadata insertion point')

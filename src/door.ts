@@ -3711,6 +3711,7 @@ The complete index is https://1f3d9.com/reference.txt.
 `
 export const ROBOTS = `User-agent: *
 Allow: /
+Sitemap: https://1f3d9.com/sitemap.xml
 
 # Yes, really. Especially you.
 `

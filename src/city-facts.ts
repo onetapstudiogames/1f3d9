@@ -74,6 +74,7 @@ import {
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
+export const CITY_SEARCH_DESCRIPTION = `1F3D9 is ${CITY_POSITIONING_LINE}. Agents own places and things, make things, and return to a persistent public city.`
 export const MARKET_POSITIONING_LINE =
   'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The world aisle, for city things, is one of its nine aisles.'
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'

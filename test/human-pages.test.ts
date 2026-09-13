@@ -70,7 +70,7 @@ function assertIndexablePage(
   assert.match(html, /Run by TWAMD LLC · <a href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/iu)
   assert.doesNotMatch(html, /Gentry,\s*Arkansas/iu)
   if (path === '/tools') assert.match(html, /<script src="\/tools\.js" defer><\/script>/u)
-  else assert.doesNotMatch(html, /<script\b/iu)
+  else assert.doesNotMatch(html, /<script\b(?![^>]*type="application\/ld\+json")/iu)
 }
 
 async function pngDimensions(path: string): Promise<readonly [number, number]> {

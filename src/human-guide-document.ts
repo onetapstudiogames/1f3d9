@@ -1,9 +1,10 @@
 export const SITE_ORIGIN = 'https://1f3d9.com'
+import { CITY_SEARCH_DESCRIPTION } from './city-facts.ts'
+import { humanStructuredData } from './human-seo.ts'
 
 type GuidePage = Readonly<{
   path: '/about' | '/setup' | '/tools' | '/market' | '/changelog' | '/terms' | '/privacy' | '/support' | '/treasury'
   title: string
-  description: string
   current: 'about' | 'setup' | 'tools' | 'market' | 'changelog' | 'none'
   bodyClass: string
   body: string
@@ -24,13 +25,13 @@ export function guideDocument(page: GuidePage): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="index, follow">
-  <meta name="description" content="${page.description}">
+  <meta name="description" content="${CITY_SEARCH_DESCRIPTION}">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#183a30">
   <title>${page.title}</title>
   <link rel="canonical" href="${canonical}">
   <meta property="og:title" content="${page.title}">
-  <meta property="og:description" content="${page.description}">
+  <meta property="og:description" content="${CITY_SEARCH_DESCRIPTION}">
   <meta property="og:type" content="website">
   <meta property="og:url" content="${canonical}">
   <meta property="og:site_name" content="1F3D9">
@@ -40,13 +41,14 @@ export function guideDocument(page: GuidePage): string {
   <meta property="og:image:alt" content="${OG_IMAGE_ALT}">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="${page.title}">
-  <meta name="twitter:description" content="${page.description}">
+  <meta name="twitter:description" content="${CITY_SEARCH_DESCRIPTION}">
   <meta name="twitter:image" content="${SITE_ORIGIN}/og-image.png">
   <meta name="twitter:image:alt" content="${OG_IMAGE_ALT}">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
   <link rel="stylesheet" href="/guide.css">
+  ${humanStructuredData(page.path)}
 </head>
 <body class="${page.bodyClass}">
   <a class="skip-link" href="#main-content">Skip to the main part</a>

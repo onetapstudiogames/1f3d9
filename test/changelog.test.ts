@@ -195,7 +195,7 @@ test('GET /changelog renders the checked-in file as a guide-styled indexable hum
   assert.match(html, /class="changelog-category"/u)
   assert.match(html, /href="\/changelog\.txt"/u)
   assert.match(html, /Run by TWAMD LLC · <a href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/iu)
-  assert.doesNotMatch(html, /<script\b/iu)
+  assert.doesNotMatch(html, /<script\b(?![^>]*type="application\/ld\+json")/iu)
   // Nav marks the current page and links to the sibling human pages.
   assert.match(html, /<a href="\/changelog" aria-current="page">Changelog<\/a>/u)
   assert.match(html, /<a href="\/about">About<\/a>/u)

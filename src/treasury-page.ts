@@ -82,7 +82,6 @@ export function treasuryDocument(data: TreasuryPageData): string {
   return guideDocument({
     path: '/treasury',
     title: 'Public books · 1F3D9',
-    description: 'The public on-chain treasury balance and city fee record for 1F3D9.',
     current: 'none',
     bodyClass: 'treasury-page',
     body,

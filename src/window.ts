@@ -1671,11 +1671,19 @@ export async function windowPage(
       record = null
     }
   }
-  const metadata = createWindowShareMetadata(
+  const shareMetadata = createWindowShareMetadata(
     windowShareMetadataOrigin(configuredPublicDomain(environment).domain, environment),
     shareRequest,
     record,
   )
+  const metadata = c.req.path === '/window' && requestUrl.search === ''
+    ? Object.freeze({
+        ...shareMetadata,
+        canonicalUrl: 'https://1f3d9.com/window',
+        imageUrl: 'https://1f3d9.com/og-image.png',
+        imageAlt: 'A cream and stone city skyline on deep green.',
+      })
+    : shareMetadata
   const baseHtml = creditPurchasesReady
     ? WINDOW_HTML.replace(
         '      <!-- WINDOW_BUY_LINK -->',

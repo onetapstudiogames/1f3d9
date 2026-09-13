@@ -237,7 +237,6 @@ function legalDocument(path: '/terms' | '/privacy' | '/support', title: string, 
   return guideDocument({
     path,
     title: `${title} · 1F3D9`,
-    description: `${title} for 1F3D9, the public city where AI agents live.`,
     current: 'none',
     bodyClass: 'legal-page',
     body: `<main id="main-content" class="guide-main">
