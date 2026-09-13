@@ -28,7 +28,7 @@ import {
   publicOfficialFacts,
   publicPhysicsFacts,
 } from '../src/public-reference-facts.ts'
-import { mcp } from '../src/mcp.ts'
+import { CITY_PUBLIC_TOOL_CATALOG, mcp } from '../src/mcp.ts'
 import { hostedChatDiscovery } from '../src/hosted-chat-discovery.ts'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
 import { RESIDENT_LOOKING_TTL_SECONDS } from '../src/resident-looking-limits.ts'
@@ -143,12 +143,28 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
   }
 
   const app = new Hono()
-  mountCityToolCatalogRoute(app)
+  mountCityToolCatalogRoute(app, CITY_PUBLIC_TOOL_CATALOG)
   const response = await app.request(FULL_TOOL_CATALOG_PATH)
   assert.equal(response.status, 200)
   const payload = await response.json() as { tools: unknown[]; count: number }
   assert.equal(payload.count, 41)
-  assert.deepEqual(payload.tools, CITY_TOOL_CATALOG)
+  assert.deepEqual(payload.tools, CITY_PUBLIC_TOOL_CATALOG)
+  const gateway = new Hono()
+  gateway.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
+  const mcpResponse = await gateway.request('/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  })
+  assert.equal(mcpResponse.status, 200)
+  const mcpPayload = await mcpResponse.json() as { result: { tools: Array<{ name: string; title: string; annotations: Record<string, unknown> }> } }
+  const byName = new Map(mcpPayload.result.tools.map(tool => [tool.name, tool]))
+  for (const tool of payload.tools as Array<{ name: string; title: string; annotations: Record<string, unknown> }>) {
+    const connector = byName.get(tool.name)
+    assert.ok(connector, tool.name)
+    assert.equal(tool.title, connector.title, `${tool.name} title`)
+    assert.deepEqual(tool.annotations, connector.annotations, `${tool.name} annotations`)
+  }
 })
 
 test('the scoped agent route catalog names mounted routes one by one and is served to agents', async () => {
@@ -281,7 +297,7 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   assert.equal(catalogResponse.status, 200)
   assert.deepEqual(await catalogResponse.json(), {
     count: CITY_TOOL_CATALOG.length,
-    tools: CITY_TOOL_CATALOG,
+    tools: CITY_PUBLIC_TOOL_CATALOG,
   })
 
   const officialResponse = await app.request('/api/official')

@@ -338,11 +338,22 @@ export function duplicateParagraphs(files: readonly TextFile[]) {
     .sort((left, right) => left.paragraph.localeCompare(right.paragraph))
 }
 
-export function mountCityToolCatalogRoute(app: Hono): void {
+export type CityPublicTool = (typeof CITY_TOOL_CATALOG)[number] & Readonly<{
+  title: string
+  annotations: Readonly<{
+    title: string
+    readOnlyHint: boolean
+    destructiveHint: boolean
+    idempotentHint: boolean
+    openWorldHint: boolean
+  }>
+}>
+
+export function mountCityToolCatalogRoute(app: Hono, catalog: readonly CityPublicTool[]): void {
   app.get(FULL_TOOL_CATALOG_PATH, c => {
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     c.header('Cache-Control', 'public, max-age=300')
-    return c.json({ count: CITY_TOOL_CATALOG.length, tools: CITY_TOOL_CATALOG })
+    return c.json({ count: catalog.length, tools: catalog })
   })
 }

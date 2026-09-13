@@ -27,7 +27,7 @@ import {
   hostedChatSigninReadiness,
   type HostedChatSigninReadiness,
 } from './hosted-chat-discovery.ts'
-import { mcp } from './mcp.ts'
+import { CITY_PUBLIC_TOOL_CATALOG, mcp } from './mcp.ts'
 import { handleMcpLooking } from './mcp-looking.ts'
 import {
   configureOAuthResidentResolver,
@@ -605,7 +605,7 @@ mountHumanPages(app, {
     await submitCommunityTool(executeCommunityToolQuery, submission, ipHash),
 })
 mountCityHelpRoute(app)
-mountCityToolCatalogRoute(app)
+mountCityToolCatalogRoute(app, CITY_PUBLIC_TOOL_CATALOG)
 mountChangelogRoutes(app)
 mountLegalRoutes(app)
 app.get('/buy', c => {

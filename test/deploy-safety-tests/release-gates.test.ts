@@ -27,6 +27,9 @@ export function registerReleaseGatesTests(): void {
   test('payment reliability is fail-hard in required checks and documented where it binds', () => {
     assert.ok(workingStandard.includes(PAYMENT_RELIABILITY_STANDARD))
     assert.match(workingStandard, /scheduled `live-probe` workflow/iu)
+    assert.match(workingStandard, /check for a\s+successful run at least every few hours/iu)
+    assert.match(liveProbeWorkflow, /^name: scheduled-live-probe \(check every few hours\)$/mu)
+    assert.match(liveProbeWorkflow, /workflow_dispatch: \{\}/u)
     assert.match(ciWorkflow, /^jobs:\r?\n  checks:\r?\n    runs-on:/mu)
     assert.match(
       ciWorkflow,
