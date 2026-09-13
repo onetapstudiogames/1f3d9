@@ -197,10 +197,13 @@ test('opaque cursor is resident-bound and rejects authenticated tampering before
   assert.equal(queryCalls, 0)
 })
 
-test('mark and unmark queries change only the private mark store', async () => {
+test('mark and unmark write only the private mark store after a held-thing read', async () => {
   const calls: Array<{ query: string; params: readonly unknown[] }> = []
   const execute: LaterHolderQueryExecutor = async (query, params) => {
     calls.push({ query, params })
+    if (query.includes('SELECT held_by, owner_id, maker_id FROM things')) {
+      return [{ held_by: null, owner_id: 7, maker_id: 7 }]
+    }
     return query.includes('DELETE FROM thing_later_holder_marks')
       ? []
       : [{ thing_id: 31, changed: false }]
@@ -212,7 +215,8 @@ test('mark and unmark queries change only the private mark store', async () => {
   assert.deepEqual(await setLaterHolderMark(execute, 7, 31, false), {
     thing_id: 31, marked: false, changed: false,
   })
-  assert.deepEqual(calls.map(call => call.params), [[7, 31], [7, 31]])
+  assert.deepEqual(calls.map(call => call.params), [[31], [7, 31], [7, 31]])
+  assert.match(calls[0]!.query, /^\s*SELECT held_by, owner_id, maker_id FROM things/iu)
   for (const call of calls) {
     assert.doesNotMatch(call.query, /\bevents\b|public_change/iu)
   }
