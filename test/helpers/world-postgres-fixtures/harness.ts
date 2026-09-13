@@ -18,6 +18,7 @@ import { registerPlaceLifecycleActionsTests } from '../../integration/world-test
 import { registerRetirementConcurrencyTests } from '../../integration/world-tests/retirement-concurrency.ts'
 import { registerRetiredPlaceWritesTests } from '../../integration/world-tests/retired-place-writes.ts'
 import { registerTransfersAndRoutesTests } from '../../integration/world-tests/transfers-and-routes.ts'
+import { registerHeldLuggageTests } from '../../integration/world-tests/held-luggage.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'world_integration'
@@ -531,6 +532,21 @@ export async function registerWorldPostgresTests(t: TestContext): Promise<void> 
       setEngineTransactionRunnerForTests,
       sql,
       transactionSql,
+    })
+    await registerHeldLuggageTests(t, {
+      actor,
+      app,
+      assertWaitingOnDatabaseLock,
+      bearer,
+      database,
+      executeEffects,
+      founderSecret,
+      insertProtectedGazetteRoom,
+      resetDatabase,
+      setEngineTransactionRunnerForTests,
+      sql,
+      transactionSql,
+      withdrawThing,
     })
     await registerAgreementTests(t, {
       app,

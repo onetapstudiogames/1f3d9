@@ -79,7 +79,7 @@ export async function withdrawThing(
         AND offer.id IS NULL
       FOR UPDATE OF thing
     ), changed AS (
-      UPDATE things SET withdrawn_at = clock_timestamp()
+      UPDATE things SET withdrawn_at = clock_timestamp(), held_by = NULL
       WHERE id IN (SELECT id FROM withdrawable)
       RETURNING id, withdrawn_at
     ), new_event AS (

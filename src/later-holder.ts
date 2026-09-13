@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { redactResidentCredentialText } from './credential-safety.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import { LATER_HOLDER_PAGE_DEFAULT, LATER_HOLDER_PAGE_MAX } from './read-limits.ts'
+import { HELD_THING_ERROR } from './refusal-text.ts'
 
 const UNSUPPORTED_FIELD_ECHO_LIMIT = 5
 const UNSUPPORTED_FIELD_NAME_MAX_CHARS = 64
@@ -79,6 +80,13 @@ export class LaterHolderMarkEligibilityError extends Error {
   constructor() {
     super('only an active public thing you made and currently own can be marked')
     this.name = 'LaterHolderMarkEligibilityError'
+  }
+}
+
+export class LaterHolderHeldThingError extends Error {
+  constructor() {
+    super(HELD_THING_ERROR)
+    this.name = 'LaterHolderHeldThingError'
   }
 }
 
@@ -385,19 +393,28 @@ export async function setLaterHolderMark(
     return Object.freeze({ thing_id: thingId, marked: false, changed: rows.length > 0 })
   }
 
+  const held = await execute(`
+    SELECT held_by, owner_id, maker_id FROM things WHERE id = $1::integer
+  `, [thingId])
+  if (held[0]?.held_by != null && held[0].owner_id === residentId
+    && held[0].maker_id === residentId) throw new LaterHolderHeldThingError()
+
   const rows = await execute(`
     /* private:later-holder-mark */
     WITH existing AS MATERIALIZED (
-      SELECT thing_id
-      FROM thing_later_holder_marks
-      WHERE resident_id = $1::integer AND thing_id = $2::integer
+      SELECT mark.thing_id
+      FROM thing_later_holder_marks mark
+      JOIN things thing ON thing.id = mark.thing_id
+      WHERE mark.resident_id = $1::integer AND mark.thing_id = $2::integer
+        AND thing.held_by IS NULL
+      FOR UPDATE OF thing
     ), eligible AS MATERIALIZED (
       SELECT thing.id
       FROM things thing
       WHERE thing.id = $2::integer
         AND thing.maker_id = $1::integer
         AND thing.owner_id = $1::integer
-        AND thing.withdrawn_at IS NULL
+        AND thing.withdrawn_at IS NULL AND thing.held_by IS NULL
         AND NOT EXISTS (SELECT 1 FROM existing)
         AND coalesce((
           SELECT moderation.action
@@ -422,13 +439,23 @@ export async function setLaterHolderMark(
   let row = rows[0]
   if (!row) {
     const concurrent = await execute(`
-      SELECT /* private:later-holder-mark-existing */ thing_id, false AS changed
-      FROM thing_later_holder_marks
-      WHERE resident_id = $1::integer AND thing_id = $2::integer
+      SELECT /* private:later-holder-mark-existing */ mark.thing_id, false AS changed
+      FROM thing_later_holder_marks mark
+      JOIN things thing ON thing.id = mark.thing_id
+      WHERE mark.resident_id = $1::integer AND mark.thing_id = $2::integer
+        AND thing.held_by IS NULL
+      FOR UPDATE OF thing
     `, [residentId, thingId])
     row = concurrent[0]
   }
-  if (!row) throw new LaterHolderMarkEligibilityError()
+  if (!row) {
+    const current = await execute(`
+      SELECT held_by, owner_id, maker_id FROM things WHERE id = $1::integer
+    `, [thingId])
+    if (current[0]?.held_by != null && current[0].owner_id === residentId
+      && current[0].maker_id === residentId) throw new LaterHolderHeldThingError()
+    throw new LaterHolderMarkEligibilityError()
+  }
   return Object.freeze({
     thing_id: thingId,
     marked: true,

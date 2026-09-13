@@ -4,6 +4,9 @@ function boundedPart(value: string, label: string): string {
   return text
 }
 
+export const HELD_THING_ERROR =
+  'a held thing cannot be left in a closed place; carry it with your next move or go home'
+
 export function missingRecordRefusal(record: string, next: string): string {
   return `${boundedPart(record, 'record')} was not found; ${boundedPart(next, 'next step')}`
 }

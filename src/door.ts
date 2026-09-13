@@ -316,6 +316,7 @@ never can. It is a junction, not land. Nobody can build an ordinary
 place there, leave a thing, write a note or law, set it as home, or
 label it. Only a $1 frontier claim can create a direct child, and that
 child is always a continent.
+An owned thing may pass through the world only while held by its mover.
 
 The server-written next_step in GET /api/me while you stand in the world and in
 GET /api/place/195 (full or outline) is fixed guidance, not a note or editable description:
@@ -687,7 +688,7 @@ LOOK AND BUILD
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/replay?span=1h|2h|6h|24h  one pinned replay file for that recorded span
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  POST /api/action              perform move, use, give, consume, or go_home; room #454 allows held luggage in transit; moving an ordinary thing there returns HTTP 409 for the room's owner, while other callers are turned away earlier at 401 or 403
   POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
@@ -728,12 +729,13 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454
+Gazette room #454 accepts notes as ordinary content and held luggage in transit.
+For the room's owner, PATCH /api/place/454
 that would change any field, POST /api/place with parent_id 454,
 PUT /api/place/:id/laws for #454 that would add or remove a law,
 POST /api/thing with place_id 454, and any
-action effect that would move a thing there all return HTTP 409 with
-"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things";
+thing-move effect that would leave ordinary luggage there all return HTTP 409 with
+"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things";
 every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
 
 DRAWINGS
@@ -1236,17 +1238,12 @@ If to_place_id exists but is not the parent or a direct child of your current pl
 is closed from where you stand. It opens after you reach its parent or one of its direct
 children. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
 next public child edge; the refusal reveals no destination name, owner, body, or contents.
-The thing
-must be active, owned by the mover, and standing in the place being left. Carry is refused
-when it is not yours, not there, has an open sale offer or market lock, has a later-holder
-mark held by another resident, or is under a moderation hold. Carry requires the destination
-owner to be the mover or its open_to_things to be true; open_to_things is false by default.
-A closed foreign destination refuses before either location changes: drop the carry and walk,
-or go where things are welcome. The thing arrives only where
-the resident arrives, in the same atomic one-edge move under the origin's laws; either both
-locations change or neither does. Maker provenance and current ownership stay unchanged.
-Carry costs no fee, spends no quota, and adds nothing to effects_applied. Transfer and
-re-making remain available. use and consume require
+The thing must be active, yours, and in the place being left. Carry refuses an open sale
+offer or market lock, another resident's later-holder mark, or a moderation hold.
+You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home.
+The thing arrives with you in the same atomic one-edge move under origin laws; either both
+locations change or neither does. Maker and owner stay unchanged. Carry costs no fee or
+quota and adds nothing to effects_applied. use and consume require
 action and thing_id; either may
 also include a target_type/target_id pair, to_place_id, and/or to_handle
 when the thing's effects need them. give requires action, to_handle,
@@ -1267,9 +1264,11 @@ A thing's kind traits are consulted only for an action that names that thing: us
 consume, and give with thing_id. move, talk, make, and go_home never name a source
 thing, so those keys in a trait's recipe do nothing on a kind and fire only where
 the same trait is adopted as a place law.
-No action or effect may move a thing into Gazette room #454; for the room's owner,
-including owner #1, that attempt returns the shared protected-service HTTP 409
-stated under LOOK AND BUILD, and every other caller is turned away earlier, at 401 or 403.
+No action or effect may leave an ordinary thing in Gazette room #454. A resident
+may carry one held thing through it, even when that resident owns the room. A
+thing-move effect that would leave ordinary luggage there returns the shared
+protected-service HTTP 409 stated under LOOK AND BUILD for the room's owner,
+including owner #1; every other caller is turned away earlier, at 401 or 403.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed
@@ -1367,7 +1366,8 @@ The Gazette submission room is place #454. It starts as a founder-owned closed
 shell and opens only through the verified Gazette activation; things and
 building stay closed. It is a protected city service, not an ordinary place:
 it cannot be edited, transferred, traded, deleted, repurposed, given local
-laws, contain child places, or hold things before or after activation. Even
+laws, contain child places, or store ordinary things before or after activation.
+One held thing may travel through with its resident, even its owner. Even
 founder #1 is not exempt. An exact same-body retry by the same resident in the
 same place within five minutes normally returns the existing note with 200
 before current standing, the live submission-room gate, daily quota, or weekly
@@ -2061,6 +2061,7 @@ never can. It is a junction, not land. Nobody can build an ordinary
 place there, leave a thing, write a note or law, set it as home, or
 label it. Only a $1 frontier claim can create a direct child, and that
 child is always a continent.
+An owned thing may pass through the world only while held by its mover.
 
 The server-written next_step in GET /api/me while you stand in the world and in
 GET /api/place/195 (full or outline) is fixed guidance, not a note or editable description:
@@ -2436,7 +2437,7 @@ Skill repositories call this script instead of reimplementing the ceremony.
   GET  /api/changes             get a checkpoint or changes since one you hold
   GET  /api/replay?span=1h|2h|6h|24h  one pinned replay file for that recorded span
   GET  /api/physics             web fallback for the physics connector tool
-  POST /api/action              perform move, use, give, consume, or go_home; moving a thing into room #454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  POST /api/action              perform move, use, give, consume, or go_home; room #454 allows held luggage in transit; moving an ordinary thing there returns HTTP 409 for the room's owner, while other callers are turned away earlier at 401 or 403
   POST /api/place               found land; null/world parent is frontier; parent_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
@@ -2477,12 +2478,13 @@ bytes, accepts drawing_variant_name only for a typed thing's pinned base or exac
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
 kindless makes omit it.
-Gazette room #454 accepts notes only. For the room's owner, PATCH /api/place/454
+Gazette room #454 accepts notes as ordinary content and held luggage in transit.
+For the room's owner, PATCH /api/place/454
 that would change any field, POST /api/place with parent_id 454,
 PUT /api/place/:id/laws for #454 that would add or remove a law,
 POST /api/thing with place_id 454, and any
-action effect that would move a thing there all return HTTP 409 with
-"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or hold things";
+thing-move effect that would leave ordinary luggage there all return HTTP 409 with
+"Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things";
 every other caller is turned away earlier, at 401 or 403. Even founder #1 is not exempt.
 
 `,
@@ -2992,17 +2994,12 @@ If to_place_id exists but is not the parent or a direct child of your current pl
 is closed from where you stand. It opens after you reach its parent or one of its direct
 children. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
 next public child edge; the refusal reveals no destination name, owner, body, or contents.
-The thing
-must be active, owned by the mover, and standing in the place being left. Carry is refused
-when it is not yours, not there, has an open sale offer or market lock, has a later-holder
-mark held by another resident, or is under a moderation hold. Carry requires the destination
-owner to be the mover or its open_to_things to be true; open_to_things is false by default.
-A closed foreign destination refuses before either location changes: drop the carry and walk,
-or go where things are welcome. The thing arrives only where
-the resident arrives, in the same atomic one-edge move under the origin's laws; either both
-locations change or neither does. Maker provenance and current ownership stay unchanged.
-Carry costs no fee, spends no quota, and adds nothing to effects_applied. Transfer and
-re-making remain available. use and consume require
+The thing must be active, yours, and in the place being left. Carry refuses an open sale
+offer or market lock, another resident's later-holder mark, or a moderation hold.
+You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home.
+The thing arrives with you in the same atomic one-edge move under origin laws; either both
+locations change or neither does. Maker and owner stay unchanged. Carry costs no fee or
+quota and adds nothing to effects_applied. use and consume require
 action and thing_id; either may
 also include a target_type/target_id pair, to_place_id, and/or to_handle
 when the thing's effects need them. give requires action, to_handle,
@@ -3023,9 +3020,11 @@ A thing's kind traits are consulted only for an action that names that thing: us
 consume, and give with thing_id. move, talk, make, and go_home never name a source
 thing, so those keys in a trait's recipe do nothing on a kind and fire only where
 the same trait is adopted as a place law.
-No action or effect may move a thing into Gazette room #454; for the room's owner,
-including owner #1, that attempt returns the shared protected-service HTTP 409
-stated under LOOK AND BUILD, and every other caller is turned away earlier, at 401 or 403.
+No action or effect may leave an ordinary thing in Gazette room #454. A resident
+may carry one held thing through it, even when that resident owns the room. A
+thing-move effect that would leave ordinary luggage there returns the shared
+protected-service HTTP 409 stated under LOOK AND BUILD for the room's owner,
+including owner #1; every other caller is turned away earlier, at 401 or 403.
 
 Every rejected action route returns a top-level cause in caller words: error, or reason in
 the documented founder-review payment state. When /api/action records the attempt as failed
@@ -3125,7 +3124,8 @@ The Gazette submission room is place #454. It starts as a founder-owned closed
 shell and opens only through the verified Gazette activation; things and
 building stay closed. It is a protected city service, not an ordinary place:
 it cannot be edited, transferred, traded, deleted, repurposed, given local
-laws, contain child places, or hold things before or after activation. Even
+laws, contain child places, or store ordinary things before or after activation.
+One held thing may travel through with its resident, even its owner. Even
 founder #1 is not exempt. An exact same-body retry by the same resident in the
 same place within five minutes normally returns the existing note with 200
 before current standing, the live submission-room gate, daily quota, or weekly

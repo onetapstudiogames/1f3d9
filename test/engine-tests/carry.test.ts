@@ -14,14 +14,19 @@ export function registerCarryTests(): void {
     readonly has_open_offer?: boolean
     readonly marked_by_other?: boolean
     readonly moderation_action?: 'remove' | 'restore' | null
-    readonly destination_owner_id?: number
+    readonly destination_owner_id?: number | null
     readonly destination_open_to_things?: boolean
     readonly destination_retired_at?: string | null
+    readonly current_place_id?: number
+    readonly home_place_id?: number
+    readonly origin_parent_id?: number | null
+    readonly destination_parent_id?: number | null
+    readonly held_by?: number | null
     readonly update_succeeds?: boolean
     readonly law_emits_typed_event?: boolean
   }
 
-  function carryActionDb(fixture: CarryThingFixture = {}) {
+  function carryActionDb(fixture: CarryThingFixture = {}, destinationPlaceId = 3) {
     const thing = {
       id: 41,
       owner_id: 7,
@@ -34,18 +39,34 @@ export function registerCarryTests(): void {
       destination_owner_id: 7,
       destination_open_to_things: false,
       destination_retired_at: null,
+      current_place_id: 2,
+      home_place_id: 2,
+      origin_parent_id: 1,
+      destination_parent_id: 2,
+      held_by: null,
       update_succeeds: true,
       ...fixture,
     }
     return fakeSql(({ text }) => {
+      if (/INSERT INTO resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: thing.current_place_id,
+          home_place_id: thing.home_place_id, updated_at: 'now' }]
+      }
+      if (/WITH usable_home AS MATERIALIZED/.test(text)) {
+        return [{ resident_id: 7, current_place_id: thing.home_place_id,
+          home_place_id: thing.home_place_id, updated_at: 'now' }]
+      }
       if (/FROM resident_presence/.test(text)) {
-        return [{ resident_id: 7, current_place_id: 2, home_place_id: 2, updated_at: 'now' }]
+        return [{ resident_id: 7, current_place_id: thing.current_place_id,
+          home_place_id: thing.home_place_id, updated_at: 'now' }]
       }
       if (/INSERT INTO action_runs/.test(text)) return [{ id: 301 }]
       if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
       if (/AS marked_by_other/.test(text)) return [thing]
+      if (/FROM things WHERE held_by/.test(text)) return thing.held_by === 7
+        ? [{ id: thing.id, place_id: thing.place_id }] : []
       if (/FROM places destination/.test(text)) return [{
-        id: 3,
+        id: destinationPlaceId,
         owner_id: thing.destination_owner_id,
         open_to_things: thing.destination_open_to_things,
         retired_at: thing.destination_retired_at,
@@ -68,12 +89,19 @@ export function registerCarryTests(): void {
       if (/pg_advisory_xact_lock/.test(text)) return []
       if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
       if (/INSERT INTO pending_effects/.test(text)) return [{ id: 501 }]
-      if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
-        { id: 2, parent_id: 1 },
-        { id: 3, parent_id: 2 },
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+        { id: thing.current_place_id, parent_id: thing.origin_parent_id,
+          owner_id: 7, open_to_things: false, retired_at: null },
+        { id: destinationPlaceId, parent_id: thing.destination_parent_id,
+          owner_id: thing.destination_owner_id, open_to_things: thing.destination_open_to_things,
+          retired_at: thing.destination_retired_at },
       ]
       if (/UPDATE resident_presence SET current_place_id/.test(text)) {
-        return [{ resident_id: 7, current_place_id: 3, home_place_id: 2, updated_at: 'now' }]
+        return [{ resident_id: 7, current_place_id: destinationPlaceId,
+          home_place_id: thing.home_place_id, updated_at: 'now' }]
+      }
+      if (/UPDATE things SET place_id/.test(text)) {
+        return thing.update_succeeds ? [{ id: thing.id }] : []
       }
       if (/UPDATE things carrying SET place_id/.test(text)) {
         return thing.update_succeeds ? [{ id: 41 }] : []
@@ -84,12 +112,12 @@ export function registerCarryTests(): void {
   }
 
   async function carryAction(fixture: CarryThingFixture = {}, destinationPlaceId = 3) {
-    const database = carryActionDb(fixture)
+    const database = carryActionDb(fixture, destinationPlaceId)
     const result = await runAction({
       actorId: 7,
       actorHandle: 'tiny-lantern',
       action: 'move',
-      placeId: 2,
+      placeId: fixture.current_place_id ?? 2,
       destinationPlaceId,
       carryThingId: 41,
     }, database.db)
@@ -111,19 +139,34 @@ export function registerCarryTests(): void {
     assert.match(String(resolution?.values[2] ?? ''), /"thing_id":41/)
   })
 
-  test('a carry refuses a closed foreign destination before either location changes', async () => {
+  test('a carry enters a closed foreign destination as held luggage', async () => {
     const { result, calls } = await carryAction({
       destination_owner_id: 8,
       destination_open_to_things: false,
     })
 
-    assert.equal(result.httpStatus, 403)
-    assert.equal(
-      result.error,
-      'destination place does not accept visitor things; drop the carry and walk, or go where things are welcome',
-    )
-    assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
-    assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), false)
+    assert.equal(result.status, 'applied')
+    assert.equal(result.httpStatus, 200)
+    assert.ok(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)))
+    const carry = calls.find(call => /UPDATE things carrying SET place_id/.test(call.text))
+    assert.match(carry?.text ?? '', /held_by = \$/u)
+    assert.equal(carry?.values[5], 7)
+  })
+
+  test('one owned thing can enter the closed ownerless world as held luggage', async () => {
+    const { result, calls } = await carryAction({
+      current_place_id: 1,
+      place_id: 1,
+      origin_parent_id: 195,
+      destination_parent_id: null,
+      destination_owner_id: null,
+      destination_open_to_things: false,
+    }, 195)
+
+    assert.equal(result.status, 'applied')
+    const carry = calls.find(call => /UPDATE things carrying SET place_id/.test(call.text))
+    assert.deepEqual(carry?.values.slice(0, 4), [41, 7, 1, 195])
+    assert.match(carry?.text ?? '', /held_by = \$/u)
   })
 
   test('a carry refuses a retired destination before either location changes', async () => {
@@ -145,17 +188,91 @@ export function registerCarryTests(): void {
 
     assert.equal(result.status, 'applied')
     const permission = calls.find(call => /FROM places destination/.test(call.text))
-    assert.match(permission?.text ?? '', /\(destination\.owner_id = \$ OR destination\.open_to_things\)/u)
-    assert.equal(permission?.values[0], 7)
+    assert.match(permission?.text ?? '', /AS destination_permits_things/u)
+    const carry = calls.find(call => /UPDATE things carrying SET place_id/.test(call.text))
+    assert.match(carry?.text ?? '', /held_by = \$/u)
+    assert.equal(carry?.values[5], null)
   })
 
   test('a carry may enter a foreign destination open to visitor things', async () => {
-    const { result } = await carryAction({
+    const { result, calls } = await carryAction({
       destination_owner_id: 8,
       destination_open_to_things: true,
     })
 
     assert.equal(result.status, 'applied')
+    const carry = calls.find(call => /UPDATE things carrying SET place_id/.test(call.text))
+    assert.equal(carry?.values[5], null)
+  })
+
+  test('protected Gazette room #454 keeps luggage held even for its owner', async () => {
+    const { result, calls } = await carryAction({
+      destination_owner_id: 7,
+      destination_open_to_things: true,
+    }, 454)
+
+    assert.equal(result.status, 'applied')
+    const carry = calls.find(call => /UPDATE things carrying SET place_id/.test(call.text))
+    assert.equal(carry?.values[5], 7)
+  })
+
+  test('a plain next move keeps luggage held in another closed room', async () => {
+    const database = carryActionDb({
+      current_place_id: 2, place_id: 2, held_by: 7,
+      destination_owner_id: 8, destination_open_to_things: false,
+    })
+    const result = await runAction({
+      actorId: 7, actorHandle: 'tiny-lantern', action: 'move',
+      placeId: 2, destinationPlaceId: 3,
+    }, database.db)
+
+    assert.equal(result.status, 'applied')
+    const move = database.calls.find(call => /UPDATE things SET place_id/.test(call.text))
+    assert.ok(move)
+    assert.equal(move.values[1], 7, 'closed destination retains held_by')
+  })
+
+  test('a plain next move takes held luggage and releases it in an open room', async () => {
+    const database = carryActionDb({
+      current_place_id: 2, place_id: 2, held_by: 7,
+      destination_owner_id: 8, destination_open_to_things: true,
+    })
+    const result = await runAction({
+      actorId: 7, actorHandle: 'tiny-lantern', action: 'move',
+      placeId: 2, destinationPlaceId: 3,
+    }, database.db)
+
+    assert.equal(result.status, 'applied')
+    const move = database.calls.find(call => /UPDATE things SET place_id/.test(call.text))
+    assert.ok(move, 'held thing follows the resident without carry_thing_id')
+    assert.equal(move.values[1], null, 'open destination clears held_by')
+    const resolution = database.calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+    assert.match(String(resolution?.values[2] ?? ''), /"thing_id":41/)
+  })
+
+  test('go_home takes held luggage to the owned home in the same action', async () => {
+    const database = carryActionDb({
+      current_place_id: 3, place_id: 3, held_by: 7,
+      home_place_id: 2, origin_parent_id: 2,
+    }, 2)
+    const result = await runAction({
+      actorId: 7, actorHandle: 'tiny-lantern', action: 'go_home',
+    }, database.db)
+
+    assert.equal(result.status, 'applied', result.error ?? undefined)
+    assert.ok(database.calls.some(call => /WITH usable_home AS MATERIALIZED/.test(call.text)))
+    const move = database.calls.find(call => /UPDATE things SET place_id/.test(call.text))
+    assert.ok(move, 'held thing reaches home')
+    assert.equal(move.values[1], null, 'owned home clears held_by')
+  })
+
+  test('a held thing cannot be exchanged for another carry on the next move', async () => {
+    const { result, calls } = await carryAction({ held_by: 7, place_id: 2, id: 42 })
+
+    assert.equal(result.httpStatus, 409)
+    assert.equal(result.error, 'a held thing cannot be left in a closed place; carry it with your next move or go home')
+    assert.equal(calls.some(call => /UPDATE resident_presence SET current_place_id/.test(call.text)), false)
+    assert.equal(calls.some(call => /UPDATE things carrying SET place_id/.test(call.text)), false)
   })
 
   test('a carried move keeps its resident movement record when an origin law emits an event', async () => {

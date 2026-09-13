@@ -171,7 +171,8 @@ export function registerGazetteTests(): void {
       assert.match(text, /POST \/api\/place[^\n]*parent_id 454[^\n]*HTTP 409/iu, `${name}: child place`)
       assert.match(text, /PUT[^\n]*\/api\/place\/:id\/laws[^\n]*#454[^\n]*HTTP 409/iu, `${name}: laws`)
       assert.match(text, /POST \/api\/thing[^\n]*place_id 454[^\n]*HTTP 409/iu, `${name}: things`)
-      assert.match(text, /move[^\n]*thing[^\n]*(?:room|place) #454[^\n]*HTTP 409/iu, `${name}: thing movement`)
+      assert.match(text, /thing-move effect[\s\S]{0,100}ordinary luggage[\s\S]{0,100}HTTP 409/iu, `${name}: ordinary thing movement`)
+      assert.match(text, /held luggage in transit/iu, `${name}: held luggage may pass through`)
       assert.match(text, /even (?:founder |owner )?#?1/iu, `${name}: founder is not exempt`)
     }
   })
@@ -181,13 +182,14 @@ export function registerGazetteTests(): void {
       ['reference source', referenceSource],
     ] as const) {
       // The Gazette paragraph is the source of truth for who gets what on #454:
-      // HTTP 409 only for the room's owner attempting a real change, HTTP 401 with
+      // HTTP 409 only for the room's owner attempting a real change or leaving an
+      // ordinary thing, HTTP 401 with
       // no sign-in, HTTP 403 for a signed-in non-owner, and (laws only) HTTP 200
       // on an empty-traits no-op. Pin that same shape onto each compact table row
       // so the table can never again promise an unconditional 409 the paragraph
       // itself does not.
       const paragraph = text.match(
-        /Gazette room #454 accepts notes only\.[\s\S]{0,700}?[Ee]ven founder #1 is not exempt\./u,
+        /Gazette room #454 accepts notes as ordinary content and held luggage in transit\.[\s\S]{0,750}?[Ee]ven founder #1 is not exempt\./u,
       )?.[0]
       assert.ok(paragraph, `${name}: corrected Gazette paragraph not found`)
       assert.match(
@@ -198,6 +200,8 @@ export function registerGazetteTests(): void {
 
       const actionRow = text.match(/^[ \t]*(?:- )?POST \/api\/action(?:[ \t]+| — )perform\b[^\n]*/imu)?.[0] ?? ''
       assert.match(actionRow, /HTTP 409/iu, `${name}: action row must still name HTTP 409`)
+      assert.match(actionRow, /held/iu, `${name}: action row must allow held luggage in transit`)
+      assert.match(actionRow, /ordinary/iu, `${name}: action row must limit the refusal to ordinary things`)
       assert.match(actionRow, /for (?:the room's|its) owner/iu, `${name}: action row must not promise an unconditional 409`)
       assert.match(actionRow, /401 or 403/iu, `${name}: action row must disclose the 401/403 caller gating`)
 
@@ -219,31 +223,26 @@ export function registerGazetteTests(): void {
     }
   })
 
-  test('every "move a thing into #454" sentence agrees with the corrected Gazette paragraph, not an unconditional 409', () => {
-    // A prose sentence naming the move-into-#454 refusal is a separate producer from
-    // the compact table row pinned above; both must state the same real answer by
-    // caller (409 for the room's owner, 401/403 for everyone else) so an agent that
-    // reads either sentence in isolation learns the true contract, not a promise
-    // the paragraph a few lines away already contradicts.
+  test('every Gazette movement sentence permits held transit but refuses leaving ordinary things', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
     ] as const) {
-      // Match the sentence leniently (a fixed slice from its start) so a regressed
-      // sentence still matches and the two assertions below name the real defect.
       const sentence = text.match(
-        /No action or effect may move a thing into Gazette room #454[\s\S]{0,320}/u,
+        /No action or effect may leave an ordinary thing in Gazette room #454[\s\S]{0,450}/u,
       )?.[0]
-      assert.ok(sentence, `${name}: move-into-#454 sentence not found`)
+      assert.ok(sentence, `${name}: ordinary-thing refusal sentence not found`)
+      assert.match(sentence!, /carry one held thing through it, even when that resident owns the room/iu,
+        `${name}: owner may carry held luggage through`)
       assert.match(
         sentence!,
         /for the room's owner/iu,
-        `${name}: move-into-#454 sentence must not promise an unconditional 409`,
+        `${name}: ordinary-thing refusal must not promise an unconditional 409`,
       )
       assert.match(
         sentence!,
         /401 or 403/iu,
-        `${name}: move-into-#454 sentence must disclose the 401/403 caller gating`,
+        `${name}: ordinary-thing refusal must disclose the 401/403 caller gating`,
       )
     }
   })

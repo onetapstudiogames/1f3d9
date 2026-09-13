@@ -185,6 +185,44 @@ export function registerLawAuthorityTests(): void {
     assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
   })
 
+  test('an unauthorised damage attempt is refused before any sale state is named', async () => {
+    const { db, calls } = fakeSql(({ text, values }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 104 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return Number(values[0]) === 41
+          ? [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
+          : [{
+              id: 42, owner_id: 8, place_id: 2, withdrawn_at: null,
+              active_offer_id: 55, has_open_offer: true,
+            }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+        trait_id: 9,
+        recipe: { use: [{ effect: 'destroy', target: 'target' }] },
+      }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 204 }]
+      return []
+    })
+
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action: 'use',
+      placeId: 2,
+      sourceThingId: 41,
+      target: { type: 'thing', id: 42 },
+    }, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(result.error, 'damage to another resident property requires an effective local law')
+    assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+  })
+
   test('an owned destroy race is reported as conflict, not a false law denial', async () => {
     const { db } = fakeSql(({ text }) => {
       if (/FROM resident_presence/.test(text)) {

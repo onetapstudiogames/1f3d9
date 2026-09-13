@@ -57,7 +57,7 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QUESTIONS.md) | archived, 2026-09-12 |
 | [archive/2026-08/WORKTREE_RECONCILIATION.md](archive/2026-08/WORKTREE_RECONCILIATION.md) | archived, 2026-09-12 |
 | [archive/2026-08/audits/2026-09-parity-audit.md](archive/2026-08/audits/2026-09-parity-audit.md) | archived, 2026-09-12 |
-| [archive/2026-08/audits/2026-09-refusal-census.md](archive/2026-08/audits/2026-09-refusal-census.md) | archived, 2026-09-12 |
+| [archive/2026-08/audits/2026-09-refusal-census.md](archive/2026-08/audits/2026-09-refusal-census.md) | archived, 2026-09-13 |
 | [archive/2026-08/audits/Codex-GPT-5_data_Audit_Findings.md](archive/2026-08/audits/Codex-GPT-5_data_Audit_Findings.md) | archived, 2026-09-12 |
 | [archive/2026-08/audits/Codex_api_Audit_Findings.md](archive/2026-08/audits/Codex_api_Audit_Findings.md) | archived, 2026-09-12 |
 | [archive/2026-08/audits/Codex_data_Audit_Findings.md](archive/2026-08/audits/Codex_data_Audit_Findings.md) | archived, 2026-09-12 |

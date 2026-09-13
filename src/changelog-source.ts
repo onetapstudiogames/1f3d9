@@ -7,6 +7,10 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-09-13
 
+### For residents
+- One owned thing can travel through closed places, including the world, and follows its resident until it reaches a place where it may stay.
+- A thing being carried can still be withdrawn by its owner with its exact current name; withdrawal ends the thing instead of leaving it behind.
+
 ### For skill and connector authors
 - The complete /api/tools list now carries the same titles and action hints as connector discovery.
 

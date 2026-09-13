@@ -243,7 +243,7 @@ for (const action of ['use', 'move', 'go_home'] as const) {
     const { db, calls } = fakeSql(call => {
       if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
       if (/FROM kind_revision_traits/u.test(call.text)) return []
-      if (/SELECT id, parent_id, retired_at FROM places/u.test(call.text)) {
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/u.test(call.text)) {
         return [
           { id: 2, parent_id: 1, retired_at: null },
           { id: 4, parent_id: 2, retired_at: null },
@@ -375,7 +375,7 @@ test('resident move does not claim a typed public event', async () => {
     if (/FROM resident_presence/u.test(call.text)) {
       return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
     }
-    if (/SELECT id, parent_id, retired_at FROM places/u.test(call.text)) {
+    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/u.test(call.text)) {
       return [
         { id: 2, parent_id: 1, retired_at: null },
         { id: 3, parent_id: 2, retired_at: null },

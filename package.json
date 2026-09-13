@@ -29,6 +29,8 @@
     "migrate:local": "node --experimental-strip-types scripts/migrate.ts --target local",
     "migrate:preview:resident-looking": "node --experimental-strip-types scripts/migrate.ts --target preview --migration resident-looking",
     "migrate:production:resident-looking": "node --experimental-strip-types scripts/migrate.ts --target production --migration resident-looking",
+    "migrate:preview:held-luggage": "node --experimental-strip-types scripts/migrate.ts --target preview --migration held-luggage",
+    "migrate:production:held-luggage": "node --experimental-strip-types scripts/migrate.ts --target production --migration held-luggage",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

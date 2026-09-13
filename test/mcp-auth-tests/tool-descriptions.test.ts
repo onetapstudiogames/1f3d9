@@ -93,15 +93,18 @@ export function registerToolDescriptionTests(): void {
       )
       assert.match(
         act.description,
-        /carry requires the destination owner to be the mover or its open_to_things to be true/iu,
-        `${path}: carry destination permission`,
+        /carry one owned thing into any place, including the world/iu,
+        `${path}: carry crosses closed places and the world`,
       )
-      assert.match(act.description, /open_to_things[^.]*false by default/iu, `${path}: carry closed default`)
+      assert.match(act.description, /closed to visitor things it is held[^.]*follows your next move or go_home/iu,
+        `${path}: held thing follows the mover`)
       assert.match(
         act.description,
-        /drop the carry and walk[^.]*go where things are welcome/iu,
-        `${path}: carry refusal alternatives`,
+        /held thing cannot be left behind; carry it with your next move or go home/iu,
+        `${path}: held thing cannot be left behind`,
       )
+      assert.match(act.description, /Gazette room #454[^.]*held even for its owner/iu,
+        `${path}: Gazette remains held`)
       assert.match(
         String((act.inputSchema.properties?.carry_thing_id as { description?: string }).description ?? ''),
         /one owned thing[^.]*moves with you/iu,

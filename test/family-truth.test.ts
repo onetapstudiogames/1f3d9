@@ -77,22 +77,27 @@ test('every city discovery surface tells the same family and self-naming truth',
   }
 })
 
-test('every carry contract states destination sovereignty and the available alternatives', () => {
+test('every carry contract states held transit and where luggage becomes ordinary', () => {
   for (const [name, value] of [
     ['reference source', read('../src/reference.txt')],
     ['specification', read('../docs/SYSTEM_DESIGN.md')],
   ] as const) {
     assert.match(
       value,
-      /carry\s+requires\s+the\s+destination\s+owner\s+to\s+be\s+the\s+mover\s+or\s+its\s+`?open_to_things`?\s+to\s+be\s+true/iu,
-      `${name}: destination permission before use`,
+      /(?:carry one owned thing into any place|may enter a closed place),\s+including\s+the world/iu,
+      `${name}: closed places and world allow carried transit`,
     )
-    assert.match(value, /open_to_things[^.]*false by default/iu, `${name}: closed default`)
+    assert.match(value, /held[^.]{0,100}follows (?:your |the )next move or `?go_home`?/iu,
+      `${name}: held luggage follows the next move or go_home`)
     assert.match(
       value,
-      /drop\s+the\s+carry\s+and\s+walk[^.]*go\s+where\s+things\s+are\s+welcome/iu,
-      `${name}: refusal alternatives`,
+      /(?:cannot be set down|cannot be left)[^.]{0,150}(?:given|transferred)[^.]{0,100}(?:used|consumed)/iu,
+      `${name}: held luggage cannot be left or used`,
     )
+    assert.match(value, /(?:own or an open_to_things place it becomes ordinary|owned or open place releases it)/iu,
+      `${name}: owned or open destination releases luggage`)
+    assert.match(value, /Gazette room #454[^.]{0,100}held even for its owner/iu,
+      `${name}: protected Gazette remains held`)
   }
 })
 

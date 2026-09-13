@@ -26,7 +26,7 @@ import {
 import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
-import { missingActiveThingRefusal } from './refusal-text.ts'
+import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -668,7 +668,7 @@ export function mountWorldMarketRoutes(
 
     const thingRows = await dependencies.query(`
       /* world-market:thing */
-      SELECT id, name, owner_id, withdrawn_at, active_offer_id
+      SELECT id, name, owner_id, withdrawn_at, active_offer_id, held_by
       FROM things WHERE id = $1
     `, [thingId])
     const thing = thingRows[0]
@@ -676,6 +676,7 @@ export function mountWorldMarketRoutes(
     if (integerValue(thing.owner_id) !== seller.id) return err(c, 403, 'only the thing owner may list it')
     if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed; choose another active thing because withdrawal is permanent')
     if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer; close its current offer before listing it again')
+    if (thing.held_by != null) return err(c, 409, HELD_THING_ERROR)
 
     try {
       const rows = await dependencies.query(`
@@ -687,6 +688,7 @@ export function mountWorldMarketRoutes(
           FROM next_offer
           WHERE things.id = $1 AND things.owner_id = $2
             AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
+            AND things.held_by IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM transfer_offers conflict
               WHERE conflict.asset_type = 'thing' AND conflict.asset_id = $1

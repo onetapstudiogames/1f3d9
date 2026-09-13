@@ -283,10 +283,10 @@ test('a resident can walk from one continent to another only through their world
       home_place_id: 2,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
-      { id: 1, parent_id: null, retired_at: null },
-      { id: 2, parent_id: 1, retired_at: null },
-      { id: 3, parent_id: 1, retired_at: null },
+    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+      { id: 1, parent_id: null, retired_at: null, owner_id: null, open_to_things: false },
+      { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false },
+      { id: 3, parent_id: 1, retired_at: null, owner_id: 8, open_to_things: false },
     ]
     if (/UPDATE resident_presence SET current_place_id/.test(text)) {
       currentPlaceId = Number(values[0])
@@ -323,9 +323,9 @@ test('a null-location resident is seeded at world and cannot use first move to s
       home_place_id: null,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id, retired_at FROM places/.test(text)) return [
-      { id: 1, parent_id: null, retired_at: null },
-      { id: 4, parent_id: 2, retired_at: null },
+    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+      { id: 1, parent_id: null, retired_at: null, owner_id: null, open_to_things: false },
+      { id: 4, parent_id: 2, retired_at: null, owner_id: 8, open_to_things: false },
     ]
     if (/UPDATE resident_presence/.test(text)) return [{
       resident_id: 7,

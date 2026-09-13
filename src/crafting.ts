@@ -8,6 +8,7 @@ import {
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { HELD_THING_ERROR } from './refusal-text.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -104,6 +105,7 @@ interface IngredientRow {
   readonly place_id: number
   readonly withdrawn_at: unknown
   readonly active_offer_id: unknown
+  readonly held_by: unknown
   readonly has_open_offer: boolean
   readonly kind: unknown
 }
@@ -282,7 +284,7 @@ export async function craftKindThing(
     ingredients = await sql`
       /* crafting:ingredients */
       SELECT ingredient.id, ingredient.owner_id, ingredient.place_id,
-        ingredient.withdrawn_at, ingredient.active_offer_id,
+        ingredient.withdrawn_at, ingredient.active_offer_id, ingredient.held_by,
         definition.name AS kind,
         EXISTS (
           SELECT 1 FROM transfer_offers AS offer
@@ -294,6 +296,10 @@ export async function craftKindThing(
       LEFT JOIN kinds AS definition ON definition.id = ingredient.kind_id
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
     ` as unknown as readonly IngredientRow[]
+  }
+
+  if (ingredients.some(ingredient => ingredient.held_by != null)) {
+    return failure(409, HELD_THING_ERROR)
   }
 
   if (!allIngredientsEligible(ingredients, input)) {
@@ -339,7 +345,7 @@ export async function craftKindThing(
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
         AND ingredient.owner_id = ${input.actorId}
         AND ingredient.place_id = ${input.placeId}
-        AND ingredient.withdrawn_at IS NULL
+        AND ingredient.withdrawn_at IS NULL AND ingredient.held_by IS NULL
         AND ingredient.active_offer_id IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM transfer_offers AS offer

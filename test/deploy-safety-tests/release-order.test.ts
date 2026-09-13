@@ -144,6 +144,21 @@ export function registerReleaseOrderTests(): void {
     )
   })
 
+  test('held luggage migration is verified in Preview before Production and before code rollout', () => {
+    const preview = deploymentRunbook.indexOf('npm run migrate:preview:held-luggage')
+    const production = deploymentRunbook.indexOf('npm run migrate:production:held-luggage')
+    const attestation = deploymentRunbook.indexOf(
+      'CONFIRM_HELD_LUGGAGE_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION_WITH_WORLD_AND_GAZETTE_CHECKS',
+    )
+    assert.ok(preview >= 0 && preview < production && production < attestation)
+    assert.match(deploymentRunbook, /Production snapshot[\s\S]*migrate:production:held-luggage/iu)
+    assert.match(deploymentRunbook, /things_one_held_per_resident/u)
+    assert.match(deploymentRunbook, /things_held_owner_active/u)
+    assert.match(deploymentRunbook, /world[\s\S]*ordinary[\s\S]*Gazette/iu)
+    assert.match(deploymentRunbook, /old application code[\s\S]*strand[\s\S]*held/iu)
+    assert.match(deploymentRunbook, /forward[\s\S]*resolve held rows[\s\S]*downgrade/iu)
+  })
+
   test('PostgreSQL gate upgrades the checked-in pre-drawing production schema in release order', () => {
     const fileName = 'drawing-upgrade-postgres.test.ts'
     assertPostgresTestDiscovered(fileName)
