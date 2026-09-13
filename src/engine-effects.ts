@@ -392,7 +392,7 @@ async function destroyThing(
     || context.lawAuthority === null)) {
     throw new EngineError(403, 'damage to another resident property requires an effective local law')
   }
-  if (thing.heldBy !== null) throw new EngineError(409, HELD_THING_ERROR)
+  if (thing.heldBy !== null && !ownedByActor) throw new EngineError(409, HELD_THING_ERROR)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
@@ -400,9 +400,9 @@ async function destroyThing(
   if (ownedByActor) {
     rows = await queryRows(db`
       WITH changed AS (
-        UPDATE things SET withdrawn_at = now()
+        UPDATE things SET withdrawn_at = now(), held_by = NULL
         WHERE id = ${thing.id} AND owner_id = ${context.actorId}
-          AND withdrawn_at IS NULL AND active_offer_id IS NULL AND held_by IS NULL
+          AND withdrawn_at IS NULL AND active_offer_id IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers offer
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id

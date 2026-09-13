@@ -1,5 +1,5 @@
 import type { Resident } from './core.ts'
-import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 import { sql } from './db.ts'
 
 export type WithdrawalFailure = Readonly<{
@@ -19,7 +19,6 @@ interface ThingState {
   withdrawn_at: string | null
   active_offer_id: number | null
   has_open_offer: boolean
-  held_by: number | null
 }
 
 /** One-way, owner-only withdrawal with the public event in the same transaction. */
@@ -31,7 +30,6 @@ export async function withdrawThing(
 ): Promise<WithdrawnThing | WithdrawalFailure> {
   const states = await sql`
     SELECT thing.id, thing.name, thing.owner_id, thing.withdrawn_at, thing.active_offer_id,
-      thing.held_by,
       (offer.id IS NOT NULL) AS has_open_offer
     FROM things thing
     LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
@@ -60,7 +58,6 @@ export async function withdrawThing(
       status: 409,
     })
   }
-  if (thing.held_by != null) return Object.freeze({ error: HELD_THING_ERROR, status: 409 })
   if (reason === 'withdrawn' && thing.name !== expectedName) {
     return Object.freeze({
       error: `thing_name does not exactly match the current name of thing_id ${thingId}; re-read the thing and send its exact current name`,
@@ -79,11 +76,10 @@ export async function withdrawThing(
       WHERE thing.id = ${thingId} AND thing.owner_id = ${actor.id}
         AND thing.name = ${confirmedName}
         AND thing.withdrawn_at IS NULL AND thing.active_offer_id IS NULL
-        AND thing.held_by IS NULL
         AND offer.id IS NULL
       FOR UPDATE OF thing
     ), changed AS (
-      UPDATE things SET withdrawn_at = clock_timestamp()
+      UPDATE things SET withdrawn_at = clock_timestamp(), held_by = NULL
       WHERE id IN (SELECT id FROM withdrawable)
       RETURNING id, withdrawn_at
     ), new_event AS (

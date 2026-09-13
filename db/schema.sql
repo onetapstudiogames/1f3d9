@@ -4258,6 +4258,15 @@ BEGIN
           RETURN NEW;
         END IF;
       END IF;
+      -- Withdrawal ends the thing where it stands; a gone row is not world content.
+      IF TG_OP = 'UPDATE' THEN
+        IF OLD.held_by IS NOT NULL AND NEW.held_by IS NULL
+          AND OLD.withdrawn_at IS NULL AND NEW.withdrawn_at IS NOT NULL
+          AND NEW.id = OLD.id AND NEW.owner_id = OLD.owner_id
+          AND NEW.place_id IS NOT DISTINCT FROM OLD.place_id THEN
+          RETURN NEW;
+        END IF;
+      END IF;
     END IF;
     RAISE EXCEPTION 'the world is transit only'
       USING ERRCODE = '23514';
@@ -8144,6 +8153,7 @@ AS $$
     SELECT 1 FROM places WHERE parent_id = 454
   ) AND NOT EXISTS (
     SELECT 1 FROM things thing WHERE thing.place_id = 454
+      AND thing.withdrawn_at IS NULL
       AND (thing.held_by IS NULL OR NOT EXISTS (
         SELECT 1 FROM resident_presence presence
         WHERE presence.resident_id = thing.held_by
@@ -8220,6 +8230,14 @@ BEGIN
       -- The mover has already left when the luggage row moves out.
       IF OLD.place_id = 454 AND NEW.place_id IS DISTINCT FROM 454
         AND OLD.held_by = OLD.owner_id AND OLD.withdrawn_at IS NULL
+        AND NEW.owner_id = OLD.owner_id AND NEW.id = OLD.id
+      THEN
+        RETURN NEW;
+      END IF;
+      -- Withdrawal ends the luggage in place; the room stores no ordinary thing.
+      IF NEW.place_id = 454 AND OLD.place_id = 454
+        AND OLD.held_by = OLD.owner_id AND OLD.withdrawn_at IS NULL
+        AND NEW.held_by IS NULL AND NEW.withdrawn_at IS NOT NULL
         AND NEW.owner_id = OLD.owner_id AND NEW.id = OLD.id
       THEN
         RETURN NEW;

@@ -171,8 +171,8 @@ export async function registerHeldLuggageTests(
       async (text, params) => (await database.query(text, [...params])).rows,
       1, 1, true,
     ), LaterHolderHeldThingError)
-    assert.deepEqual(await withdrawThing(actor, 1, 'withdrawn', 'test-object'), {
-      error: 'a held thing cannot be left in a closed place; carry it with your next move or go home',
+    assert.deepEqual(await withdrawThing(actor, 1, 'withdrawn', 'wrong name'), {
+      error: 'thing_name does not exactly match the current name of thing_id 1; re-read the thing and send its exact current name',
       status: 409,
     })
     setEngineTransactionRunnerForTests(async (_db, work) => {
@@ -349,6 +349,106 @@ export async function registerHeldLuggageTests(
     assert.deepEqual((await database.query(`
       SELECT gazette_submission_room_has_no_forbidden_contents() AS ready
     `)).rows, [{ ready: true }])
+  })
+
+  await t.test('the owner withdraws a held thing in the world and a non-owner cannot', async () => {
+    const roomId = await resetDatabase()
+    const continentId = Number((await database.query<{ parent_id: number }>(
+      'SELECT parent_id FROM places WHERE id = $1', [roomId],
+    )).rows[0]!.parent_id)
+    const worldId = Number((await database.query<{ id: number }>(
+      "SELECT id FROM places WHERE place_kind = 'world'",
+    )).rows[0]!.id)
+    await database.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, $1) ON CONFLICT (resident_id) DO UPDATE
+      SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+    `, [roomId])
+    assert.equal((await run('move', continentId, 1)).status, 'applied')
+    assert.equal((await run('move', worldId, 1)).status, 'applied')
+    assert.deepEqual((await database.query('SELECT place_id, held_by FROM things WHERE id = 1')).rows,
+      [{ place_id: worldId, held_by: 1 }])
+
+    assert.deepEqual(await withdrawThing({ ...actor, id: 2, handle: 'neighbor' }, 1, 'withdrawn', 'test-object'), {
+      error: 'only the thing owner may withdraw it',
+      status: 403,
+    })
+    assert.deepEqual(await withdrawThing(actor, 1, 'withdrawn', 'wrong name'), {
+      error: 'thing_name does not exactly match the current name of thing_id 1; re-read the thing and send its exact current name',
+      status: 409,
+    })
+    assert.deepEqual((await database.query('SELECT withdrawn_at, held_by FROM things WHERE id = 1')).rows,
+      [{ withdrawn_at: null, held_by: 1 }])
+
+    const withdrawn = await withdrawThing(actor, 1, 'withdrawn', 'test-object')
+    assert.ok(!('error' in withdrawn), JSON.stringify(withdrawn))
+    assert.equal(withdrawn.id, 1)
+    assert.deepEqual((await database.query(`
+      SELECT place_id, held_by, withdrawn_at IS NOT NULL AS gone FROM things WHERE id = 1
+    `)).rows, [{ place_id: worldId, held_by: null, gone: true }])
+    assert.deepEqual((await database.query(`
+      SELECT detail->>'reason' AS reason FROM events WHERE kind = 'thing_withdrawn'
+    `)).rows, [{ reason: 'withdrawn' }])
+  })
+
+  await t.test('the owner withdraws held luggage inside the protected Gazette room', async () => {
+    const roomId = await resetDatabase()
+    const continentId = Number((await database.query<{ parent_id: number }>(
+      'SELECT parent_id FROM places WHERE id = $1', [roomId],
+    )).rows[0]!.parent_id)
+    await insertProtectedGazetteRoom(continentId)
+    await database.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, $1) ON CONFLICT (resident_id) DO UPDATE
+      SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+    `, [roomId])
+    assert.equal((await run('move', continentId, 1)).status, 'applied')
+    assert.equal((await run('move', 454, 1)).status, 'applied')
+    const withdrawn = await withdrawThing(actor, 1, 'withdrawn', 'test-object')
+    assert.ok(!('error' in withdrawn), JSON.stringify(withdrawn))
+    assert.deepEqual((await database.query(`
+      SELECT place_id, held_by, withdrawn_at IS NOT NULL AS gone FROM things WHERE id = 1
+    `)).rows, [{ place_id: 454, held_by: null, gone: true }])
+    assert.deepEqual((await database.query(`
+      SELECT gazette_submission_room_has_no_forbidden_contents() AS ready
+    `)).rows, [{ ready: true }])
+  })
+
+  await t.test('a destroy effect ends the owner’s held thing but never a stranger’s', async () => {
+    const roomId = await resetDatabase()
+    const continentId = Number((await database.query<{ parent_id: number }>(
+      'SELECT parent_id FROM places WHERE id = $1', [roomId],
+    )).rows[0]!.parent_id)
+    const foreignId = Number((await database.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'destroy room', '', 2) RETURNING id
+    `, [continentId])).rows[0]!.id)
+    await database.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, $1) ON CONFLICT (resident_id) DO UPDATE
+      SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+    `, [roomId])
+    assert.equal((await run('move', continentId, 1)).status, 'applied')
+    assert.equal((await run('move', foreignId, 1)).status, 'applied')
+    const context = {
+      actionId: null, actorHandle: 'founder', placeId: foreignId,
+      sourceThingId: null, sharedSourceThingId: null, target: { type: 'thing' as const, id: 1 },
+      destinationPlaceId: null, recipientId: null, sourceTraitId: null,
+      parentEffectId: null, generation: 0, logicalAt: new Date(),
+    }
+    await assert.rejects(() => executeEffects([{ effect: 'destroy', target: 'target' }], {
+      ...context, actorId: 2, actorHandle: 'neighbor',
+      lawAuthority: { traitId: 2, sourcePlaceId: foreignId },
+    }, sql), /held thing cannot be left.*go home/iu)
+    assert.deepEqual((await database.query('SELECT held_by, withdrawn_at FROM things WHERE id = 1')).rows,
+      [{ held_by: 1, withdrawn_at: null }])
+
+    assert.equal(await executeEffects([{ effect: 'destroy', target: 'target' }], {
+      ...context, actorId: 1, lawAuthority: null,
+    }, sql), 1)
+    assert.deepEqual((await database.query(`
+      SELECT place_id, held_by, withdrawn_at IS NOT NULL AS gone FROM things WHERE id = 1
+    `)).rows, [{ place_id: foreignId, held_by: null, gone: true }])
   })
 
   await t.test('a resident move effect carries its target resident’s held thing', async () => {

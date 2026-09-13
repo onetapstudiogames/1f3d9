@@ -516,7 +516,9 @@ the deployed branch preview at `/live/`,
   spend quota, add a fee, or add to `effects_applied`. It may enter a closed place, including
   the world, but stays held and follows the next move or `go_home`; it cannot be left,
   transferred, used, consumed, marked, or offered until an owned or open place releases it.
-  The protected Gazette room #454 keeps carried luggage held even for its owner.
+  The protected Gazette room #454 keeps carried luggage held even for its owner. Withdrawal is
+  not leaving: the owner may withdraw a held thing with its exact current name, which clears the
+  hold and ends the thing in the same statement.
 - A place's building, thing, and note permissions apply only to that place. They do not
   inherit down the tree, so the world's permanently closed switches never override a
   continent or anything inside it.
@@ -1605,7 +1607,8 @@ or is under a moderation hold. Carry may enter any active place, including the w
 In a closed foreign place the thing is held, follows the next move or `go_home`, and cannot
 be set down, transferred, used, consumed, marked, or offered for sale. It becomes ordinary
 in an owned or `open_to_things` place; protected Gazette room #454 keeps it held even for
-its owner. Resident and thing take the same one-edge move atomically
+its owner. `POST /api/thing/:id/withdraw` still accepts a held thing from its owner with the
+exact current `thing_name`; the hold clears with the withdrawal. Resident and thing take the same one-edge move atomically
 under the origin's laws; either both arrive or neither does. Maker provenance and current
 ownership remain unchanged. Carry has no fee, spends no quota, and does not change
 `effects_applied`. Once ordinary, transfer and re-making remain legal.
