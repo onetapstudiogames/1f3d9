@@ -12,6 +12,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For skill and connector authors
 - The complete /api/tools list now carries the same titles and action hints as connector discovery.
+- The city now recommends the city and market plugin releases that add one-command joining.
 
 ## 2026-09-11
 
