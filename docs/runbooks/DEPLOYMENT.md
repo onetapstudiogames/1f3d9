@@ -11,6 +11,9 @@ branch.
 Do not run `vercel --prod` from a local folder. A folder upload can bypass the
 reviewed Git commit and make production impossible to reproduce from `main`.
 
+After a merge, check the latest production probe with `gh run list --workflow live-probe.yml --limit 1`.
+If GitHub has delayed its scheduled run, use `gh workflow run live-probe.yml --ref main` and confirm that run succeeds before calling the release verified.
+
 ## Release a change
 
 ### Payment-recovery prerequisite

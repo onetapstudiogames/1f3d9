@@ -7,6 +7,7 @@ import {
   AGREEMENT_ACTIONS_LIMIT_LINE,
   CITY_POSITIONING_LINE,
   CITY_TOOL_CATALOG,
+  type CityPublicTool,
   FULL_TOOL_CATALOG_PATH,
   PAYMENT_TERMINAL_STATES_LINE,
   RESIDENT_LOOKING_LIMIT_LINE,
@@ -1604,6 +1605,25 @@ if (
   throw new Error('MCP definitions and CITY_TOOL_CATALOG must contain the same unique tool names')
 }
 
+const TOOL_DEFINITIONS_BY_NAME = new Map(TOOLS.map(tool => [tool.name, tool]))
+
+// Public /api/tools and MCP discovery take presentation from the same tool
+// definition. The canonical facts still own key needs and side-effect hints.
+export const CITY_PUBLIC_TOOL_CATALOG: readonly CityPublicTool[] = Object.freeze(CITY_TOOL_CATALOG.map(facts => {
+  const definition = TOOL_DEFINITIONS_BY_NAME.get(facts.name)!
+  return Object.freeze({
+    ...facts,
+    title: definition.title,
+    annotations: Object.freeze({
+      ...definition.annotations,
+      title: definition.title,
+      readOnlyHint: facts.readOnlyHint,
+      destructiveHint: facts.destructiveHint,
+    }),
+  })
+}))
+const PUBLIC_TOOLS_BY_NAME = new Map(CITY_PUBLIC_TOOL_CATALOG.map(tool => [tool.name, tool]))
+
 const rpcError = (c: Context, id: unknown, code: number, requestId: string, message: string) => {
   c.header('X-Request-ID', requestId)
   c.header('X-1F3D9-Error-Class', 'bad_input')
@@ -2118,19 +2138,14 @@ function allowsAnonymous(name: string): boolean {
 
 function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
   const { name, title, description, inputSchema } = tool
-  const facts = cityToolFacts(name)
+  const presentation = PUBLIC_TOOLS_BY_NAME.get(name)!
   const described = `${describeCityTool(name, description)} ${frontDoorPointer()}`
   if (described.length > TOOL_DESCRIPTION_MAX_CHARACTERS) {
     throw new Error(
       `${name} final description exceeds ${TOOL_DESCRIPTION_MAX_CHARACTERS} characters after pointers`,
     )
   }
-  const annotations = {
-    ...tool.annotations,
-    title,
-    readOnlyHint: facts.readOnlyHint,
-    destructiveHint: facts.destructiveHint,
-  }
+  const annotations = presentation.annotations
   if (!hostedChat) return { name, title, description: described, inputSchema, annotations }
 
   const securitySchemes = securitySchemesFor(name)
@@ -2209,11 +2224,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
         legacyAuthenticated = false
       }
     }
-    const definitions = new Map(TOOLS.map(tool => [tool.name, tool]))
     const tools = CITY_TOOL_CATALOG
       .filter(facts => hostedChat ? facts.hostedVisible : legacyAuthenticated || facts.legacyAnonymous)
       .map(facts => {
-        const definition = definitions.get(facts.name)
+        const definition = TOOL_DEFINITIONS_BY_NAME.get(facts.name)
         if (!definition) throw new Error(`CITY_TOOL_CATALOG names missing MCP tool ${facts.name}`)
         return definition
       })

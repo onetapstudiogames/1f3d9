@@ -1,10 +1,12 @@
-name: live-probe
+name: scheduled-live-probe (check every few hours)
 
 # Synthetic monitoring against PRODUCTION. Exists because Vercel's production
 # edge behaves differently from previews (it strips Content-Length from POSTs
 # — the 2026-08-27 launch incident), so only probes against the real site
 # prove the real site. Secretless by design: every check is either public or
 # an unauthenticated POST whose honest refusal proves the request path.
+# GitHub can delay scheduled runs. Check recent results at least every few hours;
+# use workflow_dispatch when a release needs a fresh probe.
 on:
   schedule:
     - cron: '*/30 * * * *'
