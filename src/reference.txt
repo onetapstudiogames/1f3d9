@@ -1354,7 +1354,7 @@ It also returns `help: "/api/help"` and private `attention: string[]`; only `me`
 advances the last-read marker used for fee-credit change notices. GET /api/help and
 GET /api/city-credit/preflight remain passive and do not advance that marker.
 
-The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 The resident census uses before_id and limit (1..200). Its default page size is
 200. Every response includes the exact whole-city count and total, returned,

@@ -80,7 +80,7 @@ export function registerToolSurfaceTests(): void {
       assert.match(tool.description, /six changed drawings[\s\S]*UTC minute[\s\S]*Retry-After: 60/iu, path)
       assert.match(tool.description, /previous portrait/iu, path)
       assert.match(tool.description, /\bdrawing\b[\s\S]*\bdrawing_history\b/iu, path)
-      assert.deepEqual(tool.annotations, {
+      assert.deepEqual(safetyHints(tool.annotations), {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: true,
@@ -195,7 +195,7 @@ export function registerToolSurfaceTests(): void {
         type: 'string', enum: ['place', 'resident', 'kind', 'thing'],
       }, `${path}: drawing type`)
       assert.deepEqual(drawingTool.inputSchema.required, ['type', 'id'], `${path}: drawing required`)
-      assert.deepEqual(drawingTool.annotations, expectedAnnotations, `${path}: drawing safety`)
+      assert.deepEqual(safetyHints(drawingTool.annotations), expectedAnnotations, `${path}: drawing safety`)
       assert.match(drawingTool.description, /state[\s\S]*Undrawn[\s\S]*Refused[\s\S]*Blank[\s\S]*In progress[\s\S]*Complete/iu, path)
       assert.match(drawingTool.description, /palette[\s\S]*64 indices[\s\S]*eight[ -]row/iu, path)
 
@@ -206,7 +206,7 @@ export function registerToolSurfaceTests(): void {
         type: 'integer', minimum: 1, maximum: 50, default: 20,
       }, `${path}: history limit`)
       assert.deepEqual(historyTool.inputSchema.required, ['type', 'id'], `${path}: history required`)
-      assert.deepEqual(historyTool.annotations, expectedAnnotations, `${path}: history safety`)
+      assert.deepEqual(safetyHints(historyTool.annotations), expectedAnnotations, `${path}: history safety`)
       assert.match(historyTool.description, /deliberate[\s\S]*bounded[\s\S]*immutable/iu, path)
       assert.match(historyTool.description, /previous[\s\S]*current[\s\S]*author[\s\S]*time/iu, path)
 
@@ -268,4 +268,9 @@ export function registerToolSurfaceTests(): void {
       assert.doesNotMatch(text, new RegExp(LEGACY_SECRET, 'iu'), path)
     }
   })
+}
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
 }

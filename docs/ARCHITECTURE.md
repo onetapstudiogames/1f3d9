@@ -121,7 +121,7 @@ so restoration preserves private mark order. Index continuation uses a stateless
 resident-bound, server-authenticated cursor that carries the immutable order boundary
 without exposing the private mark ID. `LATER_HOLDER_CURSOR_KEY` is server-only and
 required for index reads; key rotation invalidates outstanding cursors, which readers
-restart from the first page. The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+restart from the first page. The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 Room orientation is public place metadata. `places.purpose` is an additive empty-by-default
 one-line field capped at 280 characters; it does not replace or rewrite `description`.

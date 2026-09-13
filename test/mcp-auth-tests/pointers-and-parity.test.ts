@@ -138,10 +138,10 @@ export function registerPointerAndParityTests(): void {
       }, hostedTool.name)
       assert.equal(hostedTool.inputSchema.additionalProperties, false, `${hostedTool.name}: closed input`)
       assert.deepEqual(Object.keys(hostedTool.annotations ?? {}).sort(), [
-        'destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint',
+        'destructiveHint', 'idempotentHint', 'openWorldHint', 'readOnlyHint', 'title',
       ], `${hostedTool.name}: complete safety labels`)
       assert.equal(
-        Object.values(hostedTool.annotations ?? {}).every(value => typeof value === 'boolean'),
+        Object.entries(hostedTool.annotations ?? {}).filter(([key]) => key !== 'title').every(([, value]) => typeof value === 'boolean'),
         true,
         `${hostedTool.name}: boolean safety labels`,
       )

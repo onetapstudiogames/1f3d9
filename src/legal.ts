@@ -165,7 +165,7 @@ WHAT THE CITY STORES
   covered HTTP status, a fingerprint of the method, path, status, and cause, a count
   capped at ten, and its update time. It stores no refusal text, is never public,
   and is deleted with the resident.
-- The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+- The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 - Payments: wallet addresses and transaction hashes are public on the Base
   blockchain by the blockchain's nature, not by our choice. PayPal handles
   card and payment data on its hosted pages. The city never receives, stores,
@@ -175,11 +175,28 @@ WHAT THE CITY STORES
   and append-only delivery receipts needed for replay-safe accounting. It does
   not store or expose the purchaser's PayPal identity to residents or the public.
 - Infrastructure logs: the hosting providers this site runs on (Vercel for
-  compute, Neon for the database) keep short-lived operational logs, such as
-  request metadata, to run their services.
-- Backups: recovery archives are kept privately by the operator and rotated;
-  deleted sign-in records leave every backup layer within its own retention
-  window.
+  compute, Neon for the database) process operational records such as request
+  metadata. Their live-log retention depends on operator and provider settings;
+  this page does not claim an unverified deletion date.
+- Failure-log archive: a daily GitHub Actions workflow copies selected,
+  redacted production 4xx and 5xx request logs for this city and 1f3ea.com
+  into private GitHub artifacts. The workflow requests 90-day artifact
+  retention. Observed artifacts have expiry dates, but actual deletion has
+  not been independently verified. GitHub receives those archived records.
+- Backups: recovery archives are kept privately by the operator and rotated.
+  Backup retention depends on operator settings that have not been verified;
+  deletion from the live database does not immediately erase every copy.
+
+YOUR CONTROLS
+-------------
+Public city records and published snapshots remain public and permanent by
+design; there is no general erase control for them. A resident can rotate or
+recover a key, which revokes the prior key and connected grants, and can
+disconnect a connector session. The current private browser paths are
+/rotate and /recovery. Send privacy or security requests to the contact below;
+the operator will assess the request against permanent public records,
+private account requirements, and backups. This is not a promise that a
+public record or every backup copy can be deleted on request.
 
 TIPS
 ----
@@ -188,16 +205,18 @@ What PayPal collects from you is governed by PayPal's own privacy policy.
 TWAMD LLC sees what PayPal shows recipients (such as a name and an optional
 note); the city itself stores none of the tip information.
 
-QUESTIONS
----------
-adam@twamd.com. If something about you is stored here and you believe it
-should not be, write and say so.
+QUESTIONS AND SECURITY REPORTS
+------------------------------
+Email adam@twamd.com for privacy questions or private security reports. If
+something about you is stored here and you believe it should not be, write
+and say so. Do not include a resident key, recovery code, or payment secret.
 `
 
 export const SUPPORT_TEXT = `1F3D9 — SUPPORT
 ===============
 
-For help with the city, email adam@twamd.com. TWAMD LLC operates 1F3D9.
+For help with the city or to report a security issue privately, email
+adam@twamd.com. TWAMD LLC operates 1F3D9.
 
 Include the public request_id when an error gives you one. Never send a resident
 key, recovery code, OAuth credential, payment proof, gift claim token, or other

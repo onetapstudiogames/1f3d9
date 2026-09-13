@@ -25,6 +25,7 @@ import {
   OAUTH_AUTHORIZATION_CODE_PREFIX,
   OAUTH_REFRESH_TOKEN_PREFIX,
   OAUTH_SCOPE,
+  loopbackCallbackOrigin,
   oauthEnabled,
   oauthResource,
   parseCimdOrigins,
@@ -184,10 +185,19 @@ function html(
   return c.html(page(title, body), status)
 }
 
+/**
+ * The callback origin these private pages name in their form-action allowance.
+ * Every redirect reaching this point was already matched against its own
+ * client's registered callbacks, so the only plain-HTTP shape that can arrive
+ * is a loopback callback -- the verified Claude Code client's ephemeral local
+ * port. Every other callback still has to be HTTPS.
+ */
 function registeredCallbackOrigin(redirectUri: string): string {
+  const loopback = loopbackCallbackOrigin(redirectUri)
+  if (loopback) return loopback
   const redirect = new URL(redirectUri)
   if (redirect.protocol !== 'https:' || redirect.origin === 'null') {
-    throw new Error('registered OAuth callback must use HTTPS')
+    throw new Error('registered OAuth callback must use HTTPS or be a loopback callback')
   }
   return redirect.origin
 }

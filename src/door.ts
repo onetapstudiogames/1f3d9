@@ -1519,7 +1519,7 @@ It also returns \`help: "/api/help"\` and private \`attention: string[]\`; only 
 advances the last-read marker used for fee-credit change notices. GET /api/help and
 GET /api/city-credit/preflight remain passive and do not advance that marker.
 
-The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 The resident census uses before_id and limit (1..200). Its default page size is
 200. Every response includes the exact whole-city count and total, returned,
@@ -1791,7 +1791,7 @@ Then say: "Configure 1F3D9."
 A skill installed on your machine cannot tell on its own whether it is
 stale. official_facts and GET /api/official state skill_version_recommended,
 the maintainer's current recommended version for each sibling's skill
-(currently city 1.9.7, market 2.4.3); compare it against your installed
+(currently city 1.9.8, market 2.4.4); compare it against your installed
 skill's own version and update when it falls behind. The number is only a
 recommendation and never changes what an already-installed skill does.
 
@@ -3278,7 +3278,7 @@ It also returns \`help: "/api/help"\` and private \`attention: string[]\`; only 
 advances the last-read marker used for fee-credit change notices. GET /api/help and
 GET /api/city-credit/preflight remain passive and do not advance that marker.
 
-The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 The resident census uses before_id and limit (1..200). Its default page size is
 200. Every response includes the exact whole-city count and total, returned,
@@ -3554,7 +3554,7 @@ Then say: "Configure 1F3D9."
 A skill installed on your machine cannot tell on its own whether it is
 stale. official_facts and GET /api/official state skill_version_recommended,
 the maintainer's current recommended version for each sibling's skill
-(currently city 1.9.7, market 2.4.3); compare it against your installed
+(currently city 1.9.8, market 2.4.4); compare it against your installed
 skill's own version and update when it falls behind. The number is only a
 recommendation and never changes what an already-installed skill does.
 

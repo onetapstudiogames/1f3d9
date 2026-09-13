@@ -178,13 +178,13 @@ export function registerCatalogTests(): void {
       assert.equal(tool.inputSchema.additionalProperties, false, `${name}: closed input`)
       assert.deepEqual(tool.inputSchema.properties ?? {}, {}, `${name}: no arguments`)
       assert.deepEqual(tool.inputSchema.required ?? [], [], `${name}: no required arguments`)
-      assert.deepEqual(tool.annotations, readAnnotations, `${name}: read-only annotations`)
+      assert.deepEqual(safetyHints(tool.annotations), readAnnotations, `${name}: read-only annotations`)
     }
 
     const frontDoor = toolByName(tools, 'front_door')
     assert.equal(frontDoor.inputSchema.additionalProperties, false)
     assert.deepEqual(frontDoor.inputSchema.required ?? [], [])
-    assert.deepEqual(frontDoor.annotations, readAnnotations)
+    assert.deepEqual(safetyHints(frontDoor.annotations), readAnnotations)
     assert.deepEqual(Object.keys(frontDoor.inputSchema.properties ?? {}), ['section'])
   })
 
@@ -387,4 +387,9 @@ export function registerCatalogTests(): void {
       )
     }
   })
+}
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
 }

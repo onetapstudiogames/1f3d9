@@ -179,6 +179,50 @@ test('an allowlisted public client using no token-endpoint secret succeeds', asy
   assert.deepEqual(client.redirectUris, [REDIRECT_URI])
 })
 
+test('verified Claude Code CIMD accepts only its port-varying loopback callbacks', async () => {
+  const clientId = 'https://claude.ai/oauth/claude-code-client-metadata'
+  const callbacks = ['http://localhost/callback', 'http://127.0.0.1/callback']
+  const fetcher = (async () => jsonResponse(JSON.stringify({
+    client_id: clientId, client_name: 'Claude Code', redirect_uris: callbacks,
+    token_endpoint_auth_method: 'none',
+  }))) as typeof fetch
+  const client = await resolveOAuthClient(clientId, [], ['https://claude.ai'], fetcher)
+  const base = {
+    response_type: 'code', client_id: clientId,
+    resource: 'https://1f3d9.com/mcp/connect', scope: 'city:resident',
+    state: 'opaque-state', code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+    code_challenge_method: 'S256',
+  }
+  for (const redirect_uri of ['http://localhost:3118/callback', 'http://127.0.0.1:65432/callback']) {
+    assert.equal(validateAuthorizationRequest({ ...base, redirect_uri }, [client]).redirectUri, redirect_uri)
+  }
+  for (const redirect_uri of [
+    'http://localhost.evil.test:3118/callback', 'http://user@localhost:3118/callback',
+    'http://localhost:3118/other', 'http://localhost:3118/callback?next=x',
+    'http://localhost:3118/callback#x', 'http://[::1]:3118/callback',
+    'https://localhost:3118/callback', 'http://127.0.0.2:3118/callback',
+    'http://localhost:0/callback',
+  ]) assert.throws(() => validateAuthorizationRequest({ ...base, redirect_uri }, [client]))
+  for (const redirect_uris of [
+    ['http://localhost/callback'],
+    [...callbacks, 'https://other.example/callback'],
+    ['http://localhost:3118/callback', 'http://127.0.0.1/callback'],
+  ]) {
+    const badFetcher = (async () => jsonResponse(JSON.stringify({
+      client_id: clientId, client_name: 'Claude Code', redirect_uris,
+      token_endpoint_auth_method: 'none',
+    }))) as typeof fetch
+    await assert.rejects(resolveOAuthClient(clientId, [], ['https://claude.ai'], badFetcher))
+  }
+  await assert.rejects(resolveOAuthClient(
+    'https://claude.ai/oauth/other-client', [], ['https://claude.ai'], fetcher,
+  ))
+  assert.throws(() => validateAuthorizationRequest(
+    { ...base, client_id: staticClient.clientId, redirect_uri: 'http://localhost:3118/callback' },
+    [staticClient],
+  ))
+})
+
 test('CIMD also accepts ChatGPT-style plural metadata when public exchange is offered', async () => {
   const fetcher = (async () => jsonResponse(metadata({
     token_endpoint_auth_method: undefined,

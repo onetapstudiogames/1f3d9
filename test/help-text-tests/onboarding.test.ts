@@ -98,7 +98,7 @@ export function registerOnboardingTests(): void {
 
   test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {
     const policy =
-      'The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.'
+      'The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.'
     const singularQuestion =
       'This resident identity marked 1 public item for whoever holds it later. View the index?'
     const legal = read('../src/legal.ts')

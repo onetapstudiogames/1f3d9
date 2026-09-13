@@ -83,7 +83,7 @@ Neither edge creates a human city account, property, influence, or public identi
   it until restoration. Marks create no event or public change notice.
 - Notice and index reads authenticate passively: no quota, presence, timer, analytics,
   or opening-state write. Ordinary `GET /api/me` remains state-changing.
-- The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+- The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 ### 4. Money claims scarce commons; it does not meter life
 

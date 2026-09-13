@@ -158,8 +158,8 @@ test('anonymous MCP advertises read-only search and change tools with bounded sc
     idempotentHint: true,
     openWorldHint: true,
   }
-  assert.deepEqual(search.annotations, readAnnotations)
-  assert.deepEqual(changes.annotations, readAnnotations)
+  assert.deepEqual(safetyHints(search.annotations), readAnnotations)
+  assert.deepEqual(safetyHints(changes.annotations), readAnnotations)
   assert.equal(search.inputSchema.additionalProperties, false)
   assert.deepEqual(search.inputSchema.required, ['q'])
   assert.deepEqual(search.inputSchema.properties?.mode?.enum, ['words', 'phrase'])
@@ -285,3 +285,8 @@ test('anonymous MCP preserves a bounded Retry-After duration on rate-limit error
     request_id: '<request-id>',
   })
 })
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
+}

@@ -8,6 +8,7 @@ import { registerRefreshReuseTests } from './oauth-flow-tests/refresh-reuse.test
 import { registerBrowserSecurityTests } from './oauth-flow-tests/browser-security.test.ts'
 import { registerAuthorizationLifecycleTests } from './oauth-flow-tests/authorization-lifecycle.test.ts'
 import { registerPairingTests } from './oauth-flow-tests/pairing.test.ts'
+import { registerClaudeCodeLoopbackTests } from './oauth-flow-tests/claude-code-loopback.test.ts'
 
 // Nested registrars preserve the original OAuth flow test order.
 registerAuthorizationRequestTests()
@@ -20,3 +21,4 @@ registerRefreshReuseTests()
 registerBrowserSecurityTests()
 registerAuthorizationLifecycleTests()
 registerPairingTests()
+registerClaudeCodeLoopbackTests()

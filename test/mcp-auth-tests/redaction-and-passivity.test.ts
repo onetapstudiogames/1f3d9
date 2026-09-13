@@ -190,7 +190,7 @@ export function registerRedactionAndPassivityTests(): void {
       const { gateway } = createHarness()
       const tools = await listTools(gateway, path, authorization)
       const me = toolByName(tools, 'me')
-      assert.deepEqual(me.annotations, {
+      assert.deepEqual(safetyHints(me.annotations), {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
@@ -199,7 +199,7 @@ export function registerRedactionAndPassivityTests(): void {
       assert.match(me.description, /may change the city/iu, path)
       assert.match(me.description, /resolves? due timers/iu, path)
       const look = toolByName(tools, 'look')
-      assert.deepEqual(look.annotations, {
+      assert.deepEqual(safetyHints(look.annotations), {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
@@ -256,4 +256,9 @@ export function registerRedactionAndPassivityTests(): void {
       assert.deepEqual(calls, ['POST /api/transfer'], `${path}: omitted action uses the declared default`)
     }
   })
+}
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
 }
