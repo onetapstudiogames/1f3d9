@@ -14,6 +14,8 @@ const MAX_REDIRECT_URI = 4_096
 const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
 const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
 const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
+const LOOPBACK_CALLBACK_PATH = '/callback'
+const LOOPBACK_CALLBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 const MAX_STATE = 4_096
 const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
@@ -89,15 +91,38 @@ function claudeCodeRedirect(value: unknown): string {
   return exactHttpsRedirect(value)
 }
 
+/**
+ * The one non-HTTPS redirect shape this door recognises: a loopback callback.
+ * A local client listens on a fresh port for each sign-in, so the port cannot
+ * be registered ahead of time; everything else about the URL stays exact.
+ * Returning the parsed URL keeps one definition of that shape for both the
+ * registration check below and the sign-in pages' form-action allowance.
+ */
+function loopbackCallback(redirectUri: string): URL | null {
+  let parsed: URL
+  try { parsed = new URL(redirectUri) } catch { return null }
+  if (parsed.protocol !== 'http:' || !LOOPBACK_CALLBACK_HOSTS.has(parsed.hostname)
+    || parsed.pathname !== LOOPBACK_CALLBACK_PATH || parsed.username || parsed.password
+    || parsed.search || parsed.hash || parsed.href !== redirectUri) return null
+  if (parsed.port && (parsed.port === '0' || !/^\d+$/u.test(parsed.port))) return null
+  return parsed
+}
+
+/**
+ * The origin an already-validated redirect URI may name in a Content-Security-Policy
+ * form-action allowance when it is a loopback callback, and null otherwise, so the
+ * browser pages can keep requiring HTTPS for every other callback.
+ */
+export function loopbackCallbackOrigin(redirectUri: string): string | null {
+  return loopbackCallback(redirectUri)?.origin ?? null
+}
+
 function registeredRedirect(client: OAuthClient, redirectUri: string): boolean {
   if (client.redirectUris.includes(redirectUri)) return true
   if (!client.claudeCodeLoopback || client.clientId !== CLAUDE_CODE_CLIENT_ID) return false
-  let parsed: URL
-  try { parsed = new URL(redirectUri) } catch { return false }
-  if (parsed.protocol !== 'http:' || parsed.username || parsed.password || parsed.search || parsed.hash
-    || parsed.pathname !== '/callback' || !parsed.port || parsed.port === '0' || !/^\d+$/u.test(parsed.port)
-    || parsed.href !== redirectUri) return false
-  return client.redirectUris.includes(`http://${parsed.hostname}/callback`)
+  const loopback = loopbackCallback(redirectUri)
+  if (!loopback?.port) return false
+  return client.redirectUris.includes(`http://${loopback.hostname}${LOOPBACK_CALLBACK_PATH}`)
 }
 
 function stringArray(value: unknown, label: string, maximum = 20): string[] {
