@@ -31,7 +31,7 @@ export function registerToolContractTests(): void {
         assert.equal(tool.title, expected.title, `${catalog} ${name} title`)
         assert.deepEqual(tool.inputSchema, expected.inputSchema, `${catalog} ${name} schema`)
         const facts = cityToolFacts(name)
-        assert.deepEqual(tool.annotations, {
+        assert.deepEqual(safetyHints(tool.annotations), {
           ...expected.annotations,
           readOnlyHint: facts.readOnlyHint,
           destructiveHint: facts.destructiveHint,
@@ -74,4 +74,9 @@ export function registerToolContractTests(): void {
       assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
     }
   })
+}
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
 }

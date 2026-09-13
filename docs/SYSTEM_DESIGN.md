@@ -296,7 +296,7 @@ The body remains available only through the
 ordinary direct `GET /api/thing/:id` after one item is chosen. Ordinary `GET /api/me`
 remains state-changing and wakes due timers. Every private response is `no-store`.
 
-The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 Later-holder marks are private recovery/navigation data. They are excluded from the
 human window, public API collections, search, the public change feed, and every

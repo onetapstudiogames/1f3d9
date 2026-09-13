@@ -12,6 +12,8 @@ const MAX_CLIENT_ID = 2_048
 const MAX_CLIENT_NAME = 240
 const MAX_REDIRECT_URI = 4_096
 const CHATGPT_CIMD_ORIGIN = 'https://chatgpt.com'
+const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
+const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
 const MAX_STATE = 4_096
 const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
@@ -27,6 +29,7 @@ export interface OAuthClient {
   clientId: string
   clientName: string
   redirectUris: string[]
+  claudeCodeLoopback?: boolean
 }
 
 export interface ValidAuthorizationRequest {
@@ -79,6 +82,22 @@ function exactHttpsRedirect(value: unknown): string {
     throw new Error('redirect URI must be an exact HTTPS URL without credentials or a fragment')
   }
   return parsed.href
+}
+
+function claudeCodeRedirect(value: unknown): string {
+  if (CLAUDE_CODE_CALLBACKS.includes(value as string)) return value as string
+  return exactHttpsRedirect(value)
+}
+
+function registeredRedirect(client: OAuthClient, redirectUri: string): boolean {
+  if (client.redirectUris.includes(redirectUri)) return true
+  if (!client.claudeCodeLoopback || client.clientId !== CLAUDE_CODE_CLIENT_ID) return false
+  let parsed: URL
+  try { parsed = new URL(redirectUri) } catch { return false }
+  if (parsed.protocol !== 'http:' || parsed.username || parsed.password || parsed.search || parsed.hash
+    || parsed.pathname !== '/callback' || !parsed.port || parsed.port === '0' || !/^\d+$/u.test(parsed.port)
+    || parsed.href !== redirectUri) return false
+  return client.redirectUris.includes(`http://${parsed.hostname}/callback`)
 }
 
 function stringArray(value: unknown, label: string, maximum = 20): string[] {
@@ -167,7 +186,7 @@ export function validateAuthorizationRequest(
   const client = clients.find(candidate => candidate.clientId === clientId)
   if (!client) throw new Error('unknown OAuth client')
   const redirectUri = requestText(request.redirect_uri, 'redirect_uri', MAX_REDIRECT_URI)
-  if (!client.redirectUris.includes(redirectUri)) throw new Error('redirect_uri is not registered')
+  if (!registeredRedirect(client, redirectUri)) throw new Error('redirect_uri is not registered')
   if (request.resource !== expectedResource) throw new Error('wrong protected resource')
   if (request.scope !== OAUTH_SCOPE) throw new Error('wrong OAuth scope')
   if (request.code_challenge_method !== 'S256') throw new Error('PKCE S256 is required')
@@ -261,6 +280,9 @@ export async function resolveOAuthClient(
   ) {
     throw new Error('unknown OAuth client')
   }
+  if (metadataUrl.origin === 'https://claude.ai' && clientId !== CLAUDE_CODE_CLIENT_ID) {
+    throw new Error('unknown OAuth client')
+  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 4_000)
@@ -316,8 +338,13 @@ export async function resolveOAuthClient(
     throw new Error('OAuth client must support public PKCE exchange')
   }
   const clientName = text(decoded.client_name, 'client_name', MAX_CLIENT_NAME)
+  const claudeCodeLoopback = clientId === CLAUDE_CODE_CLIENT_ID
   const redirectUris = [...new Set(
-    stringArray(decoded.redirect_uris, 'redirect_uris').map(exactHttpsRedirect),
+    stringArray(decoded.redirect_uris, 'redirect_uris').map(claudeCodeLoopback ? claudeCodeRedirect : exactHttpsRedirect),
   )]
-  return { clientId, clientName, redirectUris }
+  if (claudeCodeLoopback && (
+    redirectUris.length !== CLAUDE_CODE_CALLBACKS.length ||
+    CLAUDE_CODE_CALLBACKS.some(callback => !redirectUris.includes(callback))
+  )) throw new Error('Claude Code callback metadata does not match its registered loopback paths')
+  return { clientId, clientName, redirectUris, ...(claudeCodeLoopback ? { claudeCodeLoopback: true } : {}) }
 }

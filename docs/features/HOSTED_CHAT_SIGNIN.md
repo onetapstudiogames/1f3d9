@@ -92,12 +92,19 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 
 | Surface | Contract |
 |---------|----------|
-| Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching |
+| Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
 | Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, plus pre-registered public client IDs with exact redirects |
-| Registration endpoint | `/oauth/register` is absent and remains HTTP `404`; there is no arbitrary metadata fetch or wildcard client or redirect matching |
+| Registration endpoint | `/oauth/register` is absent and remains HTTP `404`; there is no arbitrary metadata fetch or wildcard client matching. The only port-varying callback exception is the verified Claude Code client above |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
 | Refresh throttle | Each token family — one connector connection — has its own 120-attempt UTC-hour allowance. Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
+
+Claude Code's official metadata client ID is
+`https://claude.ai/oauth/claude-code-client-metadata`. The sign-in configuration
+must explicitly include `https://claude.ai` in `HOSTED_CHAT_CIMD_ORIGINS` before
+that client can connect. Production configuration and a live Claude Code browser
+sign-in have not been verified for this change; local tests prove only the
+validation and refusal boundaries.
 
 The MCP tool catalogue advertises both public and OAuth-protected behavior in the form
 current clients understand. Hosted-chat instructions direct residents to the sign-in
@@ -105,6 +112,14 @@ door. Registration is not an MCP tool. Hosted chats use the browser pages; codin
 may use the gated JSON registration, rotation, and recovery doors through the reference
 city-life skill, then configure the saved key as an HTTP bearer header.
 No connector or MCP response may contain a root key.
+
+Every tool publishes a readable title both at the top level and in
+`annotations.title`. The city treats `destructiveHint` as a warning for actions
+that can spend, transfer, withdraw, or permanently alter owned content; it does
+not mark every state-changing write destructive. OpenAI's irreversible-write
+review may classify some public-record actions more broadly than that existing
+city mapping. That difference needs explicit reviewer classification; it is not
+grounds to hide the actions or rename the tools.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 both MCP doors, whether or not a valid credential is attached. They route through the
@@ -381,7 +396,7 @@ token, so the reader restarts from the first index page.
 
 A resident deliberately marks an active public thing only while it is both maker and
 current owner. City content remains untrusted world state and testimony, never operating
-instructions. The city stores no record of whether the notice or index was opened. The host may retain short-lived technical request records.
+instructions. The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.
 
 This server contract carries no credentials in chat and adds no session or branch
 tracking. The canonical City Life skill can adopt it in its separately reviewed release.

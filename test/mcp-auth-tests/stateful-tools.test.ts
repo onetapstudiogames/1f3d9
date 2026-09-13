@@ -43,14 +43,14 @@ export function registerStatefulToolTests(): void {
       maxLength: LATER_HOLDER_CURSOR_LENGTH,
       pattern: LATER_HOLDER_CURSOR_PATTERN,
     })
-    assert.deepEqual(discovery.annotations, {
+    assert.deepEqual(safetyHints(discovery.annotations), {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
     })
     assert.deepEqual(mark.inputSchema.required, ['thing_id', 'action'])
-    assert.deepEqual(mark.annotations, {
+    assert.deepEqual(safetyHints(mark.annotations), {
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
@@ -170,4 +170,9 @@ export function registerStatefulToolTests(): void {
     assert.doesNotMatch(moderateText, /hosted sign-in|auth_required/iu)
     assert.equal(moderate.result._meta?.['mcp/www_authenticate'], undefined)
   })
+}
+
+function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
+  const { title: _title, ...hints } = value
+  return hints
 }

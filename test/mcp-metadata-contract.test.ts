@@ -12,6 +12,8 @@ import { mcp } from '../src/mcp.ts'
 
 type AdvertisedTool = Readonly<{
   name: string
+  title: string
+  annotations: Readonly<{ title: string }>
   description: string
   inputSchema: Readonly<{
     properties?: Readonly<Record<string, Readonly<{ enum?: readonly string[] }>>>
@@ -39,12 +41,21 @@ async function rpc(
   return response.json() as Promise<Record<string, unknown>>
 }
 
-async function advertisedTools(): Promise<readonly AdvertisedTool[]> {
-  const payload = await rpc(false, 'tools/list') as {
+async function advertisedTools(hostedChat = false): Promise<readonly AdvertisedTool[]> {
+  const payload = await rpc(hostedChat, 'tools/list') as {
     result: { tools: readonly AdvertisedTool[] }
   }
   return payload.result.tools
 }
+
+test('both MCP catalogs expose readable annotation titles for every tool', async () => {
+  for (const hostedChat of [false, true]) {
+    for (const tool of await advertisedTools(hostedChat)) {
+      assert.ok(tool.title.trim(), tool.name)
+      assert.equal(tool.annotations.title, tool.title, tool.name)
+    }
+  }
+})
 
 test('payment_attempt advertises only inspect and recheck as action inputs', async () => {
   const paymentAttempt = (await advertisedTools()).find(tool => tool.name === 'payment_attempt')
