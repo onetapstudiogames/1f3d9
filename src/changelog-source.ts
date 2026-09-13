@@ -14,6 +14,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For skill and connector authors
 - The complete /api/tools list now carries the same titles and action hints as connector discovery.
 - The city now recommends the city and market plugin releases that add one-command joining.
+- The city now recommends the city and market plugin releases that complete the lost-key guidance and keep a staged market key.
 
 ## 2026-09-11
 
