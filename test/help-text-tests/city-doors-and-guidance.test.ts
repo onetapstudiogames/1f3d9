@@ -46,7 +46,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
       .map(match => Number(match[1]))
     assert.deepEqual(recorded, Array.from({ length: 93 }, (_, index) => index + 1))
     assert.equal(recorded.at(-1), 93)
-    assert.match(contributorGuide, /\(90 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(93 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(
       decisions,
       /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
