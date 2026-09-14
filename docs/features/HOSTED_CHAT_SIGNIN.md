@@ -182,6 +182,19 @@ stage, safe client origin, error class, status, and bounded elapsed time. It nev
 or logs a resident key, authorization code, access or refresh token, raw form, state,
 PKCE value, callback path, or sensitive query value.
 
+### OpenAI plugin domain verification
+
+`GET /.well-known/openai-apps-challenge` returns the public verification token
+shown by OpenAI's plugin submission form as plain text, without sign-in, cookies,
+redirects, or database access. The token is domain-ownership proof intended to be
+public and may be checked into this open-source repository. It is served with
+`Cache-Control: no-store` so a replacement token is available after deployment.
+
+Leave the submission form's Challenge Base URL blank for `https://1f3d9.com`.
+After the exact token is live at the displayed URL, click **Verify Domain**.
+If OpenAI issues a replacement token, update this route through a reviewed PR
+before verifying again.
+
 ## Private browser page
 
 The browser ceremony uses a random server-side transaction and a `Secure`, `HttpOnly`,
