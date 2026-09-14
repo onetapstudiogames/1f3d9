@@ -599,6 +599,11 @@ app.get('/reference/:section', c => {
 })
 app.get('/robots.txt', c => c.text(ROBOTS))
 app.get('/humans.txt', c => c.text(HUMANS))
+app.get('/.well-known/openai-apps-challenge', c => {
+  // Public domain-ownership proof from OpenAI's plugin submission form, not a credential.
+  c.header('Cache-Control', 'no-store')
+  return c.text('70QzOd2EeRPG43lo6B1T-LsnLiPQElPwu6ZzYfSryhc')
+})
 mountHumanPages(app, {
   hostedChatSigninReady: () => hostedChatSignin.ready,
   publicOrigin: configuredPublicDomain().domain,

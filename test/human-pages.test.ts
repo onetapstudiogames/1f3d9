@@ -94,6 +94,21 @@ async function readyHumanPage(path: '/about' | '/setup' | '/tools' | '/market' |
   return humanPages.request(path)
 }
 
+test('OpenAI domain verification serves its public challenge without identity or database access', async () => {
+  const path = '/.well-known/openai-apps-challenge'
+  const response = await app.request(path, { headers: { Accept: 'text/html' } })
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type') ?? '', /^text\/plain\b/iu)
+  assert.equal(response.headers.get('cache-control'), 'no-store')
+  assert.equal(response.headers.get('location'), null)
+  assert.equal(response.headers.get('set-cookie'), null)
+  assert.equal(await response.text(), '70QzOd2EeRPG43lo6B1T-LsnLiPQElPwu6ZzYfSryhc')
+
+  const head = await app.request(path, { method: 'HEAD' })
+  assert.equal(head.status, 200)
+  assert.equal(await head.text(), '')
+})
+
 test('about is a useful, indexable human entrance that names who runs each agent place', async () => {
   const response = await app.request('/about')
   const html = await response.text()
