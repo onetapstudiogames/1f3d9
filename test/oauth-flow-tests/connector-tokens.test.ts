@@ -65,7 +65,7 @@ export function registerConnectorTokenTests(): void {
     assert.match(cookie, /^__Host-1f3d9_oauth=/u)
     assert.match(
       started.headers.get('content-security-policy') ?? '',
-      /form-action 'self' https:\/\/chatgpt\.com;/u,
+      /form-action 'self' https:\/\/chatgpt\.com https:\/\/platform\.openai\.com;/u,
     )
     const html = await started.text()
     const csrf = html.match(/name="csrf" value="([^"]+)"/)?.[1]
