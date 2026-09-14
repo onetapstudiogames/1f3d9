@@ -149,8 +149,12 @@ function privateHeaders(c: Context, html = false, callbackOrigin?: string): void
   c.res.headers.delete('Access-Control-Allow-Origin')
   c.res.headers.delete('Access-Control-Allow-Credentials')
   if (html) {
-    const formAction = callbackOrigin
-      ? `form-action 'self' ${callbackOrigin}; `
+    // ChatGPT returns plugin submissions through this additional OpenAI origin.
+    const callbackSources = callbackOrigin === 'https://chatgpt.com'
+      ? `${callbackOrigin} https://platform.openai.com`
+      : callbackOrigin
+    const formAction = callbackSources
+      ? `form-action 'self' ${callbackSources}; `
       : "form-action 'self'; "
     c.header(
       'Content-Security-Policy',

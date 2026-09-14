@@ -63,6 +63,14 @@ const environment = {
     client_id: 'browser-e2e-client',
     client_name: 'Hosted Chat Browser Test',
     redirect_uris: [callbackUri],
+  }, {
+    client_id: 'openai-browser-e2e-client',
+    client_name: 'OpenAI Browser Return Test',
+    redirect_uris: [
+      'https://chatgpt.com/connector/oauth/e2e-direct',
+      'https://chatgpt.com/connector/oauth/e2e-platform',
+      'https://chatgpt.com/connector/oauth/e2e-unapproved-hop',
+    ],
   }]),
 }
 
@@ -404,6 +412,36 @@ app.post('/mcp/connect', async c => {
 })
 app.get('/oauth/callback', c => c.html(
   '<!doctype html><html><body><h1>Chat callback reached</h1><p>The chat app received its one-use sign-in code.</p></body></html>',
+))
+// The redirect-chain spec maps these real HTTPS origins to this disposable
+// server, leaving Chromium to enforce the production page's form-action policy.
+let openAiReturnRequests: ReadonlyArray<{ method: string; origin: string; path: string; status: number }> = []
+for (const path of ['/connector/oauth/*', '/apps-manage/oauth', '/oauth/return']) {
+  app.use(path, async (c, next) => {
+    await next()
+    const url = new URL(c.req.url)
+    openAiReturnRequests = [...openAiReturnRequests, {
+      method: c.req.method, origin: url.origin, path: url.pathname, status: c.res.status,
+    }]
+  })
+}
+app.get('/__e2e/openai-return-requests', c => c.json(openAiReturnRequests))
+app.post('/__e2e/reset-openai-return-requests', c => {
+  openAiReturnRequests = []
+  return c.json({ ok: true })
+})
+app.get('/connector/oauth/e2e-direct', c => c.html(
+  '<!doctype html><html><body><h1>ChatGPT callback reached</h1></body></html>',
+))
+app.get('/connector/oauth/e2e-platform', c => c.redirect('https://platform.openai.com/apps-manage/oauth', 302))
+app.get('/connector/oauth/e2e-unapproved-hop', c => c.redirect(
+  'https://platform.openai.com/apps-manage/oauth?unapproved-hop=1', 302,
+))
+app.get('/apps-manage/oauth', c => c.req.query('unapproved-hop') === '1'
+  ? c.redirect('https://unapproved.example/oauth/return', 302)
+  : c.html('<!doctype html><html><body><h1>OpenAI app return completed</h1></body></html>'))
+app.get('/oauth/return', c => c.html(
+  '<!doctype html><html><body><h1>Unapproved return reached</h1></body></html>',
 ))
 app.get('/__e2e/health', c => c.json({ ok: true, run: randomUUID() }))
 

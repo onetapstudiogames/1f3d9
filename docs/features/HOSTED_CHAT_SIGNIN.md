@@ -194,6 +194,13 @@ are fixed when the request begins and checked again when the code is redeemed. C
 metadata fetching is limited to HTTPS documents on explicitly configured origins, with
 strict identity, size, time, and redirect checks.
 
+For an already-validated callback on `https://chatgpt.com`, the sign-in pages'
+form-navigation policy also allows exactly `https://platform.openai.com`. OpenAI's
+plugin submission callback returns through that origin after ChatGPT. This browser
+allowance does not register another OAuth callback or approve another client-metadata
+origin; code and cancellation responses still use the exact registered callback.
+Other callback origins keep their existing browser allowance.
+
 Authorization pages set `Cache-Control: no-store`, deny framing, prevent cross-site referrer
 leakage, and use a restrictive content policy. OAuth routes do not inherit the site's
 wildcard CORS setting. Responses use generic errors; logs use request IDs and safe event
