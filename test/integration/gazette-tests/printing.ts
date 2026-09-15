@@ -106,25 +106,43 @@ export async function registerPrintingTests(
     })))
     assert.equal(replaySnapshot, immutableSnapshot, 'replaying a print tick changes nothing')
 
+    const catchUpStartedAt = iso((await database.query(
+      'SELECT clock_timestamp() AS current_time',
+    )).rows[0].current_time)
     await printGazetteIssuesDue(sql, '2026-09-21T16:00:00.000Z')
+    const catchUpFinishedAt = iso((await database.query(
+      'SELECT clock_timestamp() AS current_time',
+    )).rows[0].current_time)
     const archive = (await database.query(`
-      SELECT issue.issue_number, issue.scheduled_for, issue.entry_count,
+      SELECT issue.issue_number, issue.scheduled_for, issue.printed_at, issue.entry_count,
         coalesce(array_agg(entry.note_id ORDER BY entry.ordinal)
           FILTER (WHERE entry.note_id IS NOT NULL), '{}') AS note_ids
       FROM gazette_issues issue
       LEFT JOIN gazette_issue_entries entry USING (issue_number)
-      GROUP BY issue.issue_number
+      GROUP BY issue.issue_number, issue.scheduled_for, issue.printed_at, issue.entry_count
       ORDER BY issue.issue_number
     `)).rows.map(row => ({
       ...row,
       scheduled_for: iso(row.scheduled_for),
+      printed_at: iso(row.printed_at),
     }))
-    assert.deepEqual(archive, [
+    assert.deepEqual(archive.map(({ printed_at: _printedAt, ...issue }) => issue), [
       { issue_number: 1, scheduled_for: '2026-08-31T16:00:00.000Z', entry_count: 3, note_ids: [source[1]!.id, source[0]!.id, source[2]!.id] },
       { issue_number: 2, scheduled_for: '2026-09-07T16:00:00.000Z', entry_count: 1, note_ids: [source[3]!.id] },
       { issue_number: 3, scheduled_for: '2026-09-14T16:00:00.000Z', entry_count: 1, note_ids: [source[4]!.id] },
       { issue_number: 4, scheduled_for: '2026-09-21T16:00:00.000Z', entry_count: 0, note_ids: [] },
     ])
+    const catchUpStartedMs = Date.parse(catchUpStartedAt)
+    const catchUpFinishedMs = Date.parse(catchUpFinishedAt)
+    for (const issue of archive.slice(1)) {
+      const scheduledMs = Date.parse(issue.scheduled_for)
+      const printedMs = Date.parse(issue.printed_at)
+      assert.ok(
+        printedMs >= Math.max(scheduledMs, catchUpStartedMs)
+          && printedMs <= Math.max(scheduledMs, catchUpFinishedMs),
+        'an issue records its scheduled instant or its real catch-up print instant',
+      )
+    }
 
     assert.equal(
       typeof gazetteStoreRuntime.listGazetteIssues,
@@ -160,13 +178,13 @@ export async function registerPrintingTests(
         {
           issue_number: 4,
           scheduled_for: '2026-09-21T16:00:00.000Z',
-          printed_at: '2026-09-21T16:00:00.000Z',
+          printed_at: archive[3]!.printed_at,
           entry_count: 0,
         },
         {
           issue_number: 3,
           scheduled_for: '2026-09-14T16:00:00.000Z',
-          printed_at: '2026-09-14T16:00:00.000Z',
+          printed_at: archive[2]!.printed_at,
           entry_count: 1,
         },
       ],
