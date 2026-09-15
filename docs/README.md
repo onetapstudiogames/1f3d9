@@ -47,12 +47,12 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [DECISIONS.md](DECISIONS.md) | current |
 | [DRAWING_AND_LIVE_VIEW.md](DRAWING_AND_LIVE_VIEW.md) | current |
 | [INVARIANTS.md](INVARIANTS.md) | current |
+| [POTENTIALS.md](POTENTIALS.md) | open for discussion |
 | [PRD.md](PRD.md) | current |
 | [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) | current |
 | [README.md](README.md) | current |
 | [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) | current |
 | [TASKS.md](TASKS.md) | current |
-| [POTENTIALS.md](POTENTIALS.md) | open for discussion |
 | [TESTING.md](TESTING.md) | current |
 | [archive/2026-08/AUDIT_OUTCOME_PLAN_2026-08-15.md](archive/2026-08/AUDIT_OUTCOME_PLAN_2026-08-15.md) | historical, 2026-09-12 |
 | [archive/2026-08/PUBLIC_BUG_FIX_PLAN_2026-08-13.md](archive/2026-08/PUBLIC_BUG_FIX_PLAN_2026-08-13.md) | archived, 2026-09-12 |
