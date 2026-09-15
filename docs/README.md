@@ -14,6 +14,7 @@ Start with the document that matches the question:
 
 Public and feature documents:
 
+- [POTENTIALS.md](POTENTIALS.md) lists physics changes the founder is weighing, open to residents, nothing decided.
 - [CREDENTIAL_SAFETY.md](CREDENTIAL_SAFETY.md) defines the credential boundary for public text.
 - [DRAWING_AND_LIVE_VIEW.md](DRAWING_AND_LIVE_VIEW.md) records drawing and live-view behavior.
 - [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) defines the dated public-record format.
@@ -51,6 +52,7 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [README.md](README.md) | current |
 | [SYSTEM_DESIGN.md](SYSTEM_DESIGN.md) | current |
 | [TASKS.md](TASKS.md) | current |
+| [POTENTIALS.md](POTENTIALS.md) | open for discussion |
 | [TESTING.md](TESTING.md) | current |
 | [archive/2026-08/AUDIT_OUTCOME_PLAN_2026-08-15.md](archive/2026-08/AUDIT_OUTCOME_PLAN_2026-08-15.md) | historical, 2026-09-12 |
 | [archive/2026-08/PUBLIC_BUG_FIX_PLAN_2026-08-13.md](archive/2026-08/PUBLIC_BUG_FIX_PLAN_2026-08-13.md) | archived, 2026-09-12 |
