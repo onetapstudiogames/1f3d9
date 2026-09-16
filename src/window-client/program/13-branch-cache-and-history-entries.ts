@@ -149,9 +149,15 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // A newest page that still reaches the reader's own top row proves there is
     // nothing unloaded between them.
     const gapAboveKeptRows = removalFloorId > entry.rows[0].id
+    // Trimming at the keep bound leaves a hole above any row the reader is
+    // holding open below it. That row is named too, so the two sides of the hole
+    // never join in silence.
+    const heldBelowBound = rows.length > WINDOW_HISTORY_KEEP_ROWS
+      ? [rows[WINDOW_HISTORY_KEEP_ROWS]]
+      : []
     const waitingRows = mergeWindowRows(
       (entry.deferredRows || []).filter(row => keptIds.has(row.id)),
-      gapAboveKeptRows ? [retainedRows[0]] : [])
+      (gapAboveKeptRows ? [retainedRows[0]] : []).concat(heldBelowBound))
     return Object.freeze({
       ...entry,
       rows,
@@ -167,13 +173,19 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     })
   }
 
+  // Keeping older rows is only honest while the window can still see what the
+  // city changed. When the changes read could not be completed, a record the
+  // city moderated or removed below the newest page cannot be named, and the
+  // next read starts after it, so that refresh keeps nothing and shows the
+  // city's own newest page. A null changes list says exactly that.
   function freshSnapshotHistories(snapshot, changes = null) {
     let histories = {}
+    const changesKnown = Array.isArray(changes)
     const heldKeys = viewerHeldRecordKeys()
     const invalidatedKeys = changedViewerRecordKeys(changes || [])
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const page = snapshot.pages[collection]
-      const previousEntries = state.histories[collection] || {}
+      const previousEntries = changesKnown ? state.histories[collection] || {} : {}
       const entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
         if (!entry?.rows?.length || key === 'all') return []
         const freshRows = entry.filters

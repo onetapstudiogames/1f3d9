@@ -86,16 +86,21 @@ function loadedEntry(rows: readonly Row[], entry: Partial<HistoryEntry> = {}): H
 function refreshedHistories(
   previous: Partial<Histories>,
   snapshot: Snapshot,
-  options: Readonly<{ heldKeys?: readonly string[], invalidatedKeys?: readonly string[] }> = {},
+  options: Readonly<{
+    heldKeys?: readonly string[]
+    invalidatedKeys?: readonly string[]
+    // null says the window could not read what the city changed.
+    changes?: readonly unknown[] | null
+  }> = {},
 ): Histories {
   return new Function(
-    'histories', 'snapshot', 'viewerHeldRecordKeys', 'changedViewerRecordKeys',
+    'histories', 'snapshot', 'changes', 'viewerHeldRecordKeys', 'changedViewerRecordKeys',
     'historyViewerRecordKind', 'filterHistoryRows', 'mergeWindowRows',
     'WINDOW_HISTORY_KEEP_ROWS',
     `const state = { histories }; ${KEEP_AND_CURSOR_SOURCE}
-     return freshSnapshotHistories(snapshot, [])`,
+     return freshSnapshotHistories(snapshot, changes)`,
   )(
-    previous, snapshot,
+    previous, snapshot, options.changes === undefined ? [] : options.changes,
     () => new Set(options.heldKeys ?? []),
     () => new Set(options.invalidatedKeys ?? []),
     (collection: string) => collection === 'notes' ? 'note'
@@ -253,6 +258,31 @@ test('the keep bound never trims a record the reader is holding open', () => {
 
   assert.equal(entry.rows.length, WINDOW_HISTORY_KEEP_ROWS + 1)
   assert.equal(entry.rows.at(-1)!.id, oldestId, 'the held row survives the trim')
+  // The trim left a hole above that row, so the row is named rather than joined
+  // to the rows above it in silence.
+  assert.deepEqual(ids(entry.deferredRows), [oldestId],
+    'the held row below the keep bound is named as waiting')
+  assert.equal(entry.nextBeforeId, 5_002 - WINDOW_HISTORY_KEEP_ROWS,
+    'load older continues above the hole, not below it')
+})
+
+test('a refresh whose changes read failed keeps no older rows', () => {
+  const loaded = rowsFrom(400, 120)
+  const previous = {
+    notes: { all: loadedEntry(loaded), 'place:11|resident:': loadedEntry(loaded) },
+    things: {}, agreements: {}, events: {},
+  }
+  const fresh = [{ id: 401 }, ...rowsFrom(400, 49)]
+
+  // A changes read the window could not complete cannot name a moderated or
+  // removed older record, so the refresh shows the city's own newest page.
+  const histories = refreshedHistories(previous, snapshotOf({ notes: fresh }),
+    { changes: null })
+
+  assert.deepEqual(ids(histories.notes!.all!.rows), ids(fresh))
+  assert.deepEqual(histories.notes!.all!.deferredRows, [])
+  assert.deepEqual(Object.keys(histories.notes!), ['all'],
+    'a filtered list the reader paged is not kept either')
 })
 
 test('a moderated row is dropped from the kept rows instead of being kept for ever', () => {

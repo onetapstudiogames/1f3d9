@@ -78,8 +78,12 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       const retainViewerReading = viewerReadingViewIsActive()
       // Kept pages and the automatic gap fill belong to the lists themselves, so
       // they never depend on which view the reader is looking at.
+      // A changes read the window could not complete cannot name what the city
+      // moderated or removed, and the next read starts after this snapshot's
+      // marker, so that refresh keeps no older rows.
+      const knownChanges = changeState.status === 'unavailable' ? null : changeState.changes
       let histories = replaceAuthored
-        ? freshSnapshotHistories(snapshot, changeState.changes)
+        ? freshSnapshotHistories(snapshot, knownChanges)
         : mergeUnchangedSnapshotHistories(snapshot)
       if (hadSnapshot && replaceAuthored) {
         histories = await rejoinSnapshotHistories(

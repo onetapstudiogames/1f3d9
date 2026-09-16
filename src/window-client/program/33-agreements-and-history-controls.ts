@@ -115,7 +115,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
           ' between here and the newest may not be loaded.'
         : 'Some ' + label + ' between here and the newest are not loaded.') +
         ' The window closes a gap of up to ' + WINDOW_HISTORY_FILL_ROWS_TEXT +
-        ' records on its own; this one is larger or could not be read.'))
+        ' records on its own.'))
     } else if (entry.refreshError) {
       const message = element('p', 'navigation-error',
         'Updated ' + label + ' could not be loaded. Showing the previous completed results.')

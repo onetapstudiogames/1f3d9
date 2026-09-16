@@ -14,6 +14,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
 - [ ] Add a real-PostgreSQL regression test for recent-note ordering across more than one
   room before changing the window's global conversation query.
+- [ ] Give the window's 200 most-recently-opened-records bound one home. It is still
+  an inline `.slice(-200)` in `src/window-client/viewer-state.ts`, kept in step with the
+  prose in `docs/SYSTEM_DESIGN.md` by hand, unlike the kept-page and automatic-fill
+  bounds that now live once in `src/window-history-limits.ts` (city issue #326).
 - [ ] Issue #79 phase 2: add a typed accessor layer over the mutable `state` object
   declared in `src/window-client/program/02-state-and-nodes.ts` (snapshot, live,
   histories, drawings, noteBodies, changes, plus the strays `rovingTabActivation`,

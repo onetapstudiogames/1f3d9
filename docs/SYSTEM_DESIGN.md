@@ -1928,11 +1928,20 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   receive these saved choices. Closing text or clearing site
   data removes its choice; blocked or unavailable browser storage leaves the
   current page usable without persistence. Invalid saved choices are skipped
-  individually, keeping the last 200 valid distinct keys. A failed or incomplete
-  older-history check retains that entry's held copy while other entries and the
-  snapshot refresh, marks the gap it could not join, and moves that entry's
-  older-history cursor to the lowest joined row so the same control loads the gap.
-  Rows below the gap stay visible and rejoin the list when paging reaches them.
+  individually, keeping the last 200 valid distinct keys. Every paged list keeps
+  the rows it already loaded across a changed refresh, up to 3,000 kept records
+  per list. Past that bound the oldest rows go first, a record the reader is
+  holding open is never one of them, and the hole that trim leaves below the
+  bound is named rather than joined in silence. When the newest page does not
+  reach the kept rows, the window reads older records on its own, page by page,
+  up to 300 records per refresh. Only a gap larger than that bound, or a read
+  that failed, leaves a seam line, and that line states the automatic-fill bound.
+  Load older always continues from the lowest connected row, so a page that
+  closes part of a gap does not leave the cursor inside rows the reader already
+  has, and rows below a named gap stay visible and rejoin the list when paging
+  reaches them. A refresh whose public-changes read could not be completed keeps
+  no older rows at all, because it cannot tell a moderated or removed record from
+  an untouched one; that refresh shows the city's own newest page.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check.
 - **The window ships day one**: a read-only human-facing page (the market's hardened

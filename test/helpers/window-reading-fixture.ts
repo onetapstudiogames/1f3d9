@@ -30,6 +30,7 @@ type ReadingRefreshOptions = Readonly<{
   thingBody?: string
   thingMissing?: boolean
   historyUnavailable?: boolean
+  changesUnavailable?: boolean
   noteBody?: string
 }>
 
@@ -69,6 +70,7 @@ export async function installReadingFixture(
   } | null = null
   let forceNextChangeCheck = false
   let historyUnavailable = false
+  let changesUnavailable = false
   const olderNoteTemplate = baseline.notes.find(note => note.id === 301)
   if (options.olderNote && !olderNoteTemplate) {
     throw new Error('The reading fixture requires note 301 to derive its older note')
@@ -142,6 +144,9 @@ export async function installReadingFixture(
   const networkViolations: string[] = []
   const origin = new URL(response.url()).origin
   await page.route('**/api/changes**', route => {
+    if (changesUnavailable) {
+      return route.fulfill({ status: 503, json: { error: 'changes unavailable' } })
+    }
     const since = new URL(route.request().url()).searchParams.get('since')
     const forcedChanged = forceNextChangeCheck
     forceNextChangeCheck = false
@@ -277,6 +282,11 @@ export async function installReadingFixture(
     allowHistoryReads() {
       historyUnavailable = false
     },
+    // Lets a test read the city's changes again after a refresh that could not,
+    // without starting a second refresh of its own.
+    allowChangeReads() {
+      changesUnavailable = false
+    },
     // Every note id the fixture serves, newest first, so a test can compare a
     // loaded list with the whole record instead of only its two ends.
     get servedNoteIds() {
@@ -306,6 +316,7 @@ export async function installReadingFixture(
     },
     async refresh(refreshOptions: ReadingRefreshOptions = {}) {
       historyUnavailable = refreshOptions.historyUnavailable === true
+      changesUnavailable = refreshOptions.changesUnavailable === true
       if (refreshOptions.thingBody !== undefined) fullThing = { ...fullThing, body: refreshOptions.thingBody }
       if (refreshOptions.thingMissing !== undefined) thingMissing = refreshOptions.thingMissing
       if (refreshOptions.noteBody !== undefined) {

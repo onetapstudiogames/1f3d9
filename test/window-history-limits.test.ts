@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { REFERENCE } from '../src/door.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
@@ -39,4 +40,18 @@ test('the resident reference states the same two bounds', () => {
     'the reference states the automatic fill bound')
   assert.match(REFERENCE, /Load older always\ncontinues from the lowest connected row/u)
   assert.doesNotMatch(REFERENCE, /\{\{WINDOW_HISTORY_BOUNDS\}\}/u)
+})
+
+// The dated records and the design doc are written for people, so they carry the
+// numbers as words rather than importing them. This keeps them from drifting the
+// day a bound changes.
+test('the dated records and the design doc state the same two bounds', () => {
+  const written = ['CHANGELOG.md', 'docs/DECISIONS.md', 'docs/SYSTEM_DESIGN.md'] as const
+  for (const path of written) {
+    const text = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
+    assert.ok(text.includes(`up to ${WINDOW_HISTORY_KEEP_ROWS_TEXT}`),
+      `${path} states the kept-record bound`)
+    assert.ok(text.includes(`up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} `),
+      `${path} states the automatic fill bound`)
+  }
 })

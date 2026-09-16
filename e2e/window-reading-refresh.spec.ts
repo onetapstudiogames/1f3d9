@@ -3,6 +3,7 @@ import {
   installReadingFixture,
   READING_NOTE,
   READING_OLDER_NOTE,
+  READING_PAGE_LIMIT,
 } from '../test/helpers/window-reading-fixture.ts'
 import { WINDOW_HISTORY_FILL_ROWS_TEXT } from '../src/window-history-limits.ts'
 
@@ -653,6 +654,31 @@ test('a gap past the fill bound names the bound and loads from its own control',
   await expect(page.locator('#conversation-page'), 'loaded gap compared with no remaining gap notice')
     .not.toContainText('between here and the newest')
 })
+
+test('a refresh whose changes read failed keeps no older page it can no longer check',
+  async ({ page, baseURL }) => {
+    const fixture = await installReadingFixture(page, baseURL, { olderPages: 2 })
+    violationsByPage.set(page, fixture.networkViolations)
+    await ready(page, '/window/conversations')
+    const loaded = await loadOlderTwice(page)
+
+    // Without the city's own list of what changed, the window cannot tell a
+    // moderated older note from an untouched one, so it shows the city's newest
+    // page again rather than keeping text the city may have taken down.
+    await fixture.refresh({ changesUnavailable: true })
+
+    const oldestLoaded = Math.min(...loaded)
+    await expect.poll(async () => (await loadedConversationIds(page)).includes(oldestLoaded),
+      { message: 'the oldest loaded conversation id after an unreadable changes read compared with false' })
+      .toBe(false)
+    expect((await loadedConversationIds(page)).length,
+      'loaded conversation count after an unreadable changes read compared with one page')
+      .toBeLessThanOrEqual(READING_PAGE_LIMIT)
+    await expect(page.locator('#conversation-page'),
+      'a dropped page compared with no gap notice').not.toContainText('between here and the newest')
+    await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
+      'seam control after a dropped page compared with hidden').toBeHidden()
+  })
 
 test('a failed automatic fill names the gap instead of joining the list silently', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL, { olderPages: 2 })
