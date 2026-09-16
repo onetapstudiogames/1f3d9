@@ -210,7 +210,12 @@ test('outline loaders return the bounded purpose while charging it to authored-t
     (publicMapSource.match(/\bp\.purpose\b/gu) ?? []).length >= 2,
     'map parent and child outlines must select purpose',
   )
-  assert.match(publicMapSource, /purpose:\s*(?:row\.purpose|String\s*\(\s*row\.purpose\s*\))/iu)
+  // The ownerless world is the one place whose purpose the city writes; every
+  // other outline row must still return exactly the stored owner-written text.
+  assert.match(
+    publicMapSource,
+    /purpose:\s*isWorldRootRow\(row\)\s*\?\s*WORLD_ROOT_PURPOSE\s*:\s*(?:row\.purpose|String\s*\(\s*row\.purpose\s*\))/iu,
+  )
 })
 
 test('credential scanning and moderation treat purpose as public resident-authored text', () => {

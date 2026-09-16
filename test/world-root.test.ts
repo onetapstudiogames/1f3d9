@@ -12,7 +12,7 @@ import {
 } from '../src/engine.ts'
 import { publicPlaceTree } from '../src/window.ts'
 import { buildPlaceTree, type PlaceRow } from '../src/world-support.ts'
-import { WORLD_TRANSIT_ONLY_ERROR } from '../src/world-root.ts'
+import { WORLD_ROOT_PURPOSE, WORLD_TRANSIT_ONLY_ERROR } from '../src/world-root.ts'
 
 test('the shared world refusal names the usable next choices', () => {
   assert.equal(
@@ -121,6 +121,29 @@ test('map and window trees retain one visible ownerless world above all continen
   assert.equal(window[0]?.id, 1)
   assert.equal(window[0]?.owner, null)
   assert.deepEqual(window[0]?.children.map(child => child.id), [2, 3])
+})
+
+test('every public place surface reads the world line from the one constant', async () => {
+  const [fullMap, outlineMap, placeRecord] = await Promise.all([
+    readFile(new URL('../src/world.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/public-map.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/public-records.ts', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(fullMap, /isWorldRootRow\(row\)\s*\?\s*\{\s*purpose:\s*WORLD_ROOT_PURPOSE\s*\}/u)
+  assert.match(outlineMap, /purpose:\s*isWorldRootRow\(row\)\s*\?\s*WORLD_ROOT_PURPOSE/u)
+  assert.match(placeRecord, /isWorldRootRow\(record\)[\s\S]{0,120}WORLD_ROOT_PURPOSE/u)
+  for (const source of [fullMap, outlineMap, placeRecord]) {
+    assert.equal(source.includes(WORLD_ROOT_PURPOSE), false, 'the line is never retyped')
+  }
+})
+
+test('the human window gives the ownerless world the city line and leaves owned places alone', () => {
+  const [world] = publicPlaceTree([{ ...worldRow, purpose: '' }])
+  assert.equal(world?.purpose, WORLD_ROOT_PURPOSE)
+
+  const [continent] = publicPlaceTree([{ ...continentRows[0], parent_id: null, purpose: 'a purpose its owner wrote' }])
+  assert.equal(continent?.purpose, 'a purpose its owner wrote')
 })
 
 test('map and human-window SQL preserve an ownerless root instead of dropping it at the owner join', async () => {

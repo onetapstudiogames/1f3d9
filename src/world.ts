@@ -34,6 +34,7 @@ import { readLookingResidentsAtPlace } from './resident-looking.ts'
 import {
   isWorldRootRow,
   WORLD_ARRIVAL_LINE,
+  WORLD_ROOT_PURPOSE,
   WORLD_TRANSIT_ONLY_ERROR,
 } from './world-root.ts'
 import {
@@ -275,6 +276,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, rows.map(row => row.id))
   const orientedRows = publicRows.map(row => Object.freeze({
     ...row,
+    ...(isWorldRootRow(row) ? { purpose: WORLD_ROOT_PURPOSE } : {}),
     front_matter: (row as unknown as Record<string, unknown>).moderated === true
       ? Object.freeze([])
       : frontMatter.get(row.id) ?? Object.freeze([]),

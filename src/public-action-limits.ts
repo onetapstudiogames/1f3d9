@@ -5,4 +5,6 @@ export const PUBLIC_ACTION_LIMITS = Object.freeze({
   founderPaymentRepairsPerHour: 30,
   founderPaymentRepairBodyBytes: 512,
   communityToolReviewBodyBytes: 256,
+  founderFlagHandleBodyBytes: 512,
+  flagReviewNoteCharacters: 200,
 })

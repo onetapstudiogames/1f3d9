@@ -1,6 +1,7 @@
 import { sql } from './db.ts'
 import { moderatePlaceDetails, moderatePublicRows } from './moderation-store.ts'
 import type { PlaceRow, ThingRow } from './world-support.ts'
+import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
 
 export type PublicPlaceRecord = Readonly<PlaceRow & Record<string, unknown>>
 export type PublicThingRecord = Readonly<ThingRow & Record<string, unknown>>
@@ -66,7 +67,10 @@ export async function loadPublicPlaceRecord(
     WHERE p.id = $1::integer
   `, [id])) as PublicPlaceRecord[]
   const publicRows = await moderate(rows)
-  return publicRows[0] ?? null
+  const record = publicRows[0] ?? null
+  return record !== null && isWorldRootRow(record)
+    ? { ...record, purpose: WORLD_ROOT_PURPOSE }
+    : record
 }
 
 /**

@@ -69,6 +69,8 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/core.ts:Error',
   'src/drawing-thumbnail.ts:Error',
   'src/db.ts:Error',
+  'src/flag-review.ts:Error',
+  'src/flag-review.ts:TypeError',
   'src/gazette-reading.ts:Error',
   'src/gazette-store.ts:Error',
   'src/gazette.ts:RangeError',

@@ -72,6 +72,7 @@ import {
   AROUND_YOU_SUMMARY_SLOTS,
 } from './me-around-you-limit.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
+import { WORLD_ROOT_PURPOSE } from './world-root.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -161,7 +162,7 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Text: notes/descriptions ${NOTE_CHARACTERS}/${WORLD_DESCRIPTION_MAX_CHARACTERS} characters, thing body ${THING_BODY_MAX_BYTES} bytes, purpose ${PLACE_PURPOSE_MAX_CHARACTERS} characters.`,
   `Names: place/thing 1..${PUBLIC_LABEL_MAX_CHARACTERS}; normalized world/kind/trait up to ${NORMALIZED_WORLD_NAME_MAX_CHARACTERS} characters.`,
   `Flags: resident ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour}/hour, anonymous ${PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour}/IP/hour, reason 1..${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters.`,
-  `Founder repair: ${PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour}/hour, ${PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes}-byte body; tool review ${PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes}-byte body.`,
+  `Founder repair: ${PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour}/hour, ${PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes}-byte body; tool review ${PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes}-byte body; flag answer ${PUBLIC_ACTION_LIMITS.founderFlagHandleBodyBytes}-byte body, note 1..${PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters} characters.`,
   RESIDENT_LOOKING_LIMIT_LINE,
   `Gazette: ${QUOTAS.gazetteSubmissions}/resident/Monday-16:00 week; identical-note replay ${NOTE_IDEMPOTENCY_WINDOW_SECONDS / 60} minutes.`,
   `Gifts: ${CREDIT_GIFT_LIMITS.actionBodyBytes}-byte bodies, ${CREDIT_GIFT_LIMITS.redirectsPerCallerHour} redirects/caller/hour, pages 1..${CREDIT_GIFT_LIMITS.pageMax}.`,
@@ -298,6 +299,7 @@ export function renderCityFactTokens(document: string): string {
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
   return document
     .replaceAll('{{CITY_POSITIONING_LINE}}', CITY_POSITIONING_LINE)
+    .replaceAll('{{WORLD_ROOT_PURPOSE}}', WORLD_ROOT_PURPOSE)
     .replaceAll('{{MARKET_POSITIONING_LINE}}', MARKET_POSITIONING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
