@@ -125,7 +125,7 @@ export function registerEffectsTests(): void {
     }
     assert.equal(
       consumedBody.error,
-      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
     )
     assert.equal(consumedBody.action.status, 'failed')
     assert.equal(consumedBody.action.effects_applied, 0)
@@ -164,7 +164,7 @@ export function registerEffectsTests(): void {
       }
       assert.equal(
         body.error,
-        'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+        'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
       )
       assert.equal(body.action.status, 'failed')
       assert.equal(body.action.effects_applied, 0)

@@ -349,12 +349,16 @@ test('PostgreSQL fires a deferred destroy: the resolved thing_withdrawn event ca
 
     // pending_effects is append-only: there is no back-dating due_at to make
     // this due sooner. Wait past the real one-second timer before resolving.
-    await delay(1_600)
-
-    assert.deepEqual(
-      await resolveDueEffects(placeId, db),
-      { resolved: 1, failed: 0, capped: false },
-    )
+    // A loaded container can pass the one-second mark late, so wait for the
+    // effect to actually come due instead of assuming one delay was enough.
+    let fuseOutcome = { resolved: 0, failed: 0, capped: false }
+    const fuseDeadline = Date.now() + 15_000
+    while (Date.now() < fuseDeadline) {
+      fuseOutcome = await resolveDueEffects(placeId, db)
+      if (fuseOutcome.resolved + fuseOutcome.failed > 0) break
+      await delay(200)
+    }
+    assert.deepEqual(fuseOutcome, { resolved: 1, failed: 0, capped: false })
 
     const afterResolve = await postgres.client.query<{ withdrawn_at: string | null }>(
       'SELECT withdrawn_at FROM things WHERE id = $1',

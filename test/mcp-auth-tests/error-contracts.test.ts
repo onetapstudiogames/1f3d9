@@ -57,14 +57,14 @@ export function registerErrorContractTests(): void {
 
   test('a failed city action keeps its caller-facing cause through both MCP doors', async () => {
     const cityFailure = {
-      error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+      error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
       action: {
         id: 45555,
         action: 'use',
         status: 'failed',
         place_id: 303,
         effects_applied: 0,
-        error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+        error: 'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
       },
     }
 

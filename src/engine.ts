@@ -1052,7 +1052,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (thing.ownerId !== input.actorId && !sharedUse) {
     throw new EngineError(
       403,
-      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
     )
   }
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
