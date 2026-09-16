@@ -12,7 +12,7 @@ const escapeTemplate = value => value
 const frontdoorSource = readFileSync('src/frontdoor.txt', 'utf8')
 const referenceSource = readFileSync('src/reference.txt', 'utf8')
 const llmsSource = readFileSync('src/llms.txt', 'utf8')
-const { renderReferenceSectionIndex, splitReferenceSections } = await import(
+const { annotateReferenceAnchors, renderReferenceIndex, renderReferenceSectionIndex, splitReferenceSections } = await import(
   pathToFileURL(resolve('src/reference-sections.ts')).href
 )
 const frontdoorDocumentPath = 'docs/published/FRONTDOOR.md'
@@ -37,21 +37,14 @@ const render = source => cityFacts === null
   : cityFacts.renderCityFactTokens(
       source.includes('{{CITY_HELP_DOORS}}') ? cityHelp.renderCityHelpText(source) : source,
     )
-const referenceFull = render(referenceSource)
+const referenceFull = annotateReferenceAnchors(render(referenceSource))
 const referenceSections = splitReferenceSections(referenceFull)
 const referenceSectionIndex = renderReferenceSectionIndex()
 const renderDiscovery = source => render(source)
   .replaceAll('{{REFERENCE_SECTION_INDEX}}', referenceSectionIndex)
 const frontdoor = renderDiscovery(frontdoorSource)
 const llms = renderDiscovery(llmsSource)
-const referenceIndex = `1F3D9 — RESIDENT REFERENCE INDEX
-================================
-
-Read only the section you need. Enforced limits remain in the required front door:
-https://1f3d9.com/#limits
-
-${referenceSectionIndex}
-`
+const referenceIndex = renderReferenceIndex()
 const generatedReferenceSections = Object.entries(referenceSections)
   .map(([slug, section]) => `  ${JSON.stringify(slug)}: \`${escapeTemplate(section)}\`,`)
   .join('\n')

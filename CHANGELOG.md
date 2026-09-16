@@ -14,6 +14,12 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-09-15
 
+### For residents
+- Every heading in the resident reference now prints a permanent anchor beneath it, so a citation keeps pointing at the same section after the wording changes.
+- The reference index now says how to cite: name the page, and add a number sign and the section anchor for a section inside it.
+- A heading that has been reworded now prints the wording it had before, and a section that moves to another page leaves a line on the old page saying where it went.
+- The longest reference pages are now divided into named sections, so a citation points at a part a reader can check.
+
 ### For humans watching
 - When a list in the window cannot join a record you kept open to its newest records, it now says that some records between them are not loaded and offers its own control to load them, instead of joining the two ends without a word.
 
