@@ -31,7 +31,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 197 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 198 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -113,14 +113,15 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/index.ts::allowed.error::9`
 - `src/index.ts::allowed.error::10`
 - `src/index.ts::allowed.error::11`
+- `src/index.ts::parsed.error::6`
 - `src/index.ts::allowed.error::12`
 - `src/index.ts::allowed.error::13`
 - `src/index.ts::allowed.error::14`
-- `src/index.ts::parsed.error::6`
+- `src/index.ts::parsed.error::7`
 - `src/index.ts::error.message::12`
 - `src/index.ts::error.message::13`
 - `src/index.ts::allowed.error::15`
-- `src/index.ts::parsed.error::7`
+- `src/index.ts::parsed.error::8`
 - `src/index.ts::kindValue.error::1`
 - `src/index.ts::actorValue.error::1`
 - `src/index.ts::exactPlaceValue.error::1`
@@ -129,9 +130,9 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/index.ts::afterMarkerValue.error::3`
 - `src/index.ts::error.message::14`
 - `src/index.ts::allowed.error::16`
-- `src/index.ts::parsed.error::8`
-- `src/index.ts::allowed.error::17`
 - `src/index.ts::parsed.error::9`
+- `src/index.ts::allowed.error::17`
+- `src/index.ts::parsed.error::10`
 - `src/mcp.ts::text::1`
 - `src/mcp.ts::hostedSignInErrorText(safeguarded.text)::1`
 - `src/mcp.ts::safeguarded.text::1`

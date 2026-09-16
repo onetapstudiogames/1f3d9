@@ -113,7 +113,7 @@ of four dispositions.
 | `oauth` | Hosted sign-in requests, codes, tokens, token families, and rate limits are private. |
 | `infrastructure_limits` | IP hashes and identity, flag, or drawing rate-limit rows are private operations data. |
 | `resident_private_state` | Home location, personal daily quota state, and repeated-refusal state remain private to the resident. |
-| `private_flags` | Flag-report bodies are private; only safe public event references can appear. |
+| `private_flags` | Flag-report bodies and the founder answers to them stay private; only safe public event references can appear. |
 | `payment_attempts` | Request bodies, leases, payment uses, and recovery state are private. |
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
 | `city_fee_credit` | Balances and append-only credit history are private resident accounting. |

@@ -165,8 +165,12 @@ export function respondToDatabaseStage1(
     return [{ count: fixtureState.current.flags.filter(flag => flag.handled_at === null).length }]
   }
   if (q.includes('/* founder:flag-queue */')) {
+    const cursor = params[0] == null ? null : Number(params[0])
+    const fetchLimit = Number(params[1])
     return [...fixtureState.current.flags]
       .sort((left, right) => right.id - left.id)
+      .filter(flag => cursor === null || flag.id < cursor)
+      .slice(0, fetchLimit)
       .map(flag => ({ ...flag }))
   }
   if (q.includes('/* founder:flag-handle */')) {

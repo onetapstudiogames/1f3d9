@@ -12,6 +12,10 @@ import {
   unhandledFlagCount,
   type FlagReviewQuery,
 } from '../../src/flag-review.ts'
+import type { PublicPage } from '../../src/public-pagination.ts'
+
+const page = (cursor: number | null, limit: number): PublicPage =>
+  ({ ok: true, cursor, limit, fetchLimit: limit + 1 })
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const MIGRATION_URL = new URL('../../db/migrations/20260915_flag_review.sql', import.meta.url)
@@ -99,7 +103,7 @@ test('PostgreSQL keeps one permanent founder answer per flag and an honest unhan
     await server.pool.query(SEED)
 
     assert.equal(await unhandledFlagCount(query), 2)
-    const queue = await readFounderFlagQueue(query)
+    const queue = await readFounderFlagQueue(query, page(null, 10))
     assert.equal(queue.unhandledCount, 2)
     assert.equal(queue.flags.length, 2)
     assert.equal(queue.flags[0]?.id, 2, 'the newest flag is listed first')
@@ -107,6 +111,14 @@ test('PostgreSQL keeps one permanent founder answer per flag and an honest unhan
     assert.deepEqual(queue.flags[1]?.reporter, { id: 7, handle: 'tiny-lantern' })
     assert.equal(queue.flags[1]?.reason, 'a resident wrote this report text')
     assert.equal(queue.flags[1]?.handled, null)
+
+    // A report older than one page stays reachable through the cursor, and the count
+    // keeps counting the reports that page does not carry.
+    const firstPage = await readFounderFlagQueue(query, page(null, 1))
+    assert.deepEqual(firstPage.flags.map(flag => flag.id), [2, 1], 'one extra row decides has_more')
+    const olderPage = await readFounderFlagQueue(query, page(2, 1))
+    assert.deepEqual(olderPage.flags.map(flag => flag.id), [1])
+    assert.equal(olderPage.unhandledCount, 2)
 
     // An answer must name a moderation act, a note, or both.
     await assert.rejects(server.pool.query(
@@ -146,7 +158,7 @@ test('PostgreSQL keeps one permanent founder answer per flag and an honest unhan
     })
 
     assert.equal(await unhandledFlagCount(query), 1)
-    const answered = await readFounderFlagQueue(query)
+    const answered = await readFounderFlagQueue(query, page(null, 10))
     assert.equal(answered.unhandledCount, 1)
     assert.deepEqual(answered.flags[1]?.handled?.moderation_id, 77)
     assert.equal(answered.flags[1]?.handled?.note, null)

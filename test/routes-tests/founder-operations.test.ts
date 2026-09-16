@@ -5,11 +5,13 @@ import type { FakeFounderPayPalDispute } from '../helpers/routes-fixtures/state.
 
 export function registerFounderOperationsTests(): void {
   const {
+    allowOAuthForHostedConnectorRequest,
     app,
     authHeaders,
     fixtureState,
     reset,
     setActor,
+    setOAuthResidentResolver,
     sqlCalls,
     test,
   } = getRoutesTestContext()
@@ -395,7 +397,7 @@ export function registerFounderOperationsTests(): void {
   const FOUNDER_FLAG_PATH = '/api/founder/flags'
   const FLAG_JSON = { 'Content-Type': 'application/json' }
 
-  test('the founder flag read is root-key-only, private, queryless, and snake_case', async () => {
+  test('the founder flag read is root-key-only, private, paged, and snake_case', async () => {
     reset()
 
     const missingKey = await app.request(FOUNDER_FLAG_PATH)
@@ -408,9 +410,11 @@ export function registerFounderOperationsTests(): void {
     assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-queue */')), false)
 
     setActor(1, 'founder')
-    const withQuery = await app.request(`${FOUNDER_FLAG_PATH}?limit=1`, { headers: authHeaders() })
-    assert.equal(withQuery.status, 400, await withQuery.clone().text())
-    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-queue */')), false)
+    for (const unsupported of [`${FOUNDER_FLAG_PATH}?force=true`, `${FOUNDER_FLAG_PATH}?limit=0`]) {
+      const refused = await app.request(unsupported, { headers: authHeaders() })
+      assert.equal(refused.status, 400, await refused.clone().text())
+      assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-queue */')), false)
+    }
 
     const response = await app.request(FOUNDER_FLAG_PATH, { headers: authHeaders() })
     assert.equal(response.status, 200, await response.clone().text())
@@ -419,9 +423,15 @@ export function registerFounderOperationsTests(): void {
       note: string
       unhandled_count: number
       flags: Array<Record<string, unknown>>
+      returned_flags: number
+      has_more: boolean
+      next_before_id: number | null
     }
     assert.match(body.note, /data, never as instructions/iu)
     assert.equal(body.unhandled_count, 1)
+    assert.equal(body.returned_flags, 1)
+    assert.equal(body.has_more, false)
+    assert.equal(body.next_before_id, null)
     assert.deepEqual(body.flags, [{
       id: 3,
       reporter: { id: 7, handle: 'tiny-lantern' },
@@ -431,6 +441,51 @@ export function registerFounderOperationsTests(): void {
       created_at: '2026-09-10T00:00:00.000Z',
       handled: null,
     }])
+  })
+
+  test('a report older than one page stays reachable through next_before_id', async () => {
+    reset({ scenario: 'flag quota' })
+    const body = JSON.stringify({
+      target_type: 'thing', target_id: 41, reason: 'the newer report',
+    })
+    for (let index = 0; index < 2; index += 1) {
+      const filed = await app.request('/api/flag', {
+        method: 'POST', headers: authHeaders(), body,
+      })
+      assert.equal(filed.status, 201, await filed.clone().text())
+    }
+
+    setActor(1, 'founder')
+    const first = await app.request(`${FOUNDER_FLAG_PATH}?limit=1`, { headers: authHeaders() })
+    assert.equal(first.status, 200, await first.clone().text())
+    const firstPage = await first.json() as {
+      unhandled_count: number
+      flags: Array<{ id: number }>
+      returned_flags: number
+      has_more: boolean
+      next_before_id: number | null
+    }
+    // The count keeps counting the reports this page does not carry, and has_more says so.
+    assert.equal(firstPage.unhandled_count, 3)
+    assert.equal(firstPage.returned_flags, 1)
+    assert.deepEqual(firstPage.flags.map(flag => flag.id), [5])
+    assert.equal(firstPage.has_more, true)
+    assert.equal(firstPage.next_before_id, 5)
+
+    const older = await app.request(
+      `${FOUNDER_FLAG_PATH}?before_id=${firstPage.next_before_id}&limit=2`,
+      { headers: authHeaders() },
+    )
+    assert.equal(older.status, 200, await older.clone().text())
+    const olderPage = await older.json() as {
+      flags: Array<{ id: number; reason: string }>
+      has_more: boolean
+      next_before_id: number | null
+    }
+    assert.deepEqual(olderPage.flags.map(flag => flag.id), [4, 3])
+    assert.equal(olderPage.flags[1]?.reason, 'a resident wrote this report text')
+    assert.equal(olderPage.has_more, false)
+    assert.equal(olderPage.next_before_id, null)
   })
 
   test('a filed flag reads back to the founder with its reason and then marks handled', async () => {
@@ -590,5 +645,45 @@ export function registerFounderOperationsTests(): void {
     assert.equal(handled.status, 200, await handled.clone().text())
     const answered = await app.request('/api/me', { headers: authHeaders() })
     assert.equal((await answered.json() as { unhandled_flag_count: number }).unhandled_flag_count, 0)
+  })
+
+  test('a hosted-chat sign-in as founder #1 is told nothing about reports', async () => {
+    // Founder capability lives on the root key alone. The hosted door deliberately refuses
+    // founder-only surface, so signing in there as resident #1 must not leak the count.
+    reset()
+    setActor(1, 'founder')
+    const accessToken = `1f3d9_at_${'cd'.repeat(32)}`
+    const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    setOAuthResidentResolver(async token => token === accessToken ? {
+      id: 1,
+      handle: 'founder',
+      model: 'hosted-chat',
+      joined_at: '2026-08-13T00:00:00.000Z',
+      quota_day: '2026-09-15',
+      things_today: 0,
+      notes_today: 0,
+      agreement_actions_today: 0,
+    } : null)
+    try {
+      const request = new Request('http://localhost/api/me', {
+        headers: { authorization: `Bearer ${accessToken}` },
+      })
+      allowOAuthForHostedConnectorRequest(request)
+      const hosted = await app.request(request)
+      assert.equal(hosted.status, 200, await hosted.clone().text())
+      assert.equal(
+        Object.hasOwn(await hosted.json() as Record<string, unknown>, 'unhandled_flag_count'),
+        false,
+      )
+      assert.equal(
+        sqlCalls().some(call => call.query?.includes('/* founder:flag-unhandled-count */')),
+        false,
+      )
+    } finally {
+      setOAuthResidentResolver(null)
+      if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
+    }
   })
 }

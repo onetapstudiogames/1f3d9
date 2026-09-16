@@ -1,8 +1,8 @@
-import { positiveId } from './input.ts'
+import { positiveId, publicLabel } from './input.ts'
+import type { PublicPage } from './public-pagination.ts'
 import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 
 export const FLAG_REVIEW_NOTE_CHARACTERS = PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters
-export const FOUNDER_FLAG_PAGE_LIMIT = 200
 
 export const FLAG_TARGET_TYPES = Object.freeze([
   'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement',
@@ -60,8 +60,9 @@ const QUEUE_SQL = `
   FROM flags flag
   LEFT JOIN residents reporter ON reporter.id = flag.reporter_id
   LEFT JOIN flag_reviews review ON review.flag_id = flag.id
+  WHERE $1::integer IS NULL OR flag.id < $1::integer
   ORDER BY flag.id DESC
-  LIMIT ${FOUNDER_FLAG_PAGE_LIMIT}
+  LIMIT $2::integer
 `
 
 const HANDLE_SQL = `
@@ -133,10 +134,14 @@ export async function unhandledFlagCount(query: FlagReviewQuery): Promise<number
   return count
 }
 
-export async function readFounderFlagQueue(query: FlagReviewQuery): Promise<FounderFlagQueue> {
+/** One page of reports, newest first, beside the count of every unhandled report. */
+export async function readFounderFlagQueue(
+  query: FlagReviewQuery,
+  page: PublicPage,
+): Promise<FounderFlagQueue> {
   const [count, rows] = await Promise.all([
     unhandledFlagCount(query),
-    query(QUEUE_SQL, []),
+    query(QUEUE_SQL, [page.cursor, page.fetchLimit]),
   ])
   return Object.freeze({
     unhandledCount: count,
@@ -154,14 +159,12 @@ export function flagHandleDecision(value: unknown): FlagHandleDecision | null {
   if (hasModerationId && moderationId === null) return null
   let note: string | null = null
   if (Object.hasOwn(input, 'note')) {
-    if (typeof input.note !== 'string') return null
-    const trimmed = input.note.trim()
-    if (
-      trimmed.length === 0
-      || Array.from(trimmed).length > FLAG_REVIEW_NOTE_CHARACTERS
-      || /[\t\r\n]/u.test(trimmed)
-    ) return null
-    note = trimmed
+    // The same safe-text boundary every other public label crosses, plus the one-line
+    // tab rule the flag_reviews check states, so nothing is silently rewritten on the
+    // way to Postgres.
+    const label = publicLabel(input.note, FLAG_REVIEW_NOTE_CHARACTERS)
+    if (label === null || /\t/u.test(label)) return null
+    note = label
   }
   if (moderationId === null && note === null) return null
   return Object.freeze({ moderationId, note })

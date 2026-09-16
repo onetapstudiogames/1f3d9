@@ -8,6 +8,10 @@ import {
   readFounderFlagQueue,
   type FlagReviewQuery,
 } from '../src/flag-review.ts'
+import type { PublicPage } from '../src/public-pagination.ts'
+
+const page = (cursor: number | null, limit: number): PublicPage =>
+  ({ ok: true, cursor, limit, fetchLimit: limit + 1 })
 
 test('a flag handle body must carry a moderation id, a one-line note, or both', () => {
   assert.deepEqual(flagHandleDecision({ moderation_id: 77 }), { moderationId: 77, note: null })
@@ -19,12 +23,21 @@ test('a flag handle body must carry a moderation id, a one-line note, or both', 
     null, 'note', [], {}, { note: '' }, { note: '   ' }, { note: 'two\nlines' },
     { note: 'one\ttab' }, { note: 'x'.repeat(FLAG_REVIEW_NOTE_CHARACTERS + 1) },
     { moderation_id: 0 }, { moderation_id: 'seven' }, { note: 'ok', extra: true },
+    // The same safe-text boundary every other public label crosses: a control
+    // character, a bidi override, a lone surrogate, and already-broken text are all
+    // refused in caller words rather than rewritten on the way to Postgres.
+    { note: 'null\u0000byte' }, { note: 'vertical\u000Btab' },
+    { note: 'control\u0085next' }, { note: 'right\u202Eoverride' },
+    { note: 'lone\uD800surrogate' }, { note: 'already\uFFFDbroken' },
   ]) assert.equal(flagHandleDecision(refused), null, JSON.stringify(refused))
 })
 
 test('the founder flag queue keeps anonymous reports anonymous and reads timestamps once', async () => {
-  const query: FlagReviewQuery = async text =>
-    text.includes('flag-unhandled-count') ? [{ count: 1 }] : [
+  const pageParams: unknown[][] = []
+  const query: FlagReviewQuery = async (text, params) => {
+    if (text.includes('flag-unhandled-count')) return [{ count: 1 }]
+    pageParams.push([...params])
+    return [
       {
         id: 4, reporter_id: null, reporter_handle: null, target_type: 'thing', target_id: 41,
         reason: 'an anonymous reader wrote this', created_at: new Date('2026-09-14T00:00:00Z'),
@@ -36,7 +49,11 @@ test('the founder flag queue keeps anonymous reports anonymous and reads timesta
         handled_at: new Date('2026-09-11T00:00:00Z'), moderation_id: 77, note: null,
       },
     ]
-  const queue = await readFounderFlagQueue(query)
+  }
+  const queue = await readFounderFlagQueue(query, page(12, 10))
+  // The cursor and the one extra row that decides has_more both reach the page query, so
+  // a report older than one page is reachable instead of falling off a fixed window.
+  assert.deepEqual(pageParams, [[12, 11]])
   assert.equal(queue.unhandledCount, 1)
   assert.equal(queue.flags[0]?.reporter, null)
   assert.equal(queue.flags[0]?.created_at, '2026-09-14T00:00:00.000Z')
