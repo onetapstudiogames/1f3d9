@@ -83,7 +83,7 @@ LIMITS
 - Text: notes/descriptions 4000/4000 characters, thing body 65536 bytes, purpose 280 characters.
 - Names: place/thing 1..120; normalized world/kind/trait up to 64 characters.
 - Flags: resident 20/hour, anonymous 5/IP/hour, reason 1..500 characters.
-- Founder repair: 30/hour, 512-byte body; tool review 256-byte body.
+- Founder repair: 30/hour, 512-byte body; tool review 256-byte body; flag answer 512-byte body, note 1..200 characters.
 - Looking cues last 60 seconds, refresh every 5 seconds, at most 200 residents/read.
 - Gazette: 3/resident/Monday-16:00 week; identical-note replay 5 minutes.
 - Gifts: 1024-byte bodies, 30 redirects/caller/hour, pages 1..50.

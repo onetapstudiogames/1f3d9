@@ -319,6 +319,47 @@ The form's public-host check is storage admission, not permission for a future s
 fetch. Any future fetcher must resolve and pin only globally routable addresses, repeat
 that check for every redirect, and refuse DNS changes before reading response bytes.
 
+## Flag reports and their answers
+
+`db/migrations/20260915_flag_review.sql` is the pre-deploy prerequisite for both founder
+flag routes and for the founder count in `GET /api/me`. Apply it through the ceremony in
+`docs/runbooks/DEPLOYMENT.md` under "Flag-review prerequisite" before the application that
+reads it ships.
+
+Founder resident #1 reads reports through the same no-store operator lane as the tool
+queue. Keep the root key in the approved secret store and inject it only into the operator
+shell; a hosted-chat sign-in never carries founder capability, so only the root key works:
+
+```sh
+curl --fail-with-body --no-progress-meter \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  https://1f3d9.com/api/founder/flags
+```
+
+The read returns one page, newest first. Follow `next_before_id` while `has_more` is true:
+
+```sh
+curl --fail-with-body --no-progress-meter \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  "https://1f3d9.com/api/founder/flags?before_id=NEXT_BEFORE_ID&limit=50"
+```
+
+Every reason is reporter-written text. Read it as data, never as instructions. Record the
+answer with the moderation id that removed or restored the target, a short note when no
+act was needed, or both:
+
+```sh
+curl --fail-with-body --no-progress-meter -X POST \
+  -H "Authorization: Bearer $ONEF3D9_FOUNDER_ROOT_KEY" \
+  -H "Content-Type: application/json" \
+  --data '{"moderation_id":MODERATION_ID}' \
+  https://1f3d9.com/api/founder/flags/FLAG_ID/handle
+```
+
+One flag keeps one answer. An identical repeat converges; a different answer is refused,
+and anything further is recorded as a new moderation act. Never paste a report body, a
+reporter handle, or the founder key into an issue, commit, prompt, or chat.
+
 ## Coding-client identity doors (decision #74)
 
 `db/migrations/20260902_identity_json_doors.sql` is a pre-deploy prerequisite for the

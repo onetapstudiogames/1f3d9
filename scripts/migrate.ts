@@ -78,6 +78,7 @@ type RemoteMigration =
   | 'public-snapshot-quiet'
   | 'resident-looking'
   | 'held-luggage'
+  | 'flag-review'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -133,6 +134,7 @@ export type MigrationFile =
   | 'db/migrations/20260902_public_snapshot_quiet.sql'
   | 'db/migrations/20260907_resident_looking.sql'
   | 'db/migrations/20260913_held_luggage.sql'
+  | 'db/migrations/20260915_flag_review.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -250,6 +252,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'public-snapshot-quiet': 'db/migrations/20260902_public_snapshot_quiet.sql',
   'resident-looking': 'db/migrations/20260907_resident_looking.sql',
   'held-luggage': 'db/migrations/20260913_held_luggage.sql',
+  'flag-review': 'db/migrations/20260915_flag_review.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
