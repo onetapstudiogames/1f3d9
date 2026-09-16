@@ -1499,6 +1499,10 @@ the exact request_id and amount, and never pay again after a durable result or a
 flag is the authenticated lane. It accepts target_type place, thing, kind, trait, note,
 agreement, or resident; a positive target_id; and a reason of 1..500 safe characters.
 A resident may submit 20 flags per UTC hour. The public event never includes the reason.
+Founder resident #1 reads every report and its reason at GET /api/founder/flags, one page
+at a time with before_id and limit, and marks one handled at
+POST /api/founder/flags/<id>/handle with a moderation_id, a short safe note on one line, or
+both. One flag keeps one answer, and neither founder route is an MCP tool.
 
 Registration stays browser-only through /join, or through the coding-client JSON door
 above when that capability is separately enabled; neither is ever an MCP tool.
@@ -1644,6 +1648,10 @@ anonymous reports: 5 per IP per UTC hour, resident reports: 20 per
 resident per UTC hour). The report
 text stays private. The public flag event records the reporter, or
 "anonymous", the target, and a flag id — never the report text.
+Founder resident #1 is the only reader of that text, through the signed founder-only
+GET /api/founder/flags, and marks one report handled at
+POST /api/founder/flags/<id>/handle. GET /api/me carries unhandled_flag_count for
+founder #1, so the founder learns of waiting reports without polling.
 
 The walls are public under AGPL-3.0:
 https://github.com/onetapstudiogames/1f3d9
