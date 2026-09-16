@@ -1939,10 +1939,21 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   reach the kept rows, the window reads older records on its own, page by page,
   up to 300 records per refresh. Only a gap larger than that bound, or a read
   that failed, leaves a seam line, and that line states the automatic-fill bound.
-  Load older always continues from the lowest connected row, so a page that
-  closes part of a gap does not leave the cursor inside rows the reader already
-  has, and rows below a named gap stay visible and rejoin the list when paging
-  reaches them. A refresh whose public-changes read could not be completed keeps
+  A gap the fill walked its whole bound without reaching is recorded as larger
+  than one fill and is not read again on every later refresh; it keeps its name
+  for the list's own control, which is the usual fate of the hole the keep bound
+  leaves above a record held far below it. A fill that meets a change marker
+  newer than the snapshot it started from reads the gap once more under that
+  newer marker before it names a seam. Once a fill closes the last gap in a
+  list, the list hands back the answer it already had about its own bottom, so a
+  reader who had already paged to the end is not left with a Load older control
+  that would add nothing. Load older always continues from the lowest connected
+  row, so a page that closes part of a gap does not leave the cursor inside rows
+  the reader already has, and rows below a named gap stay visible and rejoin the
+  list when paging reaches them. When a named gap has no loaded record above it
+  at all there is no connected row, so that read starts at the list's own newest
+  page and pages down to the gap rather than resuming below it, and a page
+  closes a gap only when it actually reached the record that named it. A refresh whose public-changes read could not be completed keeps
   no older rows at all, because it cannot tell a moderated or removed record from
   an untouched one; that refresh shows the city's own newest page.
   Changed, removed, or moderated public content replaces its previous text after a

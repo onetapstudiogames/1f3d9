@@ -19,6 +19,8 @@ type HistoryEntry = Readonly<{
   error?: boolean
   loading?: boolean
   initialized?: boolean
+  olderRowsRemain?: boolean
+  beyondFillIds?: readonly number[]
   filters?: Readonly<Record<string, unknown>>
 }>
 type Histories = Record<string, Record<string, HistoryEntry>>
@@ -122,18 +124,23 @@ function historyGapFiller(fetchFake: (input: string) => Promise<unknown>) {
     'function mergeUnchangedSnapshotHistories',
   )
   return new Function(
-    'historyRequestUrl', 'fetch', 'requireExactReadMarker', 'normalizeHistoryRows',
-    'mergeWindowRows', 'safeId', 'WINDOW_HISTORY_FILL_ROWS',
+    'historyRequestUrl', 'fetch', 'safeChangeMarker', 'markerCovers', 'normalizeHistoryRows',
+    'mergeWindowRows', 'safeId', 'WINDOW_HISTORY_FILL_ROWS', 'WINDOW_HISTORY_KEEP_ROWS',
     `${KEEP_AND_CURSOR_SOURCE} ${source}; return rejoinSnapshotHistories`,
   )(
-    (collection: string, options: { nextBeforeId: number | null }) =>
-      new URL(`https://city.test/api/${collection}?before_id=${options.nextBeforeId ?? ''}`),
+    (collection: string, options: { nextBeforeId: number | null },
+      _filters: unknown, marker: string) =>
+      new URL(`https://city.test/api/${collection}?before_id=${options.nextBeforeId ?? ''}` +
+        `&after_change_marker=${marker ?? ''}`),
     fetchFake,
-    () => {},
+    (value: unknown) => typeof value === 'string' && /^[0-9]+$/.test(value) ? value : null,
+    (actual: string | null, minimum: string | null) =>
+      Boolean(actual && minimum && BigInt(actual) >= BigInt(minimum)),
     (collection: string, payload: Record<string, unknown>) => payload[collection],
     mergeWindowRows,
     (value: unknown) => Number(value) || null,
     WINDOW_HISTORY_FILL_ROWS,
+    WINDOW_HISTORY_KEEP_ROWS,
   ) as (histories: Partial<Histories>, snapshot: Record<string, Row[]>, marker: string,
     signal: AbortSignal) => Promise<Histories>
 }
@@ -436,6 +443,147 @@ test('a failed fill read marks the list instead of joining it silently', async (
   assert.deepEqual(reconciled.things!.all!.rows, [{ id: 20 }])
 })
 
+test('a filtered list with no fresh row above its top row keeps its cursor above the gap', async () => {
+  // A quiet place: the city's own newest page carries no row of this list, so
+  // nothing proves the reader's own top row is still the newest one.
+  const loaded = rowsFrom(100, 10).map(row => ({ ...row, place_id: 11 }))
+  const previous = {
+    notes: { 'place:11|resident:': loadedEntry(loaded, { filters: { placeId: 11 } }) },
+    things: {}, agreements: {}, events: {},
+  }
+  const citywideNewest = rowsFrom(900, 50).map(row => ({ ...row, place_id: 12 }))
+
+  const refreshed = refreshedHistories(previous, snapshotOf({ notes: citywideNewest }))
+    .notes!['place:11|resident:']!
+  assert.deepEqual(ids(refreshed.deferredRows), [100], 'the gap above the top row is named')
+  assert.equal(refreshed.nextBeforeId, null,
+    'with nothing loaded above the gap the next read starts at the newest page')
+
+  // The automatic fill then fails, which is where the cursor used to fall back
+  // to the bottom of the list, below the gap it had just named.
+  const rejoin = historyGapFiller(async () => ({ ok: false, json: async () => ({}) }))
+  const seamed = (await rejoin({ notes: { 'place:11|resident:': refreshed } },
+    { notes: [], things: [], agreements: [], events: [] },
+    '8', new AbortController().signal)).notes!['place:11|resident:']!
+
+  assert.equal(seamed.refreshError, true, 'a failed fill is marked for the reader')
+  assert.deepEqual(ids(seamed.deferredRows), [100], 'the failed fill leaves the gap named')
+  assert.equal(seamed.nextBeforeId, null, 'the cursor never drops below the gap it names')
+
+  // One press of the list's own control reads this list's newest page and pages
+  // down towards the gap. It cannot clear the marker without loading it.
+  const { run, read } = olderHistoryPager(seamed, async (input: string) => {
+    const before = Number(new URL(input, 'https://city.test').searchParams.get('before_id')) || 301
+    const rows = rowsFrom(before - 1, 50)
+    return { ok: true, json: async () => ({
+      notes: rows, change_marker: '8', has_more: true, next_before_id: rows.at(-1)!.id,
+    }) }
+  })
+
+  await run('notes', {})
+  assert.deepEqual(ids(read().deferredRows), [100],
+    'a page that stopped above the gap leaves it named')
+  assert.equal(read().nextBeforeId, 251, 'the cursor stays above the gap')
+  assert.equal(read().rows[0]!.id, 300, 'the newest page of this list is what loaded')
+
+  for (let page = 0; page < 4; page += 1) await run('notes', {})
+  assert.deepEqual(read().deferredRows, [], 'the page that reaches the top row closes the gap')
+  assert.deepEqual(ids(read().rows), ids(rowsFrom(300, 250)),
+    'every record between this list newest and its kept rows is loaded')
+})
+
+test('a gap the fill proved larger than its bound is not read again on every refresh', async () => {
+  // Ten rows a page from 400: the first fill walks its whole bound without
+  // reaching the row at 10, which is the hole the keep bound leaves above a
+  // record the reader is holding open far below it. Reading it again on every
+  // changed refresh would spend the whole fill budget for ever and end at the
+  // same seam.
+  const entry = Object.freeze({
+    rows: [{ id: 400 }, { id: 10 }], deferredRows: [{ id: 10 }], filters: {},
+  })
+  let reads = 0
+  const rejoin = historyGapFiller(async (input: string) => {
+    reads += 1
+    return deepGapFetch(input)
+  })
+  const snapshot = { notes: [{ id: 400 }], things: [], agreements: [], events: [] }
+
+  const first = (await rejoin({ notes: { all: entry }, things: {}, agreements: {}, events: {} },
+    snapshot, '8', new AbortController().signal)).notes!.all!
+  const spent = reads
+
+  assert.ok(spent > 1, 'the first fill spent its bound on the gap')
+  assert.deepEqual(ids(first.deferredRows), [10], 'the gap past the bound keeps its name')
+  assert.deepEqual(first.beyondFillIds, [10], 'and is recorded as larger than one fill')
+
+  const second = await rejoin({ notes: { all: first }, things: {}, agreements: {}, events: {} },
+    snapshot, '8', new AbortController().signal)
+
+  assert.equal(reads, spent, 'the next changed refresh reads nothing for that gap')
+  assert.strictEqual(second.notes!.all!, first, 'the named gap is left exactly as it was')
+
+  // The record survives the refresh that rebuilds the list, so the gap is not
+  // read again the moment the entry is rebuilt either.
+  const kept = refreshedHistories({ notes: { 'place:11|resident:': first } },
+    snapshotOf({ notes: rowsFrom(401, 50) })).notes!['place:11|resident:']!
+  assert.deepEqual(ids(kept.deferredRows), [10], 'the gap is still named after a refresh')
+  assert.deepEqual(kept.beyondFillIds, [10], 'and is still known to be larger than one fill')
+})
+
+test('a fill that closes the gap gives back the bottom of a list the reader had reached', async () => {
+  // This reader had paged to the very bottom of the list, so nothing older
+  // exists. A named gap opens the Load older control; closing that gap must
+  // hand the bottom answer back rather than leave a control that fetches
+  // nothing.
+  const previous = {
+    notes: { all: loadedEntry(rowsFrom(400, 120), { hasMore: false, nextBeforeId: null }) },
+    things: {}, agreements: {}, events: {},
+  }
+
+  const refreshed = refreshedHistories(previous, snapshotOf({ notes: rowsFrom(500, 50) }))
+    .notes!.all!
+  assert.deepEqual(ids(refreshed.deferredRows), [400])
+  assert.equal(refreshed.hasMore, true, 'a named gap opens the control')
+
+  const rejoin = historyGapFiller(pagedFetch(50, 500))
+  const filled = (await rejoin(
+    { notes: { all: refreshed }, things: {}, agreements: {}, events: {} },
+    { notes: rowsFrom(500, 50), things: [], agreements: [], events: [] },
+    '8', new AbortController().signal)).notes!.all!
+
+  assert.deepEqual(filled.deferredRows, [], 'the fill closed the gap')
+  assert.equal(filled.hasMore, false,
+    'a reader already at the bottom is not offered a page that would add nothing')
+})
+
+test('a city change during the fill is read again from the newer marker', async () => {
+  const entry = loadedEntry([...rowsFrom(500, 50), ...rowsFrom(400, 120)], {
+    deferredRows: [{ id: 400 }], nextBeforeId: 451,
+  })
+  const markers: string[] = []
+  const page = pagedFetch(50, 500)
+  const rejoin = historyGapFiller(async (input: string) => {
+    const marker = new URL(input, 'https://city.test').searchParams.get('after_change_marker') || ''
+    markers.push(marker)
+    // The city changed between the snapshot read and the first fill read.
+    if (marker === '8') {
+      return { ok: true, json: async () => ({ notes: [], change_marker: '9', has_more: true }) }
+    }
+    const payload = await (await page(input)).json() as Record<string, unknown>
+    return { ok: true, json: async () => ({ ...payload, change_marker: '9' }) }
+  })
+
+  const filled = (await rejoin(
+    { notes: { all: entry }, things: {}, agreements: {}, events: {} },
+    { notes: rowsFrom(500, 50), things: [], agreements: [], events: [] },
+    '8', new AbortController().signal)).notes!.all!
+
+  assert.deepEqual(markers, ['8', '9', '9'],
+    'the fill met a newer marker and read the gap again under it')
+  assert.deepEqual(filled.deferredRows, [], 'the gap the city change interrupted still closed')
+  assert.equal(filled.refreshError, false, 'a city change during a fill is not an error seam')
+})
+
 // The older-history pager is a browser-program string too, so the suite runs the
 // real loadHistory with the seam helpers it calls and fakes for the rest.
 function olderHistoryPager(
@@ -445,7 +593,7 @@ function olderHistoryPager(
   const source = functionSource(
     PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE, 'loadHistory', 'function loadedHistoryRows')
   const seamSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
-    '  function seamRowsAfterPage', '  function seamHistoryEntry')
+    '  function seamRowsAfterPage', '  function filledHistoryEntry')
   const cursorSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
     '  function connectedHistoryCursor', '  function retainedHistoryEntry')
   let stored = initial
@@ -460,7 +608,8 @@ function olderHistoryPager(
     (_collection: string, _filters: unknown, entry: HistoryEntry) => { stored = entry },
     () => {},
     (_collection: string, entry: { initialized: boolean, nextBeforeId: number | null }) =>
-      new URL(`https://city.test/api/window?before_id=${entry.initialized ? entry.nextBeforeId : ''}`),
+      new URL('https://city.test/api/window?before_id=' +
+        (entry.initialized && entry.nextBeforeId ? String(entry.nextBeforeId) : '')),
     fetchFake,
     () => {}, (_collection: string, payload: { notes: Row[] }) => payload.notes,
     (value: unknown) => Number(value) || null, mergeWindowRows,

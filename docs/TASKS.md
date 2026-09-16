@@ -19,17 +19,11 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   reader's own top row, which for a filtered list over a quiet place is every changed
   refresh, about once a minute, for as long as the tab is open. Each one is a fill of at
   least one `/api/window` read, so a reader who paged in twenty places carries twenty
-  reads a minute. Options worth weighing: a per-list gap test that can prove a quiet
-  filtered list already joins, capping how many filled lists a session keeps, or a
-  longer interval between fills (city issue #326).
-- [ ] Two smaller seams left by the same fill. A successful fill keeps the kept entry's
-  forced `hasMore: true`, so a reader who had already paged to the very bottom of a list
-  keeps a Load older control that returns nothing until they press it once. And
-  `requireExactReadMarker` inside `fillHistoryGap` turns any city change that lands
-  between the snapshot read and the fill reads into a failed fill and an
-  error-flavoured seam, which on a busy hour is the seam noise #326 set out to remove;
-  the manual pager's `requireCurrentReadMarker` cannot be used there because it calls
-  `refreshCity()` from inside the refresh that is running (city issue #326).
+  reads a minute. A gap the fill has already proved larger than one fill is no longer
+  among them, and neither is a city change landing mid-fill, but a quiet filtered list
+  that joins on every attempt still pays a read each time. Options worth weighing: a
+  per-list gap test that can prove a quiet filtered list already joins, capping how many
+  filled lists a session keeps, or a longer interval between fills (city issue #326).
 - [ ] Give the window's 200 most-recently-opened-records bound one home. It is still
   an inline `.slice(-200)` in `src/window-client/viewer-state.ts`, kept in step with the
   prose in `docs/SYSTEM_DESIGN.md` by hand, unlike the kept-page and automatic-fill

@@ -118,12 +118,26 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   }
 
   // Load older always continues from the lowest connected row: the lowest
-  // loaded row above the highest gap still waiting to be filled.
+  // loaded row above the highest gap still waiting to be filled. With a gap
+  // still waiting and no loaded row above it there is no connected row at all,
+  // so the next read starts at the newest page and pages down to the gap rather
+  // than resuming below it, which would join the two sides in silence.
   function connectedHistoryCursor(rows, waitingRows, fallbackId) {
     const highestWaitingId = waitingRows.reduce(
       (highest, row) => Math.max(highest, row.id), 0)
     const connected = rows.filter(row => row.id > highestWaitingId)
-    return connected.length ? connected[connected.length - 1].id : fallbackId ?? null
+    if (connected.length) return connected[connected.length - 1].id
+    return waitingRows.length ? null : fallbackId ?? null
+  }
+
+  // Load older has something to fetch when records older than the lowest loaded
+  // row are still out there. A gap in the middle of a list forces that control
+  // open too, so the list keeps the bottom-of-list answer separately and a
+  // closed gap gives it back, instead of leaving a control that fetches nothing.
+  function olderRowsRemain(entry) {
+    return entry.olderRowsRemain === undefined
+      ? entry.hasMore === true
+      : entry.olderRowsRemain === true
   }
 
   // A waiting marker names the top row of a block with older records above it
@@ -176,7 +190,16 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       ...entry,
       rows,
       deferredRows: waitingRows,
-      hasMore: waitingRows.length || trimmed ? true : entry.hasMore === true,
+      // A gap already proved larger than one fill stays that way across a
+      // refresh. A gap whose own marker row left the list is named again by the
+      // row that takes its place, and that new name is read once more.
+      beyondFillIds: Object.freeze(waitingRows
+        .filter(row => (entry.beyondFillIds || []).includes(row.id))
+        .map(row => row.id)),
+      hasMore: waitingRows.length || trimmed ? true : olderRowsRemain(entry),
+      // A trim drops the rows below the bound, so older records are certainly
+      // out there. A gap in the middle says nothing about the bottom.
+      olderRowsRemain: trimmed ? true : olderRowsRemain(entry),
       nextBeforeId: entry.initialized === true
         ? connectedHistoryCursor(rows, waitingRows, entry.nextBeforeId)
         : entry.nextBeforeId ?? null,
@@ -242,29 +265,46 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   async function fillHistoryGap(
     collection, entry, filters, joinIds, marker, signal,
   ) {
-    let collected = []
+    let read = await readGapPages(collection, entry, filters, joinIds, marker, signal)
+    // The city changed between the snapshot read and this one. Read the gap
+    // again from the marker the city has just reported, once, rather than
+    // naming a gap the window could still close. The manual pager's
+    // requireCurrentReadMarker cannot be used here: it calls refreshCity, which
+    // is the refresh this fill is running inside.
+    if (read.newerMarker) {
+      read = await readGapPages(
+        collection, entry, filters, joinIds, read.newerMarker, signal)
+    }
+    const closedIds = read.closed
+      ? joinIds
+      : new Set(read.rows.filter(row => joinIds.has(row.id)).map(row => row.id))
+    return filledHistoryEntry(entry, closedIds, read.rows,
+      read.failed || Boolean(read.newerMarker), read.spentBound)
+  }
+
+  // One pass of the fill. It pages older until it has reached every waiting row,
+  // run out of city, or spent the fill bound, and it reports what it read rather
+  // than throwing, so its caller can choose between reading again and a seam.
+  async function readGapPages(collection, entry, filters, joinIds, marker, signal) {
+    let rows = []
     // Starting under the lowest row still connected to the newest page keeps the
     // fill from spending a page on rows this refresh just delivered.
     let beforeId = connectedHistoryCursor(entry.rows, [...joinIds].map(id => ({ id })), null)
     const seenCursors = new Set()
     try {
-      while (collected.length < WINDOW_HISTORY_FILL_ROWS) {
-        const url = historyRequestUrl(collection, {
-          initialized: Boolean(beforeId), nextBeforeId: beforeId,
-        }, filters, marker)
-        const response = await fetch(url.pathname + url.search, {
-          credentials: 'omit',
-          headers: { Accept: 'application/json' },
-          mode: 'same-origin',
-          redirect: 'error',
-          referrerPolicy: 'no-referrer',
-          signal,
-        })
-        if (!response.ok) throw new Error('older public history unavailable')
-        const payload = await response.json()
-        requireExactReadMarker(payload?.change_marker, marker)
+      while (rows.length < WINDOW_HISTORY_FILL_ROWS) {
+        const payload = await readGapPage(collection, filters, beforeId, marker, signal)
+        const responseMarker = safeChangeMarker(payload?.change_marker)
+        if (marker && responseMarker !== marker) {
+          if (!markerCovers(responseMarker, marker)) {
+            throw new Error('public read marker does not match its accepted rows')
+          }
+          return Object.freeze({
+            rows, closed: false, newerMarker: responseMarker, failed: false, spentBound: false,
+          })
+        }
         const incoming = normalizeHistoryRows(collection, payload)
-        collected = mergeWindowRows(collected, incoming)
+        rows = mergeWindowRows(rows, incoming)
         const hasMore = payload.has_more === true
         const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
         if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
@@ -272,58 +312,82 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
             !incoming.some(row => row.id === nextBeforeId))) {
           throw new Error('older public history cursor did not progress')
         }
-        const joined = [...joinIds].every(id => collected.some(row => row.id === id))
+        const joined = [...joinIds].every(id => rows.some(row => row.id === id))
         if (joined || !hasMore) {
-          const rows = mergeWindowRows(entry.rows, collected)
           return Object.freeze({
-            ...entry,
-            rows,
-            deferredRows: [],
-            hasMore: entry.hasMore === true,
-            nextBeforeId: connectedHistoryCursor(rows, [], entry.nextBeforeId),
-            initialized: true,
-            loading: false,
-            error: false,
-            refreshing: false,
-            refreshError: false,
+            rows, closed: true, newerMarker: null, failed: false, spentBound: false,
           })
         }
         seenCursors.add(nextBeforeId)
         beforeId = nextBeforeId
       }
     } catch {
-      return seamHistoryEntry(entry, joinIds, collected, true)
+      return Object.freeze({
+        rows, closed: false, newerMarker: null, failed: true, spentBound: false,
+      })
     }
-    return seamHistoryEntry(entry, joinIds, collected, false)
+    // The loop stopped because it spent the whole fill bound without reaching
+    // every waiting row.
+    return Object.freeze({
+      rows, closed: false, newerMarker: null, failed: false, spentBound: true,
+    })
+  }
+
+  // One older page of one list, read under the marker the fill is working from.
+  function readGapPage(collection, filters, beforeId, marker, signal) {
+    const url = historyRequestUrl(collection, {
+      initialized: Boolean(beforeId), nextBeforeId: beforeId,
+    }, filters, marker)
+    return fetch(url.pathname + url.search, {
+      credentials: 'omit',
+      headers: { Accept: 'application/json' },
+      mode: 'same-origin',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+      signal,
+    }).then(response => {
+      if (!response.ok) throw new Error('older public history unavailable')
+      return response.json()
+    })
   }
 
   // A page closes only the part of a seam it actually covered. A reader holding
   // two rows open at different depths has a gap above each one, so the rows the
-  // page reached join the list while the rows still below it keep waiting.
+  // page reached join the list while the rows still below it keep waiting. A
+  // page that stopped above a waiting row, or that lands entirely below it,
+  // never reached that row and leaves its gap named.
   function seamRowsAfterPage(deferredRows, incoming, hasMore) {
     if (!deferredRows.length || !hasMore) return []
     const lowestReadId = incoming.reduce(
       (lowest, row) => Math.min(lowest, row.id), Infinity)
-    return deferredRows.filter(row => row.id < lowestReadId)
+    return deferredRows.filter(row => row.id < lowestReadId ||
+      !incoming.some(read => read.id >= row.id))
   }
 
-  // A gap the automatic fill could not close stays named. The loaded rows stay,
-  // the top row of each block still waiting is recorded so the list's own
-  // control can close it, and the older-history cursor resumes at the lowest row
-  // still connected to the newest page rather than under the gap.
-  function seamHistoryEntry(entry, joinIds, collected, readFailed) {
+  // The list after a fill. Rows the fill read join the list, a gap it closed
+  // loses its name, and a gap still waiting keeps one so the list's own control
+  // can close it. The older-history cursor resumes at the lowest row still
+  // connected to the newest page rather than under a gap.
+  function filledHistoryEntry(entry, closedIds, collected, readFailed, spentBound) {
     const rows = mergeWindowRows(entry.rows, collected)
-    const joinedIds = new Set(collected.filter(row => joinIds.has(row.id)).map(row => row.id))
-    const waitingIds = new Set([...joinIds].filter(id => !joinedIds.has(id)))
-    const waitingRows = rows.filter(row => waitingIds.has(row.id))
+    const waitingRows = (entry.deferredRows || []).filter(row => !closedIds.has(row.id))
+    // A gap the fill walked its whole bound without reaching is larger than one
+    // fill, and the next refresh cannot make it smaller. It keeps its name for
+    // the list's own control, and the window stops spending a whole fill on it
+    // again on every refresh for as long as the tab stays open.
+    const beyondFill = new Set(entry.beyondFillIds || [])
     return Object.freeze({
       ...entry,
       rows,
       deferredRows: waitingRows,
-      // Only an unjoined block promises that something older is still out there.
-      // A read that failed after joining every waiting block must not offer a
-      // page that would add nothing.
-      hasMore: waitingRows.length > 0 ? true : entry.hasMore === true,
+      beyondFillIds: Object.freeze(waitingRows
+        .filter(row => spentBound || beyondFill.has(row.id))
+        .map(row => row.id)),
+      // Only an unclosed gap promises that something older is still out there.
+      // A fill that closed every gap hands the list its own bottom answer back,
+      // rather than offering a page that would add nothing.
+      hasMore: waitingRows.length > 0 ? true : olderRowsRemain(entry),
+      olderRowsRemain: olderRowsRemain(entry),
       nextBeforeId: connectedHistoryCursor(rows, waitingRows, entry.nextBeforeId),
       initialized: true,
       loading: false,
@@ -333,13 +397,22 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     })
   }
 
+  // The window fills a gap it has not already proved larger than one fill. The
+  // hole the keep bound leaves above a record held far below it is the usual
+  // one: reading it means paging from the bound down to that record, which the
+  // first fill already walked its whole bound without reaching.
+  function fillableGapRows(entry) {
+    const beyondFill = new Set(entry.beyondFillIds || [])
+    return (entry.deferredRows || []).filter(row => !beyondFill.has(row.id))
+  }
+
   // Every list the window pages rejoins itself after a changed refresh, whether
   // or not the reader is holding one of its records open.
   async function rejoinSnapshotHistories(histories, snapshot, marker, signal) {
     const reads = []
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       for (const [key, entry] of Object.entries(histories[collection] || {})) {
-        const joinIds = new Set((entry.deferredRows || []).map(row => row.id))
+        const joinIds = new Set(fillableGapRows(entry).map(row => row.id))
         if (!joinIds.size) continue
         const filters = entry.filters || Object.freeze({
           placeId: null, resident: null, context: false,

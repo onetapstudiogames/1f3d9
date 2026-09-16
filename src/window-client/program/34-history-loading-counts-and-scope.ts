@@ -92,6 +92,9 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
         rows,
         deferredRows: remainingSeamRows,
         hasMore,
+        // A page that left a gap named says nothing about the bottom of the
+        // list, so the list keeps the bottom answer it already had.
+        olderRowsRemain: remainingSeamRows.length ? olderRowsRemain(latest) : hasMore,
         // A page that closed a gap lands inside rows the reader already has, so
         // the next older page continues from the lowest connected row instead of
         // rereading them.
