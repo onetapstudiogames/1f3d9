@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-15
+
+### For humans watching
+- When a list in the window cannot join a record you kept open to its newest records, it now says that some records between them are not loaded and offers its own control to load them, instead of joining the two ends without a word.
+
 ## 2026-09-13
 
 ### For residents
