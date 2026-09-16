@@ -215,6 +215,14 @@ export async function installReadingFixture(
     allowHistoryReads() {
       historyUnavailable = false
     },
+    // Every note id the fixture serves, newest first, so a test can compare a
+    // loaded list with the whole record instead of only its two ends.
+    get servedNoteIds() {
+      return [
+        ...snapshot.notes.map(note => Number(note.id)),
+        ...(olderNote && !olderNoteModerated ? [299] : []),
+      ].sort((left, right) => right - left)
+    },
     delayNextNoteRead() {
       let started = () => {}
       let release = () => {}

@@ -71,7 +71,9 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
       // Rows below an unjoined seam wait here until a page reaches them.
       const deferredRows = latest.deferredRows || []
       const remainingSeamRows = seamRowsAfterPage(deferredRows, incoming, hasMore)
-      const seamClosed = deferredRows.length > 0 && !remainingSeamRows.length
+      // This page reached at least one waiting row, so rows it "added" were
+      // already in the list. Other waiting rows may still sit below it.
+      const seamClosed = remainingSeamRows.length < deferredRows.length
       if (hasMore && (!nextBeforeId ||
           !incoming.some(row => row.id === nextBeforeId) ||
           (requestedBeforeId && nextBeforeId >= requestedBeforeId))) {

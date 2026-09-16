@@ -108,13 +108,12 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       parts.push(element('p', 'loading-row', 'Loading updated ' + label + '…'))
     } else if (seamRows.length) {
       // Never a bare join: say that the list has a gap, and let the paging
-      // control below load it.
-      const seam = element('p', 'navigation-error', entry.refreshError
+      // control below load it. Not-yet-loaded is a waiting state, not an error,
+      // and this container already announces its own changes politely.
+      parts.push(element('p', 'seam-row', entry.refreshError
         ? 'Older ' + label + ' could not be rechecked, so some ' + label +
           ' between here and the newest may not be loaded.'
-        : 'Some ' + label + ' between here and the newest are not loaded.')
-      seam.setAttribute('role', 'status')
-      parts.push(seam)
+        : 'Some ' + label + ' between here and the newest are not loaded.'))
     } else if (entry.refreshError) {
       const message = element('p', 'navigation-error',
         'Updated ' + label + ' could not be loaded. Showing the previous completed results.')

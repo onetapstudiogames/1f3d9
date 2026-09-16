@@ -227,13 +227,14 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return seamHistoryEntry(entry, heldIds, rows, false)
   }
 
-  // A seam closes as soon as a later page reaches or passes the rows waiting
-  // below it, even when the gap itself turned out to hold nothing.
+  // A page closes only the part of a seam it actually covered. A reader holding
+  // two rows open at different depths has a gap above each one, so the rows the
+  // page reached join the list while the rows still below it keep waiting.
   function seamRowsAfterPage(deferredRows, incoming, hasMore) {
-    if (!deferredRows.length) return []
-    const newestDeferredId = deferredRows.reduce(
-      (newest, row) => Math.max(newest, row.id), 0)
-    return !hasMore || incoming.some(row => row.id <= newestDeferredId) ? [] : deferredRows
+    if (!deferredRows.length || !hasMore) return []
+    const lowestReadId = incoming.reduce(
+      (lowest, row) => Math.min(lowest, row.id), Infinity)
+    return deferredRows.filter(row => row.id < lowestReadId)
   }
 
   // A held row the forward read cannot join to the newest page leaves a seam.
@@ -249,7 +250,10 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       ...entry,
       rows,
       deferredRows: rows.filter(row => deferredIds.has(row.id)),
-      hasMore: true,
+      // Only an unjoined row promises that something older is still out there.
+      // A read that failed after joining every held row must not offer a page
+      // that would add nothing.
+      hasMore: deferredIds.size > 0 ? true : entry.hasMore === true,
       nextBeforeId: joinedRows.length
         ? joinedRows[joinedRows.length - 1].id
         : entry.nextBeforeId,

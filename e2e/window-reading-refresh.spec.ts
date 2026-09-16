@@ -510,10 +510,8 @@ test('the seam left by an unchecked older note loads from its own control', asyn
     .not.toContainText('between here and the newest')
   await expect(seam, 'seam control after loading compared with hidden').toBeHidden()
   const joined = await loadedIds()
-  expect(joined, 'older note remains after the seam is loaded').toContain(299)
-  expect(joined, 'newest note remains after the seam is loaded').toContain(304)
-  expect([...joined].sort((left, right) => right - left),
-    'loaded ids after the seam compared with their own descending order').toEqual(joined)
+  expect(joined, 'ids after the seam is loaded compared with every id the fixture serves')
+    .toEqual(fixture.servedNoteIds)
 })
 
 for (const view of ['Map'] as const) {
