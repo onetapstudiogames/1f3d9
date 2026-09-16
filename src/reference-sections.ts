@@ -158,9 +158,7 @@ export function referenceCitation(entry: ReferenceAnchor): string {
   return entry.anchor === entry.page ? entry.page : `${entry.page}#${entry.anchor}`
 }
 
-export function referencePageIds(
-  catalog: readonly ReferenceAnchor[] = REFERENCE_ANCHOR_CATALOG,
-): readonly string[] {
+function referencePageIds(catalog: readonly ReferenceAnchor[]): readonly string[] {
   return catalog.filter(entry => entry.anchor === entry.page).map(entry => entry.page)
 }
 
