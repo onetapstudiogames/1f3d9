@@ -172,6 +172,16 @@ export function registerWindowDirectoryAndPlaceTests(): void {
     )
   })
 
+  test('the selected-place panel calls the world line the city\'s instead of owner-written', () => {
+    const orientation = WINDOW_JS.slice(
+      WINDOW_JS.indexOf('function renderPlaceOrientation('),
+      WINDOW_JS.indexOf('function renderPlaceOrientation(') + 3000,
+    )
+    assert.match(orientation, /place\.owner === null[\s\S]{0,160}WORLD_ROOT_NAME/u)
+    assert.match(orientation, /City-written line/u)
+    assert.match(orientation, /Owner-written purpose/u)
+  })
+
   test('the selected-place panel identifies owner choices and links front matter without fetching bodies', () => {
     assert.match(WINDOW_JS, /owner-written purpose/iu)
     assert.match(WINDOW_JS, /owner-chosen front matter/iu)

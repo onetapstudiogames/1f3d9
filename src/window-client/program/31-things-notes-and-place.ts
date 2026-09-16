@@ -230,6 +230,12 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
       return
     }
+    // The world has no owner, so the line its place read carries is the city's
+    // own. Naming it owner-written here would claim an author it cannot have.
+    if (nodes.placePurposeLabel && place.owner === null && place.parent_id === null
+      && place.name === WORLD_ROOT_NAME) {
+      nodes.placePurposeLabel.textContent = 'City-written line'
+    }
     const description = state.details['place:' + String(place.id)]
     if (place.moderated) {
       renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)

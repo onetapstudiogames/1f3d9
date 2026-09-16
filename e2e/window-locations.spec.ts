@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
+import { WORLD_ROOT_PURPOSE } from '../src/world-root.ts'
 
 const LOCATION_SNAPSHOT = Object.freeze({
   view: 'outline',
@@ -12,6 +13,7 @@ const LOCATION_SNAPSHOT = Object.freeze({
     parent_id: null,
     name: 'the world',
     owner: null,
+    purpose: WORLD_ROOT_PURPOSE,
     places: 1,
     things: 0,
     notes: 0,
@@ -104,6 +106,20 @@ test.beforeEach(async ({ page }) => {
   await page.addStyleTag({ content: WINDOW_CSS })
   await page.addScriptTag({ content: WINDOW_JS })
   await expect(page.locator('#window-status')).toContainText('Watching')
+})
+
+test('the Place tab shows the world line as the city\'s own, not as an owner-written purpose', async ({ page }) => {
+  await page.locator('#place-filter').selectOption('1')
+  await page.getByRole('tab', { name: 'Place' }).click()
+
+  const placePanel = page.locator('#place-panel')
+  await expect(placePanel.getByText('City-written line', { exact: true })).toBeVisible()
+  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toHaveCount(0)
+  await expect(page.locator('#place-purpose')).toHaveText(WORLD_ROOT_PURPOSE)
+
+  await page.locator('#place-filter').selectOption('12')
+  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
+  await expect(placePanel.getByText('City-written line', { exact: true })).toHaveCount(0)
 })
 
 test('notes and happenings keep loaded and unloaded locations as visible accessible text', async ({ page }) => {
