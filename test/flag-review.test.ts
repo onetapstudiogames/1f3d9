@@ -73,3 +73,28 @@ test('the founder flag reader is absent from MCP', () => {
   const mcpSource = readFileSync(new URL('../src/mcp.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(mcpSource, /name:\s*['"][^'"]*flag[^'"]+/iu)
 })
+
+test('a fresh database and the reviewed migration define one identical flag_reviews table', () => {
+  // A fresh or test database is built from db/schema.sql while production is
+  // upgraded by the migration, so the two must state the same table. An escape
+  // that survives one file and not the other is exactly the drift this catches.
+  const flagReviewsTable = (sql: string, label: string): string => {
+    const table = /CREATE TABLE IF NOT EXISTS flag_reviews \([\s\S]*?\n\);/u.exec(sql)
+    assert.notEqual(table, null, `${label} must create flag_reviews`)
+    const index = /CREATE INDEX IF NOT EXISTS flag_reviews_reviewer[\s\S]*?;/u.exec(sql)
+    assert.notEqual(index, null, `${label} must index flag_reviews by reviewer`)
+    const trigger = /CREATE TRIGGER flag_reviews_append_only[\s\S]*?;/u.exec(sql)
+    assert.notEqual(trigger, null, `${label} must keep flag_reviews append-only`)
+    return [table![0], index![0], trigger![0]].join('\n').replace(/\s+/gu, ' ')
+  }
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  const schema = flagReviewsTable(read('../db/schema.sql'), 'db/schema.sql')
+  const migration = flagReviewsTable(
+    read('../db/migrations/20260915_flag_review.sql'),
+    'the flag review migration',
+  )
+  assert.equal(schema, migration)
+  // The one-line note rule must reach Postgres as escapes, never as the raw
+  // control characters an editor or a copy can silently drop.
+  assert.equal(schema.includes(String.raw`E'[\t\r\n]'`), true)
+})

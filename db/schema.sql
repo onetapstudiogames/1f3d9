@@ -3141,8 +3141,7 @@ CREATE TABLE IF NOT EXISTS flag_reviews (
   reviewer_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   moderation_id BIGINT REFERENCES moderation_actions(id) ON DELETE RESTRICT,
   note          TEXT CHECK (
-    note IS NULL OR (char_length(note) BETWEEN 1 AND 200 AND note !~ E'[	
-]')
+    note IS NULL OR (char_length(note) BETWEEN 1 AND 200 AND note !~ E'[\t\r\n]')
   ),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   CHECK (moderation_id IS NOT NULL OR note IS NOT NULL)
