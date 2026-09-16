@@ -22,12 +22,36 @@ export const CREDIT_REQUEST_ID_SUGGESTION_LINE =
 export const CREDIT_REQUEST_ID_SHAPE_REFUSAL =
   'request_id must be an identifier you make up for this one action, not a number or your balance; credit_preflight suggests one'
 
-// Buying credit has no credit_preflight to point at and starts no payment, so the
-// two purchase doors say the same rule once, in the buyer's words.
+// A purchase door refuses before any payment starts, so it says the shape in the
+// buyer's own words and ends by saying that. The served BUY CREDIT text still
+// points a buyer at the same suggested_request_id the spend tools point at.
 export const CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL =
   'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.'
 
 // A paid action recorded under a number-shaped id before the rule existed cannot be
-// retried with that id, so its conflict says what the caller can actually do.
-export const CREDIT_REQUEST_ID_RECORDED_CONFLICT =
-  'this action is already recorded under a request id the city no longer accepts, so it cannot be retried with that id; nothing new was spent, and the recorded credit returns on its own at the attempt deadline, after which a fresh request id starts this action again'
+// retried with that id, so its conflict says what the caller can actually do. What
+// that is depends on the recorded attempt's own status, so each recorded state says
+// only what is true of it and none of them promises a return the city will not make.
+const RECORDED_CONFLICT_OPENING =
+  'this action is already recorded under a request id the city no longer accepts, so it cannot be retried with that id; '
+
+export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING =
+  `${RECORDED_CONFLICT_OPENING}nothing new was spent, and the recorded credit returns on its own at the attempt deadline, after which a fresh request id starts this action again`
+
+export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED =
+  `${RECORDED_CONFLICT_OPENING}the action already happened under it and that credit is already spent, so nothing new was spent now and there is nothing left to retry`
+
+export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW =
+  `${RECORDED_CONFLICT_OPENING}nothing new was spent, and the recorded attempt is waiting on founder review; wait for that review to finish, because no request id moves it along`
+
+/** Say what a recorded attempt's own status leaves the caller able to do. */
+export function creditRequestIdRecordedConflict(status: string): string {
+  if (status === 'completed') return CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED
+  if (status === 'needs_review') return CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW
+  return CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING
+}
+
+/** True for every wording above, so a caller-facing route can drop a retry line. */
+export function isCreditRequestIdRecordedConflict(message: string): boolean {
+  return message.startsWith(RECORDED_CONFLICT_OPENING)
+}

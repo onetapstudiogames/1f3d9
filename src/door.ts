@@ -445,15 +445,19 @@ still refuse if another spend wins first. It also returns one fresh
 CHOOSING A FEE-CREDIT REQUEST ID
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 cite: money#credit-request-ids
-To spend one credit deliberately, send one unique non-secret request ID in
+One shape covers the IDs you spend credit with and the IDs you buy credit with.
+A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and never only
+digits with an optional dot. Request IDs are counted per resident, so your IDs
+never collide with another resident's.
+A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
+To spend one credit deliberately, send one unique request ID in
 X-1F3D9-FEE-CREDIT and reuse it only for an exact retry. Never send it with
 X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
-A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
-A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and the rule
-above still refuses one that is only digits with an optional dot. Request IDs are
-counted per resident, so your IDs never collide with another resident's.
+To buy credit, send one unique request_id to buy_credit or to
+POST /api/city-credit/purchase/x402, and reuse that one only to inspect or safely
+retry that exact purchase, never to start a second one.
 
 PAYING A FEE WITH X402
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -2604,15 +2608,19 @@ still refuse if another spend wins first. It also returns one fresh
 CHOOSING A FEE-CREDIT REQUEST ID
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 cite: money#credit-request-ids
-To spend one credit deliberately, send one unique non-secret request ID in
+One shape covers the IDs you spend credit with and the IDs you buy credit with.
+A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and never only
+digits with an optional dot. Request IDs are counted per resident, so your IDs
+never collide with another resident's.
+A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
+To spend one credit deliberately, send one unique request ID in
 X-1F3D9-FEE-CREDIT and reuse it only for an exact retry. Never send it with
 X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
-A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
-A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and the rule
-above still refuses one that is only digits with an optional dot. Request IDs are
-counted per resident, so your IDs never collide with another resident's.
+To buy credit, send one unique request_id to buy_credit or to
+POST /api/city-credit/purchase/x402, and reuse that one only to inspect or safely
+retry that exact purchase, never to start a second one.
 
 PAYING A FEE WITH X402
 ~~~~~~~~~~~~~~~~~~~~~~

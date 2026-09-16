@@ -778,9 +778,13 @@ of the commons; everything you do with what is already yours is free.
   `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
   served rule that describes both lives once in `src/city-fee-facts.ts`.
   A paid action already recorded under such an ID before that rule existed cannot be
-  retried with it, so its conflict says that instead of asking for the impossible: it
-  spends nothing new, the recorded credit returns at the attempt deadline through the
-  scheduled recovery batch, and a fresh request ID then starts the action again.
+  retried with it, so its conflict says that instead of asking for the impossible, and
+  says only what the recorded attempt's own status leaves the caller able to do. A
+  `settling` or `payment_pending` attempt spends nothing new, its recorded credit
+  returns at the attempt deadline through the scheduled recovery batch, and a fresh
+  request ID then starts the action again. A `completed` attempt already happened and
+  its credit is already spent, so nothing returns and nothing is left to retry. A
+  `needs_review` attempt waits on founder review, which no request ID moves along.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and
@@ -1732,8 +1736,11 @@ when no revision field is sent. A caller uses `credit_preflight` before delibera
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 
-`buy_credit` accepts a non-secret ASCII request_id of 8..128 characters and an exact
-whole-dollar amount string from 1 through 10,000. X-PAYMENT passes only in the outer HTTP
+`buy_credit` accepts a request_id of the one fee-credit request ID shape recorded
+above, which refuses an ID that is only digits with an optional dot, and an exact
+whole-dollar amount string from 1 through 10,000. A request ID recorded under the
+older rule is still accepted by `POST /api/city-credit/purchase/x402` to replay its
+own recorded purchase, and never to open a new one. X-PAYMENT passes only in the outer HTTP
 header. Missing proof returns the current 402; an exact timeout retry reuses both fields,
 and a durable result or attempt means do not pay again. `flag` requires resident auth,
 one supported public target, a positive id, and 1..500 safe reason characters; the

@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { canonicalPaymentRequest } from '../../src/payment-attempts.ts'
 import { beginCityCreditSpend } from '../../src/city-credit.ts'
+import {
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+} from '../../src/city-fee-facts.ts'
 import { MarkerDatabase, type QueryRow } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { REQUEST_ID } from '../helpers/city-credit-fixtures/ledger-entries.ts'
 import { ATTEMPT_ID, LEASE_OWNER, CANONICAL_REQUEST, spendRow, spendInput } from '../helpers/city-credit-fixtures/spend-attempts.ts'
@@ -194,6 +199,43 @@ export function registerSpendAttemptsTests(): void {
       response_status: 409,
       response: { error: 'target became unavailable; credit returned' },
     })
+  })
+
+  test('a recorded number-shaped id says only what its own attempt status allows', async () => {
+    // The reported case: the action was minted under `1.000000`, so its attempt is
+    // completed and no credit ever comes back. Each status answers for itself.
+    const recorded = [
+      ['payment_pending', CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING],
+      ['settling', CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING],
+      ['completed', CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED],
+      ['needs_review', CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW],
+    ] as const
+
+    for (const [attemptStatus, expected] of recorded) {
+      const database = new MarkerDatabase({
+        'begin-spend': [[spendRow({
+          attempt_status: attemptStatus,
+          request_id: '1.000000',
+          lease_acquired: false,
+          ...(attemptStatus === 'completed'
+            ? { state: 'completed', response_status: 201, response_json: { ok: true } }
+            : { state: 'busy' }),
+        })]],
+      })
+      await assert.rejects(
+        beginCityCreditSpend(database, spendInput({ requestId: 'fee-a-fresh-id-0001' })),
+        (error: unknown) => {
+          assert.equal(error instanceof Error ? error.message : '', expected, attemptStatus)
+          return true
+        },
+      )
+    }
+
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED, /already spent/iu)
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED, /returns on its own/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /founder review/iu)
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /returns on its own/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING, /returns on its own at the attempt deadline/iu)
   })
 
   test('replaying one request id returns the earlier recorded result and reserves nothing new', async () => {

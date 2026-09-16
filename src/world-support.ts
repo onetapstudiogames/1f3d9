@@ -35,7 +35,7 @@ import {
   parseCityCreditRequestId,
   returnCityCreditSpend,
 } from './city-credit.ts'
-import { CREDIT_REQUEST_ID_RECORDED_CONFLICT } from './city-fee-facts.ts'
+import { isCreditRequestIdRecordedConflict } from './city-fee-facts.ts'
 import type { DrawingState, DrawingVariant } from './drawing.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 
@@ -316,7 +316,7 @@ export async function treasuryFee(
       if (error instanceof CityCreditConflictError) {
         // The recorded-id conflict already says what this caller can do, and the
         // general retry line would contradict it.
-        return error.message === CREDIT_REQUEST_ID_RECORDED_CONFLICT
+        return isCreditRequestIdRecordedConflict(error.message)
           ? c.json({ error: error.message }, 409)
           : c.json({ error: error.message, retry: 'use the same request id only for the same request' }, 409)
       }

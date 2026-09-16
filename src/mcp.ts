@@ -800,7 +800,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'buy_credit',
     title: 'Buy city credit',
     description:
-      'Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a caller-chosen non-secret retry identifier: retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.',
+      `Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a non-secret identifier you make up for this one purchase, never a number or an amount. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

@@ -4,7 +4,7 @@ import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
 import {
-  CREDIT_REQUEST_ID_RECORDED_CONFLICT,
+  creditRequestIdRecordedConflict,
   CREDIT_REQUEST_ID_SHAPE_REFUSAL,
   PAID_ACTIONS,
 } from './city-fee-facts.ts'
@@ -465,10 +465,11 @@ function verifySpendTerms(
     || (row.method != null && String(row.method) !== 'credit')
   ) {
     // Telling a caller to reuse a stored id the validator now refuses would ask
-    // for something impossible, so that one case says what it can actually do.
+    // for something impossible, so that one case says what it can actually do,
+    // read from the recorded attempt's own status rather than assumed.
     throw new CityCreditConflictError(
       NUMBER_SHAPED_RE.test(String(row.request_id ?? ''))
-        ? CREDIT_REQUEST_ID_RECORDED_CONFLICT
+        ? creditRequestIdRecordedConflict(String(row.attempt_status ?? ''))
         : 'city credit request conflicts with changed immutable credit terms; use the original terms with this request id, or use a new request id',
     )
   }
@@ -549,6 +550,7 @@ async function executeBeginSpend(
         WHEN existing_leased.public_id IS NOT NULL THEN 'ready'
         ELSE 'busy'
       END AS state,
+      attempt.status AS attempt_status,
       attempt.public_id AS attempt_id, attempt.actor_id, attempt.operation,
       attempt.target_key, attempt.method, attempt.asset_type, attempt.asset_id,
       spend.request_id, attempt.request_hash,
@@ -570,6 +572,7 @@ async function executeBeginSpend(
     LEFT JOIN existing_leased ON existing_leased.public_id = attempt.public_id
     UNION ALL
     SELECT 'ready'::text AS state,
+      attempt.status AS attempt_status,
       attempt.public_id AS attempt_id, attempt.actor_id, attempt.operation,
       attempt.target_key, attempt.method, attempt.asset_type, attempt.asset_id,
       $4::text AS request_id,

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { generatedReference, architecture, decisions, mcpSource, referenceSource, productRequirements, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
-import { CREDIT_REQUEST_ID_RULE_LINE, CREDIT_REQUEST_ID_SHAPE_REFUSAL, CREDIT_REQUEST_ID_SUGGESTION_LINE } from '../../src/city-fee-facts.ts'
+import {
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+  CREDIT_REQUEST_ID_RULE_LINE,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SUGGESTION_LINE,
+} from '../../src/city-fee-facts.ts'
 
 export function registerMoneyTests(): void {
   test('city fee credit help stays deliberate, private, fixed, and non-transferable', () => {
@@ -162,5 +169,43 @@ export function registerMoneyTests(): void {
     assert.ok(mcpSource.includes('CREDIT_REQUEST_ID_SUGGESTION_LINE'), 'mcp: paid tools point at the suggestion')
     assert.match(CREDIT_REQUEST_ID_SUGGESTION_LINE, /credit_preflight/u, 'pointer names the tool that suggests')
     assert.match(CREDIT_REQUEST_ID_SHAPE_REFUSAL, /not a number or your balance/iu, 'refusal is in caller words')
+  })
+
+  test('no surface states an 8 to 128 shape for a request id without the number exclusion', () => {
+    // `12345678` satisfies 8 to 128 ASCII and is refused, so a surface that states
+    // only the length and character rule teaches a shape the validator does not have.
+    const excludesNumbers = /never (?:a plain number|only digits)|not a number|digits with an optional dot|never a number/iu
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
+      ['system design', specification],
+      ['architecture', architecture],
+      ['product requirements', productRequirements],
+      ['mcp source', mcpSource],
+    ] as const) {
+      for (const shape of text.matchAll(/8 (?:to|\.\.) ?128|8\.\.128/giu)) {
+        const at = shape.index ?? 0
+        const window = text.slice(Math.max(0, at - 320), at + 320)
+        if (!/request[ _]?id/iu.test(window)) continue
+        assert.match(window, excludesNumbers, `${name}: a request id shape at ${at} without the number exclusion`)
+      }
+    }
+  })
+
+  test('the recorded-id conflict promises only what each recorded state does', () => {
+    // A completed or founder-review attempt never returns credit at a deadline, so
+    // only the live wording may say it does.
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING, /returns on its own at the attempt deadline/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED, /already spent/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /founder review/iu)
+    for (const message of [
+      CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
+      CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+    ]) {
+      assert.doesNotMatch(message, /returns on its own|fresh request id starts this action again/iu)
+      assert.doesNotMatch(message, /—/u, 'no em dash')
+    }
+    assert.match(specification, /`completed` attempt already happened/u, 'system design: the completed state')
+    assert.match(specification, /`needs_review` attempt waits on founder review/u, 'system design: the review state')
   })
 }

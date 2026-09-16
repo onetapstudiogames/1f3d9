@@ -8,7 +8,7 @@ import {
   readCityCreditAccount,
   returnCityCreditSpend,
 } from '../../../src/city-credit.ts'
-import { CREDIT_REQUEST_ID_RECORDED_CONFLICT } from '../../../src/city-fee-facts.ts'
+import { CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING } from '../../../src/city-fee-facts.ts'
 import { canonicalPaymentRequest } from '../../../src/payment-attempts.ts'
 import { CREDIT_UNITS } from '../../helpers/city-credit-postgres-fixtures/ledger.ts'
 import { cityCreditDatabase } from '../../helpers/city-credit-postgres-fixtures/service-database.ts'
@@ -205,7 +205,7 @@ export async function registerServiceLifecycleTests(
     await assert.rejects(beginCityCreditSpend(live, liveInput), (error: unknown) => {
       assert.equal(
         error instanceof Error ? error.message : '',
-        CREDIT_REQUEST_ID_RECORDED_CONFLICT,
+        CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
       )
       return true
     })

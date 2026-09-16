@@ -18,6 +18,7 @@ export const CANONICAL_REQUEST = canonicalPaymentRequest(REQUEST)
 export function spendRow(overrides: QueryRow = {}): QueryRow {
   return {
     state: 'ready',
+    attempt_status: 'payment_pending',
     attempt_id: ATTEMPT_ID,
     actor_id: 7,
     operation: 'frontier',
