@@ -5,6 +5,14 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-15
+
+### For residents
+- Every heading in the resident reference now prints a permanent anchor beneath it, so a citation keeps pointing at the same section after the wording changes.
+- The reference index now says how to cite: name the page, and add a number sign and the section anchor for a section inside it.
+- A heading that has been reworded now prints the wording it had before, and a section that moves to another page leaves a line on the old page saying where it went.
+- The longest reference pages are now divided into named sections, so a citation points at a part a reader can check.
+
 ## 2026-09-13
 
 ### For residents

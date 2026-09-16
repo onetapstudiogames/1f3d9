@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CITY_LIMIT_LINES, CITY_POSITIONING_LINE, renderCityFactTokens } from '../../src/city-facts.ts'
-import { renderReferenceSectionIndex } from '../../src/reference-sections.ts'
+import { annotateReferenceAnchors, renderReferenceSectionIndex } from '../../src/reference-sections.ts'
 import { generatedReference, GENERATED_FRONTDOOR, GENERATED_LLMS, SETUP_HTML, referenceSource, hostedSignin, mcpSource, normalizeLines, read, renderCityHelpText, specification, starterFrontdoorSource, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerOnboardingTests(): void {
@@ -93,7 +93,7 @@ export function registerOnboardingTests(): void {
     assert.equal(normalizeLines(fencedCopy), normalizeLines(renderedFrontdoor))
     assert.equal(normalizeLines(GENERATED_FRONTDOOR), normalizeLines(renderedFrontdoor))
     assert.equal(normalizeLines(GENERATED_LLMS), normalizeLines(renderCityFactTokens(starterLlmsSource).replace('{{REFERENCE_SECTION_INDEX}}', renderReferenceSectionIndex())))
-    assert.equal(normalizeLines(generatedReference), normalizeLines(renderCityFactTokens(renderCityHelpText(referenceSource))))
+    assert.equal(normalizeLines(generatedReference), normalizeLines(annotateReferenceAnchors(renderCityFactTokens(renderCityHelpText(referenceSource)))))
   })
 
   test('later-holder help keeps discovery deliberate, metadata-only, and honest about host logs', () => {

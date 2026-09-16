@@ -14,12 +14,15 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { withoutInheritedGitEnvironment } from '../scripts/child-process-environment.ts'
-import { REFERENCE_SECTION_CATALOG } from '../src/reference-sections.ts'
+import { REFERENCE_ANCHOR_CATALOG } from '../src/reference-sections.ts'
 
 const generatorPath = fileURLToPath(new URL('../scripts/embed-door.mjs', import.meta.url))
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
-const fixtureReference = `FULL REFERENCE\n\n${REFERENCE_SECTION_CATALOG.slice(1)
-  .map(([, title]) => `${title.toUpperCase()}\n${'-'.repeat(title.length)}\nsection\n\n`)
+const fixtureReference = `FULL REFERENCE\n\n${REFERENCE_ANCHOR_CATALOG
+  .map(entry => {
+    const underline = entry.anchor === entry.page ? '-' : '~'
+    return `${entry.heading}\n${underline.repeat(entry.heading.length)}\nsection\n\n`
+  })
   .join('')}`
 
 const createFixture = (
