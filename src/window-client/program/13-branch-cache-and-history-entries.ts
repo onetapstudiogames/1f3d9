@@ -129,10 +129,17 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   // One list across a changed refresh: every row the reader already loaded
   // stays, the newest page merges in, and the top row of any block the newest
   // page does not reach is recorded so the fill below can close that gap.
-  function retainedHistoryEntry(collection, entry, freshRows, heldKeys, invalidatedKeys) {
+  function retainedHistoryEntry(
+    collection, entry, freshRows, newestRows, heldKeys, invalidatedKeys,
+  ) {
     const kind = historyViewerRecordKind(collection)
     const freshIds = new Set(freshRows.map(row => row.id))
+    // The snapshot rows are the city's own newest page for the whole city, so a
+    // loaded row above its oldest row and missing from it has left the city or
+    // this list, rather than been paged out of sight.
+    const removalFloorId = newestRows.length ? newestRows[newestRows.length - 1].id : 0
     const retainedRows = entry.rows.filter(row => !freshIds.has(row.id) &&
+      row.id < removalFloorId &&
       !invalidatedKeys.has(kind + ':' + String(row.id)))
     if (!retainedRows.length) return null
     const merged = mergeWindowRows(retainedRows, freshRows)
@@ -141,7 +148,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const keptIds = new Set(rows.map(row => row.id))
     // A newest page that still reaches the reader's own top row proves there is
     // nothing unloaded between them.
-    const gapAboveKeptRows = !freshIds.has(entry.rows[0].id)
+    const gapAboveKeptRows = removalFloorId > entry.rows[0].id
     const waitingRows = mergeWindowRows(
       (entry.deferredRows || []).filter(row => keptIds.has(row.id)),
       gapAboveKeptRows ? [retainedRows[0]] : [])
@@ -173,13 +180,13 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           ? filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
           : snapshot[collection]
         const retained = retainedHistoryEntry(
-          collection, entry, freshRows, heldKeys, invalidatedKeys)
+          collection, entry, freshRows, snapshot[collection], heldKeys, invalidatedKeys)
         return retained ? [[key, retained]] : []
       }))
       const previousAll = previousEntries.all
       const retainedAll = previousAll?.rows?.length
-        ? retainedHistoryEntry(
-            collection, previousAll, snapshot[collection], heldKeys, invalidatedKeys)
+        ? retainedHistoryEntry(collection, previousAll, snapshot[collection],
+            snapshot[collection], heldKeys, invalidatedKeys)
         : null
       histories = {
         ...histories,

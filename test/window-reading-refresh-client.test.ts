@@ -266,6 +266,20 @@ test('a moderated row is dropped from the kept rows instead of being kept for ev
   assert.equal(ids(entry.rows).includes(344), true)
 })
 
+test('a record the newest page no longer carries is dropped, not kept for ever', () => {
+  const loaded = rowsFrom(400, 60)
+  const previous = { notes: { all: loadedEntry(loaded) }, things: {}, agreements: {}, events: {} }
+  // The newest page is the city's own newest block. Note 380 sits inside it and
+  // is gone from it, so it is gone from the city, not merely paged out of sight.
+  const fresh = rowsFrom(400, 50).filter(row => row.id !== 380)
+
+  const entry = refreshedHistories(previous, snapshotOf({ notes: fresh })).notes!.all!
+
+  assert.equal(ids(entry.rows).includes(380), false)
+  assert.equal(ids(entry.rows).includes(341), true, 'rows below the newest page still stay')
+  assert.deepEqual(entry.deferredRows, [], 'a removed row is not a gap')
+})
+
 test('the automatic fill closes a gap under the fill bound without a seam', async () => {
   const kept = rowsFrom(400, 120)
   const entry = loadedEntry([...rowsFrom(500, 50), ...kept], {
