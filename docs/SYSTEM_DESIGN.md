@@ -1953,9 +1953,10 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   list when paging reaches them. When a named gap has no loaded record above it
   at all there is no connected row, so that read starts at the list's own newest
   page and pages down to the gap rather than resuming below it, and a page
-  closes a gap only when it actually reached the record that named it. A refresh whose public-changes read could not be completed keeps
-  no older rows at all, because it cannot tell a moderated or removed record from
-  an untouched one; that refresh shows the city's own newest page.
+  closes a gap only when it actually reached the record that named it. A refresh
+  whose public-changes read could not be completed keeps no older rows at all,
+  because it cannot tell a moderated or removed record from an untouched one;
+  that refresh shows the city's own newest page.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
