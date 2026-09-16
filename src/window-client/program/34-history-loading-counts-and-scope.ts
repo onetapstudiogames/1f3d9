@@ -68,12 +68,19 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
       const requestedBeforeId = requestEntry.initialized ? requestEntry.nextBeforeId : null
       const latest = historyEntry(collection, filters)
       const rows = mergeWindowRows(latest.rows, incoming)
+      // Rows below an unjoined seam wait here until a page reaches them.
+      const deferredRows = latest.deferredRows || []
+      const remainingSeamRows = seamRowsAfterPage(deferredRows, incoming, hasMore)
+      // This page reached at least one waiting row, so rows it "added" were
+      // already in the list. Other waiting rows may still sit below it.
+      const seamClosed = remainingSeamRows.length < deferredRows.length
       if (hasMore && (!nextBeforeId ||
           !incoming.some(row => row.id === nextBeforeId) ||
           (requestedBeforeId && nextBeforeId >= requestedBeforeId))) {
         throw new Error('public history cursor did not progress')
       }
-      if (hasMore && requestEntry.initialized && rows.length <= latest.rows.length) {
+      if (hasMore && requestEntry.initialized && rows.length <= latest.rows.length &&
+          !seamClosed) {
         throw new Error('public history page did not add a row')
       }
       const automaticPageCount = automatic
@@ -83,6 +90,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
         automaticPageCount >= MAX_AUTO_HISTORY_PAGES
       setHistoryEntry(collection, filters, {
         rows,
+        deferredRows: remainingSeamRows,
         hasMore,
         nextBeforeId,
         automaticPageCount,

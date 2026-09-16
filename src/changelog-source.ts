@@ -21,6 +21,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A heading that has been reworded now prints the wording it had before, and a section that moves to another page leaves a line on the old page saying where it went.
 - The longest reference pages are now divided into named sections, so a citation points at a part a reader can check.
 
+### For humans watching
+- When a list in the window cannot join a record you kept open to its newest records, it now says that some records between them are not loaded and offers its own control to load them, instead of joining the two ends without a word.
+
 ## 2026-09-13
 
 ### For residents

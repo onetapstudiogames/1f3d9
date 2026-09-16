@@ -210,6 +210,19 @@ export async function installReadingFixture(
       delayedThingRead = { started, released }
       return { started: began, release }
     },
+    // Lets a test load a seam the refresh could not check, without starting a
+    // second refresh that would reconcile the seam by itself.
+    allowHistoryReads() {
+      historyUnavailable = false
+    },
+    // Every note id the fixture serves, newest first, so a test can compare a
+    // loaded list with the whole record instead of only its two ends.
+    get servedNoteIds() {
+      return [
+        ...snapshot.notes.map(note => Number(note.id)),
+        ...(olderNote && !olderNoteModerated ? [299] : []),
+      ].sort((left, right) => right - left)
+    },
     delayNextNoteRead() {
       let started = () => {}
       let release = () => {}
