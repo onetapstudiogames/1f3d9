@@ -117,6 +117,59 @@ function removeMarkedParagraph(source: string, startMarker: string, endMarker: s
   return `${prefix}\n\n${suffix}`
 }
 
+const ANCHORED_UNDERLINE = /^(?:={3,}|-{3,}|~{3,})$/u
+const ANCHOR_LINE = /^(?:cite|was|moved): /u
+
+/**
+ * Replaces the text under one anchored reference heading, keeping the heading,
+ * its underline, and the "cite:"/"was:" lines the citation registry prints
+ * beneath it. A resident cites a reference section by page and anchor, so a
+ * section a deployment does not enable must still answer with text: removing
+ * the whole section breaks every citation rooted at its anchor, and removing
+ * only the body leaves the anchor standing over a hole. Returns source
+ * unchanged when this page does not carry that heading.
+ */
+function replaceAnchoredSection(source: string, heading: string, body: string): string {
+  const lines = source.split('\n')
+  const headingIndex = lines.findIndex(
+    (line, index) => line === heading && ANCHORED_UNDERLINE.test(lines[index + 1] ?? ''),
+  )
+  if (headingIndex < 0) return source
+  let bodyStart = headingIndex + 2
+  while (ANCHOR_LINE.test(lines[bodyStart] ?? '')) bodyStart += 1
+  let bodyEnd = bodyStart
+  while (bodyEnd < lines.length) {
+    const line = lines[bodyEnd]!
+    const isHeading = line.trim() !== ''
+      && !ANCHORED_UNDERLINE.test(line)
+      && ANCHORED_UNDERLINE.test(lines[bodyEnd + 1] ?? '')
+    if (isHeading) break
+    bodyEnd += 1
+  }
+  return [...lines.slice(0, bodyStart), ...body.split('\n'), '', ...lines.slice(bodyEnd)].join('\n')
+}
+
+// What an anchored reference section says when this deployment does not enable
+// the path it documents. Each one states the refusal in caller words and avoids
+// naming a path the surrounding fail-closed strips remove line by line.
+const RECOVERY_UNAVAILABLE_BODY = `Lost-key recovery is not enabled on this deployment. No recovery page and no
+recovery route are published here, and recovery is never an MCP tool. Keep the
+resident key and the recovery codes already saved; when a recovery path is
+enabled, this section names it.`
+
+const ROTATION_UNAVAILABLE_BODY = `Voluntary root-key replacement is not enabled on this deployment. No replacement
+page and no replacement route are published here, and replacement is never an MCP
+tool. Keep the resident key already saved; when a replacement path is enabled,
+this section names it.`
+
+const DOORS_UNAVAILABLE_BODY =
+  'These JSON identity routes are unavailable on this deployment. Identity routes are never MCP tools.'
+
+const HOSTED_SIGNIN_UNAVAILABLE_BODY = `Hosted connector sign-in is unavailable on this deployment today. Do not create or
+repair a connector until this page publishes a live connector address. Existing
+residents may keep using saved keys through key-capable clients; hosted chats may
+read these pages and watch /window only if their host can open those URLs.`
+
 type DiscoveryDocument = 'frontdoor' | 'llms' | 'reference'
 
 function recoveryAwareSource(
@@ -144,12 +197,18 @@ function recoveryAwareSource(
   // is a fail-closed net only: if either paragraph's markers ever drift, it
   // still removes a bare stray line naming the disabled path rather than
   // silently leaving it live.
-  const withoutBrowserParagraph = removeMarkedParagraph(
-    policyAwareSource
-      .replace('Permanent keys and recovery codes never', 'Permanent resident keys never'),
-    'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:',
-    'connector sessions, and all superseded codes stop together.',
-  )
+  const keyWordingSource = policyAwareSource
+    .replace('Permanent keys and recovery codes never', 'Permanent resident keys never')
+  // On a reference page the browser paragraph is the whole body of one anchored
+  // section, so it is answered rather than deleted: moving-in#recovery-codes has
+  // to keep resolving to text.
+  const withoutBrowserParagraph = document === 'reference'
+    ? replaceAnchoredSection(keyWordingSource, 'RECOVERY CODES', RECOVERY_UNAVAILABLE_BODY)
+    : removeMarkedParagraph(
+      keyWordingSource,
+      'Use this legacy and replacement recovery path to replace a set or recover an\nexisting resident:',
+      'connector sessions, and all superseded codes stop together.',
+    )
   const withoutJsonDoorParagraph = removeMarkedParagraph(
     withoutBrowserParagraph,
     'Lost-key recovery, when enabled, works the same way as its browser page:',
@@ -175,12 +234,17 @@ function rotationAwareSource(
 
   // Same two-paragraph situation as recovery above: the browser page's own
   // paragraph, and decision row 74's coding-client JSON-door paragraph. The
-  // trailing blanket strip is the same fail-closed net described there.
-  const withoutBrowserParagraph = removeMarkedParagraph(
-    policyAwareSource,
-    'Voluntarily replace a current root key on the first-party, no-store page:',
-    'will store it.',
-  )
+  // trailing blanket strip is the same fail-closed net described there. On a
+  // reference page, as with recovery above, that browser paragraph is the whole
+  // body of one anchored section, and moving-in#key-rotation is a citable
+  // address, so it answers instead of vanishing.
+  const withoutBrowserParagraph = document === 'reference'
+    ? replaceAnchoredSection(policyAwareSource, 'REPLACING YOUR KEY', ROTATION_UNAVAILABLE_BODY)
+    : removeMarkedParagraph(
+      policyAwareSource,
+      'Voluntarily replace a current root key on the first-party, no-store page:',
+      'will store it.',
+    )
   const withoutJsonDoorParagraph = removeMarkedParagraph(
     withoutBrowserParagraph,
     'Voluntary root-key replacement, when enabled, works the same way as its browser page:',
@@ -210,9 +274,11 @@ function codingIdentityDoorsAwareSource(
       .replace(/^- POST \/api\/(?:register|rotate|recovery|pair)\b.*\r?\n/gmu, '')
   }
 
-  if (document === 'reference' && source.startsWith('CODING-CLIENT IDENTITY DOORS\n')) {
-    return 'CODING-CLIENT IDENTITY DOORS\n----------------------------\n\n' +
-      'These JSON identity routes are unavailable on this deployment. Identity routes are never MCP tools.\n'
+  // The whole coding-identity page is one anchored section, and its anchor is
+  // the page name every citation is rooted at, so the page answers instead of
+  // being replaced by a stub with no "cite:" line.
+  if (document === 'reference') {
+    return replaceAnchoredSection(source, 'CODING-CLIENT IDENTITY DOORS', DOORS_UNAVAILABLE_BODY)
   }
 
   // Same removeMarkedParagraph approach used for rotation and recovery
@@ -270,18 +336,23 @@ function hostedSigninUnavailableSource(
     '- Hosted chat without Developer Mode or custom connector support:',
     unavailable,
   )
-  const resumeAware = replaceBeforeMarker(
-    pathAware,
-    'If a hosted signup response disappears after confirmation,',
-    'Every enabled first-party identity or sign-in GET',
-    `Hosted connector sign-in is unavailable on this deployment today. Do not
+  // On a reference page those two markers straddle two more anchored headings,
+  // so the section is answered by name instead: moving-in#oauth-refresh-allowance
+  // and moving-in#browser-form-cookies keep resolving.
+  const resumeAware = document === 'reference'
+    ? replaceAnchoredSection(pathAware, 'RECONNECTING A HOSTED CHAT', HOSTED_SIGNIN_UNAVAILABLE_BODY)
+    : replaceBeforeMarker(
+      pathAware,
+      'If a hosted signup response disappears after confirmation,',
+      'Every enabled first-party identity or sign-in GET',
+      `Hosted connector sign-in is unavailable on this deployment today. Do not
 create or repair a connector until this front door publishes a live connector
   address. Existing residents may keep using saved keys through key-capable
   clients; hosted chats may read this front door and watch /window only if their
   host can open those URLs.
 
 `,
-  )
+    )
   return resumeAware.replace(/^.*\/mcp\/connect.*(?:\r?\n|$)/gmu, '')
 }
 

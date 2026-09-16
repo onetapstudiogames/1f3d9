@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { REFERENCE, REFERENCE_INDEX, REFERENCE_SECTIONS } from '../src/door.ts'
+import { hostedChatDiscovery, type HostedChatSigninReadiness } from '../src/hosted-chat-discovery.ts'
 import {
   annotateReferenceAnchors,
   assertReferenceAnchorCatalog,
@@ -14,19 +15,48 @@ import {
 
 const referenceSource = readFileSync(new URL('../src/reference.txt', import.meta.url), 'utf8')
 
-const citedHeadings = (page: string): readonly { heading: string; citation: string }[] => {
+const UNDERLINE = /^(?:={3,}|-{3,}|~{3,})$/u
+const ANCHOR_LINE = /^(?:cite|was|moved): /u
+
+type CitedSection = Readonly<{ heading: string; citation: string; body: string }>
+
+const citedHeadings = (page: string, label = ''): readonly CitedSection[] => {
   const lines = page.split('\n')
-  const found: { heading: string; citation: string }[] = []
-  for (const [index, line] of lines.entries()) {
-    if (!/^(?:={3,}|-{3,}|~{3,})$/u.test(line)) continue
+  const underlines = lines.flatMap((line, index) => UNDERLINE.test(line) ? [index] : [])
+  return underlines.map((index, order) => {
     const heading = lines[index - 1]
     const cite = lines[index + 1]
-    assert.ok(heading !== undefined && heading.trim() !== '', `underline with no heading: ${line}`)
-    assert.ok(cite !== undefined && cite.startsWith('cite: '), `heading without an anchor: ${heading}`)
-    found.push({ heading, citation: cite.slice('cite: '.length) })
-  }
-  return found
+    assert.ok(heading !== undefined && heading.trim() !== '', `underline with no heading ${label}`)
+    assert.ok(cite !== undefined && cite.startsWith('cite: '), `heading without an anchor: ${heading} ${label}`)
+    let bodyStart = index + 1
+    while (ANCHOR_LINE.test(lines[bodyStart] ?? '')) bodyStart += 1
+    const next = underlines[order + 1]
+    const bodyEnd = next === undefined ? lines.length : next - 1
+    return {
+      heading,
+      citation: cite.slice('cite: '.length),
+      body: lines.slice(bodyStart, bodyEnd).join('\n').trim(),
+    }
+  })
 }
+
+const READINESS: readonly HostedChatSigninReadiness[] = [
+  { ready: false },
+  { ready: true, origin: 'https://1f3d9.com' },
+]
+const BOTH = [false, true] as const
+// Every deployment shape a served reference page can be rendered in: the four
+// default-off feature flags, each way, times hosted sign-in ready or not.
+const SERVED_SHAPES = READINESS.flatMap(readiness => BOTH.flatMap(recovery =>
+  BOTH.flatMap(rotation => BOTH.flatMap(purchases => BOTH.map(doors => ({
+    readiness,
+    recovery,
+    rotation,
+    purchases,
+    doors,
+    label: `ready=${readiness.ready} recovery=${recovery} rotation=${rotation} `
+      + `purchases=${purchases} doors=${doors}`,
+  }))))))
 
 const FIRST_PAGE: readonly ReferenceAnchor[] = Object.freeze([
   { anchor: 'front', page: 'front', heading: 'FRONT' },
@@ -67,6 +97,33 @@ test('every reference page prints one permanent anchor at every section', () => 
     citedHeadings(annotateReferenceAnchors(referenceSource)).length,
     REFERENCE_ANCHOR_CATALOG.length,
   )
+})
+
+test('every deployment shape serves every anchor with text under it', () => {
+  for (const shape of SERVED_SHAPES) {
+    for (const [page, text] of Object.entries(REFERENCE_SECTIONS)) {
+      const served = hostedChatDiscovery(
+        text,
+        shape.readiness,
+        'reference',
+        shape.recovery,
+        shape.rotation,
+        shape.purchases,
+        shape.doors,
+      )
+      const ungated = citedHeadings(text, page)
+      const gated = citedHeadings(served, `${page} ${shape.label}`)
+      assert.deepEqual(
+        gated.map(section => section.citation),
+        ungated.map(section => section.citation),
+        `${page} lost an anchor when ${shape.label}`,
+      )
+      for (const [index, section] of gated.entries()) {
+        if (ungated[index]!.body === '') continue
+        assert.notEqual(section.body, '', `${section.citation} has no text when ${shape.label}`)
+      }
+    }
+  }
 })
 
 test('a reworded heading keeps its anchor and prints the wording it had before', () => {

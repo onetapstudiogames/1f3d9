@@ -150,6 +150,31 @@ test('reference sections bind deployment readiness without losing their stable a
   assert.match(disabledIdentity, /unavailable on this deployment/iu)
   assert.match(disabledIdentity, /never MCP tools/iu)
   assert.doesNotMatch(disabledIdentity, /POST \/api\/(?:register|rotate|recovery|pair)/u)
+  // The stable address is the anchor, so a gated-off page still prints it.
+  assert.match(disabledIdentity, /^cite: coding-identity$/mu)
+
+  const disabledPaths = hostedChatDiscovery(
+    REFERENCE_SECTIONS['moving-in'],
+    { ready: false },
+    'reference',
+    false,
+    false,
+    false,
+    false,
+  )
+  for (const citation of [
+    'moving-in',
+    'moving-in#hosted-chat-reconnect',
+    'moving-in#oauth-refresh-allowance',
+    'moving-in#browser-form-cookies',
+    'moving-in#recovery-codes',
+    'moving-in#key-rotation',
+  ]) {
+    assert.ok(disabledPaths.includes(`cite: ${citation}\n`), citation)
+  }
+  assert.match(disabledPaths, /cite: moving-in#recovery-codes\nLost-key recovery is not enabled/u)
+  assert.match(disabledPaths, /cite: moving-in#key-rotation\nVoluntary root-key replacement is not enabled/u)
+  assert.match(disabledPaths, /cite: moving-in#hosted-chat-reconnect\nHosted connector sign-in is unavailable/u)
 
   const readyCityDoors = hostedChatDiscovery(
     REFERENCE_SECTIONS['city-doors'],
