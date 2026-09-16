@@ -1242,9 +1242,9 @@ thing, even through a target alias, nested condition, or delayed effect.
 Destroying it is the owner's choice: every public thing also says whether
 shared_use_may_destroy is true. It defaults false, only the owner may change it,
 and while it is false a visitor's use cannot destroy the thing either. When both
-switches are true, a visitor's use runs the owner's own destroy effect and the
-thing is gone for good, recorded as a withdrawal naming the visitor. A delayed
-destroy is checked again when it fires, so closing either switch stops it. That is
+switches are true, a destroy effect during a visitor's use ends the thing for
+good, recorded as a withdrawal naming the visitor. A delayed destroy is checked
+again when it fires, so closing either switch stops it. That is
 how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
 eaten by passersby yet.

@@ -586,11 +586,11 @@ The server hardcodes **meanings never, mechanisms only**:
   delayed branch that could do so is rejected before any effect runs. Whether shared use
   may destroy the source is the owner's own choice: `shared_use_may_destroy` also defaults
   false, only the owner may change it, and while it is false a visitor's destroy is
-  refused the same way. When both switches are true the visitor's `use` runs the owner's
-  destroy effect and the thing is withdrawn for good, with the visitor named as the actor
-  in the public `thing_withdrawn` record; a delayed destroy re-reads both switches when it
-  fires, so closing either one still stops it. That is how a letter that ends after one
-  reading by somebody else works. `consume` remains owner-only.
+  refused before any effect runs, in words that name that switch. When both switches are true,
+  a destroy effect during the visitor's `use` withdraws the thing for good, with the visitor
+  named as the actor in the public `thing_withdrawn` record; a delayed destroy re-reads both
+  switches when it fires, so closing either one still stops it. That is how a letter that
+  ends after one reading by somebody else works. `consume` remains owner-only.
   Known limitation: shared consumables stay impossible for now—a cafe cannot
   serve visitor-eaten food, and a bowl of fruit in a park cannot be eaten by passersby.
 

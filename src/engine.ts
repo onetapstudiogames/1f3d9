@@ -10,6 +10,7 @@ import {
 } from './physics.ts'
 import {
   executeEffectsWithOutcome,
+  SHARED_SOURCE_DESTROY_CLOSED_ERROR,
   SHARED_SOURCE_MUTATION_ERROR,
   thingState,
   withdrawOwnedThing,
@@ -1075,11 +1076,11 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
 }
 
 /**
- * Reports whether a visitor's program would change the open thing it is using
- * in a way its owner has not allowed.
+ * Reports whether a visitor's program would change the open thing it is using.
  *
- * Moving or handing over the shared thing is always refused. Destroying it is
- * refused only while the owner keeps `shared_use_may_destroy` closed.
+ * Callers ask twice: once with `destroyAllowed` true, which finds only the
+ * always-refused move and hand-over, and once with the owner's real switch, so
+ * a refusal can name the rule the visitor actually met.
  */
 function sharedUseTouchesSourceDestructively(
   effects: readonly Effect[],
@@ -1422,16 +1423,16 @@ export async function runAction(
         && source.openToUse === true
         ? source.id
         : null
-      if (
-        sharedSourceThingId !== null
-        && programs.some(program => sharedUseTouchesSourceDestructively(
-          program.effects,
-          sharedSourceThingId,
-          input.target,
-          source?.sharedUseMayDestroy === true,
-        ))
-      ) {
-        throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+      if (sharedSourceThingId !== null) {
+        const touchesSource = (destroyAllowed: boolean) => programs.some(
+          program => sharedUseTouchesSourceDestructively(
+            program.effects, sharedSourceThingId, input.target, destroyAllowed,
+          ),
+        )
+        if (touchesSource(true)) throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+        if (source?.sharedUseMayDestroy !== true && touchesSource(false)) {
+          throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
+        }
       }
       const actionOutcome = await withCallerPrimitiveEffectsSavepoint(
         transaction,

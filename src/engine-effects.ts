@@ -38,6 +38,8 @@ const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored eff
 export { MAX_DUE_EFFECTS_PER_OBSERVATION }
 export const SHARED_SOURCE_MUTATION_ERROR =
   'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
+export const SHARED_SOURCE_DESTROY_CLOSED_ERROR =
+  'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it'
 export interface LawAuthority {
   readonly traitId: number
   readonly sourcePlaceId: number
@@ -424,7 +426,7 @@ async function destroyThing(
   const ownedByActor = thing.ownerId === context.actorId
   const sharedSource = !ownedByActor && thing.id === context.sharedSourceThingId
   if (sharedSource && !thing.sharedUseMayDestroy) {
-    throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+    throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
   }
   if (!ownedByActor && !sharedSource && (context.placeId === null || thing.placeId !== context.placeId
     || context.lawAuthority === null)) {
@@ -501,7 +503,10 @@ async function destroyThing(
   if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
   if (sharedSource) {
     const stillOpen = await thingState(thing.id, db)
-    if (stillOpen?.sharedUseMayDestroy !== true || stillOpen.openToUse !== true) {
+    if (stillOpen?.sharedUseMayDestroy === false) {
+      throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
+    }
+    if (stillOpen?.openToUse !== true) {
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
     }
     throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')

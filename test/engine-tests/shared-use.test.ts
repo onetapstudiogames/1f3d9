@@ -394,10 +394,30 @@ export function registerSharedUseTests(): void {
     assert.equal(result.httpStatus, 403)
     assert.equal(
       result.error,
-      'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+      'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it',
     )
     assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
   })
+
+  for (const [effectName, effect] of [
+    ['move', { effect: 'move', target: 'source', to: 'destination' }],
+    ['transfer', { effect: 'transfer', target: 'source', to: 'actor' }],
+  ] as const) {
+    test(`a closed destroy switch does not change how shared ${effectName} is refused`, async () => {
+      const { db } = openThingSql(false, [effect])
+
+      const result = await runAction({
+        ...visitorUse, destinationPlaceId: 3, recipientId: 7,
+      }, db)
+
+      assert.equal(result.status, 'failed')
+      assert.equal(result.httpStatus, 403)
+      assert.equal(
+        result.error,
+        'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+      )
+    })
+  }
 
   test('a shared destroy the owner closes mid-action names the owner switch, not a silent success', async () => {
     let stillOpen = true
@@ -430,7 +450,7 @@ export function registerSharedUseTests(): void {
     assert.equal(result.httpStatus, 403)
     assert.equal(
       result.error,
-      'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+      'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it',
     )
   })
 

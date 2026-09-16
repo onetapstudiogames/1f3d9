@@ -11,7 +11,7 @@ import {
   setEngineTransactionRunnerForTests,
   type TaggedSql,
 } from '../../src/engine.ts'
-import { resolveDueEffects, SHARED_SOURCE_MUTATION_ERROR } from '../../src/engine-effects.ts'
+import { resolveDueEffects, SHARED_SOURCE_DESTROY_CLOSED_ERROR } from '../../src/engine-effects.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'destroy_integration'
@@ -194,7 +194,7 @@ test('PostgreSQL fires a destroy brick: the source thing is withdrawn and one de
     }, db)
     assert.equal(refused.status, 'failed')
     assert.equal(refused.httpStatus, 403)
-    assert.equal(refused.error, SHARED_SOURCE_MUTATION_ERROR)
+    assert.equal(refused.error, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
 
     const sharedThingRow = await postgres.client.query<{ withdrawn_at: string | null }>(
       'SELECT withdrawn_at FROM things WHERE id = $1',
@@ -551,7 +551,7 @@ test('PostgreSQL lets one reading end a letter: the visitor destroys it, and the
     const refusal = await postgres.client.query<{ detail: string }>(`
       SELECT detail::text AS detail FROM effect_resolutions ORDER BY id DESC LIMIT 1
     `)
-    assert.match(refusal.rows[0]?.detail ?? '', new RegExp(SHARED_SOURCE_MUTATION_ERROR))
+    assert.match(refusal.rows[0]?.detail ?? '', new RegExp(SHARED_SOURCE_DESTROY_CLOSED_ERROR))
   } finally {
     setEngineTransactionRunnerForTests(null)
     await postgres.client.end().catch(() => undefined)
