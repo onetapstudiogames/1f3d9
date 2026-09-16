@@ -8,6 +8,8 @@ import {
   readCityCreditAccount,
   returnCityCreditSpend,
 } from '../../../src/city-credit.ts'
+import { CREDIT_REQUEST_ID_RECORDED_CONFLICT } from '../../../src/city-fee-facts.ts'
+import { canonicalPaymentRequest } from '../../../src/payment-attempts.ts'
 import { CREDIT_UNITS } from '../../helpers/city-credit-postgres-fixtures/ledger.ts'
 import { cityCreditDatabase } from '../../helpers/city-credit-postgres-fixtures/service-database.ts'
 
@@ -155,5 +157,73 @@ export async function registerServiceLifecycleTests(
     })).disposition, 'existing')
     assert.equal((await beginCityCreditSpend(database, kindInput)).state, 'returned')
     assert.equal((await readCityCreditAccount(database, 2)).balance_units, CREDIT_UNITS)
+  })
+
+  await t.test('an action recorded under a number-shaped request id says what it can do, then finishes on a fresh id', async () => {
+    const attemptId = 'credit_attempt_number_shaped_000001'
+    const recorded = canonicalPaymentRequest({ name: 'service-number-shaped', parent_id: null })
+    const liveInput = {
+      actorId: 2,
+      operation: 'frontier' as const,
+      targetKey: 'frontier:service-number-shaped',
+      request: { name: 'service-number-shaped', parent_id: null },
+      requestId: 'fee-service-number-shaped-0001',
+    }
+    // History: `1.000000` is what `me` printed, so it reached the ledger before the
+    // rule that now refuses it. The resident can no longer send that id at all.
+    const recordPending = async (startedAgo: string) => {
+      await resetFresh(postgres.client)
+      await issueCityFeeCredit(cityCreditDatabase(postgres.client), {
+        founderId: 1,
+        residentId: 2,
+        sourceKey: 'service-number-shaped-issue-0001',
+        reason: 'a pending spend recorded before the new-id rule existed',
+      })
+      await postgres.client.query(`
+        WITH recovery AS (
+          SELECT statement_timestamp() - $4::interval AS started_at
+        )
+        INSERT INTO payment_attempts (
+          public_id, actor_id, operation, target_key,
+          request_hash, request_json, method, amount_units, status,
+          recovery_started_at, recovery_deadline_at
+        )
+        SELECT $1, 2, 'frontier', 'frontier:service-number-shaped',
+          $2, $3::jsonb, 'credit', 1000000, 'payment_pending',
+          recovery.started_at, recovery.started_at + interval '2 hours'
+        FROM recovery
+      `, [attemptId, recorded.hash, recorded.json, startedAgo])
+      await postgres.client.query(`
+        INSERT INTO city_credit_entries (
+          resident_id, entry_kind, amount_units, request_id, payment_attempt_id
+        ) VALUES (2, 'spend', 1000000, '1.000000', $1)
+      `, [attemptId])
+      return cityCreditDatabase(postgres.client)
+    }
+
+    const live = await recordPending('1 minute')
+    await assert.rejects(beginCityCreditSpend(live, liveInput), (error: unknown) => {
+      assert.equal(
+        error instanceof Error ? error.message : '',
+        CREDIT_REQUEST_ID_RECORDED_CONFLICT,
+      )
+      return true
+    })
+    assert.equal((await readCityCreditAccount(live, 2)).balance_units, '0')
+
+    // Past its deadline the recorded credit returns on its own, and a fresh id works.
+    const expired = await recordPending('2 hours 1 second')
+    const later = await beginCityCreditSpend(expired, liveInput)
+    assert.equal(later.state, 'ready')
+    if (later.state !== 'ready') throw new Error('the returned credit did not start a fresh attempt')
+    assert.notEqual(later.attempt_id, attemptId)
+    assert.equal((await readCityCreditAccount(expired, 2)).balance_units, '0')
+
+    const ledger = await postgres.client.query<{ spends: number; returns: number }>(`
+      SELECT count(*) FILTER (WHERE entry_kind = 'spend')::int AS spends,
+        count(*) FILTER (WHERE entry_kind = 'return')::int AS returns
+      FROM city_credit_entries WHERE resident_id = 2
+    `)
+    assert.deepEqual(ledger.rows, [{ spends: 2, returns: 1 }], 'exactly one credit stays spent')
   })
 }

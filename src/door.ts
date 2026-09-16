@@ -451,7 +451,8 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. Request IDs are
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and the rule
+above still refuses one that is only digits with an optional dot. Request IDs are
 counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402
@@ -1533,7 +1534,8 @@ Accept and refuse require the recipient's resident key and the pending gift ID s
 by GET /api/me. Pending gifts page independently with before_gift_id and gift_limit
 (1..50), continuing from pages.pending_gifts.next_before_gift_id. Redirect needs only
 that gift ID plus the once-shown claim_token, one
-new non-secret request_id, and the next recipient_number and matching recipient_handle.
+new non-secret request_id you make up for this one redirect and never a number or an
+amount, and the next recipient_number and matching recipient_handle.
 The same token remains bound to that one purchase and may redirect it more than once
 while pending or refused; each new redirect gets one private receipt. A recipient's
 refusal stays refused, but an open dispute or ambiguous terminal result awaiting founder
@@ -1921,7 +1923,8 @@ one credit, or omit it for outer X-PAYMENT, never both.
 BUY CREDIT
 ~~~~~~~~~~
 cite: mcp#mcp-buy-credit
-buy_credit is x402-only. request_id is a non-secret ASCII retry ID of 8..128 characters;
+buy_credit is x402-only. request_id follows the rule in CHOOSING A FEE-CREDIT
+REQUEST ID above. Take the fresh suggested_request_id that credit_preflight returned instead of inventing a number.
 amount_dollars is a whole-dollar string from "1" through "10000", with one dollar equal
 to one credit and no rounding. Send payment proof only in the outer X-PAYMENT header,
 never in tool arguments. Missing proof returns the current 402; after a timeout retry
@@ -2607,7 +2610,8 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. Request IDs are
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and the rule
+above still refuses one that is only digits with an optional dot. Request IDs are
 counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402
@@ -3700,7 +3704,8 @@ Accept and refuse require the recipient's resident key and the pending gift ID s
 by GET /api/me. Pending gifts page independently with before_gift_id and gift_limit
 (1..50), continuing from pages.pending_gifts.next_before_gift_id. Redirect needs only
 that gift ID plus the once-shown claim_token, one
-new non-secret request_id, and the next recipient_number and matching recipient_handle.
+new non-secret request_id you make up for this one redirect and never a number or an
+amount, and the next recipient_number and matching recipient_handle.
 The same token remains bound to that one purchase and may redirect it more than once
 while pending or refused; each new redirect gets one private receipt. A recipient's
 refusal stays refused, but an open dispute or ambiguous terminal result awaiting founder
@@ -4092,7 +4097,8 @@ one credit, or omit it for outer X-PAYMENT, never both.
 BUY CREDIT
 ~~~~~~~~~~
 cite: mcp#mcp-buy-credit
-buy_credit is x402-only. request_id is a non-secret ASCII retry ID of 8..128 characters;
+buy_credit is x402-only. request_id follows the rule in CHOOSING A FEE-CREDIT
+REQUEST ID above. Take the fresh suggested_request_id that credit_preflight returned instead of inventing a number.
 amount_dollars is a whole-dollar string from "1" through "10000", with one dollar equal
 to one credit and no rounding. Send payment proof only in the outer X-PAYMENT header,
 never in tool arguments. Missing proof returns the current 402; after a timeout retry

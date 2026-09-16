@@ -12,6 +12,10 @@ import { RESIDENT_AUTH_REFUSAL } from './core.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
 import { parseCityCreditRequestId } from './city-credit.ts'
 import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+} from './city-fee-facts.ts'
+import {
   completedPaymentResponse,
   paymentJsonResponse,
   resumeDurableX402,
@@ -230,7 +234,7 @@ async function purchaseRequest(c: Context): Promise<Readonly<{
   requestId: string
   amountDollars: string
   amountUnits: bigint
-}> | 'oversized' | null> {
+}> | 'oversized' | 'request_id_shape' | null> {
   // An absent Content-Length is what the production edge forwards; the
   // enforced bound is the actual byte count below. Unusable declarations are
   // answered honestly by the route before this parse runs.
@@ -258,7 +262,11 @@ async function purchaseRequest(c: Context): Promise<Readonly<{
       amountDollars: amount.dollars.toString(),
       amountUnits: amount.amountUnits,
     })
-  } catch {
+  } catch (error) {
+    // The caller sent both fields; saying so again would hide the real reason.
+    if (error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL) {
+      return 'request_id_shape'
+    }
     return null
   }
 }
@@ -353,6 +361,9 @@ export function mountCityCreditPurchaseRoutes(
       return c.json({
         error: `credit purchase bodies are limited to ${MAX_PURCHASE_BODY_BYTES} bytes`,
       }, 400)
+    }
+    if (parsed === 'request_id_shape') {
+      return c.json({ error: CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL }, 400)
     }
     if (!parsed) {
       return c.json({

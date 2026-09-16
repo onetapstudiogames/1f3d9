@@ -21,3 +21,13 @@ export const CREDIT_REQUEST_ID_SUGGESTION_LINE =
 
 export const CREDIT_REQUEST_ID_SHAPE_REFUSAL =
   'request_id must be an identifier you make up for this one action, not a number or your balance; credit_preflight suggests one'
+
+// Buying credit has no credit_preflight to point at and starts no payment, so the
+// two purchase doors say the same rule once, in the buyer's words.
+export const CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL =
+  'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.'
+
+// A paid action recorded under a number-shaped id before the rule existed cannot be
+// retried with that id, so its conflict says what the caller can actually do.
+export const CREDIT_REQUEST_ID_RECORDED_CONFLICT =
+  'this action is already recorded under a request id the city no longer accepts, so it cannot be retried with that id; nothing new was spent, and the recorded credit returns on its own at the attempt deadline, after which a fresh request id starts this action again'

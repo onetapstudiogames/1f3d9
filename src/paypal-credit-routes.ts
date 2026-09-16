@@ -4,7 +4,7 @@ import { declaredBodyLength } from './bounded-body.ts'
 import { apiFailureResponse, type ApiFailureStatus } from './api-failure.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
-import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
+import { CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL, CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
   PayPalCreditStoreConflictError, attachPayPalOrder, attachPayPalSubscription,
@@ -170,8 +170,7 @@ function hasOnly(record: JsonRecord, names: readonly string[]): boolean {
     && Object.keys(record).every(name => expected.has(name))
 }
 
-const REQUEST_ID_SHAPE_FAILURE =
-  'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.'
+const REQUEST_ID_SHAPE_FAILURE = CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL
 const REQUEST_ID_FAILURE =
   'request_id must be one non-secret ASCII identifier of 8 to 128 characters. No payment was started.'
 

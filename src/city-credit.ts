@@ -3,7 +3,11 @@ import { postgresErrorCode } from './core-primitives.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
-import { CREDIT_REQUEST_ID_SHAPE_REFUSAL, PAID_ACTIONS } from './city-fee-facts.ts'
+import {
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+  PAID_ACTIONS,
+} from './city-fee-facts.ts'
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
@@ -459,7 +463,15 @@ function verifySpendTerms(
     || storedAssetType !== (input.assetType ?? null)
     || storedAssetId !== (input.assetId ?? null)
     || (row.method != null && String(row.method) !== 'credit')
-  ) throw new CityCreditConflictError('city credit request conflicts with changed immutable credit terms; use the original terms with this request id, or use a new request id')
+  ) {
+    // Telling a caller to reuse a stored id the validator now refuses would ask
+    // for something impossible, so that one case says what it can actually do.
+    throw new CityCreditConflictError(
+      NUMBER_SHAPED_RE.test(String(row.request_id ?? ''))
+        ? CREDIT_REQUEST_ID_RECORDED_CONFLICT
+        : 'city credit request conflicts with changed immutable credit terms; use the original terms with this request id, or use a new request id',
+    )
+  }
 }
 
 async function executeBeginSpend(

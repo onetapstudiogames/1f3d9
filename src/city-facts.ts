@@ -5,6 +5,7 @@ import { allowedPublicQuery } from './public-pagination.ts'
 import {
   CREDIT_ONLY_PAID_ACTIONS,
   CREDIT_REQUEST_ID_RULE_LINE,
+  CREDIT_REQUEST_ID_SUGGESTION_LINE,
   DUAL_RAIL_PAID_ACTIONS,
   PAID_ACTIONS,
 } from './city-fee-facts.ts'
@@ -309,6 +310,7 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{CITY_ROUTE_CATALOG}}', renderCityRoutesText())
     .replaceAll('{{PAID_ACTIONS}}', PAID_ACTIONS.join(', '))
     .replaceAll('{{CREDIT_REQUEST_ID_RULE}}', CREDIT_REQUEST_ID_RULE_LINE)
+    .replaceAll('{{CREDIT_REQUEST_ID_SUGGESTION}}', CREDIT_REQUEST_ID_SUGGESTION_LINE)
     .replaceAll('{{HANDLE_RULE}}', HANDLE_RULE)
     .replaceAll('{{TOOL_COUNT}}', String(CITY_TOOL_CATALOG.length))
     .replaceAll('{{PAYMENT_TERMINAL_STATES}}', PAYMENT_TERMINAL_STATES_LINE)

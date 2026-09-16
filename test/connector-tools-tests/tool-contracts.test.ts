@@ -14,6 +14,11 @@ import {
   withHostedConnector,
 } from '../helpers/connector-tools-fixtures/transport-harness.ts'
 import { parseCityCreditRequestId, suggestCityCreditRequestId } from '../../src/city-credit.ts'
+import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+} from '../../src/city-fee-facts.ts'
+import { callToolResult } from '../helpers/connector-tools-fixtures/transport-harness.ts'
 
 export function registerToolContractTests(): void {
   test('both MCP catalogs advertise the exact connector tool contracts', async () => {
@@ -115,6 +120,32 @@ export function registerToolContractTests(): void {
         `published schema and validator disagree about ${candidate}`)
     }
   })
+
+  test('every paid tool refuses a number-shaped request id in the words of its own door', async () => {
+    const { app } = connectorHarness()
+    for (const name of ['found', 'place_edit', 'invent_kind', 'revise_kind'] as const) {
+      const result = await callToolResult(app, '/mcp', name, {
+        ...(name === 'found' ? { name: 'Number shaped test' } : {}),
+        ...(name === 'place_edit' ? { place_id: 3, name: 'Number shaped test' } : {}),
+        ...(name === 'invent_kind' ? { name: 'number-shaped-test' } : {}),
+        ...(name === 'revise_kind' ? { kind_id: 3 } : {}),
+        city_credit_request_id: '1.000000',
+      }, { authorization: AUTHORIZATION })
+      assert.equal(result.isError, true, name)
+      assert.equal(refusalText(result), CREDIT_REQUEST_ID_SHAPE_REFUSAL, name)
+    }
+
+    const bought = await callToolResult(app, '/mcp', 'buy_credit', {
+      request_id: '12345678',
+      amount_dollars: '3',
+    }, { authorization: AUTHORIZATION })
+    assert.equal(bought.isError, true)
+    assert.equal(refusalText(bought), CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL)
+  })
+}
+
+function refusalText(result: Readonly<{ content: readonly { text: string }[] }>): string {
+  return String((JSON.parse(result.content[0]!.text) as { error?: unknown }).error)
 }
 
 type SchemaWithProperties = Readonly<{

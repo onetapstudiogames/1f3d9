@@ -777,6 +777,10 @@ of the commons; everything you do with what is already yours is free.
   replays; the refusal names `credit_preflight` as the place that hands over a safe one.
   `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
   served rule that describes both lives once in `src/city-fee-facts.ts`.
+  A paid action already recorded under such an ID before that rule existed cannot be
+  retried with it, so its conflict says that instead of asking for the impossible: it
+  spends nothing new, the recorded credit returns at the attempt deadline through the
+  scheduled recovery batch, and a fresh request ID then starts the action again.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and

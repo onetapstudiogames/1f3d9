@@ -264,3 +264,46 @@ test('the purchase route reads bodies without a Content-Length and answers unusa
     /limited to 1024 bytes/u,
   )
 })
+
+test('a number-shaped purchase request id is refused in buyer words, not as a field rule', async () => {
+  const { Hono } = await import('hono')
+  const { mountCityCreditPurchaseRoutes } = await purchaseModule()
+  const calls: string[] = []
+  const app = new Hono()
+  mountCityCreditPurchaseRoutes(app, {
+    authenticate: async () => ({ id: 7 }),
+    database: {
+      query: async (text: string) => {
+        calls.push(text)
+        return []
+      },
+    },
+  })
+
+  for (const requestId of ['12345678', '1.000000', '0.000001']) {
+    const response = await app.request('/api/city-credit/purchase/x402', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId, amount_dollars: '3' }),
+    })
+    assert.equal(response.status, 400, requestId)
+    assert.equal(
+      String((await response.json() as { error: string }).error),
+      'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.',
+      requestId,
+    )
+  }
+  assert.equal(calls.length, 0, 'a refused request id must not reach the database')
+
+  // The two-field rule still answers a body that really is missing a field.
+  const missing = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request_id: 'credit-purchase-request-0902' }),
+  })
+  assert.equal(missing.status, 400)
+  assert.match(
+    String((await missing.json() as { error: string }).error),
+    /needs only request_id and amount_dollars/u,
+  )
+})
