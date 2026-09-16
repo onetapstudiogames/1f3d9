@@ -189,6 +189,43 @@ test('reference sections bind deployment readiness without losing their stable a
   assert.equal(readyCityDoors.includes('https://1f3d9.com'), false)
 })
 
+test('a deployment without hosted sign-in stops promising the OAuth refresh allowance', () => {
+  const disabledPaths = hostedChatDiscovery(
+    REFERENCE_SECTIONS['moving-in'],
+    { ready: false },
+    'reference',
+    false,
+    false,
+    false,
+    false,
+  )
+  // mountOAuthRoutes never runs when hosted sign-in is unconfigured, so this
+  // deployment publishes no token route at all. The served page must not state
+  // an enforced allowance, a 429, or a Retry-After contract for a route it
+  // does not answer on.
+  assert.equal(disabledPaths.includes('120 attempts'), false)
+  assert.equal(disabledPaths.includes('Retry-After'), false)
+  assert.equal(disabledPaths.includes('temporarily_unavailable'), false)
+  assert.equal(disabledPaths.includes('/oauth/token'), false)
+  // The citation still has to resolve to text a reader can check.
+  assert.ok(disabledPaths.includes('cite: moving-in#oauth-refresh-allowance\n'))
+  assert.match(
+    disabledPaths,
+    /cite: moving-in#oauth-refresh-allowance\nNo connector token route is published/u,
+  )
+  // A configured deployment keeps the real allowance sentence.
+  const readyPaths = hostedChatDiscovery(
+    REFERENCE_SECTIONS['moving-in'],
+    { ready: true, origin: PREVIEW_ORIGIN },
+    'reference',
+    true,
+    true,
+    true,
+    true,
+  )
+  assert.equal(readyPaths.includes('120 attempts'), true)
+})
+
 test('the coding-identity-doors flag defaults off and is independent of the other identity flags', () => {
   for (const document of ['frontdoor', 'llms'] as const) {
     const source = document === 'frontdoor' ? FRONTDOOR : LLMS

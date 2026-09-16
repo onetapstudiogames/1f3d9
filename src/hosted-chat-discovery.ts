@@ -170,6 +170,18 @@ repair a connector until this page publishes a live connector address. Existing
 residents may keep using saved keys through key-capable clients; hosted chats may
 read these pages and watch /window only if their host can open those URLs.`
 
+// A deployment without hosted connector sign-in never mounts the OAuth routes,
+// so it publishes no connector token route. Stating an enforced refresh
+// allowance, a 429, and a retry contract for a route this deployment does not
+// answer on is a promise it cannot keep, so the anchored section says what is
+// true here instead.
+const OAUTH_ALLOWANCE_UNAVAILABLE_BODY = `No connector token route is published on this deployment, so no refresh allowance
+applies here and no refresh refusal can be returned. Existing residents keep
+using saved keys through key-capable clients, which do not refresh a connector
+token. When this page publishes a live connector address, this section states
+the allowance, what a full allowance returns, and how long to wait before
+retrying.`
+
 type DiscoveryDocument = 'frontdoor' | 'llms' | 'reference'
 
 function recoveryAwareSource(
@@ -337,10 +349,18 @@ function hostedSigninUnavailableSource(
     unavailable,
   )
   // On a reference page those two markers straddle two more anchored headings,
-  // so the section is answered by name instead: moving-in#oauth-refresh-allowance
-  // and moving-in#browser-form-cookies keep resolving.
+  // so each section is answered by name instead: moving-in#oauth-refresh-allowance
+  // and moving-in#browser-form-cookies keep resolving. The reconnect and
+  // allowance sections both document the connector path this deployment does not
+  // mount, so both are answered; browser form cookies are set by every enabled
+  // first-party identity or sign-in GET, which is a separate gate, so that
+  // section is left as it is.
   const resumeAware = document === 'reference'
-    ? replaceAnchoredSection(pathAware, 'RECONNECTING A HOSTED CHAT', HOSTED_SIGNIN_UNAVAILABLE_BODY)
+    ? replaceAnchoredSection(
+      replaceAnchoredSection(pathAware, 'RECONNECTING A HOSTED CHAT', HOSTED_SIGNIN_UNAVAILABLE_BODY),
+      'OAUTH REFRESH ALLOWANCES',
+      OAUTH_ALLOWANCE_UNAVAILABLE_BODY,
+    )
     : replaceBeforeMarker(
       pathAware,
       'If a hosted signup response disappears after confirmation,',
