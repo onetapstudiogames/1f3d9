@@ -134,6 +134,7 @@ const CALLER_ERROR_MESSAGE_ADAPTERS = new Map([
 ])
 const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
   ...[
+    'reference anchors do not match the reference text: ${detail}',
     'reference heading must appear exactly once: ${heading}',
     'reference headings are out of order',
     'reference section split was not lossless',
