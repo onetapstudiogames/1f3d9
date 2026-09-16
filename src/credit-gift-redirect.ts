@@ -1,6 +1,18 @@
 import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
 
-export const CREDIT_GIFT_REQUEST_ID_HTML_PATTERN = String.raw`[A-Za-z0-9][A-Za-z0-9_.\:\-]{7,127}`
+// The city refuses a redirect retry ID that reads as a plain number or an amount,
+// so this field refuses the same shape instead of promising the older wider rule.
+export const CREDIT_GIFT_REQUEST_ID_HTML_PATTERN = String.raw`(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.\:\-]{7,127}`
+
+export const CREDIT_GIFT_REQUEST_ID_TITLE =
+  'Make up an ID for this one redirect: 8 to 128 letters, numbers, dots, underscores, colons, or hyphens, and never a plain number or an amount.'
+
+// The same shape this page's field advertises, written for the browser script.
+export const CREDIT_GIFT_REQUEST_ID_CLIENT_PATTERN =
+  String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$`
+
+export const CREDIT_GIFT_REQUEST_ID_REFUSAL =
+  'The retry ID must be an ID you make up for this one redirect, not a number or an amount. Nothing was redirected.'
 
 export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
       <summary>Redirect a pending or refused gift</summary>
@@ -46,7 +58,7 @@ export const CREDIT_GIFT_REDIRECT_HTML = `<details class="redirect-panel">
             autocomplete="off"
             spellcheck="false"
             pattern="${CREDIT_GIFT_REQUEST_ID_HTML_PATTERN}"
-            title="Use 8 to 128 letters, numbers, dots, underscores, colons, or hyphens."
+            title="${CREDIT_GIFT_REQUEST_ID_TITLE}"
             maxlength="128"
             aria-describedby="redirect-request-help"
             required
@@ -187,8 +199,8 @@ export const CREDIT_GIFT_REDIRECT_CLIENT = `
       redirectClaimTokenInput.focus()
       return
     }
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u.test(retryId)) {
-      redirectMessage(redirectError, 'Enter the saved non-secret redirect retry ID. Nothing was redirected.')
+    if (!new RegExp(${JSON.stringify(CREDIT_GIFT_REQUEST_ID_CLIENT_PATTERN)}, 'u').test(retryId)) {
+      redirectMessage(redirectError, ${JSON.stringify(CREDIT_GIFT_REQUEST_ID_REFUSAL)})
       redirectRequestIdInput.focus()
       return
     }
@@ -241,8 +253,12 @@ export const CREDIT_GIFT_REDIRECT_CLIENT = `
     const redirectRequestId = redirectRequestIdInput instanceof HTMLInputElement
       ? redirectRequestIdInput.value.trim()
       : ''
-    if (!redirectDestination || !/^city_gift_[0-9a-f]{32}$/u.test(giftId) || !/^gift_claim_[0-9a-f]{64}$/u.test(rawClaimToken) || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u.test(redirectRequestId)) {
+    if (!redirectDestination || !/^city_gift_[0-9a-f]{32}$/u.test(giftId) || !/^gift_claim_[0-9a-f]{64}$/u.test(rawClaimToken) || !redirectRequestId) {
       redirectMessage(redirectError, 'The gift, key, retry ID, and confirmed destination are required. Nothing was redirected.')
+      return
+    }
+    if (!new RegExp(${JSON.stringify(CREDIT_GIFT_REQUEST_ID_CLIENT_PATTERN)}, 'u').test(redirectRequestId)) {
+      redirectMessage(redirectError, ${JSON.stringify(CREDIT_GIFT_REQUEST_ID_REFUSAL)})
       return
     }
     const button = byId('confirm-gift-redirect')

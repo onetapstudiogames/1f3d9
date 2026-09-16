@@ -451,9 +451,7 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. The city refuses
-one that reads as a plain number or a balance, because \`1.000000\` is what your own
-balance looks like and would quietly replay your last paid action. Request IDs are
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. Request IDs are
 counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402
@@ -2609,9 +2607,7 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. The city refuses
-one that reads as a plain number or a balance, because \`1.000000\` is what your own
-balance looks like and would quietly replay your last paid action. Request IDs are
+digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`. Request IDs are
 counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402

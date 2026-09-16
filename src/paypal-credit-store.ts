@@ -5,6 +5,7 @@ import {
   parseCityCreditRequestId,
   parseCityCreditSourceKey,
 } from './city-credit.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
 import {
   createGiftClaimToken,
   hashGiftClaimToken,
@@ -94,16 +95,23 @@ function exactAmountUnits(value: unknown): bigint {
   return amount
 }
 
+const PAYPAL_REQUEST_ID_SHAPE_REFUSAL =
+  'PayPal purchase request_id must be an identifier you make up for this one purchase, not a number or an amount'
+const PAYPAL_REQUEST_ID_REFUSAL =
+  'PayPal purchase request_id must be a non-secret ASCII identifier of 8 to 128 characters'
+
 function safeRequestId(value: unknown): string {
   let parsed: string | null
   try {
     parsed = parseCityCreditRequestId(value)
-  } catch {
-    throw new TypeError('PayPal purchase request_id must be a non-secret ASCII identifier of 8 to 128 characters')
+  } catch (error) {
+    throw new TypeError(
+      error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? PAYPAL_REQUEST_ID_SHAPE_REFUSAL
+        : PAYPAL_REQUEST_ID_REFUSAL,
+    )
   }
-  if (!parsed) {
-    throw new TypeError('PayPal purchase request_id must be a non-secret ASCII identifier of 8 to 128 characters')
-  }
+  if (!parsed) throw new TypeError(PAYPAL_REQUEST_ID_REFUSAL)
   return parsed
 }
 

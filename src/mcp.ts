@@ -277,7 +277,9 @@ const WORLD_NAME_SCHEMA = Object.freeze({
 })
 
 // Excludes a plain number or balance string, which the validator also refuses.
-const REQUEST_ID_PATTERN = '^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$'
+// String.raw keeps the escaped dot: a plain quoted literal drops the backslash and
+// the published pattern would then refuse ids the validator accepts.
+const REQUEST_ID_PATTERN = String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$`
 
 const CITY_CREDIT_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,

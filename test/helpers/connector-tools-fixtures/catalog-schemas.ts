@@ -4,7 +4,7 @@ export type ToolAnnotations = Readonly<{
 
 const HANDLE_PATTERN = '^[a-z0-9][a-z0-9-]{2,31}$'
 const WORLD_NAME_PATTERN = '^[a-z0-9][a-z0-9_-]{0,63}$'
-export const REQUEST_ID_PATTERN = '^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$'
+export const REQUEST_ID_PATTERN = String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$`
 export const CHANGE_MARKER_PATTERN = '^(?:0|[1-9][0-9]*)$'
 
 export const READ_ANNOTATIONS = {

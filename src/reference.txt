@@ -273,9 +273,7 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 {{CREDIT_REQUEST_ID_RULE}}
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
-digit and continuing with letters, digits, `_`, `.`, `:`, or `-`. The city refuses
-one that reads as a plain number or a balance, because `1.000000` is what your own
-balance looks like and would quietly replay your last paid action. Request IDs are
+digit and continuing with letters, digits, `_`, `.`, `:`, or `-`. Request IDs are
 counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402

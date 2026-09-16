@@ -13,6 +13,7 @@ import {
   listedTools,
   withHostedConnector,
 } from '../helpers/connector-tools-fixtures/transport-harness.ts'
+import { parseCityCreditRequestId, suggestCityCreditRequestId } from '../../src/city-credit.ts'
 
 export function registerToolContractTests(): void {
   test('both MCP catalogs advertise the exact connector tool contracts', async () => {
@@ -74,7 +75,51 @@ export function registerToolContractTests(): void {
       assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
     }
   })
+
+  test('the published request id pattern accepts exactly what the validator accepts', async () => {
+    const { app } = connectorHarness()
+    const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
+    const patterns = new Set<string>()
+    for (const name of ['found', 'invent_kind', 'revise_kind'] as const) {
+      const schema = legacy.find(tool => tool.name === name)!.inputSchema as SchemaWithProperties
+      patterns.add(String(schema.properties.city_credit_request_id?.pattern))
+    }
+    const buyCredit = legacy.find(tool => tool.name === 'buy_credit')!.inputSchema as SchemaWithProperties
+    patterns.add(String(buyCredit.properties.request_id?.pattern))
+    assert.equal(patterns.size, 1, 'every paid tool publishes the same request id pattern')
+
+    const [pattern] = [...patterns]
+    assert.ok(pattern && pattern.startsWith('^'), 'every paid tool publishes an anchored pattern')
+    const published = new RegExp(pattern, 'u')
+    const candidates = [
+      suggestCityCreditRequestId(),
+      '20260916-2',
+      '1726500000-1',
+      '1_2345678',
+      '1:2345678',
+      '1a2345678',
+      'fee_frontier:request.20260822',
+      '1.000000',
+      '12345678',
+      '0.000001',
+      '1000000.5',
+    ]
+    for (const candidate of candidates) {
+      let accepted: boolean
+      try {
+        accepted = parseCityCreditRequestId(candidate) !== null
+      } catch {
+        accepted = false
+      }
+      assert.equal(published.test(candidate), accepted,
+        `published schema and validator disagree about ${candidate}`)
+    }
+  })
 }
+
+type SchemaWithProperties = Readonly<{
+  properties: Record<string, Record<string, unknown>>
+}>
 
 function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
   const { title: _title, ...hints } = value
