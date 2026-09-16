@@ -772,7 +772,10 @@ of the commons; everything you do with what is already yours is free.
   rejected with `X-PAYMENT`. There is no silent fallback between credit and x402. An operation debit and an exact
   one-time failed-spend return stay bound to the same durable attempt.
 - A fee-credit request ID is unique per resident, not city-wide, and belongs to one paid
-  action. The validator refuses an ID that reads as a plain number or a balance string,
+  action. Its shape, the same one an ID that buys credit uses, is 8 to 128 non-secret
+  ASCII characters, starting with a letter or digit and continuing with letters, digits,
+  `_`, `.`, `:`, or `-`, and never only digits with an optional dot.
+  The validator refuses an ID that reads as a plain number or a balance string,
   because the balance `me` prints is exactly the string a caller reaches for and then
   replays; the refusal names `credit_preflight` as the place that hands over a safe one.
   `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
@@ -784,7 +787,10 @@ of the commons; everything you do with what is already yours is free.
   returns at the attempt deadline through the scheduled recovery batch, and a fresh
   request ID then starts the action again. A `completed` attempt already happened and
   its credit is already spent, so nothing returns and nothing is left to retry. A
-  `needs_review` attempt waits on founder review, which no request ID moves along.
+  `needs_review` attempt waits on founder review, which no request ID moves along. Only a
+  `settling` or `payment_pending` attempt is read as live, so a missing or unfamiliar
+  recorded status says that nothing new was spent and that the city cannot tell what
+  happens to the recorded credit, rather than promising the live return.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and

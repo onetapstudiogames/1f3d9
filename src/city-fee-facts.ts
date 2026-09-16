@@ -44,11 +44,21 @@ export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED =
 export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW =
   `${RECORDED_CONFLICT_OPENING}nothing new was spent, and the recorded attempt is waiting on founder review; wait for that review to finish, because no request id moves it along`
 
+export const CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD =
+  `${RECORDED_CONFLICT_OPENING}nothing new was spent now, and the city cannot tell from the recorded attempt what happens to the credit already recorded under it, so it promises no return here; read city_fee_credit.balance_usdc in me before you spend again`
+
+// Only a live attempt returns credit at its deadline, so only a status the city
+// knows to be live may say so. A missing or unfamiliar status is not evidence of
+// a live attempt, and guessing the one wording that promises a refund would
+// promise a return the city may never make.
+const LIVE_RECORDED_STATUSES: ReadonlySet<string> = new Set(['settling', 'payment_pending'])
+
 /** Say what a recorded attempt's own status leaves the caller able to do. */
 export function creditRequestIdRecordedConflict(status: string): string {
   if (status === 'completed') return CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED
   if (status === 'needs_review') return CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW
-  return CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING
+  if (LIVE_RECORDED_STATUSES.has(status)) return CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING
+  return CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD
 }
 
 /** True for every wording above, so a caller-facing route can drop a retry line. */

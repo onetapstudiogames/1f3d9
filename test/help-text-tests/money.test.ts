@@ -5,6 +5,7 @@ import {
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
   CREDIT_REQUEST_ID_RULE_LINE,
   CREDIT_REQUEST_ID_SHAPE_REFUSAL,
   CREDIT_REQUEST_ID_SUGGESTION_LINE,
@@ -201,6 +202,7 @@ export function registerMoneyTests(): void {
     for (const message of [
       CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
       CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+      CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
     ]) {
       assert.doesNotMatch(message, /returns on its own|fresh request id starts this action again/iu)
       assert.doesNotMatch(message, /—/u, 'no em dash')

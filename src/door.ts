@@ -448,7 +448,10 @@ cite: money#credit-request-ids
 One shape covers the IDs you spend credit with and the IDs you buy credit with.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
 digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and never only
-digits with an optional dot. Request IDs are counted per resident, so your IDs
+digits with an optional dot, with one exception: a credit purchase already
+recorded under a digits-with-an-optional-dot ID, before this rule, still replays
+through POST /api/city-credit/purchase/x402 with that same ID, and nothing new
+may be started with such an ID. Request IDs are counted per resident, so your IDs
 never collide with another resident's.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 To spend one credit deliberately, send one unique request ID in
@@ -457,7 +460,10 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 To buy credit, send one unique request_id to buy_credit or to
 POST /api/city-credit/purchase/x402, and reuse that one only to inspect or safely
-retry that exact purchase, never to start a second one.
+retry that exact purchase, never to start a second one. Both doors keep that
+reuse for every ID this shape allows; the one exception above replays through
+the route only, because buy_credit refuses that ID before it reaches the
+recorded purchase.
 
 PAYING A FEE WITH X402
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -2611,7 +2617,10 @@ cite: money#credit-request-ids
 One shape covers the IDs you spend credit with and the IDs you buy credit with.
 A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
 digit and continuing with letters, digits, \`_\`, \`.\`, \`:\`, or \`-\`, and never only
-digits with an optional dot. Request IDs are counted per resident, so your IDs
+digits with an optional dot, with one exception: a credit purchase already
+recorded under a digits-with-an-optional-dot ID, before this rule, still replays
+through POST /api/city-credit/purchase/x402 with that same ID, and nothing new
+may be started with such an ID. Request IDs are counted per resident, so your IDs
 never collide with another resident's.
 A fee-credit request id is yours alone and belongs to one paid action: make up a new id for every paid action, never a plain number and never your balance. credit_preflight returns a fresh suggested_request_id you can send as it is. Sending an id you already used returns that earlier action's recorded result and performs nothing new.
 To spend one credit deliberately, send one unique request ID in
@@ -2620,7 +2629,10 @@ X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
 To buy credit, send one unique request_id to buy_credit or to
 POST /api/city-credit/purchase/x402, and reuse that one only to inspect or safely
-retry that exact purchase, never to start a second one.
+retry that exact purchase, never to start a second one. Both doors keep that
+reuse for every ID this shape allows; the one exception above replays through
+the route only, because buy_credit refuses that ID before it reaches the
+recorded purchase.
 
 PAYING A FEE WITH X402
 ~~~~~~~~~~~~~~~~~~~~~~

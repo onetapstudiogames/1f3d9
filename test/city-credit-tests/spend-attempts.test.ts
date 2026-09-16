@@ -6,6 +6,7 @@ import {
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
   CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
 } from '../../src/city-fee-facts.ts'
 import { MarkerDatabase, type QueryRow } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { REQUEST_ID } from '../helpers/city-credit-fixtures/ledger-entries.ts'
@@ -236,6 +237,36 @@ export function registerSpendAttemptsTests(): void {
     assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /founder review/iu)
     assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /returns on its own/iu)
     assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING, /returns on its own at the attempt deadline/iu)
+  })
+
+  test('a recorded status the city cannot read promises no return instead of guessing', async () => {
+    // Only a live attempt returns credit at its deadline. A status the city does
+    // not know is not evidence that this one is live, so it says so rather than
+    // handing the caller the one wording that promises a refund.
+    for (const attemptStatus of [undefined, null, '', 'credit_returned', 'a_status_from_a_later_city']) {
+      const database = new MarkerDatabase({
+        'begin-spend': [[spendRow({
+          attempt_status: attemptStatus,
+          state: 'busy',
+          request_id: '1.000000',
+          lease_acquired: false,
+        })]],
+      })
+      await assert.rejects(
+        beginCityCreditSpend(database, spendInput({ requestId: 'fee-a-fresh-id-0002' })),
+        (error: unknown) => {
+          assert.equal(
+            error instanceof Error ? error.message : '',
+            CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
+            String(attemptStatus),
+          )
+          return true
+        },
+      )
+    }
+
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD, /returns on its own/iu)
+    assert.notEqual(CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD, CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING)
   })
 
   test('replaying one request id returns the earlier recorded result and reserves nothing new', async () => {
