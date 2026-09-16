@@ -147,7 +147,7 @@ export const WINDOW_HTML = `<!doctype html>
         <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <section class="place-description orientation-block" aria-labelledby="place-description-title">
-        <p class="block-number">OWNER / DESCRIPTION</p>
+        <p class="block-number" id="place-description-eyebrow">OWNER / DESCRIPTION</p>
         <h3 id="place-description-title">Owner-written description</h3>
         <div id="place-description"><p class="loading-row">Reading the owner-written description…</p></div>
       </section>
@@ -158,7 +158,7 @@ export const WINDOW_HTML = `<!doctype html>
           <div id="place-purpose"><p class="loading-row">Reading the room marker…</p></div>
         </div>
         <div class="orientation-block">
-          <p class="block-number">OWNER / FRONT MATTER</p>
+          <p class="block-number" id="place-front-matter-eyebrow">OWNER / FRONT MATTER</p>
           <h3 id="place-front-matter-title">Owner-chosen front matter</h3>
           <div id="place-front-matter"><p class="loading-row">Reading the selected headings…</p></div>
         </div>

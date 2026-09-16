@@ -14,7 +14,7 @@ setEngineTransactionRunnerForTests(async (db, work) => work(db, false))
 test.after(() => setEngineTransactionRunnerForTests(null))
 
 const ARRIVAL = 'You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.'
-const WORLD_PURPOSE = 'You are standing in the world, the junction between continents. Nothing can be built, left, or written here. The mainland is one step down at place 1, and first town is one step below that at place 2, open to building.'
+const WORLD_PURPOSE = 'You stand in the world; the continents are one step down and open to enter, and first town is inside the mainland at place 2 and open to building.'
 const headers = { Authorization: `Bearer ${SECRET}` }
 
 test('root me gives the fixed arrival line without replacing private attention', async () => {
@@ -78,6 +78,24 @@ test('connector me and look preserve the root arrival line', async () => {
     const body = await response.json() as { result: { content: Array<{ text: string }> } }
     assert.equal(JSON.parse(body.result.content[0]!.text).next_step, ARRIVAL)
   }
+})
+
+test('the world room line is the arrival line projected, not a second sentence', async () => {
+  const { WORLD_ARRIVAL_LINE, WORLD_ROOT_PURPOSE } = await import('../src/world-root.ts')
+  assert.equal(WORLD_ARRIVAL_LINE, ARRIVAL, 'decisions 80 and 83 keep the arrival wording')
+  // Every clause of the room line must already be one of the arrival line's own
+  // clauses, so the two can never become two wordings of the same fact.
+  for (const clause of [
+    'You stand in the world',
+    'the continents are one step down and open to enter',
+    'first town is inside the mainland at place 2 and open to building',
+  ]) {
+    assert.ok(WORLD_ROOT_PURPOSE.includes(clause), clause)
+    assert.ok(ARRIVAL.includes(clause), clause)
+  }
+  const source = readFileSync(new URL('../src/world-root.ts', import.meta.url), 'utf8')
+  assert.equal(source.includes(WORLD_PURPOSE), false, 'the room line is composed, never retyped')
+  assert.equal(source.includes(ARRIVAL), false, 'the arrival line is composed, never retyped')
 })
 
 test('the world room itself carries the city line that points one step down', async () => {

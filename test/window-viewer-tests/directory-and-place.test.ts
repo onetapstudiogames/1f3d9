@@ -172,17 +172,42 @@ export function registerWindowDirectoryAndPlaceTests(): void {
     )
   })
 
-  test('the selected-place panel calls the world line the city\'s instead of owner-written', () => {
-    const orientation = WINDOW_JS.slice(
+  test('the ownerless world switches every owner word on the Place panel, not the line alone', () => {
+    // The world has no owner, so the description, the line, and the front-matter
+    // block must all stop claiming one. A half-switched panel is the defect here.
+    const words = WINDOW_JS.slice(
+      WINDOW_JS.indexOf('const OWNER_PLACE_WORDS'),
       WINDOW_JS.indexOf('function renderPlaceOrientation('),
-      WINDOW_JS.indexOf('function renderPlaceOrientation(') + 3000,
     )
-    assert.match(orientation, /place\.owner === null[\s\S]{0,160}WORLD_ROOT_NAME/u)
-    assert.match(orientation, /City-written line/u)
-    assert.match(orientation, /CITY \/ LINE/u)
-    assert.match(orientation, /Owner-written purpose/u)
-    assert.match(orientation, /OWNER \/ PURPOSE/u)
-    assert.match(WINDOW_HTML, /id="place-purpose-eyebrow"/u)
+    assert.match(words, /place\.owner === null[\s\S]{0,160}WORLD_ROOT_NAME/u)
+    for (const owned of [
+      'OWNER / DESCRIPTION', 'Owner-written description',
+      'No owner-written description is set for this place.',
+      'OWNER / PURPOSE', 'Owner-written purpose',
+      'No owner-written purpose is set for this place.',
+      'OWNER / FRONT MATTER', 'Owner-chosen front matter',
+      'No owner-chosen front matter is available.',
+    ]) assert.ok(words.includes(owned), owned)
+    for (const city of [
+      'CITY / DESCRIPTION', 'City-written description',
+      'No city-written description is set for this place.',
+      'CITY / LINE', 'City-written line',
+      'No city-written line is set for this place.',
+      'NO OWNER / FRONT MATTER', 'Front matter needs an owner',
+      'The world has no owner, so nothing can be chosen as front matter here.',
+    ]) assert.ok(words.includes(city), city)
+    const render = WINDOW_JS.slice(
+      WINDOW_JS.indexOf('function renderPlaceOrientation('),
+      WINDOW_JS.indexOf('function renderPlaceOrientation(') + 1200,
+    )
+    for (const node of [
+      'placeDescriptionEyebrow', 'placeDescriptionLabel',
+      'placePurposeEyebrow', 'placePurposeLabel',
+      'placeFrontMatterEyebrow', 'placeFrontMatterLabel',
+    ]) assert.ok(render.includes(node), node)
+    for (const id of [
+      'place-description-eyebrow', 'place-purpose-eyebrow', 'place-front-matter-eyebrow',
+    ]) assert.ok(WINDOW_HTML.includes('id="' + id + '"'), id)
   })
 
   test('the selected-place panel identifies owner choices and links front matter without fetching bodies', () => {

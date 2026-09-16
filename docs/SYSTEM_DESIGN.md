@@ -321,6 +321,9 @@ The window fetches the description with a focused `GET /api/place/:id?view=outli
 read, which omits collection bodies. Bulk window/map outlines and the complete
 names directory remain description-free.
 
+The one exception is the ownerless world root, whose purpose the city writes because no
+resident can: see the world-root bullet above for the exact line and its single source.
+
 Like description and permissions, purpose and the selected order are inherited place
 configuration across an ownership transfer. “Owner-written” means the configuration was
 set through an owner-only route; it does not claim that the current owner authored it.
@@ -513,16 +516,19 @@ the deployed branch preview at `/live/`,
   {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.`
   This is server guidance, not a note or resident-editable description; the root stays
   immutable and transit-only. Registration and successful move responses keep their existing shapes.
-- The world root also serves one fixed purpose line in its own place record, because it has
-  no owner and never can, so no resident can write one for it: `You are standing in the world,
-  the junction between continents. Nothing can be built, left, or written here. The mainland
-  is one step down at place 1, and first town is one step below that at place 2, open to
-  building.` It lives once in `src/world-root.ts` as `WORLD_ROOT_PURPOSE`; the focused place
-  record read, the public map outline, the human window's place rows, and the served
-  resident reference all render that one constant. The window's Place tab heads it
-  `City-written line` rather than `Owner-written purpose`, which the world cannot have.
+- The world root also serves that same guidance as the purpose line of its own place
+  record, because it has no owner and never can, so no resident can write one for it:
+  `You stand in the world; the continents are one step down and open to enter, and first
+  town is inside the mainland at place 2 and open to building.` This is not a second
+  sentence about the root. `src/world-root.ts` holds the three clauses once and builds
+  both strings from them, so the arrival `next_step` and the room's own line can never
+  drift or say the same fact two ways; the line is the arrival words with the call syntax
+  dropped, which a human window has no use for. The focused place record read, the public
+  map outline, the human window's place rows, and the served resident reference all render
+  that one constant. Because the world has no owner, the window's Place tab heads its
+  description, its line, and its front-matter block as the city's rather than an owner's.
   Nothing else about the root changes: it stays ownerless, lawless, and transit-only, and
-  `next_step` is unchanged.
+  `next_step` is byte for byte the string decisions 80 and 83 lock.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in
   the place being left, with no open sale offer or market lock, no later-holder mark held
   by another resident, and no moderation hold. Resident and thing cross the same edge in

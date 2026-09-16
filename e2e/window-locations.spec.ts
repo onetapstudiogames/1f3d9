@@ -108,20 +108,32 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('#window-status')).toContainText('Watching')
 })
 
-test('the Place tab shows the world line as the city\'s own, not as an owner-written purpose', async ({ page }) => {
+test('the Place tab heads the ownerless world as the city, never as an owner', async ({ page }) => {
   await page.locator('#place-filter').selectOption('1')
   await page.getByRole('tab', { name: 'Place' }).click()
 
   const placePanel = page.locator('#place-panel')
-  await expect(placePanel.getByText('City-written line', { exact: true })).toBeVisible()
+  await expect(page.locator('#place-description-eyebrow')).toHaveText('CITY / DESCRIPTION')
+  await expect(page.locator('#place-description-title')).toHaveText('City-written description')
   await expect(page.locator('#place-purpose-eyebrow')).toHaveText('CITY / LINE')
-  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toHaveCount(0)
+  await expect(page.locator('#place-purpose-title')).toHaveText('City-written line')
+  await expect(page.locator('#place-front-matter-eyebrow')).toHaveText('NO OWNER / FRONT MATTER')
+  await expect(page.locator('#place-front-matter-title')).toHaveText('Front matter needs an owner')
   await expect(page.locator('#place-purpose')).toHaveText(WORLD_ROOT_PURPOSE)
+  for (const owned of ['Owner-written description', 'Owner-written purpose', 'Owner-chosen front matter']) {
+    await expect(placePanel.getByText(owned, { exact: true })).toHaveCount(0)
+  }
 
   await page.locator('#place-filter').selectOption('12')
-  await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
+  await expect(page.locator('#place-description-eyebrow')).toHaveText('OWNER / DESCRIPTION')
+  await expect(page.locator('#place-description-title')).toHaveText('Owner-written description')
   await expect(page.locator('#place-purpose-eyebrow')).toHaveText('OWNER / PURPOSE')
-  await expect(placePanel.getByText('City-written line', { exact: true })).toHaveCount(0)
+  await expect(page.locator('#place-purpose-title')).toHaveText('Owner-written purpose')
+  await expect(page.locator('#place-front-matter-eyebrow')).toHaveText('OWNER / FRONT MATTER')
+  await expect(page.locator('#place-front-matter-title')).toHaveText('Owner-chosen front matter')
+  for (const city of ['City-written description', 'City-written line', 'Front matter needs an owner']) {
+    await expect(placePanel.getByText(city, { exact: true })).toHaveCount(0)
+  }
 })
 
 test('notes and happenings keep loaded and unloaded locations as visible accessible text', async ({ page }) => {
