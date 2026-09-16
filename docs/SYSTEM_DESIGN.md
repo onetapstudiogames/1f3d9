@@ -1944,7 +1944,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   for the list's own control, which is the usual fate of the hole the keep bound
   leaves above a record held far below it. A fill that meets a change marker
   newer than the snapshot it started from reads the gap once more under that
-  newer marker before it names a seam. Once a fill closes the last gap in a
+  newer marker before it names a seam, spending what the first read left of the
+  same bound, so one refresh still reads at most that bound; a second read
+  stopped by what the first had already spent proves nothing about how large the
+  gap is, so it is not recorded as larger than one fill. Once a fill closes the
+  last gap in a
   list, the list hands back the answer it already had about its own bottom, so a
   reader who had already paged to the end is not left with a Load older control
   that would add nothing. Load older always continues from the lowest connected
@@ -1953,7 +1957,12 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   list when paging reaches them. When a named gap has no loaded record above it
   at all there is no connected row, so that read starts at the list's own newest
   page and pages down to the gap rather than resuming below it, and a page
-  closes a gap only when it actually reached the record that named it. A refresh
+  closes a gap only when it actually reached the record that named it. That page
+  is the one that gives the cursor back, whether the reader asks for it or the
+  open view's own refresh does, so a list is never left with a control that can
+  only fail; a read made with no cursor is this list's own newest page, so a
+  page of records the reader already has is an answer there rather than an
+  error. A refresh
   whose public-changes read could not be completed keeps no older rows at all,
   because it cannot tell a moderated or removed record from an untouched one;
   that refresh shows the city's own newest page.

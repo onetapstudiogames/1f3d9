@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES } from '../src/window-client/program/13-branch-cache-and-history-entries.ts'
 import { PART_30_DETAIL_RENDER_AND_BODIES } from '../src/window-client/program/30-detail-render-and-bodies.ts'
+import { PART_33_AGREEMENTS_AND_HISTORY_CONTROLS } from '../src/window-client/program/33-agreements-and-history-controls.ts'
 import { PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE } from '../src/window-client/program/34-history-loading-counts-and-scope.ts'
 import { mergeWindowRows } from '../src/window-client/rows.ts'
 import {
@@ -749,6 +750,166 @@ test('a page entirely below a waiting row can never clear its gap', async () => 
   assert.equal(read().nextBeforeId, null,
     'and the cursor starts again at the newest page rather than under the gap')
   assert.equal(read().error, false)
+})
+
+// forwardRefreshHistory is a browser-program string too. It runs on every
+// refresh of an open filtered view, after the refresh and the fill have already
+// written that list, so the suite drives the real source rather than a copy.
+function forwardRefresher(
+  initial: HistoryEntry,
+  fetchFake: (input: string) => Promise<unknown>,
+) {
+  const start = PART_33_AGREEMENTS_AND_HISTORY_CONTROLS.indexOf('  const forwardRefreshKeys')
+  assert.notEqual(start, -1)
+  const source = PART_33_AGREEMENTS_AND_HISTORY_CONTROLS.slice(start)
+  assert.ok(source.includes('async function forwardRefreshHistory'))
+  const cursorSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
+    '  function connectedHistoryCursor', '  function retainedHistoryEntry')
+  const seamSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
+    '  function seamRowsAfterPage', '  function filledHistoryEntry')
+  let stored = initial
+  const run = new Function(
+    'historyKey', 'historyEntry', 'setHistoryEntry', 'renderAll', 'historyRequestUrl',
+    'fetch', 'requireCurrentReadMarker', 'normalizeHistoryRows', 'safeId',
+    'mergeWindowRows', 'window', 'REQUEST_TIMEOUT_MS',
+    `let state = { changeMarker: '8' }; let authoredRevision = 1;
+     ${cursorSource} ${seamSource} ${source} return forwardRefreshHistory`,
+  )(
+    () => 'place:11|resident:',
+    () => stored,
+    (_collection: string, _filters: unknown, entry: HistoryEntry) => { stored = entry },
+    () => {},
+    (_collection: string, entry: { initialized: boolean, nextBeforeId: number | null }) =>
+      new URL('https://city.test/api/window?before_id=' +
+        (entry.initialized && entry.nextBeforeId ? String(entry.nextBeforeId) : '')),
+    fetchFake,
+    () => {}, (_collection: string, payload: { notes: Row[] }) => payload.notes,
+    (value: unknown) => Number(value) || null, mergeWindowRows,
+    { setTimeout: () => 1, clearTimeout: () => {} }, 10_000,
+  ) as (collection: string, filters: unknown) => Promise<void>
+  return { run, read: () => stored }
+}
+
+// The whole life of one quiet filtered list, in the order a reader meets it and
+// through the real refresh, fill, forward-refresh and pager sources: the first
+// page, a changed refresh with no fresh row above it, a fill that failed, the
+// forward refresh that runs on the same refresh, the list's own control twice,
+// and a second changed refresh. Three rules are checked after every step,
+// because each of the earlier rounds of this change kept one of them and broke
+// another: the cursor never sits below a gap the list has named, the older
+// control never errors, and a named gap loses its name only once the records it
+// named are loaded.
+test('a quiet filtered list stays readable through refresh, fill and paging', async () => {
+  const placed = (rows: readonly Row[]) => rows.map(row => ({ ...row, place_id: 11 }))
+  // One place-11 list, dense from 200 down to 1, fifty rows a page. It is quiet,
+  // so the city's own newest page never carries a row of it.
+  let listNewestId = 100
+  const fetchList = async (input: string) => {
+    const asked = new URL(input, 'https://city.test').searchParams.get('before_id')
+    const rows = placed(rowsFrom(asked ? Number(asked) - 1 : listNewestId, 50))
+    return { ok: true, json: async () => ({
+      notes: rows,
+      change_marker: '8',
+      has_more: rows.at(-1)!.id > 1,
+      next_before_id: rows.at(-1)!.id,
+    }) }
+  }
+  // setHistoryEntry stamps a list's own filters; the refresh reads them back.
+  const filtered = (entry: HistoryEntry) =>
+    Object.freeze({ ...entry, filters: { placeId: 11 } })
+  const refreshWith = (entry: HistoryEntry, newest: readonly Row[]) => refreshedHistories(
+    { notes: { 'place:11|resident:': filtered(entry) }, things: {}, agreements: {}, events: {} },
+    snapshotOf({ notes: newest }),
+  ).notes!['place:11|resident:']!
+
+  let previous: HistoryEntry | null = null
+  const step = (label: string, entry: HistoryEntry) => {
+    const waiting = ids(entry.deferredRows)
+    assert.notEqual(entry.error, true, `${label}: the list's own control errored`)
+    if (waiting.length) {
+      const gapId = Math.max(...waiting)
+      const cursor = entry.nextBeforeId ?? null
+      assert.ok(cursor === null || cursor > gapId,
+        `${label}: cursor ${cursor} sits below the gap named at ${gapId}`)
+    }
+    for (const droppedId of ids(previous?.deferredRows)) {
+      if (waiting.includes(droppedId)) continue
+      const above = ids(entry.rows).filter(candidate => candidate >= droppedId)
+      assert.deepEqual(above, ids(rowsFrom(above[0]!, above[0]! - droppedId + 1)),
+        `${label}: the gap at ${droppedId} lost its name with records above it unloaded`)
+    }
+    previous = entry
+    return entry
+  }
+
+  // 1. The reader's first page of this list.
+  const first = olderHistoryPager(Object.freeze({
+    rows: [], deferredRows: [], hasMore: true, nextBeforeId: null,
+    initialized: false, loading: false, error: false,
+  }), fetchList)
+  await first.run('notes', {})
+  const loaded = step('first page', first.read())
+  assert.deepEqual(ids(loaded.rows), ids(rowsFrom(100, 50)))
+  assert.equal(loaded.nextBeforeId, 51)
+
+  // 2. Fifty records arrive in this place, and a changed refresh whose citywide
+  // newest page carries none of them cannot prove the reader's top row is still
+  // the newest, so it names the gap above it and keeps no cursor.
+  listNewestId = 200
+  const refreshed = step('changed refresh', refreshWith(loaded, placed(rowsFrom(900, 50))
+    .map(row => ({ ...row, place_id: 12 }))))
+  assert.deepEqual(ids(refreshed.deferredRows), [100], 'the gap above the top row is named')
+  assert.equal(refreshed.nextBeforeId, null, 'nothing is loaded above that gap')
+
+  // 3. The automatic fill on that same refresh fails.
+  const filler = historyGapFiller(async () => ({ ok: false, json: async () => ({}) }))
+  const seamed = step('failed fill', (await filler(
+    { notes: { 'place:11|resident:': refreshed } }, { notes: [] } as never,
+    '8', new AbortController().signal)).notes!['place:11|resident:']!)
+  assert.equal(seamed.refreshError, true, 'the failed fill is marked for the reader')
+  assert.deepEqual(ids(seamed.deferredRows), [100])
+
+  // 4. The forward refresh of the open view runs on that same refresh. It reads
+  // this list's own newest page, which stops short of the gap, and it is what
+  // gives the empty cursor back.
+  const forward = forwardRefresher(seamed, fetchList)
+  await forward.run('notes', {})
+  const refreshedForward = step('forward refresh', forward.read())
+  assert.deepEqual(ids(refreshedForward.deferredRows), [100],
+    'a page that stopped above the gap leaves it named')
+  assert.equal(refreshedForward.nextBeforeId, 151,
+    'the cursor comes back at the lowest row connected to the gap')
+  assert.deepEqual(ids(refreshedForward.rows), [...ids(rowsFrom(200, 50)), ...ids(rowsFrom(100, 50))])
+
+  // 5. One press of the seam control, which loads towards the gap.
+  const seamPress = olderHistoryPager(refreshedForward, fetchList)
+  await seamPress.run('notes', {})
+  const pressed = step('seam press', seamPress.read())
+  assert.deepEqual(ids(pressed.deferredRows), [100], 'a page above the gap keeps it named')
+  assert.equal(pressed.nextBeforeId, 101)
+
+  // 6. One more press. Its page carries the record that named the gap, which is
+  // one the reader already has, so it adds no row and closes the gap instead.
+  const olderPress = olderHistoryPager(pressed, fetchList)
+  await olderPress.run('notes', {})
+  const joined = step('load older press', olderPress.read())
+  assert.deepEqual(joined.deferredRows, [], 'the page that reached the record closes the gap')
+  assert.deepEqual(ids(joined.rows), ids(rowsFrom(200, 150)), 'the list is whole')
+  assert.equal(joined.nextBeforeId, 51, 'load older continues from the lowest loaded row')
+
+  // 7. A second changed refresh, as quiet as the first.
+  const again = step('second changed refresh', refreshWith(joined, placed(rowsFrom(1_000, 50))
+    .map(row => ({ ...row, place_id: 12 }))))
+  assert.deepEqual(ids(again.deferredRows), [200], 'the gap above the new top row is named')
+  assert.equal(again.nextBeforeId, null)
+
+  // And the list is still readable: the press that follows loads this list's own
+  // newest page, reaches the record that named the gap, and closes it.
+  const finalPress = olderHistoryPager(again, fetchList)
+  await finalPress.run('notes', {})
+  const settled = step('press after the second refresh', finalPress.read())
+  assert.deepEqual(settled.deferredRows, [])
+  assert.equal(settled.nextBeforeId, 51)
 })
 
 test('a superseded complete-body read synchronizes its restored disclosure state', async () => {

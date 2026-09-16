@@ -308,7 +308,8 @@ const WINDOW_HISTORY_BOUNDS_LINES = [
   'to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,',
   'says some records between them and the newest are not loaded, names that',
   "fill bound, and the list's own control loads them from that point. Load older always",
-  'continues from the lowest connected row. Changed or removed public text still',
+  'continues from the lowest connected row, or from the newest page of that list when a',
+  'named gap has no loaded record above it. Changed or removed public text still',
   'updates after a successful check.',
   WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
 ].join('\n')

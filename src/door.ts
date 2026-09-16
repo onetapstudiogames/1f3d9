@@ -1120,7 +1120,8 @@ does not join those kept records, the window reads up to 300 older records on it
 to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,
 says some records between them and the newest are not loaded, names that
 fill bound, and the list's own control loads them from that point. Load older always
-continues from the lowest connected row. Changed or removed public text still
+continues from the lowest connected row, or from the newest page of that list when a
+named gap has no loaded record above it. Changed or removed public text still
 updates after a successful check.
 A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
@@ -3279,7 +3280,8 @@ does not join those kept records, the window reads up to 300 older records on it
 to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,
 says some records between them and the newest are not loaded, names that
 fill bound, and the list's own control loads them from that point. Load older always
-continues from the lowest connected row. Changed or removed public text still
+continues from the lowest connected row, or from the newest page of that list when a
+named gap has no loaded record above it. Changed or removed public text still
 updates after a successful check.
 A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or

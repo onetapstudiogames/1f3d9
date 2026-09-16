@@ -39,7 +39,10 @@ test('the resident reference states the same two bounds', () => {
     'the reference states the kept-record bound')
   assert.ok(REFERENCE.includes(`up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} older records on its own`),
     'the reference states the automatic fill bound')
-  assert.match(REFERENCE, /Load older always\ncontinues from the lowest connected row/u)
+  // The cursor rule has two halves in the code, so the served sentence states
+  // both: the lowest connected row, and the list's own newest page when a named
+  // gap has nothing loaded above it.
+  assert.match(REFERENCE, /Load older always\ncontinues from the lowest connected row, or from the newest page of that list when a\nnamed gap has no loaded record above it\./u)
   assert.doesNotMatch(REFERENCE, /\{\{WINDOW_HISTORY_BOUNDS\}\}/u)
 })
 

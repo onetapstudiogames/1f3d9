@@ -265,34 +265,42 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   async function fillHistoryGap(
     collection, entry, filters, joinIds, marker, signal,
   ) {
-    let read = await readGapPages(collection, entry, filters, joinIds, marker, signal)
+    let read = await readGapPages(
+      collection, entry, filters, joinIds, marker, signal, WINDOW_HISTORY_FILL_ROWS)
     // The city changed between the snapshot read and this one. Read the gap
     // again from the marker the city has just reported, once, rather than
-    // naming a gap the window could still close. The manual pager's
-    // requireCurrentReadMarker cannot be used here: it calls refreshCity, which
-    // is the refresh this fill is running inside.
-    if (read.newerMarker) {
-      read = await readGapPages(
-        collection, entry, filters, joinIds, read.newerMarker, signal)
+    // naming a gap the window could still close. That second pass spends what
+    // the first left of the fill bound, so one refresh still reads at most the
+    // bound the window states. The manual pager's requireCurrentReadMarker
+    // cannot be used here: it calls refreshCity, which is the refresh this fill
+    // is running inside.
+    const markerMoved = Boolean(read.newerMarker)
+    if (markerMoved) {
+      read = await readGapPages(collection, entry, filters, joinIds, read.newerMarker,
+        signal, WINDOW_HISTORY_FILL_ROWS - read.rows.length)
     }
     const closedIds = read.closed
       ? joinIds
       : new Set(read.rows.filter(row => joinIds.has(row.id)).map(row => row.id))
+    // A second pass stopped by the part of the bound the first pass had already
+    // spent proves nothing about how large the gap is, so it is not recorded as
+    // larger than one fill and the next refresh reads it again.
     return filledHistoryEntry(entry, closedIds, read.rows,
-      read.failed || Boolean(read.newerMarker), read.spentBound)
+      read.failed || Boolean(read.newerMarker), read.spentBound && !markerMoved)
   }
 
   // One pass of the fill. It pages older until it has reached every waiting row,
-  // run out of city, or spent the fill bound, and it reports what it read rather
-  // than throwing, so its caller can choose between reading again and a seam.
-  async function readGapPages(collection, entry, filters, joinIds, marker, signal) {
+  // run out of city, or spent the rows its caller gave it out of the fill bound,
+  // and it reports what it read rather than throwing, so its caller can choose
+  // between reading again and a seam.
+  async function readGapPages(collection, entry, filters, joinIds, marker, signal, budget) {
     let rows = []
     // Starting under the lowest row still connected to the newest page keeps the
     // fill from spending a page on rows this refresh just delivered.
     let beforeId = connectedHistoryCursor(entry.rows, [...joinIds].map(id => ({ id })), null)
     const seenCursors = new Set()
     try {
-      while (rows.length < WINDOW_HISTORY_FILL_ROWS) {
+      while (rows.length < budget) {
         const payload = await readGapPage(collection, filters, beforeId, marker, signal)
         const responseMarker = safeChangeMarker(payload?.change_marker)
         if (marker && responseMarker !== marker) {
@@ -326,7 +334,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         rows, closed: false, newerMarker: null, failed: true, spentBound: false,
       })
     }
-    // The loop stopped because it spent the whole fill bound without reaching
+    // The loop stopped because it spent every row it was given without reaching
     // every waiting row.
     return Object.freeze({
       rows, closed: false, newerMarker: null, failed: false, spentBound: true,

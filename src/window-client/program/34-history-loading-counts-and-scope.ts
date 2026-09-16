@@ -79,7 +79,12 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
           (requestedBeforeId && nextBeforeId >= requestedBeforeId))) {
         throw new Error('public history cursor did not progress')
       }
-      if (hasMore && requestEntry.initialized && rows.length <= latest.rows.length &&
+      // A page asked for under a cursor must move the list on. A read with no
+      // cursor is this list's own newest page, which a gap with nothing loaded
+      // above it asks for on purpose, so a page of records the reader already
+      // has is an answer there rather than a broken cursor: it gives the cursor
+      // back below, instead of leaving a control that can only error.
+      if (hasMore && requestedBeforeId && rows.length <= latest.rows.length &&
           !seamClosed) {
         throw new Error('public history page did not add a row')
       }
