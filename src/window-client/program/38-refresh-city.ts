@@ -76,11 +76,13 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       }
       const snapshot = navigation.snapshot
       const retainViewerReading = viewerReadingViewIsActive()
+      // Kept pages and the automatic gap fill belong to the lists themselves, so
+      // they never depend on which view the reader is looking at.
       let histories = replaceAuthored
-        ? freshSnapshotHistories(snapshot, retainViewerReading ? changeState.changes : null)
+        ? freshSnapshotHistories(snapshot, changeState.changes)
         : mergeUnchangedSnapshotHistories(snapshot)
-      if (hadSnapshot && replaceAuthored && retainViewerReading) {
-        histories = await rereadHeldSnapshotHistories(
+      if (hadSnapshot && replaceAuthored) {
+        histories = await rejoinSnapshotHistories(
           histories,
           snapshot,
           freshSnapshot.changeMarker || requiredMarker,

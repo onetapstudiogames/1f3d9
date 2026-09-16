@@ -107,59 +107,89 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         : collection === 'agreements' ? 'agreement' : 'event'
   }
 
+  // The reader keeps what they scrolled to. Past the keep bound the oldest rows
+  // go first, and a row the reader is holding open is never one of them.
+  function keptHistoryRows(rows, heldKeys, kind) {
+    if (rows.length <= WINDOW_HISTORY_KEEP_ROWS) return rows
+    const kept = rows.slice(0, WINDOW_HISTORY_KEEP_ROWS)
+    const heldBelow = rows.slice(WINDOW_HISTORY_KEEP_ROWS)
+      .filter(row => heldKeys.has(kind + ':' + String(row.id)))
+    return heldBelow.length ? kept.concat(heldBelow) : kept
+  }
+
+  // Load older always continues from the lowest connected row: the lowest
+  // loaded row above the highest gap still waiting to be filled.
+  function connectedHistoryCursor(rows, waitingRows, fallbackId) {
+    const highestWaitingId = waitingRows.reduce(
+      (highest, row) => Math.max(highest, row.id), 0)
+    const connected = rows.filter(row => row.id > highestWaitingId)
+    return connected.length ? connected[connected.length - 1].id : fallbackId ?? null
+  }
+
+  // One list across a changed refresh: every row the reader already loaded
+  // stays, the newest page merges in, and the top row of any block the newest
+  // page does not reach is recorded so the fill below can close that gap.
+  function retainedHistoryEntry(collection, entry, freshRows, heldKeys, invalidatedKeys) {
+    const kind = historyViewerRecordKind(collection)
+    const freshIds = new Set(freshRows.map(row => row.id))
+    const retainedRows = entry.rows.filter(row => !freshIds.has(row.id) &&
+      !invalidatedKeys.has(kind + ':' + String(row.id)))
+    if (!retainedRows.length) return null
+    const merged = mergeWindowRows(retainedRows, freshRows)
+    const rows = keptHistoryRows(merged, heldKeys, kind)
+    const trimmed = rows.length < merged.length
+    const keptIds = new Set(rows.map(row => row.id))
+    // A newest page that still reaches the reader's own top row proves there is
+    // nothing unloaded between them.
+    const gapAboveKeptRows = !freshIds.has(entry.rows[0].id)
+    const waitingRows = mergeWindowRows(
+      (entry.deferredRows || []).filter(row => keptIds.has(row.id)),
+      gapAboveKeptRows ? [retainedRows[0]] : [])
+    return Object.freeze({
+      ...entry,
+      rows,
+      deferredRows: waitingRows,
+      hasMore: waitingRows.length || trimmed ? true : entry.hasMore === true,
+      nextBeforeId: entry.initialized === true
+        ? connectedHistoryCursor(rows, waitingRows, entry.nextBeforeId)
+        : entry.nextBeforeId ?? null,
+      loading: false,
+      error: false,
+      refreshing: false,
+      refreshError: false,
+    })
+  }
+
   function freshSnapshotHistories(snapshot, changes = null) {
     let histories = {}
-    const retainViewerRows = Array.isArray(changes)
-    const heldKeys = retainViewerRows ? viewerHeldRecordKeys() : new Set()
+    const heldKeys = viewerHeldRecordKeys()
     const invalidatedKeys = changedViewerRecordKeys(changes || [])
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const page = snapshot.pages[collection]
       const previousEntries = state.histories[collection] || {}
       const entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
-        if (!entry?.rows) return []
-        const freshRows = key === 'all' || !entry.filters
-          ? snapshot[collection]
-          : filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
-        const freshIds = new Set(freshRows.map(row => row.id))
-        const kind = historyViewerRecordKind(collection)
-        const retainedRows = entry.rows.filter(row => {
-          const recordKey = kind + ':' + String(row.id)
-          return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
-            !invalidatedKeys.has(recordKey)
-        })
-        if (!retainedRows.length || key === 'all') return []
-        return [[key, Object.freeze({
-          ...entry,
-          rows: mergeWindowRows(retainedRows, freshRows),
-          // This list is rebuilt from the newest page, so any earlier seam is
-          // void; the held-row recheck below marks whatever gap is left.
-          deferredRows: [],
-          loading: false,
-          error: false,
-          refreshing: false,
-          refreshError: false,
-        })]]
+        if (!entry?.rows?.length || key === 'all') return []
+        const freshRows = entry.filters
+          ? filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
+          : snapshot[collection]
+        const retained = retainedHistoryEntry(
+          collection, entry, freshRows, heldKeys, invalidatedKeys)
+        return retained ? [[key, retained]] : []
       }))
       const previousAll = previousEntries.all
-      const freshIds = new Set(snapshot[collection].map(row => row.id))
-      const kind = historyViewerRecordKind(collection)
-      const retainedAllRows = (previousAll?.rows || []).filter(row => {
-        const recordKey = kind + ':' + String(row.id)
-        return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
-          !invalidatedKeys.has(recordKey)
-      })
+      const retainedAll = previousAll?.rows?.length
+        ? retainedHistoryEntry(
+            collection, previousAll, snapshot[collection], heldKeys, invalidatedKeys)
+        : null
       histories = {
         ...histories,
         [collection]: {
           ...entries,
-          all: Object.freeze({
-            rows: retainedAllRows.length
-              ? mergeWindowRows(retainedAllRows, snapshot[collection])
-              : snapshot[collection],
-            hasMore: retainedAllRows.length && previousAll
-              ? previousAll.hasMore : page.hasMore,
-            nextBeforeId: retainedAllRows.length && previousAll
-              ? previousAll.nextBeforeId : page.nextBeforeId,
+          all: retainedAll || Object.freeze({
+            rows: snapshot[collection],
+            deferredRows: [],
+            hasMore: page.hasMore,
+            nextBeforeId: page.nextBeforeId,
             initialized: true,
             loading: false,
             error: false,
@@ -172,14 +202,18 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return histories
   }
 
-  async function rereadHeldHistoryEntry(
-    collection, entry, filters, heldIds, marker, signal,
+  // The window closes a gap on its own before it asks the reader to. It pages
+  // from the newest until it reaches the rows already loaded, and stops at the
+  // fill bound so a browser waking after a long sleep never pulls the whole
+  // sleep from the city in one burst.
+  async function fillHistoryGap(
+    collection, entry, filters, joinIds, marker, signal,
   ) {
-    let rows = []
+    let collected = []
     let beforeId = null
     const seenCursors = new Set()
     try {
-      for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
+      while (collected.length < WINDOW_HISTORY_FILL_ROWS) {
         const url = historyRequestUrl(collection, {
           initialized: Boolean(beforeId), nextBeforeId: beforeId,
         }, filters, marker)
@@ -191,26 +225,27 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           referrerPolicy: 'no-referrer',
           signal,
         })
-        if (!response.ok) throw new Error('held public history unavailable')
+        if (!response.ok) throw new Error('older public history unavailable')
         const payload = await response.json()
         requireExactReadMarker(payload?.change_marker, marker)
         const incoming = normalizeHistoryRows(collection, payload)
-        rows = mergeWindowRows(rows, incoming)
+        collected = mergeWindowRows(collected, incoming)
         const hasMore = payload.has_more === true
         const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
         if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
             (beforeId && nextBeforeId >= beforeId) ||
             !incoming.some(row => row.id === nextBeforeId))) {
-          throw new Error('held public history cursor did not progress')
+          throw new Error('older public history cursor did not progress')
         }
-        const foundHeldRows = [...heldIds].every(id => rows.some(row => row.id === id))
-        if (foundHeldRows || !hasMore) {
+        const joined = [...joinIds].every(id => collected.some(row => row.id === id))
+        if (joined || !hasMore) {
+          const rows = mergeWindowRows(entry.rows, collected)
           return Object.freeze({
             ...entry,
             rows,
             deferredRows: [],
-            hasMore,
-            nextBeforeId,
+            hasMore: entry.hasMore === true,
+            nextBeforeId: connectedHistoryCursor(rows, [], entry.nextBeforeId),
             initialized: true,
             loading: false,
             error: false,
@@ -222,9 +257,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         beforeId = nextBeforeId
       }
     } catch {
-      return seamHistoryEntry(entry, heldIds, rows, true)
+      return seamHistoryEntry(entry, joinIds, collected, true)
     }
-    return seamHistoryEntry(entry, heldIds, rows, false)
+    return seamHistoryEntry(entry, joinIds, collected, false)
   }
 
   // A page closes only the part of a seam it actually covered. A reader holding
@@ -237,26 +272,24 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return deferredRows.filter(row => row.id < lowestReadId)
   }
 
-  // A held row the forward read cannot join to the newest page leaves a seam.
-  // The held copy stays, the rows below the seam are deferred until paging
-  // reaches them, and the older-history cursor resumes at the lowest row of the
-  // joined block instead of under the unjoined held row.
-  function seamHistoryEntry(entry, heldIds, collected, readFailed) {
+  // A gap the automatic fill could not close stays named. The loaded rows stay,
+  // the top row of each block still waiting is recorded so the list's own
+  // control can close it, and the older-history cursor resumes at the lowest row
+  // still connected to the newest page rather than under the gap.
+  function seamHistoryEntry(entry, joinIds, collected, readFailed) {
     const rows = mergeWindowRows(entry.rows, collected)
-    const joinedIds = new Set(collected.filter(row => heldIds.has(row.id)).map(row => row.id))
-    const deferredIds = new Set([...heldIds].filter(id => !joinedIds.has(id)))
-    const joinedRows = rows.filter(row => !deferredIds.has(row.id))
+    const joinedIds = new Set(collected.filter(row => joinIds.has(row.id)).map(row => row.id))
+    const waitingIds = new Set([...joinIds].filter(id => !joinedIds.has(id)))
+    const waitingRows = rows.filter(row => waitingIds.has(row.id))
     return Object.freeze({
       ...entry,
       rows,
-      deferredRows: rows.filter(row => deferredIds.has(row.id)),
-      // Only an unjoined row promises that something older is still out there.
-      // A read that failed after joining every held row must not offer a page
-      // that would add nothing.
-      hasMore: deferredIds.size > 0 ? true : entry.hasMore === true,
-      nextBeforeId: joinedRows.length
-        ? joinedRows[joinedRows.length - 1].id
-        : entry.nextBeforeId,
+      deferredRows: waitingRows,
+      // Only an unjoined block promises that something older is still out there.
+      // A read that failed after joining every waiting block must not offer a
+      // page that would add nothing.
+      hasMore: waitingRows.length > 0 ? true : entry.hasMore === true,
+      nextBeforeId: connectedHistoryCursor(rows, waitingRows, entry.nextBeforeId),
       initialized: true,
       loading: false,
       error: false,
@@ -265,28 +298,22 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     })
   }
 
-  async function rereadHeldSnapshotHistories(histories, snapshot, marker, signal) {
-    const heldKeys = viewerHeldRecordKeys()
+  // Every list the window pages rejoins itself after a changed refresh, whether
+  // or not the reader is holding one of its records open.
+  async function rejoinSnapshotHistories(histories, snapshot, marker, signal) {
     const reads = []
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
-      const kind = historyViewerRecordKind(collection)
       for (const [key, entry] of Object.entries(histories[collection] || {})) {
+        const joinIds = new Set((entry.deferredRows || []).map(row => row.id))
+        if (!joinIds.size) continue
         const filters = entry.filters || Object.freeze({
           placeId: null, resident: null, context: false,
         })
-        const freshRows = key === 'all'
-          ? snapshot[collection]
-          : filterHistoryRows(collection, snapshot[collection], filters, snapshot)
-        const freshIds = new Set(freshRows.map(row => row.id))
-        const heldIds = new Set(entry.rows.filter(row =>
-          !freshIds.has(row.id) && heldKeys.has(kind + ':' + String(row.id)))
-          .map(row => row.id))
-        if (!heldIds.size) continue
         reads.push((async () => Object.freeze({
           collection,
           key,
-          entry: await rereadHeldHistoryEntry(
-            collection, entry, filters, heldIds, marker, signal),
+          entry: await fillHistoryGap(
+            collection, entry, filters, joinIds, marker, signal),
         }))())
       }
     }

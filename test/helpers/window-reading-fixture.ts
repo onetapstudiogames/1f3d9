@@ -9,15 +9,20 @@ type ReadingSnapshot = Readonly<{
   agreements: readonly Row[]
   events: readonly Row[]
   totals: Readonly<Record<string, number>>
+  pages?: Readonly<Record<string, Readonly<{ has_more: boolean, next_before_id: number | null }>>>
   change_marker: string
 }>
 type ReadingFixtureOptions = Readonly<{
   olderNote?: boolean
+  // Pages of synthetic older notes below the snapshot, so a test can load older
+  // more than once and then prove the loaded pages survive a changed refresh.
+  olderPages?: number
   noteBody?: string
   noteFullBody?: string
   noteTruncated?: boolean
 }>
 type ReadingRefreshOptions = Readonly<{
+  arrivingNotes?: number
   moderated?: boolean
   moderateOlderNote?: boolean
   noteModerationTargetId?: number
@@ -32,6 +37,8 @@ export const READING_NOTE = 'A reader can keep this note open while the public c
 export const READING_AGREEMENT = 'The parties agree that this long public record remains readable. '.repeat(25)
 export const READING_OLDER_NOTE = 'This older note was loaded deliberately and remains in the reader history. '
   .repeat(12)
+// The public window pages fifty records at a time.
+export const READING_PAGE_LIMIT = 50
 
 // Reuse the existing local server's records; never create a resident or contact a live site.
 export async function installReadingFixture(
@@ -71,6 +78,19 @@ export async function installReadingFixture(
     : null
   let olderNoteModerated = false
   let pendingChanges: readonly Row[] = []
+  // A deep synthetic run below the snapshot, plus whatever arrives on top of it,
+  // so a test can page down and then watch a changed refresh handle the result.
+  const olderPageCount = options.olderPages ?? 0
+  const deepNoteTemplate = olderPageCount ? olderNoteTemplate ?? baseline.notes[0] : null
+  const deepOlderNotes: Row[] = deepNoteTemplate
+    ? Array.from({ length: olderPageCount * READING_PAGE_LIMIT }, (_, index) => ({
+        ...deepNoteTemplate,
+        id: 298 - index,
+        body: `Older note ${298 - index} stays in the reader history.`,
+        truncated: false,
+      }))
+    : []
+  let arrivedNotes: readonly Row[] = []
   let snapshot: ReadingSnapshot = {
     ...baseline,
     residents: baseline.residents.map(resident => resident.id === 49
@@ -86,6 +106,38 @@ export async function installReadingFixture(
     totals: options.olderNote
       ? { ...baseline.totals, conversations: Number(baseline.totals.conversations) + 1 }
       : baseline.totals,
+  }
+  // Every note the city would serve, newest first. The outline shows only the
+  // newest page of it, exactly as the real bounded window read does.
+  function noteCorpus(): readonly Row[] {
+    return [...arrivedNotes, ...snapshot.notes, ...deepOlderNotes]
+  }
+  function servedOutline(): ReadingSnapshot {
+    if (!olderPageCount) return snapshot
+    const corpus = noteCorpus()
+    const notes = corpus.slice(0, READING_PAGE_LIMIT)
+    return { ...snapshot,
+      notes,
+      totals: { ...snapshot.totals, conversations: corpus.length },
+      pages: { notes: {
+        has_more: corpus.length > notes.length,
+        next_before_id: corpus.length > notes.length ? Number(notes.at(-1)!.id) : null,
+      } },
+    } as ReadingSnapshot
+  }
+  function corpusPage(beforeId: string | null, limit: number) {
+    const corpus = noteCorpus()
+    const start = beforeId
+      ? corpus.findIndex(note => Number(note.id) < Number(beforeId))
+      : 0
+    if (start < 0) return { rows: [] as Row[], hasMore: false, nextBeforeId: null }
+    const rows = corpus.slice(start, start + limit)
+    const hasMore = start + rows.length < corpus.length
+    return { rows, hasMore, nextBeforeId: hasMore ? Number(rows.at(-1)!.id) : null }
+  }
+  if (olderPageCount) {
+    snapshot = { ...snapshot,
+      totals: { ...snapshot.totals, conversations: noteCorpus().length } }
   }
   const networkViolations: string[] = []
   const origin = new URL(response.url()).origin
@@ -114,6 +166,16 @@ export async function installReadingFixture(
         return
       }
       const beforeId = url.searchParams.get('before_id')
+      if (collection === 'notes' && olderPageCount) {
+        const page = corpusPage(beforeId, Number(url.searchParams.get('limit')) || READING_PAGE_LIMIT)
+        await route.fulfill({ json: {
+          notes: page.rows,
+          change_marker: snapshot.change_marker,
+          has_more: page.hasMore,
+          next_before_id: page.nextBeforeId,
+        } })
+        return
+      }
       const isOlderNotePage = collection === 'notes' && options.olderNote && beforeId !== null
       const rows = isOlderNotePage
         ? olderNote && !olderNoteModerated ? [olderNote] : []
@@ -134,7 +196,7 @@ export async function installReadingFixture(
       delayed.started(url.searchParams.get('after_change_marker'))
       await delayed.released
     }
-    await route.fulfill({ json: snapshot })
+    await route.fulfill({ json: servedOutline() })
   })
   await page.route('**/api/events**', route => route.fulfill({ json: {
     events: snapshot.events, change_marker: snapshot.change_marker,
@@ -218,6 +280,7 @@ export async function installReadingFixture(
     // Every note id the fixture serves, newest first, so a test can compare a
     // loaded list with the whole record instead of only its two ends.
     get servedNoteIds() {
+      if (olderPageCount) return noteCorpus().map(note => Number(note.id))
       return [
         ...snapshot.notes.map(note => Number(note.id)),
         ...(olderNote && !olderNoteModerated ? [299] : []),
@@ -250,6 +313,20 @@ export async function installReadingFixture(
       }
       const alreadyHasNewNote = snapshot.notes.some(note => note.id === 304)
       const nextMarker = String(Number(snapshot.change_marker) + 1)
+      const arriving = refreshOptions.arrivingNotes ?? 0
+      if (arriving) {
+        // Clear of note 304, which this refresh adds to the snapshot itself.
+        const base = Number(noteCorpus()[0]!.id) + 10
+        arrivedNotes = [
+          ...Array.from({ length: arriving }, (_, index) => ({
+            ...baseline.notes[0],
+            id: base + arriving - index,
+            body: `Arriving note ${base + arriving - index}.`,
+            truncated: false,
+          })),
+          ...arrivedNotes,
+        ]
+      }
       if (refreshOptions.moderateOlderNote) olderNoteModerated = true
       snapshot = { ...snapshot,
         change_marker: nextMarker,
@@ -277,6 +354,10 @@ export async function installReadingFixture(
           conversations: Number(snapshot.totals.conversations) + (alreadyHasNewNote ? 0 : 1),
           things: 2, agreements: 3,
         },
+      }
+      if (olderPageCount) {
+        snapshot = { ...snapshot,
+          totals: { ...snapshot.totals, conversations: noteCorpus().length } }
       }
       const moderationTargetId = refreshOptions.moderateOlderNote
         ? 299

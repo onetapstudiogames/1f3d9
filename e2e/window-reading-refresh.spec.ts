@@ -4,6 +4,7 @@ import {
   READING_NOTE,
   READING_OLDER_NOTE,
 } from '../test/helpers/window-reading-fixture.ts'
+import { WINDOW_HISTORY_FILL_ROWS_TEXT } from '../src/window-history-limits.ts'
 
 const violationsByPage = new WeakMap<Page, readonly string[]>()
 
@@ -470,11 +471,12 @@ test('a failed older-history check keeps its held copy while the city and detail
       .toContainText(READING_OLDER_NOTE.trim())
     await expect(page.locator('#conversation-stream [data-viewer-record-key="note:304"]'),
       'new note arrives despite the failed older-history check').toContainText('A newly arrived note.')
+    // The newest page still reaches the reader's own top row, so the list is
+    // whole and there is nothing for a history read to join.
     await expect(page.locator('#conversation-page'),
-      'failed history check names the gap instead of joining the list silently')
-      .toContainText('Older conversations could not be rechecked')
+      'a whole list compared with no gap notice').not.toContainText('between here and the newest')
     await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
-      'seam control visibility compared with visible').toBeVisible()
+      'seam control with nothing missing compared with hidden').toBeHidden()
     delayed.release()
     await expect(page.locator('#record-detail .record-detail-text'),
       'detail after partial history failure compared with the complete note').toHaveText(READING_OLDER_NOTE.trim())
@@ -483,7 +485,7 @@ test('a failed older-history check keeps its held copy while the city and detail
   }
 })
 
-test('the seam left by an unchecked older note loads from its own control', async ({ page, baseURL }) => {
+test('a changed refresh with older history unavailable keeps the page it loaded', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
   violationsByPage.set(page, fixture.networkViolations)
   await ready(page, '/window/conversations')
@@ -495,23 +497,14 @@ test('the seam left by an unchecked older note loads from its own control', asyn
   const loadedIds = () => page.evaluate(() => [...document.querySelectorAll(
     '#conversation-stream [data-viewer-record-key]')].map(node =>
     Number(node.getAttribute('data-viewer-record-key')?.split(':').at(-1))))
-  const gapped = await loadedIds()
-  expect(gapped, 'held older note stays in the list across the failed check').toContain(299)
-  expect(gapped, 'newest note arrives across the failed check').toContain(304)
-  const seam = page.getByRole('button', { name: 'Load the conversations missing here', exact: true })
-  await expect(page.locator('#conversation-page'),
-    'unchecked list states its gap rather than joining silently')
-    .toContainText('between here and the newest')
-  await expect(seam, 'seam control visibility compared with visible').toBeVisible()
-
-  fixture.allowHistoryReads()
-  await seam.click()
-  await expect(page.locator('#conversation-page'), 'loaded seam compared with no remaining gap notice')
-    .not.toContainText('between here and the newest')
-  await expect(seam, 'seam control after loading compared with hidden').toBeHidden()
-  const joined = await loadedIds()
-  expect(joined, 'ids after the seam is loaded compared with every id the fixture serves')
+  const kept = await loadedIds()
+  expect(kept, 'loaded ids across the refresh compared with every id the fixture serves')
     .toEqual(fixture.servedNoteIds)
+  expect(kept, 'newest note arrives across the refresh').toContain(304)
+  await expect(page.locator('#conversation-page'),
+    'a whole list compared with no gap notice').not.toContainText('between here and the newest')
+  await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
+    'seam control with nothing missing compared with hidden').toBeHidden()
 })
 
 for (const view of ['Map'] as const) {
@@ -588,4 +581,103 @@ test('resident portrait changes appear inside a continuously retained note', asy
       `/api/drawing/resident/49/thumb.png?rev=${firstMarker}`,
       `/api/drawing/resident/49/thumb.png?rev=${secondMarker}`,
     ]))
+})
+
+async function loadedConversationIds(page: Page) {
+  return page.evaluate(() => [...document.querySelectorAll(
+    '#conversation-stream [data-viewer-record-key]')].map(node =>
+    Number(node.getAttribute('data-viewer-record-key')?.split(':').at(-1))))
+}
+
+async function loadOlderTwice(page: Page) {
+  const load = page.getByRole('button', { name: 'Load older conversations', exact: true })
+  for (let click = 0; click < 2; click += 1) {
+    const before = (await loadedConversationIds(page)).length
+    await expect(load, 'older-conversation control visibility compared with visible').toBeVisible()
+    await load.click()
+    await expect.poll(() => loadedConversationIds(page).then(ids => ids.length),
+      { message: `loaded conversation count compared with more than ${before}` })
+      .toBeGreaterThan(before)
+  }
+  return loadedConversationIds(page)
+}
+
+test('loaded older pages survive a changed refresh with no gap named', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderPages: 2 })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const loaded = await loadOlderTwice(page)
+  expect(loaded.length, 'loaded conversation count after two pages compared with over 100')
+    .toBeGreaterThan(100)
+
+  await fixture.refresh()
+
+  await expect.poll(async () => {
+    const present = new Set(await loadedConversationIds(page))
+    return loaded.filter(id => !present.has(id))
+  }, { message: 'previously loaded conversation ids missing after the refresh compared with []' })
+    .toEqual([])
+  await expect(page.locator('#conversation-page'),
+    'kept pages compared with no gap notice').not.toContainText('between here and the newest')
+  await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
+    'seam control after a kept refresh compared with hidden').toBeHidden()
+})
+
+test('a gap past the fill bound names the bound and loads from its own control', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderPages: 2 })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const loaded = await loadOlderTwice(page)
+
+  // More arrives during the sleep than the window fills on its own.
+  await fixture.refresh({ arrivingNotes: 400 })
+
+  const seam = page.getByRole('button', { name: 'Load the conversations missing here', exact: true })
+  await expect(page.locator('#conversation-page'),
+    'a gap past the fill bound compared with a named gap').toContainText('between here and the newest')
+  await expect(page.locator('#conversation-page'),
+    'the named gap compared with the stated fill bound')
+    .toContainText(`up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} records on its own`)
+  await expect(seam, 'seam control visibility compared with visible').toBeVisible()
+  const kept = new Set(await loadedConversationIds(page))
+  expect(loaded.filter(id => !kept.has(id)),
+    'previously loaded conversation ids missing behind the gap compared with []').toEqual([])
+
+  for (let click = 0; click < 4 && await seam.isVisible(); click += 1) {
+    const before = (await loadedConversationIds(page)).length
+    await seam.click()
+    await expect.poll(() => loadedConversationIds(page).then(rows => rows.length),
+      { message: `loaded conversation count compared with more than ${before}` })
+      .toBeGreaterThan(before)
+  }
+  await expect(page.locator('#conversation-page'), 'loaded gap compared with no remaining gap notice')
+    .not.toContainText('between here and the newest')
+})
+
+test('a failed automatic fill names the gap instead of joining the list silently', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderPages: 2 })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const loaded = await loadOlderTwice(page)
+
+  await fixture.refresh({ arrivingNotes: 120, historyUnavailable: true })
+
+  await expect(page.locator('#conversation-page'),
+    'failed fill compared with a named gap').toContainText('could not be rechecked')
+  const seam = page.getByRole('button', { name: 'Load the conversations missing here', exact: true })
+  await expect(seam, 'seam control visibility compared with visible').toBeVisible()
+  const kept = new Set(await loadedConversationIds(page))
+  expect(loaded.filter(id => !kept.has(id)),
+    'previously loaded conversation ids after the failed fill compared with []').toEqual([])
+
+  fixture.allowHistoryReads()
+  for (let click = 0; click < 4 && await seam.isVisible(); click += 1) {
+    const before = (await loadedConversationIds(page)).length
+    await seam.click()
+    await expect.poll(() => loadedConversationIds(page).then(rows => rows.length),
+      { message: `loaded conversation count compared with more than ${before}` })
+      .toBeGreaterThan(before)
+  }
+  await expect(page.locator('#conversation-page'), 'loaded gap compared with no remaining gap notice')
+    .not.toContainText('between here and the newest')
 })

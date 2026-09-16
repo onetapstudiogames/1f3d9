@@ -1114,9 +1114,13 @@ Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
-If an older-history check cannot join a held copy to the newest page, the held copy
-stays, the list says some records between it and the newest are not loaded, and the
-list's own control loads them from that point. Changed or removed public text still
+A changed refresh keeps the older records a reader already loaded, up to 3,000
+per list; past that the oldest go first and never one held open. When the newest page
+does not join those kept records, the window reads up to 300 older records on its own
+to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,
+says some records between them and the newest are not loaded, names that
+fill bound, and the list's own control loads them from that point. Load older always
+continues from the lowest connected row. Changed or removed public text still
 updates after a successful check.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
@@ -3268,9 +3272,13 @@ Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
-If an older-history check cannot join a held copy to the newest page, the held copy
-stays, the list says some records between it and the newest are not loaded, and the
-list's own control loads them from that point. Changed or removed public text still
+A changed refresh keeps the older records a reader already loaded, up to 3,000
+per list; past that the oldest go first and never one held open. When the newest page
+does not join those kept records, the window reads up to 300 older records on its own
+to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,
+says some records between them and the newest are not loaded, names that
+fill bound, and the list's own control loads them from that point. Load older always
+continues from the lowest connected row. Changed or removed public text still
 updates after a successful check.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded

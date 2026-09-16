@@ -92,7 +92,12 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
         rows,
         deferredRows: remainingSeamRows,
         hasMore,
-        nextBeforeId,
+        // A page that closed a gap lands inside rows the reader already has, so
+        // the next older page continues from the lowest connected row instead of
+        // rereading them.
+        nextBeforeId: hasMore
+          ? connectedHistoryCursor(rows, remainingSeamRows, nextBeforeId)
+          : nextBeforeId,
         automaticPageCount,
         automaticPaused: automaticLimitReached,
         initialized: true,

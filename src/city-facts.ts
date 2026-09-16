@@ -73,6 +73,10 @@ import {
 } from './me-around-you-limit.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 import { WORLD_ROOT_PURPOSE } from './world-root.ts'
+import {
+  WINDOW_HISTORY_FILL_ROWS_TEXT,
+  WINDOW_HISTORY_KEEP_ROWS_TEXT,
+} from './window-history-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -294,6 +298,19 @@ export function renderCityRoutesText(): string {
     .join('\n')
 }
 
+// The human window's own kept-page and gap-fill bounds, wrapped the way the
+// reference wraps its prose so the generated mirrors stay readable.
+const WINDOW_HISTORY_BOUNDS_LINES = [
+  `A changed refresh keeps the older records a reader already loaded, up to ${WINDOW_HISTORY_KEEP_ROWS_TEXT}`,
+  'per list; past that the oldest go first and never one held open. When the newest page',
+  `does not join those kept records, the window reads up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} older records on its own`,
+  'to close the gap. A larger gap, or a read that failed, keeps the loaded records in place,',
+  'says some records between them and the newest are not loaded, names that',
+  "fill bound, and the list's own control loads them from that point. Load older always",
+  'continues from the lowest connected row. Changed or removed public text still',
+  'updates after a successful check.',
+].join('\n')
+
 export function renderCityFactTokens(document: string): string {
   const anonymousCount = CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
@@ -318,6 +335,7 @@ export function renderCityFactTokens(document: string): string {
       '{{CITY_FEE_RAILS}}',
       CITY_FEE_RAILS_LINE,
     )
+    .replaceAll('{{WINDOW_HISTORY_BOUNDS}}', WINDOW_HISTORY_BOUNDS_LINES)
 }
 
 type TextFile = Readonly<{ path: string; text: string }>

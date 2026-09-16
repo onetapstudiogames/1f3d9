@@ -12,6 +12,8 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For humans watching
 - The window's Place tab now heads the world's description, line, and front matter as the city's rather than an owner's, because the world has no owner and never can.
+- A list in the window now keeps the older records you loaded through a refresh, up to 3,000 per list, instead of dropping back to the newest page about once a minute.
+- When a refresh leaves a gap above the records you loaded, the window now reads up to 300 older records on its own to close it, and only names the gap when it is larger than that or a read fails.
 
 ## 2026-09-15
 

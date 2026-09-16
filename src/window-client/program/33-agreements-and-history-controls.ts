@@ -110,10 +110,12 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       // Never a bare join: say that the list has a gap, and let the paging
       // control below load it. Not-yet-loaded is a waiting state, not an error,
       // and this container already announces its own changes politely.
-      parts.push(element('p', 'seam-row', entry.refreshError
+      parts.push(element('p', 'seam-row', (entry.refreshError
         ? 'Older ' + label + ' could not be rechecked, so some ' + label +
           ' between here and the newest may not be loaded.'
-        : 'Some ' + label + ' between here and the newest are not loaded.'))
+        : 'Some ' + label + ' between here and the newest are not loaded.') +
+        ' The window closes a gap of up to ' + WINDOW_HISTORY_FILL_ROWS_TEXT +
+        ' records on its own; this one is larger or could not be read.'))
     } else if (entry.refreshError) {
       const message = element('p', 'navigation-error',
         'Updated ' + label + ' could not be loaded. Showing the previous completed results.')
