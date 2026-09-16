@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { generatedReference, architecture, decisions, referenceSource, productRequirements, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, architecture, decisions, mcpSource, referenceSource, productRequirements, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { CREDIT_REQUEST_ID_RULE_LINE, CREDIT_REQUEST_ID_SHAPE_REFUSAL, CREDIT_REQUEST_ID_SUGGESTION_LINE } from '../../src/city-fee-facts.ts'
 
 export function registerMoneyTests(): void {
   test('city fee credit help stays deliberate, private, fixed, and non-transferable', () => {
@@ -137,5 +138,29 @@ export function registerMoneyTests(): void {
       // join reveals the key and the first recovery codes together
       assert.match(text, /eight[\s\S]{0,60}recovery codes\s+are shown once/iu, `${name}: join reveals codes`)
     }
+  })
+
+  test('the fee-credit request id rule is served once, per resident and per paid action', () => {
+    assert.match(CREDIT_REQUEST_ID_RULE_LINE, /one paid action/iu, 'rule: one id per paid action')
+    assert.match(CREDIT_REQUEST_ID_RULE_LINE, /suggested_request_id/u, 'rule: where a safe id comes from')
+    assert.match(CREDIT_REQUEST_ID_RULE_LINE, /performs nothing new/iu, 'rule: replay performs nothing new')
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RULE_LINE, /—/u, 'rule: no em dash')
+
+    assert.equal(
+      referenceSource.split('{{CREDIT_REQUEST_ID_RULE}}').length - 1,
+      1,
+      'reference source: the rule has exactly one home',
+    )
+    assert.equal(
+      generatedReference.split(CREDIT_REQUEST_ID_RULE_LINE).length - 1,
+      1,
+      'generated reference: the rule is served once',
+    )
+    assert.match(specification, /suggested_request_id/u, 'system design: the suggestion is recorded')
+
+    assert.ok(mcpSource.includes('CREDIT_REQUEST_ID_RULE_LINE'), 'mcp: credit_preflight serves the same rule')
+    assert.ok(mcpSource.includes('CREDIT_REQUEST_ID_SUGGESTION_LINE'), 'mcp: paid tools point at the suggestion')
+    assert.match(CREDIT_REQUEST_ID_SUGGESTION_LINE, /credit_preflight/u, 'pointer names the tool that suggests')
+    assert.match(CREDIT_REQUEST_ID_SHAPE_REFUSAL, /not a number or your balance/iu, 'refusal is in caller words')
   })
 }

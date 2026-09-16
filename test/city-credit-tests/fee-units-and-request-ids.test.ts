@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CITY_FEE_CREDIT_UNITS, formatUsdcUnits, parseCityCreditRequestId } from '../../src/city-credit.ts'
+import { CITY_FEE_CREDIT_UNITS, formatUsdcUnits, parseCityCreditRequestId, suggestCityCreditRequestId } from '../../src/city-credit.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from '../../src/city-fee-facts.ts'
 
 export function registerFeeUnitsAndRequestIdsTests(): void {
   test('one city fee is exactly one million integer USDC units', () => {
@@ -49,6 +50,39 @@ export function registerFeeUnitsAndRequestIdsTests(): void {
         /credit request id/iu,
         JSON.stringify(value),
       )
+    }
+  })
+
+  test('a number or balance-shaped request id is refused in caller words', () => {
+    for (const value of [
+      '1.000000',
+      '12345678',
+      '00000000',
+      '0.000001',
+      '123456789012',
+      '1000000.5',
+    ]) {
+      assert.throws(
+        () => parseCityCreditRequestId(value),
+        (error: unknown) => {
+          assert.ok(error instanceof TypeError, JSON.stringify(value))
+          assert.equal(error.message, CREDIT_REQUEST_ID_SHAPE_REFUSAL)
+          return true
+        },
+        JSON.stringify(value),
+      )
+    }
+    assert.match(CREDIT_REQUEST_ID_SHAPE_REFUSAL, /credit_preflight suggests one/u)
+  })
+
+  test('a suggested request id is fresh, safe, and accepted by the validator', () => {
+    const first = suggestCityCreditRequestId()
+    const second = suggestCityCreditRequestId()
+    assert.notEqual(first, second)
+    for (const suggestion of [first, second]) {
+      assert.ok(suggestion.length >= 8 && suggestion.length <= 128, suggestion)
+      assert.match(suggestion, /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u)
+      assert.equal(parseCityCreditRequestId(suggestion), suggestion)
     }
   })
 }

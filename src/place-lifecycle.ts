@@ -1,4 +1,5 @@
 import { parseCityCreditRequestId } from './city-credit.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
 import { publicLabel } from './input.ts'
 
 export type PlaceLifecycleAction =
@@ -45,8 +46,12 @@ export function parsePlaceLifecycleRequest(
   let requestId: string | null
   try {
     requestId = parseCityCreditRequestId(creditHeader)
-  } catch {
-    return { error: 'X-1F3D9-FEE-CREDIT must be one safe non-secret ASCII request id' }
+  } catch (error) {
+    return {
+      error: error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        : 'X-1F3D9-FEE-CREDIT must be one safe non-secret ASCII request id',
+    }
   }
   if (requestId === null) {
     return { error: 'rename, retire, and restore each require one city fee credit; send X-1F3D9-FEE-CREDIT' }

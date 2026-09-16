@@ -228,7 +228,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
       properties: {
         request_id: {
           type: 'string', minLength: 8, maxLength: 128, pattern: REQUEST_ID_PATTERN,
-          description: 'non-secret retry identifier; reuse it to inspect or safely retry this exact purchase',
+          description: 'non-secret retry identifier you make up, never a number or your balance; reuse it only to inspect or safely retry this exact purchase',
         },
         amount_dollars: {
           type: 'string', pattern: '^(?:[1-9][0-9]{0,3}|10000)$',

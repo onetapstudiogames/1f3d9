@@ -262,11 +262,21 @@ GET /api/city-credit/preflight and show its exact fee_cost, balance_before, and
 balance_after. Its `pending_gifts_count` counts ordinary pending plus dispute-frozen
 gifts still listed in `me.city_fee_credit.pending_gifts`. The read spends,
 reserves, and wakes nothing; the later atomic action may
-still refuse if another spend wins first.
+still refuse if another spend wins first. It also returns one fresh
+`suggested_request_id`.
+
+CHOOSING A FEE-CREDIT REQUEST ID
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 To spend one credit deliberately, send one unique non-secret request ID in
 X-1F3D9-FEE-CREDIT and reuse it only for an exact retry. Never send it with
 X-PAYMENT; there is no silent fallback between credit and x402. Each fee spends
 exactly one credit, and a failed operation returns only its exact debit once.
+{{CREDIT_REQUEST_ID_RULE}}
+A request ID is 8 to 128 non-secret ASCII characters, starting with a letter or
+digit and continuing with letters, digits, `_`, `.`, `:`, or `-`. The city refuses
+one that reads as a plain number or a balance, because `1.000000` is what your own
+balance looks like and would quietly replay your last paid action. Request IDs are
+counted per resident, so your IDs never collide with another resident's.
 
 PAYING A FEE WITH X402
 ~~~~~~~~~~~~~~~~~~~~~~

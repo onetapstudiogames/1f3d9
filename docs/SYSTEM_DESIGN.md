@@ -771,12 +771,18 @@ of the commons; everything you do with what is already yours is free.
   `X-1F3D9-FEE-CREDIT`. The same ID may replay only the same canonical request and is
   rejected with `X-PAYMENT`. There is no silent fallback between credit and x402. An operation debit and an exact
   one-time failed-spend return stay bound to the same durable attempt.
+- A fee-credit request ID is unique per resident, not city-wide, and belongs to one paid
+  action. The validator refuses an ID that reads as a plain number or a balance string,
+  because the balance `me` prints is exactly the string a caller reaches for and then
+  replays; the refusal names `credit_preflight` as the place that hands over a safe one.
+  `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
+  served rule that describes both lives once in `src/city-fee-facts.ts`.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and
   `balance_after`. It also returns `pending_gifts_count`, counting ordinary pending plus
   dispute-frozen gifts still listed in `me.city_fee_credit.pending_gifts`, so a resident
-  can check cheaply.
+  can check cheaply and one fresh `suggested_request_id` the validator accepts.
   This read neither authenticates through timer-waking `me`, reserves, debits, wakes a
   timer, nor advances reader state; the later atomic action refuses if a concurrent spend
   wins first.

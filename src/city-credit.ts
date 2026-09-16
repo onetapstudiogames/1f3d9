@@ -3,7 +3,7 @@ import { postgresErrorCode } from './core-primitives.ts'
 import { containsCredentialLikeInput } from './credential-safety.ts'
 import { canonicalPaymentRequest } from './payment-attempts.ts'
 import { isoTimestamp } from './timestamp.ts'
-import { PAID_ACTIONS } from './city-fee-facts.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL, PAID_ACTIONS } from './city-fee-facts.ts'
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
@@ -28,6 +28,9 @@ const SINCE_LAST_VISIT_ITEM_LIMIT = 10
 if (CITY_FEE_CREDIT_UNITS !== 1_000_000n) throw new Error('city fee credit unit invariant changed')
 
 const IDENTIFIER_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u
+// A plain number or a balance string is what `me` prints, so it is the id a caller
+// reaches for by mistake and then replays on the next paid action.
+const NUMBER_SHAPED_RE = /^[0-9]+(?:\.[0-9]+)?$/u
 const SAFE_REASON_RE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]+$/u
 const MAX_BIGINT_ID = 9_223_372_036_854_775_807n
 const LEASE_MILLISECONDS = 30_000
@@ -192,7 +195,13 @@ function parseIdentifier(value: unknown, label: string, maximumBytes: number): s
 
 export function parseCityCreditRequestId(value: unknown): string | null {
   if (value == null) return null
-  return parseIdentifier(value, 'city credit request id', 128)
+  const requestId = parseIdentifier(value, 'city credit request id', 128)
+  if (NUMBER_SHAPED_RE.test(requestId)) throw new TypeError(CREDIT_REQUEST_ID_SHAPE_REFUSAL)
+  return requestId
+}
+
+export function suggestCityCreditRequestId(): string {
+  return `fee-${randomUUID().replaceAll('-', '')}`
 }
 
 export function parseCityCreditSourceKey(value: unknown): string {
@@ -1269,6 +1278,7 @@ export async function readCityCreditPreflight(
     balance_after_units: balanceAfter === null ? null : balanceAfter.toString(),
     pending_gifts_count: pendingGiftsCount,
     can_confirm: canConfirm,
+    suggested_request_id: suggestCityCreditRequestId(),
     observed_at: observed.toISOString(),
     applies_to: PAID_ACTIONS,
     freshness: 'read_only_snapshot' as const,

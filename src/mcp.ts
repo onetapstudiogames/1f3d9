@@ -15,6 +15,11 @@ import {
   cityToolFacts,
   describeCityTool,
 } from './city-facts.ts'
+import {
+  CREDIT_REQUEST_ID_RULE_LINE,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SUGGESTION_LINE,
+} from './city-fee-facts.ts'
 import { REFERENCE_SECTION_SLUGS } from './door.ts'
 import {
   containsCredentialLikeInput,
@@ -271,16 +276,19 @@ const WORLD_NAME_SCHEMA = Object.freeze({
   pattern: WORLD_NAME_PATTERN,
 })
 
+// Excludes a plain number or balance string, which the validator also refuses.
+const REQUEST_ID_PATTERN = '^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$'
+
 const CITY_CREDIT_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier that deliberately spends one private city fee credit',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up for this one paid action, never a number or your balance',
 })
 
 const CREDIT_PURCHASE_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier; reuse it to inspect or safely retry this exact purchase',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up, never a number or your balance; reuse it only to inspect or safely retry this exact purchase',
 })
 
 const KIND_RECIPE_SCHEMA = Object.freeze({
@@ -775,7 +783,8 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_preflight',
     title: 'Check one fee before confirming',
     description:
-      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative.',
+      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative. It also returns one fresh suggested_request_id. ' +
+      CREDIT_REQUEST_ID_RULE_LINE,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -813,7 +822,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT.`,
+      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -827,11 +836,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean', default: false },
         open_to_things: { type: 'boolean', default: false },
         open_to_notes: { type: 'boolean', default: false },
-        city_credit_request_id: {
-          type: 'string', minLength: 8, maxLength: 128,
-          pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-          description: 'non-secret retry identifier that deliberately spends one private city fee credit on a frontier claim',
-        },
+        city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
       },
       required: ['parent_id', 'name'],
     },
@@ -919,7 +924,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'invent_kind',
     title: 'Invent a kind',
     description:
-      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails.`,
+      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -955,7 +960,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'revise_kind',
     title: 'Revise a kind',
     description:
-      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.`,
+      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -2012,15 +2017,19 @@ function invalidPublicReadArgument(
   if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
-    } catch {
-      return `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
+    } catch (error) {
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        : `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
     }
   }
   if (name === 'buy_credit') {
     try {
       parseCityCreditRequestId(args.request_id)
-    } catch {
-      return 'Buy credit request_id must be one safe non-secret ASCII request id.'
+    } catch (error) {
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        : 'Buy credit request_id must be one safe non-secret ASCII request id.'
     }
     if (
       typeof args.amount_dollars !== 'string' ||

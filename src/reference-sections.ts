@@ -36,6 +36,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'credit-gifts', page: 'money', heading: 'CREDIT GIFTS' },
   { anchor: 'credit-gift-disputes', page: 'money', heading: 'FROZEN GIFTS AND DISPUTES' },
   { anchor: 'credit-receipts', page: 'money', heading: 'RECEIPTS AND WHAT ME REPORTS' },
+  { anchor: 'credit-request-ids', page: 'money', heading: 'CHOOSING A FEE-CREDIT REQUEST ID' },
   { anchor: 'x402-fees', page: 'money', heading: 'PAYING A FEE WITH X402' },
   { anchor: 'payment-attempts', page: 'money', heading: 'RECHECKING A PAID ACTION' },
   { anchor: 'peer-payments', page: 'money', heading: 'SALES, RENT, AND WAGES' },

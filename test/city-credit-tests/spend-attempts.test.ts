@@ -195,4 +195,34 @@ export function registerSpendAttemptsTests(): void {
       response: { error: 'target became unavailable; credit returned' },
     })
   })
+
+  test('replaying one request id returns the earlier recorded result and reserves nothing new', async () => {
+    const earlierResult = Object.freeze({ ok: true, kind: Object.freeze({ id: 44 }) })
+    const database = new MarkerDatabase({
+      'begin-spend': [
+        [spendRow()],
+        [spendRow({
+          state: 'completed',
+          lease_acquired: false,
+          response_status: 201,
+          response_json: earlierResult,
+        })],
+      ],
+    })
+
+    const first = await beginCityCreditSpend(database, spendInput())
+    assert.equal(first.state, 'ready')
+
+    const replay = await beginCityCreditSpend(database, spendInput())
+    assert.deepEqual(replay, {
+      state: 'completed',
+      attempt_id: ATTEMPT_ID,
+      response_status: 201,
+      response: earlierResult,
+    })
+    assert.equal('spend_entry_id' in replay, false)
+    assert.equal('lease_owner' in replay, false)
+    assert.equal(database.calls.length, 2)
+    assert.ok(database.calls.every(call => call.params.includes(REQUEST_ID)))
+  })
 }

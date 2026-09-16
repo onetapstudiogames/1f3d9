@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { cityCreditAttentionLines, cityCreditSinceLastVisit, readCityCreditAttention, readCityCreditPreflight } from '../../src/city-credit.ts'
+import { cityCreditAttentionLines, cityCreditSinceLastVisit, parseCityCreditRequestId, readCityCreditAttention, readCityCreditPreflight } from '../../src/city-credit.ts'
 import { MarkerDatabase } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { mapAroundYou } from '../../src/me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
@@ -43,15 +43,15 @@ function attentionRow(overrides: Record<string, unknown> = {}): Record<string, u
 
 export function registerPreflightAndMeReadsTests(): void {
   test('preflight shows exact cost, pending-or-frozen gift count, and before/after balance without a debit', async () => {
-    const database = new MarkerDatabase({
-      preflight: [[{
-        balance_units: '3000000',
-        pending_gifts_count: '2',
-        observed_at: '2026-08-26T23:30:00.000Z',
-      }]],
-    })
+    const preflightRow = {
+      balance_units: '3000000',
+      pending_gifts_count: '2',
+      observed_at: '2026-08-26T23:30:00.000Z',
+    }
+    const database = new MarkerDatabase({ preflight: [[preflightRow], [preflightRow]] })
     const result = await readCityCreditPreflight(database, 7)
-    assert.deepEqual(result, {
+    const { suggested_request_id: suggestedRequestId, ...fixedFacts } = result
+    assert.deepEqual(fixedFacts, {
       resident_id: 7,
       fee_cost: '1.000000',
       fee_cost_units: '1000000',
@@ -68,7 +68,10 @@ export function registerPreflightAndMeReadsTests(): void {
       ],
       freshness: 'read_only_snapshot',
     })
-    assert.equal(database.calls.length, 1)
+    assert.equal(parseCityCreditRequestId(suggestedRequestId), suggestedRequestId)
+    const second = await readCityCreditPreflight(database, 7)
+    assert.notEqual(second.suggested_request_id, suggestedRequestId)
+    assert.equal(database.calls.length, 2)
     assert.match(database.calls[0]!.text, /gift\.status IN \('pending', 'frozen'\)/iu)
     assert.doesNotMatch(database.calls[0]!.text, /\b(?:INSERT|UPDATE|DELETE)\b/iu)
   })
