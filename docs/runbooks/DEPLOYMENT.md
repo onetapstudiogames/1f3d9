@@ -114,6 +114,32 @@ second time to prove it is safe to repeat. Take the required Production snapshot
 merging the application. The rollout does not apply this migration, and `--prepare`
 does not query either database.
 
+### Flag-review prerequisite
+
+Before the first application rollout that reads flags at `GET /api/founder/flags`, answers
+one at `POST /api/founder/flags/:id/handle`, or counts unhandled reports in `GET /api/me`,
+apply `npm run migrate:preview:flag-review` to the isolated Preview database. Verify
+`flag_reviews` has a unique `flag_id` referencing `flags`, a required `reviewer_id`
+referencing `residents`, a nullable `moderation_id` referencing `moderation_actions`, a
+nullable one-line `note` of 1 to 200 characters, the check that requires a moderation id or
+a note, and the validated `flag_reviews_append_only` trigger. Verify the table is empty,
+then apply the migration a second time to prove it is safe to repeat. Take the required
+Production snapshot, apply `npm run migrate:production:flag-review`, and record the same
+checks before merging the application. The rollout does not apply this migration, and
+`--prepare` does not query either database.
+
+```sql
+SELECT column_name, is_nullable, data_type FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'flag_reviews';
+SELECT conname, convalidated FROM pg_constraint WHERE conrelid = 'flag_reviews'::regclass;
+SELECT tgname, tgenabled FROM pg_trigger
+WHERE tgrelid = 'flag_reviews'::regclass AND tgname = 'flag_reviews_append_only';
+SELECT count(*) AS answers_before_rollout FROM flag_reviews;
+```
+
+An answer is append-only and one flag keeps one answer, so a wrong answer is corrected by a
+new moderation act, never by editing the row.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

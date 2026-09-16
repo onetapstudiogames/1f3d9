@@ -139,6 +139,70 @@ export function respondToDatabaseStage1(
     const residentId = handle === 'founder' ? 1 : handle === 'tiny-lantern' ? 7 : handle === 'neighbor' ? 8 : null
     return residentId === null ? [] : [{ id: residentId }]
   }
+  if (q.includes('insert into flags')) {
+    const reporterId = params[0] == null ? null : Number(params[0])
+    const actor = String(params[4] ?? 'anonymous')
+    const flag = {
+      id: fixtureState.current.nextFlagId,
+      reporter_id: reporterId,
+      reporter_handle: reporterId === null ? null : actor,
+      target_type: String(params[1]),
+      target_id: Number(params[2]),
+      reason: String(params[3]),
+      created_at: '2026-09-15T00:00:00.000Z',
+      handled_at: null,
+      moderation_id: null,
+      note: null,
+    }
+    fixtureState.current = {
+      ...fixtureState.current,
+      flags: [...fixtureState.current.flags, flag],
+      nextFlagId: flag.id + 1,
+    }
+    return [{ id: flag.id }]
+  }
+  if (q.includes('/* founder:flag-unhandled-count */')) {
+    return [{ count: fixtureState.current.flags.filter(flag => flag.handled_at === null).length }]
+  }
+  if (q.includes('/* founder:flag-queue */')) {
+    return [...fixtureState.current.flags]
+      .sort((left, right) => right.id - left.id)
+      .map(flag => ({ ...flag }))
+  }
+  if (q.includes('/* founder:flag-handle */')) {
+    const flagId = Number(params[0])
+    const moderationId = params[2] == null ? null : Number(params[2])
+    const note = params[3] == null ? null : String(params[3])
+    const existing = fixtureState.current.flags.find(flag => flag.id === flagId)
+    if (!existing) return []
+    if (existing.handled_at !== null) {
+      return [{
+        disposition: 'already_handled',
+        handled_at: existing.handled_at,
+        moderation_id: existing.moderation_id,
+        note: existing.note,
+      }]
+    }
+    if (moderationId !== null && !fixtureState.current.moderationActionIds.includes(moderationId)) {
+      throw Object.assign(new Error('flag review names a missing moderation act'), { code: '23503' })
+    }
+    const handled = {
+      ...existing,
+      handled_at: '2026-09-15T01:00:00.000Z',
+      moderation_id: moderationId,
+      note,
+    }
+    fixtureState.current = {
+      ...fixtureState.current,
+      flags: fixtureState.current.flags.map(flag => flag.id === flagId ? handled : flag),
+    }
+    return [{
+      disposition: 'handled',
+      handled_at: handled.handled_at,
+      moderation_id: handled.moderation_id,
+      note: handled.note,
+    }]
+  }
   if (q.includes('/* community-tools:waiting-count */')) {
     return [{
       count: fixtureState.current.communityToolSubmissions.filter(submission => submission.reviewed_at === null).length,

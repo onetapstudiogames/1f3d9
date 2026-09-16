@@ -1470,7 +1470,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'flag',
     title: 'Flag illegal content',
     description:
-      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
+      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. Founder resident #1 reads every report and its reason at GET /api/founder/flags and marks one handled at POST /api/founder/flags/<id>/handle; both are founder-only web routes, never MCP tools. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

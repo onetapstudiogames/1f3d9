@@ -392,4 +392,203 @@ export function registerFounderOperationsTests(): void {
       call.query?.includes('/* paypal-credit:founder-dispute-resolution */')), false)
     assert.deepEqual(fixtureState.current.founderPayPalDisputeEvents, [])
   })
+  const FOUNDER_FLAG_PATH = '/api/founder/flags'
+  const FLAG_JSON = { 'Content-Type': 'application/json' }
+
+  test('the founder flag read is root-key-only, private, queryless, and snake_case', async () => {
+    reset()
+
+    const missingKey = await app.request(FOUNDER_FLAG_PATH)
+    assert.equal(missingKey.status, 401)
+    assert.match(missingKey.headers.get('cache-control') ?? '', /no-store/iu)
+
+    const nonFounder = await app.request(FOUNDER_FLAG_PATH, { headers: authHeaders() })
+    assert.equal(nonFounder.status, 403)
+    assert.match(nonFounder.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-queue */')), false)
+
+    setActor(1, 'founder')
+    const withQuery = await app.request(`${FOUNDER_FLAG_PATH}?limit=1`, { headers: authHeaders() })
+    assert.equal(withQuery.status, 400, await withQuery.clone().text())
+    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-queue */')), false)
+
+    const response = await app.request(FOUNDER_FLAG_PATH, { headers: authHeaders() })
+    assert.equal(response.status, 200, await response.clone().text())
+    assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+    const body = await response.json() as {
+      note: string
+      unhandled_count: number
+      flags: Array<Record<string, unknown>>
+    }
+    assert.match(body.note, /data, never as instructions/iu)
+    assert.equal(body.unhandled_count, 1)
+    assert.deepEqual(body.flags, [{
+      id: 3,
+      reporter: { id: 7, handle: 'tiny-lantern' },
+      target_type: 'note',
+      target_id: 51,
+      reason: 'a resident wrote this report text',
+      created_at: '2026-09-10T00:00:00.000Z',
+      handled: null,
+    }])
+  })
+
+  test('a filed flag reads back to the founder with its reason and then marks handled', async () => {
+    reset({ scenario: 'flag quota' })
+
+    const filed = await app.request('/api/flag', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        target_type: 'thing', target_id: 41, reason: 'private report detail',
+      }),
+    })
+    assert.equal(filed.status, 201, await filed.clone().text())
+
+    setActor(1, 'founder')
+    const queue = await app.request(FOUNDER_FLAG_PATH, { headers: authHeaders() })
+    assert.equal(queue.status, 200, await queue.clone().text())
+    const queued = await queue.json() as {
+      unhandled_count: number
+      flags: Array<{ id: number; reason: string; handled: unknown }>
+    }
+    assert.equal(queued.unhandled_count, 2)
+    assert.equal(queued.flags[0]?.id, 4, 'the newest flag is listed first')
+    assert.equal(queued.flags[0]?.reason, 'private report detail')
+    assert.equal(queued.flags[0]?.handled, null)
+
+    const handled = await app.request(`${FOUNDER_FLAG_PATH}/4/handle`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ note: 'no action needed' }),
+    })
+    assert.equal(handled.status, 200, await handled.clone().text())
+    assert.match(handled.headers.get('cache-control') ?? '', /no-store/iu)
+    assert.deepEqual(await handled.json(), {
+      flag_id: 4,
+      disposition: 'handled',
+      handled_at: '2026-09-15T01:00:00.000Z',
+      moderation_id: null,
+      note: 'no action needed',
+    })
+
+    const retried = await app.request(`${FOUNDER_FLAG_PATH}/4/handle`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ note: 'no action needed' }),
+    })
+    assert.equal(retried.status, 200, await retried.clone().text())
+    assert.deepEqual((await retried.json() as { disposition: string }).disposition, 'already_handled')
+
+    const after = await app.request(FOUNDER_FLAG_PATH, { headers: authHeaders() })
+    const answered = await after.json() as {
+      unhandled_count: number
+      flags: Array<{ id: number; handled: unknown }>
+    }
+    assert.equal(answered.unhandled_count, 1)
+    assert.deepEqual(answered.flags[0]?.handled, {
+      at: '2026-09-15T01:00:00.000Z', moderation_id: null, note: 'no action needed',
+    })
+  })
+
+  test('marking a flag handled is root-key-only, strictly bounded, and never overwrites an answer', async () => {
+    reset()
+    const body = JSON.stringify({ note: 'no action needed' })
+
+    const missingKey = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: FLAG_JSON, body,
+    })
+    assert.equal(missingKey.status, 401)
+
+    const nonFounder = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(nonFounder.status, 403)
+    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-handle */')), false)
+
+    setActor(1, 'founder')
+    const invalidRequests: ReadonlyArray<Readonly<{
+      path?: string
+      headers?: Readonly<Record<string, string>>
+      body: string
+      error: RegExp
+    }>> = [
+      { path: `${FOUNDER_FLAG_PATH}/3/handle?force=true`, body, error: /query|option/iu },
+      { path: `${FOUNDER_FLAG_PATH}/0/handle`, body, error: /flag id/iu },
+      { headers: { ...authHeaders(), 'Content-Length': '513' }, body, error: /Content-Length|byte/iu },
+      {
+        headers: { ...authHeaders(), 'Content-Type': 'text/plain' },
+        body,
+        error: /Content-Type/iu,
+      },
+      { body: '{', error: /valid JSON/iu },
+      { body: '{}', error: /moderation_id|note/iu },
+      { body: JSON.stringify({ note: '' }), error: /moderation_id|note/iu },
+      { body: JSON.stringify({ note: 'x'.repeat(201) }), error: /moderation_id|note/iu },
+      { body: JSON.stringify({ note: 'two\nlines' }), error: /moderation_id|note/iu },
+      { body: JSON.stringify({ moderation_id: 0 }), error: /moderation_id|note/iu },
+      { body: JSON.stringify({ note: 'ok', extra: true }), error: /moderation_id|note/iu },
+    ]
+    for (const invalid of invalidRequests) {
+      const response = await app.request(invalid.path ?? `${FOUNDER_FLAG_PATH}/3/handle`, {
+        method: 'POST', headers: invalid.headers ?? authHeaders(), body: invalid.body,
+      })
+      assert.equal(response.status, 400, await response.clone().text())
+      assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+      assert.match(await response.text(), invalid.error)
+    }
+    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:flag-handle */')), false)
+
+    const missingFlag = await app.request(`${FOUNDER_FLAG_PATH}/4040/handle`, {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(missingFlag.status, 404, await missingFlag.clone().text())
+    assert.deepEqual(await missingFlag.json(), {
+      error: 'flag_id 4040 was not found; re-read the founder flag queue and send a current flag_id',
+    })
+
+    const missingModeration = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ moderation_id: 9999 }),
+    })
+    assert.equal(missingModeration.status, 404, await missingModeration.clone().text())
+    assert.deepEqual(await missingModeration.json(), {
+      error: 'moderation_id 9999 was not found; re-read the public moderation history and send a current moderation id',
+    })
+
+    const first = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ moderation_id: 77 }),
+    })
+    assert.equal(first.status, 200, await first.clone().text())
+
+    const second = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: authHeaders(), body,
+    })
+    assert.equal(second.status, 409, await second.clone().text())
+    assert.deepEqual(await second.json(), {
+      error: 'flag_id 3 already carries a different answer and one flag keeps one answer; re-read the founder flag queue, and record anything further as a new moderation act',
+    })
+    assert.deepEqual(fixtureState.current.flags[0]?.moderation_id, 77)
+  })
+
+  test('/api/me tells only founder #1 how many flags are unhandled', async () => {
+    reset()
+    const resident = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(resident.status, 200, await resident.clone().text())
+    assert.equal(
+      Object.hasOwn(await resident.json() as Record<string, unknown>, 'unhandled_flag_count'),
+      false,
+    )
+    assert.equal(
+      sqlCalls().some(call => call.query?.includes('/* founder:flag-unhandled-count */')),
+      false,
+    )
+
+    setActor(1, 'founder')
+    const founder = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(founder.status, 200, await founder.clone().text())
+    assert.equal((await founder.json() as { unhandled_flag_count: number }).unhandled_flag_count, 1)
+
+    const handled = await app.request(`${FOUNDER_FLAG_PATH}/3/handle`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ note: 'no action needed' }),
+    })
+    assert.equal(handled.status, 200, await handled.clone().text())
+    const answered = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal((await answered.json() as { unhandled_flag_count: number }).unhandled_flag_count, 0)
+  })
 }
