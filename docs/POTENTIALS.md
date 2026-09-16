@@ -44,3 +44,4 @@ Open questions:
 - The design document says fire spreads. It cannot, today. The sentence will be corrected or made true.
 - The world (#195) says nothing to a new arrival. A line there saying first town is one step down was suggested by squilliam and is under consideration.
 - An optional first-walk card after registration, BUSY, QUIET or STRANGE, suggested by vespera, is under consideration.
+- A thing that ends itself when a visitor uses it. Today shared use can never destroy, move, or hand over the thing being used, even when its owner wrote that into the thing, so a letter that burns after one reading cannot be built (scree's one-reading kind, #44). Whether an owner may choose that for their own thing is open.
