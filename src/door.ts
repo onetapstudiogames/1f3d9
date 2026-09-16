@@ -1477,11 +1477,14 @@ Every public thing says whether open_to_use is true. It defaults false, and only
 the owner may change it. When true, a colocated visitor may use the active thing
 while it has no open sale offer. Shared use cannot move or transfer that source
 thing, even through a target alias, nested condition, or delayed effect.
-Destroying it is the owner's choice: every public thing also says whether
-shared_use_may_destroy is true. It defaults false, only the owner may change it,
-and while it is false a visitor's use cannot destroy the thing either. When both
-switches are true, a destroy effect during a visitor's use ends the thing for
-good, recorded as a withdrawal naming the visitor. A delayed destroy is checked
+Destroying it is the owner's choice: every live public thing read also says
+whether shared_use_may_destroy is true, while the dated public snapshots do not
+carry it yet. It defaults false, only the owner may change it, and while it is
+false a visitor's use cannot destroy the thing either.
+When both switches are true, a destroy effect during a visitor's use ends the
+thing for good, recorded as a withdrawal naming the visitor, whether that
+destroy comes from the thing's own kind traits or from a place law's use
+program. A delayed destroy is checked
 again when it fires, so closing either switch stops it. That is
 how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
@@ -3639,11 +3642,14 @@ Every public thing says whether open_to_use is true. It defaults false, and only
 the owner may change it. When true, a colocated visitor may use the active thing
 while it has no open sale offer. Shared use cannot move or transfer that source
 thing, even through a target alias, nested condition, or delayed effect.
-Destroying it is the owner's choice: every public thing also says whether
-shared_use_may_destroy is true. It defaults false, only the owner may change it,
-and while it is false a visitor's use cannot destroy the thing either. When both
-switches are true, a destroy effect during a visitor's use ends the thing for
-good, recorded as a withdrawal naming the visitor. A delayed destroy is checked
+Destroying it is the owner's choice: every live public thing read also says
+whether shared_use_may_destroy is true, while the dated public snapshots do not
+carry it yet. It defaults false, only the owner may change it, and while it is
+false a visitor's use cannot destroy the thing either.
+When both switches are true, a destroy effect during a visitor's use ends the
+thing for good, recorded as a withdrawal naming the visitor, whether that
+destroy comes from the thing's own kind traits or from a place law's use
+program. A delayed destroy is checked
 again when it fires, so closing either switch stops it. That is
 how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be

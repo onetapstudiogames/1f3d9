@@ -61,6 +61,38 @@ export function registerThingsQuotasAndLawsTests(): void {
     }
   })
 
+  test('served copy says the dated public snapshots do not carry the destroy switch yet', () => {
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
+      ['specification', specification],
+    ] as const) {
+      assert.match(
+        text,
+        /shared_use_may_destroy[\s\S]{0,200}dated public\s+snapshots do not\s+carry/iu,
+        `${name}: the dated public snapshots do not carry the destroy switch yet`,
+      )
+    }
+  })
+
+  test('tool copy needs both switches for a visitor destroy and never narrows it to the thing own recipe', () => {
+    assert.match(
+      mcpSource,
+      /omitted shared_use_may_destroy; a visitor's use may destroy this thing only while you have set both true/iu,
+      'make: omitting the switch does not open a visitor destroy',
+    )
+    assert.equal(
+      /shared_use_may_destroy[\s\S]{0,240}its own recipe/iu.test(mcpSource),
+      false,
+      'no tool copy narrows a shared destroy to the thing own recipe',
+    )
+    assert.match(
+      mcpSource,
+      /shared_use_may_destroy, which every live public thing read states/iu,
+      'act: the switch is read back from a live public thing read',
+    )
+  })
+
   test('public quota copy promises 20 things, 50 notes, and 5 agreement actions', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],

@@ -588,8 +588,9 @@ The server hardcodes **meanings never, mechanisms only**:
   false, only the owner may change it, and while it is false a visitor's destroy is
   refused before any effect runs, in words that name that switch. When both switches are true,
   a destroy effect during the visitor's `use` withdraws the thing for good, with the visitor
-  named as the actor in the public `thing_withdrawn` record; a delayed destroy re-reads both
-  switches when it fires, so closing either one still stops it. That is how a letter that
+  named as the actor in the public `thing_withdrawn` record, whether that destroy comes from
+  the thing's own kind traits or from a place law's `use` program; a delayed destroy re-reads
+  both switches when it fires, so closing either one still stops it. That is how a letter that
   ends after one reading by somebody else works. `consume` remains owner-only.
   Known limitation: shared consumables stay impossible for now—a cafe cannot
   serve visitor-eaten food, and a bowl of fruit in a park cannot be eaten by passersby.

@@ -37,9 +37,11 @@ const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
 export { MAX_DUE_EFFECTS_PER_OBSERVATION }
 export const SHARED_SOURCE_MUTATION_ERROR =
-  'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
+  'shared use can never move or hand over its source thing; only the thing owner may move or transfer it'
 export const SHARED_SOURCE_DESTROY_CLOSED_ERROR =
   'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it'
+export const SHARED_SOURCE_USE_CLOSED_ERROR =
+  'shared use cannot destroy its source thing because open_to_use is no longer true; only the thing owner may open it again'
 export interface LawAuthority {
   readonly traitId: number
   readonly sourcePlaceId: number
@@ -506,8 +508,8 @@ async function destroyThing(
     if (stillOpen?.sharedUseMayDestroy === false) {
       throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
     }
-    if (stillOpen?.openToUse !== true) {
-      throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+    if (stillOpen && stillOpen.openToUse !== true) {
+      throw new EngineError(403, SHARED_SOURCE_USE_CLOSED_ERROR)
     }
     throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
   }

@@ -378,7 +378,7 @@ export function registerSharedUseTests(): void {
       assert.equal(result.httpStatus, 403)
       assert.equal(
         result.error,
-        'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+        'shared use can never move or hand over its source thing; only the thing owner may move or transfer it',
       )
       assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
       assert.equal(calls.some(call => /UPDATE things SET owner_id/.test(call.text)), false)
@@ -414,10 +414,45 @@ export function registerSharedUseTests(): void {
       assert.equal(result.httpStatus, 403)
       assert.equal(
         result.error,
-        'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+        'shared use can never move or hand over its source thing; only the thing owner may move or transfer it',
       )
     })
   }
+
+  test('a shared destroy refused after its thing closes to shared use says so, not that only the owner may move it', async () => {
+    let stillOpen = true
+    const { db } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 142 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return [{
+          id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+          has_open_offer: false, open_to_use: stillOpen, shared_use_may_destroy: true,
+        }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) {
+        return [{ trait_id: 8, recipe: { use: [{ effect: 'destroy', target: 'source' }] } }]
+      }
+      if (/UPDATE things SET withdrawn_at/.test(text)) {
+        stillOpen = false
+        return []
+      }
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 242 }]
+      return []
+    })
+
+    const result = await runAction(visitorUse, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(
+      result.error,
+      'shared use cannot destroy its source thing because open_to_use is no longer true; only the thing owner may open it again',
+    )
+  })
 
   test('a shared destroy the owner closes mid-action names the owner switch, not a silent success', async () => {
     let stillOpen = true
