@@ -237,27 +237,8 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       requireCurrentReadMarker(payload?.change_marker, requestMarker)
       const incoming = normalizeHistoryRows(collection, payload)
       const latest = historyEntry(collection, filters)
-      const rows = mergeWindowRows(latest.rows, incoming)
-      const waitingRows = seamRowsAfterPage(
-        latest.deferredRows || [], incoming, payload.has_more === true)
-      setHistoryEntry(collection, filters, {
-        ...latest,
-        rows,
-        deferredRows: waitingRows,
-        // A refresh that named a gap with nothing loaded above it leaves no
-        // cursor at all. This page is this list's own newest, so it is what
-        // gives the cursor back: Load older resumes at the lowest row still
-        // connected to a gap still waiting, or at the bottom of the list once
-        // no gap is waiting, instead of asking for the newest page for ever.
-        nextBeforeId: connectedHistoryCursor(
-          rows, waitingRows, safeId(payload.next_before_id) ?? latest.nextBeforeId ?? null),
-        // Only a gap still waiting forces the older control open. With every
-        // gap closed the list hands back the answer it already had about its
-        // own bottom, the same way a finished fill does.
-        hasMore: waitingRows.length ? true : olderRowsRemain(latest),
-        refreshing: false,
-        refreshError: false,
-      })
+      setHistoryEntry(collection, filters, forwardRefreshedEntry(
+        latest, incoming, payload.has_more === true, safeId(payload.next_before_id)))
       renderAll()
     } catch {
       if (authoredRevision === requestAuthoredRevision) {

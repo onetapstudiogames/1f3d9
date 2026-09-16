@@ -372,6 +372,29 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       !incoming.some(read => read.id >= row.id))
   }
 
+  // The list after the forward refresh of an open filtered view. That read is
+  // this list's own newest page, so it is also what gives back an older cursor
+  // a refresh left empty because a named gap had nothing loaded above it: the
+  // next read resumes at the lowest row still connected to a gap still waiting,
+  // or at the bottom of the list once no gap is waiting.
+  function forwardRefreshedEntry(entry, incoming, hasMore, nextPageId) {
+    const rows = mergeWindowRows(entry.rows, incoming)
+    const waitingRows = seamRowsAfterPage(entry.deferredRows || [], incoming, hasMore)
+    return Object.freeze({
+      ...entry,
+      rows,
+      deferredRows: waitingRows,
+      // Only a gap still waiting forces the older control open. With every gap
+      // closed the list hands back the answer it already had about its own
+      // bottom, the same way a finished fill does.
+      hasMore: waitingRows.length ? true : olderRowsRemain(entry),
+      nextBeforeId: connectedHistoryCursor(
+        rows, waitingRows, nextPageId ?? entry.nextBeforeId ?? null),
+      refreshing: false,
+      refreshError: false,
+    })
+  }
+
   // The list after a fill. Rows the fill read join the list, a gap it closed
   // loses its name, and a gap still waiting keeps one so the list's own control
   // can close it. The older-history cursor resumes at the lowest row still
