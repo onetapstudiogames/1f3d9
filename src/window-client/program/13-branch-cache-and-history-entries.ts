@@ -126,6 +126,26 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return connected.length ? connected[connected.length - 1].id : fallbackId ?? null
   }
 
+  // A waiting marker names the top row of a block with older records above it
+  // still unloaded. When the marker's own row leaves the list, the gap above it
+  // does not leave with it: the highest kept row still below that gap takes the
+  // marker's place, so the two sides of the gap never join in silence.
+  function carriedWaitingRows(deferredRows, rows, keptIds) {
+    return deferredRows.flatMap(row => {
+      if (keptIds.has(row.id)) return [row]
+      const below = rows.filter(kept => kept.id < row.id)
+      return below.length ? [below[0]] : []
+    })
+  }
+
+  // Trimming at the keep bound leaves a hole above every row that survived the
+  // trim because the reader is holding it open. Each such row is named, however
+  // many there are and however deep they sit.
+  function trimmedGapRows(merged, keptIds) {
+    return merged.filter((row, index) => index > 0 &&
+      keptIds.has(row.id) && !keptIds.has(merged[index - 1].id))
+  }
+
   // One list across a changed refresh: every row the reader already loaded
   // stays, the newest page merges in, and the top row of any block the newest
   // page does not reach is recorded so the fill below can close that gap.
@@ -149,15 +169,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // A newest page that still reaches the reader's own top row proves there is
     // nothing unloaded between them.
     const gapAboveKeptRows = removalFloorId > entry.rows[0].id
-    // Trimming at the keep bound leaves a hole above any row the reader is
-    // holding open below it. That row is named too, so the two sides of the hole
-    // never join in silence.
-    const heldBelowBound = rows.length > WINDOW_HISTORY_KEEP_ROWS
-      ? [rows[WINDOW_HISTORY_KEEP_ROWS]]
-      : []
     const waitingRows = mergeWindowRows(
-      (entry.deferredRows || []).filter(row => keptIds.has(row.id)),
-      (gapAboveKeptRows ? [retainedRows[0]] : []).concat(heldBelowBound))
+      carriedWaitingRows(entry.deferredRows || [], rows, keptIds),
+      (gapAboveKeptRows ? [retainedRows[0]] : []).concat(trimmedGapRows(merged, keptIds)))
     return Object.freeze({
       ...entry,
       rows,
@@ -229,7 +243,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     collection, entry, filters, joinIds, marker, signal,
   ) {
     let collected = []
-    let beforeId = null
+    // Starting under the lowest row still connected to the newest page keeps the
+    // fill from spending a page on rows this refresh just delivered.
+    let beforeId = connectedHistoryCursor(entry.rows, [...joinIds].map(id => ({ id })), null)
     const seenCursors = new Set()
     try {
       while (collected.length < WINDOW_HISTORY_FILL_ROWS) {

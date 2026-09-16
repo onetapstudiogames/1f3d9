@@ -1931,8 +1931,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   individually, keeping the last 200 valid distinct keys. Every paged list keeps
   the rows it already loaded across a changed refresh, up to 3,000 kept records
   per list. Past that bound the oldest rows go first, a record the reader is
-  holding open is never one of them, and the hole that trim leaves below the
-  bound is named rather than joined in silence. When the newest page does not
+  holding open is never one of them, and every hole that trim leaves below the
+  bound is named rather than joined in silence, one for each record held open.
+  A named gap outlives its own marker: when the city removes or moderates the
+  record that named it, the highest loaded record still below that gap takes its
+  place, so the two sides never join in silence. When the newest page does not
   reach the kept rows, the window reads older records on its own, page by page,
   up to 300 records per refresh. Only a gap larger than that bound, or a read
   that failed, leaves a seam line, and that line states the automatic-fill bound.

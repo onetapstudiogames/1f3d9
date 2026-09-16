@@ -1122,6 +1122,7 @@ says some records between them and the newest are not loaded, names that
 fill bound, and the list's own control loads them from that point. Load older always
 continues from the lowest connected row. Changed or removed public text still
 updates after a successful check.
+A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
 beneath the original, which remains the record; the city viewer decodes locally
@@ -3280,6 +3281,7 @@ says some records between them and the newest are not loaded, names that
 fill bound, and the list's own control loads them from that point. Load older always
 continues from the lowest connected row. Changed or removed public text still
 updates after a successful check.
+A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
 beneath the original, which remains the record; the city viewer decodes locally

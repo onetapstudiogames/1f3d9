@@ -266,6 +266,27 @@ test('the keep bound never trims a record the reader is holding open', () => {
     'load older continues above the hole, not below it')
 })
 
+test('the keep bound names every hole it leaves, not only the first', () => {
+  // Two held records at different depths below the bound leave two holes, and
+  // the records between them are unloaded, so both are named.
+  const loaded = rowsFrom(50_000, 3_500)
+  const heldIds = [46_900, 46_600]
+  const previous = { notes: { all: loadedEntry(loaded) }, things: {}, agreements: {}, events: {} }
+
+  const fresh = [{ id: 50_001 }, ...rowsFrom(50_000, 49)]
+
+  const entry = refreshedHistories(previous, snapshotOf({ notes: fresh }),
+    { heldKeys: heldIds.map(id => `note:${id}`) }).notes!.all!
+
+  assert.equal(entry.rows.length, WINDOW_HISTORY_KEEP_ROWS + heldIds.length,
+    'both held rows survive the trim')
+  assert.deepEqual(ids(entry.deferredRows), heldIds,
+    'each held row below the bound is named as waiting')
+  assert.equal(entry.nextBeforeId, 50_002 - WINDOW_HISTORY_KEEP_ROWS,
+    'load older continues above the highest hole')
+  assert.equal(entry.hasMore, true)
+})
+
 test('a refresh whose changes read failed keeps no older rows', () => {
   const loaded = rowsFrom(400, 120)
   const previous = {
@@ -296,6 +317,27 @@ test('a moderated row is dropped from the kept rows instead of being kept for ev
   assert.equal(ids(entry.rows).includes(344), true)
 })
 
+test('a moderated seam row keeps its gap named', () => {
+  // The reader loaded a newer block and, below a gap, a deeper block whose top
+  // row is the named waiting marker. The city then moderates that very row.
+  const loaded = [...rowsFrom(400, 50), ...rowsFrom(200, 10)]
+  const previous = {
+    notes: { all: loadedEntry(loaded, { deferredRows: [{ id: 200 }], nextBeforeId: 351 }) },
+    things: {}, agreements: {}, events: {},
+  }
+  const fresh = [{ id: 401 }, ...rowsFrom(400, 49)]
+
+  const entry = refreshedHistories(previous, snapshotOf({ notes: fresh }),
+    { invalidatedKeys: ['note:200'] }).notes!.all!
+
+  assert.equal(ids(entry.rows).includes(200), false, 'the moderated row leaves the list')
+  assert.deepEqual(ids(entry.deferredRows), [199],
+    'the highest row still below the gap takes the marker place')
+  assert.equal(entry.nextBeforeId, 351, 'load older stays above the hole, not below it')
+  assert.equal(entry.hasMore, true)
+  assert.equal(ids(entry.rows).includes(191), true, 'the rows below the gap stay loaded')
+})
+
 test('a record the newest page no longer carries is dropped, not kept for ever', () => {
   const loaded = rowsFrom(400, 60)
   const previous = { notes: { all: loadedEntry(loaded) }, things: {}, agreements: {}, events: {} }
@@ -315,7 +357,12 @@ test('the automatic fill closes a gap under the fill bound without a seam', asyn
   const entry = loadedEntry([...rowsFrom(500, 50), ...kept], {
     deferredRows: [{ id: 400 }], nextBeforeId: 451,
   })
-  const rejoin = historyGapFiller(pagedFetch(50, 500))
+  const page = pagedFetch(50, 500)
+  const requested: string[] = []
+  const rejoin = historyGapFiller(async (input: string) => {
+    requested.push(new URL(input, 'https://city.test').searchParams.get('before_id') || '')
+    return page(input)
+  })
 
   const filled = (await rejoin({ notes: { all: entry }, things: {}, agreements: {}, events: {} },
     { notes: rowsFrom(500, 50), things: [], agreements: [], events: [] },
@@ -326,6 +373,8 @@ test('the automatic fill closes a gap under the fill bound without a seam', asyn
   assert.deepEqual(ids(filled.rows), ids(rowsFrom(500, 220)),
     'every record between the newest and the kept rows is loaded')
   assert.equal(filled.nextBeforeId, 281, 'load older continues from the lowest connected row')
+  assert.deepEqual(requested, ['451', '401'],
+    'the fill starts under the connected rows rather than re-reading the newest page')
 })
 
 test('a gap past the fill bound leaves a seam the reader can load', async () => {

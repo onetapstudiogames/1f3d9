@@ -76,6 +76,7 @@ import { WORLD_ROOT_PURPOSE } from './world-root.ts'
 import {
   WINDOW_HISTORY_FILL_ROWS_TEXT,
   WINDOW_HISTORY_KEEP_ROWS_TEXT,
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
 } from './window-history-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
@@ -309,6 +310,7 @@ const WINDOW_HISTORY_BOUNDS_LINES = [
   "fill bound, and the list's own control loads them from that point. Load older always",
   'continues from the lowest connected row. Changed or removed public text still',
   'updates after a successful check.',
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
 ].join('\n')
 
 export function renderCityFactTokens(document: string): string {

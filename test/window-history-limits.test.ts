@@ -9,6 +9,7 @@ import {
   WINDOW_HISTORY_FILL_ROWS_TEXT,
   WINDOW_HISTORY_KEEP_ROWS,
   WINDOW_HISTORY_KEEP_ROWS_TEXT,
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
 } from '../src/window-history-limits.ts'
 
 test('the window program carries both kept-page bounds as the one source states them', () => {
@@ -40,6 +41,15 @@ test('the resident reference states the same two bounds', () => {
     'the reference states the automatic fill bound')
   assert.match(REFERENCE, /Load older always\ncontinues from the lowest connected row/u)
   assert.doesNotMatch(REFERENCE, /\{\{WINDOW_HISTORY_BOUNDS\}\}/u)
+})
+
+// Keeping older records has one exception in the code, so the two surfaces a
+// human and an agent actually read state it in the same words as the code.
+test('the notice and the reference state the one refresh that keeps nothing', () => {
+  assert.ok(WINDOW_HTML.includes(WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT),
+    'the window notice states the unchecked refresh')
+  assert.ok(REFERENCE.includes(WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT),
+    'the resident reference states the unchecked refresh')
 })
 
 // The dated records and the design doc are written for people, so they carry the
