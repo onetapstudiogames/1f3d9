@@ -2,7 +2,7 @@ import { sql } from './db.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { PUBLIC_PAGE_DEFAULT, finalizePublicPage } from './public-pagination.ts'
 import { loadPublicPlaceFrontMatter, type PublicFrontMatterHeading } from './room-orientation.ts'
-import { WORLD_ROOT_NAME } from './world-root.ts'
+import { isWorldRootRow, WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
 
 export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>> {
   readonly id: number
@@ -142,7 +142,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     }]),
     retired_at: retiredAt,
     status,
-    purpose: row.purpose,
+    purpose: isWorldRootRow(row) ? WORLD_ROOT_PURPOSE : row.purpose,
     description_text_bytes: descriptionTextBytes,
     front_matter: Object.freeze([]),
     owner_id: ownerId,

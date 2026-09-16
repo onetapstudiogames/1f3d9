@@ -27,7 +27,7 @@ import {
 } from './public-events.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
-import { WORLD_ROOT_NAME } from './world-root.ts'
+import { WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { isBasicAction } from './physics.ts'
 import {
   PUBLIC_CREDENTIAL_PATTERN_SOURCE,
@@ -413,7 +413,9 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     id,
     parent_id: parentId,
     name,
-    purpose: moderated ? '' : safePlacePurpose(row.purpose),
+    purpose: moderated
+      ? ''
+      : isOwnerlessWorld ? WORLD_ROOT_PURPOSE : safePlacePurpose(row.purpose),
     front_matter: moderated ? Object.freeze([]) : safeFrontMatter(row.front_matter),
     owner,
     places: count(row.places),

@@ -72,6 +72,7 @@ import {
   AROUND_YOU_SUMMARY_SLOTS,
 } from './me-around-you-limit.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
+import { WORLD_ROOT_PURPOSE } from './world-root.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -298,6 +299,7 @@ export function renderCityFactTokens(document: string): string {
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
   return document
     .replaceAll('{{CITY_POSITIONING_LINE}}', CITY_POSITIONING_LINE)
+    .replaceAll('{{WORLD_ROOT_PURPOSE}}', WORLD_ROOT_PURPOSE)
     .replaceAll('{{MARKET_POSITIONING_LINE}}', MARKET_POSITIONING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
