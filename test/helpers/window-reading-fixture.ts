@@ -210,6 +210,11 @@ export async function installReadingFixture(
       delayedThingRead = { started, released }
       return { started: began, release }
     },
+    // Lets a test load a seam the refresh could not check, without starting a
+    // second refresh that would reconcile the seam by itself.
+    allowHistoryReads() {
+      historyUnavailable = false
+    },
     delayNextNoteRead() {
       let started = () => {}
       let release = () => {}

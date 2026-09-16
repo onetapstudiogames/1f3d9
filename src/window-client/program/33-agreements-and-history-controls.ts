@@ -95,7 +95,8 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
   function renderHistoryControl(target, collection, label, filters) {
     if (!target) return
     const entry = historyEntry(collection, filters)
-    const hasRefreshState = entry.refreshing || entry.refreshError
+    const seamRows = entry.deferredRows || []
+    const hasRefreshState = entry.refreshing || entry.refreshError || seamRows.length > 0
     const hasPagingState = entry.hasMore || entry.loading || entry.error
     if (!hasRefreshState && !hasPagingState) {
       target.hidden = true
@@ -105,6 +106,15 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     const parts = []
     if (entry.refreshing) {
       parts.push(element('p', 'loading-row', 'Loading updated ' + label + '…'))
+    } else if (seamRows.length) {
+      // Never a bare join: say that the list has a gap, and let the paging
+      // control below load it.
+      const seam = element('p', 'navigation-error', entry.refreshError
+        ? 'Older ' + label + ' could not be rechecked, so some ' + label +
+          ' between here and the newest may not be loaded.'
+        : 'Some ' + label + ' between here and the newest are not loaded.')
+      seam.setAttribute('role', 'status')
+      parts.push(seam)
     } else if (entry.refreshError) {
       const message = element('p', 'navigation-error',
         'Updated ' + label + ' could not be loaded. Showing the previous completed results.')
@@ -125,7 +135,9 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     const older = entry.initialized ? 'older ' : ''
     const text = entry.loading
       ? 'Loading ' + older + label + '…'
-      : entry.error ? 'Retry loading ' + older + label : 'Load ' + older + label
+      : entry.error ? 'Retry loading ' + older + label
+        : seamRows.length ? 'Load the ' + label + ' missing here'
+          : 'Load ' + older + label
     const button = element('button', 'history-load', text)
     button.type = 'button'
     // Never disabled: a disabled control cannot take restored focus, and
@@ -227,6 +239,8 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       setHistoryEntry(collection, filters, {
         ...latest,
         rows: mergeWindowRows(latest.rows, incoming),
+        deferredRows: seamRowsAfterPage(
+          latest.deferredRows || [], incoming, payload.has_more === true),
         refreshing: false,
         refreshError: false,
       })

@@ -1904,8 +1904,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   receive these saved choices. Closing text or clearing site
   data removes its choice; blocked or unavailable browser storage leaves the
   current page usable without persistence. Invalid saved choices are skipped
-  individually, keeping the last 200 valid distinct keys. A failed older-history
-  check retains that entry's held copy while other entries and the snapshot refresh.
+  individually, keeping the last 200 valid distinct keys. A failed or incomplete
+  older-history check retains that entry's held copy while other entries and the
+  snapshot refresh, marks the gap it could not join, and moves that entry's
+  older-history cursor to the lowest joined row so the same control loads the gap.
+  Rows below the gap stay visible and rejoin the list when paging reaches them.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
