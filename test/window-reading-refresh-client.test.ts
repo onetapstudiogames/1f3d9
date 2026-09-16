@@ -721,6 +721,36 @@ test('two held rows at different depths keep the deeper gap named until it is re
     'every row between the newest and the deepest held row is loaded')
 })
 
+test('a page entirely below a waiting row can never clear its gap', async () => {
+  // The exact sequence the report walked: a cursor left under the gap reads a
+  // page whose rows are all older than the record that named it. That page
+  // reached nothing it named, so the gap stays named, and the cursor corrects
+  // itself to start above the gap again.
+  const { run, read } = olderHistoryPager(Object.freeze({
+    rows: rowsFrom(100, 10),
+    deferredRows: [{ id: 100 }],
+    hasMore: true,
+    nextBeforeId: 91,
+    initialized: true,
+    loading: false,
+    error: false,
+  }), async (input: string) => {
+    const before = Number(new URL(input, 'https://city.test').searchParams.get('before_id'))
+    const rows = rowsFrom(before - 1, 50)
+    return { ok: true, json: async () => ({
+      notes: rows, change_marker: '8', has_more: true, next_before_id: rows.at(-1)!.id,
+    }) }
+  })
+
+  await run('notes', {})
+
+  assert.deepEqual(ids(read().deferredRows), [100],
+    'a page below the gap does not clear it')
+  assert.equal(read().nextBeforeId, null,
+    'and the cursor starts again at the newest page rather than under the gap')
+  assert.equal(read().error, false)
+})
+
 test('a superseded complete-body read synchronizes its restored disclosure state', async () => {
   const loadSource = functionSource(
     PART_30_DETAIL_RENDER_AND_BODIES, 'loadFullBody', 'function revalidateViewerFullBodies')
