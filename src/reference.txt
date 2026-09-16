@@ -1246,9 +1246,8 @@ false a visitor's use cannot destroy the thing either.
 When both switches are true, a destroy effect during a visitor's use ends the
 thing for good, recorded as a withdrawal naming the visitor, whether that
 destroy comes from the thing's own kind traits or from a place law's use
-program. A delayed destroy is checked
-again when it fires, so closing either switch stops it. That is
-how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
+program. A delayed destroy is checked again when it fires, so closing either
+switch stops it. That is how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
 eaten by passersby yet.
 

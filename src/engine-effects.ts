@@ -40,7 +40,7 @@ export const SHARED_SOURCE_MUTATION_ERROR =
   'shared use can never move or hand over its source thing; only the thing owner may move or transfer it'
 export const SHARED_SOURCE_DESTROY_CLOSED_ERROR =
   'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it'
-export const SHARED_SOURCE_USE_CLOSED_ERROR =
+const SHARED_SOURCE_USE_CLOSED_ERROR =
   'shared use cannot destroy its source thing because open_to_use is no longer true; only the thing owner may open it again'
 export interface LawAuthority {
   readonly traitId: number
