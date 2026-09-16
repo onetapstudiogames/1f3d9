@@ -27,6 +27,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     placeSummary: document.getElementById('place-focus-summary'),
     placeWatchLive: document.getElementById('place-watch-live'),
     placeDescription: document.getElementById('place-description'),
+    placePurposeEyebrow: document.getElementById('place-purpose-eyebrow'),
     placePurposeLabel: document.getElementById('place-purpose-title'),
     placePurpose: document.getElementById('place-purpose'),
     placeFrontMatterLabel: document.getElementById('place-front-matter-title'),

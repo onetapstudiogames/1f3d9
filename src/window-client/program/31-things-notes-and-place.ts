@@ -220,6 +220,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   }
 
   function renderPlaceOrientation(place) {
+    if (nodes.placePurposeEyebrow) nodes.placePurposeEyebrow.textContent = 'OWNER / PURPOSE'
     if (nodes.placePurposeLabel) nodes.placePurposeLabel.textContent = 'Owner-written purpose'
     if (nodes.placeFrontMatterLabel) {
       nodes.placeFrontMatterLabel.textContent = 'Owner-chosen front matter'
@@ -232,9 +233,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     }
     // The world has no owner, so the line its place read carries is the city's
     // own. Naming it owner-written here would claim an author it cannot have.
-    if (nodes.placePurposeLabel && place.owner === null && place.parent_id === null
-      && place.name === WORLD_ROOT_NAME) {
-      nodes.placePurposeLabel.textContent = 'City-written line'
+    if (place.owner === null && place.parent_id === null && place.name === WORLD_ROOT_NAME) {
+      if (nodes.placePurposeEyebrow) nodes.placePurposeEyebrow.textContent = 'CITY / LINE'
+      if (nodes.placePurposeLabel) nodes.placePurposeLabel.textContent = 'City-written line'
     }
     const description = state.details['place:' + String(place.id)]
     if (place.moderated) {

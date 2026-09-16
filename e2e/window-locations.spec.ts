@@ -114,11 +114,13 @@ test('the Place tab shows the world line as the city\'s own, not as an owner-wri
 
   const placePanel = page.locator('#place-panel')
   await expect(placePanel.getByText('City-written line', { exact: true })).toBeVisible()
+  await expect(page.locator('#place-purpose-eyebrow')).toHaveText('CITY / LINE')
   await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toHaveCount(0)
   await expect(page.locator('#place-purpose')).toHaveText(WORLD_ROOT_PURPOSE)
 
   await page.locator('#place-filter').selectOption('12')
   await expect(placePanel.getByText('Owner-written purpose', { exact: true })).toBeVisible()
+  await expect(page.locator('#place-purpose-eyebrow')).toHaveText('OWNER / PURPOSE')
   await expect(placePanel.getByText('City-written line', { exact: true })).toHaveCount(0)
 })
 

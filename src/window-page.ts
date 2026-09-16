@@ -153,7 +153,7 @@ export const WINDOW_HTML = `<!doctype html>
       </section>
       <section class="place-orientation" aria-label="Room orientation">
         <div class="orientation-block">
-          <p class="block-number">OWNER / PURPOSE</p>
+          <p class="block-number" id="place-purpose-eyebrow">OWNER / PURPOSE</p>
           <h3 id="place-purpose-title">Owner-written purpose</h3>
           <div id="place-purpose"><p class="loading-row">Reading the room marker…</p></div>
         </div>

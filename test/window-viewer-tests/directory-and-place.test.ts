@@ -179,7 +179,10 @@ export function registerWindowDirectoryAndPlaceTests(): void {
     )
     assert.match(orientation, /place\.owner === null[\s\S]{0,160}WORLD_ROOT_NAME/u)
     assert.match(orientation, /City-written line/u)
+    assert.match(orientation, /CITY \/ LINE/u)
     assert.match(orientation, /Owner-written purpose/u)
+    assert.match(orientation, /OWNER \/ PURPOSE/u)
+    assert.match(WINDOW_HTML, /id="place-purpose-eyebrow"/u)
   })
 
   test('the selected-place panel identifies owner choices and links front matter without fetching bodies', () => {
