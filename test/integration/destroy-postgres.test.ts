@@ -386,3 +386,171 @@ test('PostgreSQL fires a deferred destroy: the resolved thing_withdrawn event ca
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
   }
 })
+
+test('PostgreSQL lets one reading end a letter: the visitor destroys it, and the owner can close the door again', async () => {
+  const postgres = await startPostgres()
+  try {
+    await postgres.client.query(schemaDdl)
+    await postgres.client.query(`
+      INSERT INTO residents (
+        id, handle, model, secret_hash, things_today, notes_today, agreement_actions_today
+      ) VALUES
+        (1, 'letter-writer', 'integration-test', repeat('1', 64), 0, 0, 0),
+        (2, 'letter-reader', 'integration-test', repeat('2', 64), 0, 0, 0)
+    `)
+    const placeId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT id, 'continent', 'reading-room', 'a room for one-reading letters', 1
+      FROM places WHERE place_kind = 'world'
+      RETURNING id
+    `)).rows[0]!.id
+    await postgres.client.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, $1), (2, $1, $1)
+    `, [placeId])
+
+    // The kind scree asked for: reading the letter ends it. The same recipe
+    // also gets a delayed twin, to prove the owner can still close the door
+    // between scheduling a destroy and the moment it fires.
+    await postgres.client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES
+        (1, 'one-reading', 'ends after one reading', '{"use":[{"effect":"destroy","target":"source"}]}'::jsonb, 1),
+        (2, 'slow-reading', 'ends a second after one reading', '{"use":[{"effect":"wait","seconds":1,"then":[{"effect":"destroy","target":"source"}]}]}'::jsonb, 1);
+      INSERT INTO kinds (id, name, owner_id) VALUES (1, 'letter', 1), (2, 'slow-letter', 1);
+      INSERT INTO kind_revisions (kind_id, revision, description, traits)
+      VALUES
+        (1, 1, 'a letter that ends after one reading', ARRAY['one-reading']),
+        (2, 1, 'a letter that ends a second after one reading', ARRAY['slow-reading']);
+    `)
+    const letterId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (
+        place_id, name, body, owner_id, maker_id, kind_id, birth_revision, current_revision,
+        open_to_use, shared_use_may_destroy
+      )
+      VALUES ($1, 'a one-reading letter', 'read me once', 1, 1, 1, 1, 1, TRUE, TRUE)
+      RETURNING id
+    `, [placeId])).rows[0]!.id
+
+    const db = taggedSql(postgres.client)
+    setEngineTransactionRunnerForTests(async (_ignored, work) => {
+      await postgres.client.query('BEGIN')
+      try {
+        const result = await work(taggedSql(postgres.client), true)
+        await postgres.client.query('COMMIT')
+        return result
+      } catch (error) {
+        await postgres.client.query('ROLLBACK')
+        throw error
+      }
+    })
+
+    const read = await runAction({
+      actorId: 2,
+      actorHandle: 'letter-reader',
+      action: 'use',
+      placeId,
+      sourceThingId: letterId,
+    }, db)
+    assert.deepEqual(
+      { status: read.status, httpStatus: read.httpStatus, error: read.error, effectsApplied: read.effectsApplied },
+      { status: 'applied', httpStatus: 200, error: null, effectsApplied: 1 },
+    )
+
+    const letterRow = await postgres.client.query<{
+      withdrawn_at: string | null
+      owner_id: number
+    }>(
+      'SELECT withdrawn_at, owner_id FROM things WHERE id = $1',
+      [letterId],
+    )
+    assert.ok(letterRow.rows[0]?.withdrawn_at !== null, 'one reading must end the letter')
+    assert.equal(letterRow.rows[0]?.owner_id, 1, 'the letter stays its writer\'s until it ends')
+
+    const letterEvents = await postgres.client.query<{
+      kind: string
+      actor: string
+      thing_id: string
+      reason: string
+    }>(`
+      SELECT kind, actor, detail->>'thing_id' AS thing_id, detail->>'reason' AS reason
+      FROM events
+      WHERE kind = 'thing_withdrawn'
+        AND (detail->>'thing_id')::bigint = $1
+      ORDER BY id
+    `, [letterId])
+    assert.deepEqual(letterEvents.rows, [{
+      kind: 'thing_withdrawn',
+      actor: 'letter-reader',
+      thing_id: String(letterId),
+      reason: 'destroyed',
+    }])
+    const actionEventForReading = await postgres.client.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM events
+       WHERE kind = 'action' AND (detail->>'action_id')::bigint = $1`,
+      [read.actionId],
+    )
+    assert.equal(actionEventForReading.rows[0]?.count, '0')
+
+    const secondReading = await runAction({
+      actorId: 2,
+      actorHandle: 'letter-reader',
+      action: 'use',
+      placeId,
+      sourceThingId: letterId,
+    }, db)
+    assert.equal(secondReading.status, 'failed')
+    assert.equal(secondReading.httpStatus, 404)
+
+    // A delayed ending re-reads the owner's switch when it fires.
+    const slowLetterId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (
+        place_id, name, body, owner_id, maker_id, kind_id, birth_revision, current_revision,
+        open_to_use, shared_use_may_destroy
+      )
+      VALUES ($1, 'a slow letter', 'read me once, slowly', 1, 1, 2, 1, 1, TRUE, TRUE)
+      RETURNING id
+    `, [placeId])).rows[0]!.id
+
+    const scheduled = await runAction({
+      actorId: 2,
+      actorHandle: 'letter-reader',
+      action: 'use',
+      placeId,
+      sourceThingId: slowLetterId,
+    }, db)
+    assert.equal(scheduled.status, 'applied')
+
+    await postgres.client.query(
+      'UPDATE things SET shared_use_may_destroy = FALSE WHERE id = $1',
+      [slowLetterId],
+    )
+    // The one-second timer is real, and a loaded container can pass it late,
+    // so wait for the effect to actually come due instead of assuming it has.
+    let outcome = { resolved: 0, failed: 0, capped: false }
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      outcome = await resolveDueEffects(placeId, db)
+      if (outcome.resolved + outcome.failed > 0) break
+      await delay(200)
+    }
+    assert.deepEqual(outcome, { resolved: 0, failed: 1, capped: false })
+    const slowLetterRow = await postgres.client.query<{ withdrawn_at: string | null }>(
+      'SELECT withdrawn_at FROM things WHERE id = $1',
+      [slowLetterId],
+    )
+    assert.equal(
+      slowLetterRow.rows[0]?.withdrawn_at,
+      null,
+      'closing the switch must stop a destroy that was already waiting',
+    )
+    const refusal = await postgres.client.query<{ detail: string }>(`
+      SELECT detail::text AS detail FROM effect_resolutions ORDER BY id DESC LIMIT 1
+    `)
+    assert.match(refusal.rows[0]?.detail ?? '', new RegExp(SHARED_SOURCE_MUTATION_ERROR))
+  } finally {
+    setEngineTransactionRunnerForTests(null)
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})

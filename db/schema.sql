@@ -1072,6 +1072,7 @@ CREATE TABLE IF NOT EXISTS things (
   maker_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   held_by           INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
   open_to_use       BOOLEAN NOT NULL DEFAULT FALSE,
+  shared_use_may_destroy BOOLEAN NOT NULL DEFAULT FALSE,
   kind_id           INTEGER REFERENCES kinds(id) ON DELETE RESTRICT,
   birth_revision    INTEGER,
   current_revision  INTEGER,
@@ -1119,6 +1120,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS open_to_use BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE things ADD COLUMN IF NOT EXISTS shared_use_may_destroy BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS drawing JSONB;
 -- Legacy loopback databases need the column before earlier schema maintenance
 -- statements can invoke the history trigger. Authenticated backfill waits until

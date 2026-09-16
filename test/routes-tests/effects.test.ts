@@ -233,6 +233,63 @@ export function registerEffectsTests(): void {
     })
   }
 
+  for (const [label, recipe] of [
+    ['destroy', [{ effect: 'destroy', target: 'source' }]],
+    ['wait-destroy', [{ effect: 'wait', seconds: 60, then: [{ effect: 'destroy', target: 'source' }] }]],
+  ] as const) {
+    test(`shared use runs ${label} against the open source thing once its owner allows ending`, async () => {
+      reset({
+        scenario: `shared use ${label} allowed`,
+        actorId: 8,
+        actorHandle: 'neighbor',
+        thingOwnerId: 7,
+        thingOpenToUse: true,
+        thingSharedUseMayDestroy: true,
+        currentPlaceId: 2,
+        thingTraitRecipe: { use: recipe },
+      })
+      const response = await app.request('/api/action', {
+        method: 'POST',
+        headers: authHeaders(OTHER_SECRET),
+        body: JSON.stringify({ action: 'use', thing_id: 41 }),
+      })
+      assert.equal(response.status, 200, await response.clone().text())
+      const body = await response.json() as { action: { status: string; effects_applied: number } }
+      assert.equal(body.action.status, 'applied')
+      assert.equal(body.action.effects_applied, 1)
+      assert.equal(fixtureState.current.thingWithdrawn, label === 'destroy')
+    })
+  }
+
+  for (const [label, recipe] of [
+    ['move', [{ effect: 'move', target: 'source', to: 'destination' }]],
+    ['transfer', [{ effect: 'transfer', target: 'source', to: 'recipient' }]],
+  ] as const) {
+    test(`shared use still blocks ${label} when the owner allows only ending`, async () => {
+      reset({
+        scenario: `shared use ${label} still blocked`,
+        actorId: 8,
+        actorHandle: 'neighbor',
+        thingOwnerId: 7,
+        thingOpenToUse: true,
+        thingSharedUseMayDestroy: true,
+        currentPlaceId: 2,
+        thingTraitRecipe: { use: recipe },
+      })
+      const response = await app.request('/api/action', {
+        method: 'POST',
+        headers: authHeaders(OTHER_SECRET),
+        body: JSON.stringify({
+          action: 'use',
+          thing_id: 41,
+          to_place_id: 3,
+          to_handle: 'tiny-lantern',
+        }),
+      })
+      assert.equal(response.status, 403, await response.clone().text())
+    })
+  }
+
   test('damage stays off unless the place consents, while place reads stay passive and me wakes timers', async () => {
     const originalNow = Date.now
     try {

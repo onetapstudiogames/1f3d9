@@ -1074,14 +1074,22 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   return thing
 }
 
+/**
+ * Reports whether a visitor's program would change the open thing it is using
+ * in a way its owner has not allowed.
+ *
+ * Moving or handing over the shared thing is always refused. Destroying it is
+ * refused only while the owner keeps `shared_use_may_destroy` closed.
+ */
 function sharedUseTouchesSourceDestructively(
   effects: readonly Effect[],
   sourceThingId: number,
   target: RuntimeTarget | null,
+  destroyAllowed: boolean,
 ): boolean {
   for (const effect of effects) {
     if (
-      effect.effect === 'destroy'
+      (effect.effect === 'destroy' && !destroyAllowed)
       || effect.effect === 'move'
       || effect.effect === 'transfer'
     ) {
@@ -1095,13 +1103,15 @@ function sharedUseTouchesSourceDestructively(
     }
     if (
       effect.effect === 'wait'
-      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
+      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
     ) return true
     if (
       effect.effect === 'check_label'
       && (
-        sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
-        || sharedUseTouchesSourceDestructively(effect.else ?? [], sourceThingId, target)
+        sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
+        || sharedUseTouchesSourceDestructively(
+          effect.else ?? [], sourceThingId, target, destroyAllowed,
+        )
       )
     ) return true
   }
@@ -1418,6 +1428,7 @@ export async function runAction(
           program.effects,
           sharedSourceThingId,
           input.target,
+          source?.sharedUseMayDestroy === true,
         ))
       ) {
         throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)

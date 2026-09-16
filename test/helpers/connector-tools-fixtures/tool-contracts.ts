@@ -98,6 +98,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
+        shared_use_may_destroy: { type: 'boolean' },
         ...drawingWriteProperties,
         drawing_variant_name: drawingSelectionSchema,
       },

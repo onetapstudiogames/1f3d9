@@ -32,7 +32,7 @@ export function registerSearchTests(): void {
           maker_id: 5, made_by: 'archive-smith',
           current_owner_id: 7, current_owner: 'tiny-lantern',
           owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
-          has_drawing: false,
+          shared_use_may_destroy: false, has_drawing: false,
           body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
           href: '/api/thing/41',
         }],

@@ -292,4 +292,146 @@ export function registerSharedUseTests(): void {
     assert.equal(calls.some(call => /'thing_withdrawn'/.test(call.text)), true)
   })
 
+
+  function openThingSql(
+    sharedUseMayDestroy: boolean,
+    recipe: readonly object[],
+    withdrawRows: readonly object[] = [{ id: 41 }],
+  ) {
+    return fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 140 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return [{
+          id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+          has_open_offer: false, open_to_use: true, shared_use_may_destroy: sharedUseMayDestroy,
+        }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) {
+        return [{ trait_id: 8, recipe: { use: recipe } }]
+      }
+      if (/UPDATE things SET withdrawn_at/.test(text)) return [...withdrawRows]
+      if (/pg_advisory_xact_lock/.test(text)) return []
+      if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
+      if (/INSERT INTO pending_effects/.test(text)) return [{ id: 540 }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 240 }]
+      return []
+    })
+  }
+
+  const visitorUse = {
+    actorId: 8,
+    actorHandle: 'neighbor',
+    action: 'use',
+    placeId: 2,
+    sourceThingId: 41,
+  } as const
+
+  for (const [referenceName, reference, target] of [
+    ['source symbol', 'source', null],
+    ['target alias', 'target', { type: 'thing' as const, id: 41 }],
+  ] as const) {
+    test(`a visitor's use destroys the open thing through the ${referenceName} when its owner allows it`, async () => {
+      const { db, calls } = openThingSql(true, [{ effect: 'destroy', target: reference }])
+
+      const result = await runAction({ ...visitorUse, target }, db)
+
+      assert.deepEqual(
+        { status: result.status, httpStatus: result.httpStatus, error: result.error },
+        { status: 'applied', httpStatus: 200, error: null },
+      )
+      assert.equal(result.effectsApplied, 1)
+      const withdraw = calls.find(call => /UPDATE things SET withdrawn_at/.test(call.text))
+      assert.ok(withdraw)
+      assert.match(withdraw.text, /open_to_use AND shared_use_may_destroy/i)
+      assert.match(withdraw.text, /'thing_withdrawn'/)
+      assert.equal(withdraw.values.includes(8), true)
+    })
+  }
+
+  test('a visitor may schedule a delayed destroy of an open thing its owner opened to ending', async () => {
+    const { db, calls } = openThingSql(true, [{
+      effect: 'wait', seconds: 10, then: [{ effect: 'destroy', target: 'source' }],
+    }])
+
+    const result = await runAction(visitorUse, db)
+
+    assert.equal(result.status, 'applied')
+    assert.equal(calls.some(call => /INSERT INTO pending_effects/.test(call.text)), true)
+  })
+
+  for (const [effectName, effect] of [
+    ['move', { effect: 'move', target: 'source', to: 'destination' }],
+    ['transfer', { effect: 'transfer', target: 'source', to: 'actor' }],
+  ] as const) {
+    test(`shared use still refuses ${effectName} when the owner allows only destroying`, async () => {
+      const { db, calls } = openThingSql(true, [effect])
+
+      const result = await runAction({
+        ...visitorUse, destinationPlaceId: 3, recipientId: 7,
+      }, db)
+
+      assert.equal(result.status, 'failed')
+      assert.equal(result.httpStatus, 403)
+      assert.equal(
+        result.error,
+        'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+      )
+      assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
+      assert.equal(calls.some(call => /UPDATE things SET owner_id/.test(call.text)), false)
+    })
+  }
+
+  test('a refused shared destroy names the owner switch, never the local-law rule', async () => {
+    const { db, calls } = openThingSql(false, [{ effect: 'destroy', target: 'source' }])
+
+    const result = await runAction(visitorUse, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(
+      result.error,
+      'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+    )
+    assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+  })
+
+  test('a shared destroy the owner closes mid-action names the owner switch, not a silent success', async () => {
+    let stillOpen = true
+    const { db } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 8, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 141 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return [{
+          id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+          has_open_offer: false, open_to_use: true, shared_use_may_destroy: stillOpen,
+        }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) {
+        return [{ trait_id: 8, recipe: { use: [{ effect: 'destroy', target: 'source' }] } }]
+      }
+      if (/UPDATE things SET withdrawn_at/.test(text)) {
+        stillOpen = false
+        return []
+      }
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 241 }]
+      return []
+    })
+
+    const result = await runAction(visitorUse, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(
+      result.error,
+      'shared use cannot change its source thing; only the owner may destroy, move, or transfer it',
+    )
+  })
+
 }

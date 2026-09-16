@@ -19,13 +19,33 @@ export function registerThingsQuotasAndLawsTests(): void {
         /\bconsume\b[^\n]{0,100}(?:owner(?:-only| only)|only (?:its |the )?owner)/iu,
         `${name}: consume remains owner-only`,
       )
-      for (const effect of ['destroy', 'move', 'transfer']) {
+      for (const effect of ['move', 'transfer']) {
         assert.match(
           text,
           new RegExp(`(?:shared|visitor|non-?owner)[^\\n]{0,180}\\b${effect}\\b[^\\n]{0,120}(?:source|thing)|\\b${effect}\\b[^\\n]{0,180}(?:shared|visitor|non-?owner)`, 'iu'),
           `${name}: shared use cannot ${effect} the source`,
         )
       }
+      assert.match(
+        text,
+        /shared_use_may_destroy[\s\S]{0,120}defaults?\s+false/iu,
+        `${name}: the destroy switch defaults closed`,
+      )
+      assert.match(
+        text,
+        /shared_use_may_destroy[\s\S]{0,200}only the owner may change it/iu,
+        `${name}: only the owner opens the destroy switch`,
+      )
+      assert.match(
+        text,
+        /both\s+switches are true[\s\S]{0,140}visitor[\s\S]{0,80}destroy/iu,
+        `${name}: an owner may let a visitor use destroy the thing`,
+      )
+      assert.match(
+        text,
+        /delayed\s+destroy[\s\S]{0,200}(?:closing either|still stops|stops it)/iu,
+        `${name}: a delayed destroy is checked again when it fires`,
+      )
     }
 
     for (const [name, text] of [
@@ -91,7 +111,7 @@ export function registerThingsQuotasAndLawsTests(): void {
       )
     }
 
-    assert.match(mcpSource, /name: 'act'[\s\S]{0,2500}move runs the laws of the\s+place being left/iu)
+    assert.match(mcpSource, /name: 'act'[\s\S]{0,2800}move runs the laws of the\s+place being left/iu)
     assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/public-history\.txt/iu)
   })
 

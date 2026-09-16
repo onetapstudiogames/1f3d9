@@ -93,6 +93,9 @@ const thingRow = (id = 41) => {
     owner_id: ownerId,
     owner: residentHandleForFakeId(ownerId),
     open_to_use: source ? fixtureState.current.thingOpenToUse : fixtureState.current.targetThingOpenToUse,
+    shared_use_may_destroy: source
+      ? fixtureState.current.thingSharedUseMayDestroy
+      : fixtureState.current.targetThingSharedUseMayDestroy,
     kind_id: kindId,
     kind: kindId === null ? null : 'lantern',
     birth_revision: kindId === null ? null : 1,
@@ -259,6 +262,7 @@ const remainingPaginationRows = (collection: string) => {
       current_owner_id: 7, current_owner: 'tiny-lantern',
       owner_id: 7, owner: 'tiny-lantern',
       birth_revision: null, current_revision: null, open_to_use: false,
+      shared_use_may_destroy: false,
     }
     if (collection === 'me_kinds') return { ...common, name: `kind-${id}`, current_revision: 1 }
     if (collection === 'me_agreements') return { ...common, body: `agreement ${id}`, signed: id % 2 === 0 }

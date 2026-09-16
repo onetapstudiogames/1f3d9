@@ -140,6 +140,31 @@ SELECT count(*) AS answers_before_rollout FROM flag_reviews;
 An answer is append-only and one flag keeps one answer, so a wrong answer is corrected by a
 new moderation act, never by editing the row.
 
+### Shared-use destroy prerequisite
+
+Before the first application rollout that lets a visitor's `use` destroy an open thing,
+apply `npm run migrate:preview:shared-use-may-destroy` to the isolated Preview database.
+Verify `things.shared_use_may_destroy` is a `boolean`, `NOT NULL`, with default `false`,
+and that every existing thing reads false, so no thing changes behavior on the day the
+column lands. Then apply the migration a second time to prove it is safe to repeat. Take
+the required Production snapshot, apply
+`npm run migrate:production:shared-use-may-destroy`, and record the same checks before
+merging the application. The rollout does not apply this migration, and `--prepare` does
+not query either database.
+
+```sql
+SELECT column_name, is_nullable, data_type, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'things'
+  AND column_name = 'shared_use_may_destroy';
+SELECT count(*) FILTER (WHERE shared_use_may_destroy) AS open_to_shared_destroy,
+  count(*) AS things
+FROM things;
+```
+
+The column is additive and defaults closed, so the old application keeps working against
+the new column and the rollback is to merge the previous application, never to drop it.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

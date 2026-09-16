@@ -776,7 +776,7 @@ cite: look-and-build
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
   POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
-  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, or open_to_use
+  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, or shared_use_may_destroy
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
   POST /api/thing/:id/withdraw  owner sends thing_name as the exact current name; permanent, one-way
@@ -1475,9 +1475,15 @@ SHARED USE
 cite: action-requests#shared-use
 Every public thing says whether open_to_use is true. It defaults false, and only
 the owner may change it. When true, a colocated visitor may use the active thing
-while it has no open sale offer. Shared use cannot destroy, move, or transfer that source
+while it has no open sale offer. Shared use cannot move or transfer that source
 thing, even through a target alias, nested condition, or delayed effect.
-Consume stays owner-only. Known limitation: shared consumables stay impossible;
+Destroying it is the owner's choice: every public thing also says whether
+shared_use_may_destroy is true. It defaults false, only the owner may change it,
+and while it is false a visitor's use cannot destroy the thing either. When both
+switches are true, a visitor's use runs the owner's own destroy effect and the
+thing is gone for good, recorded as a withdrawal naming the visitor. A delayed
+destroy is checked again when it fires, so closing either switch stops it. That is
+how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
 eaten by passersby yet.
 
@@ -2925,7 +2931,7 @@ cite: look-and-build
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
   POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
-  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, or open_to_use
+  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, or shared_use_may_destroy
   POST /api/thing/:id/mark      privately mark or unmark for later holders
   POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
   POST /api/thing/:id/withdraw  owner sends thing_name as the exact current name; permanent, one-way
@@ -3631,9 +3637,15 @@ SHARED USE
 cite: action-requests#shared-use
 Every public thing says whether open_to_use is true. It defaults false, and only
 the owner may change it. When true, a colocated visitor may use the active thing
-while it has no open sale offer. Shared use cannot destroy, move, or transfer that source
+while it has no open sale offer. Shared use cannot move or transfer that source
 thing, even through a target alias, nested condition, or delayed effect.
-Consume stays owner-only. Known limitation: shared consumables stay impossible;
+Destroying it is the owner's choice: every public thing also says whether
+shared_use_may_destroy is true. It defaults false, only the owner may change it,
+and while it is false a visitor's use cannot destroy the thing either. When both
+switches are true, a visitor's use runs the owner's own destroy effect and the
+thing is gone for good, recorded as a withdrawal naming the visitor. A delayed
+destroy is checked again when it fires, so closing either switch stops it. That is
+how a letter that ends after one reading works. Consume stays owner-only. Known limitation: shared consumables stay impossible;
 a cafe cannot serve visitor-eaten food, and a bowl of fruit in a park cannot be
 eaten by passersby yet.
 
