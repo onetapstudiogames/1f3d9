@@ -12,6 +12,10 @@ import { RESIDENT_AUTH_REFUSAL } from './core.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
 import { parseCityCreditRequestId } from './city-credit.ts'
 import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+} from './city-fee-facts.ts'
+import {
   completedPaymentResponse,
   paymentJsonResponse,
   resumeDurableX402,
@@ -121,9 +125,25 @@ export function parseCityCreditPurchaseAmount(value: unknown): Readonly<{
   return Object.freeze({ dollars, amountUnits: dollars * CITY_FEE_CREDIT_UNITS })
 }
 
+// A number-shaped id cleared the identifier check and failed only the newer shape
+// rule, so it still names a purchase recorded before that rule. Naming a row is not
+// starting one: the route refuses this id whenever nothing is recorded under it.
+function recordedRequestId(value: unknown): string | null {
+  try {
+    return parseCityCreditRequestId(value)
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+      && typeof value === 'string'
+    ) return value
+    throw error
+  }
+}
+
 export function cityCreditPurchaseTargetKey(actorIdInput: number, requestIdInput: unknown): string {
   const actorId = positiveResidentId(actorIdInput)
-  const requestId = parseCityCreditRequestId(requestIdInput)
+  const requestId = recordedRequestId(requestIdInput)
   if (!requestId) throw new TypeError('credit purchase request id is invalid')
   return `city-credit-purchase:${actorId}:${requestId}`
 }
@@ -226,11 +246,34 @@ function privateHeaders(c: Context): void {
   c.header('Vary', 'Authorization')
 }
 
-async function purchaseRequest(c: Context): Promise<Readonly<{
+type ParsedPurchase = Readonly<{
   requestId: string
   amountDollars: string
   amountUnits: bigint
-}> | 'oversized' | null> {
+  recordedOnly: boolean
+}>
+
+function purchaseFields(
+  requestId: string,
+  amountDollars: unknown,
+  recordedOnly: boolean,
+): ParsedPurchase | null {
+  try {
+    const amount = parseCityCreditPurchaseAmount(amountDollars)
+    return Object.freeze({
+      requestId,
+      amountDollars: amount.dollars.toString(),
+      amountUnits: amount.amountUnits,
+      recordedOnly,
+    })
+  } catch {
+    return null
+  }
+}
+
+async function purchaseRequest(
+  c: Context,
+): Promise<ParsedPurchase | 'oversized' | 'request_id_shape' | null> {
   // An absent Content-Length is what the production edge forwards; the
   // enforced bound is the actual byte count below. Unusable declarations are
   // answered honestly by the route before this parse runs.
@@ -249,18 +292,21 @@ async function purchaseRequest(c: Context): Promise<Readonly<{
     || !Object.hasOwn(record, 'request_id')
     || !Object.hasOwn(record, 'amount_dollars')
   ) return null
+  let requestId: string | null
   try {
-    const requestId = parseCityCreditRequestId(record.request_id)
-    if (!requestId) return null
-    const amount = parseCityCreditPurchaseAmount(record.amount_dollars)
-    return Object.freeze({
-      requestId,
-      amountDollars: amount.dollars.toString(),
-      amountUnits: amount.amountUnits,
-    })
-  } catch {
-    return null
+    requestId = parseCityCreditRequestId(record.request_id)
+  } catch (error) {
+    // The caller sent both fields; saying so again would hide the real reason.
+    if (!(error instanceof Error) || error.message !== CREDIT_REQUEST_ID_SHAPE_REFUSAL) return null
+    // A number-shaped id cleared the identifier check and failed only the newer
+    // rule, so a purchase already recorded under it stays inspectable and safely
+    // retryable. The route refuses it whenever nothing is recorded under it,
+    // which is every purchase that would be new.
+    if (typeof record.request_id !== 'string') return 'request_id_shape'
+    return purchaseFields(record.request_id, record.amount_dollars, true) ?? 'request_id_shape'
   }
+  if (!requestId) return null
+  return purchaseFields(requestId, record.amount_dollars, false)
 }
 
 function purchaseFailure(
@@ -354,6 +400,9 @@ export function mountCityCreditPurchaseRoutes(
         error: `credit purchase bodies are limited to ${MAX_PURCHASE_BODY_BYTES} bytes`,
       }, 400)
     }
+    if (parsed === 'request_id_shape') {
+      return c.json({ error: CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL }, 400)
+    }
     if (!parsed) {
       return c.json({
         error: 'credit purchase needs only request_id and amount_dollars as a whole-dollar string from 1 to 10000',
@@ -373,6 +422,11 @@ export function mountCityCreditPurchaseRoutes(
         targetKey,
         request,
       })
+      // A number-shaped id may only reach its own recorded purchase. With nothing
+      // recorded it is a new purchase, which is exactly what the rule refuses.
+      if (!existing && parsed.recordedOnly) {
+        return c.json({ error: CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL }, 400)
+      }
       let payment: DurableX402Result | Response
       if (existing) {
         payment = await resumeDurableX402({

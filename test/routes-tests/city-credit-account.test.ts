@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
+import { parseCityCreditRequestId } from '../../src/city-credit.ts'
 
 
 export function registerCityCreditAccountTests(): void {
@@ -141,7 +142,8 @@ export function registerCityCreditAccountTests(): void {
     const response = await app.request('/api/city-credit/preflight', { headers: authHeaders() })
     assert.equal(response.status, 200, await response.clone().text())
     assert.equal(response.headers.get('cache-control'), 'no-store')
-    const body = await response.json() as Record<string, unknown>
+    const { suggested_request_id: suggestedRequestId, ...body } = await response.json() as Record<string, unknown>
+    assert.equal(parseCityCreditRequestId(suggestedRequestId), suggestedRequestId)
     assert.deepEqual(body, {
       resident_id: 7,
       fee_cost: '1.000000',

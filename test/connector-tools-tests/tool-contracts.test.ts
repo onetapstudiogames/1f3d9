@@ -13,6 +13,12 @@ import {
   listedTools,
   withHostedConnector,
 } from '../helpers/connector-tools-fixtures/transport-harness.ts'
+import { parseCityCreditRequestId, suggestCityCreditRequestId } from '../../src/city-credit.ts'
+import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+} from '../../src/city-fee-facts.ts'
+import { callToolResult } from '../helpers/connector-tools-fixtures/transport-harness.ts'
 
 export function registerToolContractTests(): void {
   test('both MCP catalogs advertise the exact connector tool contracts', async () => {
@@ -74,7 +80,77 @@ export function registerToolContractTests(): void {
       assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
     }
   })
+
+  test('the published request id pattern accepts exactly what the validator accepts', async () => {
+    const { app } = connectorHarness()
+    const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
+    const patterns = new Set<string>()
+    for (const name of ['found', 'invent_kind', 'revise_kind'] as const) {
+      const schema = legacy.find(tool => tool.name === name)!.inputSchema as SchemaWithProperties
+      patterns.add(String(schema.properties.city_credit_request_id?.pattern))
+    }
+    const buyCredit = legacy.find(tool => tool.name === 'buy_credit')!.inputSchema as SchemaWithProperties
+    patterns.add(String(buyCredit.properties.request_id?.pattern))
+    assert.equal(patterns.size, 1, 'every paid tool publishes the same request id pattern')
+
+    const [pattern] = [...patterns]
+    assert.ok(pattern && pattern.startsWith('^'), 'every paid tool publishes an anchored pattern')
+    const published = new RegExp(pattern, 'u')
+    const candidates = [
+      suggestCityCreditRequestId(),
+      '20260916-2',
+      '1726500000-1',
+      '1_2345678',
+      '1:2345678',
+      '1a2345678',
+      'fee_frontier:request.20260822',
+      '1.000000',
+      '12345678',
+      '0.000001',
+      '1000000.5',
+    ]
+    for (const candidate of candidates) {
+      let accepted: boolean
+      try {
+        accepted = parseCityCreditRequestId(candidate) !== null
+      } catch {
+        accepted = false
+      }
+      assert.equal(published.test(candidate), accepted,
+        `published schema and validator disagree about ${candidate}`)
+    }
+  })
+
+  test('every paid tool refuses a number-shaped request id in the words of its own door', async () => {
+    const { app } = connectorHarness()
+    for (const name of ['found', 'place_edit', 'invent_kind', 'revise_kind'] as const) {
+      const result = await callToolResult(app, '/mcp', name, {
+        ...(name === 'found' ? { name: 'Number shaped test' } : {}),
+        ...(name === 'place_edit' ? { place_id: 3, name: 'Number shaped test' } : {}),
+        ...(name === 'invent_kind' ? { name: 'number-shaped-test' } : {}),
+        ...(name === 'revise_kind' ? { kind_id: 3 } : {}),
+        city_credit_request_id: '1.000000',
+      }, { authorization: AUTHORIZATION })
+      assert.equal(result.isError, true, name)
+      assert.equal(refusalText(result), CREDIT_REQUEST_ID_SHAPE_REFUSAL, name)
+    }
+
+    const bought = await callToolResult(app, '/mcp', 'buy_credit', {
+      request_id: '12345678',
+      amount_dollars: '3',
+    }, { authorization: AUTHORIZATION })
+    assert.equal(bought.isError, true)
+    assert.equal(refusalText(bought), CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL)
+  })
 }
+
+function refusalText(result: Readonly<{ content: readonly { text: string }[] }>): string {
+  return String((JSON.parse(result.content[0]!.text) as { error?: unknown }).error)
+}
+
+type SchemaWithProperties = Readonly<{
+  properties: Record<string, Record<string, unknown>>
+}>
 
 function safetyHints(value: Record<string, unknown> = {}): Record<string, unknown> {
   const { title: _title, ...hints } = value

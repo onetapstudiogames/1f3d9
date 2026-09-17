@@ -4,6 +4,7 @@ import { declaredBodyLength } from './bounded-body.ts'
 import { apiFailureResponse, type ApiFailureStatus } from './api-failure.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { CITY_FEE_CREDIT_UNITS, parseCityCreditRequestId } from './city-credit.ts'
+import { CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL, CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
 import { deliverPayPalCredit } from './paypal-credit-delivery.ts'
 import {
   PayPalCreditStoreConflictError, attachPayPalOrder, attachPayPalSubscription,
@@ -169,18 +170,21 @@ function hasOnly(record: JsonRecord, names: readonly string[]): boolean {
     && Object.keys(record).every(name => expected.has(name))
 }
 
+const REQUEST_ID_SHAPE_FAILURE = CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL
+const REQUEST_ID_FAILURE =
+  'request_id must be one non-secret ASCII identifier of 8 to 128 characters. No payment was started.'
+
 function requestId(value: unknown): string {
   let parsed: string | null
   try {
     parsed = parseCityCreditRequestId(value)
-  } catch {
+  } catch (error) {
     throw new RouteFailure(400,
-      'request_id must be one non-secret ASCII identifier of 8 to 128 characters. No payment was started.')
+      error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? REQUEST_ID_SHAPE_FAILURE
+        : REQUEST_ID_FAILURE)
   }
-  if (!parsed) {
-    throw new RouteFailure(400,
-      'request_id must be one non-secret ASCII identifier of 8 to 128 characters. No payment was started.')
-  }
+  if (!parsed) throw new RouteFailure(400, REQUEST_ID_FAILURE)
   return parsed
 }
 

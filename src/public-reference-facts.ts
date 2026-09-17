@@ -30,6 +30,7 @@ import {
   PAID_ACTIONS,
   SKILL_VERSION_RECOMMENDED,
 } from './city-facts.ts'
+import { CREDIT_REQUEST_ID_RULE_LINE } from './city-fee-facts.ts'
 
 const DEFAULT_DOMAIN = 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -88,6 +89,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       unit_usdc: '1.000000',
       eligible_actions: PAID_ACTIONS,
       selector_header: 'X-1F3D9-FEE-CREDIT',
+      request_id: CREDIT_REQUEST_ID_RULE_LINE,
       funding: 'founder issue, exact whole-dollar x402 purchase, or feature-gated hosted PayPal purchase; no rounding',
       gifts: 'a gift is pending until the named resident accepts; refusal and private purchaser redirect never expire',
       receipts: 'purchase, gift, spend, and failed-spend return events are private append-only resident receipts',

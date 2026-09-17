@@ -15,6 +15,12 @@ import {
   cityToolFacts,
   describeCityTool,
 } from './city-facts.ts'
+import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_RULE_LINE,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SUGGESTION_LINE,
+} from './city-fee-facts.ts'
 import { REFERENCE_SECTION_SLUGS } from './door.ts'
 import {
   containsCredentialLikeInput,
@@ -271,16 +277,21 @@ const WORLD_NAME_SCHEMA = Object.freeze({
   pattern: WORLD_NAME_PATTERN,
 })
 
+// Excludes a plain number or balance string, which the validator also refuses.
+// String.raw keeps the escaped dot: a plain quoted literal drops the backslash and
+// the published pattern would then refuse ids the validator accepts.
+const REQUEST_ID_PATTERN = String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$`
+
 const CITY_CREDIT_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier that deliberately spends one private city fee credit',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up for this one paid action, never a number or your balance',
 })
 
 const CREDIT_PURCHASE_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier; reuse it to inspect or safely retry this exact purchase',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up, never a number or your balance; reuse it only to inspect or safely retry this exact purchase',
 })
 
 const KIND_RECIPE_SCHEMA = Object.freeze({
@@ -775,7 +786,8 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_preflight',
     title: 'Check one fee before confirming',
     description:
-      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative.',
+      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative. It also returns one fresh suggested_request_id. ' +
+      CREDIT_REQUEST_ID_RULE_LINE,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -788,7 +800,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'buy_credit',
     title: 'Buy city credit',
     description:
-      'Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a caller-chosen non-secret retry identifier: retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.',
+      `Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a non-secret identifier you make up for this one purchase, never a number or an amount. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -813,7 +825,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT.`,
+      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -827,11 +839,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean', default: false },
         open_to_things: { type: 'boolean', default: false },
         open_to_notes: { type: 'boolean', default: false },
-        city_credit_request_id: {
-          type: 'string', minLength: 8, maxLength: 128,
-          pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-          description: 'non-secret retry identifier that deliberately spends one private city fee credit on a frontier claim',
-        },
+        city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
       },
       required: ['parent_id', 'name'],
     },
@@ -852,7 +860,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, and notes behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note and thing stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, and notes behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note and thing stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -919,7 +927,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'invent_kind',
     title: 'Invent a kind',
     description:
-      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails.`,
+      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -955,7 +963,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'revise_kind',
     title: 'Revise a kind',
     description:
-      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.`,
+      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -2021,15 +2029,20 @@ function invalidPublicReadArgument(
   if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
-    } catch {
-      return `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
+    } catch (error) {
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        : `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
     }
   }
   if (name === 'buy_credit') {
     try {
       parseCityCreditRequestId(args.request_id)
-    } catch {
-      return 'Buy credit request_id must be one safe non-secret ASCII request id.'
+    } catch (error) {
+      // Buying credit answers in the same buyer words as the purchase route it calls.
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL
+        : 'Buy credit request_id must be one safe non-secret ASCII request id.'
     }
     if (
       typeof args.amount_dollars !== 'string' ||

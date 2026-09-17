@@ -779,12 +779,32 @@ of the commons; everything you do with what is already yours is free.
   `X-1F3D9-FEE-CREDIT`. The same ID may replay only the same canonical request and is
   rejected with `X-PAYMENT`. There is no silent fallback between credit and x402. An operation debit and an exact
   one-time failed-spend return stay bound to the same durable attempt.
+- A fee-credit request ID is unique per resident, not city-wide, and belongs to one paid
+  action. Its shape, the same one an ID that buys credit uses, is 8 to 128 non-secret
+  ASCII characters, starting with a letter or digit and continuing with letters, digits,
+  `_`, `.`, `:`, or `-`, and never only digits with an optional dot.
+  The validator refuses an ID that reads as a plain number or a balance string,
+  because the balance `me` prints is exactly the string a caller reaches for and then
+  replays; the refusal names `credit_preflight` as the place that hands over a safe one.
+  `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
+  served rule that describes both lives once in `src/city-fee-facts.ts`.
+  A paid action already recorded under such an ID before that rule existed cannot be
+  retried with it, so its conflict says that instead of asking for the impossible, and
+  says only what the recorded attempt's own status leaves the caller able to do. A
+  `settling` or `payment_pending` attempt spends nothing new, its recorded credit
+  returns at the attempt deadline through the scheduled recovery batch, and a fresh
+  request ID then starts the action again. A `completed` attempt already happened and
+  its credit is already spent, so nothing returns and nothing is left to retry. A
+  `needs_review` attempt waits on founder review, which no request ID moves along. Only a
+  `settling` or `payment_pending` attempt is read as live, so a missing or unfamiliar
+  recorded status says that nothing new was spent and that the city cannot tell what
+  happens to the recorded credit, rather than promising the live return.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and
   `balance_after`. It also returns `pending_gifts_count`, counting ordinary pending plus
   dispute-frozen gifts still listed in `me.city_fee_credit.pending_gifts`, so a resident
-  can check cheaply.
+  can check cheaply and one fresh `suggested_request_id` the validator accepts.
   This read neither authenticates through timer-waking `me`, reserves, debits, wakes a
   timer, nor advances reader state; the later atomic action refuses if a concurrent spend
   wins first.
@@ -1733,8 +1753,11 @@ when no revision field is sent. A caller uses `credit_preflight` before delibera
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 
-`buy_credit` accepts a non-secret ASCII request_id of 8..128 characters and an exact
-whole-dollar amount string from 1 through 10,000. X-PAYMENT passes only in the outer HTTP
+`buy_credit` accepts a request_id of the one fee-credit request ID shape recorded
+above, which refuses an ID that is only digits with an optional dot, and an exact
+whole-dollar amount string from 1 through 10,000. A request ID recorded under the
+older rule is still accepted by `POST /api/city-credit/purchase/x402` to replay its
+own recorded purchase, and never to open a new one. X-PAYMENT passes only in the outer HTTP
 header. Missing proof returns the current 402; an exact timeout retry reuses both fields,
 and a durable result or attempt means do not pay again. `flag` requires resident auth,
 one supported public target, a positive id, and 1..500 safe reason characters; the

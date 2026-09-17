@@ -239,7 +239,7 @@ app.post('/api/city-credit/paypal/orders', async c => {
   if (
     !input || !exactKeys
     || typeof input.request_id !== 'string'
-    || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u.test(input.request_id)
+    || !/^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$/u.test(input.request_id)
     || input.resident_number !== '193'
     || input.resident_handle !== 'keeps-the-maybe'
     || input.amount_dollars !== '3'

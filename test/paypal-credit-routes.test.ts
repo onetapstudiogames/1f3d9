@@ -294,6 +294,29 @@ test('credential-shaped request ids are rejected before DB or PayPal work', asyn
   assert.equal(paypal.calls.length, 0)
 })
 
+test('a number-shaped request id is refused in buyer words, not as a length rule', async () => {
+  const { app, database, paypal } = configuredApp()
+  for (const requestId of ['12345678', '1.000000', '0.000001']) {
+    const response = await app.request('/api/city-credit/paypal/orders', postJson({
+      request_id: requestId,
+      resident_number: 193,
+      resident_handle: 'keeps-the-maybe',
+      amount_dollars: '3',
+      delivery: 'gift',
+    }))
+
+    assert.equal(response.status, 400, requestId)
+    const message = String((await response.json() as { error: string }).error)
+    assert.equal(
+      message,
+      'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.',
+      requestId,
+    )
+  }
+  assert.equal(database.calls.length, 0)
+  assert.equal(paypal.calls.length, 0)
+})
+
 test('lookup echoes the handle, while self purchases require that resident bearer', async () => {
   const { app, paypal } = configuredApp()
   const lookup = await app.request('/api/city-credit/paypal/residents/193')

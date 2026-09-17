@@ -8,6 +8,7 @@ import {
 } from './city-credit.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
 
 const MAX_CREDIT_DOLLARS = 10_000n
 const GIFT_TOKEN_RE = /^gift_claim_[0-9a-f]{64}$/u
@@ -243,7 +244,17 @@ export async function redirectCreditGift(
   const id = giftId(input.giftId)
   const targetResidentId = positiveResidentId(input.residentId)
   const claimHash = hashGiftClaimToken(input.claimToken)
-  const requestId = parseCityCreditRequestId(input.requestId)
+  // A redirect has no fee credit and no credit_preflight, so it says the same rule
+  // in this caller's words instead of pointing at a tool they cannot call.
+  let requestId: string | null
+  try {
+    requestId = parseCityCreditRequestId(input.requestId)
+  } catch (error) {
+    if (error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL) {
+      throw new TypeError('gift redirect request id must be an identifier you make up for this one redirect, not a number or an amount')
+    }
+    throw error
+  }
   if (!requestId) throw new TypeError('gift redirect request id is required')
   const rows = await database.query(`
     /* prepaid-credit:gift-redirect */
