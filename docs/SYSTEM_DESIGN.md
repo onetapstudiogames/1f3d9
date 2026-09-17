@@ -1978,7 +1978,9 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   continues from the lowest loaded record once no range is left named. The range
   read answers the whole range, so its own `has_more` closes the gap and no
   particular record has to be found: a record the city took down inside the gap
-  cannot leave that control unable to finish. A refresh that cannot check what
+  cannot leave that control unable to finish. A list the city's own counts say
+  holds no records keeps none, which is how an emptied list is told apart from a
+  quiet one. A refresh that cannot check what
   the city changed keeps no older records and starts again from the newest page.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check. Both bounds live once in `src/window-history-limits.ts`, and

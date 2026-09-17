@@ -146,6 +146,20 @@ export function registerRefreshRetentionTests(): void {
       'a filtered list the reader paged is not kept either')
   })
 
+  test('a list the city says is empty keeps nothing and names no gap', () => {
+    // An empty newest page can mean a quiet filtered list or an empty city. The
+    // city's own total for this list is what tells the two apart.
+    const previous = {
+      things: { all: loadedEntry(rowsFrom(400, 60)) }, notes: {}, agreements: {}, events: {},
+    }
+
+    const entry = refreshedHistories(previous, snapshotOf({ things: [] }, { things: 0 }))
+      .things!.all!
+
+    assert.deepEqual(entry.rows, [], 'a record the city no longer has is not kept')
+    assert.deepEqual(entry.gapAfterIds, [], 'an empty list has no range worth naming')
+  })
+
   test('a moderated row is dropped from the kept rows instead of being kept for ever', () => {
     const loaded = rowsFrom(400, 60)
     const previous = { notes: { all: loadedEntry(loaded) }, things: {}, agreements: {}, events: {} }

@@ -42,8 +42,8 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       (!placeIds || placeIds.has(eventPlaceId(row, snapshot))))
   }
 
-  function historyTotal(collection, filters) {
-    const snapshot = state.snapshot
+  function historyTotal(collection, filters, fromSnapshot) {
+    const snapshot = fromSnapshot || state.snapshot
     if (!snapshot) return 0
     const placeIds = filters.placeId ? placeScopeSet(filters.placeId, snapshot) : null
     const places = placeIds
@@ -192,7 +192,10 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     })
   }
 
-  function retainedHistoryEntry(entry, freshRows, kind, heldKeys, invalidatedKeys, page) {
+  function retainedHistoryEntry(entry, freshRows, kind, heldKeys, invalidatedKeys, page, total) {
+    // The city says this list has no records at all, so there is nothing to
+    // keep and no range worth naming.
+    if (total === 0) return freshHistoryEntry(entry, freshRows, page)
     const held = keptHistoryRows(entry.rows, freshRows, kind, heldKeys, invalidatedKeys)
     const rows = held.kept
     const gapAfterIds = keptGapAfterIds(entry.gapAfterIds, held)
@@ -228,6 +231,11 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       const page = snapshot.pages[collection]
       const previousEntries = state.histories[collection] || {}
       const kind = historyViewerRecordKind(collection)
+      // What the city says this collection holds: the whole-city count bounds
+      // every list of it, and a list's own scope can only be smaller.
+      const cityTotal = historyTotal(collection, Object.freeze({
+        placeId: null, resident: null, context: false,
+      }), snapshot)
       let entries = {}
       if (keepLoadedRows) {
         entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
@@ -235,8 +243,12 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           const freshRows = key === 'all' || !entry.filters
             ? snapshot[collection]
             : filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
+          const filters = entry.filters || Object.freeze({
+            placeId: null, resident: null, context: false,
+          })
           return [[key, retainedHistoryEntry(
-            entry, freshRows, kind, heldKeys, invalidatedKeys, key === 'all' ? page : null)]]
+            entry, freshRows, kind, heldKeys, invalidatedKeys, key === 'all' ? page : null,
+            Math.min(cityTotal, historyTotal(collection, filters, snapshot)))]]
         }))
       }
       if (!entries.all) {

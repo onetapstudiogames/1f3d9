@@ -75,14 +75,19 @@ export function ids(rows: readonly Row[] | undefined) {
   return (rows || []).map(row => row.id)
 }
 
-export function snapshotOf(rows: Partial<Record<string, readonly Row[]>>): Snapshot {
-  const snapshot: Record<string, unknown> = { pages: {} }
+export function snapshotOf(
+  rows: Partial<Record<string, readonly Row[]>>,
+  // What the city says each list holds in total. A busy city by default.
+  totals: Partial<Record<string, number>> = {},
+): Snapshot {
+  const snapshot: Record<string, unknown> = { pages: {}, totals: {} }
   for (const collection of COLLECTIONS) {
     const collectionRows = rows[collection] ?? []
     snapshot[collection] = collectionRows
     ;(snapshot.pages as Record<string, unknown>)[collection] = {
       hasMore: true, nextBeforeId: collectionRows.at(-1)?.id ?? null,
     }
+    ;(snapshot.totals as Record<string, number>)[collection] = totals[collection] ?? 100_000
   }
   return snapshot
 }
@@ -153,7 +158,7 @@ export function refreshedHistories(
 ): Histories {
   return new Function(
     'histories', 'snapshot', 'changes', 'viewerHeldRecordKeys', 'changedViewerRecordKeys',
-    'historyViewerRecordKind', 'filterHistoryRows', 'mergeWindowRows',
+    'historyViewerRecordKind', 'filterHistoryRows', 'historyTotal', 'mergeWindowRows',
     'WINDOW_HISTORY_KEEP_ROWS',
     `const state = { histories }; ${GAP_SOURCE} ${REFRESH_SOURCE}
      return freshSnapshotHistories(snapshot, changes)`,
@@ -166,6 +171,8 @@ export function refreshedHistories(
         : collection === 'agreements' ? 'agreement' : 'event',
     (_collection: string, rows: readonly Row[], filters: { placeId?: number }) =>
       filters?.placeId ? rows.filter(row => row.place_id === filters.placeId) : rows,
+    (collection: string, _filters: unknown, snapshot: { totals: Record<string, number> }) =>
+      snapshot.totals[collection] ?? 0,
     mergeWindowRows,
     WINDOW_HISTORY_KEEP_ROWS,
   ) as Histories
