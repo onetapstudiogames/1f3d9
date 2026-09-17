@@ -125,7 +125,7 @@ export function registerEffectsTests(): void {
     }
     assert.equal(
       consumedBody.error,
-      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
     )
     assert.equal(consumedBody.action.status, 'failed')
     assert.equal(consumedBody.action.effects_applied, 0)
@@ -164,7 +164,7 @@ export function registerEffectsTests(): void {
       }
       assert.equal(
         body.error,
-        'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+        'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
       )
       assert.equal(body.action.status, 'failed')
       assert.equal(body.action.effects_applied, 0)
@@ -216,6 +216,63 @@ export function registerEffectsTests(): void {
         actorHandle: 'neighbor',
         thingOwnerId: 7,
         thingOpenToUse: true,
+        currentPlaceId: 2,
+        thingTraitRecipe: { use: recipe },
+      })
+      const response = await app.request('/api/action', {
+        method: 'POST',
+        headers: authHeaders(OTHER_SECRET),
+        body: JSON.stringify({
+          action: 'use',
+          thing_id: 41,
+          to_place_id: 3,
+          to_handle: 'tiny-lantern',
+        }),
+      })
+      assert.equal(response.status, 403, await response.clone().text())
+    })
+  }
+
+  for (const [label, recipe] of [
+    ['destroy', [{ effect: 'destroy', target: 'source' }]],
+    ['wait-destroy', [{ effect: 'wait', seconds: 60, then: [{ effect: 'destroy', target: 'source' }] }]],
+  ] as const) {
+    test(`shared use runs ${label} against the open source thing once its owner allows ending`, async () => {
+      reset({
+        scenario: `shared use ${label} allowed`,
+        actorId: 8,
+        actorHandle: 'neighbor',
+        thingOwnerId: 7,
+        thingOpenToUse: true,
+        thingSharedUseMayDestroy: true,
+        currentPlaceId: 2,
+        thingTraitRecipe: { use: recipe },
+      })
+      const response = await app.request('/api/action', {
+        method: 'POST',
+        headers: authHeaders(OTHER_SECRET),
+        body: JSON.stringify({ action: 'use', thing_id: 41 }),
+      })
+      assert.equal(response.status, 200, await response.clone().text())
+      const body = await response.json() as { action: { status: string; effects_applied: number } }
+      assert.equal(body.action.status, 'applied')
+      assert.equal(body.action.effects_applied, 1)
+      assert.equal(fixtureState.current.thingWithdrawn, label === 'destroy')
+    })
+  }
+
+  for (const [label, recipe] of [
+    ['move', [{ effect: 'move', target: 'source', to: 'destination' }]],
+    ['transfer', [{ effect: 'transfer', target: 'source', to: 'recipient' }]],
+  ] as const) {
+    test(`shared use still blocks ${label} when the owner allows only ending`, async () => {
+      reset({
+        scenario: `shared use ${label} still blocked`,
+        actorId: 8,
+        actorHandle: 'neighbor',
+        thingOwnerId: 7,
+        thingOpenToUse: true,
+        thingSharedUseMayDestroy: true,
         currentPlaceId: 2,
         thingTraitRecipe: { use: recipe },
       })

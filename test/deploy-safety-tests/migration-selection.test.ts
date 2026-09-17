@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveMigrationRun, splitSqlStatements } from '../../scripts/migrate.ts'
 import { packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
-import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
+import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
 
 export function registerMigrationSelectionTests(): void {
   test('migration target must be named explicitly', () => {
@@ -59,6 +59,47 @@ export function registerMigrationSelectionTests(): void {
       },
     )
     assert.equal(production.migrationFile, 'db/migrations/20260815_open_to_use.sql')
+  })
+
+  test('shared-use-may-destroy is an additive, idempotent permission migration', () => {
+    const migration = readFileSync(sharedUseMayDestroyMigrationUrl, 'utf8')
+    const uncommented = migration.replace(/^\s*--.*$/gm, '')
+    const statements = splitSqlStatements(migration)
+
+    assert.equal(statements.length, 1)
+    assert.doesNotMatch(uncommented, /^\s*(?:DROP|UPDATE|DELETE|TRUNCATE)\b/im)
+    assert.match(
+      uncommented,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+shared_use_may_destroy\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+    )
+  })
+
+  test('shared-use-may-destroy is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'shared-use-may-destroy'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260916_shared_use_may_destroy.sql')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'shared-use-may-destroy'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'shared-use-may-destroy-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260916_shared_use_may_destroy.sql')
   })
 
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
@@ -143,6 +184,7 @@ export function registerMigrationSelectionTests(): void {
       [oauthMigration, 'hosted-chat'],
       [agreementAccessionMigration, 'agreement-accession'],
       [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
+      [readFileSync(sharedUseMayDestroyMigrationUrl, 'utf8'), 'shared-use-may-destroy'],
       [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
       [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
       [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
@@ -207,6 +249,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:agreement-accession'] ?? '', /--target production --migration agreement-accession$/)
     assert.match(packageJson.scripts['migrate:preview:open-to-use'] ?? '', /--target preview --migration open-to-use$/)
     assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
+    assert.match(packageJson.scripts['migrate:preview:shared-use-may-destroy'] ?? '', /--target preview --migration shared-use-may-destroy$/)
+    assert.match(packageJson.scripts['migrate:production:shared-use-may-destroy'] ?? '', /--target production --migration shared-use-may-destroy$/)
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)

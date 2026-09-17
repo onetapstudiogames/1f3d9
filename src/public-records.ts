@@ -83,6 +83,7 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
       thing.maker_id, maker.handle AS made_by,
       thing.owner_id AS current_owner_id, owner.handle AS current_owner,
       thing.owner_id, owner.handle AS owner, thing.open_to_use,
+      thing.shared_use_may_destroy,
       thing.kind_id, kind.name AS kind,
       thing.birth_revision, thing.current_revision,
       CASE

@@ -37,6 +37,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       }
       thingMeta.append(document.createTextNode(
         thing.open_to_use ? ' · open to shared use' : ' · owner use only'))
+      if (thing.open_to_use && thing.shared_use_may_destroy) {
+        thingMeta.append(document.createTextNode(' · a visitor may end it'))
+      }
       const location = windowPlaceLabel(
         thing.place_id,
         placeOf ? placeOf(thing.place_id) : null,

@@ -990,7 +990,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'make',
     title: 'Make a thing',
-    description: `Make a text thing while standing in place_id, which must be active and yours or open to things (20 free makes per UTC day). Kindless and typed/crafted making refuse a retired place before quota or ingredients change; restore it first or choose an active place. Its name is 1 to 120 safe characters. The response includes a neutral UTF-8 reading-cost meter. Omitted open_to_use defaults false. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_LIVE_CONTRACT_POINTER}`,
+    description: `Make a text thing while standing in place_id, which must be active and yours or open to things (20 free makes per UTC day). Kindless and typed/crafted making refuse a retired place before quota or ingredients change; restore it first or choose an active place. Its name is 1 to 120 safe characters. The response includes a neutral UTF-8 reading-cost meter. Omitted open_to_use defaults false, and so does omitted shared_use_may_destroy; a visitor's use may destroy this thing only while you have set both true, and then any destroy effect that runs during that use ends it for good. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_LIVE_CONTRACT_POINTER}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1002,6 +1002,11 @@ const TOOLS: readonly ToolDefinition[] = [
           type: 'boolean',
           default: false,
           description: 'optional; defaults false; let colocated visitors use this thing without owning it',
+        },
+        shared_use_may_destroy: {
+          type: 'boolean',
+          default: false,
+          description: "optional; defaults false; let a visitor's use destroy this thing, which only matters while open_to_use is true",
         },
         kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
         ingredient_ids: {
@@ -1018,14 +1023,17 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: '/api/thing',
-      body: picked(args, ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids']),
+      body: picked(args, [
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'kind_id', 'ingredient_ids',
+      ]),
     }),
   },
   {
     name: 'thing_edit',
     title: 'Edit a thing',
     description:
-      `As the owner, edit one active thing. Send thing_id plus at least one changed field. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use is boolean. An untyped thing accepts the exact null/REFUSE/pixel drawing shapes stated by draw_self. A typed thing shows its pinned kind revision and cannot take arbitrary instance pixels: it accepts exact REFUSE with an owner-written drawing_description, or drawing:null to clear that refusal and return to the pinned kind source. drawing_variant_name deliberately selects null for the pinned kind base or one exact named variant offered by that pinned revision. The selection stays with the thing across transfer. Every real drawing or selection change appends immutable history; an exact no-op appends nothing. A thing with an open sale offer cannot be edited.`,
+      `As the owner, edit one active thing. Send thing_id plus at least one changed field. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use and shared_use_may_destroy are boolean, and only you may change either. Closing shared_use_may_destroy again stops a destroy a visitor already scheduled with wait. An untyped thing accepts the exact null/REFUSE/pixel drawing shapes stated by draw_self. A typed thing shows its pinned kind revision and cannot take arbitrary instance pixels: it accepts exact REFUSE with an owner-written drawing_description, or drawing:null to clear that refusal and return to the pinned kind source. drawing_variant_name deliberately selects null for the pinned kind base or one exact named variant offered by that pinned revision. The selection stays with the thing across transfer. Every real drawing or selection change appends immutable history; an exact no-op appends nothing. A thing with an open sale offer cannot be edited.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1036,6 +1044,7 @@ const TOOLS: readonly ToolDefinition[] = [
         name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
+        shared_use_may_destroy: { type: 'boolean' },
         ...DRAWING_WRITE_PROPERTIES,
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
       },
@@ -1046,7 +1055,7 @@ const TOOLS: readonly ToolDefinition[] = [
       method: 'PATCH',
       path: `/api/thing/${Number(args.thing_id)}`,
       body: picked(args, [
-        'name', 'body', 'open_to_use',
+        'name', 'body', 'open_to_use', 'shared_use_may_destroy',
         'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
       ]),
     }),
@@ -1100,7 +1109,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `Perform one frozen basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable and runs nothing. A move runs the laws of the place being left, and arrival alone does not run the destination's laws; a move never runs a kind's traits. use, consume, and give also run the named thing's kind traits. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
+      `Perform one frozen basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. Shared use can never move or hand over the thing you are using; it can destroy it only when its owner has also set shared_use_may_destroy, which every live public thing read states, and then the thing is gone for good. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable and runs nothing. A move runs the laws of the place being left, and arrival alone does not run the destination's laws; a move never runs a kind's traits. use, consume, and give also run the named thing's kind traits. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

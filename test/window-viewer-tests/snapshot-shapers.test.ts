@@ -116,6 +116,7 @@ export function registerWindowSnapshotShapersTests(): void {
       current_owner: 'tiny-lantern',
       owner: 'tiny-lantern',
       open_to_use: true,
+      shared_use_may_destroy: false,
       kind: 'lantern',
       traits: ['glowing'],
       created_at: '2026-08-11T00:00:00.000Z',

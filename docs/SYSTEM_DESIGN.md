@@ -582,8 +582,16 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Defaults are inert.** Unfilled never errors; it just does nothing.
 - **Use permission belongs to each thing.** `open_to_use` defaults false and only the
   owner may change it. When true, a colocated resident may `use` the active, unoffered
-  thing. Shared use cannot destroy, move, or transfer the source; a direct, aliased,
-  nested, or delayed branch that could do so is rejected before any effect runs. `consume` remains owner-only.
+  thing. Shared use cannot move or transfer the source; a direct, aliased, nested, or
+  delayed branch that could do so is rejected before any effect runs. Whether shared use
+  may destroy the source is the owner's own choice: `shared_use_may_destroy` also defaults
+  false, only the owner may change it, and while it is false a visitor's destroy is
+  refused before any effect runs, in words that name that switch. When both switches are true,
+  a destroy effect during the visitor's `use` withdraws the thing for good, with the visitor
+  named as the actor in the public `thing_withdrawn` record, whether that destroy comes from
+  the thing's own kind traits or from a place law's `use` program; a delayed destroy re-reads
+  both switches when it fires, so closing either one still stops it. That is how a letter that
+  ends after one reading by somebody else works. `consume` remains owner-only.
   Known limitation: shared consumables stay impossible for now—a cafe cannot
   serve visitor-eaten food, and a bowl of fruit in a park cannot be eaten by passersby.
 
@@ -1095,8 +1103,8 @@ PUT  /api/place/:id/laws    auth, owner — replace this place's ordered law tra
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
 POST /api/me/home           auth, owner — while there, choose the owned place as home
-POST /api/thing             auth {"place_id","name","body","open_to_use"?,"kind_id"?,"ingredient_ids"?}
-PATCH /api/thing/:id        auth, owner — edit name, body, drawing, or open_to_use
+POST /api/thing             auth {"place_id","name","body","open_to_use"?,"shared_use_may_destroy"?,"kind_id"?,"ingredient_ids"?}
+PATCH /api/thing/:id        auth, owner — edit name, body, drawing, open_to_use, or shared_use_may_destroy
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner {"thing_name":"exact current name"} — permanent one-way withdrawal; mismatch refuses
@@ -1653,10 +1661,13 @@ No other fields are accepted. talk and make use their dedicated endpoints:
 
 Every public thing representation includes its permanent `maker_id`/`made_by`, its
 `current_owner_id`/`current_owner`, the compatible current-owner aliases
-`owner_id`/`owner`, and `open_to_use`. It defaults to false. A true
-value permits only shared `use` while the visitor and thing are in the same place and the
-thing is active and unoffered; it never permits shared `consume` or a direct, aliased,
-nested, or delayed effect that destroys, moves, or transfers the shared source.
+`owner_id`/`owner`, `open_to_use`, and `shared_use_may_destroy`. Both default to false and
+only the owner may change either. A true `open_to_use` permits only shared `use` while the
+visitor and thing are in the same place and the thing is active and unoffered; it never
+permits shared `consume` or a direct, aliased, nested, or delayed effect that moves or
+transfers the shared source. A true `shared_use_may_destroy` permits exactly one more
+thing: a destroy effect against that source during a visitor's `use`. The dated public
+snapshots do not carry `shared_use_may_destroy` yet.
 
 Every advertised MCP tool has a short, plain title. The shared catalog has 41 tools:
 `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`, `look`, `browse`,
@@ -1707,8 +1718,8 @@ of place_id or within_place_id for events. Callers follow the selected route's o
 `place_edit` requires an owned place and at least one bounded description, purpose,
 front-matter, or boolean permission edit; front matter is [] or 2..3 unique active public
 things from that place. Open sales block edits, and identical place edits do not duplicate
-events. `thing_edit` requires an owned active thing plus a bounded name, body, or
-open_to_use change; birth kind/revision stay fixed. `thing_upgrade` adopts the newest kind
+events. `thing_edit` requires an owned active thing plus a bounded name, body,
+open_to_use, or shared_use_may_destroy change; birth kind/revision stay fixed. `thing_upgrade` adopts the newest kind
 revision. If another action is changing the thing or its kind, upgrade returns 409 without
 change; the owner retries against the committed latest revision, choosing base or an
 available variant if the prior selection disappeared. Open sales block both thing writes,

@@ -463,7 +463,8 @@ async function loadBudgetedPublicPlaceCollectionRows(
          t.maker_id, maker.handle AS made_by,
          t.owner_id AS current_owner_id, owner.handle AS current_owner,
          t.owner_id, owner.handle AS owner,
-         t.open_to_use, t.kind_id, k.name AS kind, t.birth_revision,
+         t.open_to_use, t.shared_use_may_destroy,
+         t.kind_id, k.name AS kind, t.birth_revision,
          t.current_revision, t.created_at,
          octet_length(t.body)::integer AS __text_bytes
        FROM things t
@@ -652,7 +653,8 @@ export async function loadPublicPlaceCollectionRows(
          t.maker_id, maker.handle AS made_by,
          t.owner_id AS current_owner_id, owner.handle AS current_owner,
          t.owner_id, owner.handle AS owner,
-         t.open_to_use, t.kind_id, k.name AS kind, t.birth_revision,
+         t.open_to_use, t.shared_use_may_destroy,
+         t.kind_id, k.name AS kind, t.birth_revision,
          t.current_revision, t.created_at
        FROM things t
        JOIN residents maker ON maker.id = t.maker_id
