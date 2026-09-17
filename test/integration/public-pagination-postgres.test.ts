@@ -12,6 +12,7 @@ import { registerTotalsAndCatalogsTests } from './public-pagination-tests/totals
 import { registerEventFiltersTests } from './public-pagination-tests/event-filters.ts'
 import { registerInsidePlaceHistoryTests } from './public-pagination-tests/inside-place-history.ts'
 import { registerLookupAgreementsContextTests } from './public-pagination-tests/lookup-agreements-context.ts'
+import { registerWindowGapRangeTests } from './public-pagination-tests/window-gap-range.ts'
 import { registerPublicPaginationTests } from '../helpers/public-pagination-fixtures/postgres.ts'
 
 registerPublicPaginationTests(async function registerPaginationConcernTests(t, postgres, city) {
@@ -29,4 +30,5 @@ registerPublicPaginationTests(async function registerPaginationConcernTests(t, p
   await registerEventFiltersTests(t, postgres, city)
   await registerInsidePlaceHistoryTests(t, postgres, city)
   await registerLookupAgreementsContextTests(t, postgres, city)
+  await registerWindowGapRangeTests(t, postgres, city)
 })

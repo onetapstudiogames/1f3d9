@@ -81,6 +81,7 @@ import {
   finalizePublicPage,
   loadPublicEventCollectionRows,
   parsePublicPage,
+  parsePublicRangeStart,
   PUBLIC_EVENT_WITHIN_MAX_SECONDS,
   PUBLIC_PAGE_MAX,
   singlePublicQueryValue,
@@ -1618,12 +1619,14 @@ app.get('/api/replay', async c => {
 app.get('/api/events', async c => {
   const queries = c.req.queries()
   const allowed = allowedPublicQuery(queries, [
-    'kind', 'actor', 'place_id', 'within_place_id', 'before_id', 'limit',
+    'kind', 'actor', 'place_id', 'within_place_id', 'before_id', 'after_id', 'limit',
     'after_change_marker', 'within_seconds',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
+  const rangeStart = parsePublicRangeStart(queries, 'after_id', parsed.cursor)
+  if (!rangeStart.ok) return err(c, 400, rangeStart.error)
   const kindValue = singlePublicQueryValue(queries, 'kind')
   if (!kindValue.ok) return err(c, 400, kindValue.error)
   const kind = kindValue.value
@@ -1678,6 +1681,7 @@ app.get('/api/events', async c => {
         placeId,
         includeDescendants: insidePlaceValue.value !== null,
         withinSeconds,
+        afterId: rangeStart.value,
       },
       parsed,
     )

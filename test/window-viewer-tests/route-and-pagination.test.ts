@@ -174,54 +174,54 @@ export function registerWindowRouteAndPaginationTests(): void {
     ) => Record<string, unknown> | null
 
     assert.deepEqual(parse({ collection: ['notes'] }), {
-      collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: null,
+      collection: 'notes', beforeId: null, afterId: null, limit: 10, placeId: null, resident: null,
       context: false, includeDescendants: false,
     })
     assert.deepEqual(parse({
       collection: ['things'], before_id: ['91'], limit: ['12'],
       place_id: ['7'], resident: ['tiny-lantern'],
     }), {
-      collection: 'things', beforeId: 91, limit: 12, placeId: 7, resident: 'tiny-lantern',
+      collection: 'things', beforeId: 91, afterId: null, limit: 12, placeId: 7, resident: 'tiny-lantern',
       context: false, includeDescendants: false,
     })
     assert.deepEqual(parse({
       collection: ['things'], within_place_id: ['7'], resident: ['tiny-lantern'],
     }), {
-      collection: 'things', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
+      collection: 'things', beforeId: null, afterId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
       context: false, includeDescendants: true,
     })
     assert.deepEqual(parse({
       collection: ['things'], presentation: ['headings'], within_place_id: ['7'],
     }), {
-      collection: 'things', beforeId: null, limit: 10, placeId: 7, resident: null,
+      collection: 'things', beforeId: null, afterId: null, limit: 10, placeId: 7, resident: null,
       context: false, includeDescendants: true, presentation: 'headings', find: null,
     })
     assert.deepEqual(parse({
       collection: ['things'], presentation: ['headings'], find: ['  Signal Lamp  '],
     }), {
-      collection: 'things', beforeId: null, limit: 10, placeId: null, resident: null,
+      collection: 'things', beforeId: null, afterId: null, limit: 10, placeId: null, resident: null,
       context: false, includeDescendants: false, presentation: 'headings', find: 'Signal Lamp',
     })
     assert.deepEqual(parse({
       collection: ['things'], presentation: ['headings'], find: ['#401'],
     }), {
-      collection: 'things', beforeId: null, limit: 10, placeId: null, resident: null,
+      collection: 'things', beforeId: null, afterId: null, limit: 10, placeId: null, resident: null,
       context: false, includeDescendants: false, presentation: 'headings', find: '#401',
     })
     assert.deepEqual(parse({ collection: ['agreements'], resident: ['tiny-lantern'] }), {
-      collection: 'agreements', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
+      collection: 'agreements', beforeId: null, afterId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
       context: false, includeDescendants: false,
     })
     assert.deepEqual(parse({
       collection: ['notes'], resident: ['tiny-lantern'], context: ['place'],
     }), {
-      collection: 'notes', beforeId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
+      collection: 'notes', beforeId: null, afterId: null, limit: 10, placeId: null, resident: 'tiny-lantern',
       context: true, includeDescendants: false,
     })
     assert.deepEqual(parse({
       collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], place_id: ['7'],
     }), {
-      collection: 'notes', beforeId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
+      collection: 'notes', beforeId: null, afterId: null, limit: 10, placeId: 7, resident: 'tiny-lantern',
       context: true, includeDescendants: false,
     })
     // A context page carries neighbors as well as own notes, so its page size
@@ -229,14 +229,30 @@ export function registerWindowRouteAndPaginationTests(): void {
     assert.deepEqual(parse({
       collection: ['notes'], resident: ['tiny-lantern'], context: ['place'], limit: ['200'],
     }), {
-      collection: 'notes', beforeId: null, limit: 39, placeId: null, resident: 'tiny-lantern',
+      collection: 'notes', beforeId: null, afterId: null, limit: 39, placeId: null, resident: 'tiny-lantern',
       context: true, includeDescendants: false,
     })
     assert.deepEqual(parse({
       collection: ['notes'], limit: ['200'],
     }), {
-      collection: 'notes', beforeId: null, limit: 200, placeId: null, resident: null,
+      collection: 'notes', beforeId: null, afterId: null, limit: 200, placeId: null, resident: null,
       context: false, includeDescendants: false,
+    })
+
+    // A bounded range read: after_id names the older end, before_id the newer
+    // one, and both are exclusive, so the two ask for the records between them.
+    assert.deepEqual(parse({
+      collection: ['notes'], after_id: ['300'], before_id: ['400'], limit: ['50'],
+      within_place_id: ['7'],
+    }), {
+      collection: 'notes', beforeId: 400, afterId: 300, limit: 50, placeId: 7, resident: null,
+      context: false, includeDescendants: true,
+    })
+    assert.deepEqual(parse({
+      collection: ['agreements'], after_id: ['300'], resident: ['tiny-lantern'],
+    }), {
+      collection: 'agreements', beforeId: null, afterId: 300, limit: 10, placeId: null,
+      resident: 'tiny-lantern', context: false, includeDescendants: false,
     })
 
     for (const unsafe of [
@@ -245,6 +261,14 @@ export function registerWindowRouteAndPaginationTests(): void {
       { collection: ['notes'], limit: ['0'] },
       { collection: ['notes'], limit: ['201'] },
       { collection: ['notes'], before_id: ['1.5'] },
+      { collection: ['notes'], after_id: ['1.5'] },
+      { collection: ['notes'], after_id: ['0'] },
+      { collection: ['notes'], after_id: ['-2'] },
+      { collection: ['notes'], after_id: ['2147483648'] },
+      { collection: ['notes'], after_id: ['400', '300'] },
+      // The two ends name one range, so the older end must be the lower id.
+      { collection: ['notes'], after_id: ['400'], before_id: ['400'] },
+      { collection: ['notes'], after_id: ['401'], before_id: ['400'] },
       { collection: ['notes'], place_id: ['-2'] },
       { collection: ['notes'], place_id: ['2147483648'] },
       { collection: ['notes'], resident: ['not safe!'] },

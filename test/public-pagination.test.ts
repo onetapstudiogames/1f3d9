@@ -30,7 +30,7 @@ test('inside-place event history includes the selected place and its descendants
   assert.match(statement, /JOIN public_change_log change ON change\.event_id = event\.id/iu)
   assert.match(statement, /change\.change_id::text AS change_id/iu)
   assert.match(statement, /event\.at\s*>=\s*transaction_timestamp\(\)[\s\S]*interval '1 second'/iu)
-  assert.deepEqual(values, [null, null, 7, null, 11, 1_800])
+  assert.deepEqual(values, [null, null, 7, null, 11, 1_800, null])
 })
 
 const page: PublicPage = Object.freeze({
