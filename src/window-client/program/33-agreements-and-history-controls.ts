@@ -95,18 +95,15 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
   function renderHistoryControl(target, collection, label, filters) {
     if (!target) return
     const entry = historyEntry(collection, filters)
-    const seamRows = entry.deferredRows || []
-    const hasRefreshState = entry.refreshing || entry.refreshError || seamRows.length > 0
-    const hasPagingState = entry.hasMore || entry.loading || entry.error
-    if (!hasRefreshState && !hasPagingState) {
+    const namedGap = (entry.gapAfterIds || []).length > 0
+    const hasPagingState = namedGap || entry.hasMore || entry.loading || entry.error
+    if (!hasPagingState) {
       target.hidden = true
       target.replaceChildren()
       return
     }
     const parts = []
-    if (entry.refreshing) {
-      parts.push(element('p', 'loading-row', 'Loading updated ' + label + '…'))
-    } else if (seamRows.length) {
+    if (namedGap) {
       // Never a bare join: say that the list has a gap, and let the paging
       // control below load it. Not-yet-loaded is a waiting state, not an error,
       // and this container already announces its own changes politely.
@@ -114,20 +111,6 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
         ? 'Older ' + label + ' could not be rechecked, so some ' + label +
           ' between here and the newest may not be loaded.'
         : 'Some ' + label + ' between here and the newest are not loaded.'))
-    } else if (entry.refreshError) {
-      const message = element('p', 'navigation-error',
-        'Updated ' + label + ' could not be loaded. Showing the previous completed results.')
-      message.setAttribute('role', 'alert')
-      const retry = element('button', 'history-load', 'Retry refreshing ' + label)
-      retry.type = 'button'
-      retry.dataset.focusKey = 'refresh:' + collection + ':' + historyKey(collection, filters)
-      retry.addEventListener('click', () => void forwardRefreshHistory(collection, filters))
-      parts.push(message, retry)
-    }
-    if (!hasPagingState) {
-      target.hidden = false
-      target.replaceChildren(...parts)
-      return
     }
     // While the first filtered slice is being fetched nothing "older" is
     // involved yet; every click-driven state keeps the familiar wording.
@@ -135,7 +118,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     const text = entry.loading
       ? 'Loading ' + older + label + '…'
       : entry.error ? 'Retry loading ' + older + label
-        : seamRows.length ? 'Load the ' + label + ' missing here'
+        : namedGap ? 'Load the ' + label + ' missing here'
           : 'Load ' + older + label
     const button = element('button', 'history-load', text)
     button.type = 'button'
@@ -162,7 +145,9 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     target.replaceChildren(...parts)
   }
 
-  function historyRequestUrl(collection, entry, filters, minimumMarker) {
+  // One read shape for every list: the same filters, the same page size, and
+  // either the newer end alone (load older) or both ends of one named gap.
+  function historyRequestUrl(collection, entry, filters, minimumMarker, gap) {
     const url = new URL(
       collection === 'events' ? '/api/events' : '/api/window',
       window.location.origin,
@@ -186,6 +171,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     if (entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
+    if (gap) url.searchParams.set('after_id', String(gap.afterId))
     if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }
@@ -196,68 +182,6 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     if (collection === 'things') return normalizeThings(payload.things)
     if (collection === 'agreements') return normalizeAgreements(payload.agreements)
     return normalizeEvents(payload.events)
-  }
-
-  // A filtered entry only pages backward once initialized, and the snapshot
-  // merge can only place-match events it can resolve client-side. Refetching
-  // the newest filtered page after each snapshot refresh keeps an open
-  // filtered view complete without touching its backward cursor.
-  const forwardRefreshKeys = new Set()
-  async function forwardRefreshHistory(collection, filters) {
-    const key = collection + '|' + historyKey(collection, filters)
-    if (forwardRefreshKeys.has(key)) return
-    forwardRefreshKeys.add(key)
-    const requestAuthoredRevision = authoredRevision
-    const requestMarker = state.changeMarker
-    const current = historyEntry(collection, filters)
-    setHistoryEntry(collection, filters, {
-      ...current,
-      refreshing: true,
-      refreshError: false,
-    })
-    renderAll()
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    try {
-      const url = historyRequestUrl(
-        collection, { initialized: false, nextBeforeId: null }, filters, requestMarker)
-      const response = await fetch(url.pathname + url.search, {
-        credentials: 'omit',
-        headers: { Accept: 'application/json' },
-        mode: 'same-origin',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error('updated public history unavailable')
-      const payload = await response.json()
-      if (authoredRevision !== requestAuthoredRevision) return
-      requireCurrentReadMarker(payload?.change_marker, requestMarker)
-      const incoming = normalizeHistoryRows(collection, payload)
-      const latest = historyEntry(collection, filters)
-      setHistoryEntry(collection, filters, {
-        ...latest,
-        rows: mergeWindowRows(latest.rows, incoming),
-        deferredRows: seamRowsAfterPage(
-          latest.deferredRows || [], incoming, payload.has_more === true),
-        refreshing: false,
-        refreshError: false,
-      })
-      renderAll()
-    } catch {
-      if (authoredRevision === requestAuthoredRevision) {
-        const latest = historyEntry(collection, filters)
-        setHistoryEntry(collection, filters, {
-          ...latest,
-          refreshing: false,
-          refreshError: true,
-        })
-        renderAll()
-      }
-    } finally {
-      window.clearTimeout(timeout)
-      forwardRefreshKeys.delete(key)
-    }
   }
 
 `

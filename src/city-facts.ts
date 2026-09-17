@@ -75,6 +75,11 @@ import {
 } from './me-around-you-limit.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 import { WORLD_ROOT_PURPOSE } from './world-root.ts'
+import {
+  WINDOW_HISTORY_FILL_ROWS_TEXT,
+  WINDOW_HISTORY_KEEP_ROWS_TEXT,
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
+} from './window-history-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -296,6 +301,21 @@ export function renderCityRoutesText(): string {
     .join('\n')
 }
 
+// The human window's own kept-page and gap-read bounds, wrapped the way the
+// reference wraps its prose so the generated mirrors stay readable. Both
+// numbers come from src/window-history-limits.ts, which states them once.
+const WINDOW_HISTORY_BOUNDS_LINES = [
+  `A changed refresh keeps the older records a reader already loaded, up to ${WINDOW_HISTORY_KEEP_ROWS_TEXT}`,
+  'per list; past that the oldest go first, and never one the reader is holding open.',
+  'When the newest page does not join those kept records, the window names the range',
+  `between them and reads up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} older records on its own to close it. A larger`,
+  'range, or a read that failed, leaves the loaded records in place and says some records',
+  "between them and the newest are not loaded; that list's own control then reads exactly",
+  'that range, and load older continues from the lowest loaded record once no range is',
+  'left named. Changed or removed public text still updates after a successful check.',
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
+].join('\n')
+
 export function renderCityFactTokens(document: string): string {
   const anonymousCount = CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
@@ -322,6 +342,7 @@ export function renderCityFactTokens(document: string): string {
       '{{CITY_FEE_RAILS}}',
       CITY_FEE_RAILS_LINE,
     )
+    .replaceAll('{{WINDOW_HISTORY_BOUNDS}}', WINDOW_HISTORY_BOUNDS_LINES)
 }
 
 type TextFile = Readonly<{ path: string; text: string }>

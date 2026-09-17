@@ -149,7 +149,8 @@ export function registerModerationAndHistoryTests(): void {
     const eventRead = sqlCalls().find(call => /\/\* public:events \*\//i.test(call.query ?? ''))
     assert.match(eventRead?.query ?? '', /\$4::integer\s+is\s+null\s+or\s+event\.id\s*<\s*\$4::integer/i)
     assert.match(eventRead?.query ?? '', /limit\s+\$5::integer/i)
-    assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3', null])
+    assert.match(eventRead?.query ?? '', /\$7::integer\s+is\s+null\s+or\s+event\.id\s*>\s*\$7::integer/i)
+    assert.deepEqual(eventRead?.params, ['note', null, null, '204', '3', null, null])
 
     reset({ scenario: 'event pagination' })
     assert.equal((await app.request('/api/events?before_id=nope')).status, 400)
@@ -174,7 +175,7 @@ export function registerModerationAndHistoryTests(): void {
     assert.match(actorRead?.query ?? '', /event\.detail->>'asset_type'\s*=\s*'place'/i)
     assert.match(actorRead?.query ?? '', /event\.detail->>'offer_id'[\s\S]*from\s+transfer_offers/i)
     assert.match(actorRead?.query ?? '', /withdrawn_at\s+is\s+null/i)
-    assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4', null])
+    assert.deepEqual(actorRead?.params, [null, 'tiny-lantern', null, null, '4', null, null])
 
     reset({ scenario: 'public pagination' })
     const inside = await app.request('/api/events?within_place_id=2&limit=3')
@@ -186,7 +187,7 @@ export function registerModerationAndHistoryTests(): void {
     assert.match(insideRead?.query ?? '', /event\.detail->>'from_place_id'\s*IN\s*\(SELECT id::text FROM selected_places\)/i)
     assert.match(insideRead?.query ?? '', /event\.detail->>'to_place_id'\s*IN\s*\(SELECT id::text FROM selected_places\)/i)
     assert.match(insideRead?.query ?? '', /thing\.place_id IN \(SELECT id FROM selected_places\)/i)
-    assert.deepEqual(insideRead?.params, [null, null, '2', null, '4', null])
+    assert.deepEqual(insideRead?.params, [null, null, '2', null, '4', null, null])
 
     const invalid = [
       '/api/events?actor=Not%20A%20Handle',

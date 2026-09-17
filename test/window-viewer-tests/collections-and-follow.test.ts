@@ -21,7 +21,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.match(notes.text, /note\.id < \$1/i)
     assert.match(notes.text, /ORDER BY note\.id DESC/i)
     assert.match(notes.text, /LIMIT \$4/i)
-    assert.deepEqual(notes.values, [91, 7, 'tiny-lantern', 51])
+    assert.deepEqual(notes.values, [91, 7, 'tiny-lantern', 51, null])
     assert.equal(notes.text.includes('tiny-lantern'), false)
     assert.equal(notes.text.includes('collection'), false)
 
@@ -32,7 +32,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.match(insideNotes.text, /WITH RECURSIVE selected_places/i)
     assert.match(insideNotes.text, /child\.parent_id = selected\.id/i)
     assert.match(insideNotes.text, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
-    assert.deepEqual(insideNotes.values, [91, 7, null, 51])
+    assert.deepEqual(insideNotes.values, [91, 7, null, 51, null])
 
     const things = statement({
       collection: 'things', beforeId: null, limit: 50, placeId: null, resident: null,
@@ -46,7 +46,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.match(things.text, /current_owner\.handle AS current_owner/i)
     assert.match(things.text, /current_owner\.handle = \$3::text/i)
     assert.match(things.text, /ORDER BY thing\.id DESC/i)
-    assert.deepEqual(things.values, [null, null, null, 51])
+    assert.deepEqual(things.values, [null, null, null, 51, null])
 
     const thingHeadings = statement({
       collection: 'things', beforeId: null, limit: 25, placeId: 7, resident: null,
@@ -65,7 +65,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.doesNotMatch(thingHeadings.text, /thing\.name\s*\|\|[\s\S]*?thing\.body/iu)
     assert.match(thingHeadings.text, /ORDER BY thing\.id DESC/i)
     assert.deepEqual(thingHeadings.values, [
-      null, 7, null, 26, 'Signal Lamp', null, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+      null, 7, null, 26, 'Signal Lamp', null, PUBLIC_CREDENTIAL_PATTERN_SOURCE, null,
     ])
 
     const thingById = statement({
@@ -74,7 +74,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     })
     assert.match(thingById.text, /thing\.id = \$6::integer/iu)
     assert.deepEqual(thingById.values, [
-      null, null, null, 21, null, 401, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+      null, null, null, 21, null, 401, PUBLIC_CREDENTIAL_PATTERN_SOURCE, null,
     ])
 
     const agreements = statement({
@@ -87,7 +87,7 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.match(agreements.text, /AS party_count/i)
     assert.match(agreements.text, /AS acceded/i)
     assert.match(agreements.text, /LIMIT 32/i)
-    assert.deepEqual(agreements.values, [61, 'tiny-lantern', 51])
+    assert.deepEqual(agreements.values, [61, 'tiny-lantern', 51, null])
 
     // The context variant drives the page from the resident's own notes and
     // carries bounded same-place neighbors on each side.
@@ -111,7 +111,57 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.match(context.text, /row_number\(\) OVER \(ORDER BY note\.id DESC\) AS own_position/i)
     assert.match(context.text, /page_notes AS \(\s*SELECT \* FROM resident_notes WHERE own_position <= \$5::integer/i)
     assert.match(context.text, /FROM page_notes own/i)
-    assert.deepEqual(context.values, [91, null, 'tiny-lantern', 26, 25])
+    assert.deepEqual(context.values, [91, null, 'tiny-lantern', 26, 25, null])
+  })
+
+  test('a bounded range read keeps every filter and bounds both ends of one collection', () => {
+    const exports = windowModule as unknown as Record<string, unknown>
+    const statement = exports.windowCollectionStatement as (
+      options: Record<string, unknown>,
+    ) => { text: string; values: unknown[] }
+
+    const notes = statement({
+      collection: 'notes', beforeId: 400, afterId: 300, limit: 50, placeId: 7,
+      resident: 'tiny-lantern', includeDescendants: true,
+    })
+    assert.match(notes.text, /note\.id < \$1::integer/i)
+    assert.match(notes.text, /note\.id > \$5::integer/i)
+    assert.match(notes.text, /note\.place_id IN \(SELECT id FROM selected_places\)/i)
+    assert.match(notes.text, /ORDER BY note\.id DESC/i)
+    assert.deepEqual(notes.values, [400, 7, 'tiny-lantern', 51, 300])
+
+    const things = statement({
+      collection: 'things', beforeId: 400, afterId: 300, limit: 50, placeId: null,
+      resident: null,
+    })
+    // Withdrawn things are already absent from every public page, so a range
+    // read closes its gap without them rather than waiting for them.
+    assert.match(things.text, /thing\.withdrawn_at IS NULL/i)
+    assert.match(things.text, /thing\.id > \$5::integer/i)
+    assert.deepEqual(things.values, [400, null, null, 51, 300])
+
+    const headings = statement({
+      collection: 'things', beforeId: 400, afterId: 300, limit: 25, placeId: 7,
+      resident: null, includeDescendants: true, presentation: 'headings', find: null,
+    })
+    assert.match(headings.text, /thing\.id > \$8::integer/i)
+    assert.equal(headings.values[7], 300)
+
+    const agreements = statement({
+      collection: 'agreements', beforeId: 400, afterId: 300, limit: 50, placeId: null,
+      resident: 'tiny-lantern',
+    })
+    assert.match(agreements.text, /agreement\.id > \$4::integer/i)
+    assert.deepEqual(agreements.values, [400, 'tiny-lantern', 51, 300])
+
+    const context = statement({
+      collection: 'notes', beforeId: 400, afterId: 300, limit: 25, placeId: null,
+      resident: 'tiny-lantern', context: true,
+    })
+    // The cursor pages over the followed resident's own notes, so the range
+    // bounds those rows; neighbors still ride along with the notes they answer.
+    assert.match(context.text, /note\.id > \$6::integer/i)
+    assert.deepEqual(context.values, [400, null, 'tiny-lantern', 26, 25, 300])
   })
 
   test('window histories merge immutably, dedupe by id, and stay newest first', () => {

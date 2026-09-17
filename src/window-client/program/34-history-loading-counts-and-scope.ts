@@ -1,36 +1,8 @@
-export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilteredViews() {
-    if (state.view === 'happenings') {
-      const filters = Object.freeze({ placeId: state.placeId, resident: state.resident })
-      if (!filters.placeId && !filters.resident) return
-      const entry = historyEntry('events', filters)
-      if (!entry.initialized || entry.loading) return
-      void forwardRefreshHistory('events', filters)
-    } else if (state.view === 'conversations' && state.resident) {
-      const filters = Object.freeze({
-        placeId: state.placeId,
-        resident: state.resident,
-        context: Boolean(state.conversationContext),
-      })
-      const entry = historyEntry('notes', filters)
-      if (!entry.initialized || entry.loading) return
-      void forwardRefreshHistory('notes', filters)
-    } else if (state.view === 'agreements' && state.resident) {
-      const filters = Object.freeze({ placeId: null, resident: state.resident })
-      const entry = historyEntry('agreements', filters)
-      if (!entry.initialized || entry.loading) return
-      void forwardRefreshHistory('agreements', filters)
-    }
-  }
-
-  async function loadHistory(collection, filters, automatic = false) {
+export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHistory(collection, filters, automatic = false) {
     if (automatic) return
     const current = historyEntry(collection, filters)
-    if (current.loading || (current.initialized && !current.hasMore && !current.error)) return
-    if (automatic && (current.automaticPageCount || 0) >= MAX_AUTO_HISTORY_PAGES) {
-      setHistoryEntry(collection, filters, {
-        ...current, loading: false, error: false, automaticPaused: true,
-      })
-      renderAll()
+    const waiting = (current.gapAfterIds || []).length > 0
+    if (current.loading || (current.initialized && !current.hasMore && !waiting && !current.error)) {
       return
     }
     const requestAuthoredRevision = authoredRevision
@@ -39,8 +11,6 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
       ...current,
       loading: true,
       error: false,
-      automaticPaused: false,
-      refreshing: false,
       refreshError: false,
     })
     renderAll()
@@ -49,7 +19,17 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
       const requestEntry = historyEntry(collection, filters)
-      const url = historyRequestUrl(collection, requestEntry, filters, requestMarker)
+      // A named gap is read as the range it is, so the control never asks for
+      // records below the gap it is trying to close. With no gap named, load
+      // older simply continues from the lowest loaded record.
+      const gap = namedHistoryGap(requestEntry)
+      const url = historyRequestUrl(
+        collection,
+        gap ? { initialized: true, nextBeforeId: gap.beforeId } : requestEntry,
+        filters,
+        requestMarker,
+        gap,
+      )
       const response = await fetch(url.pathname + url.search, {
         credentials: 'omit',
         headers: { Accept: 'application/json' },
@@ -65,36 +45,29 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
       const incoming = normalizeHistoryRows(collection, payload)
       const hasMore = payload.has_more === true
       const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
-      const requestedBeforeId = requestEntry.initialized ? requestEntry.nextBeforeId : null
       const latest = historyEntry(collection, filters)
       const rows = mergeWindowRows(latest.rows, incoming)
-      // Rows below an unjoined seam wait here until a page reaches them.
-      const deferredRows = latest.deferredRows || []
-      const remainingSeamRows = seamRowsAfterPage(deferredRows, incoming, hasMore)
-      // This page reached at least one waiting row, so rows it "added" were
-      // already in the list. Other waiting rows may still sit below it.
-      const seamClosed = remainingSeamRows.length < deferredRows.length
+      if (gap) {
+        // The read covered exactly the named range, so its own has_more says
+        // whether the gap is closed. No particular record has to come back for
+        // it to close, which is why a record the city took down inside the gap
+        // cannot leave this control unable to finish.
+        if (hasMore && !incoming.length) throw new Error('public gap read did not progress')
+        setHistoryEntry(collection, filters, filledHistoryEntry(latest, rows, gap.afterId,
+          filters, hasMore ? {} : { closed: true }))
+        return
+      }
+      const requestedBeforeId = requestEntry.initialized ? requestEntry.nextBeforeId : null
       if (hasMore && (!nextBeforeId ||
           !incoming.some(row => row.id === nextBeforeId) ||
           (requestedBeforeId && nextBeforeId >= requestedBeforeId))) {
         throw new Error('public history cursor did not progress')
       }
-      if (hasMore && requestEntry.initialized && rows.length <= latest.rows.length &&
-          !seamClosed) {
-        throw new Error('public history page did not add a row')
-      }
-      const automaticPageCount = automatic
-        ? (latest.automaticPageCount || 0) + 1
-        : 0
-      const automaticLimitReached = automatic && hasMore &&
-        automaticPageCount >= MAX_AUTO_HISTORY_PAGES
       setHistoryEntry(collection, filters, {
+        ...latest,
         rows,
-        deferredRows: remainingSeamRows,
         hasMore,
-        nextBeforeId,
-        automaticPageCount,
-        automaticPaused: automaticLimitReached,
+        nextBeforeId: historyPagingCursor(rows, filters),
         initialized: true,
         loading: false,
         error: false,
@@ -223,7 +196,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  function refreshFilte
         : 'what ' + state.resident + ' said'
       : ''
     const followedWaiting = followedEntry && (
-      followedEntry.loading || followedEntry.refreshing ||
+      followedEntry.loading ||
       (!followedEntry.initialized && !followedEntry.error && !followedEntry.refreshError)
     )
     const followedFailed = followedEntry && (followedEntry.error || followedEntry.refreshError)

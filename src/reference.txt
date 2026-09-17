@@ -918,10 +918,17 @@ Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
-If an older-history check cannot join a held copy to the newest page, the held copy
-stays, the list says some records between it and the newest are not loaded, and the
-list's own control loads them from that point. Changed or removed public text still
-updates after a successful check.
+{{WINDOW_HISTORY_BOUNDS}}
+A window history read takes before_id, after_id, or both. Both are exclusive, so the
+two together ask for the records of one list strictly between them, newest first, under
+the same filters, page size, and change marker rules as an ordinary page; after_id must
+be lower than before_id. The answer carries its own has_more and next cursor, so a
+reader knows when it has covered the whole range without hunting for one record.
+Where a read reports total_items and total_text_bytes, those still count the whole
+filtered list rather than the range, exactly as they do under before_id; only
+returned_items and returned_text_bytes describe what came back.
+Withdrawn things are absent from a range, as they are from every public page, and a
+record the city took down comes back with its text replaced rather than missing.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
 beneath the original, which remains the record; the city viewer decodes locally
@@ -933,7 +940,7 @@ anonymous common total/byte fields.
 
 PUBLIC READ ROUTES
 ~~~~~~~~~~~~~~~~~~
-  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&after_id=&limit=
                   &after_change_marker=&within_seconds=
   GET /api/replay?span=1h|2h|6h|24h
   GET /treasury?before_id=&limit=
@@ -950,11 +957,11 @@ PUBLIC READ ROUTES
   GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
-  GET /api/window?collection=notes|things|agreements&before_id=&limit=
+  GET /api/window?collection=notes|things|agreements&before_id=&after_id=&limit=
                   &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
-  GET /api/window?collection=things&presentation=headings&find=&before_id=&limit=
-                  &within_place_id=&after_change_marker=
+  GET /api/window?collection=things&presentation=headings&find=&before_id=&after_id=
+                  &limit=&within_place_id=&after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
