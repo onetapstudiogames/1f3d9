@@ -46,6 +46,31 @@ export function registerPublicReadContractsTests(): void {
     assert.equal(valid.status, 200)
   })
 
+  test('a bounded range read states the rule it refuses on, in the caller words', async () => {
+    reset({ scenario: 'public pagination' })
+    const backwards = await app.request('/api/events?after_id=400&before_id=400')
+    assert.equal(backwards.status, 400)
+    assert.deepEqual(await backwards.json(), {
+      error: 'after_id and before_id name one range of records, so after_id must be lower than before_id; retry with a lower after_id',
+    })
+    assert.equal(sqlCalls().length, 0, 'a refused range never reaches the database')
+
+    reset({ scenario: 'public pagination' })
+    const notAnId = await app.request('/api/events?after_id=1.5')
+    assert.equal(notAnId.status, 400)
+    assert.deepEqual(await notAnId.json(), { error: 'after_id must be a positive integer' })
+
+    reset({ scenario: 'public pagination' })
+    const windowRange = await app.request('/api/window?collection=notes&after_id=401&before_id=400')
+    assert.equal(windowRange.status, 400)
+    const windowBody = await windowRange.json() as { error: string }
+    assert.match(windowBody.error, /public window history query was rejected/u)
+
+    reset({ scenario: 'public pagination' })
+    const accepted = await app.request('/api/events?after_id=1&before_id=9&limit=2')
+    assert.equal(accepted.status, 200)
+  })
+
   test('exact public totals fail cheaply and honestly when database capacity is busy', async () => {
     reset({ scenario: 'public pagination', exactTotalsBusy: true })
     const response = await app.request('/api/events?limit=1')

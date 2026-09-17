@@ -162,8 +162,12 @@ const descendingPage = <T extends { id: number }>(
   rows: readonly T[],
   cursor: unknown,
   fetchLimit: unknown,
+  // The older, exclusive end of a bounded range read; absent reads to the
+  // oldest row, exactly as before this parameter existed.
+  afterId: unknown = null,
 ) => rows
   .filter(row => cursor == null || row.id < Number(cursor))
+  .filter(row => afterId == null || row.id > Number(afterId))
   .sort((left, right) => right.id - left.id)
   .slice(0, Number(fetchLimit))
 

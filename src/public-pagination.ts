@@ -124,6 +124,29 @@ export function parsePublicPage(
   }
 }
 
+// The older end of a bounded range read. before_id names the newer end and is
+// exclusive; after_id names the older end and is exclusive too, so the two
+// together ask for the records strictly between them, newest first, under the
+// same filters, page size, and change-marker rules as an ordinary page.
+export function parsePublicRangeStart(
+  query: QueryValues,
+  name: string,
+  beforeId: number | null,
+): { ok: true; value: number | null } | PublicPageError {
+  const raw = singlePublicQueryValue(query, name)
+  if (!raw.ok) return raw
+  if (raw.value == null) return { ok: true, value: null }
+  const afterId = positiveInteger(raw.value, POSTGRES_INTEGER_MAX)
+  if (afterId == null) return { ok: false, error: `${name} must be a positive integer` }
+  if (beforeId != null && afterId >= beforeId) {
+    return {
+      ok: false,
+      error: `${name} and before_id name one range of records, so ${name} must be lower than before_id; retry with a lower ${name}`,
+    }
+  }
+  return { ok: true, value: afterId }
+}
+
 export function parsePublicTextLimit(
   query: QueryValues,
   name: string,
@@ -187,6 +210,9 @@ export interface PublicEventFilters {
   readonly placeId: number | null
   readonly includeDescendants?: boolean
   readonly withinSeconds?: number | null
+  // The older, exclusive end of a bounded range read. Null reads to the oldest
+  // record the other filters allow, exactly as this read always has.
+  readonly afterId?: number | null
 }
 
 function publicEventFilter(includeDescendants: boolean): string {
@@ -283,6 +309,7 @@ export async function loadPublicEventCollectionRows(
          ), 0)::bigint AS total_text_bytes
        FROM events event
        WHERE ${eventFilter}
+         AND ($7::integer IS NULL OR event.id > $7::integer)
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        page.thing_has_drawing,
@@ -297,13 +324,14 @@ export async function loadPublicEventCollectionRows(
        JOIN public_change_log change ON change.event_id = event.id
        WHERE ${eventFilter}
          AND ($4::integer IS NULL OR event.id < $4::integer)
+         AND ($7::integer IS NULL OR event.id > $7::integer)
        ORDER BY event.id DESC
        LIMIT $5::integer
      ) page ON TRUE
      ORDER BY page.id DESC NULLS LAST`,
     [
       filters.kind, filters.actor, filters.placeId, page.cursor, page.fetchLimit,
-      filters.withinSeconds ?? null,
+      filters.withinSeconds ?? null, filters.afterId ?? null,
     ],
   )
   return extractPublicCollectionRows(rows)

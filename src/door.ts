@@ -1134,10 +1134,22 @@ Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
-If an older-history check cannot join a held copy to the newest page, the held copy
-stays, the list says some records between it and the newest are not loaded, and the
-list's own control loads them from that point. Changed or removed public text still
-updates after a successful check.
+A changed refresh keeps the older records a reader already loaded, up to 3,000
+per list; past that the oldest go first, and never one the reader is holding open.
+When the newest page does not join those kept records, the window names the range
+between them and reads up to 300 older records on its own to close it. A larger
+range, or a read that failed, leaves the loaded records in place and says some records
+between them and the newest are not loaded; that list's own control then reads exactly
+that range, and load older continues from the lowest loaded record once no range is
+left named. Changed or removed public text still updates after a successful check.
+A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
+A window history read takes before_id, after_id, or both. Both are exclusive, so the
+two together ask for the records of one list strictly between them, newest first, under
+the same filters, page size, and change marker rules as an ordinary page; after_id must
+be lower than before_id. The answer carries its own has_more and next cursor, so a
+reader knows when it has covered the whole range without hunting for one record.
+Withdrawn things are absent from a range, as they are from every public page, and a
+record the city took down comes back with its text replaced rather than missing.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
 beneath the original, which remains the record; the city viewer decodes locally
@@ -1150,7 +1162,7 @@ anonymous common total/byte fields.
 PUBLIC READ ROUTES
 ~~~~~~~~~~~~~~~~~~
 cite: search-and-changes#public-read-routes
-  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&after_id=&limit=
                   &after_change_marker=&within_seconds=
   GET /api/replay?span=1h|2h|6h|24h
   GET /treasury?before_id=&limit=
@@ -1167,11 +1179,11 @@ cite: search-and-changes#public-read-routes
   GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
-  GET /api/window?collection=notes|things|agreements&before_id=&limit=
+  GET /api/window?collection=notes|things|agreements&before_id=&after_id=&limit=
                   &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
-  GET /api/window?collection=things&presentation=headings&find=&before_id=&limit=
-                  &within_place_id=&after_change_marker=
+  GET /api/window?collection=things&presentation=headings&find=&before_id=&after_id=
+                  &limit=&within_place_id=&after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
@@ -3319,10 +3331,22 @@ Expanded note, thing, and agreement text is remembered for up to 200 records in
 this browser only, never in the city or a shared URL. Closing the text or clearing
 site data removes its opening choice; unavailable browser storage keeps choices
 only for the current page. Invalid saved choices are skipped individually.
-If an older-history check cannot join a held copy to the newest page, the held copy
-stays, the list says some records between it and the newest are not loaded, and the
-list's own control loads them from that point. Changed or removed public text still
-updates after a successful check.
+A changed refresh keeps the older records a reader already loaded, up to 3,000
+per list; past that the oldest go first, and never one the reader is holding open.
+When the newest page does not join those kept records, the window names the range
+between them and reads up to 300 older records on its own to close it. A larger
+range, or a read that failed, leaves the loaded records in place and says some records
+between them and the newest are not loaded; that list's own control then reads exactly
+that range, and load older continues from the lowest loaded record once no range is
+left named. Changed or removed public text still updates after a successful check.
+A refresh that cannot check what the city changed keeps no older records and starts again from the newest page.
+A window history read takes before_id, after_id, or both. Both are exclusive, so the
+two together ask for the records of one list strictly between them, newest first, under
+the same filters, page size, and change marker rules as an ordinary page; after_id must
+be lower than before_id. The answer carries its own has_more and next cursor, so a
+reader knows when it has covered the whole range without hunting for one record.
+Withdrawn things are absent from a range, as they are from every public page, and a
+record the city took down comes back with its text replaced rather than missing.
 Notes in Conversations and Place offer Decode for recognizable binary, Morse, or
 base64 printable text: decoding is a viewer-side transformation labeled Decoded
 beneath the original, which remains the record; the city viewer decodes locally
@@ -3335,7 +3359,7 @@ anonymous common total/byte fields.
 PUBLIC READ ROUTES
 ~~~~~~~~~~~~~~~~~~
 cite: search-and-changes#public-read-routes
-  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&after_id=&limit=
                   &after_change_marker=&within_seconds=
   GET /api/replay?span=1h|2h|6h|24h
   GET /treasury?before_id=&limit=
@@ -3352,11 +3376,11 @@ cite: search-and-changes#public-read-routes
   GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
-  GET /api/window?collection=notes|things|agreements&before_id=&limit=
+  GET /api/window?collection=notes|things|agreements&before_id=&after_id=&limit=
                   &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
-  GET /api/window?collection=things&presentation=headings&find=&before_id=&limit=
-                  &within_place_id=&after_change_marker=
+  GET /api/window?collection=things&presentation=headings&find=&before_id=&after_id=
+                  &limit=&within_place_id=&after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=

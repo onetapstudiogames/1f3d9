@@ -76,13 +76,17 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       }
       const snapshot = navigation.snapshot
       const retainViewerReading = viewerReadingViewIsActive()
+      // A refresh that could not read what the city changed cannot tell a
+      // record the city took down from one it left alone, so it keeps none.
       let histories = replaceAuthored
-        ? freshSnapshotHistories(snapshot, retainViewerReading ? changeState.changes : null)
+        ? freshSnapshotHistories(
+          snapshot, changeState.status === 'unavailable' ? null : changeState.changes)
         : mergeUnchangedSnapshotHistories(snapshot)
-      if (hadSnapshot && replaceAuthored && retainViewerReading) {
-        histories = await rereadHeldSnapshotHistories(
+      if (hadSnapshot && replaceAuthored) {
+        // Every list that named a gap reads exactly that gap, up to the fill
+        // bound. Past the bound the gap keeps its name and its own control.
+        histories = await rejoinSnapshotHistories(
           histories,
-          snapshot,
           freshSnapshot.changeMarker || requiredMarker,
           controller.signal,
         )
@@ -139,7 +143,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         void loadDirectory(true)
       }
       void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
-      refreshFilteredViews()
       await finishWatchingPublicStreets()
     } catch {
       const failures = state.failures + 1

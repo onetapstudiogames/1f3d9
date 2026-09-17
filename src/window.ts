@@ -15,6 +15,7 @@ import {
   PUBLIC_PAGE_MAX,
   finalizePublicPage,
   parsePublicPage,
+  parsePublicRangeStart,
   singlePublicQueryValue,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
@@ -736,8 +737,8 @@ export function mergeWindowThingTraits(
 }
 
 const WINDOW_HISTORY_KEYS = new Set([
-  'collection', 'before_id', 'limit', 'place_id', 'within_place_id', 'resident', 'context',
-  'presentation', 'find',
+  'collection', 'before_id', 'after_id', 'limit', 'place_id', 'within_place_id', 'resident',
+  'context', 'presentation', 'find',
 ])
 const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
 
@@ -756,6 +757,10 @@ export const NOTE_CONTEXT_PAGE_MAX = Math.floor(
 export interface WindowHistoryQuery {
   readonly collection: 'notes' | 'things' | 'agreements'
   readonly beforeId: number | null
+  // The older, exclusive end of a bounded range read. With beforeId it asks for
+  // the records strictly between the two, under the same filters and page size.
+  // Absent or null reads to the oldest record the filters allow, as always.
+  readonly afterId?: number | null
   readonly limit: number
   readonly placeId: number | null
   readonly includeDescendants?: boolean
@@ -784,6 +789,8 @@ export function parseWindowHistoryQuery(
   if (!collection || !WINDOW_HISTORY_COLLECTIONS.has(collection)) return null
   const page = parsePublicPage(queries, 'before_id', 'limit')
   if (!page.ok) return null
+  const rangeStart = parsePublicRangeStart(queries, 'after_id', page.cursor)
+  if (!rangeStart.ok) return null
 
   const exactPlaceValue = oneWindowQueryValue(queries, 'place_id')
   const insidePlaceValue = oneWindowQueryValue(queries, 'within_place_id')
@@ -841,6 +848,7 @@ export function parseWindowHistoryQuery(
   return Object.freeze({
     collection: collection as WindowHistoryQuery['collection'],
     beforeId: page.cursor,
+    afterId: rangeStart.value,
     limit: context ? Math.min(page.limit, NOTE_CONTEXT_PAGE_MAX) : page.limit,
     placeId,
     includeDescendants,
@@ -888,6 +896,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
             row_number() OVER (ORDER BY note.id DESC) AS own_position
           FROM notes note JOIN residents author ON author.id = note.author_id
           WHERE ($1::integer IS NULL OR note.id < $1::integer)
+            AND ($6::integer IS NULL OR note.id > $6::integer)
             AND ${placePredicate('note.place_id')}
             AND author.handle = $3::text
           ORDER BY note.id DESC
@@ -922,6 +931,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
         ORDER BY id DESC`,
       values: Object.freeze([
         options.beforeId, options.placeId, options.resident, fetchLimit, options.limit,
+        options.afterId ?? null,
       ]),
     })
   }
@@ -930,11 +940,14 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
       text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
         FROM notes note JOIN residents author ON author.id = note.author_id
         WHERE ($1::integer IS NULL OR note.id < $1::integer)
+          AND ($5::integer IS NULL OR note.id > $5::integer)
           AND ${placePredicate('note.place_id')}
           AND ($3::text IS NULL OR author.handle = $3::text)
         ORDER BY note.id DESC
         LIMIT $4::integer`,
-      values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),
+      values: Object.freeze([
+        options.beforeId, options.placeId, options.resident, fetchLimit, options.afterId ?? null,
+      ]),
     })
   }
   if (options.collection === 'things') {
@@ -958,6 +971,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           LEFT JOIN kinds kind ON kind.id = thing.kind_id
           WHERE thing.withdrawn_at IS NULL
             AND ($1::integer IS NULL OR thing.id < $1::integer)
+            AND ($8::integer IS NULL OR thing.id > $8::integer)
             AND ${placePredicate('thing.place_id')}
             AND ($3::text IS NULL OR current_owner.handle = $3::text)
             AND (($5::text IS NULL AND $6::integer IS NULL) OR coalesce((
@@ -979,7 +993,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           LIMIT $4::integer`,
         values: Object.freeze([
           options.beforeId, options.placeId, options.resident, fetchLimit,
-          findName, findId, PUBLIC_CREDENTIAL_PATTERN_SOURCE,
+          findName, findId, PUBLIC_CREDENTIAL_PATTERN_SOURCE, options.afterId ?? null,
         ]),
       })
     }
@@ -1001,11 +1015,14 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
         WHERE thing.withdrawn_at IS NULL
           AND ($1::integer IS NULL OR thing.id < $1::integer)
+          AND ($5::integer IS NULL OR thing.id > $5::integer)
           AND ${placePredicate('thing.place_id')}
           AND ($3::text IS NULL OR current_owner.handle = $3::text)
         ORDER BY thing.id DESC
         LIMIT $4::integer`,
-      values: Object.freeze([options.beforeId, options.placeId, options.resident, fetchLimit]),
+      values: Object.freeze([
+        options.beforeId, options.placeId, options.resident, fetchLimit, options.afterId ?? null,
+      ]),
     })
   }
   return Object.freeze({
@@ -1047,6 +1064,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
         WHERE ($1::integer IS NULL OR agreement.id < $1::integer)
+          AND ($4::integer IS NULL OR agreement.id > $4::integer)
           AND ($2::text IS NULL OR creator.handle = $2::text OR EXISTS (
             SELECT 1 FROM agreement_parties membership
             JOIN residents party ON party.id = membership.resident_id
@@ -1056,7 +1074,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
       SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
         NOT complete AS open, created_at
       FROM public_agreements ORDER BY id DESC LIMIT $3::integer`,
-    values: Object.freeze([options.beforeId, options.resident, fetchLimit]),
+    values: Object.freeze([options.beforeId, options.resident, fetchLimit, options.afterId ?? null]),
   })
 }
 
@@ -1181,6 +1199,7 @@ const defaultWindowHistoryQuery = (
 ): WindowHistoryQuery => Object.freeze({
   collection,
   beforeId: null,
+  afterId: null,
   limit: PUBLIC_PAGE_DEFAULT,
   placeId: null,
   resident: null,

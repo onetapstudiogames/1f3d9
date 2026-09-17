@@ -36,6 +36,10 @@ import {
   parseWindowViewerOpenKeys,
 } from '../viewer-state.ts'
 import { createNoteDecodingHelpers } from '../note-decoding.ts'
+import {
+  WINDOW_HISTORY_FILL_ROWS,
+  WINDOW_HISTORY_KEEP_ROWS,
+} from '../../window-history-limits.ts'
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -71,6 +75,10 @@ export const PART_01_PRELUDE = `(() => {
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
   const MAX_FORWARD_RECONCILE_PAGES = 8
+  // Both window history bounds come from src/window-history-limits.ts, the one
+  // place that states them, so the served notice and this program cannot drift.
+  const WINDOW_HISTORY_KEEP_ROWS = ${WINDOW_HISTORY_KEEP_ROWS}
+  const WINDOW_HISTORY_FILL_ROWS = ${WINDOW_HISTORY_FILL_ROWS}
   const MAX_AUTO_HISTORY_PAGES = 8
   const GAZETTE_ISSUE_PAGE_LIMIT = 10
   const GAZETTE_ENTRY_PAGE_LIMIT = 25

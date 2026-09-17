@@ -436,14 +436,14 @@ export function respondToDatabaseStage5(
     }]
   }
   if (fixtureState.current.scenario === 'window outline' && q.includes('from notes note')) {
-    return descendingPage(paginationNotes(), params[0], params.at(-1))
+    return descendingPage(paginationNotes(), params[0], params[3], params[4])
   }
   if (fixtureState.current.scenario === 'window outline' && q.includes('from things thing')
       && !q.includes('/* public:events */') && !q.includes('/* public:window-events */')) {
-    return descendingPage(paginationThings(), params[0], params.at(-1))
+    return descendingPage(paginationThings(), params[0], params[3], params[4])
   }
   if (fixtureState.current.scenario === 'window outline' && q.includes('from agreements agreement')) {
-    return descendingPage(remainingPaginationRows('agreements'), params[0], params.at(-1))
+    return descendingPage(remainingPaginationRows('agreements'), params[0], params[2], params[3])
   }
   if (fixtureState.current.scenario === 'window outline' && (
     q.includes('select id, at, kind, actor, detail') || q.includes('/* public:events */')
@@ -465,7 +465,8 @@ export function respondToDatabaseStage5(
           ...event,
           kind: index % 2 === 0 ? 'note' : 'thing_created',
         })
-    return descendingPage(events, null, params.at(-1))
+    return descendingPage(events, null, q.includes('/* public:window-events */')
+      ? params[1] : params[4], q.includes('/* public:window-events */') ? null : params[6])
   }
   return undefined
 }

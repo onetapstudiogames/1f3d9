@@ -68,6 +68,8 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
     return Object.freeze({
       rows,
+      gapAfterIds: [],
+      beyondFillIds: [],
       hasMore: historyTotal(collection, filters) > rows.length,
       nextBeforeId: null,
       automaticPageCount: 0,
@@ -75,7 +77,6 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       initialized: false,
       loading: false,
       error: false,
-      refreshing: false,
       refreshError: false,
     })
   }
@@ -107,82 +108,191 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         : collection === 'agreements' ? 'agreement' : 'event'
   }
 
+  // A named gap is one range of records this list has not loaded. It is named
+  // by the id of the record directly below it, so the record directly above it
+  // is the lowest loaded record with a higher id: one fact, read off the rows
+  // themselves, never a cursor kept beside them.
+  function gapUpperBound(rows, afterId) {
+    let bound = null
+    for (const row of rows) if (row.id > afterId) bound = row.id
+    return bound
+  }
+
+  function namedHistoryGap(entry) {
+    const afterId = (entry.gapAfterIds || [])[0]
+    if (afterId === undefined) return null
+    return Object.freeze({ afterId, beforeId: gapUpperBound(entry.rows || [], afterId) })
+  }
+
+  // The records a changed refresh keeps: everything already loaded and
+  // everything the newest page carries, minus what the city took down, minus
+  // the oldest past the keep bound, and never one the reader is holding open.
+  function keptHistoryRows(rows, freshRows, kind, heldKeys, invalidatedKeys) {
+    const freshIds = new Set(freshRows.map(row => row.id))
+    const freshOldestId = freshRows.length ? freshRows[freshRows.length - 1].id : null
+    const survivors = rows.filter(row => {
+      if (invalidatedKeys.has(kind + ':' + String(row.id))) return false
+      // The newest page is the city's own newest block for this list, so a
+      // record inside it that the page no longer carries is gone from the city
+      // rather than merely paged out of sight.
+      return freshOldestId === null || row.id < freshOldestId || freshIds.has(row.id)
+    })
+    const merged = mergeWindowRows(survivors, freshRows)
+    const kept = merged.filter((row, index) =>
+      index < WINDOW_HISTORY_KEEP_ROWS || heldKeys.has(kind + ':' + String(row.id)))
+    return Object.freeze({
+      merged,
+      kept,
+      freshOldestId,
+      topSurvivorId: survivors.length ? survivors[0].id : null,
+    })
+  }
+
+  function keptGapAfterIds(previousAfterIds, held) {
+    const keptIds = held.kept.map(row => row.id)
+    const keptIdSet = new Set(keptIds)
+    const mergedIndex = new Map(held.merged.map((row, index) => [row.id, index]))
+    const named = new Set()
+    // Every hole the keep bound leaves is named, not only the first.
+    for (let index = 1; index < keptIds.length; index += 1) {
+      if (mergedIndex.get(keptIds[index]) !== mergedIndex.get(keptIds[index - 1]) + 1) {
+        named.add(keptIds[index])
+      }
+    }
+    // A gap this list already named keeps its name. When the record that named
+    // it is gone, the next record still below it takes that place.
+    for (const afterId of previousAfterIds || []) {
+      const marker = keptIdSet.has(afterId) ? afterId : keptIds.find(id => id < afterId)
+      if (marker !== undefined) named.add(marker)
+    }
+    // Nothing proves the newest page joins the records this list already had
+    // unless it carries one of them, or unless the two ends are neighbouring
+    // ids: record ids are whole numbers, so no record of any list can sit
+    // between them. Otherwise the top of that block stays named until a read
+    // shows what is between them.
+    if (held.topSurvivorId !== null && keptIdSet.has(held.topSurvivorId) &&
+        (held.freshOldestId === null || held.topSurvivorId < held.freshOldestId - 1)) {
+      named.add(held.topSurvivorId)
+    }
+    return [...named].sort((left, right) => right - left)
+  }
+
+  function freshHistoryEntry(entry, rows, page) {
+    return Object.freeze({
+      ...entry,
+      rows,
+      gapAfterIds: [],
+      beyondFillIds: [],
+      hasMore: page ? page.hasMore : entry.hasMore === true,
+      nextBeforeId: page ? page.nextBeforeId : null,
+      initialized: true,
+      loading: false,
+      error: false,
+      refreshError: false,
+    })
+  }
+
+  function retainedHistoryEntry(entry, freshRows, kind, heldKeys, invalidatedKeys, page) {
+    const held = keptHistoryRows(entry.rows, freshRows, kind, heldKeys, invalidatedKeys)
+    const rows = held.kept
+    const gapAfterIds = keptGapAfterIds(entry.gapAfterIds, held)
+    const oldestMerged = held.merged[held.merged.length - 1]
+    const oldestKept = rows[rows.length - 1]
+    const bottomTrimmed = Boolean(oldestMerged) && oldestMerged.id !== oldestKept?.id
+    return Object.freeze({
+      ...entry,
+      rows,
+      gapAfterIds,
+      beyondFillIds: (entry.beyondFillIds || []).filter(id => gapAfterIds.includes(id)),
+      hasMore: rows.length
+        ? entry.hasMore === true || bottomTrimmed
+        : Boolean(page && page.hasMore),
+      nextBeforeId: rows.length
+        ? rows[rows.length - 1].id
+        : page ? page.nextBeforeId : null,
+      initialized: true,
+      loading: false,
+      error: false,
+      refreshError: false,
+    })
+  }
+
   function freshSnapshotHistories(snapshot, changes = null) {
     let histories = {}
-    const retainViewerRows = Array.isArray(changes)
-    const heldKeys = retainViewerRows ? viewerHeldRecordKeys() : new Set()
+    // Keeping older records is only honest while the window can still see what
+    // the city changed. When that check could not be completed it keeps none.
+    const keepLoadedRows = Array.isArray(changes)
+    const heldKeys = keepLoadedRows ? viewerHeldRecordKeys() : new Set()
     const invalidatedKeys = changedViewerRecordKeys(changes || [])
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const page = snapshot.pages[collection]
       const previousEntries = state.histories[collection] || {}
-      const entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
-        if (!entry?.rows) return []
-        const freshRows = key === 'all' || !entry.filters
-          ? snapshot[collection]
-          : filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
-        const freshIds = new Set(freshRows.map(row => row.id))
-        const kind = historyViewerRecordKind(collection)
-        const retainedRows = entry.rows.filter(row => {
-          const recordKey = kind + ':' + String(row.id)
-          return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
-            !invalidatedKeys.has(recordKey)
-        })
-        if (!retainedRows.length || key === 'all') return []
-        return [[key, Object.freeze({
-          ...entry,
-          rows: mergeWindowRows(retainedRows, freshRows),
-          // This list is rebuilt from the newest page, so any earlier seam is
-          // void; the held-row recheck below marks whatever gap is left.
-          deferredRows: [],
-          loading: false,
-          error: false,
-          refreshing: false,
-          refreshError: false,
-        })]]
-      }))
-      const previousAll = previousEntries.all
-      const freshIds = new Set(snapshot[collection].map(row => row.id))
       const kind = historyViewerRecordKind(collection)
-      const retainedAllRows = (previousAll?.rows || []).filter(row => {
-        const recordKey = kind + ':' + String(row.id)
-        return !freshIds.has(row.id) && heldKeys.has(recordKey) &&
-          !invalidatedKeys.has(recordKey)
-      })
-      histories = {
-        ...histories,
-        [collection]: {
-          ...entries,
-          all: Object.freeze({
-            rows: retainedAllRows.length
-              ? mergeWindowRows(retainedAllRows, snapshot[collection])
-              : snapshot[collection],
-            hasMore: retainedAllRows.length && previousAll
-              ? previousAll.hasMore : page.hasMore,
-            nextBeforeId: retainedAllRows.length && previousAll
-              ? previousAll.nextBeforeId : page.nextBeforeId,
-            initialized: true,
-            loading: false,
-            error: false,
-            refreshing: false,
-            refreshError: false,
-          }),
-        },
+      let entries = {}
+      if (keepLoadedRows) {
+        entries = Object.fromEntries(Object.entries(previousEntries).flatMap(([key, entry]) => {
+          if (!entry || !entry.rows) return []
+          const freshRows = key === 'all' || !entry.filters
+            ? snapshot[collection]
+            : filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
+          return [[key, retainedHistoryEntry(
+            entry, freshRows, kind, heldKeys, invalidatedKeys, key === 'all' ? page : null)]]
+        }))
       }
+      if (!entries.all) {
+        entries = {
+          ...entries,
+          all: freshHistoryEntry(previousEntries.all || {}, snapshot[collection], page),
+        }
+      }
+      histories = { ...histories, [collection]: entries }
     }
     return histories
   }
 
-  async function rereadHeldHistoryEntry(
-    collection, entry, filters, heldIds, marker, signal,
-  ) {
-    let rows = []
-    let beforeId = null
-    const seenCursors = new Set()
+  function filledHistoryEntry(entry, rows, afterId, options) {
+    const closed = options.closed === true
+    const gapAfterIds = closed
+      ? (entry.gapAfterIds || []).filter(id => id !== afterId)
+      : entry.gapAfterIds || []
+    const beyondFillIds = closed
+      ? (entry.beyondFillIds || []).filter(id => id !== afterId)
+      : options.beyondFill === true
+        ? [...new Set([...(entry.beyondFillIds || []), afterId])]
+        : entry.beyondFillIds || []
+    return Object.freeze({
+      ...entry,
+      rows,
+      gapAfterIds,
+      beyondFillIds,
+      nextBeforeId: rows.length ? rows[rows.length - 1].id : entry.nextBeforeId ?? null,
+      initialized: true,
+      loading: false,
+      error: false,
+      refreshError: options.readFailed === true,
+    })
+  }
+
+  // Read exactly the named gap, page by page, up to the fill bound. The read
+  // answers one range, so its own has_more says whether the gap is closed; no
+  // particular record has to come back for it to close, which is why a record
+  // the city took down inside the gap cannot leave the list stuck.
+  async function fillHistoryGap(collection, entry, filters, marker, signal) {
+    const gap = namedHistoryGap(entry)
+    if (!gap) return entry
+    let rows = entry.rows
+    let readMarker = marker
+    let spent = 0
+    let markerRetries = 0
     try {
-      for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
-        const url = historyRequestUrl(collection, {
-          initialized: Boolean(beforeId), nextBeforeId: beforeId,
-        }, filters, marker)
+      while (spent < WINDOW_HISTORY_FILL_ROWS) {
+        const url = historyRequestUrl(
+          collection,
+          { initialized: true, nextBeforeId: gapUpperBound(rows, gap.afterId) },
+          filters,
+          readMarker,
+          Object.freeze({ afterId: gap.afterId }),
+        )
         const response = await fetch(url.pathname + url.search, {
           credentials: 'omit',
           headers: { Accept: 'application/json' },
@@ -191,119 +301,65 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           referrerPolicy: 'no-referrer',
           signal,
         })
-        if (!response.ok) throw new Error('held public history unavailable')
+        if (!response.ok) throw new Error('public gap read unavailable')
         const payload = await response.json()
-        requireExactReadMarker(payload?.change_marker, marker)
+        const pageMarker = safeChangeMarker(payload && payload.change_marker)
+        if (readMarker && !markerCovers(pageMarker, readMarker)) {
+          throw new Error('public gap read marker does not cover its rows')
+        }
+        if (readMarker && pageMarker !== readMarker) {
+          // The city changed while the gap was being read. Read it again under
+          // the newer marker instead of joining two different cities.
+          markerRetries += 1
+          if (markerRetries > 3) throw new Error('public gap read never settled')
+          readMarker = pageMarker
+          continue
+        }
         const incoming = normalizeHistoryRows(collection, payload)
         rows = mergeWindowRows(rows, incoming)
-        const hasMore = payload.has_more === true
-        const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
-        if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
-            (beforeId && nextBeforeId >= beforeId) ||
-            !incoming.some(row => row.id === nextBeforeId))) {
-          throw new Error('held public history cursor did not progress')
+        spent += incoming.length
+        if (payload.has_more !== true) {
+          return filledHistoryEntry(entry, rows, gap.afterId, { closed: true })
         }
-        const foundHeldRows = [...heldIds].every(id => rows.some(row => row.id === id))
-        if (foundHeldRows || !hasMore) {
-          return Object.freeze({
-            ...entry,
-            rows,
-            deferredRows: [],
-            hasMore,
-            nextBeforeId,
-            initialized: true,
-            loading: false,
-            error: false,
-            refreshing: false,
-            refreshError: false,
-          })
-        }
-        seenCursors.add(nextBeforeId)
-        beforeId = nextBeforeId
+        if (!incoming.length) throw new Error('public gap read did not progress')
+        markerRetries = 0
       }
     } catch {
-      return seamHistoryEntry(entry, heldIds, rows, true)
+      return filledHistoryEntry(entry, rows, gap.afterId, { readFailed: true })
     }
-    return seamHistoryEntry(entry, heldIds, rows, false)
+    return filledHistoryEntry(entry, rows, gap.afterId, { beyondFill: true })
   }
 
-  // A page closes only the part of a seam it actually covered. A reader holding
-  // two rows open at different depths has a gap above each one, so the rows the
-  // page reached join the list while the rows still below it keep waiting.
-  function seamRowsAfterPage(deferredRows, incoming, hasMore) {
-    if (!deferredRows.length || !hasMore) return []
-    const lowestReadId = incoming.reduce(
-      (lowest, row) => Math.min(lowest, row.id), Infinity)
-    return deferredRows.filter(row => row.id < lowestReadId)
-  }
-
-  // A held row the forward read cannot join to the newest page leaves a seam.
-  // The held copy stays, the rows below the seam are deferred until paging
-  // reaches them, and the older-history cursor resumes at the lowest row of the
-  // joined block instead of under the unjoined held row.
-  function seamHistoryEntry(entry, heldIds, collected, readFailed) {
-    const rows = mergeWindowRows(entry.rows, collected)
-    const joinedIds = new Set(collected.filter(row => heldIds.has(row.id)).map(row => row.id))
-    const deferredIds = new Set([...heldIds].filter(id => !joinedIds.has(id)))
-    const joinedRows = rows.filter(row => !deferredIds.has(row.id))
-    return Object.freeze({
-      ...entry,
-      rows,
-      deferredRows: rows.filter(row => deferredIds.has(row.id)),
-      // Only an unjoined row promises that something older is still out there.
-      // A read that failed after joining every held row must not offer a page
-      // that would add nothing.
-      hasMore: deferredIds.size > 0 ? true : entry.hasMore === true,
-      nextBeforeId: joinedRows.length
-        ? joinedRows[joinedRows.length - 1].id
-        : entry.nextBeforeId,
-      initialized: true,
-      loading: false,
-      error: false,
-      refreshing: false,
-      refreshError: readFailed,
-    })
-  }
-
-  async function rereadHeldSnapshotHistories(histories, snapshot, marker, signal) {
-    const heldKeys = viewerHeldRecordKeys()
+  async function rejoinSnapshotHistories(histories, marker, signal) {
     const reads = []
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
-      const kind = historyViewerRecordKind(collection)
       for (const [key, entry] of Object.entries(histories[collection] || {})) {
+        const gap = namedHistoryGap(entry)
+        if (!gap || (entry.beyondFillIds || []).includes(gap.afterId)) continue
         const filters = entry.filters || Object.freeze({
           placeId: null, resident: null, context: false,
         })
-        const freshRows = key === 'all'
-          ? snapshot[collection]
-          : filterHistoryRows(collection, snapshot[collection], filters, snapshot)
-        const freshIds = new Set(freshRows.map(row => row.id))
-        const heldIds = new Set(entry.rows.filter(row =>
-          !freshIds.has(row.id) && heldKeys.has(kind + ':' + String(row.id)))
-          .map(row => row.id))
-        if (!heldIds.size) continue
         reads.push((async () => Object.freeze({
           collection,
           key,
-          entry: await rereadHeldHistoryEntry(
-            collection, entry, filters, heldIds, marker, signal),
+          entry: await fillHistoryGap(collection, entry, filters, marker, signal),
         }))())
       }
     }
     const completed = await Promise.allSettled(reads)
-    let reconciled = histories
+    let rejoined = histories
     for (const completedRead of completed) {
       if (completedRead.status !== 'fulfilled') continue
       const result = completedRead.value
-      reconciled = {
-        ...reconciled,
+      rejoined = {
+        ...rejoined,
         [result.collection]: {
-          ...reconciled[result.collection],
+          ...rejoined[result.collection],
           [result.key]: result.entry,
         },
       }
     }
-    return reconciled
+    return rejoined
   }
 
   function mergeUnchangedSnapshotHistories(snapshot) {
@@ -322,6 +378,8 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         ? { ...current, rows }
         : {
             rows,
+            gapAfterIds: [],
+            beyondFillIds: [],
             hasMore: page.hasMore,
             nextBeforeId: page.nextBeforeId,
             initialized: true,

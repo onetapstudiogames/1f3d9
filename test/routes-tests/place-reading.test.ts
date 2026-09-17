@@ -39,7 +39,7 @@ export function registerPlaceReadingTests(): void {
     const firstRead = sqlCalls().find(call => /from\s+events/i.test(call.query ?? ''))
     assert.deepEqual(
       firstRead?.params?.map((value, index) => index >= 3 ? Number(value) : value),
-      ['note_created', null, null, 65, 4, 0],
+      ['note_created', null, null, 65, 4, 0, 0],
       'the database fetches one lookahead row',
     )
     assert.match(firstRead?.query ?? '', /id\s*<\s*\$4::integer/i)
