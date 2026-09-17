@@ -309,3 +309,10 @@ test('the around-you budget has one production value and readable document mirro
     assert.ok(normalized.includes(admittedRange), `${name}: around-you admitted range`)
   }
 })
+
+test('the fee-credit conflict entry answers from the attempt status and never promises a return for every recorded id', () => {
+  const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
+  assert.doesNotMatch(changelog, /nothing new is spent, the recorded credit returns on its own at the attempt deadline, and a fresh request id starts that action again/u)
+  assert.match(changelog, /its conflict now answers from that attempt's own status: a live attempt spends nothing new/u)
+  assert.match(changelog, /a completed action returns nothing because that credit was spent/u)
+})
