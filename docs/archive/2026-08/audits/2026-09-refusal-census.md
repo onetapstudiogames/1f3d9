@@ -21,8 +21,8 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1337 resolved source refusal producers**: **925 caller-visible** and
-**412 internal-only**. Included rows record exact served text or an honest template only
+There are **1344 resolved source refusal producers**: **931 caller-visible** and
+**413 internal-only**. Included rows record exact served text or an honest template only
 for runtime-dependent values, status, reviewed cause and next-step classifications, literal
 evidence for each Yes classification, producer, adapter, final boundary, and test proof. A status
 beginning with `expression:` records the exact typed/helper adapter expression when a producer
