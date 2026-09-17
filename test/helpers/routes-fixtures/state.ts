@@ -168,11 +168,13 @@ interface FakeState {
   thingCurrentRevision: number | null
   thingDrawingVariant: string | null
   thingOpenToUse: boolean
+  thingSharedUseMayDestroy: boolean
   thingWithdrawn: boolean
   targetThingOwnerId: number
   targetThingPlaceId: number
   targetThingKindId: number | null
   targetThingOpenToUse: boolean
+  targetThingSharedUseMayDestroy: boolean
   targetThingWithdrawn: boolean
   kindOwnerId: number
   kindRevision: number
@@ -275,11 +277,13 @@ const initialState = (): FakeState => ({
   thingCurrentRevision: 1,
   thingDrawingVariant: null,
   thingOpenToUse: false,
+  thingSharedUseMayDestroy: false,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
   targetThingPlaceId: 2,
   targetThingKindId: 3,
   targetThingOpenToUse: false,
+  targetThingSharedUseMayDestroy: false,
   targetThingWithdrawn: false,
   kindOwnerId: 7,
   kindRevision: 1,

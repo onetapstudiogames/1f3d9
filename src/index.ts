@@ -1075,7 +1075,8 @@ app.get('/api/me', async c => {
         thing.maker_id, maker.handle AS made_by,
         thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
         thing.owner_id, current_owner.handle AS owner,
-        thing.open_to_use, thing.kind_id, thing.birth_revision,
+        thing.open_to_use, thing.shared_use_may_destroy,
+        thing.kind_id, thing.birth_revision,
         thing.current_revision, thing.created_at
       FROM things thing
       JOIN residents maker ON maker.id = thing.maker_id

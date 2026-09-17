@@ -268,4 +268,93 @@ export function registerThingUseTests(): void {
     })
     assert.equal(offered.status, 409)
   })
+
+  test('the thing owner alone may open a thing to ending, and a visitor sees the setting', async () => {
+    reset({
+      scenario: 'thing shared_use_may_destroy patch',
+      thingOwnerId: 7,
+      thingOpenToUse: true,
+      thingSharedUseMayDestroy: false,
+    })
+
+    const changed = await app.request('/api/thing/41', {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ shared_use_may_destroy: true }),
+    })
+    assert.equal(changed.status, 200, await changed.clone().text())
+    const changedBody = await changed.json() as {
+      thing: { shared_use_may_destroy: boolean }
+    }
+    assert.equal(changedBody.thing.shared_use_may_destroy, true)
+    const update = sqlCalls().find(call => /update\s+things\s+set/i.test(call.query ?? ''))
+    assert.match(update?.query ?? '', /\bshared_use_may_destroy\b/i)
+
+    reset({
+      scenario: 'thing shared_use_may_destroy read',
+      thingOpenToUse: true,
+      thingSharedUseMayDestroy: true,
+    })
+    const read = await app.request('/api/thing/41')
+    assert.equal(read.status, 200)
+    const readBody = await read.json() as { thing: { shared_use_may_destroy: boolean } }
+    assert.equal(readBody.thing.shared_use_may_destroy, true)
+    const detailRead = sqlCalls().find(call => /from\s+things\s+thing/i.test(call.query ?? ''))
+    assert.match(detailRead?.query ?? '', /thing\.shared_use_may_destroy/i)
+
+    reset({ scenario: 'thing shared_use_may_destroy denied', thingOwnerId: 7 })
+    setActor(8, 'neighbor')
+    const denied = await app.request('/api/thing/41', {
+      method: 'PATCH',
+      headers: authHeaders(OTHER_SECRET),
+      body: JSON.stringify({ shared_use_may_destroy: true }),
+    })
+    assert.equal(denied.status, 403)
+
+    reset({ scenario: 'thing shared_use_may_destroy validation' })
+    for (const invalid of [null, 'yes', 1]) {
+      const response = await app.request('/api/thing/41', {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ shared_use_may_destroy: invalid }),
+      })
+      assert.equal(response.status, 400)
+      const body = await response.json() as { error: string }
+      assert.match(body.error, /^shared_use_may_destroy must be boolean when present/u)
+    }
+  })
+
+  test('a make may open a new thing to ending and the response echoes the setting', async () => {
+    reset({
+      scenario: 'thing shared_use_may_destroy create',
+      openToThings: true,
+      thingOpenToUse: true,
+      thingSharedUseMayDestroy: true,
+    })
+    const made = await app.request('/api/thing', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        place_id: 2, name: 'one-reading letter', body: 'read me once',
+        open_to_use: true, shared_use_may_destroy: true,
+      }),
+    })
+    assert.equal(made.status, 201, await made.clone().text())
+    const madeBody = await made.json() as { thing: { shared_use_may_destroy: boolean } }
+    assert.equal(madeBody.thing.shared_use_may_destroy, true)
+    const insert = sqlCalls().find(call => /insert\s+into\s+things/i.test(call.query ?? ''))
+    assert.match(insert?.query ?? '', /\bshared_use_may_destroy\b/i)
+
+    const invalid = await app.request('/api/thing', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        place_id: 2, name: 'bad letter', body: '', shared_use_may_destroy: 'yes',
+      }),
+    })
+    assert.equal(invalid.status, 400)
+    const invalidBody = await invalid.json() as { error: string }
+    assert.equal(invalidBody.error, 'shared_use_may_destroy must be boolean when present')
+  })
+
 }

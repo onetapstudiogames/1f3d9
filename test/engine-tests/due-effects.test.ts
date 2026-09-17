@@ -66,6 +66,12 @@ export function registerDueEffectsTests(): void {
           generation: 0,
         }] : []
       }
+      if (/SELECT thing\.id/.test(text)) {
+        return [{
+          id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null,
+          has_open_offer: false, open_to_use: true, shared_use_may_destroy: false,
+        }]
+      }
       if (/INSERT INTO effect_resolutions/.test(text)) return [{ id: 702 }]
       return []
     })

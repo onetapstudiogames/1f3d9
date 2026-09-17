@@ -25,6 +25,19 @@ test('things persist an owner-controlled open-to-use flag that defaults closed',
   )
 })
 
+test('things persist an owner-controlled shared-destroy flag that defaults closed', () => {
+  assert.match(
+    schema,
+    /\bshared_use_may_destroy\s+boolean\s+not\s+null\s+default\s+false\b/iu,
+    'fresh databases must default every thing to owner-only destruction',
+  )
+  assert.match(
+    migrations,
+    /alter\s+table\s+(?:public\.)?things[\s\S]{0,300}\badd\s+column(?:\s+if\s+not\s+exists)?\s+shared_use_may_destroy\s+boolean\s+not\s+null\s+default\s+false\b/iu,
+    'existing databases need an additive, closed-by-default migration',
+  )
+})
+
 test('things retain an immutable maker separately from their transferable owner', () => {
   const thingsTable = /CREATE TABLE IF NOT EXISTS things \(([\s\S]*?)\);/u.exec(schema)?.[1]
   assert.ok(thingsTable, 'fresh schema must define things')

@@ -143,7 +143,7 @@ test('invalid actor, output, kind, and place fields fail without a database quer
     assert.deepEqual(result, {
       ok: false,
       status: 400,
-      error: 'crafting request was rejected because its resident, kind, place, body, or open_to_use value is invalid; retry with the documented craft fields and limits',
+      error: 'crafting request was rejected because its resident, kind, place, body, open_to_use, or shared_use_may_destroy value is invalid; retry with the documented craft fields and limits',
     })
     assert.equal(fake.calls.length, 0)
   }
@@ -346,7 +346,7 @@ test('typed crafting persists an explicit open-to-use permission', async () => {
   assert.equal(result.thing.open_to_use, true)
   const commit = fake.calls.find(call => call.marker === 'commit')
   assert.ok(commit)
-  assert.match(commit.query, /owner_id, maker_id, open_to_use, kind_id/i)
+  assert.match(commit.query, /owner_id, maker_id, open_to_use, shared_use_may_destroy,[\s\S]{0,4}kind_id/i)
   assert.equal(commit.values.includes(true), true)
 })
 
@@ -437,7 +437,10 @@ test('kindless thing creation and quota spend share the make action transaction'
   assert.match(kindless, /performPrimitive:\s*async\s+transaction\s*=>[\s\S]*await withPlacePermission\(transaction\)`[\s\S]*WITH permitted_place AS/u)
   assert.match(kindless, /place\.retired_at IS NULL/u)
   assert.match(kindless, /place is retired; restore it before making things there/u)
-  assert.match(kindless, /INSERT INTO things \(place_id, name, body, owner_id, maker_id, open_to_use\)/u)
+  assert.match(
+    kindless,
+    /INSERT INTO things \([\s\S]{0,20}place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy/u,
+  )
   assert.match(kindless, /SELECT permitted_place\.id,[\s\S]*quota_spend\.id[\s\S]*quota_spend\.id/u)
   assert.match(kindless, /'thing_created',\s*quota_spend\.handle/u)
   assert.match(kindless, /'thing_id',\s*new_thing\.id/u)
