@@ -74,6 +74,19 @@ export function registerPublicReadContractsTests(): void {
     assert.match(windowFieldBody.error, /public window history query was rejected/u,
       'an unsupported field still gets the unsupported-field answer')
 
+    for (const [path, why] of [
+      ['/api/window?collection=notes&nonsense=1&after_id=5&before_id=3', 'an unsupported field wins over a backwards range'],
+      ['/api/window?collection=events&after_id=5&before_id=3', 'a collection this door does not page wins over a backwards range'],
+      ['/api/window?after_id=5&before_id=3', 'a missing collection wins over a backwards range'],
+    ] as const) {
+      reset({ scenario: 'public pagination' })
+      const combined = await app.request(path)
+      assert.equal(combined.status, 400, why)
+      const combinedBody = await combined.json() as { error: string }
+      assert.match(combinedBody.error, /public window history query was rejected/u, why)
+      assert.equal(sqlCalls().length, 0, why)
+    }
+
     reset({ scenario: 'public pagination' })
     const accepted = await app.request('/api/events?after_id=1&before_id=9&limit=2')
     assert.equal(accepted.status, 200)

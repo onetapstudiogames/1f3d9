@@ -1572,12 +1572,21 @@ export async function windowSnapshot(c: Context) {
     const request = parseWindowHistoryQuery(historyQueries)
     if (!request) {
       // A range this door cannot accept is named in the same caller words the
-      // events door uses, rather than folded into the unsupported-field answer.
-      const historyPage = parsePublicPage(historyQueries, 'before_id', 'limit')
-      const range = historyPage.ok
-        ? parsePublicRangeStart(historyQueries, 'after_id', historyPage.cursor)
-        : null
-      if (range && !range.ok) return c.json({ error: range.error }, 400)
+      // events door uses, but only once the field set and the collection are
+      // ones this door accepts, so a caller never learns the range rule before
+      // the rule that actually refused them.
+      const fieldsAccepted = Object.keys(historyQueries).every(key => WINDOW_HISTORY_KEYS.has(key))
+        && Object.values(historyQueries).every(values => values.length === 1)
+      const collectionValue = oneWindowQueryValue(historyQueries, 'collection')
+      const collectionAccepted = typeof collectionValue === 'string'
+        && WINDOW_HISTORY_COLLECTIONS.has(collectionValue)
+      if (fieldsAccepted && collectionAccepted) {
+        const historyPage = parsePublicPage(historyQueries, 'before_id', 'limit')
+        const range = historyPage.ok
+          ? parsePublicRangeStart(historyQueries, 'after_id', historyPage.cursor)
+          : null
+        if (range && !range.ok) return c.json({ error: range.error }, 400)
+      }
       return c.json({ error: invalidHistoryQuery }, 400)
     }
     if (request.find !== null && request.find !== undefined) {
