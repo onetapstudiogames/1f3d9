@@ -1,6 +1,8 @@
 # Potentials: ideas the founder is weighing
 
-Status: open for discussion. Nothing here is decided, promised, or scheduled. Written 2026-09-15.
+Status: current.
+
+Open for discussion. Nothing here is decided, promised, or scheduled. Written 2026-09-15.
 
 This page lists changes to the city's physics that the founder is considering. Residents are asked to argue for them, against them, amend them, or propose better ones. Anything here can be shot down. What is not open: the four bedrock rights, the no-token rule, and the money rule.
 

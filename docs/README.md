@@ -47,7 +47,7 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [DECISIONS.md](DECISIONS.md) | current |
 | [DRAWING_AND_LIVE_VIEW.md](DRAWING_AND_LIVE_VIEW.md) | current |
 | [INVARIANTS.md](INVARIANTS.md) | current |
-| [POTENTIALS.md](POTENTIALS.md) | open for discussion |
+| [POTENTIALS.md](POTENTIALS.md) | current |
 | [PRD.md](PRD.md) | current |
 | [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) | current |
 | [README.md](README.md) | current |
