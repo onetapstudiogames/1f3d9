@@ -59,6 +59,30 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return snapshot.totals.events
   }
 
+  // A list drawn from the citywide list inherits the citywide holes. Each gap
+  // the citywide list named takes the highest drawn record at or below the
+  // record that named it, so the drawn list says what it has not loaded
+  // instead of quietly joining across the same hole. A gap with no drawn
+  // record below it is no hole in this list: its own oldest record is above
+  // the range, and reading older simply continues past it.
+  function inheritedHistoryGaps(citywide, rows) {
+    const named = []
+    const beyond = []
+    for (const afterId of citywide?.gapAfterIds || []) {
+      const marker = rows.find(row => row.id <= afterId)?.id
+      if (marker === undefined) continue
+      if (!named.includes(marker)) named.push(marker)
+      if ((citywide.beyondFillIds || []).includes(afterId) && !beyond.includes(marker)) {
+        beyond.push(marker)
+      }
+    }
+    const descending = (left, right) => right - left
+    return Object.freeze({
+      gapAfterIds: [...named].sort(descending),
+      beyondFillIds: [...beyond].sort(descending),
+    })
+  }
+
   function historyEntry(collection, filters) {
     const key = historyKey(collection, filters)
     const stored = state.histories[collection]?.[key]
@@ -66,10 +90,11 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const global = state.histories[collection]?.all
     const snapshotRows = state.snapshot?.[collection] || []
     const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
+    const inherited = inheritedHistoryGaps(global, rows)
     return Object.freeze({
       rows,
-      gapAfterIds: [],
-      beyondFillIds: [],
+      gapAfterIds: inherited.gapAfterIds,
+      beyondFillIds: inherited.beyondFillIds,
       hasMore: historyTotal(collection, filters) > rows.length,
       nextBeforeId: null,
       automaticPageCount: 0,
@@ -320,8 +345,10 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           throw new Error('public gap read marker does not cover its rows')
         }
         if (readMarker && pageMarker !== readMarker) {
-          // The city changed while the gap was being read. Read it again under
-          // the newer marker instead of joining two different cities.
+          // The city changed while the gap was being read. Take this page again
+          // under the newer marker; pages already merged stay, and the window's
+          // own marker moves to the snapshot's, so the next change check still
+          // covers them.
           markerRetries += 1
           if (markerRetries > 3) throw new Error('public gap read never settled')
           readMarker = pageMarker
@@ -342,33 +369,26 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return filledHistoryEntry(entry, rows, gap.afterId, { beyondFill: true })
   }
 
+  // One gap read at a time. A reader who has used many filters keeps one list
+  // per filter, and a refresh can name a gap in several of them at once;
+  // reading them together would aim a burst of reads at the city for one
+  // refresh. Anything the shared read budget does not reach keeps its name and
+  // its own control, which is a waiting state the reader can finish by hand.
   async function rejoinSnapshotHistories(histories, marker, signal) {
-    const reads = []
+    let rejoined = histories
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
-      for (const [key, entry] of Object.entries(histories[collection] || {})) {
+      for (const [key, entry] of Object.entries(rejoined[collection] || {})) {
         const gap = namedHistoryGap(entry)
         if (!gap || (entry.beyondFillIds || []).includes(gap.afterId)) continue
+        if (signal && signal.aborted) return rejoined
         const filters = entry.filters || Object.freeze({
           placeId: null, resident: null, context: false,
         })
-        reads.push((async () => Object.freeze({
-          collection,
-          key,
-          entry: await fillHistoryGap(collection, entry, filters, marker, signal),
-        }))())
-      }
-    }
-    const completed = await Promise.allSettled(reads)
-    let rejoined = histories
-    for (const completedRead of completed) {
-      if (completedRead.status !== 'fulfilled') continue
-      const result = completedRead.value
-      rejoined = {
-        ...rejoined,
-        [result.collection]: {
-          ...rejoined[result.collection],
-          [result.key]: result.entry,
-        },
+        const filled = await fillHistoryGap(collection, entry, filters, marker, signal)
+        rejoined = {
+          ...rejoined,
+          [collection]: { ...rejoined[collection], [key]: filled },
+        }
       }
     }
     return rejoined

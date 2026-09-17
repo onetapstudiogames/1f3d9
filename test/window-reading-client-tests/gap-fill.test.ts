@@ -166,6 +166,42 @@ export function registerGapFillTests(): void {
       'a reader already at the bottom is not offered a page that would add nothing')
   })
 
+  test('a refresh that names a gap in several lists reads them one at a time', async () => {
+    // A reader who has used many filters keeps one list per filter. Reading
+    // every named gap together would aim a burst of reads at the city for one
+    // refresh, so the fills queue behind each other instead.
+    const requests: Request[] = []
+    const city = cityList({ newestId: () => 400, requests })
+    let inFlight = 0
+    let mostAtOnce = 0
+    const fetchFake = async (input: string) => {
+      inFlight += 1
+      mostAtOnce = Math.max(mostAtOnce, inFlight)
+      await Promise.resolve()
+      const answer = await city(input)
+      inFlight -= 1
+      return answer
+    }
+    const gapped = () => loadedEntry([{ id: 400 }, ...rowsFrom(350, 10)],
+      { gapAfterIds: [350], filters: {} })
+    const rejoin = historyGapFiller(fetchFake)
+
+    const rejoined = await rejoin({
+      notes: { all: gapped(), 'place:11|resident:': gapped() },
+      things: { all: gapped() },
+      agreements: {}, events: {},
+    }, '8', new AbortController().signal)
+
+    assert.equal(mostAtOnce, 1, 'the city is asked for one range at a time')
+    assert.equal(requests.length, 3, 'every named gap was still read')
+    for (const entry of [
+      rejoined.notes!.all!, rejoined.notes!['place:11|resident:']!, rejoined.things!.all!,
+    ]) {
+      assert.deepEqual(entry.gapAfterIds, [], 'every named gap closed')
+      assert.equal(entry.refreshError, false)
+    }
+  })
+
   test('a city change during the fill is read again from the newer marker', async () => {
     const entry = loadedEntry([...rowsFrom(500, 50), ...rowsFrom(400, 120)], { gapAfterIds: [400] })
     const requests: Request[] = []

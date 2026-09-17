@@ -114,9 +114,13 @@ export function cityList(options: Readonly<{
   requests?: Request[]
   placeId?: number
   marker?: () => string
+  // Ids no record of this list has, so a sparse list answers a range with
+  // fewer records than the page holds and still says the range is covered.
+  skipIds?: readonly number[]
 }>) {
   const pageSize = options.pageSize ?? 50
   const oldestId = options.oldestId ?? 1
+  const skipped = new Set(options.skipIds ?? [])
   return async (input: string) => {
     const url = new URL(input, 'https://city.test')
     const collection = url.pathname.split('/').at(-1)!
@@ -130,11 +134,16 @@ export function cityList(options: Readonly<{
     const top = Math.min(beforeId === null ? options.newestId() : beforeId - 1, options.newestId())
     const floor = Math.max(afterId ?? 0, oldestId - 1)
     const rows: Row[] = []
-    for (let id = top; id > floor && rows.length < pageSize; id -= 1) {
+    // What is left unread is what the scan did not reach, never what the last
+    // row happened to be: a range the page covered says so even when the list
+    // is sparse inside it.
+    let id = top
+    for (; id > floor && rows.length < pageSize; id -= 1) {
+      if (skipped.has(id)) continue
       rows.push(options.placeId ? { id, place_id: options.placeId } : { id })
     }
     const lowest = rows.at(-1)?.id ?? null
-    const hasMore = lowest !== null && lowest - 1 > floor
+    const hasMore = id > floor
     return { ok: true, json: async () => ({
       [collection]: rows,
       change_marker: options.marker ? options.marker() : '8',
@@ -176,6 +185,33 @@ export function refreshedHistories(
     mergeWindowRows,
     WINDOW_HISTORY_KEEP_ROWS,
   ) as Histories
+}
+
+// historyEntry is a browser-program string too, so the suite runs the real
+// source: the key, the filter, the city's own count, and the gaps a list drawn
+// from the citywide list inherits from it.
+export function drawnHistoryEntry(
+  histories: Partial<Histories>,
+  snapshot: Snapshot,
+  collection: string,
+  filters: Readonly<Record<string, unknown>>,
+): HistoryEntry {
+  const source = sourceBetween(
+    PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
+    '  function historyKey',
+    '  function setHistoryEntry',
+    'function filterHistoryRows', 'function historyTotal', 'function inheritedHistoryGaps',
+    'function historyEntry',
+  )
+  return new Function(
+    'histories', 'snapshot', 'collection', 'filters', 'placeScopeSet', 'eventPlaceId',
+    `const state = { histories, snapshot }; ${source}
+     return historyEntry(collection, filters)`,
+  )(
+    histories, snapshot, collection, filters,
+    (placeId: number) => new Set([placeId]),
+    (row: Row) => row.place_id,
+  ) as HistoryEntry
 }
 
 export function historyRequestUrlFake(

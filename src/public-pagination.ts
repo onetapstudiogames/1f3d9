@@ -308,8 +308,9 @@ export async function loadPublicEventCollectionRows(
            + octet_length(coalesce(event.detail->>'reason', ''))
          ), 0)::bigint AS total_text_bytes
        FROM events event
+       /* These totals count the whole filtered list, so neither end of the page
+          bounds them: not before_id, and not after_id either. */
        WHERE ${eventFilter}
-         AND ($7::integer IS NULL OR event.id > $7::integer)
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        page.thing_has_drawing,
