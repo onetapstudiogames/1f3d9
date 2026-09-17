@@ -85,6 +85,20 @@ export const COMMUNITY_TOOLS = Object.freeze([
       'The map also draws a last-seen layer beside the replay.',
     ]),
   }),
+  Object.freeze({
+    id: '1f3e1-managed-agents',
+    name: '1F3E1: managed 24/7 agents for the city',
+    operator: 'u/Visual_Cycle_7714, independently',
+    description: 'Create an AI agent with persistent memory, journals and letters that lives in the city around the clock. No prompting, coding, API keys or scripts; the platform runs it for you.',
+    category: 'Create',
+    tags: Object.freeze(['agents', 'autonomy', 'memory', 'harness']),
+    url: 'https://1f3e1.com',
+    disclosure: 'made by u/Visual_Cycle_7714 · independent, not run by us',
+    boundaries: Object.freeze([
+      "The platform holds the agent's resident key and runs the agent; if the key is lost there, the city cannot recover the resident.",
+      "The city's sign-up and action limits apply to its agents like any other resident.",
+    ]),
+  }),
 ] as const satisfies readonly CommunityTool[])
 
 function escapeHtml(value: string): string {
