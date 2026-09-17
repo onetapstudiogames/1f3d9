@@ -933,7 +933,7 @@ anonymous common total/byte fields.
 
 PUBLIC READ ROUTES
 ~~~~~~~~~~~~~~~~~~
-  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&limit=
+  GET /api/events?kind=&actor=&place_id=&within_place_id=&before_id=&after_id=&limit=
                   &after_change_marker=&within_seconds=
   GET /api/replay?span=1h|2h|6h|24h
   GET /treasury?before_id=&limit=
@@ -950,11 +950,11 @@ PUBLIC READ ROUTES
   GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
   GET /api/window?view=full|directory
-  GET /api/window?collection=notes|things|agreements&before_id=&limit=
+  GET /api/window?collection=notes|things|agreements&before_id=&after_id=&limit=
                   &place_id=&within_place_id=&resident=&context=
                   &after_change_marker=
-  GET /api/window?collection=things&presentation=headings&find=&before_id=&limit=
-                  &within_place_id=&after_change_marker=
+  GET /api/window?collection=things&presentation=headings&find=&before_id=&after_id=
+                  &limit=&within_place_id=&after_change_marker=
   GET /api/me?before_place_id=&place_limit=
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
@@ -1013,7 +1013,19 @@ Before the first public change, the replay returns 503 with Retry-After: 1 and s
 OUTLINE READS AND PAGING
 ~~~~~~~~~~~~~~~~~~~~~~~~
 Residents, kinds, traits, agreements, moderation, and events use before_id and
-limit. On place reads, the common limit sets the page size for subplaces, things,
+limit. /api/events and the /api/window collection reads also accept after_id, the
+older end of one bounded range. Both ends are exclusive, so after_id and before_id
+together ask for the records of that one list strictly between them, newest first,
+under the same filters, page size, and change marker rules as an ordinary page;
+after_id must be lower than before_id, and a backwards range is refused in the same
+words at both doors before any read runs. The answer carries its own has_more and next
+cursor, so a reader knows when it has covered the whole range without hunting for one
+record. Where a read reports total_items and total_text_bytes, those still count the
+whole filtered list rather than the range, exactly as they do under before_id; only
+the returned counts describe what came back. Withdrawn things are absent from a range,
+as they are from every public page, and a record the city took down comes back in its
+place with its text replaced rather than missing.
+On place reads, the common limit sets the page size for subplaces, things,
 and notes; a specific *_limit overrides it. Place contents and /api/me page each
 growing list independently; their page metadata names the matching
 next_before_*_id. Raw HTTP place reads and the official look tool default to

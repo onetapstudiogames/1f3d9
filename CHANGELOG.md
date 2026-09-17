@@ -4,6 +4,12 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-17
+
+### For residents
+- Window history reads and `/api/events` now take `after_id` beside `before_id`: both ends are exclusive, so the two ask for the records of one list strictly between them under the same filters, page size, and change marker rules.
+- A window history read that names a backwards range now says so in the same words `/api/events` uses, instead of the general unsupported-field answer.
+
 ## 2026-09-16
 
 ### For residents

@@ -31,7 +31,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 198 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 201 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -122,6 +122,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/index.ts::error.message::13`
 - `src/index.ts::allowed.error::15`
 - `src/index.ts::parsed.error::8`
+- `src/index.ts::rangeStart.error::1`
 - `src/index.ts::kindValue.error::1`
 - `src/index.ts::actorValue.error::1`
 - `src/index.ts::exactPlaceValue.error::1`
@@ -185,6 +186,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/thing-making.ts::result.error::1`
 - `src/window.ts::minimumMarker::1`
 - `src/window.ts::error.message::1`
+- `src/window.ts::range.error::1`
 - `src/window.ts::error.message::2`
 - `src/world-market.ts::allowed.error::1`
 - `src/world-market.ts::allowed.error::2`
@@ -1339,6 +1341,8 @@ machine-readable so review proves provenance instead of trusting stale hand-coun
 {"key":"src/public-pagination.ts::${commonLimitName ?? limitName} must be between 1 and 200::1","disposition":"included","status":"expression:typed adapter status","finalText":"${commonLimitName ?? limitName} must be between 1 and 200","cause":"Yes","next":"Yes","causeEvidence":"${commonLimitName ?? limitName}","nextEvidence":"must be between 1 and 200","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"${commonLimitName ?? limitName} must be between 1 and 200"}
 {"key":"src/public-pagination.ts::${cursorName} must be a positive integer::1","disposition":"included","status":"expression:typed adapter status","finalText":"${cursorName} must be a positive integer","cause":"Yes","next":"Yes","causeEvidence":"${cursorName} must be","nextEvidence":"a positive integer","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/crafting.test.ts","exclusionReason":"","expressionKey":"${cursorName} must be a positive integer"}
 {"key":"src/public-pagination.ts::${limitName} must be between 1 and 200::1","disposition":"included","status":"expression:typed adapter status","finalText":"${limitName} must be between 1 and 200","cause":"Yes","next":"Yes","causeEvidence":"${limitName}","nextEvidence":"must be between 1 and 200","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"${limitName} must be between 1 and 200"}
+{"key":"src/public-pagination.ts::${name} must be a positive integer::1","disposition":"included","status":"expression:typed adapter status","finalText":"${name} must be a positive integer","cause":"Yes","next":"Yes","causeEvidence":"${name} must be","nextEvidence":"a positive integer","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes-tests/public-read-contracts.test.ts","exclusionReason":"","expressionKey":"${name} must be a positive integer"}
+{"key":"src/public-pagination.ts::${name} and before_id name one range of records, so ${name} must be lower than before_id; retry with a lower ${name}::1","disposition":"included","status":"expression:typed adapter status","finalText":"${name} and before_id name one range of records, so ${name} must be lower than before_id; retry with a lower ${name}","cause":"Yes","next":"Yes","causeEvidence":"${name} and before_id name one range of records","nextEvidence":"retry with a lower ${name}","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes-tests/public-read-contracts.test.ts","exclusionReason":"","expressionKey":"${name} and before_id name one range of records, so ${name} must be lower than before_id; retry with a lower ${name}"}
 {"key":"src/public-pagination.ts::${name} must be between 0 and 655360::1","disposition":"included","status":"expression:typed adapter status","finalText":"${name} must be between 0 and 655360","cause":"Yes","next":"Yes","causeEvidence":"${name}","nextEvidence":"must be between 0 and 655360","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"${name} must be between 0 and 655360"}
 {"key":"src/public-pagination.ts::${name} must be between 0 and 655360::2","disposition":"included","status":"expression:typed adapter status","finalText":"${name} must be between 0 and 655360","cause":"Yes","next":"Yes","causeEvidence":"${name}","nextEvidence":"must be between 0 and 655360","producer":"src/public-pagination.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"${name} must be between 0 and 655360"}
 {"key":"src/public-pagination.ts::public collection metadata is unavailable::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"public collection metadata is unavailable","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/public-pagination.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"public collection metadata is unavailable"}

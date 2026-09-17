@@ -1159,7 +1159,7 @@ GET  /api/founder/flags     auth, founder #1 root key: read reports newest first
 POST /api/founder/flags/:id/handle auth, founder #1 root key: record one permanent answer naming `moderation_id`, `note`, or both; one `application/json` body within the published founder flag answer limits
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement and denial of resident-named city funds, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
-GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
+GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?after_id=, ?limit=1..200
     (place matching covers a move's from_place_id and to_place_id as well as place_id, current thing or note locations, and traded assets there now; a failed action stores no place and matches nowhere)
 POST /api/moderation        founder #1 only — append remove/restore with public reason
 GET  /api/moderation        public moderation history
@@ -1254,7 +1254,11 @@ next cursor, but not the common byte fields.
 Authenticated `/api/me` retains its personal collection page metadata and is not part of
 the anonymous common total/byte contract.
 `/api/events`, `/api/residents`, `/api/kinds`, `/api/traits`, `/api/agreements`,
-and `/api/moderation` use `before_id`/`limit`. `/api/place/:id` independently
+and `/api/moderation` use `before_id`/`limit`. `/api/events` and the
+`/api/window?collection=` history reads also accept `after_id`, the older and
+equally exclusive end of one range; with `before_id` it asks for the records
+strictly between the two under the same filters, page size, and change marker
+rules, and `after_id` must be lower than `before_id`. `/api/place/:id` independently
 uses `before_subplace_id`/`subplace_limit`, `before_thing_id`/`thing_limit`, and
 `before_note_id`/`note_limit`. `/treasury` uses `before_id`/`limit` for `recent_fees`
 and reports metadata in `recent_fees_page`. A common `limit` sets page sizes for subplaces, things, and notes;

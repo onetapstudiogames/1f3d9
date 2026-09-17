@@ -46,6 +46,52 @@ export function registerPublicReadContractsTests(): void {
     assert.equal(valid.status, 200)
   })
 
+  test('a bounded range read states the rule it refuses on, in the caller words', async () => {
+    reset({ scenario: 'public pagination' })
+    const backwards = await app.request('/api/events?after_id=400&before_id=400')
+    assert.equal(backwards.status, 400)
+    assert.deepEqual(await backwards.json(), {
+      error: 'after_id and before_id name one range of records, so after_id must be lower than before_id; retry with a lower after_id',
+    })
+    assert.equal(sqlCalls().length, 0, 'a refused range never reaches the database')
+
+    reset({ scenario: 'public pagination' })
+    const notAnId = await app.request('/api/events?after_id=1.5')
+    assert.equal(notAnId.status, 400)
+    assert.deepEqual(await notAnId.json(), { error: 'after_id must be a positive integer' })
+
+    reset({ scenario: 'public pagination' })
+    const windowRange = await app.request('/api/window?collection=notes&after_id=401&before_id=400')
+    assert.equal(windowRange.status, 400)
+    assert.deepEqual(await windowRange.json(), {
+      error: 'after_id and before_id name one range of records, so after_id must be lower than before_id; retry with a lower after_id',
+    }, 'both public doors answer the same mistake with the same rule')
+
+    reset({ scenario: 'public pagination' })
+    const windowField = await app.request('/api/window?collection=notes&nonsense=1')
+    assert.equal(windowField.status, 400)
+    const windowFieldBody = await windowField.json() as { error: string }
+    assert.match(windowFieldBody.error, /public window history query was rejected/u,
+      'an unsupported field still gets the unsupported-field answer')
+
+    for (const [path, why] of [
+      ['/api/window?collection=notes&nonsense=1&after_id=5&before_id=3', 'an unsupported field wins over a backwards range'],
+      ['/api/window?collection=events&after_id=5&before_id=3', 'a collection this door does not page wins over a backwards range'],
+      ['/api/window?after_id=5&before_id=3', 'a missing collection wins over a backwards range'],
+    ] as const) {
+      reset({ scenario: 'public pagination' })
+      const combined = await app.request(path)
+      assert.equal(combined.status, 400, why)
+      const combinedBody = await combined.json() as { error: string }
+      assert.match(combinedBody.error, /public window history query was rejected/u, why)
+      assert.equal(sqlCalls().length, 0, why)
+    }
+
+    reset({ scenario: 'public pagination' })
+    const accepted = await app.request('/api/events?after_id=1&before_id=9&limit=2')
+    assert.equal(accepted.status, 200)
+  })
+
   test('exact public totals fail cheaply and honestly when database capacity is busy', async () => {
     reset({ scenario: 'public pagination', exactTotalsBusy: true })
     const response = await app.request('/api/events?limit=1')
