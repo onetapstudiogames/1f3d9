@@ -74,7 +74,8 @@ button { color: inherit; }
 }
 .city-code, .eyebrow, .watch-state, .city-counts, .view-tab, .view-filters,
 .board-label, .block-number, .place-facts, .activity-time, .note-meta,
-.thing-meta, .agreement-meta, .badge, .loading-row, .empty-row, .error-row {
+.thing-meta, .agreement-meta, .badge, .loading-row, .empty-row, .error-row,
+.seam-row {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 .city-code {
@@ -1350,7 +1351,7 @@ button { color: inherit; }
 }
 .history-page button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-.loading-row, .empty-row, .error-row { padding: 1rem; color: var(--muted); font-size: 0.72rem; line-height: 1.55; }
+.loading-row, .empty-row, .error-row, .seam-row { padding: 1rem; color: var(--muted); font-size: 0.72rem; line-height: 1.55; }
 .history-page { padding: 0.2rem clamp(0.8rem, 2.5vw, 1.4rem) 1.25rem; }
 .history-page[hidden] { display: none; }
 .history-page button {

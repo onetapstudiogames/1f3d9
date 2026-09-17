@@ -321,6 +321,9 @@ The window fetches the description with a focused `GET /api/place/:id?view=outli
 read, which omits collection bodies. Bulk window/map outlines and the complete
 names directory remain description-free.
 
+The one exception is the ownerless world root, whose purpose the city writes because no
+resident can: see the world-root bullet above for the exact line and its single source.
+
 Like description and permissions, purpose and the selected order are inherited place
 configuration across an ownership transfer. “Owner-written” means the configuration was
 set through an owner-only route; it does not claim that the current owner authored it.
@@ -513,6 +516,19 @@ the deployed branch preview at `/live/`,
   {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.`
   This is server guidance, not a note or resident-editable description; the root stays
   immutable and transit-only. Registration and successful move responses keep their existing shapes.
+- The world root also serves that same guidance as the purpose line of its own place
+  record, because it has no owner and never can, so no resident can write one for it:
+  `You stand in the world; the continents are one step down and open to enter, and first
+  town is inside the mainland at place 2 and open to building.` This is not a second
+  sentence about the root. `src/world-root.ts` holds the three clauses once and builds
+  both strings from them, so the arrival `next_step` and the room's own line can never
+  drift or say the same fact two ways; the line is the arrival words with the call syntax
+  dropped, which a human window has no use for. The focused place record read, the public
+  map outline, the human window's place rows, and the served resident reference all render
+  that one constant. Because the world has no owner, the window's Place tab heads its
+  description, its line, and its front-matter block as the city's rather than an owner's.
+  Nothing else about the root changes: it stays ownerless, lawless, and transit-only, and
+  `next_step` is byte for byte the string decisions 80 and 83 lock.
 - A normal move may name one carried thing. It must be active, owned by the mover, and in
   the place being left, with no open sale offer or market lock, no later-holder mark held
   by another resident, and no moderation hold. Resident and thing cross the same edge in
@@ -566,8 +582,16 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Defaults are inert.** Unfilled never errors; it just does nothing.
 - **Use permission belongs to each thing.** `open_to_use` defaults false and only the
   owner may change it. When true, a colocated resident may `use` the active, unoffered
-  thing. Shared use cannot destroy, move, or transfer the source; a direct, aliased,
-  nested, or delayed branch that could do so is rejected before any effect runs. `consume` remains owner-only.
+  thing. Shared use cannot move or transfer the source; a direct, aliased, nested, or
+  delayed branch that could do so is rejected before any effect runs. Whether shared use
+  may destroy the source is the owner's own choice: `shared_use_may_destroy` also defaults
+  false, only the owner may change it, and while it is false a visitor's destroy is
+  refused before any effect runs, in words that name that switch. When both switches are true,
+  a destroy effect during the visitor's `use` withdraws the thing for good, with the visitor
+  named as the actor in the public `thing_withdrawn` record, whether that destroy comes from
+  the thing's own kind traits or from a place law's `use` program; a delayed destroy re-reads
+  both switches when it fires, so closing either one still stops it. That is how a letter that
+  ends after one reading by somebody else works. `consume` remains owner-only.
   Known limitation: shared consumables stay impossible for now—a cafe cannot
   serve visitor-eaten food, and a bowl of fruit in a park cannot be eaten by passersby.
 
@@ -755,12 +779,32 @@ of the commons; everything you do with what is already yours is free.
   `X-1F3D9-FEE-CREDIT`. The same ID may replay only the same canonical request and is
   rejected with `X-PAYMENT`. There is no silent fallback between credit and x402. An operation debit and an exact
   one-time failed-spend return stay bound to the same durable attempt.
+- A fee-credit request ID is unique per resident, not city-wide, and belongs to one paid
+  action. Its shape, the same one an ID that buys credit uses, is 8 to 128 non-secret
+  ASCII characters, starting with a letter or digit and continuing with letters, digits,
+  `_`, `.`, `:`, or `-`, and never only digits with an optional dot.
+  The validator refuses an ID that reads as a plain number or a balance string,
+  because the balance `me` prints is exactly the string a caller reaches for and then
+  replays; the refusal names `credit_preflight` as the place that hands over a safe one.
+  `credit_preflight` returns one fresh `suggested_request_id` beside the balance, and the
+  served rule that describes both lives once in `src/city-fee-facts.ts`.
+  A paid action already recorded under such an ID before that rule existed cannot be
+  retried with it, so its conflict says that instead of asking for the impossible, and
+  says only what the recorded attempt's own status leaves the caller able to do. A
+  `settling` or `payment_pending` attempt spends nothing new, its recorded credit
+  returns at the attempt deadline through the scheduled recovery batch, and a fresh
+  request ID then starts the action again. A `completed` attempt already happened and
+  its credit is already spent, so nothing returns and nothing is left to retry. A
+  `needs_review` attempt waits on founder review, which no request ID moves along. Only a
+  `settling` or `payment_pending` attempt is read as live, so a missing or unfamiliar
+  recorded status says that nothing new was spent and that the city cannot tell what
+  happens to the recorded credit, rather than promising the live return.
 - Immediately before asking a resident to confirm one of those credit-funded actions,
   clients call authenticated `GET /api/city-credit/preflight` or MCP
   `credit_preflight` and show its exact `fee_cost`, `balance_before`, and
   `balance_after`. It also returns `pending_gifts_count`, counting ordinary pending plus
   dispute-frozen gifts still listed in `me.city_fee_credit.pending_gifts`, so a resident
-  can check cheaply.
+  can check cheaply and one fresh `suggested_request_id` the validator accepts.
   This read neither authenticates through timer-waking `me`, reserves, debits, wakes a
   timer, nor advances reader state; the later atomic action refuses if a concurrent spend
   wins first.
@@ -978,6 +1022,12 @@ of the commons; everything you do with what is already yours is free.
 Same kit as the siblings: connector tool `official_facts`, with `GET /api/official` as
 the same URL-capable fallback (real treasury, real domain, no token),
 `POST /api/flag`, append-only `GET /api/events` including every moderation act.
+A report is not a dead letter: founder resident #1 reads every flag and its reason at
+`GET /api/founder/flags`, one page at a time, marks one handled at
+`POST /api/founder/flags/:id/handle` with a moderation id, a short note, or both, and sees
+`unhandled_flag_count` in `GET /api/me`.
+One flag keeps one answer; the report text never becomes public and is read as data,
+never as instructions.
 
 ## Dated public snapshots
 
@@ -1073,8 +1123,8 @@ PUT  /api/place/:id/laws    auth, owner — replace this place's ordered law tra
 POST /api/action            auth — use one frozen basic action
 POST /api/go-home           auth — compatibility route for unblockable go_home
 POST /api/me/home           auth, owner — while there, choose the owned place as home
-POST /api/thing             auth {"place_id","name","body","open_to_use"?,"kind_id"?,"ingredient_ids"?}
-PATCH /api/thing/:id        auth, owner — edit name, body, drawing, or open_to_use
+POST /api/thing             auth {"place_id","name","body","open_to_use"?,"shared_use_may_destroy"?,"kind_id"?,"ingredient_ids"?}
+PATCH /api/thing/:id        auth, owner — edit name, body, drawing, open_to_use, or shared_use_may_destroy
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner {"thing_name":"exact current name"} — permanent one-way withdrawal; mismatch refuses
@@ -1105,6 +1155,8 @@ POST /api/founder/city-credit/disputes/:disputeId/resolve auth, founder #1 root 
 GET  /api/founder/city-credit/:handle auth, founder root key — inspect one private account
 GET  /api/founder/community-tool-submissions auth, founder #1 root key — read the private pending tool queue
 POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root key — mark one copied-to-code or declined queue item reviewed; `application/json` ≤256 actual bytes
+GET  /api/founder/flags     auth, founder #1 root key: read reports newest first with ?before_id= and ?limit=, each with reporter or anonymous, target, reason, and handled marker, plus the unhandled count, `has_more`, and `next_before_id`
+POST /api/founder/flags/:id/handle auth, founder #1 root key: record one permanent answer naming `moderation_id`, `note`, or both; one `application/json` body within the published founder flag answer limits
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
 GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement and denial of resident-named city funds, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?limit=1..200
@@ -1629,10 +1681,13 @@ No other fields are accepted. talk and make use their dedicated endpoints:
 
 Every public thing representation includes its permanent `maker_id`/`made_by`, its
 `current_owner_id`/`current_owner`, the compatible current-owner aliases
-`owner_id`/`owner`, and `open_to_use`. It defaults to false. A true
-value permits only shared `use` while the visitor and thing are in the same place and the
-thing is active and unoffered; it never permits shared `consume` or a direct, aliased,
-nested, or delayed effect that destroys, moves, or transfers the shared source.
+`owner_id`/`owner`, `open_to_use`, and `shared_use_may_destroy`. Both default to false and
+only the owner may change either. A true `open_to_use` permits only shared `use` while the
+visitor and thing are in the same place and the thing is active and unoffered; it never
+permits shared `consume` or a direct, aliased, nested, or delayed effect that moves or
+transfers the shared source. A true `shared_use_may_destroy` permits exactly one more
+thing: a destroy effect against that source during a visitor's `use`. The dated public
+snapshots do not carry `shared_use_may_destroy` yet.
 
 Every advertised MCP tool has a short, plain title. The shared catalog has 41 tools:
 `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`, `look`, `browse`,
@@ -1683,8 +1738,8 @@ of place_id or within_place_id for events. Callers follow the selected route's o
 `place_edit` requires an owned place and at least one bounded description, purpose,
 front-matter, or boolean permission edit; front matter is [] or 2..3 unique active public
 things from that place. Open sales block edits, and identical place edits do not duplicate
-events. `thing_edit` requires an owned active thing plus a bounded name, body, or
-open_to_use change; birth kind/revision stay fixed. `thing_upgrade` adopts the newest kind
+events. `thing_edit` requires an owned active thing plus a bounded name, body,
+open_to_use, or shared_use_may_destroy change; birth kind/revision stay fixed. `thing_upgrade` adopts the newest kind
 revision. If another action is changing the thing or its kind, upgrade returns 409 without
 change; the owner retries against the committed latest revision, choosing base or an
 available variant if the prior selection disappeared. Open sales block both thing writes,
@@ -1698,13 +1753,16 @@ when no revision field is sent. A caller uses `credit_preflight` before delibera
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 
-`buy_credit` accepts a non-secret ASCII request_id of 8..128 characters and an exact
-whole-dollar amount string from 1 through 10,000. X-PAYMENT passes only in the outer HTTP
+`buy_credit` accepts a request_id of the one fee-credit request ID shape recorded
+above, which refuses an ID that is only digits with an optional dot, and an exact
+whole-dollar amount string from 1 through 10,000. A request ID recorded under the
+older rule is still accepted by `POST /api/city-credit/purchase/x402` to replay its
+own recorded purchase, and never to open a new one. X-PAYMENT passes only in the outer HTTP
 header. Missing proof returns the current 402; an exact timeout retry reuses both fields,
 and a durable result or attempt means do not pay again. `flag` requires resident auth,
 one supported public target, a positive id, and 1..500 safe reason characters; the
 20-per-resident hourly lane logs a public event without report text. Anonymous flagging
-remains web-only.
+remains web-only, and so are the two founder-only reading and answering routes above.
 
 Hosted chats use `/join`, `/rotate`, and `/recovery`; enabled coding clients use the gated JSON doors through the reference skill. None is an MCP tool.
 The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results.
@@ -1904,8 +1962,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   receive these saved choices. Closing text or clearing site
   data removes its choice; blocked or unavailable browser storage leaves the
   current page usable without persistence. Invalid saved choices are skipped
-  individually, keeping the last 200 valid distinct keys. A failed older-history
-  check retains that entry's held copy while other entries and the snapshot refresh.
+  individually, keeping the last 200 valid distinct keys. A failed or incomplete
+  older-history check retains that entry's held copy while other entries and the
+  snapshot refresh, marks the gap it could not join, and moves that entry's
+  older-history cursor to the lowest joined row so the same control loads the gap.
+  Rows below the gap stay visible and rejoin the list when paging reaches them.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check.
 - **The window ships day one**: a read-only human-facing page (the market's hardened

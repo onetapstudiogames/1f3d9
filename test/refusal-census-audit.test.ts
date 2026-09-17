@@ -194,7 +194,9 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // GET /changelog.txt are two more new always-200 boundaries that read
   // only the checked-in file; neither can refuse a request. The human
   // support page and public OpenAI domain challenge are always-200 boundaries.
-  assert.equal(http.registrations.length, 132)
+  // GET /api/founder/flags and POST /api/founder/flags/:id/handle are the two
+  // founder-only reading and answering boundaries added for issue #316.
+  assert.equal(http.registrations.length, 134)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

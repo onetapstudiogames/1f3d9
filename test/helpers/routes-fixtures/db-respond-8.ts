@@ -85,7 +85,11 @@ export function respondToDatabaseStage8(
 
   if (q.includes('update things set withdrawn_at')) {
     const target = Number(params.find(value => [41, 42].includes(Number(value))) ?? 41)
-    if (target === 41 && fixtureState.current.actorId === fixtureState.current.thingOwnerId && !fixtureState.current.thingWithdrawn) {
+    const sharedDestroy = q.includes('shared_use_may_destroy')
+      && fixtureState.current.thingOpenToUse
+      && fixtureState.current.thingSharedUseMayDestroy
+    if (target === 41 && !fixtureState.current.thingWithdrawn
+      && (sharedDestroy || fixtureState.current.actorId === fixtureState.current.thingOwnerId)) {
       fixtureState.current = { ...fixtureState.current, thingWithdrawn: true }
       return [{ id: 41, withdrawn_at: '2026-08-11T00:02:00.000Z' }]
     }
@@ -117,9 +121,22 @@ export function respondToDatabaseStage8(
     if (q.includes('current_revision')) {
       fixtureState.current = { ...fixtureState.current, thingCurrentRevision: fixtureState.current.kindRevision }
     }
-    if (q.includes('open_to_use')) {
-      const requested = params.find(value => value === true || value === false || value === 'true' || value === 'false')
-      if (requested != null) fixtureState.current = { ...fixtureState.current, thingOpenToUse: String(requested) === 'true' }
+    const editedBoolean = (column: string): boolean | null => {
+      const placeholder = new RegExp(`\\b${column}\\s*=\\s*coalesce\\(\\s*\\$(\\d+)::boolean`, 'u').exec(q)
+      const value = placeholder ? params[Number(placeholder[1]) - 1] : undefined
+      return value === true || value === false || value === 'true' || value === 'false'
+        ? String(value) === 'true'
+        : null
+    }
+    const editedOpenToUse = editedBoolean('open_to_use')
+    if (editedOpenToUse !== null) {
+      fixtureState.current = { ...fixtureState.current, thingOpenToUse: editedOpenToUse }
+    }
+    const editedSharedDestroy = editedBoolean('shared_use_may_destroy')
+    if (editedSharedDestroy !== null) {
+      fixtureState.current = {
+        ...fixtureState.current, thingSharedUseMayDestroy: editedSharedDestroy,
+      }
     }
     return fixtureState.current.actorId === fixtureState.current.thingOwnerId && !fixtureState.current.thingWithdrawn ? [thingRow()] : []
   }
@@ -141,6 +158,9 @@ export function respondToDatabaseStage8(
       active_offer_id: null,
       has_open_offer: false,
       open_to_use: targetIsSource ? fixtureState.current.thingOpenToUse : fixtureState.current.targetThingOpenToUse,
+      shared_use_may_destroy: targetIsSource
+        ? fixtureState.current.thingSharedUseMayDestroy
+        : fixtureState.current.targetThingSharedUseMayDestroy,
       traits: fixtureState.current.kindTraitNames,
     }]
   }

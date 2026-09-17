@@ -102,6 +102,11 @@ function rememberAuthenticatedResident(c: Context, resident: Resident | null): R
   return resident
 }
 
+/** True when the caller presented a root key, not a hosted-chat access token. */
+export function presentedRootKey(c: Context): boolean {
+  return bearerToken(c)?.startsWith(SECRET_PREFIX) === true
+}
+
 export async function authRootKey(c: Context): Promise<Resident | null> {
   const token = bearerToken(c)
   if (!token?.startsWith(SECRET_PREFIX)) return null

@@ -178,7 +178,9 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
       return [{ id, place_id: placeId, name, body,
         maker_id: makerId, made_by: madeBy,
         current_owner_id: currentOwnerId, current_owner: currentOwner,
-        owner, open_to_use: raw.open_to_use === true, kind_id: kindId, kind, traits,
+        owner, open_to_use: raw.open_to_use === true,
+        shared_use_may_destroy: raw.shared_use_may_destroy === true,
+        kind_id: kindId, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
         kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true,
         has_drawing: raw.has_drawing === true }]

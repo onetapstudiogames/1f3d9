@@ -144,6 +144,26 @@ test('resident credentials can never become durable PayPal request ids', async (
   assert.equal(database.calls.length, 0)
 })
 
+test('a number-shaped PayPal request id is refused for its shape, not its length', async () => {
+  const database = scriptedDatabase(() => assert.fail('a refused request id must not reach storage'))
+
+  for (const requestId of ['12345678', '1.000000', '0.000001']) {
+    await assert.rejects(
+      beginPayPalCreditIntent(database, { ...INTENT, requestId }),
+      (error: unknown) => {
+        assert.ok(error instanceof TypeError, requestId)
+        assert.equal(
+          error.message,
+          'PayPal purchase request_id must be an identifier you make up for this one purchase, not a number or an amount',
+          requestId,
+        )
+        return true
+      },
+    )
+  }
+  assert.equal(database.calls.length, 0)
+})
+
 test('remote order attachment is replay-safe and rejects changed bindings', async () => {
   const database = scriptedDatabase(({ params }) => [{
     public_id: params[0], request_id: INTENT.requestId, intent_kind: 'order',

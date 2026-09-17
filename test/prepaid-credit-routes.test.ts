@@ -439,3 +439,26 @@ test('gift action empty-body check never touches c.req.raw.body and always answe
   )
   assert.equal(nonEmpty.rawBodyWasTouched(), false)
 })
+
+test('a number-shaped redirect request id is refused in redirect words before any gift work', async () => {
+  const numberShaped = appFor({ targetMatches: true })
+  for (const requestId of ['12345678', '1.000000']) {
+    const response = await numberShaped.app.request(`/api/city-credit/gifts/${GIFT_ID}/redirect`, postJson({
+      claim_token: CLAIM_TOKEN,
+      recipient_number: 8,
+      recipient_handle: 'resident-eight',
+      request_id: requestId,
+    }))
+    assert.equal(response.status, 400, requestId)
+    assert.equal(
+      String((await response.json() as { error: string }).error),
+      'gift redirect request id must be an identifier you make up for this one redirect, not a number or an amount',
+      requestId,
+    )
+  }
+  assert.equal(
+    numberShaped.calls.some(call => call.text.includes('prepaid-credit:gift-redirect')),
+    false,
+    'a refused redirect id must not reach the redirect statement',
+  )
+})

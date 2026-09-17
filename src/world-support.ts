@@ -35,6 +35,7 @@ import {
   parseCityCreditRequestId,
   returnCityCreditSpend,
 } from './city-credit.ts'
+import { isCreditRequestIdRecordedConflict } from './city-fee-facts.ts'
 import type { DrawingState, DrawingVariant } from './drawing.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 
@@ -137,6 +138,7 @@ export interface ThingRow {
   owner_id: number
   owner: string
   open_to_use: boolean
+  shared_use_may_destroy: boolean
   kind_id: number | null
   kind: string | null
   birth_revision: number | null
@@ -313,7 +315,11 @@ export async function treasuryFee(
         }, 409)
       }
       if (error instanceof CityCreditConflictError) {
-        return c.json({ error: error.message, retry: 'use the same request id only for the same request' }, 409)
+        // The recorded-id conflict already says what this caller can do, and the
+        // general retry line would contradict it.
+        return isCreditRequestIdRecordedConflict(error.message)
+          ? c.json({ error: error.message }, 409)
+          : c.json({ error: error.message, retry: 'use the same request id only for the same request' }, 409)
       }
       return c.json({
         error: 'city fee credit is temporarily unavailable; retry the same request id',

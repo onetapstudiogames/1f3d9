@@ -37,6 +37,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       }
       thingMeta.append(document.createTextNode(
         thing.open_to_use ? ' · open to shared use' : ' · owner use only'))
+      if (thing.open_to_use && thing.shared_use_may_destroy) {
+        thingMeta.append(document.createTextNode(' · a visitor may end it'))
+      }
       const location = windowPlaceLabel(
         thing.place_id,
         placeOf ? placeOf(thing.place_id) : null,
@@ -219,11 +222,53 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     }
   }
 
+  const OWNER_PLACE_WORDS = {
+    descriptionEyebrow: 'OWNER / DESCRIPTION',
+    descriptionLabel: 'Owner-written description',
+    descriptionLoading: 'Reading the owner-written description…',
+    descriptionEmpty: 'No owner-written description is set for this place.',
+    purposeEyebrow: 'OWNER / PURPOSE',
+    purposeLabel: 'Owner-written purpose',
+    purposeEmpty: 'No owner-written purpose is set for this place.',
+    frontMatterEyebrow: 'OWNER / FRONT MATTER',
+    frontMatterLabel: 'Owner-chosen front matter',
+    frontMatterEmpty: 'No owner-chosen front matter is available.',
+  }
+  // The world has no owner and never can have one, so every owner-written
+  // word on this panel would claim an author it cannot have. The description,
+  // the line, and the front-matter block switch together, not the line alone.
+  const CITY_PLACE_WORDS = {
+    descriptionEyebrow: 'CITY / DESCRIPTION',
+    descriptionLabel: 'City-written description',
+    descriptionLoading: 'Reading the city-written description…',
+    descriptionEmpty: 'No city-written description is set for this place.',
+    purposeEyebrow: 'CITY / LINE',
+    purposeLabel: 'City-written line',
+    purposeEmpty: 'No city-written line is set for this place.',
+    frontMatterEyebrow: 'NO OWNER / FRONT MATTER',
+    frontMatterLabel: 'Front matter needs an owner',
+    frontMatterEmpty: 'The world has no owner, so nothing can be chosen as front matter here.',
+  }
+
+  function placeOrientationWords(place) {
+    return place && place.owner === null && place.parent_id === null &&
+      place.name === WORLD_ROOT_NAME
+      ? CITY_PLACE_WORDS
+      : OWNER_PLACE_WORDS
+  }
+
+  function setOrientationLabel(node, text) {
+    if (node) node.textContent = text
+  }
+
   function renderPlaceOrientation(place) {
-    if (nodes.placePurposeLabel) nodes.placePurposeLabel.textContent = 'Owner-written purpose'
-    if (nodes.placeFrontMatterLabel) {
-      nodes.placeFrontMatterLabel.textContent = 'Owner-chosen front matter'
-    }
+    const words = placeOrientationWords(place)
+    setOrientationLabel(nodes.placeDescriptionEyebrow, words.descriptionEyebrow)
+    setOrientationLabel(nodes.placeDescriptionLabel, words.descriptionLabel)
+    setOrientationLabel(nodes.placePurposeEyebrow, words.purposeEyebrow)
+    setOrientationLabel(nodes.placePurposeLabel, words.purposeLabel)
+    setOrientationLabel(nodes.placeFrontMatterEyebrow, words.frontMatterEyebrow)
+    setOrientationLabel(nodes.placeFrontMatterLabel, words.frontMatterLabel)
     if (!place) {
       renderEmpty(nodes.placeDescription, 'empty-row', 'No loaded place description is available.')
       renderEmpty(nodes.placePurpose, 'empty-row', 'No loaded place purpose is available.')
@@ -234,7 +279,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     if (place.moderated) {
       renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)
     } else if (!description || description.loading) {
-      renderEmpty(nodes.placeDescription, 'loading-row', 'Reading the owner-written description…')
+      renderEmpty(nodes.placeDescription, 'loading-row', words.descriptionLoading)
       if (!description) window.queueMicrotask(() => void ensureDetail(false, place.id))
     } else if (description.notFound) {
       renderEmpty(nodes.placeDescription, 'empty-row', 'This public place is not available now.')
@@ -249,13 +294,13 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     } else {
       renderEmpty(nodes.placeDescription,
         description.record.description ? 'place-description-text' : 'empty-row',
-        description.record.description || 'No owner-written description is set for this place.')
+        description.record.description || words.descriptionEmpty)
     }
     if (nodes.placePurpose) {
       nodes.placePurpose.replaceChildren(element(
         'p',
         place.purpose ? 'place-purpose-text' : 'empty-row',
-        place.purpose || 'No owner-written purpose is set for this place.',
+        place.purpose || words.purposeEmpty,
       ))
     }
     if (!nodes.placeFrontMatter) return
@@ -270,11 +315,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       return
     }
     if (!place.front_matter.length) {
-      renderEmpty(
-        nodes.placeFrontMatter,
-        'empty-row',
-        'No owner-chosen front matter is available.',
-      )
+      renderEmpty(nodes.placeFrontMatter, 'empty-row', words.frontMatterEmpty)
       return
     }
     const list = element('ol', 'front-matter-list')

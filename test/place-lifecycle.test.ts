@@ -5,6 +5,7 @@ import {
   placeLifecycleRefusal,
   type PlaceLifecycleFacts,
 } from '../src/place-lifecycle.ts'
+import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from '../src/city-fee-facts.ts'
 
 const CREDIT_REQUEST_ID = 'place-lifecycle-20260901-0001'
 
@@ -116,4 +117,18 @@ test('restore refuses a missing place, non-owner, active place, retired parent, 
   )
   assert.equal(placeLifecycleRefusal({ ...retired, nameTaken: true }, { action: 'restore' }), 'that place name is already taken inside its parent')
   assert.equal(placeLifecycleRefusal(retired, { action: 'restore' }), null)
+})
+
+test('a number-shaped fee-credit header is refused with the rule, not with a length message', () => {
+  for (const creditHeader of ['12345678', '1.000000', '0.000001']) {
+    assert.deepEqual(
+      parsePlaceLifecycleRequest({ name: 'The quiet porch' }, creditHeader, null),
+      { error: CREDIT_REQUEST_ID_SHAPE_REFUSAL },
+      creditHeader,
+    )
+  }
+  assert.deepEqual(
+    parsePlaceLifecycleRequest({ name: 'The quiet porch' }, 'has a space', null),
+    { error: 'X-1F3D9-FEE-CREDIT must be one safe non-secret ASCII request id' },
+  )
 })

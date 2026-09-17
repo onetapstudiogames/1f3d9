@@ -131,6 +131,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         return [[key, Object.freeze({
           ...entry,
           rows: mergeWindowRows(retainedRows, freshRows),
+          // This list is rebuilt from the newest page, so any earlier seam is
+          // void; the held-row recheck below marks whatever gap is left.
+          deferredRows: [],
           loading: false,
           error: false,
           refreshing: false,
@@ -175,48 +178,91 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     let rows = []
     let beforeId = null
     const seenCursors = new Set()
-    for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
-      const url = historyRequestUrl(collection, {
-        initialized: Boolean(beforeId), nextBeforeId: beforeId,
-      }, filters, marker)
-      const response = await fetch(url.pathname + url.search, {
-        credentials: 'omit',
-        headers: { Accept: 'application/json' },
-        mode: 'same-origin',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal,
-      })
-      if (!response.ok) throw new Error('held public history unavailable')
-      const payload = await response.json()
-      requireExactReadMarker(payload?.change_marker, marker)
-      const incoming = normalizeHistoryRows(collection, payload)
-      rows = mergeWindowRows(rows, incoming)
-      const hasMore = payload.has_more === true
-      const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
-      if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
-          (beforeId && nextBeforeId >= beforeId) ||
-          !incoming.some(row => row.id === nextBeforeId))) {
-        throw new Error('held public history cursor did not progress')
-      }
-      const foundHeldRows = [...heldIds].every(id => rows.some(row => row.id === id))
-      if (foundHeldRows || !hasMore) {
-        return Object.freeze({
-          ...entry,
-          rows,
-          hasMore,
-          nextBeforeId,
-          initialized: true,
-          loading: false,
-          error: false,
-          refreshing: false,
-          refreshError: false,
+    try {
+      for (let pageCount = 0; pageCount < MAX_FORWARD_RECONCILE_PAGES; pageCount += 1) {
+        const url = historyRequestUrl(collection, {
+          initialized: Boolean(beforeId), nextBeforeId: beforeId,
+        }, filters, marker)
+        const response = await fetch(url.pathname + url.search, {
+          credentials: 'omit',
+          headers: { Accept: 'application/json' },
+          mode: 'same-origin',
+          redirect: 'error',
+          referrerPolicy: 'no-referrer',
+          signal,
         })
+        if (!response.ok) throw new Error('held public history unavailable')
+        const payload = await response.json()
+        requireExactReadMarker(payload?.change_marker, marker)
+        const incoming = normalizeHistoryRows(collection, payload)
+        rows = mergeWindowRows(rows, incoming)
+        const hasMore = payload.has_more === true
+        const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
+        if (hasMore && (!nextBeforeId || seenCursors.has(nextBeforeId) ||
+            (beforeId && nextBeforeId >= beforeId) ||
+            !incoming.some(row => row.id === nextBeforeId))) {
+          throw new Error('held public history cursor did not progress')
+        }
+        const foundHeldRows = [...heldIds].every(id => rows.some(row => row.id === id))
+        if (foundHeldRows || !hasMore) {
+          return Object.freeze({
+            ...entry,
+            rows,
+            deferredRows: [],
+            hasMore,
+            nextBeforeId,
+            initialized: true,
+            loading: false,
+            error: false,
+            refreshing: false,
+            refreshError: false,
+          })
+        }
+        seenCursors.add(nextBeforeId)
+        beforeId = nextBeforeId
       }
-      seenCursors.add(nextBeforeId)
-      beforeId = nextBeforeId
+    } catch {
+      return seamHistoryEntry(entry, heldIds, rows, true)
     }
-    throw new Error('held public history reconciliation limit reached')
+    return seamHistoryEntry(entry, heldIds, rows, false)
+  }
+
+  // A page closes only the part of a seam it actually covered. A reader holding
+  // two rows open at different depths has a gap above each one, so the rows the
+  // page reached join the list while the rows still below it keep waiting.
+  function seamRowsAfterPage(deferredRows, incoming, hasMore) {
+    if (!deferredRows.length || !hasMore) return []
+    const lowestReadId = incoming.reduce(
+      (lowest, row) => Math.min(lowest, row.id), Infinity)
+    return deferredRows.filter(row => row.id < lowestReadId)
+  }
+
+  // A held row the forward read cannot join to the newest page leaves a seam.
+  // The held copy stays, the rows below the seam are deferred until paging
+  // reaches them, and the older-history cursor resumes at the lowest row of the
+  // joined block instead of under the unjoined held row.
+  function seamHistoryEntry(entry, heldIds, collected, readFailed) {
+    const rows = mergeWindowRows(entry.rows, collected)
+    const joinedIds = new Set(collected.filter(row => heldIds.has(row.id)).map(row => row.id))
+    const deferredIds = new Set([...heldIds].filter(id => !joinedIds.has(id)))
+    const joinedRows = rows.filter(row => !deferredIds.has(row.id))
+    return Object.freeze({
+      ...entry,
+      rows,
+      deferredRows: rows.filter(row => deferredIds.has(row.id)),
+      // Only an unjoined row promises that something older is still out there.
+      // A read that failed after joining every held row must not offer a page
+      // that would add nothing.
+      hasMore: deferredIds.size > 0 ? true : entry.hasMore === true,
+      nextBeforeId: joinedRows.length
+        ? joinedRows[joinedRows.length - 1].id
+        : entry.nextBeforeId,
+      initialized: true,
+      loading: false,
+      error: false,
+      refreshing: false,
+      refreshError: readFailed,
+    })
   }
 
   async function rereadHeldSnapshotHistories(histories, snapshot, marker, signal) {

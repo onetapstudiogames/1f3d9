@@ -52,7 +52,7 @@ export const WINDOW_HTML = `<!doctype html>
   </header>
 
   <section class="view-console" aria-label="City window controls">
-    <p id="window-reading-notice" class="city-promise" hidden>In Conversations, Happenings, Place, Things, and Agreements, expanded text stays open through refresh. This browser remembers up to 200 open texts; closing one or clearing site data removes its choice. If browser storage is unavailable, choices last for this page. Changed or removed public text still updates.</p>
+    <p id="window-reading-notice" class="city-promise" hidden>In Conversations, Happenings, Place, Things, and Agreements, expanded text stays open through refresh. This browser remembers up to 200 open texts; closing one or clearing site data removes its choice. If browser storage is unavailable, choices last for this page. Changed or removed public text still updates. When a list cannot join a record you kept open to its newest records, it says some records between them are not loaded and its own control loads them from that point.</p>
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>
       <a id="live-link" class="view-tab view-tab-link" href="/live" target="_blank" rel="noopener">Live <span aria-hidden="true">↗</span></a>
@@ -147,18 +147,18 @@ export const WINDOW_HTML = `<!doctype html>
         <button class="share-button" type="button" data-share-scope="view">Share this view</button>
       </header>
       <section class="place-description orientation-block" aria-labelledby="place-description-title">
-        <p class="block-number">OWNER / DESCRIPTION</p>
+        <p class="block-number" id="place-description-eyebrow">OWNER / DESCRIPTION</p>
         <h3 id="place-description-title">Owner-written description</h3>
         <div id="place-description"><p class="loading-row">Reading the owner-written description…</p></div>
       </section>
       <section class="place-orientation" aria-label="Room orientation">
         <div class="orientation-block">
-          <p class="block-number">OWNER / PURPOSE</p>
+          <p class="block-number" id="place-purpose-eyebrow">OWNER / PURPOSE</p>
           <h3 id="place-purpose-title">Owner-written purpose</h3>
           <div id="place-purpose"><p class="loading-row">Reading the room marker…</p></div>
         </div>
         <div class="orientation-block">
-          <p class="block-number">OWNER / FRONT MATTER</p>
+          <p class="block-number" id="place-front-matter-eyebrow">OWNER / FRONT MATTER</p>
           <h3 id="place-front-matter-title">Owner-chosen front matter</h3>
           <div id="place-front-matter"><p class="loading-row">Reading the selected headings…</p></div>
         </div>

@@ -8,8 +8,11 @@ import {
 import { PENDING_GIFT_RELAY_LINE } from '../src/credit-awareness.ts'
 import {
   CREDIT_GIFT_REDIRECT_PAGE_JS,
+  CREDIT_GIFT_REQUEST_ID_CLIENT_PATTERN,
+  CREDIT_GIFT_REQUEST_ID_HTML_PATTERN,
   renderCreditGiftRedirectPage,
 } from '../src/credit-gift-redirect.ts'
+import { parseCityCreditRequestId } from '../src/city-credit.ts'
 
 test('composed buy client remains valid JavaScript', () => {
   assert.doesNotThrow(() => new Function(CREDIT_BUY_JS))
@@ -133,6 +136,37 @@ test('saved gift key can resolve and confirm a new resident before redirect', ()
   assert.match(html, /id="redirect-request-id"/u)
   assert.match(html, /same retry ID/iu)
   assert.match(html, /Redirect this gift/iu)
+})
+
+test('the gift redirect retry ID field refuses exactly what the city refuses', () => {
+  const html = renderCreditBuyPage()
+  assert.match(html, /id="redirect-request-id"[\s\S]{0,480}never a plain number or an amount/u)
+
+  const field = new RegExp('^(?:' + CREDIT_GIFT_REQUEST_ID_HTML_PATTERN + ')$', 'v')
+  const client = new RegExp(CREDIT_GIFT_REQUEST_ID_CLIENT_PATTERN, 'u')
+  for (const candidate of [
+    'gift-redirect-0123456789abcdef',
+    '20260916-2',
+    '1_2345678',
+    '1:2345678',
+    'fee_frontier:request.20260822',
+    '12345678',
+    '1.000000',
+    '0.000001',
+    '1000000.5',
+  ]) {
+    let accepted: boolean
+    try {
+      accepted = parseCityCreditRequestId(candidate) !== null
+    } catch {
+      accepted = false
+    }
+    assert.equal(field.test(candidate), accepted, `field pattern disagrees about ${candidate}`)
+    assert.equal(client.test(candidate), accepted, `client guard disagrees about ${candidate}`)
+  }
+
+  assert.match(CREDIT_BUY_JS, /not a number or an amount\. Nothing was redirected\./u)
+  assert.doesNotMatch(CREDIT_BUY_JS, /\[A-Za-z0-9_\.:-\]\{7,127\}\$\/u/u)
 })
 
 test('gift redirect sends the exact route contract once and clears the raw key', () => {

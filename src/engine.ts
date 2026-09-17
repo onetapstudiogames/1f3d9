@@ -10,6 +10,7 @@ import {
 } from './physics.ts'
 import {
   executeEffectsWithOutcome,
+  SHARED_SOURCE_DESTROY_CLOSED_ERROR,
   SHARED_SOURCE_MUTATION_ERROR,
   thingState,
   withdrawOwnedThing,
@@ -1052,7 +1053,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   if (thing.ownerId !== input.actorId && !sharedUse) {
     throw new EngineError(
       403,
-      'thing_id is not yours; use a thing you own, or use an open_to_use thing without destructive effects',
+      'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
     )
   }
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
@@ -1074,14 +1075,22 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
   return thing
 }
 
+/**
+ * Reports whether a visitor's program would change the open thing it is using.
+ *
+ * Callers ask twice: once with `destroyAllowed` true, which finds only the
+ * always-refused move and hand-over, and once with the owner's real switch, so
+ * a refusal can name the rule the visitor actually met.
+ */
 function sharedUseTouchesSourceDestructively(
   effects: readonly Effect[],
   sourceThingId: number,
   target: RuntimeTarget | null,
+  destroyAllowed: boolean,
 ): boolean {
   for (const effect of effects) {
     if (
-      effect.effect === 'destroy'
+      (effect.effect === 'destroy' && !destroyAllowed)
       || effect.effect === 'move'
       || effect.effect === 'transfer'
     ) {
@@ -1095,13 +1104,15 @@ function sharedUseTouchesSourceDestructively(
     }
     if (
       effect.effect === 'wait'
-      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
+      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
     ) return true
     if (
       effect.effect === 'check_label'
       && (
-        sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target)
-        || sharedUseTouchesSourceDestructively(effect.else ?? [], sourceThingId, target)
+        sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
+        || sharedUseTouchesSourceDestructively(
+          effect.else ?? [], sourceThingId, target, destroyAllowed,
+        )
       )
     ) return true
   }
@@ -1412,15 +1423,16 @@ export async function runAction(
         && source.openToUse === true
         ? source.id
         : null
-      if (
-        sharedSourceThingId !== null
-        && programs.some(program => sharedUseTouchesSourceDestructively(
-          program.effects,
-          sharedSourceThingId,
-          input.target,
-        ))
-      ) {
-        throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+      if (sharedSourceThingId !== null) {
+        const touchesSource = (destroyAllowed: boolean) => programs.some(
+          program => sharedUseTouchesSourceDestructively(
+            program.effects, sharedSourceThingId, input.target, destroyAllowed,
+          ),
+        )
+        if (touchesSource(true)) throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
+        if (source?.sharedUseMayDestroy !== true && touchesSource(false)) {
+          throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
+        }
       }
       const actionOutcome = await withCallerPrimitiveEffectsSavepoint(
         transaction,

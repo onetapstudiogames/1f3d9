@@ -34,6 +34,7 @@ import { readLookingResidentsAtPlace } from './resident-looking.ts'
 import {
   isWorldRootRow,
   WORLD_ARRIVAL_LINE,
+  WORLD_ROOT_PURPOSE,
   WORLD_TRANSIT_ONLY_ERROR,
 } from './world-root.ts'
 import {
@@ -275,6 +276,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, rows.map(row => row.id))
   const orientedRows = publicRows.map(row => Object.freeze({
     ...row,
+    ...(isWorldRootRow(row) ? { purpose: WORLD_ROOT_PURPOSE } : {}),
     front_matter: (row as unknown as Record<string, unknown>).moderated === true
       ? Object.freeze([])
       : frontMatter.get(row.id) ?? Object.freeze([]),
@@ -1675,10 +1677,13 @@ export function mountWorldRoutes(app: Hono): void {
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     {
-      const fields = ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids'] as const
+      const fields = [
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'kind_id', 'ingredient_ids',
+      ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional kind_id, and ingredient_ids`)
       }
     }
     const placeId = positiveId(body.place_id)
@@ -1688,12 +1693,18 @@ export function mountWorldRoutes(app: Hono): void {
     const openToUse = body.open_to_use === undefined
       ? false
       : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
+    const sharedUseMayDestroy = body.shared_use_may_destroy === undefined
+      ? false
+      : typeof body.shared_use_may_destroy === 'boolean' ? body.shared_use_may_destroy : null
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (!name) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody == null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
     if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
+    if (sharedUseMayDestroy === null) {
+      return err(c, 400, 'shared_use_may_destroy must be boolean when present')
+    }
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
@@ -1728,6 +1739,7 @@ export function mountWorldRoutes(app: Hono): void {
       name,
       body: thingBody,
       openToUse,
+      sharedUseMayDestroy,
       kindId,
       ingredientIds,
     })
@@ -1751,10 +1763,10 @@ export function mountWorldRoutes(app: Hono): void {
     }
     const body = decoded.body
     if (!hasOnly(body, [
-      'name', 'body', 'open_to_use',
+      'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, and open_to_use are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, and shared_use_may_destroy are editable; birth_revision is permanent')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
@@ -1764,6 +1776,9 @@ export function mountWorldRoutes(app: Hono): void {
     const openToUse = body.open_to_use === undefined
       ? undefined
       : typeof body.open_to_use === 'boolean' ? body.open_to_use : null
+    const sharedUseMayDestroy = body.shared_use_may_destroy === undefined
+      ? undefined
+      : typeof body.shared_use_may_destroy === 'boolean' ? body.shared_use_may_destroy : null
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariant = Object.hasOwn(body, 'drawing_variant_name')
@@ -1775,6 +1790,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (name === null) return err(c, 400, 'name must be one safe line of 1-120 characters')
     if (thingBody === null) return err(c, 400, 'body must be safe text no larger than 64 KB (65536 bytes)')
     if (openToUse === null) return err(c, 400, 'open_to_use must be boolean when present')
+    if (sharedUseMayDestroy === null) {
+      return err(c, 400, 'shared_use_may_destroy must be boolean when present')
+    }
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
@@ -1858,6 +1876,9 @@ export function mountWorldRoutes(app: Hono): void {
           name = coalesce(${name ?? null}::text, name),
           body = coalesce(${thingBody ?? null}::text, body),
           open_to_use = coalesce(${openToUse ?? null}::boolean, open_to_use),
+          shared_use_may_destroy = coalesce(
+            ${sharedUseMayDestroy ?? null}::boolean, shared_use_may_destroy
+          ),
           drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
             THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
             ELSE drawing END,
@@ -1875,6 +1896,9 @@ export function mountWorldRoutes(app: Hono): void {
             OR (${thingBody !== undefined}::boolean AND body IS DISTINCT FROM ${thingBody ?? null}::text)
             OR (${openToUse !== undefined}::boolean
               AND open_to_use IS DISTINCT FROM ${openToUse ?? null}::boolean)
+            OR (${sharedUseMayDestroy !== undefined}::boolean
+              AND shared_use_may_destroy IS DISTINCT FROM
+                ${sharedUseMayDestroy ?? null}::boolean)
             OR (${requestedDrawing.supplied}::boolean
               AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
             OR (${requestedDrawing.supplied}::boolean

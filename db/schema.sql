@@ -1072,6 +1072,7 @@ CREATE TABLE IF NOT EXISTS things (
   maker_id          INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   held_by           INTEGER REFERENCES residents(id) ON DELETE RESTRICT,
   open_to_use       BOOLEAN NOT NULL DEFAULT FALSE,
+  shared_use_may_destroy BOOLEAN NOT NULL DEFAULT FALSE,
   kind_id           INTEGER REFERENCES kinds(id) ON DELETE RESTRICT,
   birth_revision    INTEGER,
   current_revision  INTEGER,
@@ -1119,6 +1120,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS open_to_use BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE things ADD COLUMN IF NOT EXISTS shared_use_may_destroy BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE things ADD COLUMN IF NOT EXISTS drawing JSONB;
 -- Legacy loopback databases need the column before earlier schema maintenance
 -- statements can invoke the history trigger. Authenticated backfill waits until
@@ -3132,6 +3134,23 @@ CREATE TABLE IF NOT EXISTS flags (
 );
 CREATE INDEX IF NOT EXISTS flags_target ON flags (target_type, target_id, created_at DESC);
 
+-- The founder's one answer to one report. flags stays append-only, so the answer
+-- lives in its own append-only row: at most one review per flag, naming either the
+-- moderation act that answered it, a short no-action note, or both.
+CREATE TABLE IF NOT EXISTS flag_reviews (
+  id            SERIAL PRIMARY KEY,
+  flag_id       INTEGER NOT NULL UNIQUE REFERENCES flags(id) ON DELETE RESTRICT,
+  reviewer_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  moderation_id BIGINT REFERENCES moderation_actions(id) ON DELETE RESTRICT,
+  note          TEXT CHECK (
+    note IS NULL OR (char_length(note) BETWEEN 1 AND 200 AND note !~ E'[\t\r\n]')
+  ),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CHECK (moderation_id IS NOT NULL OR note IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS flag_reviews_reviewer
+  ON flag_reviews (reviewer_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS community_tool_submission_limits (
   ip_hash TEXT NOT NULL CHECK (ip_hash ~ '^[0-9a-f]{64}$'),
   day DATE NOT NULL,
@@ -3808,6 +3827,8 @@ DROP TRIGGER IF EXISTS transfers_append_only ON transfers;
 CREATE TRIGGER transfers_append_only BEFORE UPDATE OR DELETE ON transfers FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS flags_append_only ON flags;
 CREATE TRIGGER flags_append_only BEFORE UPDATE OR DELETE ON flags FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+DROP TRIGGER IF EXISTS flag_reviews_append_only ON flag_reviews;
+CREATE TRIGGER flag_reviews_append_only BEFORE UPDATE OR DELETE ON flag_reviews FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 DROP TRIGGER IF EXISTS events_append_only ON events;
 CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 

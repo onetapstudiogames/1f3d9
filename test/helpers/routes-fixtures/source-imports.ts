@@ -13,7 +13,7 @@ import {
 } from '../../../src/public-pagination.ts'
 import { PUBLIC_SEARCH_RATE_CAPACITY } from '../../../src/public-search-rate-limit.ts'
 import { encodePublicSearchCursor } from '../../../src/public-search.ts'
-import { setOAuthResidentResolver } from '../../../src/core.ts'
+import { allowOAuthForHostedConnectorRequest, setOAuthResidentResolver } from '../../../src/core.ts'
 import { PUBLIC_CREDENTIAL_REDACTION } from '../../../src/credential-safety.ts'
 import {
   createLaterHolderCursorCodec,
@@ -23,6 +23,7 @@ import { mcp } from '../../../src/mcp.ts'
 
 export {
   Hono,
+  allowOAuthForHostedConnectorRequest,
   PUBLIC_CREDENTIAL_REDACTION,
   PUBLIC_PAGE_DEFAULT,
   PUBLIC_PAGE_MAX,

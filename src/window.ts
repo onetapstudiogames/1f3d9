@@ -27,7 +27,7 @@ import {
 } from './public-events.ts'
 import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
-import { WORLD_ROOT_NAME } from './world-root.ts'
+import { WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { isBasicAction } from './physics.ts'
 import {
   PUBLIC_CREDENTIAL_PATTERN_SOURCE,
@@ -211,6 +211,7 @@ interface PublicThing {
   current_owner: string
   owner: string
   open_to_use: boolean
+  shared_use_may_destroy: boolean
   kind: string | null
   traits: string[]
   created_at: string
@@ -413,7 +414,9 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     id,
     parent_id: parentId,
     name,
-    purpose: moderated ? '' : safePlacePurpose(row.purpose),
+    purpose: moderated
+      ? ''
+      : isOwnerlessWorld ? WORLD_ROOT_PURPOSE : safePlacePurpose(row.purpose),
     front_matter: moderated ? Object.freeze([]) : safeFrontMatter(row.front_matter),
     owner,
     places: count(row.places),
@@ -533,6 +536,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       current_owner: currentOwner,
       owner,
       open_to_use: row.open_to_use === true,
+      shared_use_may_destroy: row.shared_use_may_destroy === true,
       kind,
       traits,
       created_at: createdAt,
@@ -985,7 +989,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           thing.owner_id AS owner_id, thing.owner_id AS current_owner_id,
           current_owner.handle AS current_owner,
           current_owner.handle AS owner,
-          thing.open_to_use,
+          thing.open_to_use, thing.shared_use_may_destroy,
           thing.kind_id, thing.current_revision, kind.name AS kind,
           coalesce(revision.traits, '{}'::text[]) AS traits,
           ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at

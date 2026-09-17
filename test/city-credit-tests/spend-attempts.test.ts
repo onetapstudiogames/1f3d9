@@ -2,6 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { canonicalPaymentRequest } from '../../src/payment-attempts.ts'
 import { beginCityCreditSpend } from '../../src/city-credit.ts'
+import {
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW,
+  CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
+} from '../../src/city-fee-facts.ts'
 import { MarkerDatabase, type QueryRow } from '../helpers/city-credit-fixtures/ledger-database.ts'
 import { REQUEST_ID } from '../helpers/city-credit-fixtures/ledger-entries.ts'
 import { ATTEMPT_ID, LEASE_OWNER, CANONICAL_REQUEST, spendRow, spendInput } from '../helpers/city-credit-fixtures/spend-attempts.ts'
@@ -194,5 +200,102 @@ export function registerSpendAttemptsTests(): void {
       response_status: 409,
       response: { error: 'target became unavailable; credit returned' },
     })
+  })
+
+  test('a recorded number-shaped id says only what its own attempt status allows', async () => {
+    // The reported case: the action was minted under `1.000000`, so its attempt is
+    // completed and no credit ever comes back. Each status answers for itself.
+    const recorded = [
+      ['payment_pending', CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING],
+      ['settling', CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING],
+      ['completed', CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED],
+      ['needs_review', CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW],
+    ] as const
+
+    for (const [attemptStatus, expected] of recorded) {
+      const database = new MarkerDatabase({
+        'begin-spend': [[spendRow({
+          attempt_status: attemptStatus,
+          request_id: '1.000000',
+          lease_acquired: false,
+          ...(attemptStatus === 'completed'
+            ? { state: 'completed', response_status: 201, response_json: { ok: true } }
+            : { state: 'busy' }),
+        })]],
+      })
+      await assert.rejects(
+        beginCityCreditSpend(database, spendInput({ requestId: 'fee-a-fresh-id-0001' })),
+        (error: unknown) => {
+          assert.equal(error instanceof Error ? error.message : '', expected, attemptStatus)
+          return true
+        },
+      )
+    }
+
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED, /already spent/iu)
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_COMPLETED, /returns on its own/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /founder review/iu)
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_REVIEW, /returns on its own/iu)
+    assert.match(CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING, /returns on its own at the attempt deadline/iu)
+  })
+
+  test('a recorded status the city cannot read promises no return instead of guessing', async () => {
+    // Only a live attempt returns credit at its deadline. A status the city does
+    // not know is not evidence that this one is live, so it says so rather than
+    // handing the caller the one wording that promises a refund.
+    for (const attemptStatus of [undefined, null, '', 'credit_returned', 'a_status_from_a_later_city']) {
+      const database = new MarkerDatabase({
+        'begin-spend': [[spendRow({
+          attempt_status: attemptStatus,
+          state: 'busy',
+          request_id: '1.000000',
+          lease_acquired: false,
+        })]],
+      })
+      await assert.rejects(
+        beginCityCreditSpend(database, spendInput({ requestId: 'fee-a-fresh-id-0002' })),
+        (error: unknown) => {
+          assert.equal(
+            error instanceof Error ? error.message : '',
+            CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD,
+            String(attemptStatus),
+          )
+          return true
+        },
+      )
+    }
+
+    assert.doesNotMatch(CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD, /returns on its own/iu)
+    assert.notEqual(CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD, CREDIT_REQUEST_ID_RECORDED_CONFLICT_PENDING)
+  })
+
+  test('replaying one request id returns the earlier recorded result and reserves nothing new', async () => {
+    const earlierResult = Object.freeze({ ok: true, kind: Object.freeze({ id: 44 }) })
+    const database = new MarkerDatabase({
+      'begin-spend': [
+        [spendRow()],
+        [spendRow({
+          state: 'completed',
+          lease_acquired: false,
+          response_status: 201,
+          response_json: earlierResult,
+        })],
+      ],
+    })
+
+    const first = await beginCityCreditSpend(database, spendInput())
+    assert.equal(first.state, 'ready')
+
+    const replay = await beginCityCreditSpend(database, spendInput())
+    assert.deepEqual(replay, {
+      state: 'completed',
+      attempt_id: ATTEMPT_ID,
+      response_status: 201,
+      response: earlierResult,
+    })
+    assert.equal('spend_entry_id' in replay, false)
+    assert.equal('lease_owner' in replay, false)
+    assert.equal(database.calls.length, 2)
+    assert.ok(database.calls.every(call => call.params.includes(REQUEST_ID)))
   })
 }

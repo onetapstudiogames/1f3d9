@@ -264,3 +264,110 @@ test('the purchase route reads bodies without a Content-Length and answers unusa
     /limited to 1024 bytes/u,
   )
 })
+
+test('a number-shaped purchase request id is refused in buyer words, not as a field rule', async () => {
+  const { Hono } = await import('hono')
+  const { mountCityCreditPurchaseRoutes } = await purchaseModule()
+  const calls: string[] = []
+  const app = new Hono()
+  mountCityCreditPurchaseRoutes(app, {
+    authenticate: async () => ({ id: 7 }),
+    database: {
+      query: async (text: string) => {
+        calls.push(text)
+        return []
+      },
+    },
+  })
+
+  for (const requestId of ['12345678', '1.000000', '0.000001']) {
+    const response = await app.request('/api/city-credit/purchase/x402', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId, amount_dollars: '3' }),
+    })
+    assert.equal(response.status, 400, requestId)
+    assert.equal(
+      String((await response.json() as { error: string }).error),
+      'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.',
+      requestId,
+    )
+  }
+  assert.ok(
+    calls.every(text => text.includes('payment-attempts:find-replayable-target')),
+    'a refused request id may only reach the read that looks for its own recorded purchase',
+  )
+
+  // The two-field rule still answers a body that really is missing a field.
+  const missing = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request_id: 'credit-purchase-request-0902' }),
+  })
+  assert.equal(missing.status, 400)
+  assert.match(
+    String((await missing.json() as { error: string }).error),
+    /needs only request_id and amount_dollars/u,
+  )
+})
+
+test('a purchase recorded under a number-shaped id still replays, and a new one is still refused', async () => {
+  const { Hono } = await import('hono')
+  const { canonicalPaymentRequest } = await import('../src/payment-attempts.ts')
+  const { cityCreditPurchaseTargetKey, mountCityCreditPurchaseRoutes } = await purchaseModule()
+
+  // `12345678` is refused for a new purchase, but a purchase recorded under it
+  // before that rule keeps the safe replay the reference promises.
+  const request = { request_id: '12345678', amount_dollars: '3' }
+  const canonical = canonicalPaymentRequest(request)
+  const recorded = {
+    public_id: 'credit_attempt_legacy_number_0001',
+    actor_id: 7,
+    operation: 'credit_purchase',
+    target_key: cityCreditPurchaseTargetKey(7, '12345678'),
+    request_hash: canonical.hash,
+    request_json: request,
+    method: 'x402',
+    amount_units: '3000000',
+    status: 'completed',
+    response_status: 200,
+    response_json: { ok: true, credit_added: '3' },
+    created_at: new Date('2026-09-14T00:00:00.000Z'),
+    updated_at: new Date('2026-09-14T00:00:00.000Z'),
+  }
+  const calls: string[] = []
+  const app = new Hono()
+  mountCityCreditPurchaseRoutes(app, {
+    authenticate: async () => ({ id: 7 }),
+    database: {
+      query: async (text: string, params?: readonly unknown[]) => {
+        calls.push(text)
+        return text.includes('payment-attempts:find-replayable-target')
+          && (params ?? []).includes(recorded.target_key)
+          ? [recorded]
+          : []
+      },
+    },
+  })
+
+  const replay = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  assert.equal(replay.status, 200)
+  assert.deepEqual(await replay.json(), { ok: true, credit_added: '3' })
+  assert.equal(calls.length, 1, 'the replay reads its own recorded attempt and nothing else')
+
+  // A number-shaped id with nothing recorded under it is still a new purchase.
+  const fresh = await app.request('/api/city-credit/purchase/x402', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request_id: '87654321', amount_dollars: '4' }),
+  })
+  assert.equal(fresh.status, 400)
+  assert.equal(
+    String((await fresh.json() as { error: string }).error),
+    'request_id must be an identifier you make up for this one purchase, not a number or an amount. No payment was started.',
+  )
+})

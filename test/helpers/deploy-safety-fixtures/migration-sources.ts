@@ -17,6 +17,11 @@ export const openToUseMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const sharedUseMayDestroyMigrationUrl = new URL(
+  '../../../db/migrations/20260916_shared_use_may_destroy.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,

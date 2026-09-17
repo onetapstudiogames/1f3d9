@@ -4,7 +4,7 @@ export type ToolAnnotations = Readonly<{
 
 const HANDLE_PATTERN = '^[a-z0-9][a-z0-9-]{2,31}$'
 const WORLD_NAME_PATTERN = '^[a-z0-9][a-z0-9_-]{0,63}$'
-export const REQUEST_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'
+export const REQUEST_ID_PATTERN = String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$`
 export const CHANGE_MARKER_PATTERN = '^(?:0|[1-9][0-9]*)$'
 
 export const READ_ANNOTATIONS = {
@@ -125,7 +125,7 @@ export const worldNameSchema = {
 } as const
 export const cityCreditRequestSchema = {
   type: 'string', minLength: 8, maxLength: 128, pattern: REQUEST_ID_PATTERN,
-  description: 'non-secret retry identifier that deliberately spends one private city fee credit',
+  description: 'non-secret retry identifier you make up for this one paid action, never a number or your balance',
 } as const
 export const kindRecipeSchema = {
   type: 'array',

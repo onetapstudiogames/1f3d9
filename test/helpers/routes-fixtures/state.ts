@@ -117,6 +117,18 @@ interface FakeCommunityToolSubmission {
   reviewed_by: number | null
   review_outcome: 'listed' | 'declined' | null
 }
+interface FakeFlag {
+  id: number
+  reporter_id: number | null
+  reporter_handle: string | null
+  target_type: string
+  target_id: number
+  reason: string
+  created_at: string
+  handled_at: string | null
+  moderation_id: number | null
+  note: string | null
+}
 interface FakePaidCompletionFailure {
   message: string
   code?: string
@@ -156,11 +168,13 @@ interface FakeState {
   thingCurrentRevision: number | null
   thingDrawingVariant: string | null
   thingOpenToUse: boolean
+  thingSharedUseMayDestroy: boolean
   thingWithdrawn: boolean
   targetThingOwnerId: number
   targetThingPlaceId: number
   targetThingKindId: number | null
   targetThingOpenToUse: boolean
+  targetThingSharedUseMayDestroy: boolean
   targetThingWithdrawn: boolean
   kindOwnerId: number
   kindRevision: number
@@ -202,6 +216,9 @@ interface FakeState {
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
   communityToolSubmissions: FakeCommunityToolSubmission[]
+  flags: FakeFlag[]
+  nextFlagId: number
+  moderationActionIds: number[]
   paypalCreditRateSlotsUsed: number
   paymentReplaySchemaReady: boolean
   facilitatorVerify: boolean
@@ -260,11 +277,13 @@ const initialState = (): FakeState => ({
   thingCurrentRevision: 1,
   thingDrawingVariant: null,
   thingOpenToUse: false,
+  thingSharedUseMayDestroy: false,
   thingWithdrawn: false,
   targetThingOwnerId: 8,
   targetThingPlaceId: 2,
   targetThingKindId: 3,
   targetThingOpenToUse: false,
+  targetThingSharedUseMayDestroy: false,
   targetThingWithdrawn: false,
   kindOwnerId: 7,
   kindRevision: 1,
@@ -321,6 +340,20 @@ const initialState = (): FakeState => ({
     reviewed_by: null,
     review_outcome: null,
   }],
+  flags: [{
+    id: 3,
+    reporter_id: 7,
+    reporter_handle: 'tiny-lantern',
+    target_type: 'note',
+    target_id: 51,
+    reason: 'a resident wrote this report text',
+    created_at: '2026-09-10T00:00:00.000Z',
+    handled_at: null,
+    moderation_id: null,
+    note: null,
+  }],
+  nextFlagId: 4,
+  moderationActionIds: [77],
   paypalCreditRateSlotsUsed: 0,
   paymentReplaySchemaReady: true,
   facilitatorVerify: false,
@@ -361,6 +394,7 @@ export { initialState, paidCompletionError }
 export type {
   FakeCityCreditEntry,
   FakeCommunityToolSubmission,
+  FakeFlag,
   FakeFounderPayPalDispute,
   FakeLaterHolderItem,
   FakePaymentAttempt,

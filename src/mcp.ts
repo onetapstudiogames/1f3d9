@@ -15,6 +15,12 @@ import {
   cityToolFacts,
   describeCityTool,
 } from './city-facts.ts'
+import {
+  CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_RULE_LINE,
+  CREDIT_REQUEST_ID_SHAPE_REFUSAL,
+  CREDIT_REQUEST_ID_SUGGESTION_LINE,
+} from './city-fee-facts.ts'
 import { REFERENCE_SECTION_SLUGS } from './door.ts'
 import {
   containsCredentialLikeInput,
@@ -271,16 +277,21 @@ const WORLD_NAME_SCHEMA = Object.freeze({
   pattern: WORLD_NAME_PATTERN,
 })
 
+// Excludes a plain number or balance string, which the validator also refuses.
+// String.raw keeps the escaped dot: a plain quoted literal drops the backslash and
+// the published pattern would then refuse ids the validator accepts.
+const REQUEST_ID_PATTERN = String.raw`^(?![0-9]+(?:\.[0-9]+)?$)[A-Za-z0-9][A-Za-z0-9_.:-]*$`
+
 const CITY_CREDIT_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier that deliberately spends one private city fee credit',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up for this one paid action, never a number or your balance',
 })
 
 const CREDIT_PURCHASE_REQUEST_ID_SCHEMA = Object.freeze({
   type: 'string', minLength: 8, maxLength: 128,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-  description: 'non-secret retry identifier; reuse it to inspect or safely retry this exact purchase',
+  pattern: REQUEST_ID_PATTERN,
+  description: 'non-secret retry identifier you make up, never a number or your balance; reuse it only to inspect or safely retry this exact purchase',
 })
 
 const KIND_RECIPE_SCHEMA = Object.freeze({
@@ -775,7 +786,8 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'credit_preflight',
     title: 'Check one fee before confirming',
     description:
-      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative.',
+      'Passively read the current applies_to list, exact one-credit cost, current private balance, pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), and exact resulting balance. Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset. This cheap check does not wake timers, use quota, reserve, accept, or spend credit. Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first, the later atomic action refuses instead of making the balance negative. It also returns one fresh suggested_request_id. ' +
+      CREDIT_REQUEST_ID_RULE_LINE,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -788,7 +800,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'buy_credit',
     title: 'Buy city credit',
     description:
-      'Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a caller-chosen non-secret retry identifier: retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.',
+      `Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a non-secret identifier you make up for this one purchase, never a number or an amount. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -813,7 +825,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'found',
     title: 'Found a place',
     description:
-      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT.`,
+      `Found a place with a name of 1 to 120 safe characters and an optional description of at most 4,000 safe characters. Omitted permission switches default closed to notes, things, and building, even though the owner can act there. Building inside land you own or open land is free. parent_id null or the world id claims the $1 fee frontier and creates a continent under the world; no ordinary place may be built there. ${GAZETTE_LIVE_CONTRACT_POINTER} Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to deliberately spend exactly one prepaid fee credit, or omit it to keep using X-PAYMENT. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -827,11 +839,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_building: { type: 'boolean', default: false },
         open_to_things: { type: 'boolean', default: false },
         open_to_notes: { type: 'boolean', default: false },
-        city_credit_request_id: {
-          type: 'string', minLength: 8, maxLength: 128,
-          pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]*$',
-          description: 'non-secret retry identifier that deliberately spends one private city fee credit on a frontier claim',
-        },
+        city_credit_request_id: CITY_CREDIT_REQUEST_ID_SCHEMA,
       },
       required: ['parent_id', 'name'],
     },
@@ -852,7 +860,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, and notes behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note and thing stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit.`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, and notes behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note and thing stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -919,7 +927,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'invent_kind',
     title: 'Invent a kind',
     description:
-      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails.`,
+      `Invent a public kind for the exact $1 city fee. name is a unique normalized world name of at most 64 characters; description defaults to empty and is at most 4,000 safe characters. traits defaults to [] and accepts at most 32 unique existing trait names. recipe defaults to [] and accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, with a total no greater than ${MAX_CRAFT_INGREDIENTS} and JSON no larger than ${MAX_RECIPE_BYTES} UTF-8 bytes. An optional base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self, including explicit drawing_state and an owner-written drawing_description of at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. drawing_variants publishes at most ${DRAWING_VARIANTS_MAX} unique exact named pixel variants, each drawn, explicitly in_progress or complete, and described by this exact kind revision's owner. Variants never select randomly. Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one credit, or omit it to use the outer X-PAYMENT header; never send both payment rails. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -955,7 +963,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'revise_kind',
     title: 'Revise a kind',
     description:
-      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.`,
+      `Revise a kind you own for the exact $1 city fee. kind_id is required; omitted description, traits, recipe, base drawing fields, or drawing_variants keeps that current value, and sending no revision fields still creates and charges for a new revision. description is at most 4,000 safe characters. traits accepts at most 32 unique existing trait names. recipe accepts at most ${MAX_KIND_INGREDIENTS} unique {kind, quantity} entries, each quantity 1 to ${MAX_CRAFT_INGREDIENTS}, total no greater than ${MAX_CRAFT_INGREDIENTS}, and JSON at most ${MAX_RECIPE_BYTES} UTF-8 bytes. A supplied base drawing uses the exact null/REFUSE/pixel drawing shapes stated by draw_self with paired owner description and explicit progress. drawing_variants replaces the new revision's complete bounded set of at most ${DRAWING_VARIANTS_MAX} exact named owner-authored variants; it never rewrites an older revision or randomly selects for things. A kind with an open sale offer cannot be revised. Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -990,7 +998,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'make',
     title: 'Make a thing',
-    description: `Make a text thing while standing in place_id, which must be active and yours or open to things (20 free makes per UTC day). Kindless and typed/crafted making refuse a retired place before quota or ingredients change; restore it first or choose an active place. Its name is 1 to 120 safe characters. The response includes a neutral UTF-8 reading-cost meter. Omitted open_to_use defaults false. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_LIVE_CONTRACT_POINTER}`,
+    description: `Make a text thing while standing in place_id, which must be active and yours or open to things (20 free makes per UTC day). Kindless and typed/crafted making refuse a retired place before quota or ingredients change; restore it first or choose an active place. Its name is 1 to 120 safe characters. The response includes a neutral UTF-8 reading-cost meter. Omitted open_to_use defaults false, and so does omitted shared_use_may_destroy; a visitor's use may destroy this thing only while you have set both true, and then any destroy effect that runs during that use ends it for good. ingredient_ids must be empty unless kind_id is supplied; supplied ingredients for a nonempty kind recipe are permanently withdrawn when crafting succeeds. Crafted makes return consumed_ingredient_ids; kindless makes omit it. ${GAZETTE_LIVE_CONTRACT_POINTER}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1002,6 +1010,11 @@ const TOOLS: readonly ToolDefinition[] = [
           type: 'boolean',
           default: false,
           description: 'optional; defaults false; let colocated visitors use this thing without owning it',
+        },
+        shared_use_may_destroy: {
+          type: 'boolean',
+          default: false,
+          description: "optional; defaults false; let a visitor's use destroy this thing, which only matters while open_to_use is true",
         },
         kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
         ingredient_ids: {
@@ -1018,14 +1031,17 @@ const TOOLS: readonly ToolDefinition[] = [
     route: args => ({
       method: 'POST',
       path: '/api/thing',
-      body: picked(args, ['place_id', 'name', 'body', 'open_to_use', 'kind_id', 'ingredient_ids']),
+      body: picked(args, [
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'kind_id', 'ingredient_ids',
+      ]),
     }),
   },
   {
     name: 'thing_edit',
     title: 'Edit a thing',
     description:
-      `As the owner, edit one active thing. Send thing_id plus at least one changed field. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use is boolean. An untyped thing accepts the exact null/REFUSE/pixel drawing shapes stated by draw_self. A typed thing shows its pinned kind revision and cannot take arbitrary instance pixels: it accepts exact REFUSE with an owner-written drawing_description, or drawing:null to clear that refusal and return to the pinned kind source. drawing_variant_name deliberately selects null for the pinned kind base or one exact named variant offered by that pinned revision. The selection stays with the thing across transfer. Every real drawing or selection change appends immutable history; an exact no-op appends nothing. A thing with an open sale offer cannot be edited.`,
+      `As the owner, edit one active thing. Send thing_id plus at least one changed field. name is one safe line of 1 to 120 characters; body may be empty and is at most 65,536 UTF-8 bytes; open_to_use and shared_use_may_destroy are boolean, and only you may change either. Closing shared_use_may_destroy again stops a destroy a visitor already scheduled with wait. An untyped thing accepts the exact null/REFUSE/pixel drawing shapes stated by draw_self. A typed thing shows its pinned kind revision and cannot take arbitrary instance pixels: it accepts exact REFUSE with an owner-written drawing_description, or drawing:null to clear that refusal and return to the pinned kind source. drawing_variant_name deliberately selects null for the pinned kind base or one exact named variant offered by that pinned revision. The selection stays with the thing across transfer. Every real drawing or selection change appends immutable history; an exact no-op appends nothing. A thing with an open sale offer cannot be edited.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1036,6 +1052,7 @@ const TOOLS: readonly ToolDefinition[] = [
         name: { type: 'string', minLength: 1, maxLength: 120 },
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
+        shared_use_may_destroy: { type: 'boolean' },
         ...DRAWING_WRITE_PROPERTIES,
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
       },
@@ -1046,7 +1063,7 @@ const TOOLS: readonly ToolDefinition[] = [
       method: 'PATCH',
       path: `/api/thing/${Number(args.thing_id)}`,
       body: picked(args, [
-        'name', 'body', 'open_to_use',
+        'name', 'body', 'open_to_use', 'shared_use_may_destroy',
         'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
       ]),
     }),
@@ -1100,7 +1117,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `Perform one frozen basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable and runs nothing. A move runs the laws of the place being left, and arrival alone does not run the destination's laws; a move never runs a kind's traits. use, consume, and give also run the named thing's kind traits. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
+      `Perform one frozen basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. Besides action, move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. Walking, go_home, resident or thing move effects, and carry require an active destination. A retired destination refuses before anything moves; restore it first or choose an active place. If retirement wins the place lock, the waiting move refuses without changing either location. carry_thing_id names one thing you own in the place being left; one move carries at most one thing, and it is refused when the thing is elsewhere, has an open sale offer or market lock, has a later-holder mark held by another resident, or is under a moderation hold. You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home. A successful carry takes the same one-edge move under the origin's laws, moves resident and thing atomically, keeps maker and owner unchanged, costs no fee, adds no quota use, and does not change effects_applied. A thing used or consumed must be active, in the same place, and have no open sale offer; it must be yours unless open_to_use permits shared use, which applies only to use. Shared use can never move or hand over the thing you are using; it can destroy it only when its owner has also set shared_use_may_destroy, which every live public thing read states, and then the thing is gone for good. move crosses one parent-child edge, including through the world between continents. If to_place_id exists but is not the parent or a direct child of your current place, entry is closed from where you stand; it opens after you reach its parent or one of its direct children. Use the public map outline from your current place to choose the next child edge. This refusal reveals no destination name, owner, body, or contents. go_home is always unblockable and runs nothing. A move runs the laws of the place being left, and arrival alone does not run the destination's laws; a move never runs a kind's traits. use, consume, and give also run the named thing's kind traits. effects_applied counts effect applications, not distinct visible changes; each label brick counts because it appends a label row, even when me.labels already contains that value. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} A recorded failed or blocked action names its cause in action.error and keeps the same top-level error; a rule refusal names the unmet requirement or blocking source, while an internal city failure says so distinctly. Read physics through the connector; GET /api/physics returns the same pending-effect safety ceilings if your client can open URLs. The other two basic actions have their own tools: say to talk, make to make.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1470,7 +1487,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'flag',
     title: 'Flag illegal content',
     description:
-      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
+      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. Founder resident #1 reads every report and its reason at GET /api/founder/flags, one page at a time, and marks one handled at POST /api/founder/flags/<id>/handle; both are founder-only web routes, never MCP tools. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -2012,15 +2029,20 @@ function invalidPublicReadArgument(
   if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
     try {
       parseCityCreditRequestId(args.city_credit_request_id)
-    } catch {
-      return `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
+    } catch (error) {
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        : `${name} city_credit_request_id must be one safe non-secret ASCII request id.`
     }
   }
   if (name === 'buy_credit') {
     try {
       parseCityCreditRequestId(args.request_id)
-    } catch {
-      return 'Buy credit request_id must be one safe non-secret ASCII request id.'
+    } catch (error) {
+      // Buying credit answers in the same buyer words as the purchase route it calls.
+      return error instanceof Error && error.message === CREDIT_REQUEST_ID_SHAPE_REFUSAL
+        ? CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL
+        : 'Buy credit request_id must be one safe non-secret ASCII request id.'
     }
     if (
       typeof args.amount_dollars !== 'string' ||

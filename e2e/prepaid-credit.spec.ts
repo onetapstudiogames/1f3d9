@@ -11,8 +11,11 @@ test('gift redirect enforces its retry-id pattern in Chromium', async ({ page })
   for (const [value, valid] of [
     ['retry:id-1', true],
     ['a_b.c-d:e', true],
+    ['20260916-2', true],
     ['short', false],
     ['invalid space', false],
+    ['12345678', false],
+    ['1.000000', false],
   ] as const) {
     await requestId.fill(value)
     expect(await requestId.evaluate(input => (input as HTMLInputElement).checkValidity())).toBe(valid)

@@ -37,7 +37,11 @@ const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
 export { MAX_DUE_EFFECTS_PER_OBSERVATION }
 export const SHARED_SOURCE_MUTATION_ERROR =
-  'shared use cannot change its source thing; only the owner may destroy, move, or transfer it'
+  'shared use can never move or hand over its source thing; only the thing owner may move or transfer it'
+export const SHARED_SOURCE_DESTROY_CLOSED_ERROR =
+  'shared use cannot destroy its source thing while shared_use_may_destroy is false; only the thing owner may open it'
+const SHARED_SOURCE_USE_CLOSED_ERROR =
+  'shared use cannot destroy its source thing because open_to_use is no longer true; only the thing owner may open it again'
 export interface LawAuthority {
   readonly traitId: number
   readonly sourcePlaceId: number
@@ -73,6 +77,7 @@ export interface ThingState {
   readonly activeOfferId: number | null
   readonly hasOpenOffer: boolean
   readonly openToUse: boolean
+  readonly sharedUseMayDestroy: boolean
   readonly heldBy: number | null
 }
 interface PendingRow {
@@ -184,7 +189,8 @@ export async function thingState(
   const rows = await queryRows<Record<string, unknown>>(options.forUpdate === true
     ? db`
       SELECT thing.id, thing.owner_id, thing.place_id,
-        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use, thing.held_by,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        thing.shared_use_may_destroy, thing.held_by,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -196,7 +202,8 @@ export async function thingState(
     `
     : db`
       SELECT thing.id, thing.owner_id, thing.place_id,
-        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use, thing.held_by,
+        thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
+        thing.shared_use_may_destroy, thing.held_by,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -215,6 +222,7 @@ export async function thingState(
     activeOfferId: nullableRowId(row.active_offer_id, 'thing offer id'),
     hasOpenOffer: row.has_open_offer === true,
     openToUse: row.open_to_use === true,
+    sharedUseMayDestroy: row.shared_use_may_destroy === true,
     heldBy: nullableRowId(row.held_by, 'thing holder id'),
   }
 }
@@ -335,9 +343,6 @@ async function executeEffectWithOutcome(
     if (!target || target.type !== 'thing') {
       throw new EngineError(403, 'agents and non-thing targets cannot be destroyed; choose an active thing target instead')
     }
-    if (target.id === context.sharedSourceThingId) {
-      throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
-    }
     await destroyThing(target.id, context, db)
     return effectExecutionOutcome(1, true)
   }
@@ -380,6 +385,39 @@ async function executeEffectWithOutcome(
   return executeEffectsWithOutcome(branch, branchContext, db)
 }
 
+/**
+ * Withdraws the open thing a visitor is using, on the owner's own terms.
+ *
+ * The owner's `shared_use_may_destroy` switch is re-read in the same statement
+ * that withdraws the thing, so an owner who closes it first always wins, even
+ * for an effect a `wait` scheduled minutes earlier.
+ */
+async function withdrawSharedSourceThing(
+  thing: ThingState,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<unknown[]> {
+  return await queryRows(db`
+    WITH changed AS (
+      UPDATE things SET withdrawn_at = now()
+      WHERE id = ${thing.id} AND owner_id = ${thing.ownerId}
+        AND open_to_use AND shared_use_may_destroy
+        AND withdrawn_at IS NULL AND active_offer_id IS NULL AND held_by IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
+            AND offer.status = 'open'
+        )
+      RETURNING id
+    ), new_event AS (
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_withdrawn', resident.handle,
+        jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
+      FROM changed JOIN residents resident ON resident.id = ${context.actorId}
+    ) SELECT id FROM changed
+  `)
+}
+
 async function destroyThing(
   thingId: number,
   context: EffectExecutionContext,
@@ -388,7 +426,11 @@ async function destroyThing(
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   const ownedByActor = thing.ownerId === context.actorId
-  if (!ownedByActor && (context.placeId === null || thing.placeId !== context.placeId
+  const sharedSource = !ownedByActor && thing.id === context.sharedSourceThingId
+  if (sharedSource && !thing.sharedUseMayDestroy) {
+    throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
+  }
+  if (!ownedByActor && !sharedSource && (context.placeId === null || thing.placeId !== context.placeId
     || context.lawAuthority === null)) {
     throw new EngineError(403, 'damage to another resident property requires an effective local law')
   }
@@ -397,7 +439,9 @@ async function destroyThing(
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
   let rows: unknown[]
-  if (ownedByActor) {
+  if (sharedSource) {
+    rows = await withdrawSharedSourceThing(thing, context, db)
+  } else if (ownedByActor) {
     rows = await queryRows(db`
       WITH changed AS (
         UPDATE things SET withdrawn_at = now(), held_by = NULL
@@ -459,6 +503,16 @@ async function destroyThing(
   }
   if (rows[0]) return
   if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
+  if (sharedSource) {
+    const stillOpen = await thingState(thing.id, db)
+    if (stillOpen?.sharedUseMayDestroy === false) {
+      throw new EngineError(403, SHARED_SOURCE_DESTROY_CLOSED_ERROR)
+    }
+    if (stillOpen && stillOpen.openToUse !== true) {
+      throw new EngineError(403, SHARED_SOURCE_USE_CLOSED_ERROR)
+    }
+    throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
+  }
   const current = await thingState(thing.id, db)
   if (!current || current.withdrawnAt !== null || current.placeId !== context.placeId
     || current.activeOfferId !== null || current.hasOpenOffer) {
