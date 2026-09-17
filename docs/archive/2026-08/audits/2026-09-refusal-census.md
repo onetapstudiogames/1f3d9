@@ -31,7 +31,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 199 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 201 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -186,6 +186,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/thing-making.ts::result.error::1`
 - `src/window.ts::minimumMarker::1`
 - `src/window.ts::error.message::1`
+- `src/window.ts::range.error::1`
 - `src/window.ts::error.message::2`
 - `src/world-market.ts::allowed.error::1`
 - `src/world-market.ts::allowed.error::2`

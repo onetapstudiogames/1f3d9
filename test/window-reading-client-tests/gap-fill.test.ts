@@ -81,6 +81,26 @@ export function registerGapFillTests(): void {
     assert.deepEqual(ids(rejoined.things!.all!.rows), [20])
   })
 
+  test('a fill the refresh budget cut short says nothing failed', async () => {
+    // The fill shares the refresh read budget. When that budget runs out the
+    // fill read nothing and failed at nothing, so the seam must not tell the
+    // reader that the older records could not be rechecked.
+    const entry = loadedEntry([{ id: 400 }, { id: 10 }], { gapAfterIds: [10], filters: {} })
+    const controller = new AbortController()
+    const rejoin = historyGapFiller(async () => {
+      controller.abort()
+      throw new Error('aborted')
+    })
+
+    const out = (await rejoin({ notes: { all: entry }, things: {}, agreements: {}, events: {} },
+      '8', controller.signal)).notes!.all!
+
+    assert.equal(out.refreshError, false, 'a budget that ran out is not a failed read')
+    assert.deepEqual(out.gapAfterIds, [10], 'the range keeps its name and its own control')
+    assert.deepEqual(out.beyondFillIds, [], 'and is not marked as larger than one fill')
+    assert.deepEqual(ids(out.rows), [400, 10], 'nothing was read, so nothing changed')
+  })
+
   test('a filtered list with no fresh row above its top row names and reads only that gap', async () => {
     // A quiet place: the city's own newest page carries no row of this list, so
     // nothing proves the reader's own top row is still the newest one.

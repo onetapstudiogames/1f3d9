@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES } from '../../src/window-client/program/13-branch-cache-and-history-entries.ts'
 import { PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE } from '../../src/window-client/program/34-history-loading-counts-and-scope.ts'
+import { PART_44_VIEWER_READING_STATE } from '../../src/window-client/program/44-viewer-reading-state.ts'
 import { mergeWindowRows } from '../../src/window-client/rows.ts'
 import {
   WINDOW_HISTORY_FILL_ROWS,
   WINDOW_HISTORY_KEEP_ROWS,
 } from '../../src/window-history-limits.ts'
 
-export type Row = Readonly<{ id: number, place_id?: number }>
+export type Row = Readonly<{ id: number, place_id?: number, author?: string }>
+export type Change = Readonly<{ kind: string, detail?: Readonly<Record<string, unknown>> }>
 export type HistoryEntry = Readonly<{
   rows: readonly Row[]
   gapAfterIds?: readonly number[]
@@ -54,11 +56,25 @@ const GAP_SOURCE = sourceBetween(
   '  function freshHistoryEntry',
   'function namedHistoryGap', 'function keptHistoryRows', 'function keptGapAfterIds',
 )
-const REFRESH_SOURCE = sourceBetween(
+// One refresh runs the list's key, its filter, the city's own counts, the gaps
+// it inherits, what it keeps and what it names, so no scenario below can pass
+// against a helper the program does not really use.
+const ENTRY_SOURCE = sourceBetween(
   PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
-  '  function freshHistoryEntry',
+  '  function historyKey',
   '  function filledHistoryEntry',
-  'function retainedHistoryEntry', 'function freshSnapshotHistories',
+  'function filterHistoryRows', 'function historyTotal', 'function inheritedHistoryGaps',
+  'function historyEntry', 'function historyViewerRecordKind', 'function historyPagingCursor',
+  'function keptHistoryRows', 'function keptGapAfterIds', 'function retainedHistoryEntry',
+  'function freshSnapshotHistories',
+)
+// Which records a change row says are gone and which it says merely changed is
+// the real source too: the two answers move a list in opposite directions.
+const RECORD_KEYS_SOURCE = sourceBetween(
+  PART_44_VIEWER_READING_STATE,
+  '  function removedViewerRecordKeys',
+  '  function renderWithViewerInvalidations',
+  'function changedViewerRecordKeys',
 )
 const FILL_SOURCE = sourceBetween(
   PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
@@ -79,15 +95,20 @@ export function snapshotOf(
   rows: Partial<Record<string, readonly Row[]>>,
   // What the city says each list holds in total. A busy city by default.
   totals: Partial<Record<string, number>> = {},
+  // The bounded outline the window really carries. Empty by default, because a
+  // place the reader chose from the complete directory is not in it.
+  flatPlaces: readonly Readonly<{ id: number, notes: number, things: number }>[] = [],
 ): Snapshot {
-  const snapshot: Record<string, unknown> = { pages: {}, totals: {} }
+  const snapshot: Record<string, unknown> = { pages: {}, totals: {}, flatPlaces }
   for (const collection of COLLECTIONS) {
     const collectionRows = rows[collection] ?? []
     snapshot[collection] = collectionRows
     ;(snapshot.pages as Record<string, unknown>)[collection] = {
       hasMore: true, nextBeforeId: collectionRows.at(-1)?.id ?? null,
     }
-    ;(snapshot.totals as Record<string, number>)[collection] = totals[collection] ?? 100_000
+    // The city's own name for the citywide count of notes is conversations.
+    const totalKey = collection === 'notes' ? 'conversations' : collection
+    ;(snapshot.totals as Record<string, number>)[totalKey] = totals[collection] ?? 100_000
   }
   return snapshot
 }
@@ -160,30 +181,23 @@ export function refreshedHistories(
   snapshot: Snapshot,
   options: Readonly<{
     heldKeys?: readonly string[]
-    invalidatedKeys?: readonly string[]
-    // null says the window could not read what the city changed.
-    changes?: readonly unknown[] | null
+    // The city's own public change rows since the last check. null says the
+    // window could not read them at all.
+    changes?: readonly Change[] | null
   }> = {},
 ): Histories {
   return new Function(
-    'histories', 'snapshot', 'changes', 'viewerHeldRecordKeys', 'changedViewerRecordKeys',
-    'historyViewerRecordKind', 'filterHistoryRows', 'historyTotal', 'mergeWindowRows',
-    'WINDOW_HISTORY_KEEP_ROWS',
-    `const state = { histories }; ${GAP_SOURCE} ${REFRESH_SOURCE}
+    'histories', 'snapshot', 'changes', 'viewerHeldRecordKeys', 'mergeWindowRows',
+    'WINDOW_HISTORY_KEEP_ROWS', 'placeScopeSet', 'eventPlaceId',
+    `let state = { histories, snapshot }; ${RECORD_KEYS_SOURCE} ${ENTRY_SOURCE}
      return freshSnapshotHistories(snapshot, changes)`,
   )(
     previous, snapshot, options.changes === undefined ? [] : options.changes,
     () => new Set(options.heldKeys ?? []),
-    () => new Set(options.invalidatedKeys ?? []),
-    (collection: string) => collection === 'notes' ? 'note'
-      : collection === 'things' ? 'thing'
-        : collection === 'agreements' ? 'agreement' : 'event',
-    (_collection: string, rows: readonly Row[], filters: { placeId?: number }) =>
-      filters?.placeId ? rows.filter(row => row.place_id === filters.placeId) : rows,
-    (collection: string, _filters: unknown, snapshot: { totals: Record<string, number> }) =>
-      snapshot.totals[collection] ?? 0,
     mergeWindowRows,
     WINDOW_HISTORY_KEEP_ROWS,
+    (placeId: number) => new Set([placeId]),
+    (row: Row) => row.place_id,
   ) as Histories
 }
 
@@ -196,21 +210,17 @@ export function drawnHistoryEntry(
   collection: string,
   filters: Readonly<Record<string, unknown>>,
 ): HistoryEntry {
-  const source = sourceBetween(
-    PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
-    '  function historyKey',
-    '  function setHistoryEntry',
-    'function filterHistoryRows', 'function historyTotal', 'function inheritedHistoryGaps',
-    'function historyEntry',
-  )
   return new Function(
     'histories', 'snapshot', 'collection', 'filters', 'placeScopeSet', 'eventPlaceId',
-    `const state = { histories, snapshot }; ${source}
+    'mergeWindowRows', 'WINDOW_HISTORY_KEEP_ROWS',
+    `let state = { histories, snapshot }; ${ENTRY_SOURCE}
      return historyEntry(collection, filters)`,
   )(
     histories, snapshot, collection, filters,
     (placeId: number) => new Set([placeId]),
     (row: Row) => row.place_id,
+    mergeWindowRows,
+    WINDOW_HISTORY_KEEP_ROWS,
   ) as HistoryEntry
 }
 

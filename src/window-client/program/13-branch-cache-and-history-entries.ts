@@ -42,21 +42,30 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       (!placeIds || placeIds.has(eventPlaceId(row, snapshot))))
   }
 
+  // What the city says a list holds, or null when the window cannot say. A
+  // citywide count is one of the city's own totals. A place count is the sum
+  // over the bounded outline, and it is a count at all only while that outline
+  // carries every place in the scope: a place the reader chose from the
+  // complete directory is deliberately outside the outline, so the honest
+  // answer for it is that the window does not know, never zero.
   function historyTotal(collection, filters, fromSnapshot) {
     const snapshot = fromSnapshot || state.snapshot
-    if (!snapshot) return 0
-    const placeIds = filters.placeId ? placeScopeSet(filters.placeId, snapshot) : null
-    const places = placeIds
-      ? snapshot.flatPlaces.filter(candidate => placeIds.has(candidate.id))
-      : []
-    if (collection === 'notes') return placeIds
-      ? places.reduce((total, place) => total + place.notes, 0)
-      : snapshot.totals.conversations
-    if (collection === 'things') return placeIds
-      ? places.reduce((total, place) => total + place.things, 0)
-      : snapshot.totals.things
-    if (collection === 'agreements') return snapshot.totals.agreements
-    return snapshot.totals.events
+    if (!snapshot) return null
+    const citywide = collection === 'notes' ? snapshot.totals.conversations
+      : collection === 'things' ? snapshot.totals.things
+        : collection === 'agreements' ? snapshot.totals.agreements
+          : snapshot.totals.events
+    if (!filters.placeId || collection === 'agreements' || collection === 'events') {
+      return citywide
+    }
+    const loaded = new Map(snapshot.flatPlaces.map(place => [place.id, place]))
+    let total = 0
+    for (const id of placeScopeSet(filters.placeId, snapshot)) {
+      const place = loaded.get(id)
+      if (!place) return null
+      total += collection === 'notes' ? place.notes : place.things
+    }
+    return total
   }
 
   // A list drawn from the citywide list inherits the citywide holes. Each gap
@@ -91,14 +100,15 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const snapshotRows = state.snapshot?.[collection] || []
     const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
     const inherited = inheritedHistoryGaps(global, rows)
+    // A count the window cannot prove for this list never says the list is
+    // finished: it offers the older records and lets the read answer.
+    const total = historyTotal(collection, filters)
     return Object.freeze({
       rows,
       gapAfterIds: inherited.gapAfterIds,
       beyondFillIds: inherited.beyondFillIds,
-      hasMore: historyTotal(collection, filters) > rows.length,
+      hasMore: total === null || total > rows.length,
       nextBeforeId: null,
-      automaticPageCount: 0,
-      automaticPaused: false,
       initialized: false,
       loading: false,
       error: false,
@@ -143,6 +153,19 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return bound
   }
 
+  // The cursor a list pages by is the lowest record of that list's own
+  // ordering. A followed resident's conversation pages over that resident's own
+  // notes, and same-room notes by other residents ride along below them, so one
+  // of those is never the cursor: asking below it would skip the resident's own
+  // older notes and never offer them again.
+  function historyPagingCursor(rows, filters, fallback) {
+    const ordered = filters && filters.context === true && filters.resident
+      ? (rows || []).filter(row => row.author === filters.resident)
+      : rows || []
+    if (ordered.length) return ordered[ordered.length - 1].id
+    return fallback === undefined ? null : fallback
+  }
+
   function namedHistoryGap(entry) {
     const afterId = (entry.gapAfterIds || [])[0]
     if (afterId === undefined) return null
@@ -150,24 +173,35 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   }
 
   // The records a changed refresh keeps: everything already loaded and
-  // everything the newest page carries, minus what the city took down, minus
-  // the oldest past the keep bound, and never one the reader is holding open.
-  function keptHistoryRows(rows, freshRows, kind, heldKeys, invalidatedKeys) {
+  // everything the newest page carries, minus what the city no longer has,
+  // minus the oldest past the keep bound, and never one the reader is holding
+  // open. A record the city merely changed is neither shown with its old text
+  // nor thrown away: it leaves the rows and is named as a range to read again.
+  function keptHistoryRows(rows, freshRows, kind, keys) {
     const freshIds = new Set(freshRows.map(row => row.id))
     const freshOldestId = freshRows.length ? freshRows[freshRows.length - 1].id : null
+    const staleIds = []
     const survivors = rows.filter(row => {
-      if (invalidatedKeys.has(kind + ':' + String(row.id))) return false
+      const key = kind + ':' + String(row.id)
+      if (keys.gone.has(key)) return false
       // The newest page is the city's own newest block for this list, so a
       // record inside it that the page no longer carries is gone from the city
-      // rather than merely paged out of sight.
-      return freshOldestId === null || row.id < freshOldestId || freshIds.has(row.id)
+      // rather than merely paged out of sight, and one the page still carries
+      // arrives with the city's own current text.
+      if (freshOldestId !== null && row.id >= freshOldestId) return freshIds.has(row.id)
+      if (keys.stale.has(key)) {
+        staleIds.push(row.id)
+        return false
+      }
+      return true
     })
     const merged = mergeWindowRows(survivors, freshRows)
     const kept = merged.filter((row, index) =>
-      index < WINDOW_HISTORY_KEEP_ROWS || heldKeys.has(kind + ':' + String(row.id)))
+      index < WINDOW_HISTORY_KEEP_ROWS || keys.held.has(kind + ':' + String(row.id)))
     return Object.freeze({
       merged,
       kept,
+      staleIds,
       freshOldestId,
       topSurvivorId: survivors.length ? survivors[0].id : null,
     })
@@ -188,6 +222,13 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // it is gone, the next record still below it takes that place.
     for (const afterId of previousAfterIds || []) {
       const marker = keptIdSet.has(afterId) ? afterId : keptIds.find(id => id < afterId)
+      if (marker !== undefined) named.add(marker)
+    }
+    // A record the city changed left the rows carrying text this list knows is
+    // old, so the record still below it names the range it sat in and the
+    // bounded range read brings it back with the city's current text.
+    for (const staleId of held.staleIds || []) {
+      const marker = keptIds.find(id => id < staleId)
       if (marker !== undefined) named.add(marker)
     }
     // Nothing proves the newest page joins the records this list already had
@@ -217,26 +258,30 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     })
   }
 
-  function retainedHistoryEntry(entry, freshRows, kind, heldKeys, invalidatedKeys, page, total) {
-    // The city says this list has no records at all, so there is nothing to
-    // keep and no range worth naming.
+  function retainedHistoryEntry(entry, freshRows, kind, filters, keys, page, total) {
+    // The city's own count says this list has no records at all, so there is
+    // nothing to keep and no range worth naming. A count the window could not
+    // prove for this list is not that answer, and keeps what the reader loaded.
     if (total === 0) return freshHistoryEntry(entry, freshRows, page)
-    const held = keptHistoryRows(entry.rows, freshRows, kind, heldKeys, invalidatedKeys)
+    const held = keptHistoryRows(entry.rows, freshRows, kind, keys)
     const rows = held.kept
     const gapAfterIds = keptGapAfterIds(entry.gapAfterIds, held)
     const oldestMerged = held.merged[held.merged.length - 1]
     const oldestKept = rows[rows.length - 1]
     const bottomTrimmed = Boolean(oldestMerged) && oldestMerged.id !== oldestKept?.id
+    // A changed record below every record still kept comes back by simply
+    // reading older, so the list must still offer that.
+    const staleBelowAll = held.staleIds.some(id => !rows.some(row => row.id < id))
     return Object.freeze({
       ...entry,
       rows,
       gapAfterIds,
       beyondFillIds: (entry.beyondFillIds || []).filter(id => gapAfterIds.includes(id)),
       hasMore: rows.length
-        ? entry.hasMore === true || bottomTrimmed
+        ? entry.hasMore === true || bottomTrimmed || staleBelowAll
         : Boolean(page && page.hasMore),
       nextBeforeId: rows.length
-        ? rows[rows.length - 1].id
+        ? historyPagingCursor(rows, filters, entry.nextBeforeId ?? null)
         : page ? page.nextBeforeId : null,
       initialized: true,
       loading: false,
@@ -250,8 +295,13 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // Keeping older records is only honest while the window can still see what
     // the city changed. When that check could not be completed it keeps none.
     const keepLoadedRows = Array.isArray(changes)
-    const heldKeys = keepLoadedRows ? viewerHeldRecordKeys() : new Set()
-    const invalidatedKeys = changedViewerRecordKeys(changes || [])
+    // What the city no longer has leaves a list for good; what it merely
+    // changed leaves the rows and is named as a range to read again.
+    const keys = Object.freeze({
+      held: keepLoadedRows ? viewerHeldRecordKeys() : new Set(),
+      gone: removedViewerRecordKeys(changes || []),
+      stale: changedViewerRecordKeys(changes || []),
+    })
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const page = snapshot.pages[collection]
       const previousEntries = state.histories[collection] || {}
@@ -271,9 +321,10 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           const filters = entry.filters || Object.freeze({
             placeId: null, resident: null, context: false,
           })
+          const scopeTotal = historyTotal(collection, filters, snapshot)
           return [[key, retainedHistoryEntry(
-            entry, freshRows, kind, heldKeys, invalidatedKeys, key === 'all' ? page : null,
-            Math.min(cityTotal, historyTotal(collection, filters, snapshot)))]]
+            entry, freshRows, kind, filters, keys, key === 'all' ? page : null,
+            scopeTotal === null ? cityTotal : Math.min(cityTotal, scopeTotal))]]
         }))
       }
       if (!entries.all) {
@@ -287,7 +338,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return histories
   }
 
-  function filledHistoryEntry(entry, rows, afterId, options) {
+  function filledHistoryEntry(entry, rows, afterId, filters, options) {
     const closed = options.closed === true
     const gapAfterIds = closed
       ? (entry.gapAfterIds || []).filter(id => id !== afterId)
@@ -302,7 +353,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       rows,
       gapAfterIds,
       beyondFillIds,
-      nextBeforeId: rows.length ? rows[rows.length - 1].id : entry.nextBeforeId ?? null,
+      nextBeforeId: historyPagingCursor(rows, filters, entry.nextBeforeId ?? null),
       initialized: true,
       loading: false,
       error: false,
@@ -358,15 +409,20 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         rows = mergeWindowRows(rows, incoming)
         spent += incoming.length
         if (payload.has_more !== true) {
-          return filledHistoryEntry(entry, rows, gap.afterId, { closed: true })
+          return filledHistoryEntry(entry, rows, gap.afterId, filters, { closed: true })
         }
         if (!incoming.length) throw new Error('public gap read did not progress')
         markerRetries = 0
       }
     } catch {
-      return filledHistoryEntry(entry, rows, gap.afterId, { readFailed: true })
+      // A fill the refresh budget cut short read nothing and failed at nothing,
+      // so the range keeps its name without telling the reader a read failed.
+      if (signal && signal.aborted) {
+        return filledHistoryEntry(entry, rows, gap.afterId, filters, {})
+      }
+      return filledHistoryEntry(entry, rows, gap.afterId, filters, { readFailed: true })
     }
-    return filledHistoryEntry(entry, rows, gap.afterId, { beyondFill: true })
+    return filledHistoryEntry(entry, rows, gap.afterId, filters, { beyondFill: true })
   }
 
   // One gap read at a time. A reader who has used many filters keeps one list

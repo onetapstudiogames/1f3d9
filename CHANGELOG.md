@@ -8,11 +8,13 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - Window history reads and `/api/events` now take `after_id` beside `before_id`: both ends are exclusive, so the two ask for the records of one list strictly between them under the same filters, page size, and change marker rules.
+- A window history read that names a backwards range now says so in the same words `/api/events` uses, instead of the general unsupported-field answer.
 
 ### For humans watching
 - A list in the window now keeps the older records you loaded through a refresh, up to 3,000 per list, instead of dropping back to the newest page about once a minute.
 - When a refresh leaves a gap above the records you loaded, the window now asks the city for exactly that gap and reads up to 300 older records to close it, and only names the gap when it is larger than that or a read fails.
 - A refresh that cannot read what the city changed starts again from the newest page instead of keeping older records, because it cannot tell a record the city took down from one it left alone.
+- A record the city changed while you were away comes back in place with its new text, instead of leaving the list you had loaded one record short.
 
 ## 2026-09-16
 

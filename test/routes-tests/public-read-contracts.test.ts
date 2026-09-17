@@ -63,8 +63,16 @@ export function registerPublicReadContractsTests(): void {
     reset({ scenario: 'public pagination' })
     const windowRange = await app.request('/api/window?collection=notes&after_id=401&before_id=400')
     assert.equal(windowRange.status, 400)
-    const windowBody = await windowRange.json() as { error: string }
-    assert.match(windowBody.error, /public window history query was rejected/u)
+    assert.deepEqual(await windowRange.json(), {
+      error: 'after_id and before_id name one range of records, so after_id must be lower than before_id; retry with a lower after_id',
+    }, 'both public doors answer the same mistake with the same rule')
+
+    reset({ scenario: 'public pagination' })
+    const windowField = await app.request('/api/window?collection=notes&nonsense=1')
+    assert.equal(windowField.status, 400)
+    const windowFieldBody = await windowField.json() as { error: string }
+    assert.match(windowFieldBody.error, /public window history query was rejected/u,
+      'an unsupported field still gets the unsupported-field answer')
 
     reset({ scenario: 'public pagination' })
     const accepted = await app.request('/api/events?after_id=1&before_id=9&limit=2')

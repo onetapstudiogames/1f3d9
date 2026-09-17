@@ -217,7 +217,7 @@ export function registerListControlTests(): void {
     removedId = 175
     const second = refreshedHistories(
       { notes: { all: first } }, snapshotOf({ notes: rowsFrom(300, 50) }),
-      { invalidatedKeys: ['note:175'] },
+      { changes: [{ kind: 'moderation', detail: { target_type: 'note', target_id: 175 } }] },
     ).notes!.all!
     previous = assertReadable('second refresh', second, previous, requests)
     assert.deepEqual(second.gapAfterIds, [100], 'the gap is still named, unchanged')
@@ -241,6 +241,80 @@ export function registerListControlTests(): void {
       'every other record between the two blocks is loaded')
     assert.equal(requests.every(request => request.afterId === 100 || request.afterId === null), true,
       'every read while the gap was named carried the gap own lower end')
+  })
+
+  // Following a resident pages over that resident's own notes. Same-room notes
+  // by other residents ride along with them and can carry lower ids, so a cursor
+  // taken from the whole answer rather than from the list's own ordering asks
+  // below the resident's own older notes and never offers them again.
+  test('a followed conversation pages by the resident own notes, not by one that rode along', async () => {
+    const followed = Object.freeze({ placeId: null, resident: 'ada', context: true })
+    const requests: Request[] = []
+    // The city's own answer: one note by the followed resident per page, each
+    // with one same-room note by somebody else riding along below it.
+    const ownIds = [100, 70, 20]
+    const neighbour: Record<number, number> = { 100: 40, 70: 65, 20: 15 }
+    const fetchFollowed = async (input: string) => {
+      const url = new URL(input, 'https://city.test')
+      const beforeText = url.searchParams.get('before_id')
+      const afterText = url.searchParams.get('after_id')
+      const beforeId = beforeText ? Number(beforeText) : null
+      const afterId = afterText ? Number(afterText) : null
+      requests.push(Object.freeze({
+        beforeId, afterId, marker: url.searchParams.get('after_change_marker'),
+      }))
+      const remaining = ownIds.filter(id =>
+        (beforeId === null || id < beforeId) && (afterId === null || id > afterId))
+      const ownId = remaining[0]
+      const rows = ownId === undefined ? [] : [
+        { id: ownId, author: 'ada', place_id: 5 },
+        { id: neighbour[ownId]!, author: 'bo', place_id: 5 },
+      ]
+      const hasMore = remaining.length > 1
+      return { ok: true, json: async () => ({
+        notes: rows, change_marker: '8',
+        has_more: hasMore, next_before_id: hasMore ? ownId : null,
+      }) }
+    }
+
+    const { run, read } = olderHistoryPager(Object.freeze({
+      rows: [], gapAfterIds: [], beyondFillIds: [], hasMore: true, nextBeforeId: null,
+      initialized: false, loading: false, error: false, filters: followed,
+    }), fetchFollowed)
+
+    await run('notes', followed)
+    assert.equal(read().nextBeforeId, 100,
+      'the cursor is the resident own note, not the note that rode along below it')
+    await run('notes', followed)
+    await run('notes', followed)
+
+    assert.deepEqual(requests, [
+      { beforeId: null, afterId: null, marker: '8' },
+      { beforeId: 100, afterId: null, marker: '8' },
+      { beforeId: 70, afterId: null, marker: '8' },
+    ], 'each press continues below the resident own lowest note')
+    const paged = read()
+    assert.equal(paged.error, false)
+    assert.deepEqual(ids(paged.rows), [100, 70, 65, 40, 20, 15],
+      'no note by the followed resident was paged over')
+    assert.equal(paged.hasMore, false)
+
+    // A changed refresh keeps the same cursor, for the same reason.
+    const refreshed = refreshedHistories(
+      { notes: { 'context|place:|resident:ada': paged }, things: {}, agreements: {}, events: {} },
+      snapshotOf({ notes: [{ id: 120, author: 'ada', place_id: 5 }] }),
+    ).notes!['context|place:|resident:ada']!
+    assert.equal(refreshed.nextBeforeId, 20,
+      'the refresh cursor is still the resident own lowest note')
+    assert.deepEqual(refreshed.gapAfterIds, [100], 'the range above the kept notes is named')
+
+    // And so does the read that answers the named range.
+    const seam = olderHistoryPager(refreshed, fetchFollowed)
+    await seam.run('notes', followed)
+    assert.deepEqual(requests.at(-1), { beforeId: 120, afterId: 100, marker: '8' })
+    assert.deepEqual(seam.read().gapAfterIds, [], 'the answered range closed')
+    assert.equal(seam.read().nextBeforeId, 20,
+      'closing the range left the cursor on the resident own lowest note')
   })
 
   test('a superseded complete-body read synchronizes its restored disclosure state', async () => {

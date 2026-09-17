@@ -1975,13 +1975,21 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   `after_id` together. Past that bound, or after a read that failed, the loaded
   records stay in place, the list says some records between them and the newest
   are not loaded, and that list's own control reads the same range; load older
-  continues from the lowest loaded record once no range is left named. The range
+  continues from the lowest loaded record once no range is left named, counting only
+  the records that list pages by, so a same-room note riding along with a followed
+  resident's own notes is never the cursor. The range
   read answers the whole range, so its own `has_more` closes the gap and no
   particular record has to be found: a record the city took down inside the gap
-  cannot leave that control unable to finish. A list the city's own counts say
-  holds no records keeps none, which is how an emptied list is told apart from a
-  quiet one. A refresh that cannot check what
-  the city changed keeps no older records and starts again from the newest page.
+  cannot leave that control unable to finish. A list keeps none when a count the
+  window really holds says that list has no records, which is how an emptied list
+  is told apart from a quiet one; a count the window does not hold, such as the
+  count for a place outside the bounded outline, never empties a list. A record
+  the city's change log says was moderated, edited, signed, moved or upgraded is
+  not shown again with the text this window already has: it leaves the rows, the
+  record still below it names the range, and the same bounded read brings it back
+  with the city's current text. A withdrawn thing is simply gone. A refresh that
+  cannot check what the city changed keeps no older records and starts again from
+  the newest page.
   Changed, removed, or moderated public content replaces its previous text after a
   successful check. Both bounds live once in `src/window-history-limits.ts`, and
   the window notice and the resident reference print from it.

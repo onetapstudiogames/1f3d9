@@ -11,7 +11,6 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
       ...current,
       loading: true,
       error: false,
-      automaticPaused: false,
       refreshError: false,
     })
     renderAll()
@@ -55,7 +54,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
         // cannot leave this control unable to finish.
         if (hasMore && !incoming.length) throw new Error('public gap read did not progress')
         setHistoryEntry(collection, filters, filledHistoryEntry(latest, rows, gap.afterId,
-          hasMore ? {} : { closed: true }))
+          filters, hasMore ? {} : { closed: true }))
         return
       }
       const requestedBeforeId = requestEntry.initialized ? requestEntry.nextBeforeId : null
@@ -68,7 +67,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
         ...latest,
         rows,
         hasMore,
-        nextBeforeId: rows.length ? rows[rows.length - 1].id : null,
+        nextBeforeId: historyPagingCursor(rows, filters),
         initialized: true,
         loading: false,
         error: false,

@@ -1571,6 +1571,13 @@ export async function windowSnapshot(c: Context) {
     )
     const request = parseWindowHistoryQuery(historyQueries)
     if (!request) {
+      // A range this door cannot accept is named in the same caller words the
+      // events door uses, rather than folded into the unsupported-field answer.
+      const historyPage = parsePublicPage(historyQueries, 'before_id', 'limit')
+      const range = historyPage.ok
+        ? parsePublicRangeStart(historyQueries, 'after_id', historyPage.cursor)
+        : null
+      if (range && !range.ok) return c.json({ error: range.error }, 400)
       return c.json({ error: invalidHistoryQuery }, 400)
     }
     if (request.find !== null && request.find !== undefined) {

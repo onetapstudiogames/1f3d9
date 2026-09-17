@@ -5,11 +5,14 @@ import {
 } from '../../src/window-history-limits.ts'
 import {
   COLLECTIONS,
+  cityList,
+  historyGapFiller,
   ids,
   loadedEntry,
   refreshedHistories,
   rowsFrom,
   snapshotOf,
+  type Request,
 } from './harness.ts'
 
 // What a changed refresh keeps, what it drops, and which ranges it names.
@@ -160,16 +163,135 @@ export function registerRefreshRetentionTests(): void {
     assert.deepEqual(entry.gapAfterIds, [], 'an empty list has no range worth naming')
   })
 
-  test('a moderated row is dropped from the kept rows instead of being kept for ever', () => {
+  test('a moderated row leaves the rows and names the range that answers for it', () => {
+    // The public change log says a record was moderated, never whether it was
+    // taken down or put back. The window cannot answer that on the reader's
+    // behalf, so it stops showing the text it knows is old and names the range
+    // the city itself answers for.
     const loaded = rowsFrom(400, 60)
     const previous = { notes: { all: loadedEntry(loaded) }, things: {}, agreements: {}, events: {} }
 
-    const entry = refreshedHistories(previous, snapshotOf({ notes: rowsFrom(400, 50) }),
-      { invalidatedKeys: ['note:345'] }).notes!.all!
+    const entry = refreshedHistories(previous, snapshotOf({ notes: rowsFrom(400, 50) }), {
+      changes: [{ kind: 'moderation', detail: { target_type: 'note', target_id: 345 } }],
+    }).notes!.all!
+
+    assert.equal(ids(entry.rows).includes(345), false, 'the old text is not shown again')
+    assert.equal(ids(entry.rows).includes(344), true)
+    assert.deepEqual(entry.gapAfterIds, [344],
+      'the record still below it names the range the read answers')
+  })
+
+  test('a changed agreement comes back with fresh text instead of vanishing', async () => {
+    // Round two of this change: somebody signs an agreement the reader loaded
+    // below the newest page. Dropping it left the list short of one record until
+    // a full page reload, which the window notice promises it is not.
+    const loaded = rowsFrom(400, 60)
+    const previous = {
+      agreements: { all: loadedEntry(loaded) }, notes: {}, things: {}, events: {},
+    }
+
+    const entry = refreshedHistories(previous, snapshotOf({ agreements: rowsFrom(400, 50) }), {
+      changes: [{ kind: 'agreement_sign', detail: { agreement_id: 345 } }],
+    }).agreements!.all!
+
+    assert.deepEqual(entry.gapAfterIds, [344], 'the signed agreement is named, not dropped')
+    assert.equal(entry.hasMore, true)
+    assert.equal(entry.nextBeforeId, 341, 'load older still continues from the lowest row')
+
+    // And the fill the same refresh runs reads exactly that record back.
+    const requests: Request[] = []
+    const rejoin = historyGapFiller(cityList({ newestId: () => 401, requests }))
+    const filled = (await rejoin({ agreements: { all: entry } },
+      '8', new AbortController().signal)).agreements!.all!
+
+    assert.deepEqual(requests, [{ beforeId: 346, afterId: 344, marker: '8' }],
+      'the fill asks the city for exactly the record that changed')
+    assert.equal(ids(filled.rows).includes(345), true, 'the agreement is back in the list')
+    assert.deepEqual(ids(filled.rows), ids(loaded), 'and nothing else moved')
+    assert.deepEqual(filled.gapAfterIds, [], 'the answered range closed')
+  })
+
+  test('an edited thing comes back with fresh text instead of vanishing', async () => {
+    const loaded = rowsFrom(400, 60)
+    const previous = { things: { all: loadedEntry(loaded) }, notes: {}, agreements: {}, events: {} }
+
+    const entry = refreshedHistories(previous, snapshotOf({ things: rowsFrom(400, 50) }), {
+      changes: [{ kind: 'thing_edited', detail: { thing_id: 345 } }],
+    }).things!.all!
+
+    assert.deepEqual(entry.gapAfterIds, [344], 'the edited thing is named, not dropped')
+
+    const rejoin = historyGapFiller(cityList({ newestId: () => 401 }))
+    const filled = (await rejoin({ things: { all: entry } },
+      '8', new AbortController().signal)).things!.all!
+
+    assert.deepEqual(ids(filled.rows), ids(loaded), 'the list is whole again')
+    assert.deepEqual(filled.gapAfterIds, [])
+  })
+
+  test('a withdrawn thing is dropped outright, because the city no longer has it', () => {
+    // Withdrawal is the one change that says the record is gone, so no range is
+    // named and no read is spent asking for it.
+    const loaded = rowsFrom(400, 60)
+    const previous = { things: { all: loadedEntry(loaded) }, notes: {}, agreements: {}, events: {} }
+
+    const entry = refreshedHistories(previous, snapshotOf({ things: rowsFrom(400, 50) }), {
+      changes: [{ kind: 'thing_withdrawn', detail: { thing_id: 345 } }],
+    }).things!.all!
 
     assert.equal(ids(entry.rows).includes(345), false)
-    assert.equal(ids(entry.rows).includes(344), true)
-    assert.deepEqual(entry.gapAfterIds, [], 'a record the city took down is not a gap')
+    assert.deepEqual(entry.gapAfterIds, [], 'a record the city no longer has is not a range')
+  })
+
+  test('a changed record below every kept row is still offered by load older', () => {
+    const loaded = rowsFrom(400, 60)
+    const previous = {
+      agreements: { all: loadedEntry(loaded, { hasMore: false, nextBeforeId: null }) },
+      notes: {}, things: {}, events: {},
+    }
+
+    const entry = refreshedHistories(previous, snapshotOf({ agreements: rowsFrom(400, 50) }), {
+      changes: [{ kind: 'agreement_sign', detail: { agreement_id: 341 } }],
+    }).agreements!.all!
+
+    assert.equal(ids(entry.rows).includes(341), false)
+    assert.deepEqual(entry.gapAfterIds, [], 'nothing of this list is below it to name the range')
+    assert.equal(entry.hasMore, true, 'so reading older is what brings it back')
+    assert.equal(entry.nextBeforeId, 342)
+  })
+
+  test('a place the bounded outline does not carry keeps the pages the reader loaded', () => {
+    // A place chosen from the complete directory is deliberately outside the
+    // bounded outline, so the outline's count for it is zero only because the
+    // window never loaded it. That is not the city saying the room is empty.
+    const loaded = rowsFrom(400, 60).map(row => ({ ...row, place_id: 77 }))
+    const previous = {
+      notes: { 'place:77|resident:': loadedEntry(loaded, { filters: { placeId: 77 } }) },
+      things: {}, agreements: {}, events: {},
+    }
+
+    const entry = refreshedHistories(previous,
+      snapshotOf({ notes: [] }, {}, [{ id: 1, notes: 40, things: 0 }]))
+      .notes!['place:77|resident:']!
+
+    assert.deepEqual(ids(entry.rows), ids(loaded), 'every page the reader loaded is still here')
+    assert.equal(entry.hasMore, true)
+  })
+
+  test('a place the outline does carry, and says is empty, keeps nothing', () => {
+    // The same gate, on a count the window really holds: here it fires.
+    const loaded = rowsFrom(400, 60).map(row => ({ ...row, place_id: 77 }))
+    const previous = {
+      notes: { 'place:77|resident:': loadedEntry(loaded, { filters: { placeId: 77 } }) },
+      things: {}, agreements: {}, events: {},
+    }
+
+    const entry = refreshedHistories(previous,
+      snapshotOf({ notes: [] }, {}, [{ id: 77, notes: 0, things: 0 }]))
+      .notes!['place:77|resident:']!
+
+    assert.deepEqual(entry.rows, [], 'a room the city counts as empty keeps nothing')
+    assert.deepEqual(entry.gapAfterIds, [])
   })
 
   test('a moderated gap marker hands its name to the record below it', () => {
@@ -182,8 +304,9 @@ export function registerRefreshRetentionTests(): void {
     }
     const fresh = [{ id: 401 }, ...rowsFrom(400, 49)]
 
-    const entry = refreshedHistories(previous, snapshotOf({ notes: fresh }),
-      { invalidatedKeys: ['note:200'] }).notes!.all!
+    const entry = refreshedHistories(previous, snapshotOf({ notes: fresh }), {
+      changes: [{ kind: 'moderation', detail: { target_type: 'note', target_id: 200 } }],
+    }).notes!.all!
 
     assert.equal(ids(entry.rows).includes(200), false, 'the moderated row leaves the list')
     assert.deepEqual(entry.gapAfterIds, [199],
