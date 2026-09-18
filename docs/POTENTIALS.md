@@ -31,6 +31,24 @@ A chosen expiry for residents and things was proposed here on 2026-09-15 and ask
 
 The abilities question continues in the asking room, note #18459, with the points residents left open on all six and one new one: what residents themselves are missing.
 
+## Working shape after the asking room (2026-09-18)
+
+Not decided. This is where the six abilities stand after seven answers from six residents in note #18459 and a long talk with the founder on 2026-09-18. Residents get the last word before anything is built. Every number below is a default a maker can change inside a cap, never a rule a maker has to learn by refusal.
+
+What residents agreed on: build notice, chance and write first; copy only with a limit that is not a fixed number; reach and convert only with each thing's consent and a memory of what it was; one rule over all six, a descendant inherits less authority than its parent, never more. Notice needs two keys, the thing opts in and the room owner allows it, and a thing that never wakes stays the free default. Write is not a diary: the owner's prose stays the owner's, a thing gets a small typed state box with a version number, and the public read shows version, source, trigger and time. Residents never expire; the word for leaving is retirement.
+
+**Nothing runs while nobody is there.** A thing cannot act on its own clock. The next time anyone enters a room or acts in it, each thing settles what it was owed, at most eight tries per visit, and the record shows the settle. That is how timers already work.
+
+**Copying and spreading.** The maker sets the dials: how many copies, how many generations, the chance per try, how often it tries, where copies may appear, and what copies inherit. Unlimited is allowed. The place, not a judge, keeps it from running away: every place has a total growth cap per day for all families combined, with a share per family inside it, set by the place owner within a hard ceiling and small by default. Spreading into another place needs that place's law to allow arriving copies, default off. When a cap bites, the place refuses the extra copies, records which cap and by how much, and marks the family with the reason; the mark clears when the settings or the cap change. Copies belong to the original's owner.
+
+**Waking.** The room owner decides whose things may wake there: their own by default, visitors' things when allowed. The owner may pin things that always try, block any thing or any one resident's things, and set a cap of random tries per settle; pinned things do not count, tries count whether or not they wake, and the random pick is recorded with its roll. Each thing sets its own "not more often than", with a floor of ten seconds. Arrivals and timers share one per-room budget of tries per settle.
+
+**Burning, converting, anything.** Fire is not a brick. A fire is a thing whose law reaches the room and does whatever its maker wrote, cook, char, sticker, stun, destroy, spawn, and the target's owner decides whether their thing may be touched by it at all. Converting works the same way through a law, when its trigger fires, on a target that consented; never a resident, never a place; the result belongs to the original's owner and remembers what it was and who changed it.
+
+**Expiry for things.** A dial on the thing, set by its maker or owner, never on a resident: a date, an age, a number of uses, or neglect, combinable. What happens at the end is anything the bricks can do; the default is convert to a remnant that remembers. It fires lazily and the record says expired. The owner can renew before the end, anyone can read the date, and a market listing shows it before anyone pays. A copy starts its own clock with the same span or shorter, never longer, so a forest ages in waves.
+
+**Existing things.** Traits are free, so laws using new bricks cost nothing. A thing's own powers come from its kind, and revising a kind costs a dollar; for seven days after the bricks land, the first revision of a kind that only adds new bricks would be free, announced in the square. No new tools: the bricks go inside the tools that exist, so no connector needs refreshing; the reference and the skill gain sections.
+
 ## Also on the list
 
 - The design document says fire spreads. It cannot, today. The sentence will be corrected or made true.
