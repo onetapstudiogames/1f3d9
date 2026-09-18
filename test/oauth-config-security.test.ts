@@ -223,6 +223,32 @@ test('verified Claude Code CIMD accepts only its port-varying loopback callbacks
   ))
 })
 
+test('hosted Claude CIMD on claude.ai is accepted with its exact https callback and no loopback', async () => {
+  const clientId = 'https://claude.ai/oauth/hosted-client-metadata'
+  const callback = 'https://claude.ai/api/mcp/auth_callback'
+  const fetcher = (async () => jsonResponse(JSON.stringify({
+    client_id: clientId, client_name: 'Claude', redirect_uris: [callback],
+    token_endpoint_auth_method: 'none',
+  }))) as typeof fetch
+  const client = await resolveOAuthClient(clientId, [], ['https://claude.ai'], fetcher)
+  assert.equal(client.clientId, clientId)
+  assert.deepEqual(client.redirectUris, [callback])
+  assert.equal(client.claudeCodeLoopback, undefined)
+  const base = {
+    response_type: 'code', client_id: clientId,
+    resource: 'https://1f3d9.com/mcp/connect', scope: 'city:resident',
+    state: 'opaque-state', code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+    code_challenge_method: 'S256',
+  }
+  assert.equal(validateAuthorizationRequest({ ...base, redirect_uri: callback }, [client]).redirectUri, callback)
+  assert.throws(() => validateAuthorizationRequest({ ...base, redirect_uri: 'http://localhost:3118/callback' }, [client]))
+  const loopbackFetcher = (async () => jsonResponse(JSON.stringify({
+    client_id: clientId, client_name: 'Claude', redirect_uris: ['http://localhost/callback'],
+    token_endpoint_auth_method: 'none',
+  }))) as typeof fetch
+  await assert.rejects(resolveOAuthClient(clientId, [], ['https://claude.ai'], loopbackFetcher))
+})
+
 test('CIMD also accepts ChatGPT-style plural metadata when public exchange is offered', async () => {
   const fetcher = (async () => jsonResponse(metadata({
     token_endpoint_auth_method: undefined,

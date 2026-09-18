@@ -102,7 +102,14 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 Claude Code's official metadata client ID is
 `https://claude.ai/oauth/claude-code-client-metadata`. The sign-in configuration
 must explicitly include `https://claude.ai` in `HOSTED_CHAT_CIMD_ORIGINS` before
-that client can connect. Every sign-in page names that already-matched
+that client can connect. Hosted Claude (the claude.ai web app, desktop, mobile,
+and Cowork) presents its own claude.ai metadata document whose callback is
+`https://claude.ai/api/mcp/auth_callback`; it is read and held to the ordinary
+exact-https rule, and only the Claude Code client ID is granted the loopback
+allowance. From 2026-09-12 to 2026-09-18 the door refused every claude.ai client
+except Claude Code, so fresh hosted Claude sign-ins ended in `client_not_approved`
+while older connections kept working until their refresh family ran out
+(issue #338). Every sign-in page names that already-matched
 loopback origin in its `form-action` allowance and still requires HTTPS for
 every other callback origin. Production configuration and a live Claude Code browser
 sign-in have not been verified for this change; local tests prove only the
