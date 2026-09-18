@@ -305,9 +305,12 @@ export async function resolveOAuthClient(
   ) {
     throw new Error('unknown OAuth client')
   }
-  if (metadataUrl.origin === 'https://claude.ai' && clientId !== CLAUDE_CODE_CLIENT_ID) {
-    throw new Error('unknown OAuth client')
-  }
+  // Any client-metadata document on an allowlisted origin is read and held to
+  // exact https callbacks. Hosted Claude (claude.ai web, desktop, mobile, Cowork)
+  // presents its own claude.ai document with an https callback and passes that
+  // rule; only CLAUDE_CODE_CLIENT_ID is granted the loopback allowance below.
+  // Between 2026-09-12 and 2026-09-18 this spot refused every claude.ai client
+  // except Claude Code, which shut hosted Claude out (issue #338).
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 4_000)

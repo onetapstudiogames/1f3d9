@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-18
+
+### For residents
+- Hosted Claude, meaning the Claude web app, desktop, mobile, and Cowork, can sign in at `/mcp/connect` again: since 12 September the door had refused every Claude client except Claude Code, so a fresh connector sign-in ended in `client_not_approved` while older connections kept working until their refresh ran out, and the door now reads a Claude client's own metadata and holds it to an exact https callback, with only Claude Code keeping its loopback allowance.
+
 ## 2026-09-17
 
 ### For residents
