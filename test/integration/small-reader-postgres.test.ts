@@ -684,3 +684,167 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     })
   }
 })
+
+test('continent map pages stay bounded and scoped in real PostgreSQL', async t => {
+  const postgres = await startPostgres()
+  database = postgres.client
+
+  try {
+    await postgres.client.query(schemaDdl)
+    await postgres.client.query(`
+      INSERT INTO residents (id, handle, model, secret_hash)
+      VALUES (1, 'map-owner', 'controlled-local-test', $1)
+    `, ['1'.repeat(64)])
+    const world = (await postgres.client.query<{ id: number }>(`
+      SELECT id FROM places WHERE place_kind = 'world'
+    `)).rows[0]!
+    const selected = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, purpose, owner_id)
+      VALUES ($1, 'continent', 'Selected Test Continent',
+        'This selected continent description must stay out of the flat map.',
+        'This selected continent purpose must stay out too.', 1)
+      RETURNING id
+    `, [world.id])).rows[0]!
+
+    await postgres.client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, purpose, owner_id)
+      SELECT $1, 'place', 'Selected direct ' || item,
+        'Private-looking selected description ' || item,
+        'Selected purpose ' || item, 1
+      FROM generate_series(1, 31) AS item
+    `, [selected.id])
+
+    const foreign = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'continent', 'Foreign Test Continent',
+        'Foreign rows must never widen the selected scope.', 1)
+      RETURNING id
+    `, [world.id])).rows[0]!
+    const foreignRows = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT $1, 'place', 'Foreign place ' || item, 'Foreign body ' || item, 1
+      FROM generate_series(1, 6) AS item
+      RETURNING id
+    `, [foreign.id])).rows
+
+    const nestedParent = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'Selected nested parent', 'Nested parent body.', 1)
+      RETURNING id
+    `, [selected.id])).rows[0]!
+    await postgres.client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, purpose, owner_id)
+      SELECT $1, 'place', 'Selected nested ' || item,
+        'Nested body ' || item, 'Nested purpose ' || item, 1
+      FROM generate_series(1, 26) AS item
+    `, [nestedParent.id])
+    const retired = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'Retired selected leaf', 'Retired body.', 1)
+      RETURNING id
+    `, [selected.id])).rows[0]!
+    await postgres.client.query(`UPDATE places SET retired_at = now() WHERE id = $1`, [retired.id])
+    const retiredAncestor = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'Retired selected branch', 'Retired branch body.', 1)
+      RETURNING id
+    `, [selected.id])).rows[0]!
+    const activeBelowRetired = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'Active below retired branch', 'Hidden active child body.', 1)
+      RETURNING id
+    `, [retiredAncestor.id])).rows[0]!
+    await postgres.client.query(
+      `UPDATE places SET retired_at = now() WHERE id = $1`,
+      [retiredAncestor.id],
+    )
+
+    type ContinentPage = {
+      view: 'continent'
+      continent: { id: number; parent_id: number; name: string }
+      places: Array<{ id: number; parent_id: number; name: string }>
+      places_page: {
+        maximum_items: number
+        returned_items: number
+        returned_text_bytes: number
+        has_more: boolean
+        next_before_place_id: number | null
+        next_page: null | {
+          href: string
+          look: { scope: 'continent'; continent_id: number; before_place_id: number }
+        }
+      }
+      omitted: string
+      map_complete: false
+    }
+    const first = await readBudgetedJson<ContinentPage>(
+      await cityApp.request(
+        `http://city.test/api/map?view=continent&continent_id=${selected.id}`,
+      ),
+      'first continent map page',
+    )
+    assert.equal(first.places.length, 50, 'one page caps the whole recursive result at 50')
+    assert.equal(first.places_page.returned_items, 50)
+    assert.equal(first.places_page.returned_text_bytes, 0)
+    assert.equal(first.places_page.has_more, true)
+    assert.ok(first.places_page.next_before_place_id)
+    assert.deepEqual(first.places_page.next_page, {
+      href: `/api/map?view=continent&continent_id=${selected.id}&before_place_id=${first.places_page.next_before_place_id}`,
+      look: {
+        scope: 'continent',
+        continent_id: selected.id,
+        before_place_id: first.places_page.next_before_place_id,
+      },
+    })
+    assert.equal(first.places.some(place => place.parent_id === nestedParent.id), true)
+    assert.equal(first.places.every(place => Object.keys(place).sort().join(',') === 'id,name,parent_id'), true)
+    assert.equal(first.places.some(place => foreignRows.some(row => row.id === place.id)), false)
+    assert.equal(first.places.some(place => place.id === retired.id), false)
+    assert.equal(first.places.some(place => place.id === activeBelowRetired.id), false)
+
+    const returnedCursor = first.places_page.next_before_place_id!
+    await postgres.client.query(
+      `UPDATE places SET retired_at = now() WHERE id = $1`,
+      [returnedCursor],
+    )
+    const second = await readBudgetedJson<ContinentPage>(
+      await cityApp.request(
+        `http://city.test/api/map?view=continent&continent_id=${selected.id}&before_place_id=${returnedCursor}`,
+      ),
+      'second continent map page after cursor-row retirement',
+    )
+    assert.equal(second.places_page.has_more, false)
+    assert.equal(second.places_page.next_before_place_id, null)
+    assert.equal(second.places_page.next_page, null)
+
+    const allReturned = [...first.places, ...second.places]
+    assert.equal(new Set(allReturned.map(place => place.id)).size, 58)
+    assert.equal(allReturned.length, 58, 'active selected descendants appear once across pages')
+    assert.equal(allReturned.every(place => !foreignRows.some(row => row.id === place.id)), true)
+    assert.equal(allReturned.some(place => place.id === activeBelowRetired.id), false)
+
+    const foreignBoundary = foreignRows.at(-1)!.id
+    const foreignCursorPage = await readBudgetedJson<ContinentPage>(
+      await cityApp.request(
+        `http://city.test/api/map?view=continent&continent_id=${selected.id}&before_place_id=${foreignBoundary}`,
+      ),
+      'selected continent with a foreign numeric boundary',
+    )
+    assert.equal(
+      foreignCursorPage.places.every(place => (
+        place.id < foreignBoundary && !foreignRows.some(row => row.id === place.id)
+      )),
+      true,
+      'a foreign numeric boundary can narrow the page but cannot widen its continent scope',
+    )
+
+    t.diagnostic('real recursive SQL kept 58 visible active descendants scoped and paged after cursor retirement')
+  } finally {
+    database = null
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], {
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+  }
+})

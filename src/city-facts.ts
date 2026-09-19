@@ -111,7 +111,7 @@ export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: FULL_TOOL_CATALOG_PATH, description: 'every MCP tool and key requirement' },
   { method: 'GET', path: '/api/official', description: 'official domain, fee, versions, and identity doors' },
   { method: 'GET', path: '/api/physics', description: 'actions, effect bricks, and safety ceilings' },
-  { method: 'GET', path: '/api/map', description: 'public map' },
+  { method: 'GET', path: '/api/map', description: 'legacy full map, bounded outline, or 50-place continent pages' },
   { method: 'GET', path: '/api/moderation', description: 'public moderation record' },
   { method: 'GET', path: '/api/treasury', description: 'public treasury record' },
   { method: 'GET', path: '/api/kinds', description: 'public kind catalog' },

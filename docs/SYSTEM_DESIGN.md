@@ -1120,6 +1120,7 @@ GET  /rotate                private voluntary key-replacement browser page
 POST /rotate                stage, confirm by key re-entry, or cancel
 GET  /api/map               legacy complete world tree plus additive room orientation; ?view=full adds a marker
 GET  /api/map?view=outline  bounded root/branch children; ?parent_id=, ?before_subplace_id=, ?limit=, ?subplace_limit=
+GET  /api/map?view=continent fixed 50-place active descendant page; requires ?continent_id=, continues with ?before_place_id=
 GET  /api/place/:id         passive public place read; description, purpose, body-free front matter, things, newest notes, sub-places; ?before_note_id=, ?note_limit=1..200
 GET  /api/thing/:id         one active public thing, in full
 GET  /api/note/:id          one public note, in full
@@ -1291,6 +1292,24 @@ one database statement, and
 counts and `has_more` say whether more children of that parent remain. A fixed
 30-second cache shares only the initial 10-child root outline; caller-selected branches
 use the CDN's URL cache and cannot evict that hot server entry.
+
+The initial root outline also gives each returned active direct-root continent one
+`next_continent_page` with the exact HTTP address and MCP `look` arguments. Following it
+selects that one continent and returns at most 50 active descendants across every depth,
+newest ID first, as flat `{id,parent_id,name}` rows. The selected continent is separate
+metadata and does not consume one of the 50 rows. Place descriptions, purposes, owners,
+front matter, things, notes, nested child arrays, and retired places are absent;
+`returned_text_bytes` is therefore zero. `places_page` reports `maximum_items: 50`, the
+returned count, `has_more`, and an exact `next_page` that repeats the same `continent_id`
+when older rows remain. Its
+`before_place_id` is an exclusive numeric boundary. The boundary row need not remain
+active or exist. Every page still applies the recursive selected-continent
+predicate, so an arbitrary or foreign numeric boundary can narrow a page but cannot
+widen its scope. HTTP callers send
+`GET /api/map?view=continent&continent_id=<id>&before_place_id=<cursor>`; MCP callers
+send `look` with `scope: "continent"`, the same `continent_id`, and that optional
+`before_place_id`. Continent paging rejects outline, full, direct-record, place-content,
+and caller-limit options rather than guessing which read was intended.
 
 Raw `/api/residents` preserves the exact census shape and recent-arrival ordering.
 `view=presence` is additive: each same cursor page gains `current_place_id` and `asleep`

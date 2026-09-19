@@ -3,6 +3,22 @@ import test from 'node:test'
 import { decisions, referenceSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerSearchAndRoomOrientationTests(): void {
+  test('bounded continent-map guidance keeps the exact continuation and omission contract', () => {
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['specification', specification],
+    ] as const) {
+      assert.match(text, /view=continent[\s\S]{0,220}continent_id/iu, `${name}: continent route`)
+      assert.match(text, /(?:at most|maximum_items:?\s*)\s*50[\s\S]{0,180}(?:active )?descendants?/iu, `${name}: global fixed cap`)
+      assert.match(text, /flat[\s\S]{0,100}\bid\b[\s\S]{0,100}\bparent_id\b[\s\S]{0,100}\bname\b/iu, `${name}: flat row shape`)
+      assert.match(text, /returned_text_bytes[^\n]{0,40}(?:zero|0)/iu, `${name}: omitted text accounting`)
+      assert.match(text, /next_page[\s\S]{0,180}(?:same|repeats?)[^\n]{0,100}continent_id/iu, `${name}: same-continent next call`)
+      assert.match(text, /boundary row[\s\S]{0,100}(?:need not|may)[\s\S]{0,80}(?:exist|active|retire)/iu, `${name}: stable numeric boundary`)
+      assert.match(text, /recursive[\s\S]{0,220}(?:cannot|prevents?)[\s\S]{0,80}(?:widen|scope)/iu, `${name}: recursive scope`)
+    }
+    assert.match(decisions, /\| 97 \|[^\n]*bounded map read[^\n]*one continent[^\n]*LOCKED/iu)
+  })
+
   test('Wave 5 search and caller-held change-marker truths stay aligned', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],

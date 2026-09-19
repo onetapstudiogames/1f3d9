@@ -215,6 +215,24 @@ export function registerMcpTests(): void {
     assert.equal(invalidResult.result.isError, true)
     assert.match(invalidResult.result.content[0]!.text, /before_place_id.*scope.*continent_id/iu)
     assert.equal(sqlCalls().length, 0)
+
+    const mixed = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 4, method: 'tools/call',
+        params: {
+          name: 'look',
+          arguments: { scope: 'continent', continent_id: 160, view: 'outline' },
+        },
+      }),
+    })
+    const mixedResult = await mixed.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    assert.equal(mixedResult.result.isError, true)
+    assert.match(mixedResult.result.content[0]!.text, /scope=continent.*does not accept view/iu)
+    assert.equal(sqlCalls().length, 0)
   })
 
   test('MCP drawing inputs have parity with every owner write and upgrade route', async () => {

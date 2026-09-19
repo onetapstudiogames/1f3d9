@@ -78,7 +78,12 @@ import { publicJson } from './public-output.ts'
 import { loadPublicPlaceRecord, loadPublicThingRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
-import { cachedPublicMapOutline, readPublicMapOutline } from './public-map.ts'
+import {
+  PUBLIC_CONTINENT_MAP_PAGE_MAX,
+  cachedPublicMapOutline,
+  readPublicContinentMap,
+  readPublicMapOutline,
+} from './public-map.ts'
 import { missingActiveThingRefusal } from './refusal-text.ts'
 import {
   parsePublicChangeMarker,
@@ -308,19 +313,50 @@ export function mountWorldRoutes(app: Hono): void {
     const query = c.req.queries()
     const allowed = allowedPublicQuery(query, [
       'view', 'parent_id', 'limit', 'before_subplace_id', 'subplace_limit',
-      'after_change_marker',
+      'after_change_marker', 'continent_id', 'before_place_id',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(query, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const view = viewValue.value
-    if (view != null && view !== 'outline' && view !== 'full') {
-      return err(c, 400, 'view must be outline or full')
+    if (view != null && view !== 'outline' && view !== 'continent' && view !== 'full') {
+      return err(c, 400, 'view must be outline, continent, or full')
     }
-    const pagingNames = [
+    const outlineNames = [
       'parent_id', 'limit', 'before_subplace_id', 'subplace_limit', 'after_change_marker',
     ] as const
-    if (view !== 'outline' && pagingNames.some(name => Object.hasOwn(query, name))) {
+    const continentNames = ['continent_id', 'before_place_id'] as const
+    if (view === 'continent') {
+      const incompatible = outlineNames.find(name => Object.hasOwn(query, name))
+      if (incompatible === 'limit') {
+        return err(c, 400, `continent map pages return at most ${PUBLIC_CONTINENT_MAP_PAGE_MAX} places; remove limit and retry`)
+      }
+      if (incompatible) {
+        return err(c, 400, `continent map does not accept ${incompatible}; use only continent_id and optional before_place_id`)
+      }
+      const continentValue = singlePublicQueryValue(query, 'continent_id')
+      if (!continentValue.ok) return err(c, 400, continentValue.error)
+      const continentId = continentValue.value == null ? null : positiveId(continentValue.value)
+      if (continentId == null) {
+        return err(c, 400, 'continent_id is required and must be a positive integer; call look with no target to choose a current continent_id')
+      }
+      const cursorValue = singlePublicQueryValue(query, 'before_place_id')
+      if (!cursorValue.ok) return err(c, 400, cursorValue.error)
+      const cursor = cursorValue.value == null ? null : positiveId(cursorValue.value)
+      if (cursorValue.value != null && cursor == null) {
+        return err(c, 400, 'before_place_id must be a positive integer returned as next_before_place_id for this continent_id')
+      }
+      const page = await readPublicContinentMap(continentId, cursor)
+      if (!page) {
+        return err(c, 404, `continent_id ${continentId} is not an active continent directly inside the world; call look with no target to choose a current continent_id`)
+      }
+      c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
+      return publicJson(c, { view: 'continent', ...page })
+    }
+    if (continentNames.some(name => Object.hasOwn(query, name))) {
+      return err(c, 400, 'continent_id and before_place_id require view=continent; send both view=continent and a current continent_id')
+    }
+    if (view !== 'outline' && outlineNames.some(name => Object.hasOwn(query, name))) {
       return err(c, 400, 'map paging options require view=outline')
     }
     if (view === 'outline') {

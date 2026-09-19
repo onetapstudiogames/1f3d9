@@ -179,6 +179,16 @@ export function registerMapAndMarkersTests(): void {
         look: { scope: 'continent', continent_id: continent.id },
       })
     }
+
+    reset({ scenario: 'map outline' })
+    const branchResponse = await app.request('/api/map?view=outline&parent_id=160')
+    assert.equal(branchResponse.status, 200)
+    const branch = await branchResponse.json() as typeof body
+    assert.equal(
+      branch.subplaces.every(place => !Object.hasOwn(place, 'next_continent_page')),
+      true,
+      'non-root outline rows keep their previous shape',
+    )
   })
 
   test('the continent map returns fixed 50-row body-free flat pages and an exact same-continent next call', async () => {
