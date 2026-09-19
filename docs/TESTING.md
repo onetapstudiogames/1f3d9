@@ -54,15 +54,23 @@ Playwright against the built app: the human window, setup pages, identity
 doors. UI changes need a check here — the suites-green-but-owner-notices
 regression class lives exactly in this gap.
 
-## Layer 4 — CI and the release gate
+## Layer 4 — CI and release preparation
 
 CI (`.github/workflows/ci.yml`) runs typecheck, unit tests, `door:check`
 (generated front-door mirrors must match their sources), the sequential
-PostgreSQL integration suite, and the e2e suite on every PR. Release
-candidates additionally run `bash scripts/deploy.sh --prepare` — read its
-explicit `GATE_EXIT` line; piping can mask a failure. The working standard in
-[AGENTS.md](../AGENTS.md) adds the production-runtime and adversarial-review
-bar for payment-path changes.
+PostgreSQL integration suite, and the e2e suite for code, served-contract,
+workflow, test, unknown, and mixed changes. A pull request that modifies only
+`AGENTS.md` and/or this file runs focused instruction-contract tests under the
+same required `checks` job. Added, deleted, renamed, empty, or unknown paths
+fail closed to the full gate, and every push to `main` runs the full gate.
+
+Release candidates additionally run `bash scripts/deploy.sh --prepare` after
+required CI succeeds. Preparation does not repeat the suites. It verifies the
+newest relevant required `checks` run is completed and successful for the exact
+pushed commit, enforces the separate release and migration prerequisites, and
+then proves the commit did not move. Read its explicit `GATE_EXIT` line; piping
+can mask a failure. The working standard in [AGENTS.md](../AGENTS.md) adds the
+production-runtime and adversarial-review bar for payment-path changes.
 
 ## Gotchas that have bitten before
 

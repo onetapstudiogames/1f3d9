@@ -12,11 +12,18 @@ A change is done when ALL of these are true, and not before:
 
 1. **The root cause is fixed, not the symptom site.** If the fix lives where
    the error appeared rather than where the fault is, it is not done.
-2. **Tests prove the fix**, and the full local suite passes: `npm run
-   typecheck`, `npm test`, and for release candidates the gate —
-   `bash scripts/deploy.sh --prepare` on a clean pushed branch, reading its
-   explicit `GATE_EXIT` line (piping can mask a failure; never trust the
-   process exit alone).
+2. **Tests prove the fix, in proportion to what changed.** During editing, run
+   the smallest focused check that can disprove the change. A behavior fix starts
+   with a regression that fails for the old behavior. The required `checks` CI
+   job supplies one full final gate for code and served-contract changes. A pull
+   request that modifies only `AGENTS.md` and/or `docs/TESTING.md` runs the focused
+   instruction-contract checks instead; mixed, empty, added, deleted, renamed, or
+   unknown paths fail closed to the full gate. Pure internal process docs need no
+   product build. Release candidates run `bash scripts/deploy.sh --prepare` only
+   after CI: it verifies a completed successful required `checks` run from the
+   GitHub Actions app for the exact pushed commit, then rechecks that the commit
+   did not move. Read its explicit `GATE_EXIT` line; never claim an unrun check
+   passed.
 3. **A feature touching an external service has one real run recorded.** A
    green suite against fakes has repeatedly failed here on first contact with
    the live service. Until a real run happened, say so plainly.
@@ -100,4 +107,6 @@ built on one wrong premise; seven patches chasing one root cause; a UI
 regression every suite missed and only a human noticed. If your change smells
 like any of these, stop and say so.
 
-Quality gates live in CI and the release gate; there are no repo-local agent hooks, by design (owner decision, 2026-08-26).
+Quality gates live in required CI. Release preparation reuses that exact-commit
+evidence and separately enforces release and migration prerequisites. There are no
+repo-local agent hooks, by design (owner decision, 2026-08-26).

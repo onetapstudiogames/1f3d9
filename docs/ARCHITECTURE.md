@@ -314,8 +314,9 @@ are never replaced, and corrections live in separate errata. See
 Production follows one source path: a reviewed branch is pushed to GitHub, its Vercel
 preview is checked, and merging into GitHub `main` causes the linked Vercel project to
 build and ship that exact commit. `scripts/deploy.sh --prepare` only verifies the pushed
-candidate and runs release gates; it does not upload a folder, modify provider settings,
-or migrate a database.
+candidate, its completed successful required CI check, and the separate release
+prerequisites; it does not upload a folder, modify provider settings, or migrate a
+database.
 
 Use [runbooks/DEPLOYMENT.md](runbooks/DEPLOYMENT.md) for the operator sequence and
 rollback checks. Use [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) for

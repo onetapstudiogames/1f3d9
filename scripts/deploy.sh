@@ -135,18 +135,36 @@ verify_release_readiness() {
   echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/me-public-checkpoint/Gazette schema/withdrawal schema/drawing/held-luggage release readiness acknowledged"
 }
 
+verify_required_ci() {
+  local commit
+  commit=$(git rev-parse --verify HEAD)
+
+  command -v gh >/dev/null || {
+    echo "!! GitHub CLI is required to verify the required checks for this candidate"
+    return 1
+  }
+  command -v node >/dev/null || {
+    echo "!! Node.js is required to verify the required checks for this candidate"
+    return 1
+  }
+
+  gh api \
+    -H 'Accept: application/vnd.github+json' \
+    "repos/onetapstudiogames/1f3d9/commits/$commit/check-runs?per_page=100" |
+    node scripts/verify-required-check.mjs "$commit" || {
+      echo "!! required checks evidence must be completed and successful for this exact candidate"
+      return 1
+    }
+}
+
 echo "== 1. verify pushed release candidate"
 verify_pushed_candidate
 
 echo "== 2. verify release prerequisites"
 verify_release_readiness
 
-echo "== 3. run local release gates"
-[ -d node_modules ] || npm ci --no-audit --no-fund
-npm test
-npm run typecheck
-npm run test:postgres
-npm run test:e2e
+echo "== 3. verify required CI for this exact candidate"
+verify_required_ci
 
 echo "== 4. prove the tested commit did not move"
 verify_pushed_candidate
