@@ -281,7 +281,9 @@ export function respondToDatabaseStage6(
     coiner: fixtureState.current.actorHandle,
   }]
   if (q.includes('kind_revision_traits')) {
-    return fixtureState.current.thingTraitRecipe ? [{ trait_id: 4, recipe: fixtureState.current.thingTraitRecipe }] : []
+    return fixtureState.current.thingTraitRecipe
+      ? [{ trait_id: 4, name: 'glowing', recipe: fixtureState.current.thingTraitRecipe }]
+      : []
   }
   if (q.includes('/* public:traits */')) {
     const row = {

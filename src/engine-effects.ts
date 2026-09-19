@@ -57,6 +57,7 @@ export interface EffectExecutionContext {
   readonly destinationPlaceId: number | null
   readonly recipientId: number | null
   readonly sourceTraitId: number | null
+  readonly sourceTraitName?: string | null
   readonly lawAuthority: LawAuthority | null
   /** Stable recipe origin; unlike lawAuthority, check_label never replaces it. */
   readonly originThingId?: number | null
@@ -64,10 +65,24 @@ export interface EffectExecutionContext {
   readonly parentEffectId: number | null
   readonly generation: number
   readonly logicalAt: Date
+  /** Only the literal use action keeps a destroy when a later effect reaches its target. */
+  readonly sameUseDestroySkip?: boolean
+  /** Things ended by an earlier immediate effect in this same use. */
+  readonly destroyedThingIds?: readonly number[]
+}
+export interface SkippedEffect {
+  readonly effect: Effect['effect']
+  readonly target: SymbolicTarget
+  readonly sourceTrait: string | null
+  readonly sourceTraitId: number | null
+  readonly sourcePlaceId: number | null
+  readonly reason: 'target thing was destroyed earlier in this use'
 }
 export interface EffectExecutionOutcome {
   readonly effectsApplied: number
   readonly emittedTypedPublicEvent: boolean
+  readonly destroyedThingIds?: readonly number[]
+  readonly skippedEffects?: readonly SkippedEffect[]
 }
 export interface ThingState {
   readonly id: number
@@ -250,8 +265,35 @@ async function matchingLaw(
 function effectExecutionOutcome(
   effectsApplied: number,
   emittedTypedPublicEvent: boolean,
+  destroyedThingIds?: readonly number[],
+  skippedEffects: readonly SkippedEffect[] = [],
 ): EffectExecutionOutcome {
-  return Object.freeze({ effectsApplied, emittedTypedPublicEvent })
+  if (destroyedThingIds === undefined) {
+    return Object.freeze({ effectsApplied, emittedTypedPublicEvent })
+  }
+  return Object.freeze({
+    effectsApplied,
+    emittedTypedPublicEvent,
+    destroyedThingIds: Object.freeze([...destroyedThingIds]),
+    skippedEffects: Object.freeze([...skippedEffects]),
+  })
+}
+
+function skipAfterEarlierDestroy(
+  effect: Effect,
+  context: EffectExecutionContext,
+): SkippedEffect | null {
+  if (context.sameUseDestroySkip !== true || !('target' in effect)) return null
+  const target = resolveSymbolicTarget(effect.target, context)
+  if (target?.type !== 'thing' || !context.destroyedThingIds?.includes(target.id)) return null
+  return Object.freeze({
+    effect: effect.effect,
+    target: effect.target,
+    sourceTrait: context.sourceTraitName ?? null,
+    sourceTraitId: context.sourceTraitId,
+    sourcePlaceId: context.originPlaceId ?? null,
+    reason: 'target thing was destroyed earlier in this use' as const,
+  })
 }
 
 function effectOrigin(context: EffectExecutionContext): Readonly<{
@@ -281,12 +323,30 @@ export async function executeEffectsWithOutcome(
 ): Promise<EffectExecutionOutcome> {
   let effectsApplied = 0
   let emittedTypedPublicEvent = false
+  let destroyedThingIds = context.sameUseDestroySkip === true
+    ? (context.destroyedThingIds ?? [])
+    : undefined
+  let skippedEffects: readonly SkippedEffect[] | undefined = context.sameUseDestroySkip === true
+    ? []
+    : undefined
   for (const effect of effects) {
-    const outcome = await executeEffectWithOutcome(effect, context, db)
+    const outcomeContext = destroyedThingIds === undefined
+      ? context
+      : { ...context, destroyedThingIds }
+    const outcome = await executeEffectWithOutcome(effect, outcomeContext, db)
     effectsApplied += outcome.effectsApplied
     emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
+    destroyedThingIds = outcome.destroyedThingIds ?? destroyedThingIds
+    if (skippedEffects !== undefined) {
+      skippedEffects = [...skippedEffects, ...(outcome.skippedEffects ?? [])]
+    }
   }
-  return effectExecutionOutcome(effectsApplied, emittedTypedPublicEvent)
+  return effectExecutionOutcome(
+    effectsApplied,
+    emittedTypedPublicEvent,
+    destroyedThingIds,
+    skippedEffects,
+  )
 }
 
 export async function executeEffects(
@@ -302,6 +362,11 @@ async function executeEffectWithOutcome(
   context: EffectExecutionContext,
   db: TaggedSql,
 ): Promise<EffectExecutionOutcome> {
+  const destroyedThingIds = context.sameUseDestroySkip === true
+    ? (context.destroyedThingIds ?? [])
+    : undefined
+  const skipped = skipAfterEarlierDestroy(effect, context)
+  if (skipped) return effectExecutionOutcome(0, false, destroyedThingIds, [skipped])
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
     const origin = effectOrigin(context)
@@ -320,7 +385,7 @@ async function executeEffectWithOutcome(
         ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId}
       ) RETURNING id
     `)
-    return effectExecutionOutcome(1, false)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'block') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
@@ -336,7 +401,7 @@ async function executeEffectWithOutcome(
         now() + make_interval(secs => ${effect.seconds})
       ) RETURNING id
     `)
-    return effectExecutionOutcome(1, false)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'destroy') {
     const target = resolveSymbolicTarget(effect.target, context)
@@ -344,7 +409,13 @@ async function executeEffectWithOutcome(
       throw new EngineError(403, 'agents and non-thing targets cannot be destroyed; choose an active thing target instead')
     }
     await destroyThing(target.id, context, db)
-    return effectExecutionOutcome(1, true)
+    return effectExecutionOutcome(
+      1,
+      true,
+      destroyedThingIds !== undefined
+        ? [...destroyedThingIds, target.id]
+        : destroyedThingIds,
+    )
   }
   if (effect.effect === 'move') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -353,7 +424,7 @@ async function executeEffectWithOutcome(
     }
     const target = await requireTarget(resolved, db)
     const emittedTypedPublicEvent = await moveEffectTarget(target, effect.to, context, db)
-    return effectExecutionOutcome(1, emittedTypedPublicEvent)
+    return effectExecutionOutcome(1, emittedTypedPublicEvent, destroyedThingIds)
   }
   if (effect.effect === 'transfer') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -364,11 +435,11 @@ async function executeEffectWithOutcome(
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient; send one current resident in to_handle')
     const emittedTypedPublicEvent = await transferAsset(target, context.actorId, recipientId, db)
-    return effectExecutionOutcome(1, emittedTypedPublicEvent)
+    return effectExecutionOutcome(1, emittedTypedPublicEvent, destroyedThingIds)
   }
   if (effect.effect === 'wait') {
     const scheduled = await scheduleEffect(effect, context, db)
-    return effectExecutionOutcome(scheduled ? 1 : 0, scheduled)
+    return effectExecutionOutcome(scheduled ? 1 : 0, scheduled, destroyedThingIds)
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)

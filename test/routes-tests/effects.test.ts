@@ -96,6 +96,69 @@ export function registerEffectsTests(): void {
     assert.equal(emptyObject.status, 200)
   })
 
+  test('a later law names its skipped effect after an earlier trait destroys the source', async () => {
+    reset({
+      scenario: 'destroyed source skips later law',
+      thingTraitRecipe: { use: [{ effect: 'destroy', target: 'source' }] },
+      placeLawNames: ['late-inherited-label'],
+      lawTraitRecipe: {
+        use: [{ effect: 'label', target: 'source', label: 'too-late' }],
+      },
+    })
+
+    const response = await app.request('/api/action', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ action: 'use', thing_id: 41 }),
+    })
+
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as {
+      action: {
+        status: string
+        effects_applied: number
+        skipped_effects: readonly Record<string, unknown>[]
+      }
+    }
+    assert.equal(body.action.status, 'applied')
+    assert.equal(body.action.effects_applied, 1)
+    assert.deepEqual(body.action.skipped_effects, [{
+      effect: 'label',
+      target: 'source',
+      source_trait: 'late-inherited-label',
+      source_trait_id: 4,
+      source_place_id: 2,
+      reason: 'target thing was destroyed earlier in this use',
+    }])
+    assert.equal(fixtureState.current.thingWithdrawn, true)
+  })
+
+  test('consume keeps its prior result without same-use skip metadata', async () => {
+    reset({
+      scenario: 'consume retains its prior non-use result',
+      thingTraitRecipe: {
+        consume: [
+          { effect: 'destroy', target: 'source' },
+          { effect: 'label', target: 'source', label: 'too-late' },
+        ],
+      },
+    })
+
+    const response = await app.request('/api/action', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ action: 'consume', thing_id: 41 }),
+    })
+
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as {
+      action: { status: string; effects_applied: number; skipped_effects?: unknown }
+    }
+    assert.equal(body.action.status, 'applied')
+    assert.equal(body.action.effects_applied, 2)
+    assert.equal(body.action.skipped_effects, undefined)
+  })
+
   test('a visitor may use an open thing but not consume it', async () => {
     reset({
       scenario: 'shared use allowed',

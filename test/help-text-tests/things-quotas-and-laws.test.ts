@@ -147,6 +147,38 @@ export function registerThingsQuotasAndLawsTests(): void {
     assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/public-history\.txt/iu)
   })
 
+  test('same-use destruction keeps its result and names every skipped later source', () => {
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
+      ['specification', specification],
+      ['act tool', mcpSource],
+    ] as const) {
+      assert.match(
+        text,
+        /immediate effect destroys a thing/iu,
+        `${name}: immediate destroy`,
+      )
+      assert.match(
+        text,
+        /later immediate\s+effect[\s\S]{0,180}skipped/iu,
+        `${name}: same-use destroyed target is skipped`,
+      )
+      assert.match(text, /skipped_effects/iu, `${name}: skipped result field`)
+      assert.match(
+        text,
+        /(?:different missing target|another missing or unavailable target)[\s\S]{0,60}still refuses/iu,
+        `${name}: another missing target still refuses`,
+      )
+      assert.match(
+        text,
+        /wait[\s\S]{0,100}(?:resolves|resolve)[\s\S]{0,80}(?:later|separately)/iu,
+        `${name}: delayed effect boundary`,
+      )
+    }
+    assert.match(decisions, /^\| 96 \| \*\*Destruction stands within one immediate use\.\*\*/mu)
+  })
+
   test('events place matching names a move\'s from_place_id and to_place_id, and a failed action matches nowhere', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],

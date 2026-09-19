@@ -77,6 +77,165 @@ function taggedSql(client: Client): TaggedSql {
   }) as TaggedSql
 }
 
+test('PostgreSQL keeps an inner destroy when a later inherited law targets the gone source', async () => {
+  const postgres = await startPostgres()
+  try {
+    await postgres.client.query(schemaDdl)
+    await postgres.client.query(`
+      INSERT INTO residents (
+        id, handle, model, secret_hash, things_today, notes_today, agreement_actions_today
+      ) VALUES (1, 'stack-owner', 'integration-test', repeat('1', 64), 0, 0, 0)
+    `)
+    const outerPlaceId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT id, 'continent', 'outer-law-place', 'holds the inherited law', 1
+      FROM places WHERE place_kind = 'world'
+      RETURNING id
+    `)).rows[0]!.id
+    const innerPlaceId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'inner-law-place', 'destroys first', 1)
+      RETURNING id
+    `, [outerPlaceId])).rows[0]!.id
+    await postgres.client.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, $1)
+    `, [innerPlaceId])
+    await postgres.client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES
+        (1, 'inner-destroy', 'ends the used thing first',
+          '{"use":[{"effect":"destroy","target":"source"}],"consume":[{"effect":"destroy","target":"source"}]}'::jsonb, 1),
+        (2, 'late-inherited-label', 'labels the same source later',
+          '{"use":[{"effect":"label","target":"source","label":"too-late"}],"consume":[{"effect":"label","target":"source","label":"too-late"}]}'::jsonb, 1)
+    `)
+    await postgres.client.query(`
+      INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+      VALUES ($1, 1, 1, 'add', 0), ($2, 2, 1, 'add', 0)
+    `, [innerPlaceId, outerPlaceId])
+    const sourceThingId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id)
+      VALUES ($1, 'one-use specimen', 'the inner law ends this', 1, 1)
+      RETURNING id
+    `, [innerPlaceId])).rows[0]!.id
+
+    const db = taggedSql(postgres.client)
+    setEngineTransactionRunnerForTests(async (_ignored, work) => {
+      await postgres.client.query('BEGIN')
+      try {
+        const result = await work(taggedSql(postgres.client), true)
+        await postgres.client.query('COMMIT')
+        return result
+      } catch (error) {
+        await postgres.client.query('ROLLBACK')
+        throw error
+      }
+    })
+
+    const result = await runAction({
+      actorId: 1,
+      actorHandle: 'stack-owner',
+      action: 'use',
+      placeId: innerPlaceId,
+      sourceThingId,
+    }, db)
+    const skippedEffects = (result as unknown as {
+      skippedEffects?: readonly Record<string, unknown>[]
+    }).skippedEffects
+    assert.deepEqual(
+      {
+        status: result.status,
+        httpStatus: result.httpStatus,
+        error: result.error,
+        effectsApplied: result.effectsApplied,
+        skippedEffects,
+      },
+      {
+        status: 'applied',
+        httpStatus: 200,
+        error: null,
+        effectsApplied: 1,
+        skippedEffects: [{
+          effect: 'label',
+          target: 'source',
+          sourceTrait: 'late-inherited-label',
+          sourceTraitId: 2,
+          sourcePlaceId: outerPlaceId,
+          reason: 'target thing was destroyed earlier in this use',
+        }],
+      },
+    )
+
+    const committed = await postgres.client.query<{
+      withdrawn_at: string | null
+      status: string
+      detail: Record<string, unknown>
+      destroyed_events: string
+    }>(`
+      SELECT thing.withdrawn_at, resolution.status, resolution.detail,
+        (SELECT count(*)::text FROM events event
+         WHERE event.kind = 'thing_withdrawn'
+           AND (event.detail->>'thing_id')::bigint = thing.id) AS destroyed_events
+      FROM things thing
+      JOIN action_resolutions resolution ON resolution.action_run_id = $2
+      WHERE thing.id = $1
+    `, [sourceThingId, result.actionId])
+    assert.ok(committed.rows[0]?.withdrawn_at !== null, 'the first destroy must commit')
+    assert.equal(committed.rows[0]?.status, 'applied')
+    assert.equal(committed.rows[0]?.destroyed_events, '1')
+    assert.deepEqual(committed.rows[0]?.detail, {
+      effects_applied: 1,
+      place_id: innerPlaceId,
+      source_thing_id: sourceThingId,
+      skipped_effects: [{
+        effect: 'label',
+        target: 'source',
+        source_trait: 'late-inherited-label',
+        source_trait_id: 2,
+        source_place_id: outerPlaceId,
+        reason: 'target thing was destroyed earlier in this use',
+      }],
+    })
+
+    const repeatedUse = await runAction({
+      actorId: 1,
+      actorHandle: 'stack-owner',
+      action: 'use',
+      placeId: innerPlaceId,
+      sourceThingId,
+    }, db)
+    assert.equal(repeatedUse.status, 'failed')
+    assert.equal(repeatedUse.httpStatus, 404)
+    assert.equal(repeatedUse.effectsApplied, 0)
+    assert.deepEqual(repeatedUse.skippedEffects, [])
+
+    const consumedThingId = (await postgres.client.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id)
+      VALUES ($1, 'consume boundary specimen', 'keeps the prior non-use result', 1, 1)
+      RETURNING id
+    `, [innerPlaceId])).rows[0]!.id
+    const consumeResult = await runAction({
+      actorId: 1,
+      actorHandle: 'stack-owner',
+      action: 'consume',
+      placeId: innerPlaceId,
+      sourceThingId: consumedThingId,
+    }, db)
+    assert.equal(consumeResult.status, 'failed')
+    assert.equal(consumeResult.httpStatus, 404)
+    assert.equal(consumeResult.effectsApplied, 0)
+    assert.deepEqual(consumeResult.skippedEffects, [])
+    const consumeState = await postgres.client.query<{ withdrawn_at: string | null }>(`
+      SELECT withdrawn_at FROM things WHERE id = $1
+    `, [consumedThingId])
+    assert.equal(consumeState.rows[0]?.withdrawn_at, null, 'the failed consume must roll back its destroy')
+  } finally {
+    setEngineTransactionRunnerForTests(null)
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
 test('PostgreSQL fires a destroy brick: the source thing is withdrawn and one destroyed event is public', async () => {
   const postgres = await startPostgres()
   try {
