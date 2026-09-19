@@ -9,6 +9,7 @@ import {
   runAction,
   setHome,
   withEngineTransaction,
+  publicSkippedEffects,
   type ActionExecution,
   type Presence,
   type TaggedSql,
@@ -232,6 +233,9 @@ async function runResidentAction(
       status: result.status,
       place_id: placeId,
       effects_applied: result.effectsApplied,
+      ...(result.skippedEffects.length === 0 ? {} : {
+        skipped_effects: publicSkippedEffects(result.skippedEffects),
+      }),
       ...(action === 'use' && result.status === 'noop' ? {
         reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
       } : {}),

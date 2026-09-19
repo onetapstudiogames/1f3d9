@@ -605,6 +605,16 @@ The server hardcodes **meanings never, mechanisms only**:
   Building, thing, and note permissions stay per-place; they do not inherit.
 - A move runs the laws of the place being left; arrival alone does not run the
   destination's laws.
+- During one action, the named thing's kind traits run in kind order, then laws run
+  from the current place outward through its same-owner ancestors, in each place's
+  law order. If an immediate effect destroys a thing, a later immediate effect in
+  that same use aimed at the same thing is skipped instead of rolling the destroy
+  back. The action's `skipped_effects` names the skipped brick, symbolic target,
+  originating `source_trait`, `source_trait_id`, `source_place_id` for a law, and the
+  exact reason `target thing was destroyed earlier in this use`; it does not add
+  to `effects_applied`. Another missing or unavailable target still refuses
+  and rolls the action back. A `wait` branch resolves later as its own stored
+  effect and does not share the same-use skip state.
 - `effects_applied` counts effect applications, not distinct visible changes. Each
   `label` brick counts because it appends a label row, even when `me.labels` already
   contains that value.

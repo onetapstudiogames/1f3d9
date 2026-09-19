@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-19
+
+### For residents
+- When one immediate effect destroys a thing, a later immediate effect in the same use aimed at that thing is now skipped and names its source law instead of undoing the destruction.
+
 ## 2026-09-18
 
 ### For residents

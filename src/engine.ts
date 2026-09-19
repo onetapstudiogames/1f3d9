@@ -2,6 +2,8 @@ import { Pool, type PoolClient } from '@neondatabase/serverless'
 import { COLLISION_CONFLICT_MESSAGE, isRetryableCollision } from './core.ts'
 import { runtimeDatabaseUrl, sql } from './db.ts'
 import {
+  EFFECT_BRICKS,
+  SYMBOLIC_TARGETS,
   effectsForAction,
   isBasicAction,
   type BasicAction,
@@ -15,6 +17,7 @@ import {
   thingState,
   withdrawOwnedThing,
   type EffectExecutionContext,
+  type SkippedEffect,
 } from './engine-effects.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
@@ -178,6 +181,7 @@ export interface EffectiveLaw {
 interface StoredProgram {
   readonly effects: readonly Effect[]
   readonly sourceTraitId: number | null
+  readonly sourceTraitName: string | null
   readonly sourceThingId: number | null
   readonly lawSourcePlaceId: number | null
 }
@@ -216,6 +220,7 @@ export interface ActionExecution {
   readonly httpStatus: number
   readonly error: string | null
   readonly effectsApplied: number
+  readonly skippedEffects: readonly SkippedEffect[]
 }
 
 export interface SymbolicContext {
@@ -757,6 +762,7 @@ export async function lawProgramsForAction(
     const effects = effectsForAction(law.recipe, action)
     return effects.length === 0 ? [] : [{
       effects, sourceTraitId: law.traitId,
+      sourceTraitName: law.name,
       sourceThingId: null, lawSourcePlaceId: law.sourcePlaceId,
     }]
   })
@@ -769,7 +775,7 @@ export async function thingProgramsForAction(
 ): Promise<StoredProgram[]> {
   const id = positiveId(thingId, 'thing id')
   const rows = await queryRows<Record<string, unknown>>(db`
-    SELECT trait.id AS trait_id, trait.recipe
+    SELECT trait.id AS trait_id, trait.name, trait.recipe
     FROM things thing
     JOIN kind_revision_traits link
       ON link.kind_id = thing.kind_id AND link.revision = thing.current_revision
@@ -781,6 +787,7 @@ export async function thingProgramsForAction(
     const effects = effectsForAction(row.recipe, action)
     return effects.length === 0 ? [] : [{
       effects, sourceTraitId: rowId(row.trait_id, 'source trait id'),
+      sourceTraitName: String(row.name),
       sourceThingId: id, lawSourcePlaceId: null,
     }]
   })
@@ -917,6 +924,53 @@ function resolutionDetail(value: unknown): Record<string, unknown> {
   return objectRecord(value) ?? {}
 }
 
+export function publicSkippedEffects(skippedEffects: readonly SkippedEffect[]) {
+  return skippedEffects.map(effect => Object.freeze({
+    effect: effect.effect,
+    target: effect.target,
+    source_trait: effect.sourceTrait,
+    source_trait_id: effect.sourceTraitId,
+    source_place_id: effect.sourcePlaceId,
+    reason: effect.reason,
+  }))
+}
+
+function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): readonly SkippedEffect[] {
+  if (!Array.isArray(detail.skipped_effects)) return []
+  return detail.skipped_effects.flatMap(value => {
+    const row = objectRecord(value)
+    if (!row) return []
+    const effect = typeof row.effect === 'string'
+      && EFFECT_BRICKS.includes(row.effect as Effect['effect'])
+      ? row.effect as Effect['effect'] : null
+    const target = typeof row.target === 'string'
+      && SYMBOLIC_TARGETS.includes(row.target as SymbolicTarget)
+      ? row.target as SymbolicTarget : null
+    const sourceTrait = row.source_trait === null || typeof row.source_trait === 'string'
+      ? row.source_trait as string | null : null
+    const sourceTraitId = row.source_trait_id === null
+      ? null : integer(row.source_trait_id)
+    const sourcePlaceId = row.source_place_id === null
+      ? null : integer(row.source_place_id)
+    if (
+      effect === null
+      || target === null
+      || row.reason !== 'target thing was destroyed earlier in this use'
+      || (row.source_trait !== null && sourceTrait === null)
+      || (row.source_trait_id !== null && sourceTraitId === null)
+      || (row.source_place_id !== null && sourcePlaceId === null)
+    ) return []
+    return [Object.freeze({
+      effect,
+      target,
+      sourceTrait,
+      sourceTraitId,
+      sourcePlaceId,
+      reason: 'target thing was destroyed earlier in this use' as const,
+    })]
+  })
+}
+
 /** The resolution row commits atomically with the action, so it is the canonical outcome. */
 async function committedResolution(
   actionId: number,
@@ -935,13 +989,17 @@ async function committedResolution(
       httpStatus: 200,
       error: null,
       effectsApplied: integer(detail.effects_applied) ?? 0,
+      skippedEffects: skippedEffectsFromDetail(detail),
     }
   }
   if (row.status === 'blocked') {
     const message = typeof detail.error === 'string'
       ? detail.error
       : 'action is temporarily blocked'
-    return { actionId, status: 'blocked', httpStatus: 403, error: message, effectsApplied: 0 }
+    return {
+      actionId, status: 'blocked', httpStatus: 403, error: message,
+      effectsApplied: 0, skippedEffects: [],
+    }
   }
   return null
 }
@@ -1010,6 +1068,7 @@ async function recordFailedExecution(
     httpStatus: failure.status,
     error: failure.message,
     effectsApplied: 0,
+    skippedEffects: [],
   }
 }
 
@@ -1039,6 +1098,7 @@ async function resolveUncertainCommit(
       httpStatus: 500,
       error: UNCONFIRMED_ACTION_ERROR,
       effectsApplied: 0,
+      skippedEffects: [],
     }
   }
 }
@@ -1313,10 +1373,13 @@ function actionContext(
     destinationPlaceId: input.destinationPlaceId,
     recipientId: input.recipientId,
     sourceTraitId: null,
+    sourceTraitName: null,
     lawAuthority: null,
     parentEffectId: null,
     generation: 0,
     logicalAt: new Date(),
+    sameUseDestroySkip: input.action === 'use',
+    destroyedThingIds: [],
   }
 }
 
@@ -1394,6 +1457,7 @@ export async function runAction(
           httpStatus: 403,
           error: cause.callerError,
           effectsApplied: 0,
+          skippedEffects: [],
         }
       }
       if (input.action === 'go_home') {
@@ -1412,7 +1476,10 @@ export async function runAction(
           },
           transaction,
         )
-        return { actionId, status: 'applied', httpStatus: 200, error: null, effectsApplied: 0 }
+        return {
+          actionId, status: 'applied', httpStatus: 200, error: null,
+          effectsApplied: 0, skippedEffects: [],
+        }
       }
 
       const source = await sourceReady(input, transaction)
@@ -1442,13 +1509,17 @@ export async function runAction(
           const base = actionContext(actionId, input, sharedSourceThingId)
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
+          let destroyedThingIds: readonly number[] = []
+          let skippedEffects: readonly SkippedEffect[] = []
           for (const program of programs) {
             const outcome = await executeEffectsWithOutcome(program.effects, {
               ...base,
               sourceTraitId: program.sourceTraitId,
+              sourceTraitName: program.sourceTraitName,
               sourceThingId: program.sourceThingId ?? base.sourceThingId,
               originThingId: program.sourceThingId,
               originPlaceId: program.lawSourcePlaceId,
+              destroyedThingIds,
               lawAuthority: program.lawSourcePlaceId === null || program.sourceTraitId === null
                 ? null
                 : {
@@ -1458,6 +1529,8 @@ export async function runAction(
             }, transaction)
             effectsApplied += outcome.effectsApplied
             emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
+            destroyedThingIds = outcome.destroyedThingIds ?? destroyedThingIds
+            skippedEffects = [...skippedEffects, ...(outcome.skippedEffects ?? [])]
           }
           if (input.primitiveHandledByCaller) {
             if (!input.performPrimitive) {
@@ -1481,11 +1554,17 @@ export async function runAction(
           return {
             effectsApplied,
             emittedTypedPublicEvent,
+            skippedEffects,
             primitiveApplied: intrinsic.applied || input.primitiveHandledByCaller,
           }
         },
       )
-      const { effectsApplied, emittedTypedPublicEvent, primitiveApplied } = actionOutcome
+      const {
+        effectsApplied,
+        emittedTypedPublicEvent,
+        primitiveApplied,
+        skippedEffects,
+      } = actionOutcome
       const status: ResolutionStatus = effectsApplied === 0 && !primitiveApplied
         && input.action === 'use' ? 'noop' : 'applied'
       await recordActionResolution(
@@ -1495,6 +1574,8 @@ export async function runAction(
         status,
         {
           effects_applied: effectsApplied,
+          ...(skippedEffects.length === 0
+            ? {} : { skipped_effects: publicSkippedEffects(skippedEffects) }),
           ...(input.action === 'move'
             && input.placeId !== null
             && input.destinationPlaceId !== null
@@ -1517,7 +1598,9 @@ export async function runAction(
         transaction,
         input.action === 'move' || !emittedTypedPublicEvent,
       )
-      return { actionId, status, httpStatus: 200, error: null, effectsApplied }
+      return {
+        actionId, status, httpStatus: 200, error: null, effectsApplied, skippedEffects,
+      }
     })
   } catch (error) {
     if (error instanceof CommitOutcomeUnknownError) {
