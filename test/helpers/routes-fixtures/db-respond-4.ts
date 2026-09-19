@@ -373,6 +373,7 @@ export function respondToDatabaseStage4(
     q.includes('from moderation_actions')
     && !q.includes('update places set')
     && !q.includes('/* public:window-directory */')
+    && !q.includes('/* public:map-continent */')
     && !q.includes('as has_drawing')
   ) {
     const targetType = String(params.find(value => (

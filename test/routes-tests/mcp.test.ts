@@ -149,6 +149,92 @@ export function registerMcpTests(): void {
     assert.equal(fixtureState.current.offer.buyerWallet, BUYER_WALLET)
   })
 
+  test('MCP look advertises and dispatches the bounded continent continuation', async () => {
+    reset({ scenario: 'map continent' })
+    const listed = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    const tools = (await listed.json() as {
+      result: { tools: Array<{
+        name: string
+        description: string
+        inputSchema: { properties?: Record<string, unknown> }
+      }> }
+    }).result.tools
+    const look = tools.find(tool => tool.name === 'look')
+    assert.ok(look)
+    assert.match(look.description, /one continent.*50.*body-free.*next/iu)
+    const properties = look.inputSchema.properties ?? {}
+    assert.deepEqual((properties.scope as { enum?: string[] } | undefined)?.enum, ['continent'])
+    assert.ok('continent_id' in properties)
+    assert.ok('before_place_id' in properties)
+
+    const response = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: { name: 'look', arguments: { scope: 'continent', continent_id: 160 } },
+      }),
+    })
+    const result = await response.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    assert.equal(result.result.isError, false)
+    const body = JSON.parse(result.result.content[0]!.text) as {
+      view: string
+      continent: { id: number }
+      places: Array<{ id: number }>
+      places_page: {
+        maximum_items: number
+        next_page: { look: Record<string, unknown> } | null
+      }
+    }
+    assert.equal(body.view, 'continent')
+    assert.equal(body.continent.id, 160)
+    assert.equal(body.places.length, 50)
+    assert.equal(body.places_page.maximum_items, 50)
+    assert.deepEqual(body.places_page.next_page?.look, {
+      scope: 'continent', continent_id: 160, before_place_id: 311,
+    })
+
+    reset({ scenario: 'map continent' })
+    const invalidCursor = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 3, method: 'tools/call',
+        params: { name: 'look', arguments: { before_place_id: 311 } },
+      }),
+    })
+    const invalidResult = await invalidCursor.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    assert.equal(invalidResult.result.isError, true)
+    assert.match(invalidResult.result.content[0]!.text, /before_place_id.*scope.*continent_id/iu)
+    assert.equal(sqlCalls().length, 0)
+
+    const mixed = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 4, method: 'tools/call',
+        params: {
+          name: 'look',
+          arguments: { scope: 'continent', continent_id: 160, view: 'outline' },
+        },
+      }),
+    })
+    const mixedResult = await mixed.json() as {
+      result: { isError: boolean; content: Array<{ text: string }> }
+    }
+    assert.equal(mixedResult.result.isError, true)
+    assert.match(mixedResult.result.content[0]!.text, /scope=continent.*does not accept view/iu)
+    assert.equal(sqlCalls().length, 0)
+  })
+
   test('MCP drawing inputs have parity with every owner write and upgrade route', async () => {
     reset({ scenario: 'mcp drawing contract', openToNotes: true })
     const listed = await app.request('/mcp', {

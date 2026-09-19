@@ -30,6 +30,7 @@ import type {
 import {
   descendingPage,
   kindRow,
+  mapContinentRows,
   mapOutlineParent,
   mapOutlineRows,
   paginationEvents,
@@ -420,7 +421,19 @@ export function respondToDatabaseStage5(
           outline_parent: mapOutlineParent(parentId),
           total_items: all.length,
           total_text_bytes: totalTextBytes,
-        }]
+      }]
+  }
+  if (fixtureState.current.scenario === 'map continent' &&
+      q.includes('/* public:map-continent */')) {
+    const continentId = Number(params[0])
+    if (continentId !== 160) return []
+    const page = descendingPage(mapContinentRows(), params[2], params[3])
+    return page.length > 0
+      ? page.map(row => ({
+          ...row,
+          selected_continent: mapOutlineParent(continentId),
+        }))
+      : [{ id: null, selected_continent: mapOutlineParent(continentId) }]
   }
   if (fixtureState.current.scenario === 'window outline' && (
     q.includes('/* public:window-outline-totals */') ||

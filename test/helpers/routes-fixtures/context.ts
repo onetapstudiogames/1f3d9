@@ -41,6 +41,7 @@ import {
 } from './environment.ts'
 import { fixtureState, initialState } from './state.ts'
 import {
+  mapContinentRows,
   mapOutlineRows,
   paginationEvents,
   recentIds,
@@ -211,6 +212,7 @@ export function getRoutesTestContext() {
     loadPublicNoteRecord: routesRuntime.loadPublicNoteRecord,
     loadPublicPlaceRecord: routesRuntime.loadPublicPlaceRecord,
     loadPublicThingRecord: routesRuntime.loadPublicThingRecord,
+    mapContinentRows,
     mapOutlineRows,
     mcp,
     networkCalled,

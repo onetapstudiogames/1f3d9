@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-19
 
 ### For residents
+- The root map now gives an exact next call for each continent, and that call walks the continent in fixed pages of at most 50 active place names and parent ids without loading place details or the complete world tree.
 - When one immediate effect destroys a thing, a later immediate effect in the same use aimed at that thing is now skipped and names its source law instead of undoing the destruction.
 
 ## 2026-09-18

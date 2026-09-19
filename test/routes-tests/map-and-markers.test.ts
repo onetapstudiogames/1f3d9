@@ -6,6 +6,7 @@ export function registerMapAndMarkersTests(): void {
   const {
     app,
     fixtureState,
+    mapContinentRows,
     mapOutlineRows,
     recentIds,
     reset,
@@ -156,6 +157,138 @@ export function registerMapAndMarkersTests(): void {
     } finally {
       Date.now = originalNow
     }
+  })
+
+  test('the root outline gives every returned continent one exact bounded continuation', async () => {
+    reset({ scenario: 'map outline' })
+    const response = await app.request('/api/map?view=outline')
+    assert.equal(response.status, 200)
+    const body = await response.json() as {
+      subplaces: Array<{
+        id: number
+        next_continent_page?: {
+          href: string
+          look: { scope: string; continent_id: number }
+        }
+      }>
+    }
+    assert.ok(body.subplaces.length > 0)
+    for (const continent of body.subplaces) {
+      assert.deepEqual(continent.next_continent_page, {
+        href: `/api/map?view=continent&continent_id=${continent.id}`,
+        look: { scope: 'continent', continent_id: continent.id },
+      })
+    }
+
+    reset({ scenario: 'map outline' })
+    const branchResponse = await app.request('/api/map?view=outline&parent_id=160')
+    assert.equal(branchResponse.status, 200)
+    const branch = await branchResponse.json() as typeof body
+    assert.equal(
+      branch.subplaces.every(place => !Object.hasOwn(place, 'next_continent_page')),
+      true,
+      'non-root outline rows keep their previous shape',
+    )
+  })
+
+  test('the continent map returns fixed 50-row body-free flat pages and an exact same-continent next call', async () => {
+    reset({ scenario: 'map continent' })
+    const firstResponse = await app.request('/api/map?view=continent&continent_id=160')
+    assert.equal(firstResponse.status, 200)
+    const first = await firstResponse.json() as {
+      view: string
+      continent: { id: number; parent_id: number; name: string }
+      places: Array<Record<string, unknown> & { id: number; parent_id: number; name: string }>
+      places_page: {
+        maximum_items: number
+        returned_items: number
+        returned_text_bytes: number
+        has_more: boolean
+        next_before_place_id: number | null
+        next_page: null | {
+          href: string
+          look: { scope: string; continent_id: number; before_place_id: number }
+        }
+      }
+      omitted: string
+      map_complete: boolean
+    }
+    assert.equal(first.view, 'continent')
+    assert.deepEqual(
+      { id: first.continent.id, parent_id: first.continent.parent_id },
+      { id: 160, parent_id: 1 },
+    )
+    assert.deepEqual(first.places.map(place => place.id), mapContinentRows().slice(0, 50).map(place => place.id))
+    assert.equal(first.places.length, 50)
+    assert.equal(first.places.every(place => Number.isInteger(place.parent_id)), true)
+    assert.equal(first.places.every(place => !Object.hasOwn(place, 'description')), true)
+    assert.equal(first.places.every(place => !Object.hasOwn(place, 'purpose')), true)
+    assert.equal(first.places.every(place => !Object.hasOwn(place, 'front_matter')), true)
+    assert.equal(first.places.every(place => !Object.hasOwn(place, 'children')), true)
+    assert.deepEqual(first.places_page, {
+      maximum_items: 50,
+      returned_items: 50,
+      returned_text_bytes: 0,
+      has_more: true,
+      next_before_place_id: 311,
+      next_page: {
+        href: '/api/map?view=continent&continent_id=160&before_place_id=311',
+        look: { scope: 'continent', continent_id: 160, before_place_id: 311 },
+      },
+    })
+    assert.match(first.omitted, /place details.*nested children.*look.*place_id|look.*place_id.*place details.*nested children/iu)
+    assert.equal(first.map_complete, false)
+
+    const secondResponse = await app.request(
+      '/api/map?view=continent&continent_id=160&before_place_id=311',
+    )
+    assert.equal(secondResponse.status, 200)
+    const second = await secondResponse.json() as typeof first
+    assert.deepEqual(second.places.map(place => place.id), mapContinentRows().slice(50).map(place => place.id))
+    assert.equal(second.places.some(place => first.places.some(previous => previous.id === place.id)), false)
+    assert.deepEqual(second.places_page, {
+      maximum_items: 50,
+      returned_items: 10,
+      returned_text_bytes: 0,
+      has_more: false,
+      next_before_place_id: null,
+      next_page: null,
+    })
+  })
+
+  test('continent map query rules keep every numeric cursor inside one selected active root continent', async () => {
+    for (const path of [
+      '/api/map?view=continent',
+      '/api/map?view=continent&continent_id=160&continent_id=159',
+      '/api/map?view=continent&continent_id=0',
+      '/api/map?view=continent&continent_id=160&before_place_id=0',
+      '/api/map?view=outline&continent_id=160',
+      '/api/map?view=full&before_place_id=200',
+      '/api/map?before_place_id=200',
+      '/api/map?view=continent&continent_id=160&limit=10',
+    ]) {
+      reset({ scenario: 'map continent' })
+      const response = await app.request(path)
+      assert.equal(response.status, 400, path)
+      assert.equal(sqlCalls().length, 0, `${path} must fail before PostgreSQL work`)
+    }
+
+    reset({ scenario: 'map continent' })
+    const missing = await app.request('/api/map?view=continent&continent_id=159')
+    assert.equal(missing.status, 404)
+    assert.match(
+      (await missing.json() as { error: string }).error,
+      /continent_id 159.*active continent.*world.*look.*no target/iu,
+    )
+
+    reset({ scenario: 'map continent' })
+    const bounded = await app.request(
+      '/api/map?view=continent&continent_id=160&before_place_id=2147483647',
+    )
+    assert.equal(bounded.status, 200)
+    const body = await bounded.json() as { continent: { id: number }; places: Array<{ id: number }> }
+    assert.equal(body.continent.id, 160)
+    assert.deepEqual(body.places.map(place => place.id), mapContinentRows().slice(0, 50).map(place => place.id))
   })
 
   test('map modes reject ambiguous, unsupported, and cross-mode options before PostgreSQL', async () => {
