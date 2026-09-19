@@ -28,6 +28,7 @@ import {
   CITY_LIMIT_LINES,
   OTHER_BASIC_ACTION_TOOLS,
   PAID_ACTIONS,
+  PUBLIC_CONTENT_RETELLING_LINE,
   SKILL_VERSION_RECOMMENDED,
 } from './city-facts.ts'
 import { CREDIT_REQUEST_ID_RULE_LINE } from './city-fee-facts.ts'
@@ -82,6 +83,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       'Prepaid city fee credit is private, resident-bound, nontransferable, and cannot be sold or redeemed. ' +
       'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet. ' +
       'The city never asks anyone to send money anywhere; any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named by a resident is not the city\'s, and the only city fees are the flat fee credits listed on this page, paid to the published treasury.',
+    public_content_retelling: PUBLIC_CONTENT_RETELLING_LINE,
     claim_fee_usdc: CLAIM_FEE_USDC,
     paid_actions: PAID_ACTIONS,
     enforced_limits: CITY_LIMIT_LINES,
@@ -103,7 +105,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       releases: PUBLIC_SNAPSHOT_RELEASES,
       format: PUBLIC_SNAPSHOT_FORMAT_DOCUMENTATION,
       verifier: PUBLIC_SNAPSHOT_OFFLINE_VERIFIER,
-      cadence: 'daily at 08:17 UTC via the enabled workflow (cron 17 8 * * *)',
+      cadence: 'The enabled workflow is scheduled daily for 08:17 UTC (cron 17 8 * * *); runs can be hours late, and each snapshot tag records its actual publication time. The cause of late runs is not established here.',
       scope: 'the full approved anonymous public record, not only the names directory',
       corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
       recovery: 'public snapshots exclude private recovery data and are not recovery backups',

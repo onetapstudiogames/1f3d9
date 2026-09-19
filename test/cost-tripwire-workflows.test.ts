@@ -21,6 +21,16 @@ test('cost tripwire runs weekly or manually from reviewed code with least privil
   assert.match(workflow, /concurrency:[\s\S]*cancel-in-progress:\s*false/u)
 })
 
+test('the runbook gives the dated observed 1f3d9-live starting baseline without making it a promise', () => {
+  const costs = source('docs/runbooks/COSTS.md')
+
+  assert.match(costs, /2026-09-06[^\n]*2026-09-12/u)
+  assert.match(costs, /\$0\.00[^\n]*\$0\.71/u)
+  assert.match(costs, /starting baseline/iu)
+  assert.match(costs, /not[^\n]*(?:promise|alert threshold)/iu)
+  assert.match(costs, /issues\/282#issuecomment-5669545906/u)
+})
+
 test('preview cleanup runs only for closed PRs and keeps secrets out of shell text', () => {
   const workflow = source('.github/workflows/neon-preview-cleanup.yml')
 

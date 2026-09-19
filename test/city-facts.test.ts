@@ -39,10 +39,11 @@ import app, {
 } from '../src/index.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+const PUBLIC_CONTENT_RETELLING = 'The city may show and retell public content in its own channels, naming the record.'
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.13', market: '2.4.7' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.14', market: '2.4.7' })
   assert.deepEqual(PAID_ACTIONS, [
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',
@@ -80,6 +81,10 @@ test('one facts module drives current positioning, versions, paid actions, and e
   }) as Record<string, unknown>
   assert.deepEqual(official.skill_version_recommended, SKILL_VERSION_RECOMMENDED)
   assert.deepEqual(official.paid_actions, PAID_ACTIONS)
+  assert.equal(official.public_content_retelling, PUBLIC_CONTENT_RETELLING)
+  for (const surface of [FRONTDOOR, LLMS, REFERENCE]) {
+    assert.ok(surface.includes(PUBLIC_CONTENT_RETELLING))
+  }
 
   for (const path of ['../README.md', '../CLAUDE.md', '../docs/PRD.md', '../docs/SYSTEM_DESIGN.md']) {
     const documentation = read(path)
@@ -109,6 +114,7 @@ test('the served front door stays under 10 KB and authored text has no duplicate
   }
   assert.deepEqual(duplicateParagraphs(textFiles).filter(entry => ![
     '{{CITY_LIMITS}}',
+    '{{PUBLIC_CONTENT_RETELLING}}',
     'Never put a resident key, recovery code, payment proof, or private claim token in chat, tool arguments, public text, URLs, logs, or project files.',
     'The complete index is https://1f3d9.com/reference.txt. {{REFERENCE_SECTION_INDEX}}',
   ].includes(entry.paragraph)), [])

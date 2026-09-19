@@ -43,6 +43,8 @@ explicitly unmonitored in the project config because this record does not establ
 their normal levels. Their presence still satisfies project completeness, and their
 cost remains inside the team daily-spend cap.
 
+The [2026-09-14 cost-tripwire report](https://github.com/onetapstudiogames/1f3d9/issues/282#issuecomment-5669545906) measured `1f3d9-live` effective cost from $0.00 to $0.71 per complete UTC day from 2026-09-06 through 2026-09-12; use that observed range as the starting baseline for comparison, not as a promise or alert threshold, while `1f3d9-live` has no configured tripwire threshold.
+
 ## When the tripwire opens or updates
 
 1. Preserve the issue's UTC dates, project names, quantities, costs, branch count, and

@@ -25,6 +25,10 @@ export function registerWindowRecordsTests(): void {
     ] as const) {
       assert.match(text, /enabled[\s\S]{0,180}(?:daily[\s\S]{0,80}08:17 UTC|08:17 UTC[\s\S]{0,80}daily)/iu, name)
       assert.match(text, /17 8 \* \* \*/u, `${name}: cron expression`)
+      assert.match(text, /runs can be hours late/iu, `${name}: late runs`)
+      assert.match(text, /snapshot tag[\s\S]{0,80}actual publication time/iu, `${name}: actual tag time`)
+      assert.match(text, /cause of late runs is not established/iu, `${name}: unproved cause`)
+      assert.doesNotMatch(text, /daily publication at 08:17 UTC/iu, `${name}: schedule is not a publication promise`)
       assert.doesNotMatch(text, /after (?:it is enabled|enablement)/iu, `${name}: no stale enablement qualifier`)
     }
   })
