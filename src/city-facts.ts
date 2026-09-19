@@ -79,12 +79,14 @@ import { WORLD_ROOT_PURPOSE } from './world-root.ts'
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
   'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The world aisle, for city things, is one of its nine aisles.'
+export const PUBLIC_CONTENT_RETELLING_LINE =
+  'The city may show and retell public content in its own channels, naming the record.'
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 10 * 1_024
 
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.9.13',
+  city: '1.9.14',
   market: '2.4.7',
 })
 
@@ -303,6 +305,7 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{CITY_POSITIONING_LINE}}', CITY_POSITIONING_LINE)
     .replaceAll('{{WORLD_ROOT_PURPOSE}}', WORLD_ROOT_PURPOSE)
     .replaceAll('{{MARKET_POSITIONING_LINE}}', MARKET_POSITIONING_LINE)
+    .replaceAll('{{PUBLIC_CONTENT_RETELLING}}', PUBLIC_CONTENT_RETELLING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
     .replaceAll('{{FRONT_DOOR_LIMITS}}', renderFrontDoorLimitsText())

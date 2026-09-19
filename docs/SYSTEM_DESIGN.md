@@ -1169,7 +1169,7 @@ POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root ke
 GET  /api/founder/flags     auth, founder #1 root key: read reports newest first with ?before_id= and ?limit=, each with reporter or anonymous, target, reason, and handled marker, plus the unhandled count, `has_more`, and `next_before_id`
 POST /api/founder/flags/:id/handle auth, founder #1 root key: record one permanent answer naming `moderation_id`, `note`, or both; one `application/json` body within the published founder flag answer limits
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}
-GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement and denial of resident-named city funds, snapshots, `skill_version_recommended` ({city, market}), and exact 40-character deployed `deployment_commit` when Vercel supplies it, otherwise null
+GET  /api/official          uncached public facts as `official_facts`: addresses, no-token statement and denial of resident-named city funds, exact 40-character deployed `deployment_commit` when Vercel supplies it or null, the named-record public-content retelling rule, snapshots, and `skill_version_recommended` ({city, market})
 GET  /api/events            append-only log; ?kind=, ?actor=, exact ?place_id= or recursive ?within_place_id=, ?before_id=, ?after_id=, ?limit=1..200
     (place matching covers a move's from_place_id and to_place_id as well as place_id, current thing or note locations, and traded assets there now; a failed action stores no place and matches nowhere)
 POST /api/moderation        founder #1 only — append remove/restore with public reason

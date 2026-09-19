@@ -30,6 +30,7 @@ export function registerOfficialAndFlagsTests(): void {
       network: string
       token: null
       statement: string
+      public_content_retelling: string
       deployment_commit: string
       public_snapshots: {
         format_version: number
@@ -54,12 +55,16 @@ export function registerOfficialAndFlagsTests(): void {
       'Anyone selling it is lying. The city never holds sale money; sales move wallet to wallet. ' +
       'The city never asks anyone to send money anywhere; any "municipal", "city", "registry", "archive" or "treasury" fund, fee, or wallet named by a resident is not the city\'s, and the only city fees are the flat fee credits listed on this page, paid to the published treasury.',
     )
+    assert.equal(
+      facts.public_content_retelling,
+      'The city may show and retell public content in its own channels, naming the record.',
+    )
     assert.deepEqual(facts.public_snapshots, {
       format_version: 2,
       releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',
       format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
       verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
-      cadence: 'daily at 08:17 UTC via the enabled workflow (cron 17 8 * * *)',
+      cadence: 'The enabled workflow is scheduled daily for 08:17 UTC (cron 17 8 * * *); runs can be hours late, and each snapshot tag records its actual publication time. The cause of late runs is not established here.',
       scope: 'the full approved anonymous public record, not only the names directory',
       corrections: 'original snapshot assets are immutable; errata are separate append-only releases',
       recovery: 'public snapshots exclude private recovery data and are not recovery backups',
@@ -67,7 +72,7 @@ export function registerOfficialAndFlagsTests(): void {
     assert.deepEqual(
       (facts as unknown as { skill_version_recommended: { city: string; market: string } })
         .skill_version_recommended,
-      { city: '1.9.13', market: '2.4.7' },
+      { city: '1.9.14', market: '2.4.7' },
     )
 
     const [events, residents, treasury] = await Promise.all([

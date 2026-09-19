@@ -146,9 +146,10 @@ are absent. It creates no tag, release, or asset.
 
 - `workflow_dispatch` defaults to `dry-run`. An operator must deliberately choose
   `publish` for a real release.
-- The `17 8 * * *` schedule prepares, verifies, and publishes one new append-only
-  release daily at 08:17 UTC after the reviewed workflow reaches the default branch
-  with the required secret and permissions.
+- The `17 8 * * *` schedule asks the reviewed default-branch workflow to prepare,
+  verify, and publish one new append-only release daily at 08:17 UTC. Runs can be
+  hours late, and each snapshot tag records its actual publication time. The cause
+  of late runs is not established here.
 
 The workflow needs the protected `SNAPSHOT_DATABASE_URL`. GitHub's job token needs
 `contents: write` only for the publication job. Do not add `DATABASE_URL`, a privileged
