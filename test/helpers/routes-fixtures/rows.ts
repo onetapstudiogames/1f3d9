@@ -195,6 +195,15 @@ const mapOutlineRows = () => Array.from({ length: 60 }, (_, index) => ({
   places: index === 0 ? 2 : 0,
 }))
 
+const mapContinentRows = () => Array.from({ length: 60 }, (_, index) => {
+  const id = 360 - index
+  return {
+    ...placeRow(id, index < 30 ? 160 : 360),
+    name: `Continent place ${id}`,
+    description: `Continent description ${id} 🏙`,
+  }
+})
+
 const mapOutlineParent = (id: number) => id === 1
   ? { ...placeRow(1, null), owner_id: null, owner: null, name: 'the world', places: 60 }
   : { ...placeRow(id, 1), name: `Map place ${id}`, places: id === 160 ? 2 : 0 }
@@ -304,6 +313,7 @@ function residentArrivalPage(query: string, cursor: unknown, fetchLimit: unknown
 export {
   descendingPage,
   kindRow,
+  mapContinentRows,
   mapOutlineParent,
   mapOutlineRows,
   paginationEvents,

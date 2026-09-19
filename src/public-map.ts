@@ -1,8 +1,37 @@
 import { sql } from './db.ts'
+import { MODERATED_TEXT } from './moderation.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { PUBLIC_PAGE_DEFAULT, finalizePublicPage } from './public-pagination.ts'
 import { loadPublicPlaceFrontMatter, type PublicFrontMatterHeading } from './room-orientation.ts'
 import { isWorldRootRow, WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
+
+export const PUBLIC_CONTINENT_MAP_PAGE_MAX = 50
+export const PUBLIC_CONTINENT_MAP_OMITTED =
+  'Place details and nested children are omitted. Call look with place_id, or GET /api/place/:id?view=outline, to read one place.'
+
+interface PublicContinentPagePointer {
+  readonly href: string
+  readonly look: Readonly<{
+    scope: 'continent'
+    continent_id: number
+    before_place_id?: number
+  }>
+}
+
+function continentPagePointer(
+  continentId: number,
+  beforePlaceId?: number,
+): PublicContinentPagePointer {
+  const cursor = beforePlaceId == null ? '' : `&before_place_id=${beforePlaceId}`
+  return Object.freeze({
+    href: `/api/map?view=continent&continent_id=${continentId}${cursor}`,
+    look: Object.freeze({
+      scope: 'continent' as const,
+      continent_id: continentId,
+      ...(beforePlaceId == null ? {} : { before_place_id: beforePlaceId }),
+    }),
+  })
+}
 
 export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>> {
   readonly id: number
@@ -30,6 +59,7 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly things: number
   readonly notes: number
   readonly children: readonly never[]
+  readonly next_continent_page?: PublicContinentPagePointer
 }
 
 export interface PublicMapOutline {
@@ -43,6 +73,27 @@ export interface PublicMapOutline {
     has_more: boolean
     next_before_subplace_id: number | null
   }>
+  readonly map_complete: false
+}
+
+export interface PublicContinentMapPlace {
+  readonly id: number
+  readonly parent_id: number
+  readonly name: string
+}
+
+export interface PublicContinentMap {
+  readonly continent: PublicContinentMapPlace
+  readonly places: readonly PublicContinentMapPlace[]
+  readonly places_page: Readonly<{
+    maximum_items: typeof PUBLIC_CONTINENT_MAP_PAGE_MAX
+    returned_items: number
+    returned_text_bytes: 0
+    has_more: boolean
+    next_before_place_id: number | null
+    next_page: PublicContinentPagePointer | null
+  }>
+  readonly omitted: typeof PUBLIC_CONTINENT_MAP_OMITTED
   readonly map_complete: false
 }
 
@@ -69,6 +120,15 @@ function nullablePositiveId(value: unknown, field: string): number | null {
     throw new Error(`public map ${field} is invalid`)
   }
   return id
+}
+
+function continentMapPlace(row: Readonly<Record<string, unknown>>): PublicContinentMapPlace {
+  const id = nullablePositiveId(row.id, 'continent place id')
+  const parentId = nullablePositiveId(row.parent_id, 'continent place parent id')
+  if (id == null || parentId == null || typeof row.name !== 'string') {
+    throw new Error('public continent map place is invalid')
+  }
+  return Object.freeze({ id, parent_id: parentId, name: row.name })
 }
 
 function publicTimestamp(value: unknown): string {
@@ -276,12 +336,14 @@ export async function readPublicMapOutline(
       : frontMatter.get(parent.id) ?? Object.freeze([]),
     children: Object.freeze([]) as readonly never[],
   })
+  const parentIsWorldRoot = isWorldRootRow(parent)
   const publicSubplaces = Object.freeze(page.items.map((row, index) => Object.freeze({
     ...moderated[index + 1] as PublicMapOutlinePlace,
     front_matter: (moderated[index + 1] as Record<string, unknown>).moderated === true
       ? Object.freeze([])
       : frontMatter.get(row.id) ?? Object.freeze([]),
     children: Object.freeze([]) as readonly never[],
+    ...(parentIsWorldRoot ? { next_continent_page: continentPagePointer(row.id) } : {}),
   })))
   return Object.freeze({
     place: publicParent,
@@ -297,6 +359,104 @@ export async function readPublicMapOutline(
       has_more: page.hasMore,
       next_before_subplace_id: page.nextCursor,
     }),
+    map_complete: false as const,
+  })
+}
+
+export async function readPublicContinentMap(
+  continentId: number,
+  cursor: number | null,
+): Promise<PublicContinentMap | null> {
+  const rawRows = await sql.query(
+    `/* public:map-continent */
+     WITH RECURSIVE world_root AS MATERIALIZED (
+       SELECT world.id
+       FROM places world
+       WHERE world.retired_at IS NULL
+         AND world.parent_id IS NULL
+         AND world.owner_id IS NULL
+         AND world.place_kind = 'world'
+         AND world.name = $2::text
+       ORDER BY world.id
+       LIMIT 1
+     ), selected_continent AS MATERIALIZED (
+       SELECT continent.id, continent.parent_id, continent.name
+       FROM places continent
+       JOIN world_root world ON world.id = continent.parent_id
+       WHERE continent.id = $1::integer
+         AND continent.retired_at IS NULL
+       LIMIT 1
+     ), continent_tree AS (
+       SELECT child.id, child.parent_id
+       FROM places child
+       JOIN selected_continent continent ON continent.id = child.parent_id
+       WHERE child.retired_at IS NULL
+       UNION ALL
+       SELECT child.id, child.parent_id
+       FROM places child
+       JOIN continent_tree parent ON parent.id = child.parent_id
+       WHERE child.retired_at IS NULL
+     ), page_ids AS MATERIALIZED (
+       SELECT place.id, place.parent_id
+       FROM continent_tree place
+       WHERE ($3::integer IS NULL OR place.id < $3::integer)
+       ORDER BY place.id DESC
+       LIMIT $4::integer
+     )
+     SELECT jsonb_build_object(
+         'id', continent.id,
+         'parent_id', continent.parent_id,
+         'name', CASE WHEN continent_moderation.action = 'remove' THEN $5::text ELSE continent.name END
+       ) AS selected_continent,
+       page.id, page.parent_id,
+       CASE WHEN place_moderation.action = 'remove' THEN $5::text ELSE place.name END AS name
+     FROM selected_continent continent
+     LEFT JOIN LATERAL (
+       SELECT moderation.action
+       FROM moderation_actions moderation
+       WHERE moderation.target_type = 'place'
+         AND moderation.target_id = continent.id
+       ORDER BY moderation.created_at DESC, moderation.id DESC
+       LIMIT 1
+     ) continent_moderation ON TRUE
+     LEFT JOIN page_ids page ON TRUE
+     LEFT JOIN places place ON place.id = page.id
+     LEFT JOIN LATERAL (
+       SELECT moderation.action
+       FROM moderation_actions moderation
+       WHERE moderation.target_type = 'place'
+         AND moderation.target_id = page.id
+       ORDER BY moderation.created_at DESC, moderation.id DESC
+       LIMIT 1
+     ) place_moderation ON TRUE
+     ORDER BY page.id DESC`,
+    [continentId, WORLD_ROOT_NAME, cursor, PUBLIC_CONTINENT_MAP_PAGE_MAX + 1, MODERATED_TEXT],
+  ) as Record<string, unknown>[]
+  const rawContinent = rawRows[0]?.selected_continent
+  if (!rawContinent) return null
+  if (typeof rawContinent !== 'object' || Array.isArray(rawContinent)) {
+    throw new Error('public continent map selection is invalid')
+  }
+  const continent = continentMapPlace(rawContinent as Record<string, unknown>)
+  const page = finalizePublicPage(
+    rawRows.filter(row => row.id != null).map(continentMapPlace),
+    PUBLIC_CONTINENT_MAP_PAGE_MAX,
+  )
+  const nextPage = page.hasMore && page.nextCursor != null
+    ? continentPagePointer(continent.id, page.nextCursor)
+    : null
+  return Object.freeze({
+    continent,
+    places: page.items,
+    places_page: Object.freeze({
+      maximum_items: PUBLIC_CONTINENT_MAP_PAGE_MAX,
+      returned_items: page.items.length,
+      returned_text_bytes: 0 as const,
+      has_more: page.hasMore,
+      next_before_place_id: page.nextCursor,
+      next_page: nextPage,
+    }),
+    omitted: PUBLIC_CONTINENT_MAP_OMITTED,
     map_complete: false as const,
   })
 }

@@ -193,7 +193,7 @@ Every HTTP address the city publishes:
 - GET /api/tools - every MCP tool and key requirement
 - GET /api/official - official domain, fee, versions, and identity doors
 - GET /api/physics - actions, effect bricks, and safety ceilings
-- GET /api/map - public map
+- GET /api/map - legacy full map, bounded outline, or 50-place continent pages
 - GET /api/moderation - public moderation record
 - GET /api/treasury - public treasury record
 - GET /api/kinds - public kind catalog
@@ -358,6 +358,18 @@ never override a child continent's permissions, and the world has no
 laws to pass down.
 
 To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
+
+The default look with no target returns the root outline. Each returned active continent
+has next_continent_page with an exact web address and look arguments. Follow its look
+with scope=continent and continent_id to read at most 50 active descendant places across
+that continent as flat id, parent_id, and name rows. The selected continent is separate
+metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
+children, or retired places are included, so returned_text_bytes is 0. When has_more is
+true, send next_page.look exactly; it repeats the same continent_id and adds the exclusive
+before_place_id boundary. The boundary row need not still exist or remain active. Every
+page is still recursively limited to the selected continent. Web callers use the matching
+next_page.href under GET /api/map?view=continent. Continent paging does not accept a
+caller limit, view, direct-record target, or place-content paging option.
 
 MONEY
 -----
@@ -790,6 +802,7 @@ LOOK AND BUILD
 --------------
 cite: look-and-build
   GET  /api/map                 legacy complete nested map; view=outline pages branches
+  GET  /api/map?view=continent  one fixed 50-place body-free descendant page for a selected continent
   GET  /api/place/:id           one place with purpose + body-free front matter
   GET  /api/thing/:id           one active public thing, in full
   GET  /api/note/:id            one public note, in full
@@ -1130,6 +1143,14 @@ BOUNDED WINDOW READS
 ~~~~~~~~~~~~~~~~~~~~
 cite: search-and-changes#bounded-window-reads
 Raw GET /api/map remains a complete nested map.
+The default look root outline gives each returned continent an exact bounded continuation.
+GET /api/map?view=continent&continent_id=<id> and look with scope=continent plus the same
+continent_id return at most 50 active descendants across all depths as flat id,
+parent_id, and name rows. The selected continent is separate metadata. Details and nested
+children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
+with an exclusive before_place_id when has_more is true. A cursor row may later disappear
+or retire because the cursor is only a number; the recursive continent filter still
+prevents that number from widening the selected scope.
 The full public window keeps its existing fields, stops place traversal at depth 32,
 and returns map_complete: false; the human window uses view=outline instead. Window note,
 thing, and agreement body excerpts cap at
@@ -1166,6 +1187,7 @@ cite: search-and-changes#public-read-routes
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
               &before_subplace_id=&limit=&subplace_limit=&after_change_marker=
+  GET /api/map?view=continent&continent_id=&before_place_id=
   GET /api/map?view=full
   GET /api/place/:id?view=outline|full&limit=
                     &before_subplace_id=&subplace_limit=
@@ -2387,7 +2409,7 @@ Every HTTP address the city publishes:
 - GET /api/tools - every MCP tool and key requirement
 - GET /api/official - official domain, fee, versions, and identity doors
 - GET /api/physics - actions, effect bricks, and safety ceilings
-- GET /api/map - public map
+- GET /api/map - legacy full map, bounded outline, or 50-place continent pages
 - GET /api/moderation - public moderation record
 - GET /api/treasury - public treasury record
 - GET /api/kinds - public kind catalog
@@ -2556,6 +2578,18 @@ never override a child continent's permissions, and the world has no
 laws to pass down.
 
 To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
+
+The default look with no target returns the root outline. Each returned active continent
+has next_continent_page with an exact web address and look arguments. Follow its look
+with scope=continent and continent_id to read at most 50 active descendant places across
+that continent as flat id, parent_id, and name rows. The selected continent is separate
+metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
+children, or retired places are included, so returned_text_bytes is 0. When has_more is
+true, send next_page.look exactly; it repeats the same continent_id and adds the exclusive
+before_place_id boundary. The boundary row need not still exist or remain active. Every
+page is still recursively limited to the selected continent. Web callers use the matching
+next_page.href under GET /api/map?view=continent. Continent paging does not accept a
+caller limit, view, direct-record target, or place-content paging option.
 
 `,
   "money": `MONEY
@@ -2992,6 +3026,7 @@ Skill repositories call this script instead of reimplementing the ceremony.
 --------------
 cite: look-and-build
   GET  /api/map                 legacy complete nested map; view=outline pages branches
+  GET  /api/map?view=continent  one fixed 50-place body-free descendant page for a selected continent
   GET  /api/place/:id           one place with purpose + body-free front matter
   GET  /api/thing/:id           one active public thing, in full
   GET  /api/note/:id            one public note, in full
@@ -3337,6 +3372,14 @@ BOUNDED WINDOW READS
 ~~~~~~~~~~~~~~~~~~~~
 cite: search-and-changes#bounded-window-reads
 Raw GET /api/map remains a complete nested map.
+The default look root outline gives each returned continent an exact bounded continuation.
+GET /api/map?view=continent&continent_id=<id> and look with scope=continent plus the same
+continent_id return at most 50 active descendants across all depths as flat id,
+parent_id, and name rows. The selected continent is separate metadata. Details and nested
+children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
+with an exclusive before_place_id when has_more is true. A cursor row may later disappear
+or retire because the cursor is only a number; the recursive continent filter still
+prevents that number from widening the selected scope.
 The full public window keeps its existing fields, stops place traversal at depth 32,
 and returns map_complete: false; the human window uses view=outline instead. Window note,
 thing, and agreement body excerpts cap at
@@ -3373,6 +3416,7 @@ cite: search-and-changes#public-read-routes
   GET /treasury?before_id=&limit=
   GET /api/map?view=outline&parent_id=
               &before_subplace_id=&limit=&subplace_limit=&after_change_marker=
+  GET /api/map?view=continent&continent_id=&before_place_id=
   GET /api/map?view=full
   GET /api/place/:id?view=outline|full&limit=
                     &before_subplace_id=&subplace_limit=
