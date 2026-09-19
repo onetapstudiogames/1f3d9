@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { finalNonEmptyLine, createPreparationFixture } from '../helpers/deploy-safety-fixtures/preparation-worktree.ts'
 
 export function registerBranchPreparationTests(): void {
-  test('preparation proves a clean GitHub branch and runs every local gate without deploying', t => {
+  test('preparation proves a clean pushed branch and release prerequisites without repeating CI', t => {
     const fixture = createPreparationFixture()
     t.after(() => fixture.cleanup())
     const result = fixture.run()
@@ -18,10 +18,7 @@ export function registerBranchPreparationTests(): void {
     )
     assert.match(result.stdout, /did not deploy/i)
     assert.match(result.stdout, /merge[^\n]*main/i)
-    const commands = readFileSync(fixture.commandLog, 'utf8')
-    for (const command of ['npm test', 'npm run typecheck', 'npm run test:postgres', 'npm run test:e2e']) {
-      assert.match(commands, new RegExp(`^${command}$`, 'm'))
-    }
+    assert.equal(existsSync(fixture.commandLog), false)
   })
 
   test('dirty or not-pushed work stops before any preparation gate', t => {
@@ -52,5 +49,34 @@ export function registerBranchPreparationTests(): void {
     )
     assert.match(`${unpushedResult.stdout}\n${unpushedResult.stderr}`, /pushed.*origin/i)
     assert.equal(existsSync(unpushed.commandLog), false)
+  })
+
+  test('missing, stale, pending, cancelled, failed, or unrelated required CI stops preparation', t => {
+    const cases = [
+      ['missing', { TEST_REQUIRED_CHECK_MODE: 'missing' }],
+      ['stale', { TEST_REQUIRED_CHECK_HEAD_SHA: '2'.repeat(40) }],
+      ['pending', {
+        TEST_REQUIRED_CHECK_STATUS: 'in_progress',
+        TEST_REQUIRED_CHECK_CONCLUSION: 'null',
+      }],
+      ['cancelled', { TEST_REQUIRED_CHECK_CONCLUSION: 'cancelled' }],
+      ['failed', { TEST_REQUIRED_CHECK_CONCLUSION: 'failure' }],
+      ['skipped', { TEST_REQUIRED_CHECK_CONCLUSION: 'skipped' }],
+      ['neutral', { TEST_REQUIRED_CHECK_CONCLUSION: 'neutral' }],
+      ['timed out', { TEST_REQUIRED_CHECK_CONCLUSION: 'timed_out' }],
+      ['action required', { TEST_REQUIRED_CHECK_CONCLUSION: 'action_required' }],
+      ['unrelated name', { TEST_REQUIRED_CHECK_NAME: 'other' }],
+      ['unrelated app', { TEST_REQUIRED_CHECK_APP_ID: '1' }],
+      ['API failure', { TEST_REQUIRED_CHECK_MODE: 'api-failure' }],
+    ] as const
+
+    for (const [label, environment] of cases) {
+      const fixture = createPreparationFixture()
+      t.after(() => fixture.cleanup())
+      const result = fixture.run(environment)
+      assert.notEqual(result.status, 0, label)
+      assert.match(`${result.stdout}\n${result.stderr}`, /required.*checks.*candidate/iu, label)
+      assert.equal(existsSync(fixture.commandLog), false, label)
+    }
   })
 }

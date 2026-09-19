@@ -16,14 +16,26 @@ jobs:
       - name: Check out the source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Use Node.js 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      - name: Classify the pull request change
+        if: github.event_name == 'pull_request'
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-status --no-renames -z "$BASE_SHA" "$HEAD_SHA" |
+            node --experimental-strip-types scripts/ci-change-scope.ts >> "$GITHUB_OUTPUT"
       - name: Install locked dependencies
         run: npm ci
       - name: Validate workflow YAML and embedded shell
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         env:
           ACTIONLINT_VERSION: 1.7.12
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -39,14 +51,25 @@ jobs:
           # A deferred trap must retain its variable until EXIT; SC2016 misreads that intentional quoting.
           "$RUNNER_TEMP/actionlint" -ignore 'SC2016' -shellcheck "$(command -v shellcheck)" .github/workflows/*.yml
       - name: Check generated front-door mirrors
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm run door:check
       - name: Typecheck
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm run typecheck
       - name: Run unit tests
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm test
       - name: Run PostgreSQL integration tests
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm run test:postgres
       - name: Install Chromium
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npx playwright install --with-deps chromium
       - name: Run end-to-end tests
+        if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm run test:e2e
+      - name: Check internal process documents
+        if: github.event_name == 'pull_request' && steps.scope.outputs.scope == 'internal-process'
+        run: >-
+          node --test --experimental-strip-types
+          test/deploy-safety.test.ts test/help-text.test.ts

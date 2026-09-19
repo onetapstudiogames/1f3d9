@@ -352,11 +352,13 @@ and `CONFIRM_LOCAL_SCHEMA=APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE`.
 `scripts/deploy.sh` is preparation-only and accepts only `--prepare`. It cannot run a
 migration, change Vercel or Neon settings, or upload a local folder. It requires a clean
 non-`main` branch whose exact `HEAD` is already pushed to its matching `origin` branch,
-then runs the ordinary tests, type check, real PostgreSQL rollback tests, and browser
-tests. After those gates pass, open the GitHub pull request, verify its Vercel preview,
-and merge it into `main`. The linked Vercel project builds and ships that exact GitHub
-`main` commit. Production feature-switch or environment changes remain separate,
-explicit provider operations; the preparation script never changes them.
+plus a completed successful required `checks` run for that exact commit. Open the GitHub
+pull request and wait for CI before preparation. Preparation reuses that exact evidence
+instead of running the ordinary, type, real PostgreSQL, and browser suites again. Then
+verify the Vercel preview and merge into `main`. The linked Vercel project builds and
+ships that exact GitHub `main` commit. Production feature-switch or environment changes
+remain separate, explicit provider operations; the preparation script never changes
+them.
 
 ## Release 2: generated recovery codes
 

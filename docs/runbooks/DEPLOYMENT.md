@@ -320,10 +320,12 @@ migration runs as part of application deployment.
 
    Verify the same dual-view schema postconditions. Production room #454 must remain
    the exact protected closed shell, contain zero notes, and have no Gazette opening event.
-3. Push the candidate commit and wait for its Vercel Preview deployment. While room #454
-   remains closed in both databases, run the acknowledgement-prefixed release preparation
-   command in the next section. Record its explicit `GATE_EXIT=0` line.
-4. Before opening the pull request, request `GET /api/official` from the exact Preview
+3. Push the candidate commit, open the pull request, and wait for required CI and its
+   Vercel Preview deployment. While room #454 remains closed in both databases, run the
+   acknowledgement-prefixed release preparation command in the next section. It verifies
+   the successful required CI run for that exact commit. Record its explicit
+   `GATE_EXIT=0` line.
+4. Request `GET /api/official` from the exact Preview
    origin. Its `deployment_commit` must equal the exact PR head commit. Also verify
    `GET /api/gazette` reports `submission_room.submissions_open: false` and a new
    submission is refused without creating a note, consuming quota, or emitting an event.
@@ -584,18 +586,21 @@ the known schema-less Preview is Gazette-capable or authorizes activation.
 
 These acknowledgements contain no key material. The preparation script never reads an
 environment file, queries or changes Vercel, or applies a migration; it only blocks the
-release gates until the operator confirms those separate prerequisites.
+release until the operator confirms those separate prerequisites and required CI proves
+the exact candidate.
 
 1. Put the change on a review branch, push it, and leave the worktree clean.
-2. Run the acknowledgement-prefixed `scripts/deploy.sh --prepare` command above. This is
-   a read-only release check: it
-   proves the branch is pushed at the tested commit and runs the test,
-   type-check, PostgreSQL integration, and browser suites. It does not upload or
-   deploy anything.
-3. Open a pull request and check its Vercel preview, including the changed user
+2. Open a pull request and wait for its required `checks` job to finish successfully.
+3. Run the acknowledgement-prefixed `scripts/deploy.sh --prepare` command above. This is
+   a read-only release check: it proves the branch is pushed at the tested commit, proves
+   the newest relevant required CI run completed successfully for that exact commit,
+   checks the separate release prerequisites, and proves the commit did not move. It does
+   not repeat the test, type-check, PostgreSQL integration, or browser suites. It does not
+   upload or deploy anything.
+4. Check the Vercel preview, including the changed user
    paths and any expected API behavior. The first Gazette rollout must complete its
    exact-commit Preview activation and probes above before this step.
-4. Merge the reviewed pull request into `main`. Vercel then deploys that exact
+5. Merge the reviewed pull request into `main`. Vercel then deploys that exact
    GitHub commit.
 
 Database migrations are separate operations. Run only the explicitly named

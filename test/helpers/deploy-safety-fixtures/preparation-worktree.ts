@@ -111,11 +111,15 @@ export function createPreparationFixture(): PreparationFixture {
   mkdirSync(join(root, 'scripts'))
   mkdirSync(join(root, 'node_modules'))
   copyFileSync(new URL('../../../scripts/deploy.sh', import.meta.url), join(root, 'scripts', 'deploy.sh'))
+  copyFileSync(
+    new URL('../../../scripts/verify-required-check.mjs', import.meta.url),
+    join(root, 'scripts', 'verify-required-check.mjs'),
+  )
   writeFileSync(join(root, 'README.md'), 'release fixture\n')
   git('init', '-q', '--initial-branch=agent/release-test')
   git('config', '--local', 'user.email', 'release-test@example.invalid')
   git('config', '--local', 'user.name', 'Release Test')
-  git('add', 'README.md', 'scripts/deploy.sh')
+  git('add', 'README.md', 'scripts/deploy.sh', 'scripts/verify-required-check.mjs')
   git('commit', '-q', '-m', 'test release')
   git('remote', 'add', 'origin', remote)
   git('push', '-q', '-u', 'origin', 'HEAD')
@@ -129,6 +133,20 @@ export function createPreparationFixture(): PreparationFixture {
     '',
   ].join('\n'))
   chmodSync(npmStub, 0o755)
+  const ghStub = join(bin, 'gh')
+  writeFileSync(ghStub, [
+    '#!/usr/bin/env bash',
+    'if [ "${TEST_REQUIRED_CHECK_MODE:-}" = "api-failure" ]; then exit 1; fi',
+    'if [ "${TEST_REQUIRED_CHECK_MODE:-}" = "missing" ]; then printf \'{"check_runs":[]}\\n\'; exit 0; fi',
+    'head_sha=${TEST_REQUIRED_CHECK_HEAD_SHA:-$(git rev-parse HEAD)}',
+    'status=${TEST_REQUIRED_CHECK_STATUS:-completed}',
+    'conclusion=${TEST_REQUIRED_CHECK_CONCLUSION:-success}',
+    'name=${TEST_REQUIRED_CHECK_NAME:-checks}',
+    'app_id=${TEST_REQUIRED_CHECK_APP_ID:-15368}',
+    'printf \'{"check_runs":[{"id":10,"name":"%s","head_sha":"%s","status":"%s","conclusion":"%s","app":{"id":%s}}]}\\n\' "$name" "$head_sha" "$status" "$conclusion" "$app_id"',
+    '',
+  ].join('\n'))
+  chmodSync(ghStub, 0o755)
   const bashBin = spawnSync('bash', ['-lc', 'pwd'], {
     cwd: bin,
     encoding: 'utf8',
@@ -170,6 +188,18 @@ export function createPreparationFixture(): PreparationFixture {
     'export CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION',
     'CONFIRM_HELD_LUGGAGE_MIGRATION="${12-}"',
     'export CONFIRM_HELD_LUGGAGE_MIGRATION',
+    'TEST_REQUIRED_CHECK_MODE="${13-}"',
+    'export TEST_REQUIRED_CHECK_MODE',
+    'TEST_REQUIRED_CHECK_HEAD_SHA="${14-}"',
+    'export TEST_REQUIRED_CHECK_HEAD_SHA',
+    'TEST_REQUIRED_CHECK_STATUS="${15-}"',
+    'export TEST_REQUIRED_CHECK_STATUS',
+    'TEST_REQUIRED_CHECK_CONCLUSION="${16-}"',
+    'export TEST_REQUIRED_CHECK_CONCLUSION',
+    'TEST_REQUIRED_CHECK_NAME="${17-}"',
+    'export TEST_REQUIRED_CHECK_NAME',
+    'TEST_REQUIRED_CHECK_APP_ID="${18-}"',
+    'export TEST_REQUIRED_CHECK_APP_ID',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -196,6 +226,12 @@ export function createPreparationFixture(): PreparationFixture {
         readiness.CONFIRM_GAZETTE_WITHDRAWAL_SCHEMA_MIGRATION ?? '',
         readiness.CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION ?? '',
         readiness.CONFIRM_HELD_LUGGAGE_MIGRATION ?? '',
+        overrides.TEST_REQUIRED_CHECK_MODE ?? '',
+        overrides.TEST_REQUIRED_CHECK_HEAD_SHA ?? '',
+        overrides.TEST_REQUIRED_CHECK_STATUS ?? '',
+        overrides.TEST_REQUIRED_CHECK_CONCLUSION ?? '',
+        overrides.TEST_REQUIRED_CHECK_NAME ?? '',
+        overrides.TEST_REQUIRED_CHECK_APP_ID ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',

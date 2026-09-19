@@ -10,18 +10,22 @@ export function registerReleaseGatesTests(): void {
     assert.doesNotMatch(deployScript, /VERCEL_TOKEN|PORKBUN_API_KEY|PORKBUN_SECRET_KEY/)
   })
 
-  test('every release test gate remains part of explicit branch preparation', () => {
+  test('required CI owns each automated product gate without branch-preparation repeats', () => {
     for (const command of [
       'npm test',
       'npm run typecheck',
       'npm run test:postgres',
       'npm run test:e2e',
     ]) {
-      const position = deployScript.indexOf(command)
-      assert.ok(position > 0, `missing preparation gate: ${command}`)
+      assert.doesNotMatch(deployScript, new RegExp(command.replaceAll(' ', '\\s+'), 'u'))
+      assert.match(ciWorkflow, new RegExp(`run: ${command.replaceAll(' ', '\\s+')}`, 'u'))
     }
     assert.match(deployScript, /--prepare/)
+    assert.match(deployScript, /verify_release_readiness/u)
     assert.match(deployScript, /merge[^\n]*\bmain\b/i)
+    assert.match(ciWorkflow, /scripts\/ci-change-scope\.ts/u)
+    assert.match(ciWorkflow, /test\/deploy-safety\.test\.ts/u)
+    assert.match(ciWorkflow, /test\/help-text\.test\.ts/u)
   })
 
   test('payment reliability is fail-hard in required checks and documented where it binds', () => {
@@ -33,7 +37,7 @@ export function registerReleaseGatesTests(): void {
     assert.match(ciWorkflow, /^jobs:\r?\n  checks:\r?\n    runs-on:/mu)
     assert.match(
       ciWorkflow,
-      /- name: Run PostgreSQL integration tests\r?\n\s+run: npm run test:postgres/u,
+      /- name: Run PostgreSQL integration tests[\s\S]{0,240}run: npm run test:postgres/u,
     )
     assert.doesNotMatch(ciWorkflow, /continue-on-error:\s*true/iu)
 
