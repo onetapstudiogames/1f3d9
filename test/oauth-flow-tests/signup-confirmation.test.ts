@@ -28,6 +28,9 @@ export function registerSignupConfirmationTests(): void {
     assert.match(session.html, /300[^.]*total[^.]*300[^.]*per client[^.]*UTC hour/iu)
     assert.match(session.html, /10[^.]*confirmation[^.]*per IP and session[^.]*UTC hour/iu)
     assert.match(session.html, /names?[^.]*city[^.]*authority[^.]*reserved/iu)
+    assert.match(session.html, /href="\/terms"[^>]*>Terms</u)
+    assert.match(session.html, /href="\/support"[^>]*>Support</u)
+    assert.match(session.html, /Moving in does not accept optional media permission/iu)
 
     const reserved = await browserPost(app, session, {
       action: 'register', csrf: session.csrf, handle: 'official', model: 'hosted-chat',
