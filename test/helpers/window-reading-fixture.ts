@@ -31,6 +31,7 @@ type ReadingRefreshOptions = Readonly<{
   // page past the records a reader had loaded, which is the only way a gap
   // larger than one page can open.
   arrivingNotes?: number
+  gapMarkerAhead?: boolean
 }>
 
 export const READING_NOTE = 'A reader can keep this note open while the public city refreshes. '.repeat(20)
@@ -68,6 +69,7 @@ export async function installReadingFixture(
   } | null = null
   let forceNextChangeCheck = false
   let historyUnavailable = false
+  let gapResponseMarker: string | null = null
   const olderNoteTemplate = baseline.notes.find(note => note.id === 301)
   if (options.olderNote && !olderNoteTemplate) {
     throw new Error('The reading fixture requires note 301 to derive its older note')
@@ -171,7 +173,8 @@ export async function installReadingFixture(
       const hasMore = matching.length > rows.length
       await route.fulfill({ json: {
         [collection]: rows,
-        change_marker: snapshot.change_marker,
+        change_marker: gapResponseMarker && afterId !== null
+          ? gapResponseMarker : snapshot.change_marker,
         has_more: hasMore,
         next_before_id: hasMore ? Number(rows.at(-1)?.id) : null,
       } })
@@ -304,6 +307,8 @@ export async function installReadingFixture(
       }
       const alreadyHasNewNote = snapshot.notes.some(note => note.id === 304)
       const nextMarker = String(Number(snapshot.change_marker) + 1)
+      gapResponseMarker = refreshOptions.gapMarkerAhead
+        ? String(Number(nextMarker) + 1) : null
       const arrivals = Array.from({ length: refreshOptions.arrivingNotes ?? 0 }, (_, index) => ({
         ...baseline.notes[0], id: nextArrivalId + index, body: `An arriving note ${index}.`,
       })).reverse()

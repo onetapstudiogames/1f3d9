@@ -283,6 +283,9 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
         .includes(change.kind) && detail.thing_id) {
         keys.add('thing:' + String(detail.thing_id))
       }
+      if (change.kind === 'transfer' && detail.asset_type === 'thing' && detail.asset_id) {
+        keys.add('thing:' + String(detail.asset_id))
+      }
       if (['agreement_accession', 'agreement_sign'].includes(change.kind) &&
           detail.agreement_id) {
         keys.add('agreement:' + String(detail.agreement_id))

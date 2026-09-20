@@ -9,10 +9,12 @@ import {
   historyGapFiller,
   ids,
   loadedEntry,
+  olderHistoryPager,
   refreshedHistories,
   rowsFrom,
   snapshotOf,
   type Request,
+  type Row,
 } from './harness.ts'
 
 // What a changed refresh keeps, what it drops, and which ranges it names.
@@ -212,6 +214,60 @@ export function registerRefreshRetentionTests(): void {
       'the held row below the keep bound names the range above it')
   })
 
+  test('a held context neighbor below the keep bound leaves a primary range the control can finish', async () => {
+    const filters = { resident: 'alice', context: true }
+    const key = 'context|place:|resident:alice'
+    const primaries = Array.from({ length: WINDOW_HISTORY_KEEP_ROWS + 1 }, (_, index) =>
+      ({ id: 10_000 - index, author: 'alice' }))
+    const heldNeighbor = { id: 500, author: 'neighbor' }
+    const previous = {
+      notes: { [key]: loadedEntry([...primaries, heldNeighbor], {
+        filters, hasMore: true, nextBeforeId: 7_000,
+      }) },
+      things: {}, agreements: {}, events: {},
+    }
+    const fresh = Array.from({ length: 25 }, (_, index) =>
+      ({ id: 10_024 - index, author: 'alice' }))
+    const entry = refreshedHistories(previous, snapshotOf({ notes: fresh }), {
+      heldKeys: ['note:500'],
+      ownNewestPages: { notes: { [key]: {
+        failed: false,
+        rows: fresh,
+        page: { hasMore: true, nextBeforeId: 10_000 },
+      } } },
+    }).notes![key]!
+
+    assert.equal(ids(entry.rows).includes(500), true, 'the held neighbor remains visible')
+    assert.deepEqual(entry.gapAfterIds, [], 'a neighbor never becomes a primary cursor')
+    assert.deepEqual(entry.gapRanges, [{ beforeId: 7_025, afterId: 6_999 }],
+      'the trimmed primary block keeps its own numeric range')
+
+    const requests: Request[] = []
+    const pager = olderHistoryPager(entry, async input => {
+      const url = new URL(input, 'https://city.test')
+      requests.push({
+        beforeId: Number(url.searchParams.get('before_id')),
+        afterId: Number(url.searchParams.get('after_id')),
+        marker: url.searchParams.get('after_change_marker'),
+      })
+      const notes: Row[] = Array.from({ length: 25 }, (_, index) =>
+        ({ id: 7_024 - index, author: 'alice' }))
+      return { ok: true, json: async () => ({
+        notes, change_marker: '8', has_more: false, next_before_id: null,
+      }) }
+    })
+    await pager.run('notes', filters)
+    const completed = pager.read()
+
+    assert.deepEqual(requests, [{ beforeId: 7_025, afterId: 6_999, marker: '8' }],
+      'the control reads the missing primary range without paging from the neighbor')
+    assert.deepEqual(completed.gapRanges, [], 'the completed primary range closes its seam')
+    assert.equal(completed.error, false)
+    assert.equal(ids(completed.rows).includes(500), true, 'closing the seam preserves the neighbor')
+    assert.deepEqual(ids(completed.rows).filter(id => id >= 7_000 && id <= 7_025),
+      rowsFrom(7_025, 26).map(row => row.id), 'the primary sequence is whole after the control')
+  })
+
   test('the keep bound names every hole it leaves, not only the first', () => {
     // Two held records at different depths below the bound leave two holes, and
     // the records between them are unloaded, so both are named.
@@ -334,6 +390,47 @@ export function registerRefreshRetentionTests(): void {
 
     assert.deepEqual(ids(filled.rows), ids(loaded), 'the list is whole again')
     assert.deepEqual(filled.gapAfterIds, [])
+  })
+
+  test('a transferred thing leaves its former owner list and the range closes honestly', async () => {
+    const filters = { resident: 'oldowner' }
+    const key = 'place:|resident:oldowner'
+    const previous = {
+      notes: {}, agreements: {}, events: {},
+      things: { [key]: loadedEntry([
+        { id: 60, owner: 'oldowner' }, { id: 50, owner: 'oldowner' },
+      ], { filters, hasMore: true, nextBeforeId: 50 }) },
+    }
+    const fresh = [{ id: 60, owner: 'oldowner' }]
+    const entry = refreshedHistories(previous, snapshotOf({ things: fresh }), {
+      changes: [{ kind: 'transfer', detail: { asset_type: 'thing', asset_id: 50 } }],
+      ownNewestPages: { things: { [key]: {
+        failed: false, rows: fresh, page: { hasMore: true, nextBeforeId: 60 },
+      } } },
+    }).things![key]!
+
+    assert.deepEqual(ids(entry.rows), [60], 'the former owner never keeps the transferred thing')
+    assert.deepEqual(entry.gapRanges, [{ beforeId: 60, afterId: 49 }],
+      'the old owner list can confirm the changed range')
+
+    const requests: Request[] = []
+    const pager = olderHistoryPager(entry, async input => {
+      const url = new URL(input, 'https://city.test')
+      requests.push({
+        beforeId: Number(url.searchParams.get('before_id')),
+        afterId: Number(url.searchParams.get('after_id')),
+        marker: url.searchParams.get('after_change_marker'),
+      })
+      return { ok: true, json: async () => ({
+        things: [], change_marker: '8', has_more: false, next_before_id: null,
+      }) }
+    })
+    await pager.run('things', filters)
+
+    assert.deepEqual(requests, [{ beforeId: 60, afterId: 49, marker: '8' }])
+    assert.deepEqual(ids(pager.read().rows), [60])
+    assert.deepEqual(pager.read().gapRanges, [], 'the empty current range closes the seam')
+    assert.equal(pager.read().error, false)
   })
 
   test('a withdrawn thing is dropped outright, because the city no longer has it', () => {

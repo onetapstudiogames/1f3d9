@@ -514,6 +514,26 @@ test('the window closes a bounded gap on its own from the same list', async ({ p
     .not.toContainText('between here and the newest')
 })
 
+test('a newer gap page waits for its matching snapshot instead of mixing markers', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const older = await loadOlderNote(page)
+
+  await fixture.refresh({ arrivingNotes: 4, gapMarkerAhead: true })
+
+  await expect(page.locator('#conversation-stream'),
+    'newer gap row compared with absent beneath the older snapshot')
+    .not.toContainText('An arriving note 0.')
+  await expect(page.locator(older), 'completed old-snapshot row compared with retained')
+    .toContainText(READING_OLDER_NOTE.trim())
+  await expect(page.locator('#conversation-page'),
+    'marker mismatch compared with an honest retry seam')
+    .toContainText('Older conversations could not be rechecked')
+  await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
+    'marker mismatch seam control compared with visible').toBeVisible()
+})
+
 test('moderation removes or tombstones an older note loaded by the reader', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
   violationsByPage.set(page, fixture.networkViolations)

@@ -8,7 +8,7 @@ import {
   WINDOW_HISTORY_KEEP_ROWS,
 } from '../../src/window-history-limits.ts'
 
-export type Row = Readonly<{ id: number, place_id?: number, author?: string }>
+export type Row = Readonly<{ id: number, place_id?: number, author?: string, owner?: string }>
 export type Change = Readonly<{ kind: string, detail?: Readonly<Record<string, unknown>> }>
 export type HistoryEntry = Readonly<{
   rows: readonly Row[]
@@ -338,7 +338,7 @@ export function olderHistoryPager(
     () => {},
     historyRequestUrlFake,
     fetchFake,
-    () => {}, (_collection: string, payload: { notes: Row[] }) => payload.notes,
+    () => {}, (collection: string, payload: Record<string, Row[]>) => payload[collection],
     (value: unknown) => Number(value) || null, mergeWindowRows,
     { setTimeout: () => 1, clearTimeout: () => {} }, 10_000, WINDOW_HISTORY_KEEP_ROWS,
   ) as (collection: string, filters: unknown) => Promise<void>

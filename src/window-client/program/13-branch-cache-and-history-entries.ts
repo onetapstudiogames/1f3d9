@@ -290,6 +290,35 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     return ranges
   }
 
+  // A held context neighbor may sit below the 3,000-row keep boundary even
+  // though the followed resident's primary notes between them were trimmed.
+  // Keep that missing primary block as its own numeric range. The neighbor is
+  // deliberately absent from both boundaries because it never drives context
+  // paging.
+  function retainedHistoryGapRanges(previousRanges, held, filters) {
+    const ranges = staleHistoryGapRanges(previousRanges, held, filters)
+    if (!filters?.context || !filters.resident) return ranges
+    const mergedPrimary = historyOrderedRows(held.merged, filters)
+    const keptPrimary = historyOrderedRows(held.kept, filters)
+    const keptPrimaryIds = new Set(keptPrimary.map(row => row.id))
+    const trimmedPrimary = mergedPrimary.filter(row => !keptPrimaryIds.has(row.id))
+    if (!trimmedPrimary.length || !keptPrimary.length) return ranges
+    const highestTrimmed = trimmedPrimary[0].id
+    const lowestTrimmed = trimmedPrimary[trimmedPrimary.length - 1].id
+    const heldNeighborBelow = held.kept.some(row =>
+      historyOrderedRows([row], filters).length === 0 && row.id < lowestTrimmed)
+    if (!heldNeighborBelow) return ranges
+    const above = keptPrimary.filter(row => row.id > highestTrimmed)
+    const gap = Object.freeze({
+      beforeId: above.length ? above[above.length - 1].id : null,
+      afterId: lowestTrimmed > 1 ? lowestTrimmed - 1 : null,
+    })
+    if (!ranges.some(candidate => gapRangeKey(candidate) === gapRangeKey(gap))) {
+      ranges.push(gap)
+    }
+    return ranges
+  }
+
   function freshHistoryEntry(entry, rows, page) {
     return Object.freeze({
       ...entry,
@@ -316,7 +345,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const held = keptHistoryRows(entry.rows, freshRows, kind, filters, keys)
     const rows = held.kept
     const gapAfterIds = keptGapAfterIds(entry.gapAfterIds, held, filters)
-    const gapRanges = staleHistoryGapRanges(entry.gapRanges, held, filters)
+    const gapRanges = retainedHistoryGapRanges(entry.gapRanges, held, filters)
     const oldestMerged = held.merged[held.merged.length - 1]
     const oldestKept = rows[rows.length - 1]
     const bottomTrimmed = Boolean(oldestMerged) && oldestMerged.id !== oldestKept?.id
@@ -592,10 +621,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     const gap = namedHistoryGap(entry)
     if (!gap) return entry
     let rows = entry.rows
-    let readMarker = marker
+    const readMarker = marker
     const startingBudget = budget.remaining
     let provedBeyondBudget = false
-    let markerRetries = 0
     let beforeId = gap.beforeId
     try {
       while (budget.remaining > 0) {
@@ -628,21 +656,17 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         if (readMarker && !markerCovers(pageMarker, readMarker)) {
           throw new Error('public gap read marker does not cover its rows')
         }
+        if (readMarker && pageMarker !== readMarker) {
+          // These rows belong beside a newer snapshot. Keep the completed old
+          // rows and their seam until the next refresh obtains that matching
+          // snapshot; never render mixed marker generations.
+          throw new Error('public gap read marker does not match its snapshot')
+        }
         const incoming = normalizeHistoryRows(collection, payload)
         if (incoming.length > budget.remaining) {
           throw new Error('public gap read exceeded the refresh row budget')
         }
         budget.remaining -= incoming.length
-        if (readMarker && pageMarker !== readMarker) {
-          // The city changed while the gap was being read. Take this page again
-          // under the newer marker; pages already merged stay, and the window's
-          // own marker moves to the snapshot's, so the next change check still
-          // covers them.
-          markerRetries += 1
-          if (markerRetries > 3) throw new Error('public gap read never settled')
-          readMarker = pageMarker
-          continue
-        }
         rows = mergeWindowRows(rows, incoming)
         if (payload.has_more !== true) {
           return filledHistoryEntry(entry, rows, gap, filters, { closed: true })
@@ -655,7 +679,6 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
           throw new Error('public gap read cursor did not match its own ordering')
         }
         beforeId = nextBeforeId
-        markerRetries = 0
         if (budget.remaining === 0 && startingBudget === WINDOW_HISTORY_FILL_ROWS) {
           provedBeyondBudget = true
         }

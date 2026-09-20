@@ -1554,8 +1554,10 @@ response is `no-store` so no edge-stale copy can intervene; a future marker is r
 browser accepts a lazy or focused response only at the exact neighboring snapshot marker and
 treats a changes marker as a candidate
 until a covering snapshot survives normalization and the navigation-race check. A real
-change replaces loaded histories, branches, and Archive results instead of merging old
-authored rows. If the presence read or change check is unavailable, the fallback is the
+change keeps each visited history under Decision 99's row bound, removes or withholds rows
+named by the completed change check, and rejoins only exact-marker pages from that list's own
+ordering. It replaces branches and Archive results instead of merging those old authored
+rows. If the presence read or change check is unavailable, the fallback is the
 same bounded marker-covered snapshot, and failures leave the old marker in place for retry.
 
 Every canonical window path is also a server-rendered unfurl surface. It emits a canonical

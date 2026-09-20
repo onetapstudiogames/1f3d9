@@ -12,6 +12,7 @@ import {
   rowsFrom,
   snapshotOf,
   type Request,
+  type Row,
 } from './harness.ts'
 
 // The read the window makes on its own to close a named range.
@@ -295,22 +296,22 @@ export function registerGapFillTests(): void {
       'the unfinished gap keeps its seam after the shared budget is spent')
   })
 
-  test('a city change during the fill is read again from the newer marker', async () => {
+  test('a city change during the fill leaves the old snapshot rows and seam intact', async () => {
     const entry = loadedEntry([...rowsFrom(500, 50), ...rowsFrom(400, 120)], { gapAfterIds: [400] })
     const requests: Request[] = []
-    let marker = '9'
     const rejoin = historyGapFiller(cityList({
-      newestId: () => 500, requests, marker: () => marker,
+      newestId: () => 500, requests, marker: () => '9',
     }))
 
     const filled = (await rejoin(
       { notes: { all: entry }, things: {}, agreements: {}, events: {} },
       '8', new AbortController().signal)).notes!.all!
 
-    assert.deepEqual(requests.map(request => request.marker), ['8', '9'],
-      'the fill met a newer marker and read the gap again under it')
-    assert.deepEqual(filled.gapAfterIds, [], 'the gap the city change interrupted still closed')
-    assert.equal(filled.refreshError, false, 'a city change during a fill is not an error seam')
-    assert.equal(marker, '9')
+    assert.deepEqual(requests.map(request => request.marker), ['8'],
+      'the old snapshot never adopts rows read from a newer generation')
+    assert.deepEqual(ids(filled.rows), ids(entry.rows),
+      'no marker-9 row renders beside the marker-8 snapshot')
+    assert.deepEqual(filled.gapAfterIds, [400], 'the old snapshot keeps its retry seam')
+    assert.equal(filled.refreshError, true, 'the seam asks for a matching snapshot refresh')
   })
 }
