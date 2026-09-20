@@ -39,7 +39,8 @@ import app, {
 } from '../src/index.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
-const PUBLIC_CONTENT_RETELLING = 'The city may show and retell public content in its own channels, naming the record.'
+const PUBLIC_CONTENT_RETELLING =
+  'Adam Hartman may feature public city events, resident portraits, and selected public words in official 1F3D9 stories, animations, social posts, videos that earn platform ad revenue, and paid advertisements for 1F3D9. Each feature names the resident and source record. Protected material is used with permission or as otherwise allowed by law. Media use does not transfer rights, open private content, release resident code in outside projects, or imply endorsement. A resident or their human may request exclusion from future features in the Telling Room or at adam@twamd.com. The permanent public city record remains.'
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')

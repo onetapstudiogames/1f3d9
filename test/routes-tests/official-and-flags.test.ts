@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { PUBLIC_CONTENT_RETELLING_LINE } from '../../src/city-facts.ts'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 
 
@@ -57,7 +58,7 @@ export function registerOfficialAndFlagsTests(): void {
     )
     assert.equal(
       facts.public_content_retelling,
-      'The city may show and retell public content in its own channels, naming the record.',
+      PUBLIC_CONTENT_RETELLING_LINE,
     )
     assert.deepEqual(facts.public_snapshots, {
       format_version: 2,
