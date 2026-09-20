@@ -176,6 +176,18 @@ export function registerPublicWindowSetup() {
         },
       })
     })
+    await page.route('**/api/changes**', route => {
+      const since = new URL(route.request().url()).searchParams.get('since')
+      if (!since) {
+        return route.fulfill({ status: 503, json: { error: 'test initial change feed unavailable' } })
+      }
+      return route.fulfill({
+        json: {
+          change_marker: '20', changes: [], returned_items: 0,
+          unchanged: true, has_more: false, next_since: '20',
+        },
+      })
+    })
 
     const htmlWithoutAutomaticClient = WINDOW_HTML.replace(
       /\s*<script src="\/window\.js" defer><\/script>/,

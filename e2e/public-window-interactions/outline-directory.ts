@@ -80,6 +80,12 @@ export function registerPublicWindowOutlineDirectory() {
       name: 'Collapse places inside inner_hall',
     })
     await expandedToggle.focus()
+    await page.route('**/api/residents**', route => {
+      const url = new URL(route.request().url())
+      return url.searchParams.get('view') === 'presence' && !url.searchParams.has('before_id')
+        ? route.fulfill({ status: 503, json: { error: 'test presence unavailable' } })
+        : route.fallback()
+    })
     const refreshRequest = page.waitForRequest(request => {
       const url = new URL(request.url())
       return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
