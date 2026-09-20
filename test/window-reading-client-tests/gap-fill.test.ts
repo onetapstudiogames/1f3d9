@@ -225,11 +225,16 @@ export function registerGapFillTests(): void {
 
   test('all automatic gap reads share one 300-row refresh budget with the active list first', async () => {
     const requests: Request[] = []
+    const requestedLimits: number[] = []
     const gapped = () => loadedEntry([{ id: 500 }, { id: 1 }], {
       gapAfterIds: [1], filters: {},
     })
+    const fetchList = cityList({ newestId: () => 500, requests })
     const rejoin = historyGapFiller(
-      cityList({ newestId: () => 500, requests }),
+      async input => {
+        requestedLimits.push(Number(new URL(input, 'https://city.test').searchParams.get('limit')))
+        return fetchList(input)
+      },
       () => 'things|all',
     )
 
@@ -242,6 +247,8 @@ export function registerGapFillTests(): void {
       total + rejoined[collection]!.all!.rows.length - 2, 0)
     assert.equal(added, WINDOW_HISTORY_FILL_ROWS,
       'all lists together spend exactly the one advertised row budget')
+    assert.deepEqual(requestedLimits, Array(6).fill(50),
+      'ordinary gap reads request 50 rows until the shared budget is spent')
     assert.equal(rejoined.things!.all!.rows.length, WINDOW_HISTORY_FILL_ROWS + 2,
       'the active list receives the shared budget first')
     assert.deepEqual(ids(rejoined.notes!.all!.rows), [500, 1],

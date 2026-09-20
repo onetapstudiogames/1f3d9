@@ -243,7 +243,6 @@ export function registerWindowCollectionsAndFollowTests(): void {
     assert.doesNotMatch(WINDOW_JS, /context: Boolean\(state\.resident\)/)
     assert.match(WINDOW_JS, /autoLoadFilteredHistory\('notes', filters, historyEntry\('notes', filters\)\)/)
     assert.match(WINDOW_JS, /url\.searchParams\.set\('context', 'place'\)/)
-    assert.match(WINDOW_JS, /filters\.context \? '25' : '50'/)
     assert.match(WINDOW_JS, /context-note/)
     // Neighbours are chosen by position in the room, not by clock, so the mark
     // states the measured distance instead of asserting a closeness the
