@@ -43,7 +43,7 @@ const PUBLIC_CONTENT_RETELLING = 'The city may show and retell public content in
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.14', market: '2.4.7' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.15', market: '2.4.7' })
   assert.deepEqual(PAID_ACTIONS, [
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',

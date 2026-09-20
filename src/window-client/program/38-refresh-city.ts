@@ -66,7 +66,8 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         throw new Error('public snapshot does not cover the requested change marker')
       }
       const replaceAuthored = !state.hasSnapshot || !state.changeMarker ||
-        changeState.status === 'changed' || freshSnapshot.changeMarker !== state.changeMarker
+        changeState.status === 'changed' || changeState.status === 'unavailable' ||
+        freshSnapshot.changeMarker !== state.changeMarker
       const navigation = replaceAuthored
         ? freshSnapshotNavigation(freshSnapshot)
         : await mergeFreshNavigation(freshSnapshot, controller.signal)
@@ -76,20 +77,35 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       }
       const snapshot = navigation.snapshot
       const retainViewerReading = viewerReadingViewIsActive()
-      let histories = replaceAuthored
-        ? freshSnapshotHistories(snapshot, retainViewerReading ? changeState.changes : null)
-        : mergeUnchangedSnapshotHistories(snapshot)
-      if (hadSnapshot && replaceAuthored && retainViewerReading) {
-        histories = await rereadHeldSnapshotHistories(
-          histories,
-          snapshot,
-          freshSnapshot.changeMarker || requiredMarker,
-          controller.signal,
-        )
-        if (navigationRevision !== navigationRevisionAtStart) {
-          await finishWatchingPublicStreets()
-          return
-        }
+      const refreshMarker = freshSnapshot.changeMarker || requiredMarker
+      // A filtered list's newest page is its own server read, with its own
+      // filters. Reading these sequentially also avoids a request burst when a
+      // reader has visited many places.
+      const ownNewestPages = hadSnapshot && replaceAuthored
+        ? await readOwnNewestHistoryPages(state.histories, refreshMarker, controller.signal)
+        : {}
+      let histories
+      if (replaceAuthored) {
+        histories = hadSnapshot
+          ? await reconcileChangedSnapshotHistories(
+            snapshot,
+            changeState.status === 'unavailable' ? null : changeState.changes,
+            ownNewestPages,
+            refreshMarker,
+            controller.signal,
+          )
+          : freshSnapshotHistories(
+            snapshot,
+            changeState.status === 'unavailable' ? null : changeState.changes,
+            ownNewestPages,
+            state.histories,
+          )
+      } else {
+        histories = mergeUnchangedSnapshotHistories(snapshot)
+      }
+      if (navigationRevision !== navigationRevisionAtStart) {
+        await finishWatchingPublicStreets()
+        return
       }
       const archive = replaceAuthored
         ? {
@@ -139,7 +155,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         void loadDirectory(true)
       }
       void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
-      refreshFilteredViews()
       await finishWatchingPublicStreets()
     } catch {
       const failures = state.failures + 1

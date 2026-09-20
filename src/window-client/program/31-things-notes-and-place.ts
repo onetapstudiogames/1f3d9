@@ -186,7 +186,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
 
   function renderHistoryOutcome(target, entry, messages, itemTag) {
     if (!target || entry.rows.length) return false
-    const waiting = entry.loading || entry.refreshing ||
+    const waiting = entry.loading ||
       (!entry.initialized && !entry.error && !entry.refreshError)
     const failed = entry.error || entry.refreshError
     const message = waiting

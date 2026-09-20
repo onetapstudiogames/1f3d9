@@ -9,6 +9,7 @@ type ReadingSnapshot = Readonly<{
   agreements: readonly Row[]
   events: readonly Row[]
   totals: Readonly<Record<string, number>>
+  pages?: Readonly<Record<string, unknown>>
   change_marker: string
 }>
 type ReadingFixtureOptions = Readonly<{
@@ -26,6 +27,10 @@ type ReadingRefreshOptions = Readonly<{
   thingMissing?: boolean
   historyUnavailable?: boolean
   noteBody?: string
+  // How many notes arrive at once. Enough of them push the city's own newest
+  // page past the records a reader had loaded, which is the only way a gap
+  // larger than one page can open.
+  arrivingNotes?: number
 }>
 
 export const READING_NOTE = 'A reader can keep this note open while the public city refreshes. '.repeat(20)
@@ -56,6 +61,7 @@ export async function installReadingFixture(
   let thingReadCount = 0
   let delayedThingRead: { started: () => void, released: Promise<void> } | null = null
   let delayedNoteRead: { started: () => void, released: Promise<void> } | null = null
+  let delayedHistoryRead: { started: () => void, released: Promise<void> } | null = null
   let delayedOutlineRead: {
     started: (minimumMarker: string | null) => void
     released: Promise<void>
@@ -71,6 +77,11 @@ export async function installReadingFixture(
     : null
   let olderNoteModerated = false
   let pendingChanges: readonly Row[] = []
+  // Notes that arrived all at once. They are the city's own newest page while
+  // they exist, which is how a page stops reaching the records a reader loaded.
+  const ARRIVAL_PAGE = 3
+  let arrivedNotes: Row[] = []
+  let nextArrivalId = 400
   let snapshot: ReadingSnapshot = {
     ...baseline,
     residents: baseline.residents.map(resident => resident.id === 49
@@ -86,6 +97,27 @@ export async function installReadingFixture(
     totals: options.olderNote
       ? { ...baseline.totals, conversations: Number(baseline.totals.conversations) + 1 }
       : baseline.totals,
+  }
+  const everyNote = () => [
+    ...arrivedNotes,
+    ...snapshot.notes,
+    ...(olderNote && !olderNoteModerated ? [olderNote] : []),
+  ].sort((left, right) => Number(right.id) - Number(left.id))
+  // The window reads the city's own newest page, not the whole list, so the
+  // fixture serves a page and says honestly that older records remain.
+  const windowSnapshotPayload = () => {
+    const notes = everyNote()
+    const page = arrivedNotes.length ? arrivedNotes.slice(0, ARRIVAL_PAGE) : snapshot.notes
+    const oldestServed = Number(page.at(-1)?.id ?? 0)
+    const hasMore = notes.some(note => Number(note.id) < oldestServed)
+    return {
+      ...snapshot,
+      notes: page,
+      pages: {
+        ...(snapshot.pages ?? {}),
+        notes: { has_more: hasMore, next_before_id: hasMore ? oldestServed : null },
+      },
+    }
   }
   const networkViolations: string[] = []
   const origin = new URL(response.url()).origin
@@ -109,22 +141,39 @@ export async function installReadingFixture(
     }
     const collection = url.searchParams.get('collection')
     if (collection && ['notes', 'things', 'agreements'].includes(collection)) {
+      const delayed = delayedHistoryRead
+      delayedHistoryRead = null
+      if (delayed) {
+        delayed.started()
+        await delayed.released
+      }
       if (historyUnavailable) {
         await route.fulfill({ status: 503, json: { error: 'history unavailable' } })
         return
       }
+      // One bounded read of one list: a newer end, an optional older end, and an
+      // honest has_more for whatever range the two describe.
       const beforeId = url.searchParams.get('before_id')
-      const isOlderNotePage = collection === 'notes' && options.olderNote && beforeId !== null
-      const rows = isOlderNotePage
-        ? olderNote && !olderNoteModerated ? [olderNote] : []
-        : snapshot[collection as 'notes' | 'things' | 'agreements']
+      const afterId = url.searchParams.get('after_id')
       const placeId = url.searchParams.get('within_place_id')
-      const hasMore = collection === 'notes' && options.olderNote && !beforeId && !olderNoteModerated
+      const limit = Number(url.searchParams.get('limit') ?? '10')
+      const everyRow = collection === 'notes'
+        ? everyNote()
+        : snapshot[collection as 'things' | 'agreements']
+      const matching = (placeId
+        ? everyRow.filter(row => String(row.place_id) === placeId)
+        : everyRow
+      ).filter(row => (beforeId === null || Number(row.id) < Number(beforeId)) &&
+        (afterId === null || Number(row.id) > Number(afterId)))
+      // A place list of a busy room is longer than one page, so a reader of one
+      // place has to ask for its older records the same way.
+      const rows = matching.slice(0, placeId ? Math.min(limit, 2) : limit)
+      const hasMore = matching.length > rows.length
       await route.fulfill({ json: {
-        [collection]: placeId ? rows.filter(row => String(row.place_id) === placeId) : rows,
+        [collection]: rows,
         change_marker: snapshot.change_marker,
         has_more: hasMore,
-        next_before_id: hasMore ? Math.min(...snapshot.notes.map(note => Number(note.id))) : null,
+        next_before_id: hasMore ? Number(rows.at(-1)?.id) : null,
       } })
       return
     }
@@ -134,7 +183,7 @@ export async function installReadingFixture(
       delayed.started(url.searchParams.get('after_change_marker'))
       await delayed.released
     }
-    await route.fulfill({ json: snapshot })
+    await route.fulfill({ json: windowSnapshotPayload() })
   })
   await page.route('**/api/events**', route => route.fulfill({ json: {
     events: snapshot.events, change_marker: snapshot.change_marker,
@@ -218,10 +267,7 @@ export async function installReadingFixture(
     // Every note id the fixture serves, newest first, so a test can compare a
     // loaded list with the whole record instead of only its two ends.
     get servedNoteIds() {
-      return [
-        ...snapshot.notes.map(note => Number(note.id)),
-        ...(olderNote && !olderNoteModerated ? [299] : []),
-      ].sort((left, right) => right - left)
+      return everyNote().map(note => Number(note.id))
     },
     delayNextNoteRead() {
       let started = () => {}
@@ -229,6 +275,14 @@ export async function installReadingFixture(
       const began = new Promise<void>(resolve => { started = resolve })
       const released = new Promise<void>(resolve => { release = resolve })
       delayedNoteRead = { started, released }
+      return { started: began, release }
+    },
+    delayNextHistoryRead() {
+      let started = () => {}
+      let release = () => {}
+      const began = new Promise<void>(resolve => { started = resolve })
+      const released = new Promise<void>(resolve => { release = resolve })
+      delayedHistoryRead = { started, released }
       return { started: began, release }
     },
     async beginOldMarkerOutlineRead() {
@@ -250,6 +304,11 @@ export async function installReadingFixture(
       }
       const alreadyHasNewNote = snapshot.notes.some(note => note.id === 304)
       const nextMarker = String(Number(snapshot.change_marker) + 1)
+      const arrivals = Array.from({ length: refreshOptions.arrivingNotes ?? 0 }, (_, index) => ({
+        ...baseline.notes[0], id: nextArrivalId + index, body: `An arriving note ${index}.`,
+      })).reverse()
+      nextArrivalId += refreshOptions.arrivingNotes ?? 0
+      arrivedNotes = [...arrivals, ...arrivedNotes]
       if (refreshOptions.moderateOlderNote) olderNoteModerated = true
       snapshot = { ...snapshot,
         change_marker: nextMarker,
@@ -274,7 +333,8 @@ export async function installReadingFixture(
         agreements: [{ ...baseline.agreements[0], id: 602, body: 'A newly arrived agreement.' },
           ...snapshot.agreements.filter(agreement => agreement.id !== 602)],
         totals: { ...snapshot.totals,
-          conversations: Number(snapshot.totals.conversations) + (alreadyHasNewNote ? 0 : 1),
+          conversations: Number(snapshot.totals.conversations) + arrivals.length +
+            (alreadyHasNewNote ? 0 : 1),
           things: 2, agreements: 3,
         },
       }

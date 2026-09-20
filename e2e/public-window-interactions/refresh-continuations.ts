@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { FAR_WALKER_ACTION_EVENTS } from '../helpers/public-window-snapshot-fixtures.ts'
 
 export function registerPublicWindowRefreshContinuations() {
   test('a history page newer than its neighboring totals fails instead of mixing markers', async ({ page }) => {
@@ -54,109 +53,9 @@ export function registerPublicWindowRefreshContinuations() {
     releaseChangeCheck()
   })
 
-  test('a filtered forward refresh newer than its neighboring totals keeps the completed rows', async ({ page }) => {
-    let phase: 'initial' | 'ahead' = 'initial'
-    await page.route('**/api/events**', route => {
-      const url = new URL(route.request().url())
-      if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
-      return route.fulfill({
-        json: {
-          events: phase === 'initial'
-            ? [FAR_WALKER_ACTION_EVENTS[0]]
-            : FAR_WALKER_ACTION_EVENTS.slice(0, 2),
-          has_more: false,
-          next_before_id: null,
-          change_marker: phase === 'initial' ? '20' : '21',
-        },
-      })
-    })
-    await page.route('**/api/changes**', route => route.fulfill({
-      status: 503,
-      json: { error: 'test change check unavailable' },
-    }))
-
-    await page.locator('#resident-filter').selectOption('far-walker')
-    await page.getByRole('tab', { name: 'Happenings' }).click()
-    await expect(page.locator('#activity-list')).toContainText('far-walker used')
-
-    phase = 'ahead'
-    const aheadResponse = page.waitForResponse(response => {
-      const url = new URL(response.url())
-      return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
-        url.searchParams.get('after_change_marker') === '20' && response.status() === 200
-    })
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await aheadResponse
-
-    await expect(page.locator('#happenings-page')).toContainText(
-      'Updated happenings could not be loaded. Showing the previous completed results.',
-    )
-    await expect(page.locator('#activity-list')).not.toContainText('2 times')
-    await expect(page.getByRole('button', { name: 'Retry refreshing happenings' })).toBeVisible()
-  })
-
-  test('a filtered refresh names loading and failure, preserves rows, and retries itself', async ({ page }) => {
-    let phase: 'initial' | 'refresh' = 'initial'
-    let refreshAttempts = 0
-    let releaseRefresh!: () => void
-    const heldRefresh = new Promise<void>(resolve => { releaseRefresh = resolve })
-    await page.route('**/api/events**', async route => {
-      const url = new URL(route.request().url())
-      if (url.searchParams.get('actor') !== 'far-walker') return route.fallback()
-      if (phase === 'initial') {
-        return route.fulfill({
-          json: {
-            events: [FAR_WALKER_ACTION_EVENTS[0]], has_more: false,
-            next_before_id: null, change_marker: '20',
-          },
-        })
-      }
-      refreshAttempts += 1
-      if (refreshAttempts === 1) {
-        await heldRefresh
-        return route.fulfill({ status: 503, json: { error: 'test forward refresh failure' } })
-      }
-      return route.fulfill({
-        json: {
-          events: FAR_WALKER_ACTION_EVENTS.slice(0, 2), has_more: false,
-          next_before_id: null, change_marker: '20',
-        },
-      })
-    })
-    await page.route('**/api/changes**', route => route.fulfill({
-      status: 503,
-      json: { error: 'test change check unavailable' },
-    }))
-
-    await page.locator('#resident-filter').selectOption('far-walker')
-    await page.getByRole('tab', { name: 'Happenings' }).click()
-    await expect(page.locator('#activity-list')).toContainText('far-walker')
-    phase = 'refresh'
-    const refreshRequest = page.waitForRequest(request => {
-      const url = new URL(request.url())
-      return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
-        url.searchParams.get('after_change_marker') === '20'
-    })
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await refreshRequest
-    await expect(page.locator('#happenings-page')).toContainText('Loading updated happenings…')
-    await expect(page.locator('#activity-list')).toContainText('far-walker')
-    releaseRefresh()
-    await expect(page.locator('#happenings-page')).toContainText(
-      'Updated happenings could not be loaded. Showing the previous completed results.',
-    )
-    const retry = page.getByRole('button', { name: 'Retry refreshing happenings' })
-    await expect(retry).toBeVisible()
-    const success = page.waitForResponse(response => {
-      const url = new URL(response.url())
-      return url.pathname === '/api/events' && url.searchParams.get('actor') === 'far-walker' &&
-        response.status() === 200
-    })
-    await retry.click()
-    await success
-    await expect(page.locator('#happenings-page')).not.toContainText('could not be loaded')
-  })
-
+  // Changed refreshes now reconcile from each list's own newest page. Gap,
+  // failure, and retry behavior is covered with a real discontinuity in
+  // e2e/window-reading-refresh.spec.ts.
   test('recent window slices can be extended independently in every public view', async ({ page }) => {
     await page.getByRole('tab', { name: 'Conversations' }).click()
     const olderConversationRequest = page.waitForRequest(request => {
