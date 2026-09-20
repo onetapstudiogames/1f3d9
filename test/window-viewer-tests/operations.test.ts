@@ -143,10 +143,6 @@ export function registerWindowOperationsTests(): void {
     // cannot push a watched place or followed resident out of the page.
     assert.match(WINDOW_JS, /url\.searchParams\.set\('within_place_id', String\(filters\.placeId\)\)/)
     assert.match(WINDOW_JS, /url\.searchParams\.set\('actor', filters\.resident\)/)
-    // An initialized filtered view keeps learning: each snapshot refresh
-    // silently refetches the newest filtered page and merges it.
-    assert.match(WINDOW_JS, /function forwardRefreshHistory\(collection, filters\)/)
-    assert.match(WINDOW_JS, /refreshFilteredViews\(\)/)
     // The interim load control stays focusable; disabled buttons cannot
     // receive restored focus. Arrow-key tab roving must not flood history.
     assert.match(WINDOW_JS, /aria-busy/)

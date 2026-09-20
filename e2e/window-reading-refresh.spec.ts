@@ -428,7 +428,111 @@ test('an older note loaded by the reader stays continuously attached on unrelate
     await expect(page.locator(selector), 'older-note body after unrelated refresh compared with fixture body')
       .toContainText(READING_OLDER_NOTE.trim())
     await expectHeldNodes(page, [selector])
+    await expect(page.locator('#conversation-page'), 'joined retained list compared with no gap')
+      .not.toContainText('between here and the newest')
   })
+
+test('a loaded older page survives when it finishes before the changed refresh commits',
+  async ({ page, baseURL }) => {
+    const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+    violationsByPage.set(page, fixture.networkViolations)
+    await ready(page, '/window/conversations')
+    const delayedRefresh = await fixture.beginOldMarkerOutlineRead()
+    try {
+      const selector = await loadOlderNote(page)
+      delayedRefresh.release()
+      await expect(page.locator('#window-status'), 'changed refresh completion compared with Watching')
+        .toContainText('Watching', { timeout: 15_000 })
+      await expect(page.locator(selector), 'page completed before refresh commit compared with retained')
+        .toContainText(READING_OLDER_NOTE.trim())
+    } finally {
+      delayedRefresh.release()
+    }
+  })
+
+test('a load older request that finishes after a changed refresh still completes',
+  async ({ page, baseURL }) => {
+    const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+    violationsByPage.set(page, fixture.networkViolations)
+    await ready(page, '/window/conversations')
+    const delayedPage = fixture.delayNextHistoryRead()
+    try {
+      const load = page.getByRole('button', { name: 'Load older conversations', exact: true })
+      await load.click()
+      await delayedPage.started
+      await fixture.refresh()
+      delayedPage.release()
+      const selector = '#conversation-stream [data-viewer-record-key="note:299"]'
+      await expect(page.locator(selector), 'page completed after refresh commit compared with retained')
+        .toContainText(READING_OLDER_NOTE.trim(), { timeout: 15_000 })
+    } finally {
+      delayedPage.release()
+    }
+  })
+
+test('a second refresh overtaking the one bounded page retry leaves an honest retry control',
+  async ({ page, baseURL }) => {
+    const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+    violationsByPage.set(page, fixture.networkViolations)
+    await ready(page, '/window/conversations')
+    const firstPage = fixture.delayNextHistoryRead()
+    let retriedPage: ReturnType<typeof fixture.delayNextHistoryRead> | null = null
+    try {
+      await page.getByRole('button', { name: 'Load older conversations', exact: true }).click()
+      await firstPage.started
+      await fixture.refresh()
+      retriedPage = fixture.delayNextHistoryRead()
+      firstPage.release()
+      await retriedPage.started
+      await fixture.refresh()
+      retriedPage.release()
+      await expect(page.locator('#conversation-page'),
+        'twice-overtaken page compared with an explicit loading failure')
+        .toContainText('Older conversations could not be loaded')
+      await expect(page.getByRole('button', { name: 'Retry loading older conversations', exact: true }),
+        'twice-overtaken page compared with a usable retry control').toBeVisible()
+    } finally {
+      firstPage.release()
+      retriedPage?.release()
+    }
+  })
+
+test('the window closes a bounded gap on its own from the same list', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  await loadOlderNote(page)
+  await fixture.refresh({ arrivingNotes: 6 })
+  const loadedIds = () => page.evaluate(() => [...document.querySelectorAll(
+    '#conversation-stream [data-viewer-record-key]')].map(node =>
+    Number(node.getAttribute('data-viewer-record-key')?.split(':').at(-1))))
+  await expect.poll(async () => (await loadedIds()).includes(304),
+    { message: 'record inside the closed gap compared with loaded' }).toBe(true)
+  expect(await loadedIds(), 'ids after automatic fill compared with every id in this list')
+    .toEqual(fixture.servedNoteIds)
+  await expect(page.locator('#conversation-page'), 'closed gap compared with no seam line')
+    .not.toContainText('between here and the newest')
+})
+
+test('a newer gap page waits for its matching snapshot instead of mixing markers', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const older = await loadOlderNote(page)
+
+  await fixture.refresh({ arrivingNotes: 4, gapMarkerAhead: true })
+
+  await expect(page.locator('#conversation-stream'),
+    'newer gap row compared with absent beneath the older snapshot')
+    .not.toContainText('An arriving note 0.')
+  await expect(page.locator(older), 'completed old-snapshot row compared with retained')
+    .toContainText(READING_OLDER_NOTE.trim())
+  await expect(page.locator('#conversation-page'),
+    'marker mismatch compared with an honest retry seam')
+    .toContainText('Older conversations could not be rechecked')
+  await expect(page.getByRole('button', { name: 'Load the conversations missing here', exact: true }),
+    'marker mismatch seam control compared with visible').toBeVisible()
+})
 
 test('moderation removes or tombstones an older note loaded by the reader', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL, { olderNote: true })
@@ -464,12 +568,12 @@ test('a failed older-history check keeps its held copy while the city and detail
     await delayed.started
     await expect(page.locator('#record-detail-body'), 'pending note detail compared with explicit loading')
       .toContainText('Reading the live public record')
-    await fixture.refresh({ historyUnavailable: true })
+    await fixture.refresh({ historyUnavailable: true, arrivingNotes: 6 })
     await expectHeldNodes(page, [selector])
     await expect(page.locator(selector), 'failed history check retains the held older note')
       .toContainText(READING_OLDER_NOTE.trim())
-    await expect(page.locator('#conversation-stream [data-viewer-record-key="note:304"]'),
-      'new note arrives despite the failed older-history check').toContainText('A newly arrived note.')
+    await expect(page.locator('#conversation-stream [data-viewer-record-key="note:405"]'),
+      'newly arrived notes appear despite the failed gap read').toContainText('An arriving note')
     await expect(page.locator('#conversation-page'),
       'failed history check names the gap instead of joining the list silently')
       .toContainText('Older conversations could not be rechecked')
@@ -489,7 +593,7 @@ test('the seam left by an unchecked older note loads from its own control', asyn
   await ready(page, '/window/conversations')
   const selector = await loadOlderNote(page)
   await openBody(page.locator('#conversation-stream [data-body-key="note:299"]'))
-  await fixture.refresh({ historyUnavailable: true })
+  await fixture.refresh({ historyUnavailable: true, arrivingNotes: 6 })
   await expect(page.locator(selector), 'kept older note compared with its fixture body')
     .toContainText(READING_OLDER_NOTE.trim())
   const loadedIds = () => page.evaluate(() => [...document.querySelectorAll(
@@ -497,7 +601,9 @@ test('the seam left by an unchecked older note loads from its own control', asyn
     Number(node.getAttribute('data-viewer-record-key')?.split(':').at(-1))))
   const gapped = await loadedIds()
   expect(gapped, 'held older note stays in the list across the failed check').toContain(299)
-  expect(gapped, 'newest note arrives across the failed check').toContain(304)
+  expect(gapped, 'the reader loaded pages stay across the failed check').toContain(301)
+  expect(gapped, 'newest notes arrive across the failed check').toContain(405)
+  expect(gapped, 'records inside the gap are not loaded yet').not.toContain(304)
   const seam = page.getByRole('button', { name: 'Load the conversations missing here', exact: true })
   await expect(page.locator('#conversation-page'),
     'unchecked list states its gap rather than joining silently')

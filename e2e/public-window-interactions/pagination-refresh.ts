@@ -81,6 +81,9 @@ export function registerPublicWindowPaginationRefresh() {
     await page.unroute('**/api/residents**')
     await page.route('**/api/residents**', route => {
       const url = new URL(route.request().url())
+      if (url.searchParams.get('view') === 'presence' && !url.searchParams.has('before_id')) {
+        return route.fulfill({ status: 503, json: { error: 'test presence unavailable' } })
+      }
       const before = url.searchParams.get('before_id')
       const changeMarker = url.searchParams.get('after_change_marker') ?? '20'
       if (!refreshed) {
@@ -164,6 +167,12 @@ export function registerPublicWindowPaginationRefresh() {
         },
       } })
     })
+    await page.route('**/api/residents**', route => {
+      const url = new URL(route.request().url())
+      return url.searchParams.get('view') === 'presence' && !url.searchParams.has('before_id')
+        ? route.fulfill({ status: 503, json: { error: 'test presence unavailable' } })
+        : route.fallback()
+    })
 
     const refreshRequest = page.waitForResponse(response => {
       const url = new URL(response.url())
@@ -192,10 +201,16 @@ export function registerPublicWindowPaginationRefresh() {
 
   test('a slower refresh cannot overwrite a manual resident page that finishes first', async ({ page }) => {
     await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+    await expect(page.getByRole('button', { name: 'newest_gallery', exact: true })).toBeVisible()
 
     await page.unroute('**/api/residents**')
     let releaseResidents: (() => void) | null = null
     await page.route('**/api/residents**', async route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('view') === 'presence' && !url.searchParams.has('before_id')) {
+        await route.fulfill({ status: 503, json: { error: 'test presence unavailable' } })
+        return
+      }
       await new Promise<void>(resolve => {
         releaseResidents = () => {
           void route.fulfill({ json: RESIDENT_PAGE }).then(() => resolve())
@@ -212,8 +227,10 @@ export function registerPublicWindowPaginationRefresh() {
       })
     })
 
-    const residentRequest = page.waitForRequest(request =>
-      new URL(request.url()).pathname === '/api/residents')
+    const residentRequest = page.waitForRequest(request => {
+      const url = new URL(request.url())
+      return url.pathname === '/api/residents' && url.searchParams.get('before_id') === '7'
+    })
     await page.getByRole('button', { name: 'Load more residents' }).click()
     await residentRequest
 

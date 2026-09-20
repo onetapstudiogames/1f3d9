@@ -257,6 +257,20 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
     return current
   }
 
+  // The records the city no longer has at all. A withdrawn thing is gone
+  // from every public list. A moderation row is not one of these: the public
+  // change log says a record was moderated, never whether it was taken down or
+  // put back, so a moderated record is one to read again rather than one to
+  // drop on the reader's behalf.
+  function removedViewerRecordKeys(changes) {
+    const keys = new Set()
+    for (const change of changes || []) {
+      const thingId = (change.detail || {}).thing_id
+      if (change.kind === 'thing_withdrawn' && thingId) keys.add('thing:' + String(thingId))
+    }
+    return keys
+  }
+
   function changedViewerRecordKeys(changes) {
     const keys = new Set()
     for (const change of changes || []) {
@@ -268,6 +282,9 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
       if (['thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn']
         .includes(change.kind) && detail.thing_id) {
         keys.add('thing:' + String(detail.thing_id))
+      }
+      if (change.kind === 'transfer' && detail.asset_type === 'thing' && detail.asset_id) {
+        keys.add('thing:' + String(detail.asset_id))
       }
       if (['agreement_accession', 'agreement_sign'].includes(change.kind) &&
           detail.agreement_id) {

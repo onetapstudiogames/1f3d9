@@ -75,6 +75,11 @@ import {
 } from './me-around-you-limit.ts'
 import { THING_BODY_MAX_BYTES, WORLD_DESCRIPTION_MAX_CHARACTERS } from './world-limits.ts'
 import { WORLD_ROOT_PURPOSE } from './world-root.ts'
+import {
+  WINDOW_HISTORY_FILL_ROWS_TEXT,
+  WINDOW_HISTORY_KEEP_ROWS_TEXT,
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
+} from './window-history-limits.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -86,7 +91,7 @@ export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 10 * 1_024
 
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
-  city: '1.9.14',
+  city: '1.9.15',
   market: '2.4.7',
 })
 
@@ -298,6 +303,19 @@ export function renderCityRoutesText(): string {
     .join('\n')
 }
 
+const WINDOW_HISTORY_BOUNDS_LINES = [
+  `A changed refresh keeps up to ${WINDOW_HISTORY_KEEP_ROWS_TEXT} records the reader already loaded per list,`,
+  'plus any extra records held open; otherwise the oldest go first. Each filtered list',
+  'checks its own newest page, under its own ordering and filters. When that page does',
+  'not join the kept records, the window names the numeric range between them and reads',
+  'missing records from that same list. One changed refresh reads up to',
+  `${WINDOW_HISTORY_FILL_ROWS_TEXT} missing records in total, with the active list first. A larger range, a later`,
+  'list that budget did not reach, or a read that failed leaves the completed rows and says some',
+  "records between them and the newest are not loaded; that list's own control reads",
+  'exactly that range. Changed, removed, moved, or moderated public text is never kept',
+  'as stale text after the city reports its change. ' + WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
+].join('\n')
+
 export function renderCityFactTokens(document: string): string {
   const anonymousCount = CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length
   const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
@@ -325,6 +343,7 @@ export function renderCityFactTokens(document: string): string {
       '{{CITY_FEE_RAILS}}',
       CITY_FEE_RAILS_LINE,
     )
+    .replaceAll('{{WINDOW_HISTORY_BOUNDS}}', WINDOW_HISTORY_BOUNDS_LINES)
 }
 
 type TextFile = Readonly<{ path: string; text: string }>

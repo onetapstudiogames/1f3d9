@@ -2,6 +2,11 @@ import {
   COMMUNITY_TOOLS,
   renderCommunityToolLink,
 } from './community-tools.ts'
+import {
+  WINDOW_HISTORY_FILL_ROWS_TEXT,
+  WINDOW_HISTORY_KEEP_ROWS_TEXT,
+  WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
+} from './window-history-limits.ts'
 
 const VISUAL_WIKI = COMMUNITY_TOOLS[0]
 
@@ -52,7 +57,7 @@ export const WINDOW_HTML = `<!doctype html>
   </header>
 
   <section class="view-console" aria-label="City window controls">
-    <p id="window-reading-notice" class="city-promise" hidden>In Conversations, Happenings, Place, Things, and Agreements, expanded text stays open through refresh. This browser remembers up to 200 open texts; closing one or clearing site data removes its choice. If browser storage is unavailable, choices last for this page. Changed or removed public text still updates. When a list cannot join a record you kept open to its newest records, it says some records between them are not loaded and its own control loads them from that point.</p>
+    <p id="window-reading-notice" class="city-promise" hidden>In Conversations, Happenings, Place, Things, and Agreements, expanded text stays open through refresh. This browser remembers up to 200 open texts; closing one or clearing site data removes its choice. If browser storage is unavailable, choices last for this page. Changed or removed public text still updates. Each list keeps up to ${WINDOW_HISTORY_KEEP_ROWS_TEXT} records you loaded through a refresh, plus any extra records you are holding open; otherwise its oldest records go first. ${WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT} When a list's own newest page leaves a gap, the window reads missing records from that same list. One refresh reads up to ${WINDOW_HISTORY_FILL_ROWS_TEXT} missing records in total, starting with the list you are viewing. A larger gap, a later list the refresh budget did not reach, or a read that failed leaves a line saying some records between here and the newest are not loaded, and that list's own control reads exactly that gap.</p>
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>
       <a id="live-link" class="view-tab view-tab-link" href="/live" target="_blank" rel="noopener">Live <span aria-hidden="true">↗</span></a>

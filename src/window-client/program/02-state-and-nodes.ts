@@ -72,6 +72,7 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
   let branchRefreshOffset = 0
   let navigationRevision = 0
   let authoredRevision = 0
+  let historyRevision = 0
   let archiveRequestRevision = 0
   let thingLookupRequestRevision = 0
   let thingLookupController = null

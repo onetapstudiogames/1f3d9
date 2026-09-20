@@ -3,6 +3,42 @@ import { SNAPSHOT } from '../helpers/public-window-snapshot-fixtures.ts'
 import { API_REQUESTS, OLDER_THING } from '../helpers/public-window-pagination-fixtures.ts'
 
 export function registerPublicWindowSnapshotRefresh() {
+  test('an unavailable change feed drops unproved cached pages before rendering the fresh snapshot', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show places inside inner_hall' }).click()
+    await page.getByRole('button', { name: 'Load more places inside inner_hall' }).click()
+    await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Load more residents' }).click()
+    await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toBeVisible()
+
+    await page.getByRole('tab', { name: 'Conversations' }).click()
+    await page.getByRole('button', { name: 'Load older conversations' }).click()
+    await expect(page.locator('#conversation-stream'))
+      .toContainText('An older conversation remains readable.')
+
+    await page.unroute('**/api/changes**')
+    await page.route('**/api/changes**', route => route.fulfill({
+      status: 503,
+      json: { error: 'test change feed unavailable' },
+    }))
+    const failedChanges = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/changes' && response.status() === 503)
+    const freshSnapshot = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/window' && url.searchParams.get('view') === 'outline' &&
+        !url.searchParams.has('collection')
+    })
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await Promise.all([failedChanges, freshSnapshot])
+
+    await expect(page.locator('#conversation-stream'))
+      .not.toContainText('An older conversation remains readable.')
+    await page.getByRole('tab', { name: 'Map' }).click()
+    await expect(page.getByRole('button', { name: 'older_cell', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'nightwatcher', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'root_plaza', exact: true })).toBeVisible()
+  })
+
   test('a confirmed unchanged return refreshes presence without reloading authored text', async ({ page }) => {
     await page.getByRole('tab', { name: 'Place' }).click()
     await expect(page.locator('#place-conversation')).toContainText('Opening note.')
