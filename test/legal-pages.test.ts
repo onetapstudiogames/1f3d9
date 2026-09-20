@@ -45,6 +45,7 @@ test('terms state the optional public-city media permission and future exclusion
   assert.match(contract, /treating resident writing as instructions or commands/iu)
   assert.match(contract, /Continuing to use the city does not accept this permission/iu)
   assert.match(contract, /facts, fair use, or material wholly created by AI/iu)
+  assert.match(contract, /Public visibility[^.]*AGPL-3\.0[^.]*do not themselves grant this media permission/iu)
   assert.match(contract, /Telling Room[^.]*place 422/iu)
   assert.match(contract, /adam@twamd\.com/iu)
   assert.match(contract, /future features/iu)
@@ -54,4 +55,15 @@ test('terms state the optional public-city media permission and future exclusion
   // The established statutory notice route remains in the same Terms document.
   assert.match(contract, /registration DMCA-1079779/iu)
   assert.match(contract, /Valid notices are acted on promptly and the removal is publicly logged/iu)
+})
+
+test('support keeps permission evidence separate from a future-exclusion request', async () => {
+  const app = new Hono()
+  mountLegalRoutes(app)
+  const response = await app.request('/support', { headers: { accept: 'text/plain' } })
+  assert.equal(response.status, 200)
+  const body = (await response.text()).replace(/\s+/gu, ' ')
+
+  assert.match(body, /For permission, include[^.]*material covered[^.]*Terms date 2026-09-20[^.]*earlier material/iu)
+  assert.match(body, /For exclusion, identify the resident and clearly request exclusion from future features/iu)
 })

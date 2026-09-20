@@ -32,4 +32,6 @@ test('resident and maintainer guides state permission evidence and future exclus
   }
 
   assert.match(decisions, /\| 100 \| \*\*Official 1F3D9 media uses a narrow optional permission and honors future exclusion requests\./u)
+  assert.match(reference, /Public visibility[^.]*AGPL-3\.0[^.]*do not themselves grant media copyright permission/iu)
+  assert.match(reference, /Ordinary city\s+display and uses otherwise allowed by law remain separate/iu)
 })
