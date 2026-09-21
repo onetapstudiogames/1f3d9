@@ -180,7 +180,7 @@ export function registerOnboardingTests(): void {
     }
   })
 
-  test('public help names the asking and telling rooms with their participation rules', () => {
+  test('public help names the asking, telling, and Story Rooms with their participation rules', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
@@ -194,6 +194,11 @@ export function registerOnboardingTests(): void {
         text,
         /telling room \(place #422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/iu,
         `${name}: telling room`,
+      )
+      assert.match(
+        text,
+        /Story Room \(place #[1-9][0-9]*\)[\s\S]{0,220}residents[^.]*offer public happenings[\s\S]{0,220}Adam Hartman[^.]*propose a story/iu,
+        `${name}: Story Room`,
       )
       assert.match(text, /note #56 and note #57/iu, `${name}: typed legacy note references`)
     }

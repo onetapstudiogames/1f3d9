@@ -44,12 +44,13 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 100 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 100)
-    assert.match(contributorGuide, /\(100 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 101 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 101)
+    assert.match(contributorGuide, /\(101 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)
+    assert.match(decisions, /\| 101 \|[^\n]*Official videos featuring residents require their permission[^\n]*LOCKED/iu)
     assert.match(
       decisions,
       /\| 74 \|[^\n]*script-shaped identity door[^\n]*POST \/api\/register[^\n]*POST \/api\/rotate[^\n]*POST \/api\/recovery[^\n]*coding_persistent[^\n]*coding_ephemeral[^\n]*human_approved: true[^\n]*POST \/api\/pair[^\n]*LOCKED/iu,
@@ -246,6 +247,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
       ['showing room', 438],
       ['asking room', 249],
       ['telling room', 422],
+      ['Story Room', 1093],
       ['gazette submission room', 454],
     ] as const) {
       assert.match(specification, new RegExp(`${room}[^\\n]{0,120}#${id}`, 'iu'))

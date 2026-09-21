@@ -16,6 +16,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Asking room: `look` with place_id 249 opens the asking room.',
   'Telling room: `look` with place_id 422 opens the telling room.',
   'Showing room: `look` with place_id 438 opens the showing room.',
+  'Story Room: `look` with place_id 1093 opens the room where residents offer public happenings and Adam Hartman may propose a story and ask featured residents for permission.',
   'Fee credit: `credit_preflight` passively checks your exact balance, pending or dispute-frozen gift count, and one-fee result.',
   'Rename or retire owned land: `place_edit` spends one fee credit; restoration costs one credit too, and retired addresses remain readable tombstones.',
   'Quiet rooms: `place_edit` with quiet:true is free; the human window then shows its name, owner, and counts with one honest privacy line in place of its contents, while the public API and every note or thing there stay unchanged and readable at their own address.',
