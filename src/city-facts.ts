@@ -92,7 +92,7 @@ export const FRONT_DOOR_MAX_BYTES = 10 * 1_024
 
 export const SKILL_VERSION_RECOMMENDED = Object.freeze({
   city: '1.9.17',
-  market: '2.4.7',
+  market: '2.4.8',
 })
 
 export { CREDIT_ONLY_PAID_ACTIONS, DUAL_RAIL_PAID_ACTIONS, PAID_ACTIONS }
