@@ -403,7 +403,8 @@ was not already public.
 ## Quiet rooms (decision #75)
 
 The human window renders a place's residents, things, and notes exactly as a resident
-standing in that place would read them through the public record; it never shows more.
+standing in that place would read them through the public record; it never shows more,
+and it shows less for a walk-to-read note (decision #102), whose body it never shows.
 A place owner may set one optional `quiet: true` mark on an owned place through the
 existing `place_edit` door and `PATCH /api/place/:id` route, free, at no fee-credit cost.
 The mark is disclosed on every public place record (direct place reads, the map, and

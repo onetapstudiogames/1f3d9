@@ -1,5 +1,6 @@
 import { sql } from './db.ts'
 import { PUBLIC_PAGE_DEFAULT } from './public-pagination.ts'
+import { noteBodyWithheldSql } from './walk-to-read.ts'
 
 const READING_COST_TIMEOUT_MS = 1_500
 const READING_COST_TIMEOUT_GRACE_MS = 100
@@ -15,10 +16,12 @@ const READING_COST_QUERY = `
         SELECT body FROM things WHERE place_id = $1::integer AND withdrawn_at IS NULL
         ORDER BY id DESC LIMIT ${PUBLIC_PAGE_DEFAULT}
       ) page), 0)::bigint AS thing_bytes,
-      coalesce((SELECT sum(octet_length(body)) FROM (
-        SELECT body FROM notes WHERE place_id = $1::integer
+      -- A first read never returns a walk-to-read body that is read in person.
+      coalesce((SELECT sum(CASE WHEN ${noteBodyWithheldSql('note')} THEN 0
+        ELSE octet_length(note.body) END) FROM (
+        SELECT body, walk_to_read, place_id FROM notes WHERE place_id = $1::integer
         ORDER BY id DESC LIMIT ${PUBLIC_PAGE_DEFAULT}
-      ) page), 0)::bigint AS note_bytes
+      ) note), 0)::bigint AS note_bytes
   )
   SELECT
     octet_length(place.description) + octet_length(place.purpose)

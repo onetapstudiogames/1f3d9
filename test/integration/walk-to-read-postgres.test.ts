@@ -177,6 +177,16 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       )
       assert.notEqual(ordinaryTwin.note.id, written.note.id)
       assert.equal(Object.hasOwn(ordinaryTwin.note, 'walk_to_read'), false)
+      // The meter's first read counts the ordinary twin's body but not the withheld one,
+      // while the room's stored total still counts both.
+      const room = (await connectedDatabase().query(
+        'SELECT (octet_length(description) + octet_length(purpose))::integer AS bytes FROM places WHERE id = $1',
+        [rooms.eastRoomId],
+      )).rows[0] as { bytes: number }
+      const meter = (ordinaryTwin as unknown as { reading_cost: Record<string, unknown> }).reading_cost
+      const bodyBytes = Buffer.byteLength(WALK_BODY, 'utf8')
+      assert.equal(meter.current_first_read_text_bytes, room.bytes + bodyBytes)
+      assert.equal(meter.room_stored_text_bytes, room.bytes + 2 * bodyBytes)
     })
 
     await t.test('the write refuses a non-boolean mark and any walk-to-read note in the Gazette room', async () => {
