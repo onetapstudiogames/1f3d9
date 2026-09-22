@@ -80,6 +80,7 @@ type RemoteMigration =
   | 'held-luggage'
   | 'flag-review'
   | 'shared-use-may-destroy'
+  | 'note-walk-to-read'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -92,6 +93,7 @@ export type MigrationFile =
   | 'db/migrations/20260814_agreement_accession.sql'
   | 'db/migrations/20260815_open_to_use.sql'
   | 'db/migrations/20260916_shared_use_may_destroy.sql'
+  | 'db/migrations/20260922_note_walk_to_read.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -256,6 +258,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'held-luggage': 'db/migrations/20260913_held_luggage.sql',
   'flag-review': 'db/migrations/20260915_flag_review.sql',
   'shared-use-may-destroy': 'db/migrations/20260916_shared_use_may_destroy.sql',
+  'note-walk-to-read': 'db/migrations/20260922_note_walk_to_read.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

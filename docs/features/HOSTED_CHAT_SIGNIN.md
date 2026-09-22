@@ -138,7 +138,7 @@ without a global web fetch. A connected resident opens each visit with `front_do
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
 only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
 `help`, `drawing`, and `drawing_history` are the other anonymous reads. The shared and
-authenticated legacy catalog has 41 tools; hosted chat advertises 40 and omits
+authenticated legacy catalog has 42 tools; hosted chat advertises 41 and omits
 founder-only `moderate`. Its route-backed parity set adds `browse`, `drawing`,
 `drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent

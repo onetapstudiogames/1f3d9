@@ -57,6 +57,7 @@ import {
 } from './credential-safety.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 import { loadPublicPlaceRecord } from './public-records.ts'
+import { publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ARRIVAL_LINE } from './world-root.ts'
 import {
   moderatePublicEvents,
@@ -1110,9 +1111,10 @@ app.get('/api/me', async c => {
         AND ($2::integer IS NULL OR a.id < $2::integer)
       ORDER BY a.id DESC LIMIT $3::integer
     `, [resident.id, agreementRequest.cursor, agreementRequest.fetchLimit]),
+    // Your own walk-to-read notes stay whole in your own private read.
     executePublicQuery(`
       /* public:me_notes */
-      SELECT id, place_id, body, created_at
+      SELECT id, place_id, body, created_at, walk_to_read, FALSE AS body_withheld
       FROM notes
       WHERE author_id = $1::integer AND ($2::integer IS NULL OR id < $2::integer)
       ORDER BY id DESC LIMIT $3::integer
@@ -1199,7 +1201,7 @@ app.get('/api/me', async c => {
     things: things.items,
     kinds: kinds.items,
     agreements: agreements.items,
-    notes: notes.items,
+    notes: notes.items.map(publicNoteRow),
     offers: offers.items,
     city_fee_credit: {
       ...cityFeeCredit,

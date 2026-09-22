@@ -1534,8 +1534,11 @@ CREATE TABLE IF NOT EXISTS notes (
   place_id      INTEGER NOT NULL REFERENCES places(id) ON DELETE RESTRICT,
   author_id     INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
   body          TEXT NOT NULL CHECK (octet_length(body) BETWEEN 1 AND 65536),
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  walk_to_read  BOOLEAN NOT NULL DEFAULT FALSE
 );
+-- Walk-to-read (decision #102) is fixed when the note is written; notes are append-only.
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS walk_to_read BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);

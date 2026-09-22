@@ -1,6 +1,7 @@
 export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
 import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
+import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
@@ -517,7 +518,9 @@ async function loadBudgetedPublicPlaceCollectionRows(
          AND ($9::bigint IS NULL OR __cumulative_text_bytes <= $9::bigint)
      ), note_source AS MATERIALIZED (
        SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at,
-         octet_length(n.body)::integer AS __text_bytes
+         n.walk_to_read, ${noteBodyWithheldSql('n')} AS body_withheld,
+         CASE WHEN ${noteBodyWithheldSql('n')} THEN 0
+           ELSE octet_length(n.body) END::integer AS __text_bytes
        FROM notes n
        JOIN residents author ON author.id = n.author_id
        WHERE n.place_id = $1::integer
@@ -623,7 +626,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
   return Object.freeze({
     subplaces: recordArray(totals.subplaces, 'subplaces'),
     things: recordArray(totals.things, 'things'),
-    notes: recordArray(totals.notes, 'notes'),
+    notes: Object.freeze(recordArray(totals.notes, 'notes').map(publicNoteRow)),
     totals: Object.freeze({
       subplaces: collectionTotal({ items: totals.subplace_items, text_bytes: totals.subplace_text_bytes }),
       things: collectionTotal({ items: totals.thing_items, text_bytes: totals.thing_text_bytes }),
@@ -694,7 +697,8 @@ export async function loadPublicPlaceCollectionRows(
        ORDER BY t.id DESC
        LIMIT $5::integer
      ), note_page AS MATERIALIZED (
-       SELECT n.id, n.place_id, author.handle AS author, ${noteTextProjection} n.created_at
+       SELECT n.id, n.place_id, author.handle AS author, ${noteTextProjection} n.created_at,
+         n.walk_to_read, ${noteBodyWithheldSql('n')} AS body_withheld
        FROM notes n
        JOIN residents author ON author.id = n.author_id
        WHERE n.place_id = $1::integer
@@ -729,7 +733,7 @@ export async function loadPublicPlaceCollectionRows(
   return Object.freeze({
     subplaces: recordArray(totals.subplaces, 'subplaces'),
     things: recordArray(totals.things, 'things'),
-    notes: recordArray(totals.notes, 'notes'),
+    notes: Object.freeze(recordArray(totals.notes, 'notes').map(publicNoteRow)),
     totals: Object.freeze({
       subplaces: collectionTotal({ items: totals.subplace_items, text_bytes: totals.subplace_text_bytes }),
       things: collectionTotal({ items: totals.thing_items, text_bytes: totals.thing_text_bytes }),

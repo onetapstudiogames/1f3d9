@@ -196,11 +196,12 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // support page and public OpenAI domain challenge are always-200 boundaries.
   // GET /api/founder/flags and POST /api/founder/flags/:id/handle are the two
   // founder-only reading and answering boundaries added for issue #316.
-  assert.equal(http.registrations.length, 134)
+  // GET /api/note/:id/here is the passive walk-to-read body read (decision #102).
+  assert.equal(http.registrations.length, 135)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
-  assert.equal(mcp.tools.length, 41)
+  assert.equal(mcp.tools.length, 42)
   assert.deepEqual(mcp.protocol, [
     'invalid-json',
     'invalid-message',

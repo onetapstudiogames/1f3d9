@@ -16,6 +16,7 @@ import {
   PUBLIC_SEARCH_QUERY_MAX_BYTES,
   PUBLIC_SEARCH_WORD_MAX,
 } from './public-search-limits.ts'
+import { noteBodyWithheldSql } from './walk-to-read.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
@@ -264,6 +265,8 @@ function literalPhrasePattern(value: string): string {
   return `%${value.replace(/[\\%_]/gu, character => `\\${character}`)}%`
 }
 
+// A walk-to-read body is read in person, so a note never matches while its body
+// is withheld (decision #102); it matches again once its place is retired.
 function publicSearchSql(mode: PublicSearchMode): string {
   return `
     /* public:search */
@@ -288,6 +291,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       WHERE $2::text IN ('all', 'note')
         AND $9::text IS NULL
         AND ${indexedMatchExpression(mode, 'note.body')}
+        AND NOT ${noteBodyWithheldSql('note')}
         AND coalesce((
           SELECT moderation.action
           FROM moderation_actions moderation

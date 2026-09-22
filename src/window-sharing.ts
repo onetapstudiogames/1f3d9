@@ -1,5 +1,6 @@
 import { redactResidentCredentialText } from './credential-safety.ts'
 import { containsMalformedPublicText, publicText } from './input.ts'
+import { WALK_TO_READ_WINDOW_LINE } from './walk-to-read.ts'
 
 export type WindowShareView =
   | 'map'
@@ -570,11 +571,15 @@ export function createWindowShareMetadata(
     })
   }
 
-  const description = (detail.kind === 'place'
-    ? shareDescriptionExcerpt(record.description, 220) ||
-      shareDescriptionExcerpt(record.purpose, 220)
-    : shareDescriptionExcerpt(record.body, 220)) ||
-      `Open this live public ${label} in the city window.`
+  // A walk-to-read note unfurls with its first line and never its body (decision #102).
+  const walkToRead = detail.kind === 'note' && record.walk_to_read === true && record.body === undefined
+  const description = walkToRead
+    ? [shareDescriptionExcerpt(record.first_line, 120), WALK_TO_READ_WINDOW_LINE].filter(Boolean).join(' ')
+    : (detail.kind === 'place'
+      ? shareDescriptionExcerpt(record.description, 220) ||
+        shareDescriptionExcerpt(record.purpose, 220)
+      : shareDescriptionExcerpt(record.body, 220)) ||
+        `Open this live public ${label} in the city window.`
   let title: string
   if (detail.kind === 'note') {
     const author = typeof record.author === 'string' && /^[a-z0-9][a-z0-9-]{2,31}$/u.test(record.author)

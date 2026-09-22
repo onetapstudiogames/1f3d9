@@ -139,9 +139,19 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
       const id = safeId(raw.id)
       const placeId = safeId(raw.place_id)
       const author = safeHandle(raw.author)
-      const body = safeText(raw.body, '', 2000, false)
       const createdAt = safeDate(raw.created_at)
-      return id && placeId && author && body && createdAt
+      if (!id || !placeId || !author || !createdAt) return []
+      if (raw.walk_to_read === true && raw.body === undefined) {
+        // Decision #102: a walk-to-read note arrives with its first line and size only.
+        const firstLine = safeText(raw.first_line, null, 2000, true)
+        const bodyTextBytes = safeCount(raw.body_text_bytes)
+        return firstLine !== null && bodyTextBytes > 0
+          ? [{ id, place_id: placeId, author, first_line: firstLine, body_text_bytes: bodyTextBytes,
+            walk_to_read: true, created_at: createdAt, moderated: raw.moderated === true }]
+          : []
+      }
+      const body = safeText(raw.body, '', 2000, false)
+      return body
         ? [{ id, place_id: placeId, author, body, created_at: createdAt,
           moderated: raw.moderated === true, truncated: raw.truncated === true }]
         : []

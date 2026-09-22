@@ -135,10 +135,10 @@ test('the served front door stays under 10 KB and authored text has no duplicate
 
 test('the canonical catalog lists every tool, key need, and per-door visibility', async () => {
   assert.equal(FULL_TOOL_CATALOG_PATH, '/api/tools')
-  assert.equal(CITY_TOOL_CATALOG.length, 41)
-  assert.equal(new Set(CITY_TOOL_CATALOG.map(tool => tool.name)).size, 41)
+  assert.equal(CITY_TOOL_CATALOG.length, 42)
+  assert.equal(new Set(CITY_TOOL_CATALOG.map(tool => tool.name)).size, 42)
   assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length, 10)
-  assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length, 40)
+  assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length, 41)
   assert.deepEqual(
     CITY_TOOL_CATALOG.filter(tool => !tool.hostedVisible).map(tool => tool.name),
     ['moderate'],
@@ -154,7 +154,7 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
   const response = await app.request(FULL_TOOL_CATALOG_PATH)
   assert.equal(response.status, 200)
   const payload = await response.json() as { tools: unknown[]; count: number }
-  assert.equal(payload.count, 41)
+  assert.equal(payload.count, 42)
   assert.deepEqual(payload.tools, CITY_PUBLIC_TOOL_CATALOG)
   const gateway = new Hono()
   gateway.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
@@ -344,7 +344,7 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
     const hosted = new Hono()
     hosted.post('/mcp/connect', c => mcp(c, new Hono(), { hostedChat: true }))
     const tools = await list(hosted, '/mcp/connect')
-    assert.equal(tools.length, 40)
+    assert.equal(tools.length, 41)
     assert.equal(tools.some(tool => tool.name === 'moderate'), false)
   } finally {
     if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED

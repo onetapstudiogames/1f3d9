@@ -57,7 +57,8 @@ const DISPLAY_FIELDS = Object.freeze({
   thing: Object.freeze(['name', 'body'] as const),
   kind: Object.freeze(['name', 'description'] as const),
   trait: Object.freeze(['name', 'description'] as const),
-  note: Object.freeze(['body'] as const),
+  // A walk-to-read note read remotely shows its first line instead of its body.
+  note: Object.freeze(['body', 'first_line'] as const),
   agreement: Object.freeze(['body'] as const),
 } satisfies Readonly<Record<ModerationTargetType, readonly string[]>>)
 

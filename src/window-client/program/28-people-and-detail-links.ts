@@ -89,6 +89,16 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         : null
     }
     const placeId = safeId(raw.place_id)
+    if (kind === 'note' && placeId && raw.walk_to_read === true && raw.body === undefined) {
+      // Decision #102: the detail shows a walk-to-read note's first line, never its body.
+      const author = safeHandle(raw.author)
+      const createdAt = safeDate(raw.created_at)
+      const firstLine = safeText(raw.first_line, null, 4000, true)
+      return author && createdAt && firstLine !== null ? Object.freeze({
+        kind, id, placeId, author, body: '', firstLine, walkToRead: true, createdAt,
+        moderated: raw.moderated === true,
+      }) : null
+    }
     const body = safeText(raw.body, null, kind === 'note' ? 4000 : 65536, kind === 'thing')
     if (!placeId || body === null) return null
     if (kind === 'note') {

@@ -1,6 +1,7 @@
 import { sql } from './db.ts'
 import { moderatePlaceDetails, moderatePublicRows } from './moderation-store.ts'
 import type { PlaceRow, ThingRow } from './world-support.ts'
+import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
 
 export type PublicPlaceRecord = Readonly<PlaceRow & Record<string, unknown>>
@@ -9,7 +10,6 @@ export type PublicNoteRecord = Readonly<{
   id: number
   place_id: number
   author: string
-  body: string
   created_at: string
 } & Record<string, unknown>>
 
@@ -129,15 +129,17 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
 
 /**
  * Read one current note by an already-validated ID from 1 through 2,147,483,647.
- * Returns its moderated public record, or null when that note does not exist.
+ * Returns its moderated public record, or null when that note does not exist. A
+ * walk-to-read note in an active place carries its first line instead of its body.
  */
 export async function loadPublicNoteRecord(id: number): Promise<PublicNoteRecord | null> {
-  const rows = (await sql`
-    SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+  const rows = await sql.query(`
+    SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
+      note.walk_to_read, ${noteBodyWithheldSql('note')} AS body_withheld
     FROM notes note
     JOIN residents author ON author.id = note.author_id
-    WHERE note.id = ${id}
-  `) as PublicNoteRecord[]
-  const publicRows = await moderatePublicRows('note', rows)
-  return publicRows[0] ?? null
+    WHERE note.id = $1::integer
+  `, [id]) as readonly Record<string, unknown>[]
+  const publicRows = await moderatePublicRows('note', rows.map(publicNoteRow))
+  return (publicRows[0] as PublicNoteRecord | undefined) ?? null
 }

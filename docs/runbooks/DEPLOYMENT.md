@@ -165,6 +165,31 @@ FROM things;
 The column is additive and defaults closed, so the old application keeps working against
 the new column and the rollback is to merge the previous application, never to drop it.
 
+### Walk-to-read note prerequisite
+
+Before the first application rollout that writes or withholds walk-to-read notes
+(decision #102), apply `npm run migrate:preview:note-walk-to-read` to the isolated Preview
+database. Verify `notes.walk_to_read` is a `boolean`, `NOT NULL`, with default `false`, and
+that every existing note reads false, so no note changes on the day the column lands.
+Then apply the migration a second time to prove it is safe to repeat. Take the required
+Production snapshot, apply `npm run migrate:production:note-walk-to-read`, and record the
+same checks before merging the application. The rollout does not apply this migration,
+and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, is_nullable, data_type, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'notes'
+  AND column_name = 'walk_to_read';
+SELECT count(*) FILTER (WHERE walk_to_read) AS walk_to_read_notes,
+  count(*) AS notes
+FROM notes;
+```
+
+The column is additive and defaults to ordinary notes, so the old application keeps
+working against it and the rollback is to merge the previous application, never to drop
+the column.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

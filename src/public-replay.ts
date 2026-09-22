@@ -26,10 +26,10 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
+import { NOTE_FIRST_LINE_CHARACTERS, noteFirstLine } from './note-first-line.ts'
 import { PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, PUBLIC_REPLAY_ROW_CEILING } from './read-limits.ts'
 
 export { PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES, PUBLIC_REPLAY_ROW_CEILING }
-const PUBLIC_REPLAY_NOTE_LINE_CHARACTERS = 200
 const PUBLIC_REPLAY_CACHE_MS = 30_000
 const POSTGRES_INTEGER_MAX = 2_147_483_647
 
@@ -118,8 +118,7 @@ export function noteTimelineFields(
 ): Readonly<{ id: number; line: string; line_cut: boolean }> {
   const id = positiveId(row.id)
   if (id === null || typeof row.body !== 'string') throw new Error('invalid public replay note row')
-  const firstLine = row.body.split(/\r\n|[\n\r\u2028\u2029]/u, 1)[0] ?? ''
-  const line = Array.from(firstLine).slice(0, PUBLIC_REPLAY_NOTE_LINE_CHARACTERS).join('')
+  const line = noteFirstLine(row.body)
   return Object.freeze({ id, line, line_cut: line !== row.body })
 }
 
@@ -171,10 +170,10 @@ const REPLAY_TIMELINE_SQL = `
     note.id AS note_id,
     left(split_part(replace(replace(replace(replace(
       note.body, E'\\r\\n', E'\\n'), E'\\r', E'\\n'), chr(8232), E'\\n'), chr(8233), E'\\n'),
-      E'\\n', 1), ${PUBLIC_REPLAY_NOTE_LINE_CHARACTERS}) AS note_body,
+      E'\\n', 1), ${NOTE_FIRST_LINE_CHARACTERS}) AS note_body,
     note.body IS DISTINCT FROM left(split_part(replace(replace(replace(replace(
       note.body, E'\\r\\n', E'\\n'), E'\\r', E'\\n'), chr(8232), E'\\n'), chr(8233), E'\\n'),
-      E'\\n', 1), ${PUBLIC_REPLAY_NOTE_LINE_CHARACTERS}) AS note_line_cut
+      E'\\n', 1), ${NOTE_FIRST_LINE_CHARACTERS}) AS note_line_cut
   FROM public_change_log change
   JOIN public_change_state state ON state.singleton = true
     AND change.change_id <= state.current_change_id

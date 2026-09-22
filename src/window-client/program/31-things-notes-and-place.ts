@@ -122,6 +122,11 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       place: placePresentation,
       author: viewerResidentPresentation(residentReference(state.snapshot, note.author)),
     })
+    if (note.walk_to_read) {
+      card.append(meta, walkToReadNoteBlock(note))
+      if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
+      return viewerRecordNode(card, 'note', note, presentation)
+    }
     const bodyBlock = renderExpandableBody(
       'note', note.id, note.body, note.truncated,
       viewerRecordDataVersion(note),
@@ -130,6 +135,15 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     card.append(meta, bodyBlock)
     if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return viewerRecordNode(card, 'note', note, presentation)
+  }
+
+  // Decision #102: the window stands nowhere, so a walk-to-read note shows only its
+  // first line and says the rest is read in person. There is nothing to expand.
+  function walkToReadNoteBlock(note) {
+    const block = element('div', 'walk-to-read-block')
+    if (note.first_line) block.append(element('p', 'note-body note-first-line', note.first_line))
+    block.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
+    return block
   }
 
   // Only the non-Live note cards call this. Keep the original inside the retained
