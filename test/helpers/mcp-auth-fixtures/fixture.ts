@@ -46,7 +46,7 @@ export const EXISTING_TOOL_NAMES = [
   'draw_self', 'act', 'laws', 'home', 'withdraw',
   'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
   'payment_attempt', 'transfer',
-  'agree', 'open_agreement_accession', 'sign', 'say', 'flag', 'later_holder_items',
+  'agree', 'open_agreement_accession', 'sign', 'say', 'read_here', 'flag', 'later_holder_items',
   'mark_for_later', 'me', 'moderate',
 ] as const
 export const PUBLIC_ANONYMOUS_TOOL_NAMES = [

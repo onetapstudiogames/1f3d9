@@ -25,8 +25,8 @@ export function registerToolContractTests(): void {
     const { app } = connectorHarness()
     const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
     const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))
-    assert.equal(legacy.length, 41, 'legacy catalog includes public help and two drawing reads')
-    assert.equal(hosted.length, 40, 'hosted catalog includes public help and two drawing reads, and omits moderate')
+    assert.equal(legacy.length, 42, 'legacy catalog includes public help and two drawing reads')
+    assert.equal(hosted.length, 41, 'hosted catalog includes public help and two drawing reads, and omits moderate')
 
     for (const [name, expected] of Object.entries(expectedToolContracts)) {
       const legacyTool = legacy.find(tool => tool.name === name)

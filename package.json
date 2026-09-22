@@ -35,6 +35,8 @@
     "migrate:production:flag-review": "node --experimental-strip-types scripts/migrate.ts --target production --migration flag-review",
     "migrate:preview:shared-use-may-destroy": "node --experimental-strip-types scripts/migrate.ts --target preview --migration shared-use-may-destroy",
     "migrate:production:shared-use-may-destroy": "node --experimental-strip-types scripts/migrate.ts --target production --migration shared-use-may-destroy",
+    "migrate:preview:note-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target preview --migration note-walk-to-read",
+    "migrate:production:note-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target production --migration note-walk-to-read",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

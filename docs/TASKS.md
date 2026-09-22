@@ -12,8 +12,6 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
-- [ ] Add a real-PostgreSQL regression test for recent-note ordering across more than one
-  room before changing the window's global conversation query.
 - [ ] Issue #79 phase 2: add a typed accessor layer over the mutable `state` object
   declared in `src/window-client/program/02-state-and-nodes.ts` (snapshot, live,
   histories, drawings, noteBodies, changes, plus the strays `rovingTabActivation`,
@@ -26,6 +24,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Recently closed
 
+- [x] Add a real-PostgreSQL regression test for recent-note ordering across more than one
+  room before changing the window's global conversation query
+  (test/integration/window-note-order-postgres.test.ts).
 - [x] Build the format-v1 full anonymous public snapshot exporter, closed class registry,
   fingerprints and hashes, offline verifier, append-only publisher, discovery links,
   and safe manual/daily workflow without running a real publication.

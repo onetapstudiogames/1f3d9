@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveMigrationRun, splitSqlStatements } from '../../scripts/migrate.ts'
 import { packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
-import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
+import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
 
 export function registerMigrationSelectionTests(): void {
   test('migration target must be named explicitly', () => {
@@ -102,6 +102,47 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.migrationFile, 'db/migrations/20260916_shared_use_may_destroy.sql')
   })
 
+  test('note-walk-to-read is an additive, idempotent note migration', () => {
+    const migration = readFileSync(noteWalkToReadMigrationUrl, 'utf8')
+    const uncommented = migration.replace(/^\s*--.*$/gm, '')
+    const statements = splitSqlStatements(migration)
+
+    assert.equal(statements.length, 1)
+    assert.doesNotMatch(uncommented, /^\s*(?:DROP|UPDATE|DELETE|TRUNCATE)\b/im)
+    assert.match(
+      uncommented,
+      /ALTER\s+TABLE\s+notes\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+walk_to_read\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+    )
+  })
+
+  test('note-walk-to-read is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'note-walk-to-read'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260922_note_walk_to_read.sql')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'note-walk-to-read'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'note-walk-to-read-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260922_note_walk_to_read.sql')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -185,6 +226,7 @@ export function registerMigrationSelectionTests(): void {
       [agreementAccessionMigration, 'agreement-accession'],
       [readFileSync(openToUseMigrationUrl, 'utf8'), 'open-to-use'],
       [readFileSync(sharedUseMayDestroyMigrationUrl, 'utf8'), 'shared-use-may-destroy'],
+      [readFileSync(noteWalkToReadMigrationUrl, 'utf8'), 'note-walk-to-read'],
       [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
       [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
       [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
@@ -251,6 +293,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:open-to-use'] ?? '', /--target production --migration open-to-use$/)
     assert.match(packageJson.scripts['migrate:preview:shared-use-may-destroy'] ?? '', /--target preview --migration shared-use-may-destroy$/)
     assert.match(packageJson.scripts['migrate:production:shared-use-may-destroy'] ?? '', /--target production --migration shared-use-may-destroy$/)
+    assert.match(packageJson.scripts['migrate:preview:note-walk-to-read'] ?? '', /--target preview --migration note-walk-to-read$/)
+    assert.match(packageJson.scripts['migrate:production:note-walk-to-read'] ?? '', /--target production --migration note-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)

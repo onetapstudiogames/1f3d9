@@ -34,6 +34,7 @@ interface TalkNote {
   readonly author?: string
   readonly body?: string
   readonly created_at?: string
+  readonly walk_to_read?: boolean
 }
 
 export type GazetteWithdrawalResult = Readonly<{
@@ -53,6 +54,8 @@ interface TalkNoteActionInput {
   readonly residentId: number
   readonly residentHandle: string
   readonly text: string
+  /** Decision #102: fixed on the note when it is written; omitted means an ordinary note. */
+  readonly walkToRead?: boolean
 }
 
 interface TalkNoteCreationRow {
@@ -61,6 +64,7 @@ interface TalkNoteCreationRow {
   readonly author?: string
   readonly body?: string
   readonly created_at?: string
+  readonly walk_to_read?: boolean
   readonly place_exists?: boolean
   readonly place_permits_notes?: boolean
   readonly active_place?: boolean
@@ -304,7 +308,8 @@ async function findRecentDuplicate(
     : ''
   const rows = await database.query(`
     /* note-action:recent-duplicate */
-    SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+    SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
+      note.walk_to_read
     FROM notes note
     JOIN residents author ON author.id = note.author_id
     WHERE note.author_id = $1
@@ -312,6 +317,7 @@ async function findRecentDuplicate(
       AND note.body COLLATE "C" = $3::text COLLATE "C"
       AND note.created_at >= statement_timestamp()
         - ($4::integer * interval '1 second')
+      AND note.walk_to_read = $5::boolean
       ${gazetteReplayRule}
     ORDER BY note.created_at DESC, note.id DESC
     LIMIT 1
@@ -320,6 +326,7 @@ async function findRecentDuplicate(
     input.placeId,
     input.text,
     NOTE_IDEMPOTENCY_WINDOW_SECONDS,
+    input.walkToRead === true,
   ]) as TalkNote[]
   return rows[0] ?? null
 }
@@ -393,10 +400,10 @@ async function createTalkNote(
         AND EXISTS (SELECT 1 FROM permitted_place)
       RETURNING id
     ), new_note AS (
-      INSERT INTO notes (place_id, author_id, body, created_at)
-      SELECT p.id, q.id, ${input.text}, statement_timestamp()
+      INSERT INTO notes (place_id, author_id, walk_to_read, body, created_at)
+      SELECT p.id, q.id, ${input.walkToRead === true}::boolean, ${input.text}, statement_timestamp()
       FROM permitted_place p CROSS JOIN spent_quota q
-      RETURNING id, place_id, author_id, body, created_at
+      RETURNING id, place_id, author_id, body, created_at, walk_to_read
     ), new_event AS (
       INSERT INTO events (at, kind, actor, detail)
       SELECT created_at, 'note', ${input.residentHandle},
@@ -404,6 +411,7 @@ async function createTalkNote(
       FROM new_note
     )
     SELECT n.id, n.place_id, ${input.residentHandle}::text AS author, n.body, n.created_at,
+      n.walk_to_read,
       EXISTS (SELECT 1 FROM place_state) AS place_exists,
       coalesce((SELECT state.ordinary_place AND state.permits_notes FROM place_state state), FALSE)
         AS place_permits_notes,
@@ -428,6 +436,7 @@ async function createTalkNote(
       ...(outcome.author === undefined ? {} : { author: outcome.author }),
       ...(outcome.body === undefined ? {} : { body: outcome.body }),
       ...(outcome.created_at === undefined ? {} : { created_at: outcome.created_at }),
+      ...(outcome.walk_to_read === undefined ? {} : { walk_to_read: outcome.walk_to_read }),
     }
   }
   if (outcome.place_exists === false) {

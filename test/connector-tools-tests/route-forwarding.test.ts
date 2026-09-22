@@ -180,6 +180,19 @@ export function registerRouteForwardingTests(): void {
         body: { target_type: 'thing', target_id: 41, reason: 'Illegal public content' },
       },
     },
+    {
+      name: 'say',
+      args: { place_id: 12, body: 'Field note, east wall', walk_to_read: true },
+      expected: {
+        method: 'POST', path: '/api/note',
+        body: { place_id: 12, body: 'Field note, east wall', walk_to_read: true },
+      },
+    },
+    {
+      name: 'read_here',
+      args: { note_id: 17942 },
+      expected: { method: 'GET', path: '/api/note/17942/here' },
+    },
   ] as const
 
   test('legacy MCP forwards every connector tool to its exact existing web route', async t => {

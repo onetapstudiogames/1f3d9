@@ -1,6 +1,16 @@
 import type { Context } from 'hono'
 import type { Hono } from 'hono'
-import { auth, err, HANDLE_RE, postgresErrorCode, QUOTAS, RESIDENT_AUTH_REFUSAL, WALLET_RE } from './core.ts'
+import {
+  auth,
+  authPassive,
+  err,
+  HANDLE_RE,
+  postgresErrorCode,
+  presentedRootKey,
+  QUOTAS,
+  RESIDENT_AUTH_REFUSAL,
+  WALLET_RE,
+} from './core.ts'
 import { sql } from './db.ts'
 import {
   createAgreementAction,
@@ -57,11 +67,18 @@ import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
+import { readNoteHere } from './read-here.ts'
+import {
+  publicNoteRow,
+  WALK_TO_READ_GAZETTE_REFUSAL,
+  WALK_TO_READ_TYPE_REFUSAL,
+} from './walk-to-read.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
 const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and retry with a current agreement id'
 const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
+const NOTE_FIELDS_REFUSAL = 'send place_id and body, plus optional walk_to_read true or false, and no other field'
 const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current handle'
 
 const ASSETS = {
@@ -180,6 +197,15 @@ function x402HeaderPayer(header: string): string | null {
   }
 }
 
+function missingNoteRefusal(id: number): string {
+  return `note_id ${id} was not found; re-read the place's recent notes and use a current note_id`
+}
+
+// The author's own write answer keeps the whole body and says whether it is walk-to-read.
+function writtenNote(note: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return publicNoteRow({ ...note, body_withheld: false })
+}
+
 function agreementState(row: Record<string, unknown>) {
   const parties = Array.isArray(row.parties) ? row.parties : []
   const acceded = Array.isArray(row.acceded) ? row.acceded : []
@@ -201,17 +227,36 @@ export function mountSocietyRoutes(app: Hono): void {
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
     const note = await loadPublicNoteRecord(id)
-    if (!note) return err(c, 404, `note_id ${id} was not found; re-read the place's recent notes and use a current note_id`)
+    if (!note) return err(c, 404, missingNoteRefusal(id))
     return publicJson(c, { note })
+  })
+
+  // Decision #102: the one passive signed-in read that opens a walk-to-read body
+  // to a resident standing in that note's place. It never records the read.
+  app.get('/api/note/:id/here', async c => {
+    c.header('Cache-Control', 'no-store')
+    c.header('Pragma', 'no-cache')
+    c.header('Vary', 'Authorization')
+    const resident = await authPassive(c)
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const id = positiveId(c.req.param('id'))
+    if (!id) return err(c, 400, 'note id must be a positive integer')
+    const read = await readNoteHere(id, resident.id, resident.id === 1 && presentedRootKey(c))
+    if (!read) return err(c, 404, missingNoteRefusal(id))
+    if (!read.ok) return err(c, read.status, read.error)
+    return c.json({ note: read.note })
   })
 
   app.post('/api/note', async c => {
     const resident = await auth(c)
     if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['place_id', 'body']))
-      return err(c, 400, 'need place_id and body')
+    if (!body || !hasOnly(body, ['place_id', 'body', 'walk_to_read']))
+      return err(c, 400, NOTE_FIELDS_REFUSAL)
     const placeId = positiveId(body.place_id)
+    const walkToRead = body.walk_to_read === undefined ? false : body.walk_to_read
     if (containsBearerSecret(body.body)) return err(c, 400, SECRET_REJECTION)
     const text = publicText(body.body, {
       maximumCharacters: NOTE_CHARACTERS,
@@ -219,23 +264,27 @@ export function mountSocietyRoutes(app: Hono): void {
     })
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
+    if (typeof walkToRead !== 'boolean') return err(c, 400, WALK_TO_READ_TYPE_REFUSAL)
+    if (walkToRead && placeId === GAZETTE_ROOM_ID) return err(c, 400, WALK_TO_READ_GAZETTE_REFUSAL)
 
     const replay = await findRecentTalkNoteReplay({
       placeId,
       residentId: resident.id,
       residentHandle: resident.handle,
       text,
+      walkToRead,
     })
     if (replay) {
       const duplicate = replay.note
       return c.json({
-        note: {
+        note: writtenNote({
           id: duplicate.id,
           place_id: duplicate.place_id ?? placeId,
           author: duplicate.author ?? resident.handle,
           body: duplicate.body ?? text,
           ...(duplicate.created_at ? { created_at: duplicate.created_at } : {}),
-        },
+          walk_to_read: duplicate.walk_to_read ?? walkToRead,
+        }),
         ...(replay.gazetteWithdrawal
           ? { gazette_withdrawal: replay.gazetteWithdrawal }
           : {}),
@@ -279,17 +328,19 @@ export function mountSocietyRoutes(app: Hono): void {
       residentId: resident.id,
       residentHandle: resident.handle,
       text,
+      walkToRead,
     })
     if (!talk.ok) return err(c, talk.status, talk.error)
     const { note } = talk
     return c.json({
-      note: {
+      note: writtenNote({
         id: note.id,
         place_id: note.place_id ?? placeId,
         author: note.author ?? resident.handle,
         body: note.body ?? text,
         ...(note.created_at ? { created_at: note.created_at } : {}),
-      },
+        walk_to_read: note.walk_to_read ?? walkToRead,
+      }),
       ...(talk.gazetteWithdrawal ? { gazette_withdrawal: talk.gazetteWithdrawal } : {}),
       reading_cost: await safeReadingCostMeter(placeId, note.body ?? text),
     }, talk.replayed ? 200 : 201)

@@ -237,6 +237,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'open_agreement_accession', writesPublicOrPermanent: true },
   { name: 'sign', writesPublicOrPermanent: true },
   { name: 'say', writesPublicOrPermanent: true },
+  { name: 'read_here' },
   { name: 'flag', writesPublicOrPermanent: true },
   { name: 'later_holder_items' },
   { name: 'mark_for_later', writesPublicOrPermanent: true },

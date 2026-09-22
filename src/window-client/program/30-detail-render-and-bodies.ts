@@ -87,7 +87,9 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           : 'by ' + record.author + ' · place #' + String(record.placeId) + ' · ' +
             new Date(record.createdAt).toLocaleString()
         const body = viewerRecordNode(
-          element('p', 'record-detail-text public-body', record.body),
+          record.walkToRead
+            ? walkToReadDetailNode(record)
+            : element('p', 'record-detail-text public-body', record.body),
           record.kind,
           record,
           meta,
@@ -109,6 +111,13 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       window.queueMicrotask(() => nodes.detailBody?.querySelector(
         '[data-focus-key="' + CSS.escape(previousFocusKey) + '"]')?.focus())
     }
+  }
+
+  function walkToReadDetailNode(record) {
+    const node = element('div', 'record-detail-text walk-to-read-block')
+    if (record.firstLine) node.append(element('p', 'note-first-line', record.firstLine))
+    node.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
+    return node
   }
 
   async function loadFullBody(kind, id, recordVersion = null, revalidate = false) {

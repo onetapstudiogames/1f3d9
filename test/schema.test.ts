@@ -38,6 +38,21 @@ test('things persist an owner-controlled shared-destroy flag that defaults close
   )
 })
 
+test('notes persist a writer-chosen walk-to-read mark that defaults ordinary', () => {
+  const notesTable = /CREATE TABLE IF NOT EXISTS notes \(([\s\S]*?)\);/u.exec(schema)?.[1]
+  assert.ok(notesTable, 'fresh schema must define notes')
+  assert.match(
+    notesTable,
+    /\bwalk_to_read\s+boolean\s+not\s+null\s+default\s+false\b/iu,
+    'fresh databases must default every note to ordinary',
+  )
+  assert.match(
+    migrations,
+    /alter\s+table\s+(?:public\.)?notes[\s\S]{0,300}\badd\s+column(?:\s+if\s+not\s+exists)?\s+walk_to_read\s+boolean\s+not\s+null\s+default\s+false\b/iu,
+    'existing databases need an additive, ordinary-by-default migration',
+  )
+})
+
 test('things retain an immutable maker separately from their transferable owner', () => {
   const thingsTable = /CREATE TABLE IF NOT EXISTS things \(([\s\S]*?)\);/u.exec(schema)?.[1]
   assert.ok(thingsTable, 'fresh schema must define things')

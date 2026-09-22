@@ -66,6 +66,7 @@ import {
   loadPublicThingRecord,
 } from './public-records.ts'
 import { configuredPublicDomain } from './public-reference-facts.ts'
+import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import {
   createWindowShareMetadata,
   parseWindowShareRequest,
@@ -194,10 +195,15 @@ interface PublicNote {
   id: number
   place_id: number
   author: string
-  body: string
+  body?: string
   created_at: string
   moderated: boolean
   truncated?: true
+  // Decision #102: a withheld walk-to-read note carries these four instead of body.
+  walk_to_read?: true
+  first_line?: string
+  body_text_bytes?: number
+  read_in_person?: string
 }
 
 interface PublicThing {
@@ -474,6 +480,26 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
   })
 }
 
+function publicWindowWithheldNote(
+  row: Record<string, unknown>,
+  common: Readonly<{ id: number; place_id: number; author: string; created_at: string }>,
+): PublicNote[] {
+  const firstLine = safePublicText(row.first_line, WINDOW_BODY_LIMITS.notes, true)
+  const bodyTextBytes = Number(row.body_text_bytes)
+  if (
+    !firstLine || typeof row.read_in_person !== 'string' ||
+    !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 1
+  ) return []
+  return [{
+    ...common,
+    moderated: row.moderated === true,
+    walk_to_read: true,
+    first_line: firstLine.text,
+    body_text_bytes: bodyTextBytes,
+    read_in_person: row.read_in_person,
+  }]
+}
+
 export function publicWindowNotes(values: unknown[]): PublicNote[] {
   return values.flatMap(value => {
     if (!value || typeof value !== 'object') return []
@@ -481,9 +507,13 @@ export function publicWindowNotes(values: unknown[]): PublicNote[] {
     const id = positiveInteger(row.id)
     const placeId = positiveInteger(row.place_id)
     const author = typeof row.author === 'string' && HANDLE_RE.test(row.author) ? row.author : null
-    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.notes)
     const createdAt = safeDate(row.created_at)
-    if (!id || !placeId || !author || !body || !createdAt) return []
+    if (!id || !placeId || !author || !createdAt) return []
+    if (row.walk_to_read === true && row.body === undefined) {
+      return publicWindowWithheldNote(row, { id, place_id: placeId, author, created_at: createdAt })
+    }
+    const body = safePublicText(row.body, WINDOW_BODY_LIMITS.notes)
+    if (!body) return []
     return [{
       id,
       place_id: placeId,
@@ -893,6 +923,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
     return Object.freeze({
       text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte},` : 'WITH'} resident_notes AS (
           SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
+            note.walk_to_read, ${noteBodyWithheldSql('note')} AS body_withheld,
             row_number() OVER (ORDER BY note.id DESC) AS own_position
           FROM notes note JOIN residents author ON author.id = note.author_id
           WHERE ($1::integer IS NULL OR note.id < $1::integer)
@@ -905,18 +936,19 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           SELECT * FROM resident_notes WHERE own_position <= $5::integer
         ), context_notes AS (
           SELECT DISTINCT ON (ctx.id)
-            ctx.id, ctx.place_id, ctx_author.handle AS author, ctx.body, ctx.created_at
+            ctx.id, ctx.place_id, ctx_author.handle AS author, ctx.body, ctx.created_at,
+            ctx.walk_to_read, ${noteBodyWithheldSql('ctx')} AS body_withheld
           FROM page_notes own
           CROSS JOIN LATERAL (
             (SELECT neighbor.id, neighbor.place_id, neighbor.author_id,
-               neighbor.body, neighbor.created_at
+               neighbor.body, neighbor.created_at, neighbor.walk_to_read
              FROM notes neighbor
              WHERE neighbor.place_id = own.place_id AND neighbor.id < own.id
              ORDER BY neighbor.id DESC
              LIMIT ${NOTE_CONTEXT_NEIGHBORS})
             UNION ALL
             (SELECT neighbor.id, neighbor.place_id, neighbor.author_id,
-               neighbor.body, neighbor.created_at
+               neighbor.body, neighbor.created_at, neighbor.walk_to_read
              FROM notes neighbor
              WHERE neighbor.place_id = own.place_id AND neighbor.id > own.id
              ORDER BY neighbor.id ASC
@@ -925,9 +957,11 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           JOIN residents ctx_author ON ctx_author.id = ctx.author_id
           WHERE ctx_author.handle <> $3::text
         )
-        SELECT id, place_id, author, body, created_at FROM resident_notes
+        SELECT id, place_id, author, body, created_at, walk_to_read, body_withheld
+        FROM resident_notes
         UNION ALL
-        SELECT id, place_id, author, body, created_at FROM context_notes
+        SELECT id, place_id, author, body, created_at, walk_to_read, body_withheld
+        FROM context_notes
         ORDER BY id DESC`,
       values: Object.freeze([
         options.beforeId, options.placeId, options.resident, fetchLimit, options.limit,
@@ -937,7 +971,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
   }
   if (options.collection === 'notes') {
     return Object.freeze({
-      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at
+      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
+          note.walk_to_read, ${noteBodyWithheldSql('note')} AS body_withheld
         FROM notes note JOIN residents author ON author.id = note.author_id
         WHERE ($1::integer IS NULL OR note.id < $1::integer)
           AND ($5::integer IS NULL OR note.id > $5::integer)
@@ -1112,7 +1147,7 @@ export async function readWindowCollectionPage(
     const keptOwn = new Set(ownPage.items.map(row => row.id))
     const pageRows = typed.filter(row =>
       row.author !== options.resident || keptOwn.has(row.id))
-    const moderated = await moderatePublicRows('note', [...pageRows])
+    const moderated = await moderatePublicRows('note', pageRows.map(row => publicNoteRow(row)))
     return Object.freeze({
       items: Object.freeze(publicWindowNotes([...moderated])),
       hasMore: ownPage.hasMore,
@@ -1125,10 +1160,7 @@ export async function readWindowCollectionPage(
   )
   let items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement)[]
   if (options.collection === 'notes') {
-    const moderated = await moderatePublicRows(
-      'note',
-      [...rawPage.items] as Array<Record<string, unknown> & { id: number }>,
-    )
+    const moderated = await moderatePublicRows('note', rawPage.items.map(row => publicNoteRow(row)))
     items = publicWindowNotes([...moderated])
   } else if (options.collection === 'things') {
     const rawThings = [...rawPage.items]

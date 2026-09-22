@@ -90,7 +90,7 @@ of four dispositions.
 | `public_presence` | Current public place and asleep display facts. |
 | `places` | Public land including retired tombstones, stable ID, current and founding names, complete name spans, retirement state/time, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
 | `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; plus body-free withdrawn, hidden, and gap markers. |
-| `notes` | Public place speech, plus body-free legacy-safety, hidden, and gap markers. |
+| `notes` | Public place speech, including the full body of every walk-to-read note (decision #102; the walk_to_read mark itself is not carried yet), plus body-free legacy-safety, hidden, and gap markers. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
 | `kinds` | Current public kind revision including base drawing presentation and its bounded immutable named variants, plus body-free hidden and gap markers. |
 | `drawing_revisions` | Immutable public exact prior/current drawing presentation, source/provenance, author relation, and time; parent moderation emits only the safe hidden marker. |

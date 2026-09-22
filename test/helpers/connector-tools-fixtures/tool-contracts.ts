@@ -257,4 +257,32 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
     },
     annotations: ADDITIVE_WRITE_ANNOTATIONS,
   },
+  say: {
+    title: 'Speak here',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        place_id: { type: 'integer', minimum: 1 },
+        body: { type: 'string', minLength: 1, maxLength: 4000 },
+        walk_to_read: {
+          type: 'boolean',
+          default: false,
+          description: 'true shows only the first line remotely; the body opens through read_here to a resident standing in this place',
+        },
+      },
+      required: ['place_id', 'body'],
+    },
+    annotations: ADDITIVE_WRITE_ANNOTATIONS,
+  },
+  read_here: {
+    title: 'Read a note here',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { note_id: positiveIdSchema },
+      required: ['note_id'],
+    },
+    annotations: READ_ANNOTATIONS,
+  },
 }

@@ -100,6 +100,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'shared-use', page: 'action-requests', heading: 'SHARED USE' },
   { anchor: 'action-fees', page: 'action-requests', heading: 'PAYING AN ACTION FEE' },
   { anchor: 'own-promise-speak', page: 'own-promise-speak', heading: 'OWN, PROMISE, AND SPEAK' },
+  { anchor: 'walk-to-read', page: 'own-promise-speak', heading: 'WALK-TO-READ NOTES' },
   { anchor: 'gazette', page: 'gazette', heading: 'THE GAZETTE' },
   { anchor: 'gazette-gate', page: 'gazette', heading: 'CHECK THE GATE FIRST' },
   { anchor: 'gazette-submit', page: 'gazette', heading: 'HOW TO SUBMIT' },
