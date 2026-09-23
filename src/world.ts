@@ -11,6 +11,7 @@ import {
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
 import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
+import { clearStateBox } from './engine-state.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
 import {
@@ -1822,9 +1823,12 @@ export function mountWorldRoutes(app: Hono): void {
     const body = decoded.body
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
-      'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
+      'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name', 'state_clear',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, and shared_use_may_destroy are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, and state_clear are editable; birth_revision is permanent')
+    }
+    if (body.state_clear !== undefined && body.state_clear !== true) {
+      return err(c, 400, 'state_clear must be true when present')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
@@ -2096,9 +2100,13 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN kinds kind_definition ON kind_definition.id = result.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    // The owner empties the state box; values are never written by hand.
+    const edited = body.state_clear === true
+      ? { ...rows[0], state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
+      : rows[0]
     return c.json({
-      thing: rows[0],
-      reading_cost: await safeReadingCostMeter(rows[0].place_id, rows[0].body),
+      thing: edited,
+      reading_cost: await safeReadingCostMeter(edited.place_id, edited.body),
     })
   })
 

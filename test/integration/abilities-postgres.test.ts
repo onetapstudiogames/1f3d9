@@ -21,6 +21,7 @@ const migrationDdl = await readFile(
 
 const FOUNDER = Object.freeze({ id: 1, handle: 'founder', secret: `1f3d9_sk_${'1'.repeat(48)}` })
 const MAKER = Object.freeze({ id: 2, handle: 'bell-maker', secret: `1f3d9_sk_${'2'.repeat(48)}` })
+const VISITOR = Object.freeze({ id: 3, handle: 'far-walker', secret: `1f3d9_sk_${'3'.repeat(48)}` })
 
 type CityApp = Readonly<{ request: (input: string, init?: RequestInit) => Response | Promise<Response> }>
 type Json = Record<string, unknown>
@@ -356,6 +357,110 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       const missing = await call(app, null, 'GET', '/api/physics?roll_id=999999')
       assert.equal(missing.status, 404)
       assert.equal(missing.json.error, 'roll 999999 was not found; read a roll_id from a chance_rolled event, a room settle, or an action answer')
+    })
+
+    await t.test("write changes only its own thing's box, bumps its version, and never its words", async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      await standIn(MAKER.id, rooms.eastRoomId)
+      await standIn(VISITOR.id, rooms.eastRoomId)
+      assert.equal((await coin(app, MAKER.secret, 'guestbook', {
+        use: [
+          { effect: 'write', key: 'visits', op: 'add' },
+          { effect: 'write', key: 'guests', op: 'append', value: { from: 'actor' } },
+          { effect: 'chance', percent: 99, then: [], else: [] },
+          { effect: 'write', key: 'last-roll', value: { from: 'roll' } },
+          { effect: 'write', key: 'open', value: true },
+        ],
+      })).status, 201)
+      const bookTraitId = await traitId('guestbook')
+      const kindId = await seedKind(MAKER.id, 'books', [bookTraitId])
+      const bookId = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'the guestbook')
+      const neighbourId = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'another book')
+      const db = connectedDatabase()
+      await db.query('UPDATE things SET body = $2, open_to_use = TRUE WHERE id = $1', [bookId, 'sign here, please'])
+
+      const own = await call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: bookId })
+      assert.equal(own.status, 200, JSON.stringify(own.json))
+      assert.equal((own.json.action as Json).effects_applied, 5)
+      const shared = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'use', thing_id: bookId })
+      assert.equal(shared.status, 200, JSON.stringify(shared.json))
+      const lastRoll = ((shared.json.action as Json).rolls as Json[])[0]!.roll
+
+      const read = await call(app, null, 'GET', `/api/thing/${bookId}`)
+      assert.equal(read.status, 200)
+      const thing = read.json.thing as Json
+      assert.equal(thing.name, 'the guestbook')
+      assert.equal(thing.body, 'sign here, please', "the owner's words are never touched")
+      const state = thing.state as Json
+      assert.equal(state.version, 8)
+      assert.deepEqual(state.values, {
+        visits: 2, guests: ['bell-maker', 'far-walker'], 'last-roll': lastRoll, open: true,
+      })
+      const lastWrite = state.last_write as Json
+      assert.deepEqual({ ...lastWrite, at: undefined }, {
+        version: 8, key: 'open', op: 'set', trimmed: 0, source_trait: 'guestbook',
+        source_trait_id: bookTraitId, trigger: 'use', by: 'far-walker', at: undefined,
+      })
+      assert.match(String(lastWrite.at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+      const neighbour = (await call(app, null, 'GET', `/api/thing/${neighbourId}`)).json.thing as Json
+      assert.deepEqual(neighbour.state, { version: 0, values: {}, last_write: null })
+
+      const history = (await db.query(`
+        SELECT version, key, op, trigger, resident_id, authority_id FROM thing_state_changes
+        WHERE thing_id = $1 ORDER BY version
+      `, [bookId])).rows
+      assert.equal(history.length, 8)
+      assert.deepEqual(history[5], {
+        version: 6, key: 'guests', op: 'append', trigger: 'use', resident_id: VISITOR.id, authority_id: VISITOR.id,
+      })
+      const stateEvents = (await db.query(`
+        SELECT count(*)::int AS events FROM events
+        WHERE kind = 'thing_edited' AND detail->>'mode' = 'state' AND (detail->>'thing_id')::int = $1
+      `, [bookId])).rows[0]!.events
+      assert.equal(stateEvents, 8)
+    })
+
+    await t.test('write refuses in caller words, and the owner may empty the box', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER])
+      await standIn(MAKER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, MAKER.secret, 'rollless', {
+        use: [{ effect: 'write', key: 'luck', value: { from: 'roll' } }],
+      })).status, 201)
+      assert.equal((await coin(app, MAKER.secret, 'namer', {
+        use: [{ effect: 'write', key: 'visits', value: 'many' }],
+      })).status, 201)
+      assert.equal((await coin(app, MAKER.secret, 'counter', {
+        use: [{ effect: 'write', key: 'visits', op: 'add' }],
+      })).status, 201)
+      const rolllessKind = await seedKind(MAKER.id, 'rollless-kind', [await traitId('rollless')])
+      const rolllessId = await seedThing(MAKER.id, rooms.eastRoomId, rolllessKind, 'no dice')
+      const noRoll = await call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: rolllessId })
+      assert.equal(noRoll.status, 409)
+      assert.equal(noRoll.json.error, 'write from roll needs a chance roll earlier in this same run; put the write after or inside a chance')
+
+      const namedKind = await seedKind(MAKER.id, 'named', [await traitId('namer')])
+      const countKind = await seedKind(MAKER.id, 'counted', [await traitId('counter')])
+      const boxId = await seedThing(MAKER.id, rooms.eastRoomId, namedKind, 'a box')
+      assert.equal((await call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: boxId })).status, 200)
+      const counterId = await seedThing(MAKER.id, rooms.eastRoomId, countKind, 'a counter')
+      await connectedDatabase().query(`UPDATE things SET state = '{"visits": "many"}'::jsonb WHERE id = $1`, [counterId])
+      const mismatch = await call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: counterId })
+      assert.equal(mismatch.status, 409)
+      assert.equal(mismatch.json.error, 'write add needs key visits to hold a whole number; it holds text; use set to replace it first')
+
+      const refusedClear = await call(app, MAKER.secret, 'PATCH', `/api/thing/${boxId}`, { state_clear: false })
+      assert.equal(refusedClear.status, 400)
+      assert.equal(refusedClear.json.error, 'state_clear must be true when present')
+      const cleared = await call(app, MAKER.secret, 'PATCH', `/api/thing/${boxId}`, { state_clear: true })
+      assert.equal(cleared.status, 200, JSON.stringify(cleared.json))
+      const after = (await call(app, null, 'GET', `/api/thing/${boxId}`)).json.thing as Json
+      const state = after.state as Json
+      assert.equal(state.version, 2)
+      assert.deepEqual(state.values, {})
+      assert.deepEqual({ ...(state.last_write as Json), at: undefined }, {
+        version: 2, key: null, op: 'clear', trimmed: 0, source_trait: null, source_trait_id: null,
+        trigger: 'owner', by: 'bell-maker', at: undefined,
+      })
     })
   } finally {
     await postgres.stop()

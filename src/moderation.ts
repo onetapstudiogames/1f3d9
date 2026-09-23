@@ -72,11 +72,14 @@ const DRAWING_TOMBSTONE = Object.freeze({
   drawing_revisions: null,
 })
 const DRAWING_FIELDS: ReadonlySet<string> = new Set(Object.keys(DRAWING_TOMBSTONE))
+// Tombstones that replace a field only where the record already carries it.
+const PRESENT_ONLY_TOMBSTONE_FIELDS: ReadonlySet<string> = new Set([...DRAWING_FIELDS, 'state'])
 
 const CONTENT_TOMBSTONES = Object.freeze({
   resident: DRAWING_TOMBSTONE,
   place: DRAWING_TOMBSTONE,
-  thing: DRAWING_TOMBSTONE,
+  // A hidden thing's state box is hidden with its name and body.
+  thing: Object.freeze({ ...DRAWING_TOMBSTONE, state: null }),
   kind: Object.freeze({
     ...DRAWING_TOMBSTONE,
     drawing_variants: null,
@@ -150,7 +153,7 @@ function redactFields<T extends PublicRecord>(
   )
   const presentTombstones = Object.fromEntries(
     Object.entries(tombstones).filter(([field]) => (
-      !DRAWING_FIELDS.has(field) || Object.hasOwn(record, field)
+      !PRESENT_ONLY_TOMBSTONE_FIELDS.has(field) || Object.hasOwn(record, field)
     )),
   )
   return deepFreeze({

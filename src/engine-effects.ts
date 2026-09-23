@@ -39,6 +39,7 @@ import {
   type RollLog,
 } from './engine-chance.ts'
 import { requireWakeActor } from './wake-guard.ts'
+import { writeStateBox } from './engine-state.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -308,12 +309,14 @@ function skipAfterEarlierDestroy(
   effect: Effect,
   context: EffectExecutionContext,
 ): SkippedEffect | null {
-  if (context.sameUseDestroySkip !== true || !('target' in effect)) return null
-  const target = resolveSymbolicTarget(effect.target, context)
+  // A write changes the box of its own thing, so it is aimed at source.
+  const symbol = effect.effect === 'write' ? 'source' : 'target' in effect ? effect.target : null
+  if (context.sameUseDestroySkip !== true || symbol === null) return null
+  const target = resolveSymbolicTarget(symbol, context)
   if (target?.type !== 'thing' || !context.destroyedThingIds?.includes(target.id)) return null
   return Object.freeze({
     effect: effect.effect,
-    target: effect.target,
+    target: symbol,
     sourceTrait: context.sourceTraitName ?? null,
     sourceTraitId: context.sourceTraitId,
     sourcePlaceId: context.originPlaceId ?? null,
@@ -479,7 +482,8 @@ async function executeEffectWithOutcome(
     )
   }
   if (effect.effect === 'write') {
-    throw new EngineError(500, 'the city could not complete this effect')
+    await writeStateBox(effect, context, db)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)

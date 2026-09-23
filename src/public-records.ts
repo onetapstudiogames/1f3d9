@@ -116,6 +116,31 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
             AND drawing_revision.revision = thing.current_revision
         ), false)
       END AS has_drawing,
+      thing.wake_enabled,
+      jsonb_build_object(
+        'version', thing.state_version,
+        'values', thing.state,
+        'last_write', (
+          SELECT jsonb_build_object(
+            'version', change.version, 'key', change.key, 'op', change.op,
+            'trimmed', change.trimmed,
+            'source_trait', CASE WHEN coalesce((
+              SELECT moderation.action FROM moderation_actions moderation
+              WHERE moderation.target_type = 'trait' AND moderation.target_id = change.source_trait_id
+              ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+            ), 'restore') = 'remove' THEN NULL ELSE trait.name END,
+            'source_trait_id', change.source_trait_id,
+            'trigger', change.trigger,
+            'by', writer.handle,
+            'at', to_char(change.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )
+          FROM thing_state_changes change
+          LEFT JOIN traits trait ON trait.id = change.source_trait_id
+          LEFT JOIN residents writer ON writer.id = change.resident_id
+          WHERE change.thing_id = thing.id
+          ORDER BY change.version DESC LIMIT 1
+        )
+      ) AS state,
       thing.created_at
     FROM things thing
     JOIN residents maker ON maker.id = thing.maker_id
