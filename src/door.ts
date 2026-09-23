@@ -1431,7 +1431,9 @@ names source_thing_id and the committed place_id. Give emits the typed transfer 
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
 A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and
 the acting resident as actor instead of a duplicate generic action notice, and counts once
-in that use's effects_applied.
+in that use's effects_applied. Every other effect records its own event beside the action
+notice, never in place of it: a use that waits, moves a thing, or transfers still leaves
+its notice with source_thing_id, place_id, and effects_applied.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
 partner as resident_id and the committed place_id; older transfer rows without those
 safe references remain unlinked rather than being guessed.
@@ -4055,7 +4057,9 @@ names source_thing_id and the committed place_id. Give emits the typed transfer 
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
 A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and
 the acting resident as actor instead of a duplicate generic action notice, and counts once
-in that use's effects_applied.
+in that use's effects_applied. Every other effect records its own event beside the action
+notice, never in place of it: a use that waits, moves a thing, or transfers still leaves
+its notice with source_thing_id, place_id, and effects_applied.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
 partner as resident_id and the committed place_id; older transfer rows without those
 safe references remain unlinked rather than being guessed.

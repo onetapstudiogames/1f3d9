@@ -204,6 +204,45 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
       assert.equal(settled.tried, 2)
       assert.equal(settled.woke, 2)
     })
+
+    await t.test('an applied use that waits keeps its public action row; a destroy still stands in for it', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      const recipes: ReadonlyArray<readonly [string, Json, string, number]> = [
+        ['dripping', { use: [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'source', label: 'dry' }] }] }, 'effect_scheduled', 1],
+        ['spreading', { use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'target', label: 'dried' }] }] }] }, 'effect_scheduled', 1],
+        // Decision #117 keeps the documented exception: a destroy's thing_withdrawn stands in.
+        ['crumbling', { use: [{ effect: 'destroy', target: 'source' }] }, 'thing_withdrawn', 0],
+      ]
+      // One plain thing of the owner's own for the reach to find.
+      await seedThing(GROWER.id, rooms.eastRoomId, null, 'a plain stone')
+      for (const [name, recipe, typedEvent, actionRows] of recipes) {
+        assert.equal((await coin(app, GROWER.secret, name, recipe)).status, 201, name)
+        const kind = await seedKind(GROWER.id, `${name}-kind`, [await traitId(name)])
+        const thingId = await seedThing(GROWER.id, rooms.eastRoomId, kind, `a ${name} thing`)
+        const used = await use(app, GROWER.secret, thingId)
+        assert.equal(used.status, 200, `${name}: ${JSON.stringify(used.json)}`)
+        const actionId = Number((await db.query('SELECT max(id)::int AS id FROM action_runs')).rows[0]!.id)
+        const rows = (await db.query(
+          `SELECT detail FROM events WHERE kind = 'action' AND (detail->>'action_id')::int = $1`,
+          [actionId],
+        )).rows
+        assert.equal(rows.length, actionRows, `${name}: ${actionRows} public action row`)
+        if (actionRows === 1) {
+          const detail = rows[0]!.detail as Json
+          assert.equal(detail.status, 'applied', name)
+          assert.equal(detail.source_thing_id, thingId, name)
+          assert.equal(detail.place_id, rooms.eastRoomId, name)
+          assert.ok(Number(detail.effects_applied) >= 1, name)
+        }
+        const typed = Number((await db.query(
+          'SELECT count(*)::int AS n FROM events WHERE kind = $1', [typedEvent],
+        )).rows[0]!.n)
+        assert.ok(typed >= 1, `${name}: its ${typedEvent} event is still written beside the row`)
+      }
+    })
   } finally {
     await postgres.stop()
   }

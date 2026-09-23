@@ -1791,6 +1791,11 @@ Successful generic `move` and `go_home` notices include `from_place_id` and
 an addressable `thing_moved` event carrying the same `action_id`. Successful `use`
 includes `source_thing_id` and its committed `place_id`. Give and consume emit the
 typed `transfer` and `thing_withdrawn` events instead of duplicate generic action events.
+Among a trait's or a law's effects only a destroy does the same, with its `thing_withdrawn`;
+every other effect records its event beside the action's public row, never in place of it,
+so a use that waits (`effect_scheduled`), moves a thing (`thing_moved`), or transfers
+(`transfer`) still leaves its `action` event with `source_thing_id`, `place_id`, and
+`effects_applied` (decision #117).
 New immediate-gift and effect-driven `transfer` notices also name the safely identified
 interaction partner as `resident_id` and the committed `place_id`; older transfer notices
 without both references remain unlinked.
