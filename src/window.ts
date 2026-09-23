@@ -74,6 +74,7 @@ import {
   windowShareMetadataOrigin,
   type WindowShareDetail,
 } from './window-sharing.ts'
+import { thingBornAsColumnsSql } from './thing-kind-read.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -206,6 +207,13 @@ interface PublicNote {
   read_in_person?: string
 }
 
+/** The kind and revision a thing was born as; null for a thing made with no kind. */
+interface PublicBornAs {
+  kind: string
+  kind_id: number
+  revision: number
+}
+
 interface PublicThing {
   id: number
   place_id: number
@@ -220,6 +228,8 @@ interface PublicThing {
   open_to_use: boolean
   shared_use_may_destroy: boolean
   kind: string | null
+  born_as: PublicBornAs | null
+  generation: number
   traits: string[]
   created_at: string
   moderated: boolean
@@ -234,6 +244,8 @@ export interface PublicThingHeading {
   name: string
   kind_id: number | null
   kind: string | null
+  born_as: PublicBornAs | null
+  generation: number
   maker_id: number
   made_by: string
   current_owner_id: number
@@ -335,6 +347,22 @@ function safeWorldName(value: unknown): string | null {
   return typeof value === 'string' && (WORLD_NAME_RE.test(value) || value === MODERATED_TEXT)
     ? value
     : null
+}
+
+/** born_as as the window shows it, or undefined when the stored value is malformed. */
+function publicBornAs(value: unknown): PublicBornAs | null | undefined {
+  if (value == null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const kind = safeWorldName(record.kind)
+  const kindId = positiveInteger(record.kind_id)
+  const revision = positiveInteger(record.revision)
+  return kind && kindId && revision ? { kind, kind_id: kindId, revision } : undefined
+}
+
+function thingGeneration(value: unknown): number | null {
+  const generation = Number(value ?? 0)
+  return Number.isSafeInteger(generation) && generation >= 0 ? generation : null
 }
 
 function safeHandles(value: unknown): string[] {
@@ -545,12 +573,14 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       : null
     const owner = typeof row.owner === 'string' && HANDLE_RE.test(row.owner) ? row.owner : null
     const kind = row.kind == null ? null : safeWorldName(row.kind)
+    const bornAs = publicBornAs(row.born_as)
+    const generation = thingGeneration(row.generation)
     const createdAt = safeDate(row.created_at)
     if (
       !id || !placeId || !name || !body || !makerId || !madeBy ||
       !ownerId || !currentOwnerId || ownerId !== currentOwnerId ||
       !currentOwner || !owner || owner !== currentOwner ||
-      !createdAt || (row.kind != null && !kind)
+      !createdAt || (row.kind != null && !kind) || bornAs === undefined || generation === null
     ) return []
     const traits = Array.isArray(row.traits)
       ? [...new Set(row.traits.flatMap(trait => safeWorldName(trait) ?? []))].slice(0, 32)
@@ -569,6 +599,8 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       open_to_use: row.open_to_use === true,
       shared_use_may_destroy: row.shared_use_may_destroy === true,
       kind,
+      born_as: bornAs,
+      generation,
       traits,
       created_at: createdAt,
       moderated: row.moderated === true,
@@ -598,10 +630,12 @@ export function publicWindowThingHeadings(values: unknown[]): PublicThingHeading
       : null
     const bodyTextBytes = Number(row.body_text_bytes)
     const createdAt = safeDate(row.created_at)
+    const bornAs = publicBornAs(row.born_as)
+    const generation = thingGeneration(row.generation)
     if (
       !id || !placeId || !name || !makerId || !madeBy || !currentOwnerId || !currentOwner ||
       !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0 || !createdAt ||
-      (kindId === null) !== (kind === null)
+      (kindId === null) !== (kind === null) || bornAs === undefined || generation === null
     ) return []
     return [Object.freeze({
       id,
@@ -609,6 +643,8 @@ export function publicWindowThingHeadings(values: unknown[]): PublicThingHeading
       name,
       kind_id: kindId,
       kind,
+      born_as: bornAs,
+      generation,
       maker_id: makerId,
       made_by: madeBy,
       current_owner_id: currentOwnerId,
@@ -995,6 +1031,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
         text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT
             thing.id, thing.place_id, thing.name,
             coalesce(thing.as_kind_id, thing.kind_id) AS kind_id, kind.name AS kind,
+            ${thingBornAsColumnsSql('thing')},
             thing.maker_id, maker.handle AS made_by,
             thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
             octet_length(thing.body)::integer AS body_text_bytes,
@@ -1041,6 +1078,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           thing.open_to_use, thing.shared_use_may_destroy,
           coalesce(thing.as_kind_id, thing.kind_id) AS kind_id,
           coalesce(thing.as_revision, thing.current_revision) AS current_revision, kind.name AS kind,
+          ${thingBornAsColumnsSql('thing')},
           coalesce(revision.traits, '{}'::text[]) AS traits,
           ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at
         FROM things thing

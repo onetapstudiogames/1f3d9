@@ -8,6 +8,7 @@ import { ownThingOf } from './engine-state.ts'
 import type { EffectExecutionContext } from './engine-effects.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import { MAX_EFFECT_GENERATIONS, type ConvertEffect } from './physics.ts'
+import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 
 export const CONVERT_ONLY_THINGS_ERROR =
   'convert changes only things; residents and places are never converted'
@@ -27,6 +28,8 @@ export function convertedVariantRefusal(thingId: number): string {
 interface KindAt {
   readonly kindId: number
   readonly revision: number
+  /** The kind's owner, whose drawing the converted thing now shows. */
+  readonly ownerId: number
 }
 
 /** What the thing becomes, where the change came from, and the generation it lands at. */
@@ -44,15 +47,18 @@ async function kindTraitConversion(context: EffectExecutionContext, db: TaggedSq
   const rows = await db`
     SELECT coalesce(thing.as_kind_id, thing.kind_id) AS kind_id,
       coalesce(thing.as_revision, thing.current_revision) AS revision,
+      kind.owner_id AS kind_owner_id,
       thing.generation, coalesce(thing.family_id, thing.id) AS family_id
-    FROM things thing WHERE thing.id = ${converterId} AND thing.withdrawn_at IS NULL
+    FROM things thing
+    LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
+    WHERE thing.id = ${converterId} AND thing.withdrawn_at IS NULL
   ` as Array<Record<string, unknown>>
   const row = rows[0]
   if (!row || row.kind_id == null) {
     throw new EngineError(409, `thing ${converterId} is gone, so it cannot convert anything`)
   }
   return Object.freeze({
-    into: { kindId: Number(row.kind_id), revision: Number(row.revision) },
+    into: { kindId: Number(row.kind_id), revision: Number(row.revision), ownerId: Number(row.kind_owner_id) },
     byThingId: converterId,
     byLawTraitId: null,
     byPlaceId: null,
@@ -69,14 +75,14 @@ async function lawConversion(
 ): Promise<Conversion> {
   const lawPlaceId = context.originPlaceId ?? context.placeId
   const rows = await db`
-    SELECT kind.id, kind.current_revision
+    SELECT kind.id, kind.current_revision, kind.owner_id
     FROM kinds kind JOIN places place ON place.id = ${lawPlaceId}
     WHERE kind.name = ${intoKind} AND kind.owner_id = place.owner_id
-  ` as Array<{ id?: unknown; current_revision?: unknown }>
+  ` as Array<{ id?: unknown; current_revision?: unknown; owner_id?: unknown }>
   const row = rows[0]
   if (!row || lawPlaceId === null) throw new EngineError(409, lawIntoKindRefusal(intoKind))
   return Object.freeze({
-    into: { kindId: Number(row.id), revision: Number(row.current_revision) },
+    into: { kindId: Number(row.id), revision: Number(row.current_revision), ownerId: Number(row.owner_id) },
     byThingId: null,
     byLawTraitId: context.sourceTraitId,
     byPlaceId: lawPlaceId,
@@ -136,6 +142,7 @@ export async function convertThing(
   const residentId = context.fromWake === true
     ? (context.actorSymbolId ?? null)
     : (context.actorSymbolId ?? context.actorId)
+  const shownBefore = await readThingPresentation(thingId, db)
   await db`
     WITH changed AS (
       UPDATE things SET
@@ -158,6 +165,11 @@ export async function convertThing(
         ${context.actorId}, ${residentId}, ${context.actionId}, ${context.settleId ?? null}
       FROM changed
       RETURNING id
+    ), cleared_marks AS (
+      UPDATE family_growth_marks mark
+      SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+      FROM changed
+      WHERE mark.family_id = ${Number(target.family_id)} AND mark.cleared_at IS NULL
     )
     INSERT INTO events (kind, actor, detail)
     SELECT 'thing_edited', resident.handle, jsonb_build_object(
@@ -170,6 +182,12 @@ export async function convertThing(
     )
     FROM changed CROSS JOIN remembered JOIN residents resident ON resident.id = ${context.actorId}
   `
+  // The thing now shows its new kind's drawing, which that kind's owner made.
+  if (shownBefore) {
+    await appendThingPresentationRevision(thingId, shownBefore, {
+      id: conversion.into.ownerId, relation: 'kind_owner',
+    }, db)
+  }
   context.abilityLog?.converted.push(thingId)
   return true
 }

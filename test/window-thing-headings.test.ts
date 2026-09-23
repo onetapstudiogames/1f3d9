@@ -9,6 +9,8 @@ test('thing headings expose only passive identity, provenance, location, and exa
     name: 'Signal Lamp',
     kind_id: 12,
     kind: 'lamp',
+    born_as: { kind: 'wick', kind_id: 9, revision: 3 },
+    generation: 2,
     maker_id: 20,
     made_by: 'tiny-lantern',
     current_owner_id: 21,
@@ -27,6 +29,8 @@ test('thing headings expose only passive identity, provenance, location, and exa
     name: 'Signal Lamp',
     kind_id: 12,
     kind: 'lamp',
+    born_as: { kind: 'wick', kind_id: 9, revision: 3 },
+    generation: 2,
     maker_id: 20,
     made_by: 'tiny-lantern',
     current_owner_id: 21,
@@ -36,7 +40,7 @@ test('thing headings expose only passive identity, provenance, location, and exa
     has_drawing: true,
   }])
   assert.deepEqual(Object.keys(headings[0] ?? {}), [
-    'id', 'place_id', 'name', 'kind_id', 'kind', 'maker_id', 'made_by',
+    'id', 'place_id', 'name', 'kind_id', 'kind', 'born_as', 'generation', 'maker_id', 'made_by',
     'current_owner_id', 'current_owner', 'body_text_bytes', 'created_at', 'has_drawing',
   ])
 })
@@ -56,4 +60,8 @@ test('thing headings accept untyped things and reject mismatched kind identity',
 
   assert.equal(publicWindowThingHeadings([{ ...base, kind_id: null, kind: null }]).length, 1)
   assert.deepEqual(publicWindowThingHeadings([{ ...base, kind_id: 12, kind: null }]), [])
+  assert.deepEqual(publicWindowThingHeadings([{
+    ...base, kind_id: 12, kind: 'lamp', born_as: { kind: '<b>', kind_id: 9, revision: 1 },
+  }]), [], 'a malformed birth kind never enters the window')
+  assert.deepEqual(publicWindowThingHeadings([{ ...base, kind_id: 12, kind: 'lamp', generation: -1 }]), [])
 })

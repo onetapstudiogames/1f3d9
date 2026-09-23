@@ -34,7 +34,14 @@ import {
   type PlaceLifecycleAction,
   type PlaceLifecycleFacts,
 } from './place-lifecycle.ts'
-import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
+import {
+  moderatePlaceDetails,
+  moderatePublicKinds,
+  moderatePublicRows,
+  moderateThingKindHistory,
+} from './moderation-store.ts'
+import { thingRowAsItIsNow } from './thing-kind-read.ts'
+import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 import {
   effectiveLaws,
   engineSql,
@@ -290,29 +297,37 @@ async function kindTraitRefusal(names: readonly string[]): Promise<string | null
 
 /**
  * A converted thing upgrades to its new kind's newest revision. Its birth kind
- * and revision never change, and a family's open growth marks clear.
+ * and revision never change, a family's open growth marks clear, and a changed
+ * presentation is appended to its drawing history.
  */
 async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
-  await sql`
-    WITH changed AS (
-      UPDATE things thing SET as_revision = kind.current_revision
-      FROM kinds kind
-      WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
-        AND thing.withdrawn_at IS NULL AND kind.id = thing.as_kind_id
-        AND thing.as_revision IS DISTINCT FROM kind.current_revision
-      RETURNING thing.id, thing.birth_revision, thing.as_revision,
-        coalesce(thing.family_id, thing.id) AS family_id
-    ), cleared_marks AS (
-      UPDATE family_growth_marks mark
-      SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
-      FROM changed
-      WHERE mark.family_id = changed.family_id AND mark.cleared_at IS NULL
-    )
-    INSERT INTO events (kind, actor, detail)
-    SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
-      'thing_id', id, 'birth_revision', birth_revision, 'current_revision', as_revision
-    ) FROM changed
-  `
+  await withEngineTransaction(engineSql, async transaction => {
+    const shownBefore = await readThingPresentation(id, transaction)
+    const changed = await transaction`
+      WITH changed AS (
+        UPDATE things thing SET as_revision = kind.current_revision
+        FROM kinds kind
+        WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+          AND thing.withdrawn_at IS NULL AND kind.id = thing.as_kind_id
+          AND thing.as_revision IS DISTINCT FROM kind.current_revision
+        RETURNING thing.id, thing.as_kind_id, thing.as_revision,
+          coalesce(thing.family_id, thing.id) AS family_id
+      ), cleared_marks AS (
+        UPDATE family_growth_marks mark
+        SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+        FROM changed
+        WHERE mark.family_id = changed.family_id AND mark.cleared_at IS NULL
+      )
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
+        'thing_id', id, 'kind_id', as_kind_id, 'current_revision', as_revision
+      ) FROM changed
+      RETURNING id
+    ` as unknown[]
+    if (changed.length > 0 && shownBefore) {
+      await appendThingPresentationRevision(id, shownBefore, { id: resident.id, relation: 'owner' }, transaction)
+    }
+  })
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -2025,7 +2040,8 @@ export function mountWorldRoutes(app: Hono): void {
         (offer.id IS NOT NULL) AS has_open_offer
       FROM things thing
       LEFT JOIN kind_revisions pinned
-        ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
+        ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+        AND pinned.revision = coalesce(thing.as_revision, thing.current_revision)
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
@@ -2080,13 +2096,16 @@ export function mountWorldRoutes(app: Hono): void {
     const rows = (await sql`
       WITH editable AS MATERIALIZED (
         SELECT thing.*,
+          coalesce(thing.as_kind_id, thing.kind_id) AS shown_kind_id,
+          coalesce(thing.as_revision, thing.current_revision) AS shown_revision,
           pinned.drawing AS kind_drawing,
           pinned.drawing_state AS kind_drawing_state,
           pinned.drawing_description AS kind_drawing_description,
           selected_variant.value AS kind_variant
         FROM things thing
         LEFT JOIN kind_revisions pinned
-          ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
+          ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+          AND pinned.revision = coalesce(thing.as_revision, thing.current_revision)
         LEFT JOIN LATERAL (
           SELECT variant.value
           FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
@@ -2150,13 +2169,16 @@ export function mountWorldRoutes(app: Hono): void {
         RETURNING *
       ), current_presentation AS MATERIALIZED (
         SELECT changed.*,
+          coalesce(changed.as_kind_id, changed.kind_id) AS shown_kind_id,
+          coalesce(changed.as_revision, changed.current_revision) AS shown_revision,
           pinned.drawing AS kind_drawing,
           pinned.drawing_state AS kind_drawing_state,
           pinned.drawing_description AS kind_drawing_description,
           selected_variant.value AS kind_variant
         FROM changed
         LEFT JOIN kind_revisions pinned
-          ON pinned.kind_id = changed.kind_id AND pinned.revision = changed.current_revision
+          ON pinned.kind_id = coalesce(changed.as_kind_id, changed.kind_id)
+          AND pinned.revision = coalesce(changed.as_revision, changed.current_revision)
         LEFT JOIN LATERAL (
           SELECT variant.value
           FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
@@ -2174,72 +2196,72 @@ export function mountWorldRoutes(app: Hono): void {
         )
         SELECT 'thing', current.id, NULL,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_state
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_state
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'state'
             ELSE prior.kind_drawing_state
           END,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_description
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_description
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'description'
             ELSE prior.kind_drawing_description
           END,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->'drawing'
             ELSE prior.kind_drawing
           END,
           CASE
-            WHEN prior.kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN prior.shown_kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN prior.drawing_state = 'refused' THEN 'thing'
             WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
             WHEN prior.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          CASE WHEN prior.kind_id IS NOT NULL AND (
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND (
               prior.drawing_state = 'refused'
               OR prior.drawing_variant_name IS NOT NULL
               OR prior.kind_drawing_state <> 'undrawn'
-            ) THEN prior.kind_id ELSE NULL END,
-          CASE WHEN prior.kind_id IS NOT NULL AND (
+            ) THEN prior.shown_kind_id ELSE NULL END,
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND (
               prior.drawing_state = 'refused'
               OR prior.drawing_variant_name IS NOT NULL
               OR prior.kind_drawing_state <> 'undrawn'
-            ) THEN prior.current_revision ELSE NULL END,
-          CASE WHEN prior.kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
+            ) THEN prior.shown_revision ELSE NULL END,
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
             THEN prior.drawing_variant_name ELSE NULL END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_state
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_state
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'state'
             ELSE current.kind_drawing_state
           END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_description
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_description
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'description'
             ELSE current.kind_drawing_description
           END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->'drawing'
             ELSE current.kind_drawing
           END,
           CASE
-            WHEN current.kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN current.shown_kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN current.drawing_state = 'refused' THEN 'thing'
             WHEN current.drawing_variant_name IS NOT NULL THEN 'kind_variant'
             WHEN current.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          CASE WHEN current.kind_id IS NOT NULL AND (
+          CASE WHEN current.shown_kind_id IS NOT NULL AND (
               current.drawing_state = 'refused'
               OR current.drawing_variant_name IS NOT NULL
               OR current.kind_drawing_state <> 'undrawn'
-            ) THEN current.kind_id ELSE NULL END,
-          CASE WHEN current.kind_id IS NOT NULL AND (
+            ) THEN current.shown_kind_id ELSE NULL END,
+          CASE WHEN current.shown_kind_id IS NOT NULL AND (
               current.drawing_state = 'refused'
               OR current.drawing_variant_name IS NOT NULL
               OR current.kind_drawing_state <> 'undrawn'
-            ) THEN current.current_revision ELSE NULL END,
-          CASE WHEN current.kind_id IS NOT NULL AND current.drawing_state <> 'refused'
+            ) THEN current.shown_revision ELSE NULL END,
+          CASE WHEN current.shown_kind_id IS NOT NULL AND current.drawing_state <> 'refused'
             THEN current.drawing_variant_name ELSE NULL END,
           ${resident.id}, 'owner'
         FROM current_presentation current
@@ -2268,18 +2290,23 @@ export function mountWorldRoutes(app: Hono): void {
         result.owner_id AS current_owner_id,
         current_owner.handle AS current_owner,
         current_owner.handle AS owner,
-        kind_definition.name AS kind
+        kind_definition.name AS kind,
+        CASE WHEN result.kind_id IS NULL THEN NULL ELSE jsonb_build_object(
+          'kind', birth_kind.name, 'kind_id', result.kind_id, 'revision', result.birth_revision
+        ) END AS born_as
       FROM result
       JOIN residents maker ON maker.id = result.maker_id
       JOIN residents current_owner ON current_owner.id = result.owner_id
       LEFT JOIN kinds kind_definition
         ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
+      LEFT JOIN kinds birth_kind ON birth_kind.id = result.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    const [answered] = await moderateThingKindHistory([thingRowAsItIsNow(rows[0])])
     // The owner empties the state box; values are never written by hand.
     const edited = body.state_clear === true
-      ? { ...rows[0], state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
-      : rows[0]
+      ? { ...answered!, state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
+      : answered!
     return c.json({
       thing: edited,
       reading_cost: await safeReadingCostMeter(edited.place_id, edited.body),

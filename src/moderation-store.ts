@@ -182,6 +182,47 @@ function redactIngredientNames(value: unknown, overlays: ReadonlyMap<string, Nam
   return changed ? Object.freeze(recipe) : value
 }
 
+/** The birth kind and former kinds a thing row names in born_as and was. */
+function historyKindIds(things: readonly object[]): number[] {
+  return [...new Set(things.flatMap(thing => {
+    const row = thing as Record<string, unknown>
+    const entries = [row.born_as, ...(Array.isArray(row.was) ? row.was : [])]
+    return entries.flatMap(entry => {
+      if (!entry || typeof entry !== 'object') return []
+      const id = Number((entry as Record<string, unknown>).kind_id)
+      return Number.isSafeInteger(id) && id > 0 ? [id] : []
+    })
+  }))]
+}
+
+function hiddenKindName(entry: unknown, overlays: ReadonlyMap<number, ModerationOverlay>): unknown {
+  if (!entry || typeof entry !== 'object') return entry
+  const record = entry as Record<string, unknown>
+  return overlays.get(Number(record.kind_id))?.action === 'remove' && typeof record.kind === 'string'
+    ? Object.freeze({ ...record, kind: MODERATED_TEXT })
+    : entry
+}
+
+/**
+ * A hidden kind's name stays hidden where a thing names it as its birth kind
+ * (born_as) or a former kind (was); the ids and revisions stay.
+ */
+export async function moderateThingKindHistory<TThing extends object>(
+  things: readonly TThing[],
+): Promise<readonly TThing[]> {
+  const overlays = await currentOverlays('kind', historyKindIds(things))
+  if (overlays.size === 0) return things
+  return Object.freeze(things.map(thing => {
+    const row = thing as Record<string, unknown>
+    if (!Object.hasOwn(row, 'born_as') && !Object.hasOwn(row, 'was')) return thing
+    return Object.freeze({
+      ...row,
+      ...(Object.hasOwn(row, 'born_as') ? { born_as: hiddenKindName(row.born_as, overlays) } : {}),
+      ...(Array.isArray(row.was) ? { was: row.was.map(entry => hiddenKindName(entry, overlays)) } : {}),
+    }) as unknown as TThing
+  }))
+}
+
 export async function moderatePlaceDetails<TThing extends object, TLaw extends object>(
   things: readonly TThing[],
   laws: readonly TLaw[],
@@ -192,12 +233,13 @@ export async function moderatePlaceDetails<TThing extends object, TLaw extends o
     const id = Number(row.traitId ?? row.trait_id)
     return Number.isSafeInteger(id) && id > 0 ? [id] : []
   }))]
-  const [thingOverlays, kindOverlays, traitOverlays] = await Promise.all([
+  const [thingOverlays, kindOverlays, traitOverlays, historyThings] = await Promise.all([
     currentOverlays('thing', positiveIds(things, 'id')),
     currentOverlays('kind', kindIds),
     currentOverlays('trait', traitIds),
+    moderateThingKindHistory(things),
   ])
-  const publicThings = applyDirectOverlays('thing', things, thingOverlays).map(thing => {
+  const publicThings = applyDirectOverlays('thing', historyThings, thingOverlays).map(thing => {
     const row = thing as Record<string, unknown>
     const kindId = Number(row.kind_id)
     const overlay = kindOverlays.get(kindId)
