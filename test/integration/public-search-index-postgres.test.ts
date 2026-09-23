@@ -418,7 +418,11 @@ test('large public searches use maintained indexes without changing archive trut
         [searchQuery('literal 100%_archive phrase', 'phrase', 'thing'), 'things', INDEX_NAMES.thingPhrase],
       ] as const) {
         const run = await runSearch(postgres.client, query)
-        assertUsesIndexWithoutSourceWalk(await explain(postgres.client, run), table, indexName)
+        const nodes = await explain(postgres.client, run)
+        assertUsesIndexWithoutSourceWalk(nodes, table, indexName)
+        // A walk-to-read note is found by its first line, never vetoed by the
+        // whole-body index, and still without walking every note (decision #103).
+        if (table === 'notes') assertUsesIndexWithoutSourceWalk(nodes, table, 'notes_walk_to_read')
       }
 
       await postgres.client.query(`

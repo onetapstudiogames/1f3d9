@@ -35,6 +35,10 @@ const quietSnapshotMigrationDdl = await readFile(
   new URL('../../../db/migrations/20260902_public_snapshot_quiet.sql', import.meta.url),
   'utf8',
 )
+const walkToReadSnapshotMigrationDdl = await readFile(
+  new URL('../../../db/migrations/20260922_public_snapshot_walk_to_read.sql', import.meta.url),
+  'utf8',
+)
 
 let database: Pool | null = null
 let afterAgreementSignPreflight: (() => Promise<void>) | null = null
@@ -309,6 +313,7 @@ export interface WorldTestContext {
   placeLifecycleMigrationDdl: string
   preLifecycleSnapshotMigrationDdl: string
   quietSnapshotMigrationDdl: string
+  walkToReadSnapshotMigrationDdl: string
   craftKindThing: typeof import('../../../src/crafting.ts')['craftKindThing']
   makeThingThroughEngine: typeof import('../../../src/thing-making.ts')['makeThingThroughEngine']
   replacePlaceLaws: typeof import('../../../src/laws.ts')['replacePlaceLaws']
@@ -335,6 +340,7 @@ export async function registerWorldPostgresTests(t: TestContext): Promise<void> 
       postgresCode,
       preLifecycleSnapshotMigrationDdl,
       quietSnapshotMigrationDdl,
+      walkToReadSnapshotMigrationDdl,
       replacePlaceLaws,
       resetDatabase,
       withdrawThing,

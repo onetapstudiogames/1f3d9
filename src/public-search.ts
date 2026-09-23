@@ -16,7 +16,8 @@ import {
   PUBLIC_SEARCH_QUERY_MAX_BYTES,
   PUBLIC_SEARCH_WORD_MAX,
 } from './public-search-limits.ts'
-import { noteBodyWithheldSql } from './walk-to-read.ts'
+import { noteFirstLineSql } from './note-first-line.ts'
+import { noteBodyWithheldSql, walkToReadInPerson } from './walk-to-read.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
@@ -265,8 +266,12 @@ function literalPhrasePattern(value: string): string {
   return `%${value.replace(/[\\%_]/gu, character => `\\${character}`)}%`
 }
 
-// A walk-to-read body is read in person, so a note never matches while its body
-// is withheld (decision #102); it matches again once its place is retired.
+// A walk-to-read body is read in person, so while it is withheld a note matches
+// only on its public first line, the same line every remote read shows (decisions
+// #102 and #103); its whole body matches again once its place is retired.
+// The whole-body index only narrows ordinary notes. It never decides for a
+// walk-to-read note, because how the whole body splits into words can differ from
+// how its first line does; the final match on search_text decides alone.
 function publicSearchSql(mode: PublicSearchMode): string {
   return `
     /* public:search */
@@ -283,15 +288,23 @@ function publicSearchSql(mode: PublicSearchMode): string {
         note.author_id, author.handle AS author,
         NULL::text AS founding_name, NULL::jsonb AS name_history,
         NULL::timestamptz AS retired_at, NULL::text AS status,
+        note.walk_to_read, withheld.body_withheld,
+        CASE WHEN withheld.body_withheld THEN public_note.text END AS first_line,
         note.body,
-        CASE WHEN note.body !~* $3::text THEN note.body ELSE '' END AS search_text,
+        CASE WHEN public_note.text !~* $3::text THEN public_note.text ELSE '' END AS search_text,
         note.created_at
       FROM notes note
       JOIN residents author ON author.id = note.author_id
+      CROSS JOIN LATERAL (
+        SELECT ${noteBodyWithheldSql('note')} AS body_withheld
+      ) withheld
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN withheld.body_withheld
+          THEN ${noteFirstLineSql('note.body')} ELSE note.body END AS text
+      ) public_note
       WHERE $2::text IN ('all', 'note')
         AND $9::text IS NULL
-        AND ${indexedMatchExpression(mode, 'note.body')}
-        AND NOT ${noteBodyWithheldSql('note')}
+        AND (${indexedMatchExpression(mode, 'note.body')} OR note.walk_to_read)
         AND coalesce((
           SELECT moderation.action
           FROM moderation_actions moderation
@@ -312,6 +325,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         NULL::integer AS author_id, NULL::text AS author,
         NULL::text AS founding_name, NULL::jsonb AS name_history,
         NULL::timestamptz AS retired_at, NULL::text AS status,
+        NULL::boolean AS walk_to_read, NULL::boolean AS body_withheld, NULL::text AS first_line,
         thing.body,
         concat_ws(' ',
           CASE WHEN thing.name !~* $3::text THEN thing.name ELSE '' END,
@@ -387,6 +401,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         coalesce(history.name_history, '[]'::jsonb) AS name_history,
         place.retired_at,
         CASE WHEN place.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
+        NULL::boolean AS walk_to_read, NULL::boolean AS body_withheld, NULL::text AS first_line,
         ''::text AS body,
         concat_ws(' ', place.name, history.search_names) AS search_text,
         place.created_at
@@ -420,6 +435,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       page.founding_name, page.name_history,
       to_char(page.retired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS retired_at,
       page.status,
+      page.walk_to_read, page.body_withheld, page.first_line,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
       totals.total_items, totals.total_body_bytes, checkpoint.change_marker
@@ -452,6 +468,23 @@ function safeCount(value: unknown, name: string): number {
   return count
 }
 
+// A walk-to-read result carries what every remote read of that note shows: the
+// mark, and while the body is withheld its first line and where it is read.
+function walkToReadResultFields(
+  row: Readonly<Record<string, unknown>>,
+  noteId: number,
+  placeId: number,
+): Readonly<Record<string, unknown>> {
+  if (row.walk_to_read !== true) return {}
+  if (row.body_withheld !== true) return { walk_to_read: true }
+  if (typeof row.first_line !== 'string') throw new Error('search result first line is invalid')
+  return {
+    walk_to_read: true,
+    first_line: row.first_line,
+    read_in_person: walkToReadInPerson(noteId, placeId),
+  }
+}
+
 function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
   if (row.result_type !== 'note' && row.result_type !== 'place' && row.result_type !== 'thing') return null
   const common = {
@@ -472,6 +505,7 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
       author: row.author,
       body_text_bytes: bodyTextBytes,
       created_at: row.created_at,
+      ...walkToReadResultFields(row, common.id, placeId),
     })
   }
   if (row.result_type === 'place') {
