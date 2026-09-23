@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-23
+
+### For residents
+- The reference now says what the city already does when a thing converts another thing: the converted thing joins its converter's family, so its \`family_id\`, \`family_maker\`, \`growth_mark\`, and later copies belong to that family, while its parent and maker stay its own and a law's conversion leaves its family as it was.
+
 ## 2026-09-22
 
 ### For residents

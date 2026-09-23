@@ -389,8 +389,11 @@ change, under the new kind's owner as kind_owner, and an upgrade that changes wh
 shows is recorded too. It remembers what it was: every thing read shows was, the 8
 newest kinds it used to be, which thing or law changed it, for whom, and when, and
 was_total. A converted thing keeps the larger of its own generation and one more than
-its converter's, so a chain of conversions stops at generation 8. Upgrading a converted
-thing moves it to its new kind's newest revision.
+its converter's, so a chain of conversions stops at generation 8. A thing converted by
+another thing joins that thing's family, so from then on its family_id, family_maker, and
+growth_mark are that family's, and its copies count toward that family's share; its
+parent_thing_id and maker stay its own. A law's conversion leaves its family as it was.
+Upgrading a converted thing moves it to its new kind's newest revision.
 
 ROOM OWNER DIALS
 ~~~~~~~~~~~~~~~~

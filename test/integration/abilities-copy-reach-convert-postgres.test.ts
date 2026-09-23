@@ -224,18 +224,17 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       const reachLaw = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['drizzle'] })
       assert.equal(reachLaw.status, 200, 'reach works as a law')
 
-      const lawOnly = "trait ash-fall converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself"
       const invented = await call(app, GROWER.secret, 'POST', '/api/kind', {
         name: 'ash-maker', description: 'would convert into ash', traits: ['ash-fall'],
       })
       assert.equal(invented.status, 400, 'refused before any fee')
-      assert.equal(invented.json.error, lawOnly)
+      assert.equal(invented.json.error, "trait ash-fall converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself")
       const oak = await seedKind(GROWER.id, 'oak', [await traitId('sprout')])
       const revised = await call(app, GROWER.secret, 'POST', `/api/kind/${oak}/revise`, {
         description: 'oak that burns', traits: ['sprout', 'ash-fall'],
       })
       assert.equal(revised.status, 400, 'refused before any fee')
-      assert.equal(revised.json.error, lawOnly)
+      assert.equal(revised.json.error, invented.json.error)
       const fees = (await connectedDatabase().query('SELECT count(*)::int AS count FROM kind_revisions WHERE kind_id = $1', [oak])).rows[0]!.count
       assert.equal(fees, 1, 'no revision was made')
     })
