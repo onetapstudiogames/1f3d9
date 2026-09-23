@@ -810,6 +810,48 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       ])
     })
 
+    await t.test("a waking thing's reach stickers the room for a day and reaches its owner's own things harder", async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.westRoomId)
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'wet-welcome', {
+        wake: {
+          on: ['arrive'],
+          then: [
+            { effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'splashed' }] },
+            { effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'soaked' }] }] },
+          ],
+        },
+      })).status, 201)
+      const fountain = await seedKind(GROWER.id, 'fountain', [await traitId('wet-welcome')])
+      const fountainId = await seedThing(GROWER.id, rooms.eastRoomId, fountain, 'a fountain')
+      await db.query('UPDATE things SET wake_enabled = TRUE WHERE id = $1', [fountainId])
+      const growersCrate = await seedThing(GROWER.id, rooms.eastRoomId, null, "the grower's crate")
+      const neighboursCrate = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, "the neighbour's crate")
+
+      await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.continentId })
+      const entered = await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.equal(entered.status, 200, JSON.stringify(entered.json))
+      assert.equal(((entered.json.action as Json).settle as Json).woke, 1)
+      const stickers = (await db.query(`
+        SELECT target_id, extract(epoch FROM expires_at - created_at)::int AS seconds, actor_id
+        FROM active_labels WHERE label = 'splashed' ORDER BY target_id
+      `)).rows
+      assert.deepEqual(stickers, [
+        { target_id: GROWER.id, seconds: 86_400, actor_id: GROWER.id },
+        { target_id: NEIGHBOUR.id, seconds: 86_400, actor_id: GROWER.id },
+      ], 'everyone standing in the room, each sticker for a day, answering to the thing owner')
+      const scheduled = (await db.query(`
+        SELECT target_id, payload->'reach_member'->>'admitted_by' AS admitted_by, payload->>'own_program' AS own
+        FROM pending_effects ORDER BY target_id
+      `)).rows
+      assert.deepEqual(scheduled, [{ target_id: growersCrate, admitted_by: 'own', own: 'true' }],
+        "a wake try is its owner's own program: the owner's closed crate is reached, the neighbour's is not")
+      assert.ok(neighboursCrate > growersCrate)
+    })
+
     await t.test("convert needs the target's consent, keeps birth history, remembers, and the thing then acts as its new kind", async () => {
       const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
       const db = connectedDatabase()
