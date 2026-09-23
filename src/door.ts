@@ -409,9 +409,9 @@ ONE RULE OVER ALL SIX
 ~~~~~~~~~~~~~~~~~~~~~
 cite: abilities#ability-rules
 A descendant has less authority than its parent, never more. Each thing has a generation:
-0 when a resident makes it, one more than its parent for a copy, one more than its
-converter for a converted thing, and at least 1 when a law converts it. Nothing passes
-generation 8. A copy starts at its parent's kind revision, never a newer one, with its
+0 when a resident makes it, one more than its parent for a copy, and for a converted
+thing the larger of its own and one more than its converter's, a law counting as 0.
+Nothing passes generation 8. A copy starts at its parent's kind revision, never a newer one, with its
 parent's switches exactly. A wake try acts for the thing's owner, never for the resident
 who woke it. A thing that is reached or converted does not act because of it.
 
@@ -529,8 +529,8 @@ When a limit bites, the copy is skipped and the action goes on. skipped_effects 
 limit in cap, one of generations, copies, no_arrivals, place_daily, or family_share, with
 limit and over_by, how far over it was. The family carries one mark with the same facts,
 shown as growth_mark on the thing and in growth_marks on the place, until the place owner
-changes a growth dial, the thing's kind revision changes, or a later copy of that family
-there succeeds.
+changes a growth dial, a thing of the family changes kind revision by an upgrade or a
+conversion, or a later copy of that family there succeeds.
 
 REACH THE ROOM
 ~~~~~~~~~~~~~~
@@ -552,8 +552,9 @@ a local damage law.
 A reach over residents may only sticker, check, roll, and write, and its stickers on
 residents expire after 24 hours. block, copy, a reach inside a reach, and moving the actor
 are never allowed inside a reach. All reaches in one action together make at most 512
-changes. The answer's reaches lists, for each reach, how many members it reached, how many
-more there were, and whether that limit stopped it. If one member refuses a step, that
+changes: a reach stops before any member whose steps could pass that limit, counting each
+member at the most its steps can make. The answer's reaches lists, for each reach, how
+many members it reached, how many more there were, and whether that limit stopped it. If one member refuses a step, that
 member is skipped and named in skipped_effects, its rolls stay public, and the rest go on.
 
 TURN INTO
@@ -568,13 +569,17 @@ needs open_to_convert even on your own things. Never a resident, never a place, 
 the thing running it or being used.
 
 The thing keeps its owner, maker, name, body, state box, and birth kind. Every read shows
-the kind it is now in kind, kind_id, and current_revision, and the kind and revision it
-was born as in born_as. It shows its new kind's base drawing, and it sleeps until its owner
-turns wake_enabled on again. It remembers what it was: every thing read shows was, the 8
+the kind it is now and the kind and revision it was born as in born_as, with its
+generation: the thing read, its row in me, in a place read, and in the window, and the
+thing_edit answer. kind_id and current_revision are the kind it is now, and
+birth_revision is the revision in born_as. It shows its new kind's base drawing, and it
+sleeps until its owner turns wake_enabled on again. Its drawing history records the
+change, under the new kind's owner as kind_owner, and an upgrade that changes what it
+shows is recorded too. It remembers what it was: every thing read shows was, the 8
 newest kinds it used to be, which thing or law changed it, for whom, and when, and
-was_total. A converted thing sits one generation below its converter, so a chain of
-conversions stops at generation 8. Upgrading a converted thing moves it to its new kind's
-newest revision.
+was_total. A converted thing keeps the larger of its own generation and one more than
+its converter's, so a chain of conversions stops at generation 8. Upgrading a converted
+thing moves it to its new kind's newest revision.
 
 ROOM OWNER DIALS
 ~~~~~~~~~~~~~~~~
@@ -1828,7 +1833,8 @@ that the city could not complete the action; it is never presented as a rule ref
 genuine no-op remains status noop and has no invented error. A chance roll drawn before a
 refusal is still public, marked as failed, and the failed answer lists it in rolls. A copy
 stopped by a growth or family limit, and a reach member that refused a step, are not
-refusals: the action goes on, and skipped_effects names what was skipped and why.
+refusals: the action goes on, and skipped_effects names what was skipped and why. A use
+whose every effect was skipped is status noop, and its reason says to read skipped_effects.
 
 SHARED USE
 ~~~~~~~~~~
@@ -2996,9 +3002,9 @@ ONE RULE OVER ALL SIX
 ~~~~~~~~~~~~~~~~~~~~~
 cite: abilities#ability-rules
 A descendant has less authority than its parent, never more. Each thing has a generation:
-0 when a resident makes it, one more than its parent for a copy, one more than its
-converter for a converted thing, and at least 1 when a law converts it. Nothing passes
-generation 8. A copy starts at its parent's kind revision, never a newer one, with its
+0 when a resident makes it, one more than its parent for a copy, and for a converted
+thing the larger of its own and one more than its converter's, a law counting as 0.
+Nothing passes generation 8. A copy starts at its parent's kind revision, never a newer one, with its
 parent's switches exactly. A wake try acts for the thing's owner, never for the resident
 who woke it. A thing that is reached or converted does not act because of it.
 
@@ -3116,8 +3122,8 @@ When a limit bites, the copy is skipped and the action goes on. skipped_effects 
 limit in cap, one of generations, copies, no_arrivals, place_daily, or family_share, with
 limit and over_by, how far over it was. The family carries one mark with the same facts,
 shown as growth_mark on the thing and in growth_marks on the place, until the place owner
-changes a growth dial, the thing's kind revision changes, or a later copy of that family
-there succeeds.
+changes a growth dial, a thing of the family changes kind revision by an upgrade or a
+conversion, or a later copy of that family there succeeds.
 
 REACH THE ROOM
 ~~~~~~~~~~~~~~
@@ -3139,8 +3145,9 @@ a local damage law.
 A reach over residents may only sticker, check, roll, and write, and its stickers on
 residents expire after 24 hours. block, copy, a reach inside a reach, and moving the actor
 are never allowed inside a reach. All reaches in one action together make at most 512
-changes. The answer's reaches lists, for each reach, how many members it reached, how many
-more there were, and whether that limit stopped it. If one member refuses a step, that
+changes: a reach stops before any member whose steps could pass that limit, counting each
+member at the most its steps can make. The answer's reaches lists, for each reach, how
+many members it reached, how many more there were, and whether that limit stopped it. If one member refuses a step, that
 member is skipped and named in skipped_effects, its rolls stay public, and the rest go on.
 
 TURN INTO
@@ -3155,13 +3162,17 @@ needs open_to_convert even on your own things. Never a resident, never a place, 
 the thing running it or being used.
 
 The thing keeps its owner, maker, name, body, state box, and birth kind. Every read shows
-the kind it is now in kind, kind_id, and current_revision, and the kind and revision it
-was born as in born_as. It shows its new kind's base drawing, and it sleeps until its owner
-turns wake_enabled on again. It remembers what it was: every thing read shows was, the 8
+the kind it is now and the kind and revision it was born as in born_as, with its
+generation: the thing read, its row in me, in a place read, and in the window, and the
+thing_edit answer. kind_id and current_revision are the kind it is now, and
+birth_revision is the revision in born_as. It shows its new kind's base drawing, and it
+sleeps until its owner turns wake_enabled on again. Its drawing history records the
+change, under the new kind's owner as kind_owner, and an upgrade that changes what it
+shows is recorded too. It remembers what it was: every thing read shows was, the 8
 newest kinds it used to be, which thing or law changed it, for whom, and when, and
-was_total. A converted thing sits one generation below its converter, so a chain of
-conversions stops at generation 8. Upgrading a converted thing moves it to its new kind's
-newest revision.
+was_total. A converted thing keeps the larger of its own generation and one more than
+its converter's, so a chain of conversions stops at generation 8. Upgrading a converted
+thing moves it to its new kind's newest revision.
 
 ROOM OWNER DIALS
 ~~~~~~~~~~~~~~~~
@@ -4427,7 +4438,8 @@ that the city could not complete the action; it is never presented as a rule ref
 genuine no-op remains status noop and has no invented error. A chance roll drawn before a
 refusal is still public, marked as failed, and the failed answer lists it in rolls. A copy
 stopped by a growth or family limit, and a reach member that refused a step, are not
-refusals: the action goes on, and skipped_effects names what was skipped and why.
+refusals: the action goes on, and skipped_effects names what was skipped and why. A use
+whose every effect was skipped is status noop, and its reason says to read skipped_effects.
 
 SHARED USE
 ~~~~~~~~~~

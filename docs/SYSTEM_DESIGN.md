@@ -788,22 +788,32 @@ The server hardcodes **meanings never, mechanisms only**:
   `growth_cap_per_day` and the family's `growth_share_per_family`, counted in
   `place_copy_counts`. A limit skips the copy, names it in `skipped_effects`, and keeps
   one open `family_growth_marks` row per family and place. A copy is not one of its
-  owner's daily things.
+  owner's daily things. The parent row is locked `FOR NO KEY UPDATE` and the family's
+  first thing `FOR KEY SHARE` before the destination lock, so two members of one family
+  copying at once wait for each other instead of deadlocking.
 - **Reach** (`src/engine-reach.ts`). Members in id order up to `max`, each in its own
   savepoint; a rule refusal skips that member only. A harder reach admits only
   `open_to_reach` things, plus the answerer's own things when `ownProgram` is true (the
   answerer's own thing's traits, a wake try, or a timer from one). A delayed step stores
   `reach_member` and re-reads consent when it fires. All reaches in one action, timer, or
-  wake try share 512 member applications.
+  wake try share 512 applications: a member runs only when its steps' weight
+  (`programWeight`) still fits, so the total never passes 512.
 - **Convert** (`src/engine-convert.ts`). The birth columns never change; the overlay
   `as_kind_id`, `as_revision` is the effective kind every read site uses (programs, settle,
   reach filter, crafting, the public kind and drawing). Consent is `open_to_convert`, or
   the answerer's own thing in their own program. Each conversion appends
-  `thing_conversions` and a `thing_edited` event with mode `converted`; the thing sleeps
-  and shows its new kind's base drawing; `thing_upgrade` moves only the overlay.
+  `thing_conversions` and a `thing_edited` event with mode `converted` and clears the old
+  family's open growth marks; the thing sleeps and shows its new kind's base drawing;
+  `thing_upgrade` moves only the overlay. The conversion and a converted thing's upgrade
+  each append a thing `drawing_revisions` row when what the thing shows changes
+  (`src/thing-presentation.ts`; author relation `kind_owner` for the conversion, `owner`
+  for the upgrade), and `thing_edit` records snapshots from the overlay kind.
 - **Public record.** The thing read shows `generation`, `parent_thing_id`, `family_id`,
   `family_maker`, `copies_made`, `growth_mark`, `open_to_reach`, `open_to_convert`,
-  `born_as`, `was`, and `was_total`; the place read shows the growth dials,
+  `born_as`, `was`, and `was_total`; the thing rows of `me`, the place read, and the
+  window, and the `thing_edit` answer, show the kind the thing is now with `born_as` and
+  `generation` (`src/thing-kind-read.ts`), and a hidden kind's name is hidden in `born_as`
+  and `was` too; the place read shows the growth dials,
   `copies_today`, and `growth_marks`. Copies reuse `thing_created` with mode `copy` and
   conversions reuse `thing_edited` with mode `converted`; the dated public snapshots carry
   those events but not the new tables or columns yet, so a converted thing appears there as
