@@ -81,6 +81,7 @@ LIMITS
 - Effect queues: 512/place, 1024/actor; resolve at most 512/observation.
 - Wake: every 10..86400 seconds (default 60), 8 tries/thing/settle, random cap 0..32 (default 8), 4 pins, 64 blocks each, 256 effects/settle, one wake settle/10 seconds/room; chance 1..99 percent; program weight 512.
 - State box: 16 keys, 4096 bytes, 200-character lines, 20-line lists.
+- Growth: generations 1..8 (default 3), copies 1..10000 or unlimited (default 1), not counted in the daily things; place 0..100/day (default 10), family 1..100 (default 5); reach 1..64 (default 16), 512/action.
 - Crafting: 64 kinds, 1024 ingredients; timers 1..86400 seconds.
 - City fee rails: 1.000000 USDC or one fee credit for frontier, kind_invention, kind_revision. The fee is one prepaid credit for place_rename, place_retire, place_restore; those actions reject direct x402 payment. Credit buys: $1..$10000, 1024-byte bodies.
 - Sales: >0..10000 USDC, 6 decimals; claim 5 minutes; recovery 2 hours.

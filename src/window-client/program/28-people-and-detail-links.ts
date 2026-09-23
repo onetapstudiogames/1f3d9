@@ -115,11 +115,25 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     const stateVersion = raw.state && Number.isSafeInteger(raw.state.version) && raw.state.version > 0
       ? raw.state.version
       : null
+    // Decisions #112 and #114: a copy names its parent and generation, and a
+    // converted thing names the kind it was born as and how many kinds it has been.
+    const copyOf = safeId(raw.parent_thing_id)
+    const generation = Number.isSafeInteger(raw.generation) && raw.generation > 0 ? raw.generation : null
+    const kindNow = safeText(raw.kind, null, 64, false)
+    const bornAs = raw.born_as && safeId(raw.born_as.kind_id) !== safeId(raw.kind_id)
+      ? safeText(raw.born_as.kind, null, 64, false)
+      : null
+    const wasTotal = Number.isSafeInteger(raw.was_total) && raw.was_total > 0 ? raw.was_total : null
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       moderated: raw.moderated === true,
       has_drawing: raw.has_drawing === true,
       stateVersion,
+      copyOf,
+      generation,
+      kindNow,
+      bornAs,
+      wasTotal,
     }) : null
   }
 
