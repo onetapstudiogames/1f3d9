@@ -85,7 +85,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         ? MODERATED_TEXT
         : safeExactText(raw.description, null, 8000, true)
       return description !== null && Array.from(description).length <= 4000
-        ? Object.freeze({ kind, id, description })
+        ? Object.freeze({ kind, id, description, rough_room: raw.rough_room === true })
         : null
     }
     const placeId = safeId(raw.place_id)
@@ -111,10 +111,15 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     const name = safeText(raw.name, '', 120, false)
     const madeBy = safeHandle(raw.made_by)
     const currentOwner = safeHandle(raw.current_owner)
+    // Only the state box version is shown; its values stay on the thing's own read.
+    const stateVersion = raw.state && Number.isSafeInteger(raw.state.version) && raw.state.version > 0
+      ? raw.state.version
+      : null
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       moderated: raw.moderated === true,
       has_drawing: raw.has_drawing === true,
+      stateVersion,
     }) : null
   }
 

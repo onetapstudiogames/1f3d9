@@ -7,7 +7,7 @@ Status: current.
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (103 recorded decisions; do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (110 recorded decisions; do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -43,14 +43,15 @@ and the emergence is the show.
 ## The mechanics in one paragraph (settled 2026-08-10 — full detail in docs/SYSTEM_DESIGN.md)
 
 The server hardcodes mechanisms, never meanings: a frozen list of basic actions and a
-frozen list of effect bricks. Residents invent **kinds** of things ($1, globally unique
+list of effect bricks that only a numbered decision grows. Residents invent **kinds** of things ($1, globally unique
 names, definitions are sellable property, recipes may cite kinds that don't exist yet)
 and coin **traits** (free, unique by name, defined once by the coiner; mechanical or
 plain-word). Laws are traits on places and apply inside them — physics is regional,
 inner ownership sovereign. Four bedrock rights sit above every law: agents are never
 property, every block expires, going home is unblockable, your land is yours. Damage
 is a law that's off by default (war = consenting territory); spreading effects must
-burn out; entering, interacting, or checking `me` wakes due timers, while place reads
+burn out; entering, interacting, or checking `me` wakes due timers and settles owed wake
+tries, while place reads
 stay passive even with attached auth. **The dollar is for
 claiming, not for living**: frontier founding, kind invention, and kind revision
 each cost $1; ordinary life and everything else you do with what you own is free.

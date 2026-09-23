@@ -9,7 +9,16 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
+import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
+import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
+import { clearStateBox } from './engine-state.ts'
+import { settleRoom } from './engine-settle.ts'
+import {
+  blockedResidentUnknownRefusal,
+  parseWakeDials,
+  pinnedThingElsewhereRefusal,
+  WAKE_DIAL_FIELDS,
+} from './place-abilities.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
 import {
@@ -23,7 +32,6 @@ import {
   effectiveLaws,
   engineSql,
   residentPresence,
-  resolveDueEffects,
   withEngineTransaction,
 } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
@@ -223,10 +231,25 @@ async function optionalDrawingBody(request: Request): Promise<BoundedJsonResult>
   return await readBoundedJsonObject(request, DRAWING_RECORD_BODY_MAX_BYTES, { allowEmpty: true })
 }
 
-function publicPlaceWriteRow(row: PlaceRow): Readonly<Record<string, unknown>> {
-  return Object.freeze(Object.fromEntries(
-    Object.entries(row).filter(([field]) => field !== 'front_matter_thing_ids'),
-  ))
+function publicPlaceWriteRow(
+  row: PlaceRow,
+  blockedResidents: readonly string[],
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    ...Object.fromEntries(Object.entries(row).filter(([field]) => (
+      field !== 'front_matter_thing_ids' && field !== 'wake_block_resident_ids'
+    ))),
+    wake_block_residents: blockedResidents,
+  })
+}
+
+/** Blocked residents are stored as ids, so a handle change never loses a block, and read back as handles. */
+async function residentHandlesInOrder(ids: readonly number[]): Promise<readonly string[]> {
+  if (ids.length === 0) return Object.freeze([])
+  const rows = await sql`
+    SELECT id, handle FROM residents WHERE id = ANY(${[...ids]}::int[])
+  ` as Array<{ id: number; handle: string }>
+  return Object.freeze(ids.flatMap(id => rows.filter(row => Number(row.id) === id).map(row => row.handle)))
 }
 
 async function everyTraitExists(names: readonly string[]): Promise<boolean> {
@@ -236,6 +259,20 @@ async function everyTraitExists(names: readonly string[]): Promise<boolean> {
   ` as Array<{ name: string }>
   const found = new Set(rows.map(row => row.name))
   return names.every(name => found.has(name))
+}
+
+/** A kind revision may list only one trait with a wake key, so a thing has one clock. */
+async function secondWakeTrait(names: readonly string[]): Promise<string | null> {
+  if (names.length < 2) return null
+  const rows = await sql`
+    SELECT name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
+  ` as Array<{ name: string; recipe: unknown }>
+  const waking = names.filter(name => (
+    rows.some(row => row.name === name && wakeProgramOf(row.recipe) !== null)
+  ))
+  return waking.length > 1
+    ? `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
+    : null
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -253,13 +290,14 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const rows = (await sql`
     WITH RECURSIVE place_tree AS (
       SELECT p.id, p.parent_id, p.name, p.description, p.purpose, p.owner_id,
-        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
       WHERE p.parent_id IS NULL AND p.retired_at IS NULL
       UNION ALL
       SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
-        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.created_at,
+        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.rough_room,
+        child.created_at,
         parent.path || child.id
       FROM places child
       JOIN place_tree parent ON parent.id = child.parent_id
@@ -267,7 +305,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
     )
     SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
-      tree.open_to_notes, tree.quiet, tree.created_at,
+      tree.open_to_notes, tree.quiet, tree.rough_room, tree.created_at,
       (SELECT count(*)::int FROM places child
         WHERE child.parent_id = tree.id AND child.retired_at IS NULL) AS places,
       (SELECT count(*)::int FROM things thing
@@ -785,7 +823,7 @@ export function mountWorldRoutes(app: Hono): void {
           SELECT new_place.*, ${resident.handle}::text AS owner FROM new_place
         `) as PlaceRow[]
         if (!rows[0]) return err(c, 409, 'parent place changed or closed to building; retry')
-        return c.json({ place: publicPlaceWriteRow(rows[0]) }, 201)
+        return c.json({ place: publicPlaceWriteRow(rows[0], []) }, 201)
       } catch (error) {
         const message = conflictMessage(error, 'a place with that name already exists there')
         if (message) return err(c, 409, message)
@@ -1033,13 +1071,17 @@ export function mountWorldRoutes(app: Hono): void {
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
       'drawing', 'drawing_state', 'drawing_description',
+      ...WAKE_DIAL_FIELDS,
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
       return err(c, 400, rejected.length > 0
-        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
-        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch')
+        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
+        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial')
     }
+    const wakeDials = parseWakeDials(body)
+    if (!wakeDials.ok) return err(c, 400, wakeDials.error)
+    const dials = wakeDials.dials
 
     const description = body.description === undefined
       ? undefined
@@ -1079,6 +1121,24 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.retired_at != null) return err(c, 409, 'place is retired; restore it before editing')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'place cannot be edited while it has an open sale offer; close that offer before editing the place')
+    }
+    if (dials.wakePins !== undefined && dials.wakePins.length > 0) {
+      const standing = await sql`
+        SELECT id FROM things
+        WHERE id = ANY(${[...dials.wakePins]}::int[]) AND place_id = ${id} AND withdrawn_at IS NULL
+      ` as Array<{ id: number }>
+      const found = new Set(standing.map(row => Number(row.id)))
+      const missing = dials.wakePins.find(thingId => !found.has(thingId))
+      if (missing !== undefined) return err(c, 409, pinnedThingElsewhereRefusal(id, missing))
+    }
+    let blockedResidentIds: readonly number[] | undefined
+    if (dials.wakeBlockResidents !== undefined) {
+      const known = dials.wakeBlockResidents.length === 0 ? [] : await sql`
+        SELECT id, handle FROM residents WHERE handle = ANY(${[...dials.wakeBlockResidents]}::text[])
+      ` as Array<{ id: number; handle: string }>
+      const unknown = dials.wakeBlockResidents.find(handle => !known.some(row => row.handle === handle))
+      if (unknown !== undefined) return err(c, 404, blockedResidentUnknownRefusal(unknown))
+      blockedResidentIds = dials.wakeBlockResidents.map(handle => Number(known.find(row => row.handle === handle)!.id))
     }
 
     if (frontMatterThingIds !== undefined && frontMatterThingIds.length > 0) {
@@ -1158,6 +1218,18 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
             quiet = coalesce(${quiet ?? null}::boolean, quiet),
+            wake_visitors = coalesce(${dials.wakeVisitors ?? null}::boolean, wake_visitors),
+            rough_room = coalesce(${dials.roughRoom ?? null}::boolean, rough_room),
+            wake_random_cap = coalesce(${dials.wakeRandomCap ?? null}::smallint, wake_random_cap),
+            wake_pins = coalesce(${dials.wakePins === undefined ? null : [...dials.wakePins]}::integer[], wake_pins),
+            wake_block_thing_ids = coalesce(
+              ${dials.wakeBlockThingIds === undefined ? null : [...dials.wakeBlockThingIds]}::integer[],
+              wake_block_thing_ids
+            ),
+            wake_block_resident_ids = coalesce(
+              ${blockedResidentIds === undefined ? null : [...blockedResidentIds]}::integer[],
+              wake_block_resident_ids
+            ),
             drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
               THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
               ELSE drawing END,
@@ -1184,6 +1256,18 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
               OR (${quiet !== undefined}::boolean
                 AND quiet IS DISTINCT FROM ${quiet ?? false}::boolean)
+              OR (${dials.wakeVisitors !== undefined}::boolean
+                AND wake_visitors IS DISTINCT FROM ${dials.wakeVisitors ?? false}::boolean)
+              OR (${dials.roughRoom !== undefined}::boolean
+                AND rough_room IS DISTINCT FROM ${dials.roughRoom ?? false}::boolean)
+              OR (${dials.wakeRandomCap !== undefined}::boolean
+                AND wake_random_cap IS DISTINCT FROM ${dials.wakeRandomCap ?? 0}::smallint)
+              OR (${dials.wakePins !== undefined}::boolean
+                AND wake_pins IS DISTINCT FROM ${[...(dials.wakePins ?? [])]}::integer[])
+              OR (${dials.wakeBlockThingIds !== undefined}::boolean
+                AND wake_block_thing_ids IS DISTINCT FROM ${[...(dials.wakeBlockThingIds ?? [])]}::integer[])
+              OR (${blockedResidentIds !== undefined}::boolean
+                AND wake_block_resident_ids IS DISTINCT FROM ${[...(blockedResidentIds ?? [])]}::integer[])
               OR (${requestedDrawing.supplied}::boolean
                 AND drawing IS DISTINCT FROM
                   ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
@@ -1246,8 +1330,9 @@ export function mountWorldRoutes(app: Hono): void {
     }
     if (!rows[0]) return err(c, 409, 'place changed or received an open sale offer; retry')
     const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, [id])
+    const storedBlocks = (rows[0] as unknown as { wake_block_resident_ids?: readonly number[] }).wake_block_resident_ids ?? []
     return c.json({
-      place: publicPlaceWriteRow(rows[0]),
+      place: publicPlaceWriteRow(rows[0], await residentHandlesInOrder(storedBlocks.map(Number))),
       front_matter: frontMatter.get(id) ?? Object.freeze([]),
     })
   })
@@ -1361,6 +1446,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
+    const wakeConflict = await secondWakeTrait(traits)
+    if (wakeConflict) return err(c, 400, wakeConflict)
 
     const fee = await treasuryFee(
       c,
@@ -1518,6 +1605,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
+    const wakeConflict = await secondWakeTrait(traits)
+    if (wakeConflict) return err(c, 400, wakeConflict)
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing
@@ -1679,7 +1768,10 @@ export function mountWorldRoutes(app: Hono): void {
     if (!name) return err(c, 400, 'trait name must use lowercase letters, numbers, hyphens, or underscores')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (hasRecipe && recipe == null) {
-      return err(c, 400, 'recipe must use only the frozen actions and effect bricks within the hard limits')
+      const fault = traitRecipeFault(body.recipe)
+      if (fault === 'wake_hand_over') return err(c, 400, WAKE_HAND_OVER_ERROR)
+      if (fault === 'wake_scope') return err(c, 400, WAKE_SCOPE_ERROR)
+      return err(c, 400, "recipe must use only the frozen actions, the wake key, and the effect bricks, each within its stated range; call physics for every brick's fields, defaults, and limits")
     }
 
     try {
@@ -1714,12 +1806,12 @@ export function mountWorldRoutes(app: Hono): void {
     if (!body) return err(c, 400, 'body must be a JSON object')
     {
       const fields = [
-        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy', 'wake_enabled',
         'kind_id', 'ingredient_ids',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional wake_enabled, optional kind_id, and ingredient_ids`)
       }
     }
     const placeId = positiveId(body.place_id)
@@ -1732,6 +1824,9 @@ export function mountWorldRoutes(app: Hono): void {
     const sharedUseMayDestroy = body.shared_use_may_destroy === undefined
       ? false
       : typeof body.shared_use_may_destroy === 'boolean' ? body.shared_use_may_destroy : null
+    const wakeEnabled = body.wake_enabled === undefined
+      ? true
+      : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
@@ -1741,6 +1836,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (sharedUseMayDestroy === null) {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
+    if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
@@ -1767,7 +1863,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (place.place_permits_things !== true) {
       return err(c, 403, 'this place does not permit visitors to make things; its owner can enable open_to_things, or you can choose your own or another open place')
     }
-    await resolveDueEffects(placeId)
+    await settleRoom(placeId, 'act', resident.id)
 
     const made = await makeThingThroughEngine({
       actor: resident,
@@ -1776,6 +1872,7 @@ export function mountWorldRoutes(app: Hono): void {
       body: thingBody,
       openToUse,
       sharedUseMayDestroy,
+      wakeEnabled,
       kindId,
       ingredientIds,
     })
@@ -1801,8 +1898,12 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
+      'wake_enabled', 'state_clear',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, and shared_use_may_destroy are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, wake_enabled, and state_clear are editable; birth_revision is permanent')
+    }
+    if (body.state_clear !== undefined && body.state_clear !== true) {
+      return err(c, 400, 'state_clear must be true when present')
     }
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
     const name = body.name === undefined ? undefined : publicLabel(body.name)
@@ -1815,6 +1916,9 @@ export function mountWorldRoutes(app: Hono): void {
     const sharedUseMayDestroy = body.shared_use_may_destroy === undefined
       ? undefined
       : typeof body.shared_use_may_destroy === 'boolean' ? body.shared_use_may_destroy : null
+    const wakeEnabled = body.wake_enabled === undefined
+      ? undefined
+      : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariant = Object.hasOwn(body, 'drawing_variant_name')
@@ -1829,6 +1933,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (sharedUseMayDestroy === null) {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
+    if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
@@ -1915,6 +2020,7 @@ export function mountWorldRoutes(app: Hono): void {
           shared_use_may_destroy = coalesce(
             ${sharedUseMayDestroy ?? null}::boolean, shared_use_may_destroy
           ),
+          wake_enabled = coalesce(${wakeEnabled ?? null}::boolean, wake_enabled),
           drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
             THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
             ELSE drawing END,
@@ -1935,6 +2041,8 @@ export function mountWorldRoutes(app: Hono): void {
             OR (${sharedUseMayDestroy !== undefined}::boolean
               AND shared_use_may_destroy IS DISTINCT FROM
                 ${sharedUseMayDestroy ?? null}::boolean)
+            OR (${wakeEnabled !== undefined}::boolean
+              AND wake_enabled IS DISTINCT FROM ${wakeEnabled ?? null}::boolean)
             OR (${requestedDrawing.supplied}::boolean
               AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
             OR (${requestedDrawing.supplied}::boolean
@@ -2074,9 +2182,13 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN kinds kind_definition ON kind_definition.id = result.kind_id
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    // The owner empties the state box; values are never written by hand.
+    const edited = body.state_clear === true
+      ? { ...rows[0], state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
+      : rows[0]
     return c.json({
-      thing: rows[0],
-      reading_cost: await safeReadingCostMeter(rows[0].place_id, rows[0].body),
+      thing: edited,
+      reading_cost: await safeReadingCostMeter(edited.place_id, edited.body),
     })
   })
 

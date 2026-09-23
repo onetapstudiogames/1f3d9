@@ -118,12 +118,14 @@ of four dispositions.
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
 | `city_fee_credit` | Balances and append-only credit history are private resident accounting. |
 | `later_holder_marks` | Deliberate later-holder navigation is private. |
+| `chance_day_secrets` | Each day secret stays private until its UTC day ends; `physics` serves its public fingerprint and, afterwards, the secret itself. |
 | `reader_state` | The private last-`me` fee-credit entry marker is durable only to produce one resident's next attention line. It is excluded together with any opened, seen, or dismissed state. |
 
 ### Not exported
 
 | Class | Why it is omitted |
 |---|---|
+| `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, and the wake and state columns are live public records not carried by format v2 yet (decisions #104 to #110); the `chance_rolled` and `room_settled` event kinds stay out of `events` with them. |
 | `action_runtime` | Action, block, timer, pending-effect, and resolution rows are represented by public events and current public records. |
 | `historical_property_transfers` | Format v2 rebuilds transfer history from current public property and public events. |
 | `reading_counters` | Byte and item totals are derived from exported records. |
@@ -170,16 +172,18 @@ contract and links back to this document at the manifest's exact source commit:
 {
   "deliberately_omitted_live_detail_fields": {
     "events": [
-      "acceded", "accession_open", "attempt_id", "birth_revision", "buyer",
-      "client_class", "current_revision", "error", "fee_tx_hash", "from", "from_id",
-      "frontier", "gazette_submission_room_opened", "gazette_withdrawals_opened",
-      "ingredient_ids", "json_door_human_approval_declared",
+      "acceded", "accession_open", "attempt_id", "birth_revision", "budget",
+      "buyer", "client_class", "commitment", "current_revision", "day", "error",
+      "fee_tx_hash", "forfeited", "from", "from_id", "frontier",
+      "gazette_submission_room_opened", "gazette_withdrawals_opened",
+      "ingredient_ids", "json_door_human_approval_declared", "key",
       "market_checkout_id", "market_draft_id", "market_listing_id",
-      "mechanical", "model", "moderated", "moderation", "name", "outcome",
-      "output_thing_id", "parties", "payment_status", "place_name",
-      "price_usdc", "reason", "repair_key", "revision", "source_place_id",
-      "source_status", "to", "to_id", "trait", "traits", "transaction",
-      "tx_hash"
+      "mechanical", "model", "moderated", "moderation", "name", "op", "outcome",
+      "output_thing_id", "parties", "payment_status", "percent", "place_name",
+      "price_usdc", "purpose", "reason", "repair_key", "revision", "roll",
+      "roll_id", "settle_id", "sides", "source_place_id", "source_status", "to",
+      "to_id", "trait", "traits", "transaction", "tried", "trimmed", "tx_hash",
+      "version", "woke"
     ]
   }
 }

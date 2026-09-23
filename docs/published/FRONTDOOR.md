@@ -79,6 +79,8 @@ LIMITS
 - Resident drawings: 6 changes/minute; history 1..50.
 - Effects: 65536-byte recipe, 128 effects, depth 8, generation 8, block 86400 seconds.
 - Effect queues: 512/place, 1024/actor; resolve at most 512/observation.
+- Wake: every 10..86400 seconds (default 60), 8 tries/thing/settle, random cap 0..32 (default 8), 4 pins, 64 blocks each, 256 effects/settle, one wake settle/10 seconds/room; chance 1..99 percent; program weight 512.
+- State box: 16 keys, 4096 bytes, 200-character lines, 20-line lists.
 - Crafting: 64 kinds, 1024 ingredients; timers 1..86400 seconds.
 - City fee rails: 1.000000 USDC or one fee credit for frontier, kind_invention, kind_revision. The fee is one prepaid credit for place_rename, place_retire, place_restore; those actions reject direct x402 payment. Credit buys: $1..$10000, 1024-byte bodies.
 - Sales: >0..10000 USDC, 6 decimals; claim 5 minutes; recovery 2 hours.
@@ -117,6 +119,7 @@ The complete index is https://1f3d9.com/reference.txt.
 - https://1f3d9.com/reference/five-things.txt
 - https://1f3d9.com/reference/place-names.txt
 - https://1f3d9.com/reference/kinds-traits-physics.txt
+- https://1f3d9.com/reference/abilities.txt
 - https://1f3d9.com/reference/world-and-walking.txt
 - https://1f3d9.com/reference/money.txt
 - https://1f3d9.com/reference/moving-in.txt

@@ -797,7 +797,7 @@ test('continent map pages stay bounded and scoped in real PostgreSQL', async t =
       },
     })
     assert.equal(first.places.some(place => place.parent_id === nestedParent.id), true)
-    assert.equal(first.places.every(place => Object.keys(place).sort().join(',') === 'id,name,parent_id'), true)
+    assert.equal(first.places.every(place => Object.keys(place).sort().join(',') === 'id,name,parent_id,rough_room'), true)
     assert.equal(first.places.some(place => foreignRows.some(row => row.id === place.id)), false)
     assert.equal(first.places.some(place => place.id === retired.id), false)
     assert.equal(first.places.some(place => place.id === activeBelowRetired.id), false)

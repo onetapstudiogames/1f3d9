@@ -54,6 +54,7 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly open_to_things: boolean
   readonly open_to_notes: boolean
   readonly quiet: boolean
+  readonly rough_room: boolean
   readonly created_at: string
   readonly places: number
   readonly things: number
@@ -80,6 +81,7 @@ export interface PublicContinentMapPlace {
   readonly id: number
   readonly parent_id: number
   readonly name: string
+  readonly rough_room: boolean
 }
 
 export interface PublicContinentMap {
@@ -125,10 +127,13 @@ function nullablePositiveId(value: unknown, field: string): number | null {
 function continentMapPlace(row: Readonly<Record<string, unknown>>): PublicContinentMapPlace {
   const id = nullablePositiveId(row.id, 'continent place id')
   const parentId = nullablePositiveId(row.parent_id, 'continent place parent id')
-  if (id == null || parentId == null || typeof row.name !== 'string') {
+  if (
+    id == null || parentId == null || typeof row.name !== 'string'
+    || typeof row.rough_room !== 'boolean'
+  ) {
     throw new Error('public continent map place is invalid')
   }
-  return Object.freeze({ id, parent_id: parentId, name: row.name })
+  return Object.freeze({ id, parent_id: parentId, name: row.name, rough_room: row.rough_room })
 }
 
 function publicTimestamp(value: unknown): string {
@@ -186,7 +191,8 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     typeof row.open_to_building !== 'boolean' ||
     typeof row.open_to_things !== 'boolean' ||
     typeof row.open_to_notes !== 'boolean' ||
-    typeof row.quiet !== 'boolean'
+    typeof row.quiet !== 'boolean' ||
+    typeof row.rough_room !== 'boolean'
   ) {
     throw new Error('public map place permissions are invalid')
   }
@@ -211,6 +217,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     open_to_things: row.open_to_things,
     open_to_notes: row.open_to_notes,
     quiet: row.quiet,
+    rough_room: row.rough_room,
     created_at: publicTimestamp(row.created_at),
     places: safeCount(row.places, 'subplace count'),
     things: safeCount(row.things, 'thing count'),
@@ -233,7 +240,7 @@ export async function readPublicMapOutline(
          p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
          totals.subplace_items AS places,
          totals.thing_items AS things,
          totals.note_items AS notes,
@@ -272,7 +279,7 @@ export async function readPublicMapOutline(
          history.name_history, p.retired_at, 'active'::text AS status, p.purpose,
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
          child_totals.subplace_items AS places,
          child_totals.thing_items AS things,
          child_totals.note_items AS notes
@@ -380,7 +387,7 @@ export async function readPublicContinentMap(
        ORDER BY world.id
        LIMIT 1
      ), selected_continent AS MATERIALIZED (
-       SELECT continent.id, continent.parent_id, continent.name
+       SELECT continent.id, continent.parent_id, continent.name, continent.rough_room
        FROM places continent
        JOIN world_root world ON world.id = continent.parent_id
        WHERE continent.id = $1::integer
@@ -406,10 +413,12 @@ export async function readPublicContinentMap(
      SELECT jsonb_build_object(
          'id', continent.id,
          'parent_id', continent.parent_id,
-         'name', CASE WHEN continent_moderation.action = 'remove' THEN $5::text ELSE continent.name END
+         'name', CASE WHEN continent_moderation.action = 'remove' THEN $5::text ELSE continent.name END,
+         'rough_room', continent.rough_room
        ) AS selected_continent,
        page.id, page.parent_id,
-       CASE WHEN place_moderation.action = 'remove' THEN $5::text ELSE place.name END AS name
+       CASE WHEN place_moderation.action = 'remove' THEN $5::text ELSE place.name END AS name,
+       place.rough_room
      FROM selected_continent continent
      LEFT JOIN LATERAL (
        SELECT moderation.action

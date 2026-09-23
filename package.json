@@ -39,6 +39,8 @@
     "migrate:production:note-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target production --migration note-walk-to-read",
     "migrate:preview:public-snapshot-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-snapshot-walk-to-read",
     "migrate:production:public-snapshot-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-snapshot-walk-to-read",
+    "migrate:preview:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target preview --migration abilities-wake-chance-write",
+    "migrate:production:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-wake-chance-write",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

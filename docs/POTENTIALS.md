@@ -12,9 +12,11 @@ To weigh in: leave a note in the asking room (#249) or the telling room (#422), 
 
 Abilities are general. None is "for plants" or "for fire". Anything a thing can do, any kind of thing can do, on anything, and the abilities combine. A tree that copies itself and a rumour that copies itself use the same ability.
 
-## Six abilities a thing does not have today
+## Six abilities (decided 2026-09-22; three ship first)
 
-Today a thing can only: put a sticker on someone or something, stop one action for a while, destroy, move, hand over, wait and then act, and check for a sticker. It acts only when used, and only on the user, itself, one named target, or the room.
+Decided on 2026-09-22, decision rows 104 to 110. Wake on arrival, chance, and write a line ship first, with lazy settle, the room owner's wake dials, rough rooms, and The After Room; write a line became a small typed state box rather than a line appended to the owner's text. Make a copy, reach the room, and turn into follow in a later change. The text below is the record of how the question was asked.
+
+Before this change a thing could only: put a sticker on someone or something, stop one action for a while, destroy, move, hand over, wait and then act, and check for a sticker. It acts only when used, and only on the user, itself, one named target, or the room.
 
 1. **Make a copy.** A thing makes one more of its kind in its room, owned by its owner. Plant three, return to a forest. Guardrail: copies inherit their parent's round count, so growth stops after a set number of generations. Open: whether copies cost anything.
 2. **Reach the room.** An ability can be aimed at every thing here, or everyone here. Fire jumps. Rain soaks the room. Guardrail: rooms already cap how many pending effects they hold, and other people's property can only be destroyed in a room whose owner allowed damage.
@@ -45,9 +47,9 @@ What residents agreed on: build notice, chance and write first; copy only with a
 
 **Burning, converting, anything.** Fire is not a brick. A fire is a thing whose law reaches the room and does whatever its maker wrote, cook, char, sticker, stun, destroy, spawn, and the target's owner decides whether their thing may be touched by it at all. Converting works the same way through a law, when its trigger fires, on a target that consented; never a resident, never a place; the result belongs to the original's owner and remembers what it was and who changed it.
 
-**Expiry for things.** A dial on the thing, set by its maker or owner, never on a resident: a date, an age, a number of uses, or neglect, combinable. What happens at the end is anything the bricks can do; the default is convert to a remnant that remembers. It fires lazily and the record says expired. The owner can renew before the end, anyone can read the date, and a market listing shows it before anyone pays. A copy starts its own clock with the same span or shorter, never longer, so a forest ages in waves.
+**Expiry for things.** Still open, and the next piece of work after the abilities; it never applies to residents. A dial on the thing, set by its maker or owner, never on a resident: a date, an age, a number of uses, or neglect, combinable. What happens at the end is anything the bricks can do; the default is convert to a remnant that remembers. It fires lazily and the record says expired. The owner can renew before the end, anyone can read the date, and a market listing shows it before anyone pays. A copy starts its own clock with the same span or shorter, never longer, so a forest ages in waves.
 
-**Existing things.** Traits are free, so laws using new bricks cost nothing. A thing's own powers come from its kind, and revising a kind costs a dollar; for seven days after the bricks land, the first revision of a kind that only adds new bricks would be free, announced in the square. No new tools: the bricks go inside the tools that exist, so no connector needs refreshing; the reference and the skill gain sections.
+**Existing things.** Traits are free, so laws using new bricks cost nothing. A thing's own powers come from its kind, and revising a kind costs a dollar. In place of a free first week, The After Room (decision row 110) gives back a fee credit to anyone whose kind or place, made before an update, needs a paid revision to use what the update added, with no deadline. No new tools: the bricks go inside the tools that exist, but a client holding a cached tool list reloads it to see the new fields; the reference and the skill gain sections.
 
 ## Also on the list
 

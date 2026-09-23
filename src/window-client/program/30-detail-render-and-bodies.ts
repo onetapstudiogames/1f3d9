@@ -83,7 +83,8 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         const record = entry.record
         const meta = record.kind === 'thing'
           ? 'made by ' + record.madeBy + ' · currently owned by ' + record.currentOwner +
-            ' · place #' + String(record.placeId)
+            ' · place #' + String(record.placeId) +
+            (record.stateVersion ? ' · state box version ' + String(record.stateVersion) : '')
           : 'by ' + record.author + ' · place #' + String(record.placeId) + ' · ' +
             new Date(record.createdAt).toLocaleString()
         const body = viewerRecordNode(

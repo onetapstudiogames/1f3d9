@@ -67,14 +67,14 @@ test('gift, pagination, and transfer refusals name accepted state', () => {
 test('world body refusals name the rejected field(s) by name and the accepted fields', () => {
   expects('world.ts', [
     'place body does not accept ${describeUnsupportedFields(rejected)}; send only parent_id, name, description, open_to_building, open_to_things, and open_to_notes',
-    'place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, or a permission switch. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.',
-    'place edit body is empty; edit description, purpose, front matter, drawing, quiet, or a permission switch',
+    'place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.',
+    'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial',
     'kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs',
     'kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs',
     'trait body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, and an optional inert recipe',
-    'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional kind_id, and ingredient_ids',
+    'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional wake_enabled, optional kind_id, and ingredient_ids',
     'thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name',
   ])
   assert.doesNotMatch(source('world.ts'), /`kind(?: revision)? \$\{unknownTrait\}`/u)

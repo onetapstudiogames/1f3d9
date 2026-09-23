@@ -44,7 +44,41 @@ export async function loadPublicPlaceRecord(
       CASE WHEN p.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
       p.description, p.purpose,
       p.owner_id, owner.handle AS owner,
-      p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at
+      p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+      p.rough_room, p.wake_visitors, p.wake_pins, p.wake_block_thing_ids,
+      coalesce((
+        SELECT jsonb_agg(blocked.handle ORDER BY array_position(p.wake_block_resident_ids, blocked.id))
+        FROM residents blocked WHERE blocked.id = ANY(p.wake_block_resident_ids)
+      ), '[]'::jsonb) AS wake_block_residents,
+      p.wake_random_cap,
+      (
+        SELECT jsonb_build_object(
+          'settle_id', settle.id,
+          'at', to_char(settle.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'trigger', settle.trigger,
+          'by', settler.handle,
+          'budget', settle.budget,
+          'tried', tries.tried,
+          'woke', tries.woke,
+          'stopped', tries.stopped,
+          'forfeited', settle.forfeited + tries.stopped_clock,
+          'roll_id', (
+            SELECT roll.id FROM chance_rolls roll
+            WHERE roll.settle_id = settle.id AND roll.purpose = 'wake_pick' LIMIT 1
+          )
+        )
+        FROM wake_settles settle
+        JOIN residents settler ON settler.id = settle.resident_id
+        CROSS JOIN LATERAL (
+          SELECT count(*) FILTER (WHERE attempt.status <> 'stopped')::int AS tried,
+            count(*) FILTER (WHERE attempt.status = 'woke')::int AS woke,
+            count(*) FILTER (WHERE attempt.status = 'stopped')::int AS stopped,
+            count(*) FILTER (WHERE attempt.status = 'stopped' AND attempt.reason = 'clock')::int AS stopped_clock
+          FROM wake_tries attempt WHERE attempt.settle_id = settle.id
+        ) tries
+        WHERE settle.place_id = p.id
+        ORDER BY settle.id DESC LIMIT 1
+      ) AS last_settle
     FROM places p
     LEFT JOIN residents owner ON owner.id = p.owner_id
     LEFT JOIN LATERAL (
@@ -116,6 +150,58 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
             AND drawing_revision.revision = thing.current_revision
         ), false)
       END AS has_drawing,
+      thing.wake_enabled,
+      (
+        SELECT jsonb_build_object(
+          'trait_id', trait.id,
+          'on', trait.recipe -> 'wake' -> 'on',
+          'every_seconds', trait.recipe -> 'wake' -> 'every_seconds',
+          'last_try_at', to_char(wake_state.last_try_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'clock_at', to_char(wake_state.clock_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'last_try', (
+            SELECT jsonb_build_object(
+              'settle_id', attempt.settle_id,
+              'reason', attempt.reason,
+              'status', attempt.status,
+              'effects_applied', attempt.effects_applied,
+              'error', attempt.error,
+              'at', to_char(attempt.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            )
+            FROM wake_tries attempt WHERE attempt.thing_id = thing.id
+            ORDER BY attempt.id DESC LIMIT 1
+          )
+        )
+        FROM kind_revision_traits link
+        JOIN traits trait ON trait.id = link.trait_id
+        LEFT JOIN thing_wake_state wake_state ON wake_state.thing_id = thing.id
+        WHERE link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+          AND trait.recipe ? 'wake'
+        ORDER BY link.position LIMIT 1
+      ) AS wake,
+      jsonb_build_object(
+        'version', thing.state_version,
+        'values', thing.state,
+        'last_write', (
+          SELECT jsonb_build_object(
+            'version', change.version, 'key', change.key, 'op', change.op,
+            'trimmed', change.trimmed,
+            'source_trait', CASE WHEN coalesce((
+              SELECT moderation.action FROM moderation_actions moderation
+              WHERE moderation.target_type = 'trait' AND moderation.target_id = change.source_trait_id
+              ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+            ), 'restore') = 'remove' THEN NULL ELSE trait.name END,
+            'source_trait_id', change.source_trait_id,
+            'trigger', change.trigger,
+            'by', writer.handle,
+            'at', to_char(change.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          )
+          FROM thing_state_changes change
+          LEFT JOIN traits trait ON trait.id = change.source_trait_id
+          LEFT JOIN residents writer ON writer.id = change.resident_id
+          WHERE change.thing_id = thing.id
+          ORDER BY change.version DESC LIMIT 1
+        )
+      ) AS state,
       thing.created_at
     FROM things thing
     JOIN residents maker ON maker.id = thing.maker_id

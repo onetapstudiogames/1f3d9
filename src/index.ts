@@ -3,6 +3,8 @@ import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { declaredBodyLength } from './bounded-body.ts'
 import { sql } from './db.ts'
+import { parseRollId, readChanceDays, readPublicRoll, ROLL_ID_ERROR } from './engine-chance.ts'
+import { settleRoom } from './engine-settle.ts'
 import {
   auth,
   authPassive,
@@ -46,7 +48,6 @@ import { mountPairDisabledRoute, mountPairRoutes } from './pair.ts'
 import {
   engineSql,
   residentPresence,
-  resolveDueEffects,
   withEngineTransaction,
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
@@ -1047,7 +1048,7 @@ app.get('/api/me', async c => {
   if (!giftRequest.ok) return err(c, 400, giftRequest.error)
   let presence = await residentPresence(resident.id)
   if (presence.currentPlaceId) {
-    await resolveDueEffects(presence.currentPlaceId)
+    await settleRoom(presence.currentPlaceId, 'me', resident.id)
     presence = await residentPresence(resident.id)
   }
   const [
@@ -1588,10 +1589,30 @@ app.get('/api/official', c => {
   }))
 })
 
-app.get('/api/physics', c => {
-  const allowed = allowedPublicQuery(c.req.queries(), [])
+app.get('/api/physics', async c => {
+  const queries = c.req.queries()
+  const allowed = allowedPublicQuery(queries, ['roll_id'])
   if (!allowed.ok) return err(c, 400, allowed.error)
-  return c.json(publicPhysicsFacts())
+  const rollValue = singlePublicQueryValue(queries, 'roll_id')
+  if (!rollValue.ok) return err(c, 400, rollValue.error)
+  if (rollValue.value === null) {
+    // The fixed facts never depend on the database; only the day fingerprints do,
+    // and chance_days says null, never an empty list, when they cannot be read.
+    let chanceDays: Awaited<ReturnType<typeof readChanceDays>> | null = null
+    try {
+      chanceDays = await readChanceDays()
+    } catch (error) {
+      console.error('chance day fingerprint read failed', error instanceof Error ? error.name : typeof error)
+    }
+    return c.json({ ...publicPhysicsFacts(), chance_days: chanceDays })
+  }
+  const rollId = parseRollId(rollValue.value)
+  if (rollId === null) return err(c, 400, ROLL_ID_ERROR)
+  const roll = await readPublicRoll(rollId)
+  if (!roll) {
+    return err(c, 404, `roll ${rollId} was not found; read a roll_id from a chance_rolled event, a room settle, or an action answer`)
+  }
+  return c.json({ roll })
 })
 
 app.get('/api/replay', async c => {

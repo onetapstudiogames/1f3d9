@@ -223,6 +223,69 @@ The rollback is to reapply `npm run migrate:production:public-snapshot-quiet`, w
 restores the earlier view without the mark. The index can stay; the earlier
 application never reads it.
 
+### Abilities (wake, chance, write) prerequisite
+
+Before merging the application that wakes things, rolls chance, and writes state boxes
+(decisions #104 to #110), apply `npm run migrate:preview:abilities-wake-chance-write` to
+the isolated Preview database, then apply it a second time to prove it is safe to
+repeat. It adds `things.wake_enabled` (default false), `things.state` (default `{}`),
+`things.state_version` (default 0), the places' wake dials and `rough_room` (default
+false), `places.rough_since` (null) and `resident_presence.arrived_at` (default the
+migration time), the `things_sleep_on_owner_change`, `places_mark_rough_since`, and
+`resident_presence_mark_arrival` triggers, and the append-only
+`wake_settles`, `wake_tries`, `chance_days`, `chance_rolls`, and
+`thing_state_changes` tables plus the mutable `thing_wake_state` anchors. It backfills
+nothing: every existing thing starts asleep with an empty box, and every place keeps
+the default dials. Take the required Production snapshot (for example
+`PRODUCTION_SNAPSHOT_NAME=pre-abilities-20260922`), apply
+`npm run migrate:production:abilities-wake-chance-write` from a fresh clone of the
+reviewed head, and record the checks below before merging, never chained with the
+merge. The rollout does not apply this migration, and `--prepare` does not query
+either database.
+
+```sql
+SELECT table_name, column_name, is_nullable, data_type, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND ((table_name = 'things' AND column_name IN ('wake_enabled', 'state', 'state_version'))
+    OR (table_name = 'places' AND column_name IN ('wake_visitors', 'wake_pins',
+      'wake_block_thing_ids', 'wake_block_resident_ids', 'wake_random_cap', 'rough_room',
+      'rough_since'))
+    OR (table_name = 'resident_presence' AND column_name = 'arrived_at'))
+ORDER BY table_name, column_name;
+SELECT tgname FROM pg_trigger
+WHERE tgname IN ('things_sleep_on_owner_change', 'places_mark_rough_since',
+  'resident_presence_mark_arrival', 'wake_settles_append_only',
+  'wake_tries_append_only', 'chance_days_append_only', 'chance_rolls_append_only',
+  'thing_state_changes_append_only')
+ORDER BY tgname;
+SELECT count(*) FILTER (WHERE wake_enabled) AS awake_things,
+  count(*) FILTER (WHERE state_version <> 0) AS written_boxes,
+  count(*) AS things
+FROM things;
+SELECT count(*) FILTER (WHERE rough_room OR rough_since IS NOT NULL) AS rough_places
+FROM places;
+SELECT (SELECT count(*) FROM wake_settles) AS settles,
+  (SELECT count(*) FROM chance_rolls) AS rolls,
+  (SELECT count(*) FROM thing_state_changes) AS state_changes;
+```
+
+Before rollout the awake, written, rough, settle, roll, and state-change counts are all
+zero.
+The columns are additive and default to asleep and empty, so the old application
+keeps working against them. The rollback is to merge the previous application, never
+to drop anything. On the old application, `loadTraitRecipe` refuses the unknown
+`chance` and `write` bricks and the `wake` key, so every trait that uses one loads
+entirely empty, older keys in the same trait included: things of those kinds do
+nothing on use, consume, or give, and laws carrying chance do nothing, until the new
+application returns. Nothing wakes on the old application, state boxes stay stored
+but unread, and returning to the new application restores all of it with no data lost.
+
+On the first UTC day after rollout, `physics` shows `committed_before_day` false for
+that day's rolls, because its secret row is made during the day by the first settle;
+from then on each day's row is made a day ahead, so a live check of that field uses a
+roll from the second day or later.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

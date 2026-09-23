@@ -44,6 +44,9 @@ import { NOTE_IDEMPOTENCY_WINDOW_SECONDS } from './note-limits.ts'
 import { OAUTH_LIMITS } from './oauth-limits.ts'
 import { PAYMENT_RECOVERY_WINDOW_MILLISECONDS } from './payment-limits.ts'
 import {
+  CHANCE_PERCENT_MAX,
+  CHANCE_PERCENT_MIN,
+  MAX_APPLICATIONS_PER_PROGRAM,
   MAX_BLOCK_SECONDS,
   MAX_CRAFT_INGREDIENTS,
   MAX_EFFECT_COUNT,
@@ -52,7 +55,23 @@ import {
   MAX_KIND_INGREDIENTS,
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
+  STATE_BOX_MAX_BYTES,
+  STATE_BOX_MAX_KEYS,
+  STATE_LIST_MAX_ITEMS,
+  STATE_TEXT_MAX_CHARACTERS,
+  WAKE_DEFAULT_EVERY_SECONDS,
+  WAKE_MAX_EVERY_SECONDS,
+  WAKE_MIN_EVERY_SECONDS,
 } from './physics.ts'
+import {
+  MAX_WAKE_EFFECTS_PER_SETTLE,
+  MAX_WAKE_TRIES_PER_THING_PER_SETTLE,
+  WAKE_BLOCKS_MAX,
+  WAKE_PINS_MAX,
+  WAKE_RANDOM_CAP_DEFAULT,
+  WAKE_RANDOM_CAP_MAX,
+  WAKE_SETTLE_MIN_INTERVAL_SECONDS,
+} from './engine-limits.ts'
 import {
   PUBLIC_EVENT_WITHIN_MAX_SECONDS,
   PUBLIC_PAGE_DEFAULT,
@@ -117,7 +136,7 @@ export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: '/api/help', description: 'starter door list' },
   { method: 'GET', path: FULL_TOOL_CATALOG_PATH, description: 'every MCP tool and key requirement' },
   { method: 'GET', path: '/api/official', description: 'official domain, fee, versions, and identity doors' },
-  { method: 'GET', path: '/api/physics', description: 'actions, effect bricks, and safety ceilings' },
+  { method: 'GET', path: '/api/physics', description: 'actions, effect bricks, the wake key, ability defaults, safety ceilings, and one public roll with roll_id' },
   { method: 'GET', path: '/api/map', description: 'legacy full map, bounded outline, or 50-place continent pages' },
   { method: 'GET', path: '/api/moderation', description: 'public moderation record' },
   { method: 'GET', path: '/api/treasury', description: 'public treasury record' },
@@ -164,6 +183,8 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Resident drawings: ${RESIDENT_DRAWING_CHANGES_PER_MINUTE} changes/minute; history 1..${DRAWING_HISTORY_MAX}.`,
   `Effects: ${MAX_RECIPE_BYTES}-byte recipe, ${MAX_EFFECT_COUNT} effects, depth ${MAX_EFFECT_DEPTH}, generation ${MAX_EFFECT_GENERATIONS}, block ${MAX_BLOCK_SECONDS} seconds.`,
   `Effect queues: ${MAX_PENDING_EFFECTS_PER_PLACE}/place, ${MAX_PENDING_EFFECTS_PER_ACTOR}/actor; resolve at most ${MAX_DUE_EFFECTS_PER_OBSERVATION}/observation.`,
+  `Wake: every ${WAKE_MIN_EVERY_SECONDS}..${WAKE_MAX_EVERY_SECONDS} seconds (default ${WAKE_DEFAULT_EVERY_SECONDS}), ${MAX_WAKE_TRIES_PER_THING_PER_SETTLE} tries/thing/settle, random cap 0..${WAKE_RANDOM_CAP_MAX} (default ${WAKE_RANDOM_CAP_DEFAULT}), ${WAKE_PINS_MAX} pins, ${WAKE_BLOCKS_MAX} blocks each, ${MAX_WAKE_EFFECTS_PER_SETTLE} effects/settle, one wake settle/${WAKE_SETTLE_MIN_INTERVAL_SECONDS} seconds/room; chance ${CHANCE_PERCENT_MIN}..${CHANCE_PERCENT_MAX} percent; program weight ${MAX_APPLICATIONS_PER_PROGRAM}.`,
+  `State box: ${STATE_BOX_MAX_KEYS} keys, ${STATE_BOX_MAX_BYTES} bytes, ${STATE_TEXT_MAX_CHARACTERS}-character lines, ${STATE_LIST_MAX_ITEMS}-line lists.`,
   `Crafting: ${MAX_KIND_INGREDIENTS} kinds, ${MAX_CRAFT_INGREDIENTS} ingredients; timers 1..${MAX_TIMER_SECONDS} seconds.`,
   `${CITY_FEE_RAILS_LINE} Credit buys: $${CITY_CREDIT_PURCHASE_MIN_DOLLARS}..$${CITY_CREDIT_PURCHASE_MAX_DOLLARS}, ${CITY_CREDIT_PURCHASE_BODY_MAX_BYTES}-byte bodies.`,
   `Sales: >0..${USDC_AMOUNT_MAX} USDC, 6 decimals; claim ${CLAIM_WINDOW_SECONDS / 60} minutes; recovery ${PAYMENT_RECOVERY_WINDOW_MILLISECONDS / 3_600_000} hours.`,

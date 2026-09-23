@@ -16,6 +16,7 @@ import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
+  RESIDENT_ABILITY_LABEL_SECONDS,
   parseTraitRecipe,
   type Effect,
   type SymbolicTarget,
@@ -32,6 +33,14 @@ import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { MAX_DUE_EFFECTS_PER_OBSERVATION } from './engine-limits.ts'
+import {
+  drawChanceRoll,
+  newRollLog,
+  recordFailedRolls,
+  type RollLog,
+} from './engine-chance.ts'
+import { requireRoughRoomFor, requireWakeActor, requireWakeHome } from './wake-guard.ts'
+import { writeStateBox } from './engine-state.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -69,7 +78,22 @@ export interface EffectExecutionContext {
   readonly sameUseDestroySkip?: boolean
   /** Things ended by an earlier immediate effect in this same use. */
   readonly destroyedThingIds?: readonly number[]
+  /**
+   * Who the actor symbol names when it is not the answering resident: the
+   * resident who arrived or spoke in a wake try, or null for a clock try.
+   */
+  readonly actorSymbolId?: number | null
+  /** True for a wake try and for every timer a wake try scheduled. */
+  readonly fromWake?: boolean
+  /** What set this run off, as the state box records it. */
+  readonly trigger?: EffectTrigger
+  /** The rolls drawn in this run, kept so a refused run still records them. */
+  readonly rollLog?: RollLog
+  readonly settleId?: number | null
 }
+export type EffectTrigger =
+  | 'use' | 'consume' | 'give' | 'talk' | 'move' | 'make' | 'timer'
+  | 'wake_arrive' | 'wake_talk' | 'wake_clock'
 export interface SkippedEffect {
   readonly effect: Effect['effect']
   readonly target: SymbolicTarget
@@ -115,6 +139,9 @@ interface PendingRow {
   readonly dueAt: Date
   readonly logicalDueAt: Date
   readonly generation: number
+  readonly actorSymbolId: number | null | undefined
+  readonly fromWake: boolean
+  readonly settleId: number | null
 }
 function objectRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
@@ -283,12 +310,14 @@ function skipAfterEarlierDestroy(
   effect: Effect,
   context: EffectExecutionContext,
 ): SkippedEffect | null {
-  if (context.sameUseDestroySkip !== true || !('target' in effect)) return null
-  const target = resolveSymbolicTarget(effect.target, context)
+  // A write changes the box of its own thing, so it is aimed at source.
+  const symbol = effect.effect === 'write' ? 'source' : 'target' in effect ? effect.target : null
+  if (context.sameUseDestroySkip !== true || symbol === null) return null
+  const target = resolveSymbolicTarget(symbol, context)
   if (target?.type !== 'thing' || !context.destroyedThingIds?.includes(target.id)) return null
   return Object.freeze({
     effect: effect.effect,
-    target: effect.target,
+    target: symbol,
     sourceTrait: context.sourceTraitName ?? null,
     sourceTraitId: context.sourceTraitId,
     sourcePlaceId: context.originPlaceId ?? null,
@@ -367,6 +396,7 @@ async function executeEffectWithOutcome(
     : undefined
   const skipped = skipAfterEarlierDestroy(effect, context)
   if (skipped) return effectExecutionOutcome(0, false, destroyedThingIds, [skipped])
+  if ('target' in effect && effect.target === 'actor') requireWakeActor(context)
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
     const origin = effectOrigin(context)
@@ -376,18 +406,25 @@ async function executeEffectWithOutcome(
       `)
       if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
     }
+    // A sticker a waking thing puts on a resident expires after a day.
+    const expiresInSeconds = context.fromWake === true && target.type === 'resident'
+      ? RESIDENT_ABILITY_LABEL_SECONDS
+      : null
     await queryRows(db`
       INSERT INTO active_labels (
         target_type, target_id, label, actor_id,
-        source_trait_id, source_place_id, source_thing_id
+        source_trait_id, source_place_id, source_thing_id, expires_at
       ) VALUES (
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
-        ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId}
+        ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId},
+        CASE WHEN ${expiresInSeconds}::int IS NULL THEN NULL
+          ELSE now() + make_interval(secs => ${expiresInSeconds}::int) END
       ) RETURNING id
     `)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'block') {
+    await requireRoughRoomFor(effect, context, db)
     const target = await requireScopedBrickTarget(effect.target, context, db)
     if (target.type !== 'resident') throw new EngineError(400, 'block target must be a resident')
     const origin = effectOrigin(context)
@@ -418,6 +455,7 @@ async function executeEffectWithOutcome(
     )
   }
   if (effect.effect === 'move') {
+    await requireRoughRoomFor(effect, context, db)
     const resolved = resolveSymbolicTarget(effect.target, context)
     if (resolved?.type === 'thing' && resolved.id === context.sharedSourceThingId) {
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
@@ -440,6 +478,21 @@ async function executeEffectWithOutcome(
   if (effect.effect === 'wait') {
     const scheduled = await scheduleEffect(effect, context, db)
     return effectExecutionOutcome(scheduled ? 1 : 0, scheduled, destroyedThingIds)
+  }
+  if (effect.effect === 'chance') {
+    const drawn = await drawChanceRoll(effect.percent, context, db)
+    const branch = drawn.branch === 'then' ? effect.then : (effect.else ?? [])
+    const outcome = await executeEffectsWithOutcome(branch, context, db)
+    return effectExecutionOutcome(
+      1 + outcome.effectsApplied,
+      outcome.emittedTypedPublicEvent,
+      outcome.destroyedThingIds ?? destroyedThingIds,
+      outcome.skippedEffects,
+    )
+  }
+  if (effect.effect === 'write') {
+    await writeStateBox(effect, context, db)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
@@ -641,6 +694,7 @@ async function moveEffectTarget(
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
+      await requireWakeHome(target.id, context, db)
        await goHome(target.id, db, context.actionId)
       return false
     }
@@ -883,6 +937,11 @@ async function scheduleEffect(
       source_thing_id: origin.thingId,
       source_place_id: origin.placeId,
     },
+    ...(context.fromWake === true ? {
+      from_wake: true,
+      actor_symbol_id: context.actorSymbolId ?? null,
+      settle_id: context.settleId ?? null,
+    } : {}),
   }
   await insertPendingEffect({
     actionId: context.actionId,
@@ -974,6 +1033,16 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
       || sharedSourceThingId !== sourceThingId
     )
   ) return null
+  const fromWake = payload.from_wake === true
+  const actorSymbolId = !fromWake || payload.actor_symbol_id == null
+    ? null
+    : integer(payload.actor_symbol_id)
+  const settleId = !fromWake || payload.settle_id == null ? null : integer(payload.settle_id)
+  if (
+    (payload.from_wake !== undefined && typeof payload.from_wake !== 'boolean')
+    || (fromWake && payload.actor_symbol_id != null && (actorSymbolId === null || actorSymbolId <= 0))
+    || (fromWake && payload.settle_id != null && (settleId === null || settleId <= 0))
+  ) return null
   return {
     id: rowId(row.id, 'pending effect id'),
     actionId: nullableRowId(row.action_id, 'pending action id'),
@@ -994,6 +1063,9 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     dueAt,
     logicalDueAt,
     generation,
+    actorSymbolId: fromWake ? actorSymbolId : undefined,
+    fromWake,
+    settleId,
   }
 }
 
@@ -1072,6 +1144,7 @@ async function resolveOne(
   placeId: number,
   db: TaggedSql,
   atomic: boolean,
+  rollLog: RollLog,
 ): Promise<'resolved' | 'failed' | 'already-resolved'> {
   const pendingId = rowId(raw.id, 'pending effect id')
   const fresh = atomic ? await lockAndLoadPending(pendingId, placeId, db) : raw
@@ -1098,6 +1171,13 @@ async function resolveOne(
     parentEffectId: row.id,
     generation: row.generation,
     logicalAt: row.logicalDueAt,
+    trigger: 'timer',
+    rollLog,
+    ...(row.fromWake ? {
+      fromWake: true,
+      actorSymbolId: row.actorSymbolId ?? null,
+      settleId: row.settleId,
+    } : {}),
   }
   const effectsApplied = await executeEffects(row.effects, context, db)
   await repeatPending(row, context, db)
@@ -1131,9 +1211,10 @@ export async function resolveDueEffects(
     for (const raw of batch) {
       if (resolved + failed >= MAX_DUE_EFFECTS_PER_OBSERVATION) break
       let outcome: 'resolved' | 'failed' | 'already-resolved'
+      const rollLog = newRollLog()
       try {
         outcome = await withEngineTransaction(db, (transaction, atomic) => (
-          resolveOne(raw, placeId, transaction, atomic)
+          resolveOne(raw, placeId, transaction, atomic, rollLog)
         ))
       } catch (error) {
         const pendingId = rowId(raw.id, 'pending effect id')
@@ -1146,6 +1227,7 @@ export async function resolveDueEffects(
         const recorded = await withEngineTransaction(db, (transaction, atomic) => (
           recordFailedEffect(pendingId, placeId, message, transaction, atomic)
         ))
+        if (recorded) await recordFailedRolls(rollLog, db)
         outcome = recorded ? 'failed' : 'already-resolved'
       }
       if (outcome === 'resolved') {

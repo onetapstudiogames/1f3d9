@@ -192,6 +192,7 @@ const mapOutlineRows = () => Array.from({ length: 60 }, (_, index) => ({
   ...placeRow(160 - index, 1),
   name: `Map place ${160 - index}`,
   description: `Map description ${160 - index} 🏙`,
+  rough_room: false,
   places: index === 0 ? 2 : 0,
 }))
 
@@ -201,12 +202,13 @@ const mapContinentRows = () => Array.from({ length: 60 }, (_, index) => {
     ...placeRow(id, index < 30 ? 160 : 360),
     name: `Continent place ${id}`,
     description: `Continent description ${id} 🏙`,
+    rough_room: false,
   }
 })
 
 const mapOutlineParent = (id: number) => id === 1
-  ? { ...placeRow(1, null), owner_id: null, owner: null, name: 'the world', places: 60 }
-  : { ...placeRow(id, 1), name: `Map place ${id}`, places: id === 160 ? 2 : 0 }
+  ? { ...placeRow(1, null), owner_id: null, owner: null, name: 'the world', rough_room: false, places: 60 }
+  : { ...placeRow(id, 1), name: `Map place ${id}`, rough_room: false, places: id === 160 ? 2 : 0 }
 
 const paginationThings = () => Array.from({ length: 60 }, (_, index) => ({
   ...thingRow(260 - index),

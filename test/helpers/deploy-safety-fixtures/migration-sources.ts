@@ -27,6 +27,11 @@ export const noteWalkToReadMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const abilitiesWakeChanceWriteMigrationUrl = new URL(
+  '../../../db/migrations/20260922_abilities_wake_chance_write.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,
