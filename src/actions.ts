@@ -253,7 +253,9 @@ async function runResidentAction(
         })),
       }),
       ...(action === 'use' && result.status === 'noop' ? {
-        reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
+        reason: result.skippedEffects.length === 0
+          ? 'no use effect applied: this thing has no applicable recipe or effect in the current place'
+          : 'no use effect applied: every effect that would have run was skipped, and skipped_effects says why',
       } : {}),
       ...(carryThingId === null ? {} : { carried_thing_id: carryThingId }),
       ...(settle === null ? {} : { settle }),

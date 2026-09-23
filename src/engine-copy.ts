@@ -63,11 +63,17 @@ async function lockParent(thingId: number, db: TaggedSql): Promise<Parent> {
       coalesce(thing.family_id, thing.id) AS family_id, thing.copies_made, thing.state,
       thing.withdrawn_at
     FROM things thing WHERE thing.id = ${thingId}
-    FOR UPDATE OF thing
+    FOR NO KEY UPDATE OF thing
   ` as Array<Record<string, unknown>>
   const row = rows[0]
   if (!row || row.withdrawn_at != null || row.kind_id == null) {
     throw new EngineError(409, `thing ${thingId} is gone, so it cannot make a copy`)
+  }
+  // The copy's family_id key needs this share lock on the family's first thing.
+  // Taking it now, before the destination lock, means a family member copying
+  // at the same moment waits here instead of deadlocking under that lock.
+  if (Number(row.family_id) !== thingId) {
+    await db`SELECT 1 FROM things WHERE id = ${Number(row.family_id)} FOR KEY SHARE`
   }
   return Object.freeze({
     id: thingId,
