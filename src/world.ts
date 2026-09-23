@@ -22,9 +22,9 @@ import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
 import {
   blockedResidentUnknownRefusal,
-  parseWakeDials,
+  parsePlaceDials,
   pinnedThingElsewhereRefusal,
-  WAKE_DIAL_FIELDS,
+  PLACE_DIAL_FIELDS,
 } from './place-abilities.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
@@ -1111,7 +1111,7 @@ export function mountWorldRoutes(app: Hono): void {
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
       'drawing', 'drawing_state', 'drawing_description',
-      ...WAKE_DIAL_FIELDS,
+      ...PLACE_DIAL_FIELDS,
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
@@ -1119,9 +1119,9 @@ export function mountWorldRoutes(app: Hono): void {
         ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
         : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial')
     }
-    const wakeDials = parseWakeDials(body)
-    if (!wakeDials.ok) return err(c, 400, wakeDials.error)
-    const dials = wakeDials.dials
+    const placeDials = parsePlaceDials(body)
+    if (!placeDials.ok) return err(c, 400, placeDials.error)
+    const dials = placeDials.dials
 
     const description = body.description === undefined
       ? undefined
@@ -1258,6 +1258,13 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
             quiet = coalesce(${quiet ?? null}::boolean, quiet),
+            growth_cap_per_day = coalesce(${dials.growthCapPerDay ?? null}::smallint, growth_cap_per_day),
+            growth_share_per_family = coalesce(
+              ${dials.growthSharePerFamily ?? null}::smallint, growth_share_per_family
+            ),
+            allow_arriving_copies = coalesce(
+              ${dials.allowArrivingCopies ?? null}::boolean, allow_arriving_copies
+            ),
             wake_visitors = coalesce(${dials.wakeVisitors ?? null}::boolean, wake_visitors),
             rough_room = coalesce(${dials.roughRoom ?? null}::boolean, rough_room),
             wake_random_cap = coalesce(${dials.wakeRandomCap ?? null}::smallint, wake_random_cap),
@@ -1296,6 +1303,12 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
               OR (${quiet !== undefined}::boolean
                 AND quiet IS DISTINCT FROM ${quiet ?? false}::boolean)
+              OR (${dials.growthCapPerDay !== undefined}::boolean
+                AND growth_cap_per_day IS DISTINCT FROM ${dials.growthCapPerDay ?? 0}::smallint)
+              OR (${dials.growthSharePerFamily !== undefined}::boolean
+                AND growth_share_per_family IS DISTINCT FROM ${dials.growthSharePerFamily ?? 1}::smallint)
+              OR (${dials.allowArrivingCopies !== undefined}::boolean
+                AND allow_arriving_copies IS DISTINCT FROM ${dials.allowArrivingCopies ?? false}::boolean)
               OR (${dials.wakeVisitors !== undefined}::boolean
                 AND wake_visitors IS DISTINCT FROM ${dials.wakeVisitors ?? false}::boolean)
               OR (${dials.roughRoom !== undefined}::boolean
@@ -1349,6 +1362,17 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO events (kind, actor, detail)
           SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
           FROM changed
+        ), cleared_marks AS (
+          -- A changed growth dial clears the open family marks here: the caps that bit have moved.
+          UPDATE family_growth_marks mark
+          SET cleared_at = now(), cleared_reason = 'place_dials_changed'
+          FROM changed JOIN editable ON editable.id = changed.id
+          WHERE mark.place_id = changed.id AND mark.cleared_at IS NULL
+            AND (
+              changed.growth_cap_per_day IS DISTINCT FROM editable.growth_cap_per_day
+              OR changed.growth_share_per_family IS DISTINCT FROM editable.growth_share_per_family
+              OR changed.allow_arriving_copies IS DISTINCT FROM editable.allow_arriving_copies
+            )
         ), result AS (
           SELECT changed.* FROM changed
           UNION ALL
@@ -1846,12 +1870,12 @@ export function mountWorldRoutes(app: Hono): void {
     if (!body) return err(c, 400, 'body must be a JSON object')
     {
       const fields = [
-        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy', 'wake_enabled',
-        'kind_id', 'ingredient_ids',
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional wake_enabled, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids`)
       }
     }
     const placeId = positiveId(body.place_id)
@@ -1867,6 +1891,12 @@ export function mountWorldRoutes(app: Hono): void {
     const wakeEnabled = body.wake_enabled === undefined
       ? true
       : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
+    const openToReach = body.open_to_reach === undefined
+      ? false
+      : typeof body.open_to_reach === 'boolean' ? body.open_to_reach : null
+    const openToConvert = body.open_to_convert === undefined
+      ? false
+      : typeof body.open_to_convert === 'boolean' ? body.open_to_convert : null
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
@@ -1877,6 +1907,8 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
+    if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
+    if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
@@ -1912,6 +1944,8 @@ export function mountWorldRoutes(app: Hono): void {
       body: thingBody,
       openToUse,
       sharedUseMayDestroy,
+      openToReach,
+      openToConvert,
       wakeEnabled,
       kindId,
       ingredientIds,
@@ -1938,9 +1972,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
-      'wake_enabled', 'state_clear',
+      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
     }
     if (body.state_clear !== undefined && body.state_clear !== true) {
       return err(c, 400, 'state_clear must be true when present')
@@ -1959,6 +1993,12 @@ export function mountWorldRoutes(app: Hono): void {
     const wakeEnabled = body.wake_enabled === undefined
       ? undefined
       : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
+    const openToReach = body.open_to_reach === undefined
+      ? undefined
+      : typeof body.open_to_reach === 'boolean' ? body.open_to_reach : null
+    const openToConvert = body.open_to_convert === undefined
+      ? undefined
+      : typeof body.open_to_convert === 'boolean' ? body.open_to_convert : null
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariant = Object.hasOwn(body, 'drawing_variant_name')
@@ -1974,6 +2014,8 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
+    if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
+    if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
@@ -2066,6 +2108,8 @@ export function mountWorldRoutes(app: Hono): void {
             ${sharedUseMayDestroy ?? null}::boolean, shared_use_may_destroy
           ),
           wake_enabled = coalesce(${wakeEnabled ?? null}::boolean, wake_enabled),
+          open_to_reach = coalesce(${openToReach ?? null}::boolean, open_to_reach),
+          open_to_convert = coalesce(${openToConvert ?? null}::boolean, open_to_convert),
           drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
             THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
             ELSE drawing END,
@@ -2088,6 +2132,10 @@ export function mountWorldRoutes(app: Hono): void {
                 ${sharedUseMayDestroy ?? null}::boolean)
             OR (${wakeEnabled !== undefined}::boolean
               AND wake_enabled IS DISTINCT FROM ${wakeEnabled ?? null}::boolean)
+            OR (${openToReach !== undefined}::boolean
+              AND open_to_reach IS DISTINCT FROM ${openToReach ?? null}::boolean)
+            OR (${openToConvert !== undefined}::boolean
+              AND open_to_convert IS DISTINCT FROM ${openToConvert ?? null}::boolean)
             OR (${requestedDrawing.supplied}::boolean
               AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
             OR (${requestedDrawing.supplied}::boolean

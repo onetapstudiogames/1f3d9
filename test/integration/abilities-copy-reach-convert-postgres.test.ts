@@ -1025,6 +1025,102 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         kind_id: stone, current_revision: 1, as_revision: 2,
       }, 'the birth revision stays; only the overlay moves')
     })
+
+    await t.test('make and thing_edit set open_to_reach and open_to_convert, closed unless told', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const make = (body: Json) => call(app, GROWER.secret, 'POST', '/api/thing', { place_id: rooms.eastRoomId, name: 'a crate', body: '', ...body })
+
+      const badReach = await make({ open_to_reach: 'yes' })
+      assert.equal(badReach.status, 400)
+      assert.equal(badReach.json.error, 'open_to_reach must be boolean when present')
+      const badConvert = await make({ open_to_convert: 1 })
+      assert.equal(badConvert.status, 400)
+      assert.equal(badConvert.json.error, 'open_to_convert must be boolean when present')
+      const unknown = await make({ open_to_all: true })
+      assert.equal(unknown.status, 400)
+      assert.match(String(unknown.json.error), /send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids/)
+
+      const closed = await make({})
+      assert.equal(closed.status, 201, JSON.stringify(closed.json))
+      const closedId = Number((closed.json.thing as Json).id)
+      const closedRead = (await call(app, null, 'GET', `/api/thing/${closedId}`)).json.thing as Json
+      assert.deepEqual([closedRead.open_to_reach, closedRead.open_to_convert], [false, false])
+      const open = await make({ open_to_reach: true, open_to_convert: true })
+      const openRead = (await call(app, null, 'GET', `/api/thing/${Number((open.json.thing as Json).id)}`)).json.thing as Json
+      assert.deepEqual([openRead.open_to_reach, openRead.open_to_convert], [true, true])
+
+      const crate = await seedKind(GROWER.id, 'crate', [])
+      const crafted = await make({ kind_id: crate, ingredient_ids: [], open_to_convert: true })
+      assert.equal(crafted.status, 201, JSON.stringify(crafted.json))
+      assert.deepEqual(
+        (await db.query('SELECT open_to_reach, open_to_convert FROM things WHERE id = $1', [Number((crafted.json.thing as Json).id)])).rows[0],
+        { open_to_reach: false, open_to_convert: true },
+        'a crafted thing takes the same switches',
+      )
+
+      const edited = await call(app, GROWER.secret, 'PATCH', `/api/thing/${closedId}`, { open_to_reach: true, open_to_convert: true })
+      assert.equal(edited.status, 200, JSON.stringify(edited.json))
+      assert.deepEqual((await db.query('SELECT open_to_reach, open_to_convert FROM things WHERE id = $1', [closedId])).rows[0], {
+        open_to_reach: true, open_to_convert: true,
+      })
+      const badEdit = await call(app, GROWER.secret, 'PATCH', `/api/thing/${closedId}`, { open_to_convert: 'no' })
+      assert.equal(badEdit.status, 400)
+      assert.equal(badEdit.json.error, 'open_to_convert must be boolean when present')
+      const unknownEdit = await call(app, GROWER.secret, 'PATCH', `/api/thing/${closedId}`, { open_to_everyone: true })
+      assert.equal(unknownEdit.status, 400)
+      assert.equal(unknownEdit.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+    })
+
+    await t.test('place_edit sets the growth dials, the place read shows them, and a changed dial clears the marks', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const edit = (body: Json) => call(app, GROWER.secret, 'PATCH', `/api/place/${rooms.eastRoomId}`, body)
+      for (const [body, error] of [
+        [{ growth_cap_per_day: 101 }, 'growth_cap_per_day must be a whole number from 0 to 100'],
+        [{ growth_cap_per_day: -1 }, 'growth_cap_per_day must be a whole number from 0 to 100'],
+        [{ growth_cap_per_day: 2.5 }, 'growth_cap_per_day must be a whole number from 0 to 100'],
+        [{ growth_share_per_family: 0 }, 'growth_share_per_family must be a whole number from 1 to 100'],
+        [{ allow_arriving_copies: 'yes' }, 'allow_arriving_copies, wake_visitors, and rough_room must be boolean when present'],
+      ] as const) {
+        const refused = await edit(body)
+        assert.equal(refused.status, 400, JSON.stringify(body))
+        assert.equal(String(refused.json.error).split('\n')[0], error)
+      }
+
+      const outlineBefore = (await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).json.place as Json
+      assert.deepEqual(
+        [outlineBefore.growth_cap_per_day, outlineBefore.growth_share_per_family, outlineBefore.allow_arriving_copies, outlineBefore.copies_today, outlineBefore.growth_marks],
+        [10, 5, false, 0, []],
+        'every place starts small and takes no arriving copies',
+      )
+      const set = await edit({ growth_cap_per_day: 1, growth_share_per_family: 1, allow_arriving_copies: true })
+      assert.equal(set.status, 200, JSON.stringify(set.json))
+      const written = set.json.place as Json
+      assert.deepEqual([written.growth_cap_per_day, written.growth_share_per_family, written.allow_arriving_copies], [1, 1, true])
+
+      assert.equal((await coin(app, GROWER.secret, 'bud', { use: [{ effect: 'copy', copies: 'unlimited' }] })).status, 201)
+      const bud = await seedKind(GROWER.id, 'bud', [await traitId('bud')])
+      const budId = await seedThing(GROWER.id, rooms.eastRoomId, bud, 'a bud')
+      await use(app, GROWER.secret, budId)
+      await use(app, GROWER.secret, budId)
+      const full = (await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=full`)).json.place as Json
+      assert.equal(full.copies_today, 1)
+      const [mark] = full.growth_marks as [Json]
+      assert.deepEqual([mark.family_id, mark.source_thing_id, mark.cap, mark.limit, mark.over_by], [budId, budId, 'place_daily', 1, 1])
+
+      assert.equal((await edit({ growth_cap_per_day: 1 })).status, 200, 'an unchanged dial changes nothing')
+      assert.equal(((await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).json.place as Json).growth_marks instanceof Array, true)
+      assert.equal(Number((await db.query(`SELECT count(*)::int AS count FROM family_growth_marks WHERE cleared_at IS NULL`)).rows[0]!.count), 1)
+      assert.equal((await edit({ growth_cap_per_day: 5 })).status, 200)
+      const cleared = (await db.query('SELECT cleared_reason FROM family_growth_marks')).rows.map(row => row.cleared_reason)
+      assert.deepEqual(cleared, ['place_dials_changed'])
+      assert.deepEqual(((await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).json.place as Json).growth_marks, [])
+    })
   } finally {
     await postgres.stop()
   }

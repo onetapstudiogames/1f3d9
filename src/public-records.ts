@@ -45,6 +45,27 @@ export async function loadPublicPlaceRecord(
       p.description, p.purpose,
       p.owner_id, owner.handle AS owner,
       p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+      p.growth_cap_per_day, p.growth_share_per_family, p.allow_arriving_copies,
+      coalesce((
+        SELECT sum(count.copies) FROM place_copy_counts count
+        WHERE count.place_id = p.id AND count.utc_day = (now() AT TIME ZONE 'UTC')::date
+      ), 0)::int AS copies_today,
+      coalesce((
+        SELECT jsonb_agg(open_mark.entry ORDER BY open_mark.id DESC)
+        FROM (
+          SELECT mark.id, jsonb_build_object(
+            'family_id', mark.family_id,
+            'source_thing_id', mark.source_thing_id,
+            'cap', mark.cap,
+            'limit', mark.cap_limit,
+            'over_by', mark.over_by,
+            'at', to_char(mark.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          ) AS entry
+          FROM family_growth_marks mark
+          WHERE mark.place_id = p.id AND mark.cleared_at IS NULL
+          ORDER BY mark.id DESC LIMIT 8
+        ) open_mark
+      ), '[]'::jsonb) AS growth_marks,
       p.rough_room, p.wake_visitors, p.wake_pins, p.wake_block_thing_ids,
       coalesce((
         SELECT jsonb_agg(blocked.handle ORDER BY array_position(p.wake_block_resident_ids, blocked.id))

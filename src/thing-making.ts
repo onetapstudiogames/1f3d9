@@ -13,6 +13,9 @@ export interface MakeThingInput {
   readonly body: string
   readonly openToUse?: boolean
   readonly sharedUseMayDestroy?: boolean
+  /** Closed until the owner opens them: a harder reach and conversion by others. */
+  readonly openToReach?: boolean
+  readonly openToConvert?: boolean
   /** Making a thing is its owner's own act, so it may wake unless told not to. */
   readonly wakeEnabled?: boolean
   readonly kindId: number | null
@@ -74,6 +77,8 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
         body: input.body,
         openToUse: input.openToUse === true,
         sharedUseMayDestroy: input.sharedUseMayDestroy === true,
+        openToReach: input.openToReach === true,
+        openToConvert: input.openToConvert === true,
         wakeEnabled: input.wakeEnabled !== false,
         ingredientIds: input.ingredientIds,
       })
@@ -119,10 +124,11 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
         ), new_thing AS (
           INSERT INTO things (
             place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy,
-            wake_enabled
+            open_to_reach, open_to_convert, wake_enabled
           )
           SELECT permitted_place.id, ${input.name}, ${input.body}, quota_spend.id,
             quota_spend.id, ${input.openToUse === true}, ${input.sharedUseMayDestroy === true},
+            ${input.openToReach === true}, ${input.openToConvert === true},
             ${input.wakeEnabled !== false}
           FROM permitted_place CROSS JOIN quota_spend
           RETURNING *
