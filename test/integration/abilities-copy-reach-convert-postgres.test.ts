@@ -378,6 +378,11 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(created[0]!.actor, NEIGHBOUR.handle)
       assert.equal(created[0]!.detail.mode, 'copy')
       assert.equal(created[0]!.detail.source_thing_id, parentId)
+      const actionEvents = (await db.query(`
+        SELECT detail FROM events WHERE kind = 'action' AND (detail->>'action_id')::int = $1
+      `, [action.id])).rows
+      assert.equal(actionEvents.length, 1, "the copy's own event sits beside the action's, never in place of it")
+      assert.equal(actionEvents[0]!.detail.effects_applied, 2)
 
       const read = await call(app, null, 'GET', `/api/thing/${copyId}`)
       assert.equal(read.status, 200)
@@ -903,6 +908,10 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.deepEqual(edited.map(event => [event.detail.thing_id, event.detail.source_thing_id, event.detail.kind_id]), [
         [openOak, ember, ash],
       ])
+      const convertAction = (await db.query(`
+        SELECT detail FROM events WHERE kind = 'action' AND (detail->>'action_id')::int = $1
+      `, [(converted.json.action as Json).id])).rows
+      assert.equal(convertAction.length, 1, "a conversion's event sits beside the action's")
 
       const read = (await call(app, null, 'GET', `/api/thing/${openOak}`)).json.thing as Json
       assert.equal(read.kind, 'ash', 'every read shows the kind it is now')

@@ -557,11 +557,13 @@ async function executeEffectWithOutcome(
     await writeStateBox(effect, context, db)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
+  // Like a write, a copy or a conversion records its own event beside the action's,
+  // never in place of it, so the action's public record stays whole.
   if (effect.effect === 'copy') {
     const copied = await makeCopy(effect, context, db)
     return 'skipped' in copied
       ? effectExecutionOutcome(0, false, destroyedThingIds, [copied.skipped])
-      : effectExecutionOutcome(1, true, destroyedThingIds)
+      : effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'reach') return runReach(effect, context, db)
   if (effect.effect === 'convert') {
@@ -569,7 +571,7 @@ async function executeEffectWithOutcome(
     if (target.type !== 'thing') throw new EngineError(403, CONVERT_ONLY_THINGS_ERROR)
     await requireCallerTargetScope(target, context.actorId, context.placeId, db)
     const converted = await convertThing(effect, target.id, context, db)
-    return effectExecutionOutcome(converted ? 1 : 0, converted, destroyedThingIds)
+    return effectExecutionOutcome(converted ? 1 : 0, false, destroyedThingIds)
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
