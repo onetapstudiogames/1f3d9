@@ -167,7 +167,8 @@ test('consume relies on its guaranteed thing_withdrawn event instead of a bare a
   assert.equal(actionResolution(calls).values.at(-1), false)
 })
 
-test('a typed effect outcome suppresses the bare action event', async () => {
+// Decision #117: among effects, only a destroy's thing_withdrawn stands in for the row.
+test("a destroy effect's thing_withdrawn stands in for a use's bare action event", async () => {
   const { db, calls } = fakeSql(call => {
     if (/SELECT thing\.id/u.test(call.text)) {
       return [{
@@ -201,6 +202,37 @@ test('a typed effect outcome suppresses the bare action event', async () => {
   assert.ok(calls.some(call => /'thing_withdrawn'/u.test(call.text)))
   assert.equal(actionResolution(calls).values.at(-1), false)
 })
+
+// Decision #117: every other effect's event sits beside a use's public action row.
+for (const [brick, typedEvent, recipe] of [
+  ['wait', 'effect_scheduled', { use: [{ effect: 'wait', seconds: 60, then: [] }] }],
+  ['transfer', 'INSERT INTO transfers', { use: [{ effect: 'transfer', target: 'source', to: 'recipient' }] }],
+] as const) {
+  test(`a use whose ${brick} effect records its own event keeps its bare action event`, async () => {
+    const { db, calls } = fakeSql(call => {
+      if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
+      if (/SELECT EXISTS/u.test(call.text) && /FROM things/u.test(call.text)) return [{ exists: true }]
+      if (/JOIN kind_revision_traits/u.test(call.text)) return [{ trait_id: 9, recipe }]
+      if (/AS place_pending/u.test(call.text)) return [{ place_pending: 0, actor_pending: 0 }]
+      if (/INSERT INTO pending_effects/u.test(call.text)) return [{ id: 801 }]
+      if (/INSERT INTO transfers/u.test(call.text)) return [{ id: 701 }]
+      return baseResponder(call)
+    })
+
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action: 'use',
+      placeId: 2,
+      sourceThingId: 41,
+      recipientId: 8,
+    }, db)
+
+    assert.equal(result.status, 'applied')
+    assert.ok(calls.some(call => call.text.includes(typedEvent)), `${brick} wrote its own record`)
+    assert.equal(actionResolution(calls).values.at(-1), true)
+  })
+}
 
 for (const [recipientId, expectedPublicActionEvent] of [[8, false], [7, true]] as const) {
   test(`give to resident ${recipientId} ${expectedPublicActionEvent ? 'keeps' : 'suppresses'} the bare action event`, async () => {
@@ -324,7 +356,7 @@ test('destroy reports the typed thing_withdrawn event it inserts', async () => {
   assert.equal(Object.isFrozen(outcome), true)
 })
 
-test('thing move reports an event only when the thing actually changes places', async () => {
+test('a thing move effect writes thing_moved only when it changes places, beside the action row', async () => {
   const moving = fakeSql(call => {
     if (/SELECT EXISTS/u.test(call.text) && /FROM things/u.test(call.text)) {
       return [{ exists: true }]
@@ -345,7 +377,7 @@ test('thing move reports an event only when the thing actually changes places', 
 
   assert.deepEqual(moved, {
     effectsApplied: 1,
-    emittedTypedPublicEvent: true,
+    emittedTypedPublicEvent: false,
   })
   assert.ok(moving.calls.some(call => /'thing_moved'/u.test(call.text)))
 
@@ -397,8 +429,8 @@ test('resident move does not claim a typed public event', async () => {
   })
 })
 
-for (const [recipientId, expectedTypedEvent] of [[8, true], [7, false]] as const) {
-  test(`effect transfer to resident ${recipientId} reports typed event ${expectedTypedEvent}`, async () => {
+for (const recipientId of [8, 7] as const) {
+  test(`effect transfer to resident ${recipientId} never stands in for the action row`, async () => {
     const { db, calls } = fakeSql(call => {
       if (/SELECT EXISTS/u.test(call.text) && /FROM things/u.test(call.text)) {
         return [{ exists: true }]
@@ -413,7 +445,7 @@ for (const [recipientId, expectedTypedEvent] of [[8, true], [7, false]] as const
 
     assert.deepEqual(outcome, {
       effectsApplied: 1,
-      emittedTypedPublicEvent: expectedTypedEvent,
+      emittedTypedPublicEvent: false,
     })
     assert.equal(calls.some(call => /INSERT INTO transfers/u.test(call.text)), recipientId !== 7)
     if (recipientId !== 7) {
@@ -446,7 +478,7 @@ test('transfer refusal addresses the caller instead of leaking actor vocabulary'
   )
 })
 
-test('wait reports effect_scheduled when it inserts a pending effect', async () => {
+test('wait writes effect_scheduled beside the action row, never in place of it', async () => {
   const { db, calls } = fakeSql(call => {
     if (/AS place_pending/u.test(call.text)) {
       return [{ place_pending: 0, actor_pending: 0 }]
@@ -461,7 +493,7 @@ test('wait reports effect_scheduled when it inserts a pending effect', async () 
 
   assert.deepEqual(outcome, {
     effectsApplied: 1,
-    emittedTypedPublicEvent: true,
+    emittedTypedPublicEvent: false,
   })
   assert.ok(calls.some(call => /'effect_scheduled'/u.test(call.text)))
 })
@@ -490,10 +522,8 @@ test('check_label combines nested counts and typed-event outcomes', async () => 
     }
     if (/AS present/u.test(call.text)) return [{ present: true }]
     if (/INSERT INTO active_labels/u.test(call.text)) return [{ id: 901 }]
-    if (/AS place_pending/u.test(call.text)) {
-      return [{ place_pending: 0, actor_pending: 0 }]
-    }
-    if (/INSERT INTO pending_effects/u.test(call.text)) return [{ id: 902 }]
+    if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
+    if (/UPDATE things SET withdrawn_at/u.test(call.text)) return [{ id: 41 }]
     return []
   })
 
@@ -503,7 +533,7 @@ test('check_label combines nested counts and typed-event outcomes', async () => 
     label: 'ready',
     then: [
       { effect: 'label', target: 'source', label: 'checked' },
-      { effect: 'wait', seconds: 60, then: [] },
+      { effect: 'destroy', target: 'source' },
     ],
   }], effectContext(), db)
 
@@ -519,10 +549,8 @@ test('check_label carries a typed-event outcome from its else branch', async () 
       return [{ exists: true }]
     }
     if (/AS present/u.test(call.text)) return [{ present: false }]
-    if (/AS place_pending/u.test(call.text)) {
-      return [{ place_pending: 0, actor_pending: 0 }]
-    }
-    if (/INSERT INTO pending_effects/u.test(call.text)) return [{ id: 903 }]
+    if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
+    if (/UPDATE things SET withdrawn_at/u.test(call.text)) return [{ id: 41 }]
     return []
   })
 
@@ -531,7 +559,7 @@ test('check_label carries a typed-event outcome from its else branch', async () 
     target: 'source',
     label: 'missing',
     then: [],
-    else: [{ effect: 'wait', seconds: 60, then: [] }],
+    else: [{ effect: 'destroy', target: 'source' }],
   }], effectContext(), db)
 
   assert.deepEqual(outcome, {

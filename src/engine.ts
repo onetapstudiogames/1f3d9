@@ -1426,13 +1426,15 @@ async function intrinsicAction(
     if ((input.sourceThingId === null && input.target === null) || input.recipientId === null) {
       throw new EngineError(400, 'give needs a source thing or target, plus a recipient')
     }
-    // The transfer brick implementation owns the same guarded transfer path.
-    const outcome = await executeEffectsWithOutcome([{
+    // The transfer brick implementation owns the same guarded transfer path. A give to
+    // someone else writes a typed transfer event, which stands in for its action row;
+    // a give to yourself changes no owner and keeps the row.
+    await executeEffectsWithOutcome([{
       effect: 'transfer',
       target: input.sourceThingId === null ? 'target' : 'source',
       to: 'recipient',
     }], actionContext(0, input), db)
-    return intrinsicActionOutcome(true, outcome.emittedTypedPublicEvent)
+    return intrinsicActionOutcome(true, input.recipientId !== input.actorId)
   }
   return intrinsicActionOutcome(false, false)
 }

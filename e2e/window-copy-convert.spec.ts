@@ -29,6 +29,8 @@ function thingRecord(overrides: Readonly<Record<string, unknown>>) {
       was: [],
       was_total: 0,
       state: { version: 0, values: {}, last_write: null },
+      labels: [],
+      labels_total: 0,
       ...overrides,
     },
   }
@@ -63,4 +65,20 @@ test('an ordinary thing shows no copy or conversion words', async ({ page }) => 
   expect(meta).not.toContain('generation')
   expect(meta).not.toContain('born as')
   expect(meta).not.toContain('converted')
+})
+
+test('a labeled thing names its current labels and how many more there are', async ({ page }) => {
+  const meta = await openThing(page, thingRecord({
+    labels: [
+      { label: 'dried', set_by: 'lamp-keeper', set_at: '2026-09-23T12:31:00.000Z', expires_at: null },
+      { label: 'wet', set_by: 'rain-maker', set_at: '2026-09-23T12:30:00.000Z', expires_at: '2026-09-24T12:30:00.000Z' },
+    ],
+    labels_total: 5,
+  }))
+  expect(meta).toContain('labels dried, wet and 3 more')
+})
+
+test('a thing with no current labels shows no label words', async ({ page }) => {
+  const meta = await openThing(page, thingRecord({}))
+  expect(meta).not.toContain('labels')
 })

@@ -4,3 +4,5 @@ export const LATER_HOLDER_PAGE_DEFAULT = 10
 export const LATER_HOLDER_PAGE_MAX = 200
 export const PUBLIC_REPLAY_ROW_CEILING = 800
 export const PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES = 512_000
+// A public thing read lists at most this many current labels, newest first.
+export const PUBLIC_THING_LABELS_MAX = 32

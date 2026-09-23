@@ -335,8 +335,10 @@ export function registerMcpTests(): void {
       kindDrawingState: 'complete',
       kindDrawingDescription: CONTRACT_DRAWING_DESCRIPTION,
     })
+    // A revision must change something, so this one also rewrites the description.
     const revision = await call('revise_kind', {
       kind_id: 3,
+      description: 'A lantern whose variant set is now explicitly empty.',
       drawing_variants: [],
     }, { ...authHeaders(), 'X-PAYMENT': X_PAYMENT })
     assert.equal(revision.result.isError, false, revision.result.content[0]?.text)

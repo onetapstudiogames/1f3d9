@@ -164,6 +164,11 @@ export interface SkippedEffect {
 }
 export interface EffectExecutionOutcome {
   readonly effectsApplied: number
+  /**
+   * True only when an effect wrote a typed public event that stands in for the
+   * action's own public row (decision #117): a destroy's thing_withdrawn. Every other
+   * effect records its event beside the action's row, never in place of it.
+   */
   readonly emittedTypedPublicEvent: boolean
   readonly destroyedThingIds?: readonly number[]
   readonly skippedEffects?: readonly SkippedEffect[]
@@ -524,8 +529,9 @@ async function executeEffectWithOutcome(
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)
     }
     const target = await requireTarget(resolved, db)
-    const emittedTypedPublicEvent = await moveEffectTarget(target, effect.to, context, db)
-    return effectExecutionOutcome(1, emittedTypedPublicEvent, destroyedThingIds)
+    // Like a carried move's thing_moved, an effect's move sits beside the action's row.
+    await moveEffectTarget(target, effect.to, context, db)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'transfer') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -535,12 +541,16 @@ async function executeEffectWithOutcome(
     const target = await requireTarget(resolved, db)
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient; send one current resident in to_handle')
-    const emittedTypedPublicEvent = await transferAsset(target, context.actorId, recipientId, db)
-    return effectExecutionOutcome(1, emittedTypedPublicEvent, destroyedThingIds)
+    // A transfer effect's event sits beside the action's row; only give's own
+    // transfer stands in for its row, and give decides that itself.
+    await transferAsset(target, context.actorId, recipientId, db)
+    return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'wait') {
+    // effect_scheduled names no action, so it records beside the action's row, never
+    // in place of it, and a use that waits keeps its public action row.
     const scheduled = await scheduleEffect(effect, context, db)
-    return effectExecutionOutcome(scheduled ? 1 : 0, scheduled, destroyedThingIds)
+    return effectExecutionOutcome(scheduled ? 1 : 0, false, destroyedThingIds)
   }
   if (effect.effect === 'chance') {
     const drawn = await drawChanceRoll(effect.percent, context, db)
@@ -769,24 +779,24 @@ async function moveEffectTarget(
   destination: 'destination' | 'home',
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<boolean> {
+): Promise<void> {
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
       await requireWakeHome(target.id, context, db)
        await goHome(target.id, db, context.actionId)
-      return false
+      return
     }
     if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
      await moveResident(target.id, context.destinationPlaceId, db, context.actionId)
-    return false
+    return
   }
   if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
   const destinationId = destination === 'home'
     ? (await ensurePresence(context.actorId, db)).homePlaceId
     : context.destinationPlaceId
   if (destinationId === null) throw new EngineError(409, 'move destination is unavailable because the effect has no resolved destination; send to_place_id for move and retry')
-  return moveThing(target.id, destinationId, context.actorId, db)
+  await moveThing(target.id, destinationId, context.actorId, db)
 }
 
 async function moveThing(
@@ -794,7 +804,7 @@ async function moveThing(
   destinationId: number,
   actorId: number,
   db: TaggedSql,
-): Promise<boolean> {
+): Promise<void> {
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
@@ -802,7 +812,7 @@ async function moveThing(
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
-  if (thing.placeId === destinationId) return false
+  if (thing.placeId === destinationId) return
   const places = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
     SELECT place.id, place.parent_id, place.owner_id, place.open_to_things,
       place.retired_at,
@@ -853,7 +863,6 @@ async function moveThing(
     SELECT id FROM moved
   `)
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move; re-read both and retry')
-  return true
 }
 
 async function transferAsset(
@@ -861,9 +870,9 @@ async function transferAsset(
   actorId: number,
   recipientId: number,
   db: TaggedSql,
-): Promise<boolean> {
+): Promise<void> {
   if (target.type === 'resident') throw new EngineError(403, 'an agent is never property; transfer only a place, thing, or kind you own')
-  if (actorId === recipientId) return false
+  if (actorId === recipientId) return
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db, { forUpdate: true })
     if (thing?.ownerId === actorId && thing.heldBy != null) {
@@ -947,7 +956,6 @@ async function transferAsset(
         ) SELECT id FROM transfer
       `
   if ((await queryRows(conditions)).length === 0) await throwTransferFailure(target, actorId, db)
-  return true
 }
 
 async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<never> {

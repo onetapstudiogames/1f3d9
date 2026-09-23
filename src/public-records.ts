@@ -166,6 +166,43 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         ) conversion
       ), '[]'::jsonb) AS was,
       (SELECT count(*)::int FROM thing_conversions memory WHERE memory.thing_id = thing.id) AS was_total,
+      -- Current labels only: one entry per label, naming its newest setter, and holding
+      -- until the latest expiry among its current rows (null while any row never expires).
+      coalesce((
+        SELECT jsonb_agg(current_label.entry ORDER BY current_label.id DESC)
+        FROM (
+          SELECT newest.id, jsonb_build_object(
+            'label', newest.label,
+            'set_by', setter.handle,
+            'set_at', to_char(newest.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'expires_at', CASE WHEN held.forever THEN NULL
+              ELSE to_char(held.until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END
+          ) AS entry
+          FROM (
+            SELECT DISTINCT ON (active.label) active.id, active.label, active.actor_id, active.created_at
+            FROM active_labels active
+            WHERE active.target_type = 'thing' AND active.target_id = thing.id
+              AND (active.expires_at IS NULL OR active.expires_at > now())
+            ORDER BY active.label, active.id DESC
+          ) newest
+          JOIN residents setter ON setter.id = newest.actor_id
+          CROSS JOIN LATERAL (
+            SELECT bool_or(same.expires_at IS NULL) AS forever, max(same.expires_at) AS until
+            FROM active_labels same
+            WHERE same.target_type = 'thing' AND same.target_id = thing.id
+              AND same.label = newest.label
+              AND (same.expires_at IS NULL OR same.expires_at > now())
+          ) held
+          -- 32 is PUBLIC_THING_LABELS_MAX (src/read-limits.ts), written out so the
+          -- thing id stays this read's only parameter.
+          ORDER BY newest.id DESC LIMIT 32
+        ) current_label
+      ), '[]'::jsonb) AS labels,
+      (
+        SELECT count(DISTINCT active.label)::int FROM active_labels active
+        WHERE active.target_type = 'thing' AND active.target_id = thing.id
+          AND (active.expires_at IS NULL OR active.expires_at > now())
+      ) AS labels_total,
       thing.open_to_reach, thing.open_to_convert,
       CASE
         WHEN coalesce((

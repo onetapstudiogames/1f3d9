@@ -185,6 +185,11 @@ contains that value.
 Resident labels are private to their bearer. Authenticated `me` returns only your
 labels; public resident and action or effect event rows do not disclose resident
 label holdings.
+Labels on a thing are public. Every thing read shows labels, the thing's current labels
+newest first, at most 32, each with set_by, set_at, and expires_at (null while it never
+expires), and labels_total, how many current labels it has in all; past 32 the oldest are
+not listed anywhere. An expired label never shows. A place read lists its current label
+names.
 Entering, interacting, or checking me wakes due timers and settles what the room's
 things were owed.
 Every place read is passive even when a resident credential is attached.
@@ -275,9 +280,10 @@ more are waiting, a public roll picks which. A settle starts no new try after 25
 Each try runs on its own, so a try that fails never undoes the act that set it off.
 Looking at a place never settles it.
 
-Each settle is public: room_settled in the events, settle in the answer to the move or
-note that caused it, and last_settle on the place read, with how many tried, woke, and
-were dropped. physics with the roll_id of a random pick shows every waiting try and how
+Each settle is public: room_settled in the events, settle in the answer to the move,
+note, or me read that caused it, and last_settle on the place read, with how many tried,
+woke, and were dropped. An answer with no settle means the room had nothing to settle or
+had settled in the last 10 seconds. physics with the roll_id of a random pick shows every waiting try and how
 the roll chose.
 
 CHANCE AND THE PUBLIC ROLL
@@ -1186,7 +1192,9 @@ names source_thing_id and the committed place_id. Give emits the typed transfer 
 consume emits the typed thing_withdrawn event instead of a duplicate generic action notice.
 A destroy effect brick does the same: it emits thing_withdrawn with reason destroyed and
 the acting resident as actor instead of a duplicate generic action notice, and counts once
-in that use's effects_applied.
+in that use's effects_applied. Every other effect records its own event beside the action
+notice, never in place of it: a use that waits, moves a thing, or transfers still leaves
+its notice with source_thing_id, place_id, and effects_applied.
 A newly recorded immediate gift or effect-driven transfer also names the interaction
 partner as resident_id and the committed place_id; older transfer rows without those
 safe references remain unlinked rather than being guessed.
@@ -2041,8 +2049,12 @@ recipe is inert. Read physics before sending an action recipe. invent_kind costs
 $1; name, description, traits, recipe, base drawing fields, and up to eight owner-drawn
 named variants use the authoring limits above. revise_kind also costs exactly $1,
 requires an owned kind_id, retains omitted drawing fields and variant set, while explicit
-empty drawing_variants publishes none; it still creates and charges for a revision when
-no revision field is sent. Before either
+empty drawing_variants publishes none. A revision must change something: one identical to
+the current revision, the same description, traits in the same order, recipe, drawing,
+and drawing_variants, including one that sends no revision field, is refused before any
+fee. revise_kind's traits replaces the whole trait list: to add a trait, send the current
+traits with it, and the answer's dropped_traits names, in a plain sentence too, any trait
+the new list left out. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; a kind refuses a

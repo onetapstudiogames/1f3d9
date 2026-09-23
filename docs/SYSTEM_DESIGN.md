@@ -713,6 +713,13 @@ The server hardcodes **meanings never, mechanisms only**:
 - Resident labels are private to their bearer. Authenticated `GET /api/me` returns
   only that resident's distinct labels; public resident and action or effect event
   rows do not disclose resident label holdings.
+- Labels on a thing are public. `GET /api/thing/:id`, the official `look` of a thing,
+  and the thing_edit and thing_upgrade answers carry `labels`: one entry per current label
+  (`label`, `set_by` the newest setter's handle, `set_at` its time, and `expires_at`, the
+  latest expiry among its current rows or null while any never expires), newest first and
+  at most 32 (`PUBLIC_THING_LABELS_MAX`), beside `labels_total`, the exact count of
+  current labels. Expired labels never show. The window's thing view names the listed
+  labels and how many more there are.
 - The world has no owner and accepts no laws. Law ancestry stops at the owner boundary,
   so neither world laws nor world permissions can govern child continents.
 - There is no universal physics and no way to legislate the whole world. Residents
@@ -767,7 +774,10 @@ The server hardcodes **meanings never, mechanisms only**:
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
-  read shows the dials, `rough_room`, and `last_settle`; every subplace, map, and
+  read shows the dials, `rough_room`, and `last_settle`; the answer to the move, the note,
+  or the `GET /api/me` read that caused a settle carries it as `settle` (`settle_id`,
+  `tried`, `woke`, `forfeited`), and omits `settle` when the room had nothing to settle
+  or had settled in the last 10 seconds; every subplace, map, and
   continent row carries `rough_room` too; the thing read shows
   `wake_enabled`, `wake`, and `state`. The dated public snapshots do not carry the new
   tables, columns, or event kinds yet.
@@ -1781,6 +1791,11 @@ Successful generic `move` and `go_home` notices include `from_place_id` and
 an addressable `thing_moved` event carrying the same `action_id`. Successful `use`
 includes `source_thing_id` and its committed `place_id`. Give and consume emit the
 typed `transfer` and `thing_withdrawn` events instead of duplicate generic action events.
+Among a trait's or a law's effects only a destroy does the same, with its `thing_withdrawn`;
+every other effect records its event beside the action's public row, never in place of it,
+so a use that waits (`effect_scheduled`), moves a thing (`thing_moved`), or transfers
+(`transfer`) still leaves its `action` event with `source_thing_id`, `place_id`, and
+`effects_applied` (decision #117).
 New immediate-gift and effect-driven `transfer` notices also name the safely identified
 interaction partner as `resident_id` and the committed `place_id`; older transfer notices
 without both references remain unlinked.
@@ -1976,8 +1991,13 @@ event or drawing revision.
 
 `coin_trait` is free and uses the existing safe name, description, recipe, and physics
 ceilings. `invent_kind` and owner-only `revise_kind` each cost exactly $1 and use the
-existing kind limits. A revision retains omitted fields but still creates and charges
-when no revision field is sent. A caller uses `credit_preflight` before deliberate credit,
+existing kind limits. A revision retains omitted fields, and must change something it
+stores: one identical to the current revision (description, traits in order, recipe,
+drawing, and drawing_variants), including one that sends no revision field, is refused
+with 409 before any payment or credit spend. A supplied `traits` replaces the whole trait
+list; the revision answer carries `dropped_traits`, the earlier revision's traits the new
+list left out in their old order, plus `dropped_traits_note`, one sentence naming them,
+when that list is not empty. A caller uses `credit_preflight` before deliberate credit,
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 

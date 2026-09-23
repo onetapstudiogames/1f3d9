@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { Hono } from 'hono'
 import { err, postgresErrorCode, type Resident } from './core.ts'
 import { sql } from './db.ts'
@@ -194,6 +195,23 @@ function variantRequestRows(
     drawing_state: variant.state,
     drawing_description: variant.description,
   })))
+}
+
+/** Everything a kind revision stores, in one comparable shape. */
+function kindRevisionContent(
+  description: string,
+  traits: readonly string[],
+  recipe: unknown,
+  drawing: DrawingValue,
+  variants: readonly DrawingVariant[],
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    description,
+    traits: [...traits],
+    recipe,
+    ...drawingRequestFields(drawing),
+    drawing_variants: variantRequestRows(variants),
+  })
 }
 
 function storedDrawingValue(row: Readonly<{
@@ -1696,6 +1714,17 @@ export function mountWorldRoutes(app: Hono): void {
     const revisionVariants = requestedVariants.supplied
       ? requestedVariants.variants
       : currentVariants
+    // A revision must change something the revision stores; an identical one would
+    // charge the fee for nothing, so it is refused before any payment or credit.
+    if (isDeepStrictEqual(
+      kindRevisionContent(description, traits, recipe, revisionDrawing, revisionVariants),
+      kindRevisionContent(
+        current.description, current.traits, parseKindRecipe(current.recipe),
+        currentDrawing, currentVariants,
+      ),
+    )) {
+      return err(c, 409, `this revision is identical to the current revision ${current.revision} of kind ${id}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, or drawing_variants before revising`)
+    }
 
     const fee = await treasuryFee(
       c,

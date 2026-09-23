@@ -730,7 +730,14 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'drawing_description', revision.drawing_description,
         'drawing_variants', revision.drawing_variants,
         'created_at', kind.created_at
-      )) || CASE WHEN request.method = 'x402'
+      )) || jsonb_build_object('dropped_traits', to_jsonb(dropped.names))
+      || CASE WHEN cardinality(dropped.names) = 0 THEN '{}'::jsonb
+        ELSE jsonb_build_object('dropped_traits_note',
+          'traits replaces the whole list, so revision ' || revision.revision::text ||
+          ' left out ' || array_to_string(dropped.names, ', ') || ' that revision ' ||
+          (revision.revision - 1)::text || ' had; to keep a trait, send it in traits with the rest')
+        END
+      || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(
           'spent_usdc', '1.000000',
@@ -743,6 +750,14 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
     FROM changed_kind kind
     JOIN revised_kind_revision revision ON revision.kind_id = kind.id
     JOIN kind_revision_shaped request ON request.asset_id = kind.id
+    -- The new list replaces the whole old one; name what it left out, in the old order.
+    CROSS JOIN LATERAL (
+      SELECT coalesce(array_agg(old.name ORDER BY old.position), '{}'::text[]) AS names
+      FROM kind_revisions prior
+      CROSS JOIN LATERAL unnest(prior.traits) WITH ORDINALITY old(name, position)
+      WHERE prior.kind_id = kind.id AND prior.revision = revision.revision - 1
+        AND old.name <> ALL(revision.traits)
+    ) dropped
   ), operation_result AS MATERIALIZED (
     SELECT * FROM frontier_result
     UNION ALL SELECT * FROM kind_invention_result
