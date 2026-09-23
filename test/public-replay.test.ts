@@ -92,6 +92,7 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
         owner: 'lamp-reader',
         has_drawing: true,
         quiet: true,
+        rough_room: true,
       }]
     }
     if (statement.includes('public:replay-start')) {
@@ -172,6 +173,7 @@ test('the builder pins the file, sorts the timeline, moderates note lines, and e
   assert.equal(Object.hasOwn(replay, 'rest_at'), false)
   assert.equal(Object.hasOwn(replay, 'before_id'), false)
   assert.equal(replay.map.places[0]?.has_drawing, true)
+  assert.equal(replay.map.places[0]?.rough_room, true, 'a replay map row carries the rough mark')
   assert.equal(Object.hasOwn(replay.map.places[0] ?? {}, 'drawing_marker'), false)
   assert.deepEqual(replay.start['resident:7'], { place_id: 2, origin_event_id: 101 })
   assert.equal(replay.start['thing:80'], undefined)
@@ -345,7 +347,7 @@ test('the builder gives the no-record state a typed refusal', async () => {
 test('credential safety accepts a large valid replay without skipping row checks', () => {
   const places = Array.from({ length: 800 }, (_, index) => Object.freeze({
     id: index + 1, parent_id: null, name: `place ${index + 1}`,
-    owner_id: null, owner: null, has_drawing: false, quiet: false,
+    owner_id: null, owner: null, has_drawing: false, quiet: false, rough_room: false,
   }))
   const start = Object.fromEntries(Array.from({ length: 800 }, (_, index) => [
     `resident:${index + 1}`, Object.freeze({ place_id: index + 1 }),

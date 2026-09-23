@@ -58,6 +58,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
         notes: safeCount(rawPlace.notes),
         moderated,
         quiet: rawPlace.quiet === true,
+        rough_room: rawPlace.rough_room === true,
         children: normalizePlaces(rawPlace.children, depth + 1, nextSeen),
       }]
     })
@@ -110,7 +111,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
       const parentId = raw.parent_id === null ? null : safeId(raw.parent_id)
       const name = safeText(raw.name, '', 120, false)
       return id && name && (raw.parent_id === null || parentId)
-        ? [{ id, parent_id: parentId, name, quiet: raw.quiet === true }]
+        ? [{ id, parent_id: parentId, name, quiet: raw.quiet === true, rough_room: raw.rough_room === true }]
         : []
     }))
     const residentsByHandle = new Map()

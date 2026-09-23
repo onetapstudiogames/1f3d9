@@ -14,7 +14,8 @@ const DIRECTORY_SQL = `
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
     NULL::text AS handle,
     NULL::boolean AS has_drawing,
-    place.quiet
+    place.quiet,
+    place.rough_room
   FROM places place
   LEFT JOIN LATERAL (
     SELECT moderation.action
@@ -32,7 +33,8 @@ const DIRECTORY_SQL = `
     NULL::text AS name,
     resident.handle,
     ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
-    NULL::boolean AS quiet
+    NULL::boolean AS quiet,
+    NULL::boolean AS rough_room
   FROM residents resident
   ORDER BY entry_type, id
 `
@@ -48,6 +50,7 @@ export interface PublicDirectoryPlace {
   readonly parent_id: number | null
   readonly name: string
   readonly quiet: boolean
+  readonly rough_room: boolean
 }
 
 export interface PublicDirectoryResident {
@@ -74,6 +77,7 @@ function publicDirectoryPlace(row: Readonly<Record<string, unknown>>): PublicDir
   }
   return Object.freeze({
     type: 'place' as const, id, parent_id: parentId, name, quiet: row.quiet === true,
+    rough_room: row.rough_room === true,
   })
 }
 

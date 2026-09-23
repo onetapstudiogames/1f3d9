@@ -756,7 +756,10 @@ The server hardcodes **meanings never, mechanisms only**:
   then one `room_settled` event. A thing needs its kind's wake key, `wake_enabled`, and
   the room owner's leave (`wake_visitors`, `wake_pins`, `wake_block_thing_ids`,
   `wake_block_resident_ids`, `wake_random_cap`). A wake try may block or send home the
-  resident who arrived only where `rough_room` is true; going home is never blockable.
+  resident who arrived only where `rough_room` is true, while that resident is still in
+  the room, and only if their `resident_presence.arrived_at` is at or after the room's
+  `rough_since` (the `places_mark_rough_since` and `resident_presence_mark_arrival`
+  triggers keep both); going home is never blockable.
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place

@@ -201,6 +201,7 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       one_per_kind: 'a kind revision may list only one trait with a wake key',
       actor_steps: Object.freeze(['label', 'check_label', 'chance', 'write']),
       rough_room_steps: Object.freeze(['block actor', 'move actor to home']),
+      rough_room_entry: 'only a resident still in the room who came in at or after its owner last switched rough_room on',
       never_in_wake: Object.freeze(['transfer', 'target', 'move to destination']),
       resident_label_seconds: RESIDENT_ABILITY_LABEL_SECONDS,
       thing_switch: 'wake_enabled',

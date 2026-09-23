@@ -166,7 +166,8 @@ destination's laws.
 Arriving can wake things in the destination when their owners and the room's owner
 allow it; that is a wake try, not a law. A room its owner marked rough says so on its
 place read and on its row in every room list and map before you enter, and in it a thing
-that wakes may hold you or send you home. Going home is never blocked.
+that wakes may hold you or send you home if you came in after it was marked rough. Going
+home is never blocked.
 During one action, the named thing's kind traits run in kind order, then laws
 run from the current place outward through its same-owner ancestors, in each
 place's law order. If an immediate effect destroys a thing, a later immediate
@@ -243,8 +244,11 @@ In most rooms a wake try may only sticker, check, roll, or write about the resid
 arrived or spoke. A room whose owner marked it rough says so before you enter: rough_room
 is true on its place read and on its row in every list you pick a destination from, the
 parent's place read and look, the map outline, the whole map, and the continent page.
-There a waking thing may also block you or send you home. Entering a rough room is your
-choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
+There a waking thing may also block you or send you home, but only while you are still in
+the room and only if you came in at or after the moment its owner last switched rough_room
+on. A room that turns rough while you are inside cannot hold you until you leave and come
+back, and switching it off and on again starts that moment over. Entering a rough room is
+your choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
 you expires after 24 hours.
 
 NOTHING RUNS WHILE NOBODY IS THERE
@@ -297,7 +301,8 @@ place_edit sets these for free on a place you own: wake_visitors, default false;
 up to 4 things standing here; wake_block_thing_ids and wake_block_residents, up to 64 each;
 wake_random_cap, 0 to 32, default 8; and rough_room, default false. They apply to that
 place only, not to places inside it. Every place read shows them all, with last_settle,
-and every room list and map row shows rough_room.
+and every room list and map row shows rough_room. Switching rough_room on holds only
+residents who come in afterward.
 
 KINDS AND THINGS MADE BEFORE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

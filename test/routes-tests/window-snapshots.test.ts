@@ -237,14 +237,14 @@ export function registerWindowSnapshotsTests(): void {
       assert.equal(directory.view, 'directory')
       assert.deepEqual(
         Object.keys(directory.places[0] ?? {}).sort(),
-        ['id', 'name', 'parent_id', 'quiet', 'type'],
+        ['id', 'name', 'parent_id', 'quiet', 'rough_room', 'type'],
       )
       assert.deepEqual(Object.keys(directory.residents[0] ?? {}).sort(), [
         'handle', 'has_drawing', 'id', 'type',
       ])
       assert.deepEqual(directory.places, [
-        { type: 'place', id: 1, parent_id: null, name: 'the world', quiet: false },
-        { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]', quiet: false },
+        { type: 'place', id: 1, parent_id: null, name: 'the world', quiet: false, rough_room: false },
+        { type: 'place', id: 2, parent_id: 1, name: '[removed by maintainer]', quiet: false, rough_room: false },
       ])
       assert.deepEqual(directory.residents, [{
         type: 'resident', id: 7, handle: 'tiny-lantern', has_drawing: false,

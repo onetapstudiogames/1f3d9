@@ -201,6 +201,11 @@ export function registerMigrationSelectionTests(): void {
       )
     }
     assert.match(uncommented, /CREATE\s+TRIGGER\s+things_sleep_on_owner_change\s+BEFORE\s+UPDATE\s+OF\s+owner_id\s+ON\s+things/i)
+    // A rough room holds only visitors who came in after it was marked rough (decision #109).
+    assert.match(uncommented, /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+rough_since\s+TIMESTAMPTZ;/i)
+    assert.match(uncommented, /ALTER\s+TABLE\s+resident_presence\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+arrived_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+now\(\)/i)
+    assert.match(uncommented, /CREATE\s+TRIGGER\s+places_mark_rough_since\s+BEFORE\s+INSERT\s+OR\s+UPDATE\s+OF\s+rough_room,\s*rough_since\s+ON\s+places/i)
+    assert.match(uncommented, /CREATE\s+TRIGGER\s+resident_presence_mark_arrival\s+BEFORE\s+UPDATE\s+OF\s+current_place_id,\s*arrived_at\s+ON\s+resident_presence/i)
     for (const later of ['generation', 'parent_thing_id', 'family_id', 'copies_made', 'open_to_reach', 'open_to_convert', 'as_kind_id', 'growth_cap_per_day', 'allow_arriving_copies']) {
       assert.doesNotMatch(uncommented, new RegExp(String.raw`\b${later}\b`, 'i'), `${later} belongs to a later change`)
     }

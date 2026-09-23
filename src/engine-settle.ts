@@ -333,12 +333,12 @@ async function claimSettle(
   })
 }
 
-/** Recheck, inside the try's own transaction, that the thing may still wake here as claimed. */
+/** Recheck, inside the try's own transaction, that the thing may still wake here, and say who owns it now. */
 async function stillEligible(
   candidate: Candidate,
   placeId: number,
   db: TaggedSql,
-): Promise<string | null> {
+): Promise<Readonly<{ ownerId: number; ownerHandle: string }> | null> {
   const rows = await db`
     SELECT owner.handle AS owner_handle, thing.owner_id,
       place.owner_id AS room_owner_id, place.wake_visitors, place.wake_pins,
@@ -368,8 +368,11 @@ async function stillEligible(
     blockedResidentIds: ids(row.wake_block_resident_ids),
     randomCap: 0,
   }
+  // The thing may have changed hands since the claim; its try answers to whoever owns it now.
   const current = { ...candidate, ownerId: Number(row.owner_id) }
-  return allowedHere(current, room) ? String(row.owner_handle) : null
+  return allowedHere(current, room)
+    ? Object.freeze({ ownerId: current.ownerId, ownerHandle: String(row.owner_handle) })
+    : null
 }
 
 type TryStatus = 'woke' | 'quiet' | 'failed' | 'stopped'
@@ -404,15 +407,15 @@ async function runTry(
   const rollLog = newRollLog()
   try {
     return await withEngineTransaction(db, async transaction => {
-      const ownerHandle = await stillEligible(candidate, placeId, transaction)
-      if (ownerHandle === null) {
+      const owner = await stillEligible(candidate, placeId, transaction)
+      if (owner === null) {
         await recordTry(claim.settleId, unit, 'quiet', { error: NO_LONGER_ELIGIBLE }, transaction)
         return 'quiet' as const
       }
       const context: EffectExecutionContext = {
         actionId: null,
-        actorId: candidate.ownerId,
-        actorHandle: ownerHandle,
+        actorId: owner.ownerId,
+        actorHandle: owner.ownerHandle,
         actorSymbolId: unit.reason === 'clock' ? null : residentId,
         fromWake: true,
         trigger: `wake_${unit.reason}`,

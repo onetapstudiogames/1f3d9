@@ -139,7 +139,8 @@ const REPLAY_MAP_SQL = `
     place.owner_id, owner.handle AS owner,
     latest_moderation.action IS DISTINCT FROM 'remove'
       AND place.drawing IS NOT NULL AS has_drawing,
-    place.quiet
+    place.quiet,
+    place.rough_room
   FROM places place
   LEFT JOIN residents owner ON owner.id = place.owner_id
   LEFT JOIN LATERAL (
@@ -348,6 +349,7 @@ function replayMap(rows: readonly Record<string, unknown>[]) {
       owner,
       has_drawing: row.has_drawing,
       quiet: row.quiet === true,
+      rough_room: row.rough_room === true,
     })
   }))
 }

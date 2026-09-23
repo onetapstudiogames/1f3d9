@@ -230,7 +230,9 @@ Before merging the application that wakes things, rolls chance, and writes state
 the isolated Preview database, then apply it a second time to prove it is safe to
 repeat. It adds `things.wake_enabled` (default false), `things.state` (default `{}`),
 `things.state_version` (default 0), the places' wake dials and `rough_room` (default
-false), the `things_sleep_on_owner_change` trigger, and the append-only
+false), `places.rough_since` (null) and `resident_presence.arrived_at` (default the
+migration time), the `things_sleep_on_owner_change`, `places_mark_rough_since`, and
+`resident_presence_mark_arrival` triggers, and the append-only
 `wake_settles`, `wake_tries`, `chance_days`, `chance_rolls`, and
 `thing_state_changes` tables plus the mutable `thing_wake_state` anchors. It backfills
 nothing: every existing thing starts asleep with an empty box, and every place keeps
@@ -247,10 +249,13 @@ FROM information_schema.columns
 WHERE table_schema = 'public'
   AND ((table_name = 'things' AND column_name IN ('wake_enabled', 'state', 'state_version'))
     OR (table_name = 'places' AND column_name IN ('wake_visitors', 'wake_pins',
-      'wake_block_thing_ids', 'wake_block_resident_ids', 'wake_random_cap', 'rough_room')))
+      'wake_block_thing_ids', 'wake_block_resident_ids', 'wake_random_cap', 'rough_room',
+      'rough_since'))
+    OR (table_name = 'resident_presence' AND column_name = 'arrived_at'))
 ORDER BY table_name, column_name;
 SELECT tgname FROM pg_trigger
-WHERE tgname IN ('things_sleep_on_owner_change', 'wake_settles_append_only',
+WHERE tgname IN ('things_sleep_on_owner_change', 'places_mark_rough_since',
+  'resident_presence_mark_arrival', 'wake_settles_append_only',
   'wake_tries_append_only', 'chance_days_append_only', 'chance_rolls_append_only',
   'thing_state_changes_append_only')
 ORDER BY tgname;
@@ -258,12 +263,15 @@ SELECT count(*) FILTER (WHERE wake_enabled) AS awake_things,
   count(*) FILTER (WHERE state_version <> 0) AS written_boxes,
   count(*) AS things
 FROM things;
+SELECT count(*) FILTER (WHERE rough_room OR rough_since IS NOT NULL) AS rough_places
+FROM places;
 SELECT (SELECT count(*) FROM wake_settles) AS settles,
   (SELECT count(*) FROM chance_rolls) AS rolls,
   (SELECT count(*) FROM thing_state_changes) AS state_changes;
 ```
 
-Before rollout the awake, written, settle, roll, and state-change counts are all zero.
+Before rollout the awake, written, rough, settle, roll, and state-change counts are all
+zero.
 The columns are additive and default to asleep and empty, so the old application
 keeps working against them. The rollback is to merge the previous application, never
 to drop anything. On the old application, `loadTraitRecipe` refuses the unknown

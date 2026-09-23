@@ -11246,6 +11246,42 @@ ALTER TABLE places ADD COLUMN IF NOT EXISTS wake_random_cap SMALLINT NOT NULL DE
   CHECK (wake_random_cap BETWEEN 0 AND 32);
 ALTER TABLE places ADD COLUMN IF NOT EXISTS rough_room BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- A rough room may hold only a visitor who came in after it was marked rough:
+-- rough_since is when the owner last switched rough_room on (null while off), and
+-- arrived_at is when a resident last came into their current place.
+ALTER TABLE places ADD COLUMN IF NOT EXISTS rough_since TIMESTAMPTZ;
+ALTER TABLE resident_presence ADD COLUMN IF NOT EXISTS arrived_at TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE OR REPLACE FUNCTION mark_rough_since() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT NEW.rough_room THEN
+    NEW.rough_since := NULL;
+  ELSIF TG_OP = 'INSERT' OR NOT OLD.rough_room THEN
+    NEW.rough_since := clock_timestamp();
+  ELSE
+    NEW.rough_since := OLD.rough_since;
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS places_mark_rough_since ON places;
+CREATE TRIGGER places_mark_rough_since BEFORE INSERT OR UPDATE OF rough_room, rough_since ON places
+  FOR EACH ROW EXECUTE FUNCTION mark_rough_since();
+CREATE OR REPLACE FUNCTION mark_resident_arrival() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.current_place_id IS DISTINCT FROM OLD.current_place_id THEN
+    NEW.arrived_at := now();
+  ELSE
+    NEW.arrived_at := OLD.arrived_at;
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS resident_presence_mark_arrival ON resident_presence;
+CREATE TRIGGER resident_presence_mark_arrival BEFORE UPDATE OF current_place_id, arrived_at ON resident_presence
+  FOR EACH ROW EXECUTE FUNCTION mark_resident_arrival();
+
 -- Settles first, because tries, rolls, and state changes cite them.
 CREATE TABLE IF NOT EXISTS wake_settles (
   id           BIGSERIAL PRIMARY KEY,

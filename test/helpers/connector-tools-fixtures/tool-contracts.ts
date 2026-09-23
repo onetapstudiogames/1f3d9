@@ -83,7 +83,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         wake_visitors: { type: 'boolean', description: "let visitors' things wake here; default false" },
         rough_room: {
           type: 'boolean',
-          description: 'let a thing waking here block or send home a resident who arrives or speaks; default false; shown on every place read',
+          description: 'let a thing waking here block or send home a resident who arrives or speaks, if they came in after you switched it on; default false; shown on every place read',
         },
         wake_pins: {
           type: 'array',

@@ -112,10 +112,15 @@ const PRE_ABILITIES_DDL = `
   DROP SEQUENCE chance_rolls_id_seq;
   DROP TRIGGER things_sleep_on_owner_change ON things;
   DROP FUNCTION sleep_thing_on_owner_change();
+  DROP TRIGGER places_mark_rough_since ON places;
+  DROP FUNCTION mark_rough_since();
+  DROP TRIGGER resident_presence_mark_arrival ON resident_presence;
+  DROP FUNCTION mark_resident_arrival();
+  ALTER TABLE resident_presence DROP COLUMN arrived_at;
   ALTER TABLE things DROP COLUMN wake_enabled, DROP COLUMN state, DROP COLUMN state_version;
   ALTER TABLE places DROP COLUMN wake_visitors, DROP COLUMN wake_pins,
     DROP COLUMN wake_block_thing_ids, DROP COLUMN wake_block_resident_ids,
-    DROP COLUMN wake_random_cap, DROP COLUMN rough_room;
+    DROP COLUMN wake_random_cap, DROP COLUMN rough_room, DROP COLUMN rough_since;
 `
 
 test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 }, async t => {
@@ -124,6 +129,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
     await t.test('the abilities migration is additive and repeatable', async () => {
       const rooms = await resetCity([FOUNDER, MAKER])
       const db = connectedDatabase()
+      await standIn(MAKER.id, rooms.eastRoomId)
       await db.query(PRE_ABILITIES_DDL)
       const thingId = Number((await db.query<{ id: number }>(`
         INSERT INTO things (place_id, name, body, owner_id, maker_id)
@@ -139,7 +145,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.deepEqual(thing, { wake_enabled: false, state: {}, state_version: 0 })
       const place = (await db.query(`
         SELECT wake_visitors, wake_pins, wake_block_thing_ids, wake_block_resident_ids,
-          wake_random_cap, rough_room
+          wake_random_cap, rough_room, rough_since
         FROM places WHERE id = $1
       `, [rooms.eastRoomId])).rows[0]
       assert.deepEqual(place, {
@@ -149,19 +155,44 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         wake_block_resident_ids: [],
         wake_random_cap: 8,
         rough_room: false,
+        rough_since: null,
       })
+      const arrivedBefore = (await db.query<{ arrived_at: Date }>(
+        'SELECT arrived_at FROM resident_presence WHERE resident_id = $1', [MAKER.id],
+      )).rows[0]!.arrived_at
+      assert.ok(arrivedBefore instanceof Date, 'a resident already standing somewhere gets an arrival time')
+
+      // rough_since follows the switch: set when it turns on, kept while on, cleared when off.
+      await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.eastRoomId])
+      const since = (await db.query<{ rough_since: Date }>('SELECT rough_since FROM places WHERE id = $1', [rooms.eastRoomId])).rows[0]!.rough_since
+      assert.ok(since instanceof Date && since.getTime() >= arrivedBefore.getTime())
+      await db.query(`UPDATE places SET rough_room = TRUE, rough_since = now() - interval '1 day' WHERE id = $1`, [rooms.eastRoomId])
+      assert.deepEqual((await db.query('SELECT rough_since FROM places WHERE id = $1', [rooms.eastRoomId])).rows[0]!.rough_since, since)
+      await db.query('UPDATE places SET rough_room = FALSE WHERE id = $1', [rooms.eastRoomId])
+      assert.equal((await db.query('SELECT rough_since FROM places WHERE id = $1', [rooms.eastRoomId])).rows[0]!.rough_since, null)
+      // arrived_at changes only when the resident's current place does.
+      await db.query(`UPDATE resident_presence SET arrived_at = now() - interval '1 day', current_place_id = current_place_id WHERE resident_id = $1`, [MAKER.id])
+      assert.deepEqual((await db.query('SELECT arrived_at FROM resident_presence WHERE resident_id = $1', [MAKER.id])).rows[0]!.arrived_at, arrivedBefore)
+      await standIn(MAKER.id, rooms.westRoomId)
+      const arrivedAfter = (await db.query<{ arrived_at: Date }>(
+        'SELECT arrived_at FROM resident_presence WHERE resident_id = $1', [MAKER.id],
+      )).rows[0]!.arrived_at
+      assert.ok(arrivedAfter.getTime() >= since.getTime(), 'walking into another place resets the arrival time')
       const columns = (await db.query<{ table_name: string; column_name: string; data_type: string; is_nullable: string }>(`
         SELECT table_name, column_name, data_type, is_nullable
         FROM information_schema.columns
         WHERE table_schema = 'public'
           AND ((table_name = 'things' AND column_name IN ('wake_enabled', 'state', 'state_version'))
-            OR (table_name = 'places' AND column_name IN ('wake_visitors', 'wake_random_cap', 'rough_room')))
+            OR (table_name = 'places' AND column_name IN ('wake_visitors', 'wake_random_cap', 'rough_room', 'rough_since'))
+            OR (table_name = 'resident_presence' AND column_name = 'arrived_at'))
         ORDER BY table_name, column_name
       `)).rows
       assert.deepEqual(columns, [
         { table_name: 'places', column_name: 'rough_room', data_type: 'boolean', is_nullable: 'NO' },
+        { table_name: 'places', column_name: 'rough_since', data_type: 'timestamp with time zone', is_nullable: 'YES' },
         { table_name: 'places', column_name: 'wake_random_cap', data_type: 'smallint', is_nullable: 'NO' },
         { table_name: 'places', column_name: 'wake_visitors', data_type: 'boolean', is_nullable: 'NO' },
+        { table_name: 'resident_presence', column_name: 'arrived_at', data_type: 'timestamp with time zone', is_nullable: 'NO' },
         { table_name: 'things', column_name: 'state', data_type: 'jsonb', is_nullable: 'NO' },
         { table_name: 'things', column_name: 'state_version', data_type: 'integer', is_nullable: 'NO' },
         { table_name: 'things', column_name: 'wake_enabled', data_type: 'boolean', is_nullable: 'NO' },
@@ -756,6 +787,135 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal((lastTry.last_try as Json).error, sentence, "the thing's owner reads why, not advice meant for the visitor")
       const presence = (await db.query('SELECT current_place_id FROM resident_presence WHERE resident_id = $1', [VISITOR.id])).rows[0]
       assert.equal(presence!.current_place_id, rooms.eastRoomId, 'the visitor stays where they walked')
+    })
+
+    await t.test('a thing that changed hands between the claim and its try acts as its new owner', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET wake_visitors = TRUE WHERE id = $1', [rooms.eastRoomId])
+      assert.equal((await coin(app, FOUNDER.secret, 'greeter', {
+        wake: { then: [
+          { effect: 'label', target: 'actor', label: 'greeted' },
+          { effect: 'write', key: 'last', op: 'set', value: { from: 'actor' } },
+        ] },
+      })).status, 201)
+      const kind = await seedKind(FOUNDER.id, 'greeters', [await traitId('greeter')])
+      const first = await seedThing(FOUNDER.id, rooms.eastRoomId, kind, 'first greeter', { wakeEnabled: true })
+      const second = await seedThing(FOUNDER.id, rooms.eastRoomId, kind, 'second greeter', { wakeEnabled: true })
+      // Between the claim and the later try, the thing that has not tried yet is given
+      // to MAKER, who switches it on: two ordinary statements that commit in between.
+      await db.query(`
+        CREATE FUNCTION abilities_hand_over() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+          IF (SELECT count(*) FROM wake_tries) = 1 THEN
+            UPDATE things SET owner_id = ${MAKER.id} WHERE id IN (${first}, ${second}) AND id <> NEW.thing_id;
+            UPDATE things SET wake_enabled = TRUE WHERE id IN (${first}, ${second}) AND id <> NEW.thing_id;
+          END IF;
+          RETURN NEW;
+        END $fn$;
+      `)
+      await db.query('CREATE TRIGGER abilities_hand_over AFTER INSERT ON wake_tries FOR EACH ROW EXECUTE FUNCTION abilities_hand_over()')
+      try {
+        await standIn(VISITOR.id, rooms.continentId)
+        const entered = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+        assert.equal(entered.status, 200)
+      } finally {
+        await db.query('DROP TRIGGER abilities_hand_over ON wake_tries')
+        await db.query('DROP FUNCTION abilities_hand_over()')
+      }
+      const tries = (await db.query<{ thing_id: number; status: string }>('SELECT thing_id, status FROM wake_tries ORDER BY id')).rows
+      assert.deepEqual(tries.map(row => row.status), ['woke', 'woke'])
+      const earlier = tries[0]!.thing_id
+      const handed = tries[1]!.thing_id
+      assert.equal((await db.query('SELECT owner_id FROM things WHERE id = $1', [handed])).rows[0]!.owner_id, MAKER.id)
+      const labels = (await db.query(`
+        SELECT source_thing_id, actor_id FROM active_labels WHERE target_type = 'resident' ORDER BY id
+      `)).rows
+      assert.deepEqual(labels, [
+        { source_thing_id: earlier, actor_id: FOUNDER.id },
+        { source_thing_id: handed, actor_id: MAKER.id },
+      ], "the later try's sticker answers to the thing's new owner")
+      const writes = (await db.query('SELECT thing_id, authority_id, resident_id FROM thing_state_changes ORDER BY id')).rows
+      assert.deepEqual(writes, [
+        { thing_id: earlier, authority_id: FOUNDER.id, resident_id: VISITOR.id },
+        { thing_id: handed, authority_id: MAKER.id, resident_id: VISITOR.id },
+      ], "the later try's write answers to the thing's new owner")
+    })
+
+    /** A visitor whose home is the continent they own, and a thing of FOUNDER's in East Room that wakes on talk. */
+    async function roughRoomScene(name: string, then: readonly unknown[]) {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await db.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES ($1, $2, $2)
+        ON CONFLICT (resident_id) DO UPDATE SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+      `, [VISITOR.id, rooms.continentId])
+      await db.query(`UPDATE places SET owner_id = $1 WHERE id = $2`, [VISITOR.id, rooms.continentId])
+      assert.equal((await coin(app, FOUNDER.secret, name, { wake: { on: ['talk'], every_seconds: 10, then } })).status, 201)
+      await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, `${name}s`, [await traitId(name)]), `a ${name}`, { wakeEnabled: true })
+      let notes = 0
+      const speak = async () => {
+        await ageRoom(rooms.eastRoomId, 120)
+        notes += 1 // a repeated note is a replay and settles nothing, so each one differs
+        const spoke = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: `hello ${notes}` })
+        assert.equal(spoke.status, 201, JSON.stringify(spoke.json).slice(0, 300))
+        return (await db.query<{ status: string; error: string | null }>(
+          'SELECT status, error FROM wake_tries ORDER BY id DESC LIMIT 1',
+        )).rows[0]
+      }
+      const walk = (to: number) => call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: to })
+      const where = async () => Number((await db.query(
+        'SELECT current_place_id FROM resident_presence WHERE resident_id = $1', [VISITOR.id],
+      )).rows[0]!.current_place_id)
+      return { rooms, db, speak, walk, where }
+    }
+    const ROUGH_AFTER_ENTRY = 'this room turned rough after the resident who arrived or spoke came in, or they are no longer here, so a thing waking here may only label, check, roll, or write about them until they come back in while it is rough'
+
+    await t.test('a room that turns rough while a visitor is inside cannot hold them until they leave and come back', async () => {
+      const { rooms, db, speak, walk } = await roughRoomScene('listener', [
+        { effect: 'block', target: 'actor', action: 'move', seconds: 600 },
+      ])
+      const looked = (await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).json
+      assert.equal(((looked.place ?? looked) as Json).rough_room, false, 'plain when the visitor looked')
+      assert.equal((await walk(rooms.eastRoomId)).status, 200)
+      await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.eastRoomId])
+
+      assert.deepEqual(await speak(), {
+        status: 'failed',
+        error: 'this room turned rough after the resident who arrived or spoke came in, or they are no longer here, so a thing waking here may only label, check, roll, or write about them until they come back in while it is rough',
+      })
+      assert.equal((await db.query('SELECT count(*)::int AS n FROM active_blocks WHERE resident_id = $1', [VISITOR.id])).rows[0]!.n, 0)
+      assert.equal((await walk(rooms.continentId)).status, 200, 'the visitor who came in before the mark walks out freely')
+
+      assert.equal((await walk(rooms.eastRoomId)).status, 200, 'coming back in, now under the mark')
+      assert.deepEqual(await speak(), { status: 'woke', error: null })
+      assert.equal((await walk(rooms.continentId)).status, 403, 'a visitor who entered a rough room may be held')
+      const home = await call(app, VISITOR.secret, 'POST', '/api/go-home', {})
+      assert.equal(home.status, 200, 'going home is never blocked')
+      assert.equal((home.json.action as Json).place_id, rooms.continentId)
+    })
+
+    await t.test('switching rough_room off and on again holds only visitors who entered after the last switch on', async () => {
+      const { rooms, speak, walk, where } = await roughRoomScene('bouncer', [{ effect: 'move', target: 'actor', to: 'home' }])
+      const dial = async (rough: boolean) => assert.equal(
+        (await call(app, FOUNDER.secret, 'PATCH', `/api/place/${rooms.eastRoomId}`, { rough_room: rough })).status, 200)
+      await dial(true)
+      assert.equal((await walk(rooms.eastRoomId)).status, 200)
+      await dial(true) // already on: the moment it turned rough stays the same
+      assert.deepEqual(await speak(), { status: 'woke', error: null })
+      assert.equal(await where(), rooms.continentId, 'entered under the mark, so sent home')
+
+      assert.equal((await walk(rooms.eastRoomId)).status, 200)
+      await dial(false)
+      await dial(true)
+      assert.deepEqual(await speak(), { status: 'failed', error: ROUGH_AFTER_ENTRY })
+      assert.equal(await where(), rooms.eastRoomId, 'inside when the dial went off and on again, so not moved')
+
+      assert.equal((await walk(rooms.continentId)).status, 200)
+      assert.equal((await walk(rooms.eastRoomId)).status, 200)
+      assert.deepEqual(await speak(), { status: 'woke', error: null })
+      assert.equal(await where(), rooms.continentId, 'came back in after the last switch on, so sent home')
     })
 
     await t.test('a place read never settles, and concurrent settles claim each owed try once', async () => {

@@ -16,6 +16,8 @@ const WAKE_NO_HOME_ERROR =
   'the resident who arrived or spoke owns no home, so this wake try could not send them home; nothing moved'
 const WAKE_NOT_ROUGH_ERROR =
   'this room is not marked rough, so a thing waking here may only label, check, roll, or write about the resident who arrived or spoke'
+const WAKE_ROUGH_AFTER_ENTRY_ERROR =
+  'this room turned rough after the resident who arrived or spoke came in, or they are no longer here, so a thing waking here may only label, check, roll, or write about them until they come back in while it is rough'
 
 /** Where a program came from, as far as the wake rules care. */
 export interface WakeRunContext {
@@ -33,8 +35,11 @@ export function requireWakeActor(context: WakeRunContext): void {
 
 /**
  * Holding or moving the resident who arrived or spoke is allowed only in a room
- * its owner marked rough, read at the moment the step runs. Going home is never
- * blockable anywhere, so no block from a wake try can stop it.
+ * its owner marked rough, read at the moment the step runs, and only when that
+ * resident is still in the room and came in at or after the moment the owner
+ * last switched rough_room on: a visitor knew the room was rough before
+ * entering. Going home is never blockable anywhere, so no block from a wake try
+ * can stop it.
  */
 export async function requireRoughRoomFor(
   effect: Extract<Effect, { effect: 'block' | 'move' }>,
@@ -44,9 +49,17 @@ export async function requireRoughRoomFor(
   if (context.fromWake !== true || effect.target !== 'actor') return
   requireWakeActor(context)
   if (context.placeId === null) throw new EngineError(409, WAKE_NOT_ROUGH_ERROR)
-  const rows = await db`SELECT rough_room FROM places WHERE id = ${context.placeId}` as unknown
-  const rough = Array.isArray(rows) && (rows[0] as { rough_room?: unknown } | undefined)?.rough_room === true
-  if (!rough) throw new EngineError(409, WAKE_NOT_ROUGH_ERROR)
+  const rows = await db`
+    SELECT place.rough_room,
+      coalesce(presence.current_place_id = place.id
+        AND presence.arrived_at >= place.rough_since, false) AS entered_rough
+    FROM places place
+    LEFT JOIN resident_presence presence ON presence.resident_id = ${context.actorSymbolId ?? null}::integer
+    WHERE place.id = ${context.placeId}
+  ` as unknown
+  const row = Array.isArray(rows) ? rows[0] as { rough_room?: unknown; entered_rough?: unknown } | undefined : undefined
+  if (row?.rough_room !== true) throw new EngineError(409, WAKE_NOT_ROUGH_ERROR)
+  if (row.entered_rough !== true) throw new EngineError(409, WAKE_ROUGH_AFTER_ENTRY_ERROR)
 }
 
 /**
