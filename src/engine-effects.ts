@@ -43,6 +43,7 @@ import {
 import { requireRoughRoomFor, requireWakeActor, requireWakeHome } from './wake-guard.ts'
 import { writeStateBox } from './engine-state.ts'
 import { makeCopy } from './engine-copy.ts'
+import { reachMemberStillConsents, REACH_MEMBER_REFUSED, runReach } from './engine-reach.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -100,6 +101,18 @@ export interface EffectExecutionContext {
   readonly ownProgram?: boolean
   /** What this run made beyond its count: copies, conversions, and reaches. */
   readonly abilityLog?: AbilityLog
+  /** Set on every step a reach runs for one member, target being that member. */
+  readonly reachMember?: ReachMember
+}
+
+/**
+ * How a reach member was admitted: every member for soft steps; for a harder
+ * step, its owner's open_to_reach, or the answering resident's own thing in
+ * that resident's own program.
+ */
+export interface ReachMember {
+  readonly answererId: number
+  readonly admittedBy: 'soft' | 'own' | 'open'
 }
 
 /** How one reach went: members reached, members past its max, and whether the action's limit stopped it. */
@@ -189,6 +202,7 @@ interface PendingRow {
   readonly fromWake: boolean
   readonly settleId: number | null
   readonly ownProgram: boolean
+  readonly reachMember: ReachMember | null
 }
 function objectRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
@@ -453,8 +467,9 @@ async function executeEffectWithOutcome(
       `)
       if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
     }
-    // A sticker a waking thing puts on a resident expires after a day.
-    const expiresInSeconds = context.fromWake === true && target.type === 'resident'
+    // A sticker a waking thing or a reach puts on a resident expires after a day.
+    const expiresInSeconds = (context.fromWake === true || context.reachMember !== undefined)
+      && target.type === 'resident'
       ? RESIDENT_ABILITY_LABEL_SECONDS
       : null
     await queryRows(db`
@@ -547,7 +562,8 @@ async function executeEffectWithOutcome(
       ? effectExecutionOutcome(0, false, destroyedThingIds, [copied.skipped])
       : effectExecutionOutcome(1, true, destroyedThingIds)
   }
-  if (effect.effect === 'reach' || effect.effect === 'convert') {
+  if (effect.effect === 'reach') return runReach(effect, context, db)
+  if (effect.effect === 'convert') {
     throw new EngineError(500, UNKNOWN_STORED_EFFECT_ERROR)
   }
 
@@ -1000,6 +1016,13 @@ async function scheduleEffect(
     } : {}),
     // A timer from its owner's own thing stays that owner's own program.
     ...(context.ownProgram === true ? { own_program: true } : {}),
+    // A delayed step from a harder reach re-reads its member's consent when it fires.
+    ...(context.reachMember !== undefined && context.reachMember.admittedBy !== 'soft' ? {
+      reach_member: {
+        answerer_id: context.reachMember.answererId,
+        admitted_by: context.reachMember.admittedBy,
+      },
+    } : {}),
   }
   await insertPendingEffect({
     actionId: context.actionId,
@@ -1092,6 +1115,14 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     )
   ) return null
   const fromWake = payload.from_wake === true
+  const rawMember = payload.reach_member === undefined ? undefined : objectRecord(payload.reach_member)
+  const memberAnswerer = rawMember ? integer(rawMember.answerer_id) : null
+  const reachMember: ReachMember | null = rawMember
+    && memberAnswerer !== null && memberAnswerer > 0
+    && (rawMember.admitted_by === 'own' || rawMember.admitted_by === 'open')
+    ? { answererId: memberAnswerer, admittedBy: rawMember.admitted_by }
+    : null
+  if (rawMember !== undefined && (reachMember === null || type !== 'thing')) return null
   const actorSymbolId = !fromWake || payload.actor_symbol_id == null
     ? null
     : integer(payload.actor_symbol_id)
@@ -1126,6 +1157,7 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     fromWake,
     settleId,
     ownProgram: payload.own_program === true,
+    reachMember,
   }
 }
 
@@ -1214,6 +1246,22 @@ async function resolveOne(
     await recordEffectResolution(pendingId, 'skipped', { error: 'invalid stored effect payload' }, db)
     return 'failed'
   }
+  if (row.reachMember !== null && row.target !== null
+    && !await reachMemberStillConsents(row.reachMember, row.target.id, db)) {
+    await recordEffectResolution(row.id, 'skipped', {
+      effects_applied: 0,
+      skipped_effects: publicSkippedEffects([{
+        effect: 'wait',
+        target: 'target',
+        sourceTrait: null,
+        sourceTraitId: row.sourceTraitId,
+        sourcePlaceId: row.originPlaceId ?? null,
+        reason: REACH_MEMBER_REFUSED,
+        memberId: row.target.id,
+      }]),
+    }, db)
+    return 'resolved'
+  }
   const context: EffectExecutionContext = {
     actionId: row.actionId,
     actorId: row.actorId,
@@ -1235,6 +1283,7 @@ async function resolveOne(
     rollLog,
     ownProgram: row.ownProgram,
     abilityLog: newAbilityLog(),
+    ...(row.reachMember === null ? {} : { reachMember: row.reachMember }),
     ...(row.fromWake ? {
       fromWake: true,
       actorSymbolId: row.actorSymbolId ?? null,

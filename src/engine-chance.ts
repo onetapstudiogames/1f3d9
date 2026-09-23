@@ -34,10 +34,12 @@ export interface DrawnRoll {
 /** The rolls drawn in one run: an action, a timer resolution, or a wake try. */
 export interface RollLog {
   readonly rolls: DrawnRoll[]
+  /** Rolls drawn for a reach member that then refused, kept public after its rollback. */
+  readonly memberRefused?: Set<number>
 }
 
 export function newRollLog(): RollLog {
-  return { rolls: [] }
+  return { rolls: [], memberRefused: new Set() }
 }
 
 export function lastRoll(log: RollLog | undefined): number | null {
@@ -236,6 +238,14 @@ export async function drawCopyPlaceRoll(
   return drawRoll('copy_place', sides, null, context, db)
 }
 
+/** A reach member refused after its savepoint rolled back: its rolls stay public, marked so. */
+export async function recordMemberRefusedRolls(log: RollLog, fromIndex: number, db: TaggedSql): Promise<void> {
+  for (const roll of log.rolls.slice(fromIndex)) {
+    await recordRoll(roll, 'member_refused', db)
+    log.memberRefused?.add(roll.rollId)
+  }
+}
+
 /** After a run refuses, keep every roll it drew public, marked as failed. */
 export async function recordFailedRolls(log: RollLog, db: TaggedSql): Promise<void> {
   for (const roll of log.rolls) await recordRoll(roll, 'action_failed', db)
@@ -248,7 +258,7 @@ export function publicRolls(log: RollLog, outcome: RollOutcome) {
     percent: roll.percent,
     roll: roll.roll,
     branch: roll.branch,
-    outcome,
+    outcome: log.memberRefused?.has(roll.rollId) === true ? 'member_refused' as const : outcome,
   }))
 }
 

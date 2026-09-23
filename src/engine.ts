@@ -1240,6 +1240,11 @@ function sharedUseTouchesSourceDestructively(
       effect.effect === 'wait'
       && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
     ) return true
+    // Inside a reach, target is each member, and the source is never a member.
+    if (
+      effect.effect === 'reach'
+      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, null, destroyAllowed)
+    ) return true
     if (
       (effect.effect === 'check_label' || effect.effect === 'chance')
       && (

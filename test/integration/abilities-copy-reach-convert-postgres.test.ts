@@ -631,6 +631,184 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(resolution[0]!.status, 'applied')
       assert.equal(resolution[0]!.detail.skipped_effects[0].cap, 'place_daily')
     })
+
+    await t.test('a soft reach touches every thing; a harder one only consenting things, and delayed steps re-read consent', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'soak-all', {
+        use: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet' }] }],
+      })).status, 201)
+      assert.equal((await coin(app, GROWER.secret, 'slow-scorch', {
+        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'target', label: 'scorched' }] }] }],
+      })).status, 201)
+      const cloud = await seedKind(GROWER.id, 'cloud', [await traitId('soak-all'), await traitId('slow-scorch')])
+      const sourceId = await seedThing(GROWER.id, rooms.eastRoomId, cloud, 'a cloud')
+      const mineClosed = await seedThing(GROWER.id, rooms.eastRoomId, null, 'my closed crate')
+      const theirsClosed = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'their closed crate')
+      const theirsOpen = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'their open crate', { openToReach: true })
+      const founderOpen = await seedThing(FOUNDER.id, rooms.eastRoomId, null, 'an open crate', { openToReach: true })
+
+      const used = await use(app, GROWER.secret, sourceId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      const action = used.json.action as Json
+      const wet = (await db.query(`
+        SELECT target_id FROM active_labels WHERE label = 'wet' AND target_type = 'thing' ORDER BY target_id
+      `)).rows.map(row => row.target_id)
+      assert.deepEqual(wet, [mineClosed, theirsClosed, theirsOpen, founderOpen], 'soft steps reach every thing but the source')
+      const pending = (await db.query(`
+        SELECT target_id, payload->'reach_member' AS member FROM pending_effects ORDER BY target_id
+      `)).rows
+      assert.deepEqual(pending.map(row => row.target_id), [mineClosed, theirsOpen, founderOpen],
+        "a harder step reaches open things and, in the owner's own program, the owner's things")
+      assert.deepEqual(pending.map(row => row.member.admitted_by), ['own', 'open', 'open'])
+      assert.equal(action.effects_applied, 7, 'each member application counts; the reach itself counts none')
+      assert.deepEqual(action.reaches, [
+        { source_trait: 'soak-all', source_trait_id: await traitId('soak-all'), over: 'things', reached: 4, more: 0, stopped: null },
+        { source_trait: 'slow-scorch', source_trait_id: await traitId('slow-scorch'), over: 'things', reached: 3, more: 0, stopped: null },
+      ])
+
+      // Consent is read again when the delayed step fires.
+      await db.query('UPDATE things SET open_to_reach = FALSE WHERE id = $1', [theirsOpen])
+      await db.query('UPDATE things SET owner_id = $2 WHERE id = $1', [mineClosed, FOUNDER.id])
+      await delay(1_200)
+      assert.equal((await call(app, GROWER.secret, 'GET', '/api/me')).status, 200)
+      const scorched = (await db.query(`
+        SELECT target_id FROM active_labels WHERE label = 'scorched' ORDER BY target_id
+      `)).rows.map(row => row.target_id)
+      assert.deepEqual(scorched, [founderOpen], 'closing open_to_reach, or giving the thing away, stops the delayed step')
+      const resolutions = (await db.query(`
+        SELECT pending.target_id, resolution.status, resolution.detail FROM effect_resolutions resolution
+        JOIN pending_effects pending ON pending.id = resolution.pending_effect_id ORDER BY pending.target_id
+      `)).rows
+      assert.deepEqual(resolutions.map(row => [row.target_id, row.status]), [
+        [mineClosed, 'skipped'], [theirsOpen, 'skipped'], [founderOpen, 'applied'],
+      ])
+      assert.equal(resolutions[0]!.detail.skipped_effects[0].reason, 'this reach member refused the step')
+      assert.equal(resolutions[0]!.detail.skipped_effects[0].member_id, mineClosed)
+    })
+
+    await t.test("a law's and a shared use's harder reach never touch the answerer's own closed things", async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await standIn(GROWER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, FOUNDER.secret, 'wildfire', {
+        talk: [{ effect: 'reach', then: [{ effect: 'destroy', target: 'target' }] }],
+      })).status, 201)
+      assert.equal((await call(app, FOUNDER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['wildfire'] })).status, 200)
+      const mineClosed = await seedThing(GROWER.id, rooms.eastRoomId, null, 'my closed crate')
+      const mineOpen = await seedThing(GROWER.id, rooms.eastRoomId, null, 'my open crate', { openToReach: true })
+      const theirsOpen = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'their open crate', { openToReach: true })
+      const theirsClosed = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'their closed crate')
+
+      const spoke = await call(app, GROWER.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'strike a match' })
+      assert.equal(spoke.status, 201, JSON.stringify(spoke.json))
+      const standing = (await db.query(`
+        SELECT id FROM things WHERE withdrawn_at IS NULL AND place_id = $1 ORDER BY id
+      `, [rooms.eastRoomId])).rows.map(row => row.id)
+      assert.deepEqual(standing, [mineClosed, theirsClosed], "a law's fire reaches only open things, the speaker's own included")
+      assert.ok(mineOpen && theirsOpen)
+
+      // A shared use runs another's program, so the visitor's own things need open_to_reach too.
+      assert.equal((await coin(app, NEIGHBOUR.secret, 'slow-scorch', {
+        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'scorched' }] }] }],
+      })).status, 201)
+      const torch = await seedKind(NEIGHBOUR.id, 'torch', [await traitId('slow-scorch')])
+      const torchId = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, torch, 'a torch', { openToUse: true })
+      const reopened = await seedThing(GROWER.id, rooms.eastRoomId, null, 'my new open crate', { openToReach: true })
+      const used = await use(app, GROWER.secret, torchId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      const targets = (await db.query('SELECT target_id FROM pending_effects ORDER BY target_id')).rows.map(row => row.target_id)
+      assert.deepEqual(targets, [reopened], 'neither the visitor nor the owner is exempt in a shared use')
+    })
+
+    await t.test('a reach over residents stickers each resident for a day', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'drizzle', {
+        use: [{ effect: 'reach', over: 'residents', then: [
+          { effect: 'label', target: 'target', label: 'damp' },
+          { effect: 'write', key: 'counted', op: 'add' },
+        ] }],
+      })).status, 201)
+      const cloud = await seedKind(GROWER.id, 'drizzle-cloud', [await traitId('drizzle')])
+      const cloudId = await seedThing(GROWER.id, rooms.eastRoomId, cloud, 'a small cloud')
+      const used = await use(app, GROWER.secret, cloudId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      const labels = (await db.query(`
+        SELECT target_id, extract(epoch FROM expires_at - created_at)::int AS seconds
+        FROM active_labels WHERE label = 'damp' ORDER BY target_id
+      `)).rows
+      assert.deepEqual(labels, [
+        { target_id: GROWER.id, seconds: 86_400 },
+        { target_id: NEIGHBOUR.id, seconds: 86_400 },
+      ], 'only residents standing here, and each sticker lasts a day')
+      assert.deepEqual(((await db.query('SELECT state FROM things WHERE id = $1', [cloudId])).rows[0]!.state), { counted: 2 },
+        'write inside a reach still writes its own thing')
+    })
+
+    await t.test('a member that refuses a step is skipped and named, keeps its roll public, and the rest apply', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'burn-it', {
+        use: [{ effect: 'reach', then: [{
+          effect: 'chance', percent: 50,
+          then: [{ effect: 'destroy', target: 'target' }],
+          else: [{ effect: 'destroy', target: 'target' }],
+        }] }],
+      })).status, 201)
+      const flame = await seedKind(GROWER.id, 'flame', [await traitId('burn-it')])
+      const flameId = await seedThing(GROWER.id, rooms.eastRoomId, flame, 'a flame')
+      const mine = await seedThing(GROWER.id, rooms.eastRoomId, null, 'my kindling')
+      const theirs = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'their open kindling', { openToReach: true })
+
+      const used = await use(app, GROWER.secret, flameId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      const action = used.json.action as Json
+      assert.equal(action.status, 'applied')
+      const [skip] = action.skipped_effects as [Json]
+      assert.equal(skip.reason, 'this reach member refused the step')
+      assert.equal(skip.member_id, theirs)
+      assert.equal(skip.error, 'damage to another resident property requires an effective local law')
+      const active = (await db.query('SELECT id FROM things WHERE withdrawn_at IS NULL ORDER BY id')).rows.map(row => row.id)
+      assert.deepEqual(active, [flameId, theirs], 'the owner\'s own kindling burned; the neighbour\'s did not')
+      const rolls = action.rolls as Json[]
+      assert.deepEqual(rolls.map(roll => roll.outcome), ['counted', 'member_refused'])
+      const stored = (await db.query('SELECT id::int AS id, outcome FROM chance_rolls ORDER BY id')).rows
+      assert.deepEqual(stored.map(row => row.outcome), ['counted', 'member_refused'], 'the refused member\'s roll is still public')
+    })
+
+    await t.test('all reaches in one action stop at 512 applications and say so', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const eight = Array.from({ length: 8 }, (_, index) => ({ effect: 'label', target: 'target', label: `mark-${index}` }))
+      for (const name of ['wave-one', 'wave-two']) {
+        assert.equal((await coin(app, GROWER.secret, name, { use: [{ effect: 'reach', max: 64, then: eight }] })).status, 201)
+      }
+      const sea = await seedKind(GROWER.id, 'sea', [await traitId('wave-one'), await traitId('wave-two')])
+      const seaId = await seedThing(GROWER.id, rooms.eastRoomId, sea, 'the sea')
+      await db.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        SELECT $1, 'pebble ' || n, '', $2, $2 FROM generate_series(1, 70) AS n
+      `, [rooms.eastRoomId, GROWER.id])
+      const used = await use(app, GROWER.secret, seaId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      const action = used.json.action as Json
+      assert.equal(action.effects_applied, 512)
+      assert.deepEqual((action.reaches as Json[]).map(reach => [reach.reached, reach.more, reach.stopped]), [
+        [64, 6, null],
+        [0, 70, 'action_reach_limit'],
+      ])
+    })
   } finally {
     await postgres.stop()
   }

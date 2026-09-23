@@ -256,6 +256,7 @@ const COPY_DESTINATION_SET: ReadonlySet<string> = new Set(COPY_DESTINATIONS)
 const COPY_INHERITABLE_SET: ReadonlySet<string> = new Set(COPY_INHERITABLE)
 const REACH_OVER_SET: ReadonlySet<string> = new Set(REACH_OVER)
 const REACH_SOFT_STEP_SET: ReadonlySet<string> = new Set(REACH_SOFT_STEPS)
+const REACH_HARD_STEP_SET: ReadonlySet<string> = new Set(REACH_HARD_STEPS)
 const REACH_NEVER_INSIDE_SET: ReadonlySet<string> = new Set(REACH_NEVER_INSIDE)
 
 type UnknownRecord = Record<PropertyKey, unknown>
@@ -574,6 +575,11 @@ export function programWeight(effects: readonly Effect[]): number {
     }
     return total + 1
   }, 0)
+}
+
+/** A reach with any harder step, however deep, touches only members whose owners consented. */
+export function reachIsHard(effect: ReachEffect): boolean {
+  return someEffect(effect.then, step => REACH_HARD_STEP_SET.has(step.effect))
 }
 
 /** A wake program names target only for a reach member, and moves only to home. */
