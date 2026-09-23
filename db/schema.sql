@@ -11429,6 +11429,22 @@ CREATE INDEX IF NOT EXISTS things_family ON things (family_id)
 CREATE INDEX IF NOT EXISTS things_as_kind ON things (as_kind_id, as_revision)
   WHERE as_kind_id IS NOT NULL AND withdrawn_at IS NULL;
 
+-- A thing changing hands arrives closed to a harder reach and to conversion, as
+-- it arrives asleep: only its new owner may open either switch again.
+CREATE OR REPLACE FUNCTION close_thing_consent_on_owner_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.owner_id IS DISTINCT FROM OLD.owner_id THEN
+    NEW.open_to_reach := FALSE;
+    NEW.open_to_convert := FALSE;
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS things_close_consent_on_owner_change ON things;
+CREATE TRIGGER things_close_consent_on_owner_change BEFORE UPDATE OF owner_id ON things
+  FOR EACH ROW EXECUTE FUNCTION close_thing_consent_on_owner_change();
+
 -- Places: the owner's growth dials.
 ALTER TABLE places ADD COLUMN IF NOT EXISTS growth_cap_per_day SMALLINT NOT NULL DEFAULT 10
   CHECK (growth_cap_per_day BETWEEN 0 AND 100);

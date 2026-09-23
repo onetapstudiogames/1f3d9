@@ -248,7 +248,7 @@ export function registerMigrationSelectionTests(): void {
       const trimmed = statement.replace(/^\s*--.*$/gm, '').trim()
       assert.match(
         trimmed,
-        /^(?:(?:ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS|CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+IF\s+NOT\s+EXISTS|DROP\s+TRIGGER\s+IF\s+EXISTS|CREATE\s+TRIGGER)\b|DO\s+\$\w+\$\s)/i,
+        /^(?:(?:ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS|CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+IF\s+NOT\s+EXISTS|CREATE\s+OR\s+REPLACE\s+FUNCTION|DROP\s+TRIGGER\s+IF\s+EXISTS|CREATE\s+TRIGGER)\b|DO\s+\$\w+\$\s)/i,
         `every statement must be additive and repeatable: ${trimmed.slice(0, 80)}`,
       )
     }
@@ -272,6 +272,12 @@ export function registerMigrationSelectionTests(): void {
       uncommented,
       /CREATE\s+TRIGGER\s+thing_conversions_append_only[\s\S]*?EXECUTE\s+FUNCTION\s+deny_history_mutation\(\)/i,
     )
+    // A change of owner closes both consent switches, as it already puts the thing to sleep.
+    assert.match(
+      uncommented,
+      /CREATE\s+TRIGGER\s+things_close_consent_on_owner_change\s+BEFORE\s+UPDATE\s+OF\s+owner_id\s+ON\s+things\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+FUNCTION\s+close_thing_consent_on_owner_change\(\)/i,
+    )
+    assert.match(uncommented, /NEW\.open_to_reach\s*:=\s*FALSE;\s*NEW\.open_to_convert\s*:=\s*FALSE;/i)
     // The only dropped constraints are narrower checks, each after its wider replacement exists.
     const drops = [...uncommented.matchAll(/DROP\s+CONSTRAINT\b/gi)]
     assert.equal(drops.length, 1, 'one guarded drop of a narrower check, inside the widening block')

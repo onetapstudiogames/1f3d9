@@ -286,8 +286,8 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       wake_random_cap: Object.freeze({ min: 0, default: WAKE_RANDOM_CAP_DEFAULT, max: WAKE_RANDOM_CAP_MAX }),
     }),
     thing_switches: Object.freeze({
-      open_to_reach: Object.freeze({ default: false }),
-      open_to_convert: Object.freeze({ default: false }),
+      open_to_reach: Object.freeze({ default: false, after_owner_change: false }),
+      open_to_convert: Object.freeze({ default: false, after_owner_change: false }),
       wake_enabled: Object.freeze({ default_at_make: true, after_owner_change: false, after_conversion: false }),
     }),
     roll: Object.freeze({
