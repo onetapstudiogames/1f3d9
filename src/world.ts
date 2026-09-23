@@ -38,9 +38,7 @@ import {
   moderatePlaceDetails,
   moderatePublicKinds,
   moderatePublicRows,
-  moderateThingKindHistory,
 } from './moderation-store.ts'
-import { thingRowAsItIsNow } from './thing-kind-read.ts'
 import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 import {
   effectiveLaws,
@@ -2290,26 +2288,23 @@ export function mountWorldRoutes(app: Hono): void {
         result.owner_id AS current_owner_id,
         current_owner.handle AS current_owner,
         current_owner.handle AS owner,
-        kind_definition.name AS kind,
-        CASE WHEN result.kind_id IS NULL THEN NULL ELSE jsonb_build_object(
-          'kind', birth_kind.name, 'kind_id', result.kind_id, 'revision', result.birth_revision
-        ) END AS born_as
+        kind_definition.name AS kind
       FROM result
       JOIN residents maker ON maker.id = result.maker_id
       JOIN residents current_owner ON current_owner.id = result.owner_id
       LEFT JOIN kinds kind_definition
         ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
-      LEFT JOIN kinds birth_kind ON birth_kind.id = result.kind_id
     `) as ThingRow[]
-    if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
-    const [answered] = await moderateThingKindHistory([thingRowAsItIsNow(rows[0])])
+    const written = rows[0]
+    if (!written) return err(c, 409, 'thing changed or received an open sale offer; retry')
     // The owner empties the state box; values are never written by hand.
-    const edited = body.state_clear === true
-      ? { ...answered!, state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
-      : answered!
+    if (body.state_clear === true) await clearStateBox(id, resident.id, engineSql)
+    // The answer is the same public thing read every other door gives.
+    const edited = await loadPublicThingRecord(id)
+    if (!edited) return err(c, 409, 'thing changed or received an open sale offer; retry')
     return c.json({
       thing: edited,
-      reading_cost: await safeReadingCostMeter(edited.place_id, edited.body),
+      reading_cost: await safeReadingCostMeter(written.place_id, written.body),
     })
   })
 
@@ -2563,7 +2558,10 @@ export function mountWorldRoutes(app: Hono): void {
       throw error
     }
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
-    return c.json({ thing: rows[0] })
+    // The answer is the same public thing read every other door gives.
+    const upgraded = await loadPublicThingRecord(id)
+    if (!upgraded) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    return c.json({ thing: upgraded })
   })
 
   app.post('/api/thing/:id/withdraw', async c => {
