@@ -9,7 +9,13 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
+import {
+  loadTraitRecipe,
+  parseKindRecipe,
+  parseTraitRecipe,
+  recipeConvertsIntoNamedKind,
+  traitRecipeFault,
+} from './physics.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { clearStateBox } from './engine-state.ts'
 import { settleRoom } from './engine-settle.ts'
@@ -261,18 +267,24 @@ async function everyTraitExists(names: readonly string[]): Promise<boolean> {
   return names.every(name => found.has(name))
 }
 
-/** A kind revision may list only one trait with a wake key, so a thing has one clock. */
-async function secondWakeTrait(names: readonly string[]): Promise<string | null> {
-  if (names.length < 2) return null
+/**
+ * A kind revision may list only one trait with a wake key, so a thing has one
+ * clock, and no trait whose convert names into_kind, which only a law may do.
+ */
+async function kindTraitRefusal(names: readonly string[]): Promise<string | null> {
+  if (names.length === 0) return null
   const rows = await sql`
     SELECT name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
   ` as Array<{ name: string; recipe: unknown }>
-  const waking = names.filter(name => (
-    rows.some(row => row.name === name && wakeProgramOf(row.recipe) !== null)
-  ))
-  return waking.length > 1
-    ? `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
-    : null
+  const recipeOf = (name: string) => loadTraitRecipe(rows.find(row => row.name === name)?.recipe)
+  const waking = names.filter(name => recipeOf(name).wake !== undefined)
+  if (waking.length > 1) {
+    return `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
+  }
+  const lawOnly = names.find(name => recipeConvertsIntoNamedKind(recipeOf(name)))
+  return lawOnly === undefined
+    ? null
+    : `trait ${lawOnly} converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself`
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -1446,8 +1458,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const wakeConflict = await secondWakeTrait(traits)
-    if (wakeConflict) return err(c, 400, wakeConflict)
+    const traitConflict = await kindTraitRefusal(traits)
+    if (traitConflict) return err(c, 400, traitConflict)
 
     const fee = await treasuryFee(
       c,
@@ -1605,8 +1617,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const wakeConflict = await secondWakeTrait(traits)
-    if (wakeConflict) return err(c, 400, wakeConflict)
+    const traitConflict = await kindTraitRefusal(traits)
+    if (traitConflict) return err(c, 400, traitConflict)
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing

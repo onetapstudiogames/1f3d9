@@ -249,6 +249,69 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })
+
+    const { default: app } = await import('../../src/index.ts') as { default: CityApp }
+
+    await t.test('the doors refuse copy, reach, and convert where they may never be', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await connectedDatabase().query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+
+      const tooDeep = await coin(app, GROWER.secret, 'too-deep', { use: [{ effect: 'copy', generations: 9 }] })
+      assert.equal(tooDeep.status, 400)
+      assert.equal(tooDeep.json.error, "recipe must use only the frozen actions, the wake key, and the effect bricks, each within its stated range; call physics for every brick's fields, defaults, and limits")
+      const blockInside = await coin(app, GROWER.secret, 'hold-all', {
+        use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'block', target: 'target', action: 'talk', seconds: 60 }] }],
+      })
+      assert.equal(blockInside.status, 400, 'a reach never holds a block')
+
+      const sprout = await coin(app, GROWER.secret, 'sprout', { use: [{ effect: 'copy' }] })
+      assert.equal(sprout.status, 201, JSON.stringify(sprout.json))
+      assert.deepEqual((sprout.json.trait as Json).recipe, {
+        use: [{ effect: 'copy', generations: 3, copies: 1, to: 'here', inherit: ['body'] }],
+      })
+      const rain = await coin(app, GROWER.secret, 'rain', {
+        wake: { on: ['clock'], then: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet' }] }] },
+      })
+      assert.equal(rain.status, 201, 'a wake program may name target inside a reach')
+      const stray = await coin(app, GROWER.secret, 'stray', {
+        wake: { then: [{ effect: 'convert', target: 'target' }] },
+      })
+      assert.equal(stray.status, 400)
+      assert.equal(stray.json.error, 'a wake try has no target, destination, or recipient of its own; use target only inside a reach, and move things only to home')
+      assert.equal((await coin(app, GROWER.secret, 'blight', {
+        use: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target' }] }],
+      })).status, 201)
+      assert.equal((await coin(app, GROWER.secret, 'ash-fall', {
+        talk: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target', into_kind: 'ash' }] }],
+      })).status, 201)
+      assert.equal((await coin(app, GROWER.secret, 'drizzle', {
+        talk: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'damp' }] }],
+      })).status, 201)
+
+      for (const name of ['sprout', 'blight']) {
+        const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
+        assert.equal(law.status, 400, name)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+      }
+      const reachLaw = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['drizzle'] })
+      assert.equal(reachLaw.status, 200, 'reach works as a law')
+
+      const lawOnly = "trait ash-fall converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself"
+      const invented = await call(app, GROWER.secret, 'POST', '/api/kind', {
+        name: 'ash-maker', description: 'would convert into ash', traits: ['ash-fall'],
+      })
+      assert.equal(invented.status, 400, 'refused before any fee')
+      assert.equal(invented.json.error, lawOnly)
+      const oak = await seedKind(GROWER.id, 'oak', [await traitId('sprout')])
+      const revised = await call(app, GROWER.secret, 'POST', `/api/kind/${oak}/revise`, {
+        description: 'oak that burns', traits: ['sprout', 'ash-fall'],
+      })
+      assert.equal(revised.status, 400, 'refused before any fee')
+      assert.equal(revised.json.error, lawOnly)
+      const fees = (await connectedDatabase().query('SELECT count(*)::int AS count FROM kind_revisions WHERE kind_id = $1', [oak])).rows[0]!.count
+      assert.equal(fees, 1, 'no revision was made')
+    })
   } finally {
     await postgres.stop()
   }

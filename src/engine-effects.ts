@@ -494,6 +494,9 @@ async function executeEffectWithOutcome(
     await writeStateBox(effect, context, db)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
+  if (effect.effect === 'copy' || effect.effect === 'reach' || effect.effect === 'convert') {
+    throw new EngineError(500, UNKNOWN_STORED_EFFECT_ERROR)
+  }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
   const law = await matchingLaw(target, effect.label, db)

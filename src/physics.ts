@@ -36,12 +36,25 @@ export const EFFECT_BRICKS = Object.freeze([
   'check_label',
   'chance',
   'write',
+  'copy',
+  'reach',
+  'convert',
 ] as const)
 
 /** What sets off a thing's wake key: an arrival, a note, or its own clock. */
 export const WAKE_EVENTS = Object.freeze(['arrive', 'talk', 'clock'] as const)
 export const WRITE_OPS = Object.freeze(['set', 'add', 'append'] as const)
 export const WRITE_FROM = Object.freeze(['actor', 'roll', 'time'] as const)
+/** Where a copy appears: its own room, or one parent-child edge away. */
+export const COPY_DESTINATIONS = Object.freeze(['here', 'adjacent'] as const)
+export const COPY_INHERITABLE = Object.freeze(['body', 'state'] as const)
+export const REACH_OVER = Object.freeze(['things', 'residents'] as const)
+/** Steps a reach may run on every member, residents included. */
+export const REACH_SOFT_STEPS = Object.freeze(['label', 'check_label', 'chance', 'write'] as const)
+/** Steps that make a reach touch only members whose owners consented. */
+export const REACH_HARD_STEPS = Object.freeze(['destroy', 'move', 'transfer', 'convert', 'wait'] as const)
+/** Never allowed anywhere inside a reach. */
+export const REACH_NEVER_INSIDE = Object.freeze(['block', 'copy', 'reach'] as const)
 
 export const SYMBOLIC_TARGETS = Object.freeze([
   'actor',
@@ -76,6 +89,11 @@ export const STATE_TEXT_MAX_CHARACTERS = 200
 export const STATE_LIST_MAX_ITEMS = 20
 export const STATE_INTEGER_LIMIT = 1_000_000_000
 export const STATE_ADD_LIMIT = 1_000_000
+export const COPY_GENERATIONS_DEFAULT = 3
+export const COPY_COPIES_DEFAULT = 1
+export const COPY_COPIES_MAX = 10_000
+export const REACH_MAX_DEFAULT = 16
+export const REACH_MAX_CEILING = 64
 /** A sticker a wake try puts on a resident expires after a day, like the longest block. */
 export const RESIDENT_ABILITY_LABEL_SECONDS = MAX_BLOCK_SECONDS
 
@@ -88,6 +106,9 @@ export type TransferRecipient = typeof TRANSFER_RECIPIENTS[number]
 export type WakeEvent = typeof WAKE_EVENTS[number]
 export type WriteOp = typeof WRITE_OPS[number]
 export type WriteFrom = typeof WRITE_FROM[number]
+export type CopyDestination = typeof COPY_DESTINATIONS[number]
+export type CopyInheritable = typeof COPY_INHERITABLE[number]
+export type ReachOver = typeof REACH_OVER[number]
 
 export interface DestroyEffect {
   readonly effect: 'destroy'
@@ -151,6 +172,34 @@ export interface WriteEffect {
   readonly value: WriteValue
 }
 
+/** The thing whose own kind traits run it makes one more of its kind. */
+export interface CopyEffect {
+  readonly effect: 'copy'
+  readonly generations: number
+  readonly copies: number | 'unlimited'
+  readonly to: CopyDestination
+  readonly inherit: readonly CopyInheritable[]
+}
+
+/** Runs its steps once for each member of the room, with target set to that member. */
+export interface ReachEffect {
+  readonly effect: 'reach'
+  readonly over: ReachOver
+  readonly max: number
+  readonly kind?: string
+  readonly then: readonly Effect[]
+}
+
+/**
+ * Changes the target thing's kind: in a kind's trait into that kind itself, and
+ * in a law into `into_kind`, a kind the law's place owner owns.
+ */
+export interface ConvertEffect {
+  readonly effect: 'convert'
+  readonly target: 'target'
+  readonly into_kind?: string
+}
+
 export type Effect =
   | DestroyEffect
   | MoveEffect
@@ -161,6 +210,9 @@ export type Effect =
   | CheckLabelEffect
   | ChanceEffect
   | WriteEffect
+  | CopyEffect
+  | ReachEffect
+  | ConvertEffect
 
 export interface WakeProgram {
   readonly on: readonly WakeEvent[]
@@ -175,7 +227,7 @@ export type TraitRecipe = Readonly<Partial<Record<BasicAction, readonly Effect[]
 /**
  * Why a new recipe was refused: a grammar fault, or one of the wake key's two
  * coining rules (a wake program never hands a thing over, and it has no target
- * or destination of its own).
+ * or destination of its own outside a reach).
  */
 export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope'
 
@@ -200,6 +252,11 @@ const WAKE_EVENT_SET: ReadonlySet<string> = new Set(WAKE_EVENTS)
 const WRITE_OP_SET: ReadonlySet<string> = new Set(WRITE_OPS)
 const WRITE_FROM_SET: ReadonlySet<string> = new Set(WRITE_FROM)
 const RECIPE_KEY_SET: ReadonlySet<string> = new Set([...BASIC_ACTIONS, 'wake'])
+const COPY_DESTINATION_SET: ReadonlySet<string> = new Set(COPY_DESTINATIONS)
+const COPY_INHERITABLE_SET: ReadonlySet<string> = new Set(COPY_INHERITABLE)
+const REACH_OVER_SET: ReadonlySet<string> = new Set(REACH_OVER)
+const REACH_SOFT_STEP_SET: ReadonlySet<string> = new Set(REACH_SOFT_STEPS)
+const REACH_NEVER_INSIDE_SET: ReadonlySet<string> = new Set(REACH_NEVER_INSIDE)
 
 type UnknownRecord = Record<PropertyKey, unknown>
 type ParseState = { count: number }
@@ -306,6 +363,71 @@ function parseWrite(value: UnknownRecord): WriteEffect | null {
   return written === null ? null : Object.freeze({ effect: 'write', key, op, value: written })
 }
 
+function parseInherit(value: unknown): readonly CopyInheritable[] | null {
+  if (!isDenseArray(value) || value.length > COPY_INHERITABLE.length) return null
+  const chosen = value.map(part => canonicalToken(part, COPY_INHERITABLE_SET))
+  if (chosen.some(part => part === null) || new Set(chosen).size !== chosen.length) return null
+  return Object.freeze(COPY_INHERITABLE.filter(part => chosen.includes(part)))
+}
+
+function parseCopy(value: UnknownRecord): CopyEffect | null {
+  if (!hasExactKeys(value, ['effect'], ['generations', 'copies', 'to', 'inherit'])) return null
+  const generations = Object.hasOwn(value, 'generations')
+    ? boundedInteger(value.generations, 1, MAX_EFFECT_GENERATIONS)
+    : COPY_GENERATIONS_DEFAULT
+  const copies = !Object.hasOwn(value, 'copies')
+    ? COPY_COPIES_DEFAULT
+    : canonicalToken(value.copies, new Set(['unlimited'])) === 'unlimited'
+      ? 'unlimited' as const
+      : boundedInteger(value.copies, 1, COPY_COPIES_MAX)
+  const to = Object.hasOwn(value, 'to')
+    ? canonicalToken(value.to, COPY_DESTINATION_SET) as CopyDestination | null
+    : 'here'
+  const inherit = Object.hasOwn(value, 'inherit')
+    ? parseInherit(value.inherit)
+    : Object.freeze(['body' as const])
+  if (generations === null || copies === null || to === null || inherit === null) return null
+  return Object.freeze({ effect: 'copy', generations, copies, to, inherit })
+}
+
+/**
+ * A reach never holds a block, a copy, or another reach, never moves the
+ * resident who acts, and over residents holds only soft steps.
+ */
+function reachStepsAllowed(over: ReachOver, then: readonly Effect[]): boolean {
+  if (someEffect(then, effect => REACH_NEVER_INSIDE_SET.has(effect.effect))) return false
+  if (someEffect(then, effect => effect.effect === 'move' && effect.target === 'actor')) return false
+  return over === 'things' || !someEffect(then, effect => !REACH_SOFT_STEP_SET.has(effect.effect))
+}
+
+function parseReach(value: UnknownRecord, depth: number, state: ParseState): ReachEffect | null {
+  if (!hasExactKeys(value, ['effect', 'then'], ['over', 'max', 'kind'])) return null
+  const over = Object.hasOwn(value, 'over')
+    ? canonicalToken(value.over, REACH_OVER_SET) as ReachOver | null
+    : 'things'
+  const max = Object.hasOwn(value, 'max')
+    ? boundedInteger(value.max, 1, REACH_MAX_CEILING)
+    : REACH_MAX_DEFAULT
+  const kind = Object.hasOwn(value, 'kind') ? canonicalName(value.kind) : undefined
+  if (over === null || max === null || kind === null) return null
+  if (kind !== undefined && over !== 'things') return null
+  const then = parseEffectList(value.then, depth + 1, state)
+  if (!then || !reachStepsAllowed(over, then)) return null
+  return kind === undefined
+    ? Object.freeze({ effect: 'reach', over, max, then })
+    : Object.freeze({ effect: 'reach', over, max, kind, then })
+}
+
+function parseConvert(value: UnknownRecord): ConvertEffect | null {
+  if (!hasExactKeys(value, ['effect', 'target'], ['into_kind'])) return null
+  if (canonicalToken(value.target, new Set(['target'])) !== 'target') return null
+  if (!Object.hasOwn(value, 'into_kind')) return Object.freeze({ effect: 'convert', target: 'target' })
+  const intoKind = canonicalName(value.into_kind)
+  return intoKind === null
+    ? null
+    : Object.freeze({ effect: 'convert', target: 'target', into_kind: intoKind })
+}
+
 function parseEffectList(
   value: unknown,
   depth: number,
@@ -401,6 +523,9 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
   }
 
   if (discriminator === 'write') return parseWrite(value)
+  if (discriminator === 'copy') return parseCopy(value)
+  if (discriminator === 'reach') return parseReach(value, depth, state)
+  if (discriminator === 'convert') return parseConvert(value)
 
   if (!hasExactKeys(value, ['effect', 'target', 'label', 'then'], ['else'])) return null
   const target = symbolicTarget(value.target)
@@ -418,7 +543,7 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 }
 
 function effectBranches(effect: Effect): readonly (readonly Effect[])[] {
-  if (effect.effect === 'wait') return [effect.then]
+  if (effect.effect === 'wait' || effect.effect === 'reach') return [effect.then]
   if (effect.effect === 'check_label' || effect.effect === 'chance') {
     return [effect.then, effect.else ?? EMPTY_EFFECTS]
   }
@@ -433,12 +558,13 @@ function someEffect(effects: readonly Effect[], matches: (effect: Effect) => boo
 
 /**
  * The most effect applications one run of a program can make: wait and chance
- * weigh one plus a branch, check_label weighs its larger branch, and every
- * other brick weighs one.
+ * weigh one plus a branch, check_label weighs its larger branch, a reach weighs
+ * its max times its steps, and every other brick weighs one.
  */
 export function programWeight(effects: readonly Effect[]): number {
   return effects.reduce((total, effect) => {
     if (effect.effect === 'wait') return total + 1 + programWeight(effect.then)
+    if (effect.effect === 'reach') return total + effect.max * programWeight(effect.then)
     if (effect.effect === 'check_label' || effect.effect === 'chance') {
       const larger = Math.max(
         programWeight(effect.then),
@@ -450,13 +576,19 @@ export function programWeight(effects: readonly Effect[]): number {
   }, 0)
 }
 
+/** A wake program names target only for a reach member, and moves only to home. */
+function wakeReachesOutside(effects: readonly Effect[], insideReach: boolean): boolean {
+  return effects.some(effect => {
+    if (effect.effect === 'reach') return wakeReachesOutside(effect.then, true)
+    if (effect.effect === 'move' && effect.to !== 'home') return true
+    if (!insideReach && 'target' in effect && effect.target === 'target') return true
+    return effectBranches(effect).some(branch => wakeReachesOutside(branch, insideReach))
+  })
+}
+
 function wakeFault(effects: readonly Effect[]): RecipeFault | null {
   if (someEffect(effects, effect => effect.effect === 'transfer')) return 'wake_hand_over'
-  const reachesOutside = someEffect(effects, effect => (
-    ('target' in effect && effect.target === 'target')
-    || (effect.effect === 'move' && effect.to !== 'home')
-  ))
-  return reachesOutside ? 'wake_scope' : null
+  return wakeReachesOutside(effects, false) ? 'wake_scope' : null
 }
 
 function parseWakeEvents(value: unknown): readonly WakeEvent[] | null {
@@ -531,12 +663,27 @@ export function traitRecipeFault(value: unknown): RecipeFault | null {
   return parseRecipe(value).fault
 }
 
-/** Write and the wake key need a thing of their own, so they work only in a kind's traits. */
+function recipeHasEffect(recipe: TraitRecipe, matches: (effect: Effect) => boolean): boolean {
+  return BASIC_ACTIONS.some(action => someEffect(recipe[action] ?? EMPTY_EFFECTS, matches))
+    || someEffect(recipe.wake?.then ?? EMPTY_EFFECTS, matches)
+}
+
+/**
+ * Copy, write, the wake key, and a convert without into_kind need a thing of
+ * their own, so they work only in a kind's traits.
+ */
 export function recipeUsesKindOnlyAbility(recipe: TraitRecipe): boolean {
   if (recipe.wake) return true
-  return BASIC_ACTIONS.some(action => (
-    someEffect(recipe[action] ?? EMPTY_EFFECTS, effect => effect.effect === 'write')
+  return recipeHasEffect(recipe, effect => (
+    effect.effect === 'write'
+    || effect.effect === 'copy'
+    || (effect.effect === 'convert' && effect.into_kind === undefined)
   ))
+}
+
+/** A convert that names into_kind turns things into another kind, which only a law may do. */
+export function recipeConvertsIntoNamedKind(recipe: TraitRecipe): boolean {
+  return recipeHasEffect(recipe, effect => effect.effect === 'convert' && effect.into_kind !== undefined)
 }
 
 /** The stored wake program of a trait, or null when it has none or is malformed. */

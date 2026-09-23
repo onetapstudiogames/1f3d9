@@ -225,7 +225,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         wake: { then: [{ effect: 'label', target: 'target', label: 'touched' }] },
       })
       assert.equal(outside.status, 400)
-      assert.equal(outside.json.error, 'a wake try has no target or destination of its own; name actor, source, or place, and move only to home')
+      assert.equal(outside.json.error, 'a wake try has no target, destination, or recipient of its own; use target only inside a reach, and move things only to home')
 
       const outOfRange = await coin(app, MAKER.secret, 'sure-thing', {
         use: [{ effect: 'chance', percent: 100, then: [] }],
@@ -255,7 +255,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       for (const name of ['counter', 'greeter']) {
         const law = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
         assert.equal(law.status, 400, name)
-        assert.equal(law.json.error, `trait ${name} carries write or a wake key, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
       }
       const chanceLaw = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['lucky-floor'] })
       assert.equal(chanceLaw.status, 200, 'chance works as a law')
@@ -676,7 +676,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(stickerTries.length, 8)
       assert.ok(stickerTries.every(row => (
         row.status === 'failed'
-        && row.error === "this wake try came from the thing's clock, so there is no actor; name source or place instead"
+        && row.error === "this wake try came from the thing's clock, so there is no actor; name source or place, or reach the room instead"
       )))
       const settled = (await db.query(`SELECT detail FROM events WHERE kind = 'room_settled'`)).rows[0]!.detail
       assert.equal(settled.forfeited, 24, 'twenty owed tries each, eight run, twelve forfeited each')
