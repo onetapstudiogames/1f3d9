@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { err, postgresErrorCode } from './core.ts'
+import { err, postgresErrorCode, type Resident } from './core.ts'
 import { sql } from './db.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
@@ -18,6 +18,7 @@ import {
 } from './physics.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { clearStateBox } from './engine-state.ts'
+import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
 import {
   blockedResidentUnknownRefusal,
@@ -285,6 +286,33 @@ async function kindTraitRefusal(names: readonly string[]): Promise<string | null
   return lawOnly === undefined
     ? null
     : `trait ${lawOnly} converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself`
+}
+
+/**
+ * A converted thing upgrades to its new kind's newest revision. Its birth kind
+ * and revision never change, and a family's open growth marks clear.
+ */
+async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
+  await sql`
+    WITH changed AS (
+      UPDATE things thing SET as_revision = kind.current_revision
+      FROM kinds kind
+      WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+        AND thing.withdrawn_at IS NULL AND kind.id = thing.as_kind_id
+        AND thing.as_revision IS DISTINCT FROM kind.current_revision
+      RETURNING thing.id, thing.birth_revision, thing.as_revision,
+        coalesce(thing.family_id, thing.id) AS family_id
+    ), cleared_marks AS (
+      UPDATE family_growth_marks mark
+      SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+      FROM changed
+      WHERE mark.family_id = changed.family_id AND mark.cleared_at IS NULL
+    )
+    INSERT INTO events (kind, actor, detail)
+    SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
+      'thing_id', id, 'birth_revision', birth_revision, 'current_revision', as_revision
+    ) FROM changed
+  `
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -1949,6 +1977,7 @@ export function mountWorldRoutes(app: Hono): void {
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
+        thing.as_kind_id IS NOT NULL AS converted,
         thing.drawing_state, thing.drawing_variant_name, pinned.drawing_variants,
         thing.active_offer_id,
         (offer.id IS NOT NULL) AS has_open_offer
@@ -1963,6 +1992,7 @@ export function mountWorldRoutes(app: Hono): void {
       owner_id: number
       kind_id: number | null
       current_revision: number | null
+      converted?: boolean
       drawing_state?: DrawingState
       drawing_variant_name?: string | null
       drawing_variants?: unknown
@@ -1972,6 +2002,9 @@ export function mountWorldRoutes(app: Hono): void {
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
+    if (existing.converted === true && requestedVariant !== undefined) {
+      return err(c, 409, convertedVariantRefusal(id))
+    }
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be edited while it has an open sale offer; close that offer before editing the thing')
     }
@@ -2191,7 +2224,8 @@ export function mountWorldRoutes(app: Hono): void {
       FROM result
       JOIN residents maker ON maker.id = result.maker_id
       JOIN residents current_owner ON current_owner.id = result.owner_id
-      LEFT JOIN kinds kind_definition ON kind_definition.id = result.kind_id
+      LEFT JOIN kinds kind_definition
+        ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
     `) as ThingRow[]
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
     // The owner empties the state box; values are never written by hand.
@@ -2231,6 +2265,7 @@ export function mountWorldRoutes(app: Hono): void {
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.birth_revision,
+        thing.as_kind_id,
         thing.current_revision, kind.current_revision AS latest_revision,
         thing.drawing_state, thing.drawing_variant_name,
         latest.drawing_variants AS latest_drawing_variants,
@@ -2244,6 +2279,7 @@ export function mountWorldRoutes(app: Hono): void {
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     `) as Array<ThingRow & {
+      as_kind_id?: number | null
       latest_revision?: number
       drawing_state?: DrawingState
       drawing_variant_name?: string | null
@@ -2258,6 +2294,13 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be upgraded while it has an open sale offer; close that offer before upgrading the thing')
+    }
+    if (existing.as_kind_id != null) {
+      if (requestedVariant !== undefined) return err(c, 409, convertedVariantRefusal(id))
+      await upgradeConvertedThing(id, resident)
+      const converted = await loadPublicThingRecord(id)
+      if (!converted) return err(c, 409, 'thing changed or received an open sale offer; retry')
+      return c.json({ thing: converted })
     }
     if (requestedVariant !== undefined && existing.drawing_state === 'refused') {
       return err(c, 409, 'clear the thing refusal before choosing a base or variant during upgrade')

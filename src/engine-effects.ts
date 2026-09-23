@@ -44,6 +44,7 @@ import { requireRoughRoomFor, requireWakeActor, requireWakeHome } from './wake-g
 import { writeStateBox } from './engine-state.ts'
 import { makeCopy } from './engine-copy.ts'
 import { reachMemberStillConsents, REACH_MEMBER_REFUSED, runReach } from './engine-reach.ts'
+import { CONVERT_ONLY_THINGS_ERROR, convertThing } from './engine-convert.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -564,7 +565,11 @@ async function executeEffectWithOutcome(
   }
   if (effect.effect === 'reach') return runReach(effect, context, db)
   if (effect.effect === 'convert') {
-    throw new EngineError(500, UNKNOWN_STORED_EFFECT_ERROR)
+    const target = await requireTarget(resolveSymbolicTarget(effect.target, context), db)
+    if (target.type !== 'thing') throw new EngineError(403, CONVERT_ONLY_THINGS_ERROR)
+    await requireCallerTargetScope(target, context.actorId, context.placeId, db)
+    const converted = await convertThing(effect, target.id, context, db)
+    return effectExecutionOutcome(converted ? 1 : 0, converted, destroyedThingIds)
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)

@@ -809,6 +809,222 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         [0, 70, 'action_reach_limit'],
       ])
     })
+
+    await t.test("convert needs the target's consent, keeps birth history, remembers, and the thing then acts as its new kind", async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET open_to_things = TRUE WHERE id = $1', [rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'ash-touch', { use: [{ effect: 'convert', target: 'target' }] })).status, 201)
+      assert.equal((await coin(app, GROWER.secret, 'ash-glow', {
+        wake: { on: ['arrive'], then: [{ effect: 'label', target: 'source', label: 'glowing' }] },
+      })).status, 201)
+      const ash = await seedKind(GROWER.id, 'ash', [await traitId('ash-touch'), await traitId('ash-glow')])
+      const oak = await seedKind(NEIGHBOUR.id, 'oak', [])
+      const ember = await seedThing(GROWER.id, rooms.eastRoomId, ash, 'an ember')
+      const closedOak = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'a closed oak')
+      const openOak = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'an open oak', { openToConvert: true })
+      const ownOak = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, "the neighbour's own oak")
+      await db.query('UPDATE things SET wake_enabled = TRUE WHERE id = $1', [openOak])
+
+      const refused = await use(app, GROWER.secret, ember, { target_type: 'thing', target_id: closedOak })
+      assert.equal(refused.status, 403)
+      assert.equal(refused.json.error, `thing ${closedOak} has not agreed to be converted; its owner can set open_to_convert with thing_edit`)
+
+      const converted = await use(app, GROWER.secret, ember, { target_type: 'thing', target_id: openOak })
+      assert.equal(converted.status, 200, JSON.stringify(converted.json))
+      assert.deepEqual((converted.json.action as Json).converted_thing_ids, [openOak])
+      const row = (await db.query(`
+        SELECT kind_id, birth_revision, current_revision, as_kind_id, as_revision, wake_enabled,
+          generation, family_id, owner_id, maker_id, name
+        FROM things WHERE id = $1
+      `, [openOak])).rows[0]
+      assert.deepEqual(row, {
+        kind_id: oak, birth_revision: 1, current_revision: 1, as_kind_id: ash, as_revision: 1,
+        wake_enabled: false, generation: 1, family_id: ember, owner_id: NEIGHBOUR.id,
+        maker_id: NEIGHBOUR.id, name: 'an open oak',
+      }, 'birth history stays, the overlay names the new kind, and the thing sleeps')
+      const memory = (await db.query(`
+        SELECT from_kind_id, from_revision, from_generation, from_wake_enabled, to_kind_id, to_revision,
+          to_generation, by_thing_id, by_law_trait_id, authority_id, resident_id
+        FROM thing_conversions WHERE thing_id = $1
+      `, [openOak])).rows
+      assert.deepEqual(memory, [{
+        from_kind_id: oak, from_revision: 1, from_generation: 0, from_wake_enabled: true,
+        to_kind_id: ash, to_revision: 1, to_generation: 1, by_thing_id: ember, by_law_trait_id: null,
+        authority_id: GROWER.id, resident_id: GROWER.id,
+      }])
+      const edited = (await db.query(`
+        SELECT detail FROM events WHERE kind = 'thing_edited' AND detail->>'mode' = 'converted'
+      `)).rows
+      assert.deepEqual(edited.map(event => [event.detail.thing_id, event.detail.source_thing_id, event.detail.kind_id]), [
+        [openOak, ember, ash],
+      ])
+
+      const read = (await call(app, null, 'GET', `/api/thing/${openOak}`)).json.thing as Json
+      assert.equal(read.kind, 'ash', 'every read shows the kind it is now')
+      assert.equal(read.kind_id, ash)
+      assert.equal(read.current_revision, 1)
+      assert.deepEqual(read.born_as, { kind: 'oak', kind_id: oak, revision: 1 }, 'and the kind it was born as')
+      assert.equal(read.was_total, 1)
+      const [was] = read.was as [Json]
+      assert.deepEqual({ ...was, at: undefined }, {
+        kind: 'oak', kind_id: oak, revision: 1, changed_by_thing_id: ember, changed_by_law: null,
+        changed_by: GROWER.handle, at: undefined,
+      })
+      assert.equal(read.wake_enabled, false)
+
+      // Its owner's next use runs the new kind's traits, and in the owner's own program
+      // the owner's own things need no open_to_convert.
+      const again = await use(app, NEIGHBOUR.secret, openOak, { target_type: 'thing', target_id: ownOak })
+      assert.equal(again.status, 200, JSON.stringify(again.json))
+      assert.deepEqual((await db.query('SELECT as_kind_id, generation FROM things WHERE id = $1', [ownOak])).rows[0], {
+        as_kind_id: ash, generation: 2,
+      }, 'a converted thing sits one generation below its converter')
+
+      // Asleep until its owner wakes it; then it wakes as its new kind.
+      await standIn(GROWER.id, rooms.westRoomId)
+      await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.continentId })
+      await db.query('UPDATE places SET wake_visitors = TRUE WHERE id = $1', [rooms.eastRoomId])
+      await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.equal(Number((await db.query('SELECT count(*)::int AS count FROM wake_tries WHERE thing_id = $1', [openOak])).rows[0]!.count), 0)
+      const woken = await call(app, NEIGHBOUR.secret, 'PATCH', `/api/thing/${openOak}`, { wake_enabled: true })
+      assert.equal(woken.status, 200, JSON.stringify(woken.json))
+      await db.query('ALTER TABLE wake_settles DISABLE TRIGGER wake_settles_append_only')
+      await db.query(`UPDATE wake_settles SET created_at = created_at - interval '1 hour'`)
+      await db.query('ALTER TABLE wake_settles ENABLE TRIGGER wake_settles_append_only')
+      await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.continentId })
+      await call(app, GROWER.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      const glow = (await db.query(`
+        SELECT target_id FROM active_labels WHERE label = 'glowing' ORDER BY target_id
+      `)).rows.map(label => label.target_id)
+      assert.ok(glow.includes(openOak), `the converted thing wakes with its new kind's wake key: ${JSON.stringify(glow)}`)
+    })
+
+    await t.test('convert refuses residents, places, itself, things with no kind, and the ninth generation', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'rot-touch', { use: [{ effect: 'convert', target: 'target' }] })).status, 201)
+      const rot = await seedKind(GROWER.id, 'rot', [await traitId('rot-touch')])
+      const spore = await seedThing(GROWER.id, rooms.eastRoomId, rot, 'a spore')
+      const drawn = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, null, 'a drawn note', { openToConvert: true })
+
+      const resident = await use(app, GROWER.secret, spore, { target_type: 'resident', target_id: NEIGHBOUR.id })
+      assert.equal(resident.status, 403)
+      assert.equal(resident.json.error, 'convert changes only things; residents and places are never converted')
+      const place = await use(app, GROWER.secret, spore, { target_type: 'place', target_id: rooms.eastRoomId })
+      assert.equal(place.status, 403)
+      // A refusal repeated word for word carries a short note after its first line.
+      assert.equal(String(place.json.error).split('\n')[0], 'convert changes only things; residents and places are never converted')
+      const itself = await use(app, GROWER.secret, spore, { target_type: 'thing', target_id: spore })
+      assert.equal(itself.status, 400)
+      assert.equal(itself.json.error, 'convert cannot change the thing running it; choose another target thing')
+      const kindless = await use(app, GROWER.secret, spore, { target_type: 'thing', target_id: drawn })
+      assert.equal(kindless.status, 409)
+      assert.equal(kindless.json.error, `convert changes only things made from a kind; thing ${drawn} has no kind, so it stays as its owner made it`)
+
+      const oak = await seedKind(NEIGHBOUR.id, 'deep-oak', [])
+      const deepOak = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'a deep oak', { openToConvert: true })
+      await db.query('UPDATE things SET generation = 8 WHERE id = $1', [spore])
+      const tooDeep = await use(app, GROWER.secret, spore, { target_type: 'thing', target_id: deepOak })
+      assert.equal(tooDeep.status, 409)
+      assert.equal(tooDeep.json.error, `convert would take thing ${deepOak} past generation 8; this family cannot spread further`)
+      assert.equal((await db.query('SELECT as_kind_id FROM things WHERE id = $1', [deepOak])).rows[0]!.as_kind_id, null)
+    })
+
+    await t.test("a law converts only into its place owner's kind, and only things that agreed", async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const oak = await seedKind(NEIGHBOUR.id, 'oak', [])
+      await seedKind(NEIGHBOUR.id, 'ash', [])
+      assert.equal((await coin(app, GROWER.secret, 'ash-fall', {
+        talk: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target', into_kind: 'ash' }] }],
+      })).status, 201)
+      const notMine = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['ash-fall'] })
+      assert.equal(notMine.status, 409)
+      assert.equal(notMine.json.error, 'a law may convert only into a kind its place owner owns; kind ash is missing or belongs to someone else')
+
+      const cinder = await seedKind(GROWER.id, 'cinder', [])
+      await addRevision(cinder, 2, [])
+      assert.equal((await coin(app, GROWER.secret, 'cinder-fall', {
+        talk: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target', into_kind: 'cinder' }] }],
+      })).status, 201)
+      assert.equal((await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['cinder-fall'] })).status, 200)
+      const agreed = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'an agreeing oak', { openToReach: true, openToConvert: true })
+      const ownReachOnly = await seedThing(GROWER.id, rooms.eastRoomId, oak, "the owner's oak", { openToReach: true })
+      const closed = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'a closed oak')
+
+      const spoke = await call(app, GROWER.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'let it fall' })
+      assert.equal(spoke.status, 201, JSON.stringify(spoke.json))
+      const kinds = (await db.query(`
+        SELECT id, as_kind_id, as_revision, generation FROM things WHERE id = ANY($1::int[]) ORDER BY id
+      `, [[agreed, ownReachOnly, closed]])).rows
+      assert.deepEqual(kinds, [
+        { id: agreed, as_kind_id: cinder, as_revision: 2, generation: 1 },
+        { id: ownReachOnly, as_kind_id: null, as_revision: null, generation: 0 },
+        { id: closed, as_kind_id: null, as_revision: null, generation: 0 },
+      ], "a law needs open_to_convert even on its own place owner's things, and converts at the kind's current revision")
+      const lawMemory = (await db.query(`
+        SELECT by_thing_id, by_law_trait_id, by_place_id FROM thing_conversions WHERE thing_id = $1
+      `, [agreed])).rows
+      assert.deepEqual(lawMemory, [{ by_thing_id: null, by_law_trait_id: await traitId('cinder-fall'), by_place_id: rooms.eastRoomId }])
+      const skipped = (await db.query(`
+        SELECT detail->'skipped_effects' AS skipped FROM action_resolutions ORDER BY id DESC LIMIT 1
+      `)).rows[0]!.skipped as Json[]
+      assert.deepEqual(skipped.map(skip => [skip.member_id, skip.error]), [
+        [ownReachOnly, `thing ${ownReachOnly} has not agreed to be converted; its owner can set open_to_convert with thing_edit`],
+      ])
+      const lawRead = (await call(app, null, 'GET', `/api/thing/${agreed}`)).json.thing as Json
+      assert.equal((lawRead.was as Json[])[0]!.changed_by_law, 'cinder-fall')
+
+      // Ownership read again when the law runs: a kind given away stops the law.
+      await db.query('UPDATE kinds SET owner_id = $1 WHERE id = $2', [NEIGHBOUR.id, cinder])
+      const second = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, oak, 'a second oak', { openToReach: true, openToConvert: true })
+      assert.equal((await call(app, GROWER.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'again' })).status, 201)
+      assert.equal((await db.query('SELECT as_kind_id FROM things WHERE id = $1', [second])).rows[0]!.as_kind_id, null)
+      const after = (await db.query(`
+        SELECT detail->'skipped_effects' AS skipped FROM action_resolutions ORDER BY id DESC LIMIT 1
+      `)).rows[0]!.skipped as Json[]
+      assert.ok(after.some(skip => skip.error === 'a law may convert only into a kind its place owner owns; kind cinder is missing or belongs to someone else'))
+    })
+
+    await t.test('upgrading a converted thing moves its overlay revision and refuses a drawing variant', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'moss-touch', { use: [{ effect: 'convert', target: 'target' }] })).status, 201)
+      const moss = await seedKind(GROWER.id, 'moss', [await traitId('moss-touch')])
+      const stone = await seedKind(GROWER.id, 'stone', [])
+      const mossId = await seedThing(GROWER.id, rooms.eastRoomId, moss, 'moss')
+      const stoneId = await seedThing(GROWER.id, rooms.eastRoomId, stone, 'a stone')
+      const converted = await use(app, GROWER.secret, mossId, { target_type: 'thing', target_id: stoneId })
+      assert.equal(converted.status, 200, JSON.stringify(converted.json))
+
+      await addRevision(moss, 2, [await traitId('moss-touch')])
+      const variant = await call(app, GROWER.secret, 'POST', `/api/thing/${stoneId}/upgrade`, { drawing_variant_name: 'green' })
+      assert.equal(variant.status, 409)
+      assert.equal(variant.json.error, `thing ${stoneId} was converted, so it shows its new kind's base drawing; send no drawing_variant_name`)
+      const edit = await call(app, GROWER.secret, 'PATCH', `/api/thing/${stoneId}`, { drawing_variant_name: 'green' })
+      assert.equal(edit.status, 409)
+      assert.equal(edit.json.error, `thing ${stoneId} was converted, so it shows its new kind's base drawing; send no drawing_variant_name`)
+
+      const upgraded = await call(app, GROWER.secret, 'POST', `/api/thing/${stoneId}/upgrade`, {})
+      assert.equal(upgraded.status, 200, JSON.stringify(upgraded.json))
+      const thing = upgraded.json.thing as Json
+      assert.equal(thing.kind, 'moss')
+      assert.equal(thing.current_revision, 2)
+      assert.deepEqual(thing.born_as, { kind: 'stone', kind_id: stone, revision: 1 })
+      assert.deepEqual((await db.query('SELECT kind_id, current_revision, as_revision FROM things WHERE id = $1', [stoneId])).rows[0], {
+        kind_id: stone, current_revision: 1, as_revision: 2,
+      }, 'the birth revision stays; only the overlay moves')
+    })
   } finally {
     await postgres.stop()
   }

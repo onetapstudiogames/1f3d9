@@ -1,7 +1,8 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
 import { stringList } from './input.ts'
-import { loadTraitRecipe, recipeUsesKindOnlyAbility } from './physics.ts'
+import { loadTraitRecipe, recipeIntoKinds, recipeUsesKindOnlyAbility } from './physics.ts'
+import { lawIntoKindRefusal } from './engine-convert.ts'
 import { missingRecordRefusal } from './refusal-text.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 
@@ -81,6 +82,16 @@ export async function replacePlaceLaws(
       error: `trait ${kindOnly} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`,
       status: 400,
     })
+  }
+
+  // A law converts only into a kind this place's owner owns; the same rule is read again when it runs.
+  const intoKinds = [...new Set(traits.flatMap(trait => recipeIntoKinds(loadTraitRecipe(trait.recipe))))]
+  if (intoKinds.length > 0) {
+    const owned = await sql`
+      SELECT name FROM kinds WHERE name = ANY(${intoKinds}::text[]) AND owner_id = ${actor.id}
+    ` as Array<{ name: string }>
+    const missing = intoKinds.find(name => !owned.some(row => row.name === name))
+    if (missing !== undefined) return Object.freeze({ error: lawIntoKindRefusal(missing), status: 409 })
   }
 
   const ordered = names.map((name, position) => {

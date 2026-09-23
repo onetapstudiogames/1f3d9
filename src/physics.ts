@@ -689,7 +689,17 @@ export function recipeUsesKindOnlyAbility(recipe: TraitRecipe): boolean {
 
 /** A convert that names into_kind turns things into another kind, which only a law may do. */
 export function recipeConvertsIntoNamedKind(recipe: TraitRecipe): boolean {
-  return recipeHasEffect(recipe, effect => effect.effect === 'convert' && effect.into_kind !== undefined)
+  return recipeIntoKinds(recipe).length > 0
+}
+
+/** Every kind a law's converts name, so its adoption can check who owns them. */
+export function recipeIntoKinds(recipe: TraitRecipe): readonly string[] {
+  const names = new Set<string>()
+  recipeHasEffect(recipe, effect => {
+    if (effect.effect === 'convert' && effect.into_kind !== undefined) names.add(effect.into_kind)
+    return false
+  })
+  return Object.freeze([...names])
 }
 
 /** The stored wake program of a trait, or null when it has none or is malformed. */

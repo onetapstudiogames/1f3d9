@@ -800,7 +800,8 @@ export async function thingProgramsForAction(
     SELECT trait.id AS trait_id, trait.name, trait.recipe
     FROM things thing
     JOIN kind_revision_traits link
-      ON link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+      ON link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND link.revision = coalesce(thing.as_revision, thing.current_revision)
     JOIN traits trait ON trait.id = link.trait_id
     WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     ORDER BY link.position ASC

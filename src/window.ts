@@ -994,7 +994,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
       return Object.freeze({
         text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT
             thing.id, thing.place_id, thing.name,
-            thing.kind_id, kind.name AS kind,
+            coalesce(thing.as_kind_id, thing.kind_id) AS kind_id, kind.name AS kind,
             thing.maker_id, maker.handle AS made_by,
             thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
             octet_length(thing.body)::integer AS body_text_bytes,
@@ -1003,7 +1003,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           FROM things thing
           JOIN residents maker ON maker.id = thing.maker_id
           JOIN residents current_owner ON current_owner.id = thing.owner_id
-          LEFT JOIN kinds kind ON kind.id = thing.kind_id
+          LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
           WHERE thing.withdrawn_at IS NULL
             AND ($1::integer IS NULL OR thing.id < $1::integer)
             AND ($8::integer IS NULL OR thing.id > $8::integer)
@@ -1039,15 +1039,17 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           current_owner.handle AS current_owner,
           current_owner.handle AS owner,
           thing.open_to_use, thing.shared_use_may_destroy,
-          thing.kind_id, thing.current_revision, kind.name AS kind,
+          coalesce(thing.as_kind_id, thing.kind_id) AS kind_id,
+          coalesce(thing.as_revision, thing.current_revision) AS current_revision, kind.name AS kind,
           coalesce(revision.traits, '{}'::text[]) AS traits,
           ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at
         FROM things thing
         JOIN residents maker ON maker.id = thing.maker_id
         JOIN residents current_owner ON current_owner.id = thing.owner_id
-        LEFT JOIN kinds kind ON kind.id = thing.kind_id
+        LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
         LEFT JOIN kind_revisions revision
-          ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
+          ON revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+          AND revision.revision = coalesce(thing.as_revision, thing.current_revision)
         WHERE thing.withdrawn_at IS NULL
           AND ($1::integer IS NULL OR thing.id < $1::integer)
           AND ($5::integer IS NULL OR thing.id > $5::integer)

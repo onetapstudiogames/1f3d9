@@ -103,12 +103,15 @@ function allowedHere(candidate: Candidate, room: RoomDials): boolean {
 
 async function loadCandidates(placeId: number, db: TaggedSql): Promise<Candidate[]> {
   const rows = await db`
-    SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
+    SELECT thing.id, thing.owner_id,
+      coalesce(thing.as_kind_id, thing.kind_id) AS kind_id,
+      coalesce(thing.as_revision, thing.current_revision) AS current_revision,
       trait.id AS trait_id, trait.name AS trait_name, trait.recipe,
       state.last_try_at, state.clock_at
     FROM things thing
     JOIN kind_revision_traits link
-      ON link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+      ON link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND link.revision = coalesce(thing.as_revision, thing.current_revision)
     JOIN traits trait ON trait.id = link.trait_id
     LEFT JOIN thing_wake_state state ON state.thing_id = thing.id
     WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
@@ -152,7 +155,8 @@ async function roomMayWake(placeId: number, db: TaggedSql): Promise<boolean> {
     SELECT EXISTS (
       SELECT 1 FROM things thing
       JOIN kind_revision_traits link
-        ON link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+        ON link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+        AND link.revision = coalesce(thing.as_revision, thing.current_revision)
       JOIN traits trait ON trait.id = link.trait_id
       WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
         AND trait.recipe ? 'wake'
@@ -350,12 +354,14 @@ async function stillEligible(
     FROM things thing
     JOIN residents owner ON owner.id = thing.owner_id
     JOIN places place ON place.id = thing.place_id
-    JOIN kind_revision_traits link ON link.kind_id = thing.kind_id
-      AND link.revision = thing.current_revision AND link.trait_id = ${candidate.traitId}
+    JOIN kind_revision_traits link ON link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND link.revision = coalesce(thing.as_revision, thing.current_revision)
+      AND link.trait_id = ${candidate.traitId}
     WHERE thing.id = ${candidate.thingId} AND thing.place_id = ${placeId}
       AND thing.withdrawn_at IS NULL AND thing.wake_enabled
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
-      AND thing.kind_id = ${candidate.kindId} AND thing.current_revision = ${candidate.revision}
+      AND coalesce(thing.as_kind_id, thing.kind_id) = ${candidate.kindId}
+      AND coalesce(thing.as_revision, thing.current_revision) = ${candidate.revision}
       AND place.retired_at IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM transfer_offers offer

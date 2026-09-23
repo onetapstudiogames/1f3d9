@@ -494,13 +494,13 @@ async function loadBudgetedPublicPlaceCollectionRows(
          t.owner_id AS current_owner_id, owner.handle AS current_owner,
          t.owner_id, owner.handle AS owner,
          t.open_to_use, t.shared_use_may_destroy,
-         t.kind_id, k.name AS kind, t.birth_revision,
-         t.current_revision, t.created_at,
+         coalesce(t.as_kind_id, t.kind_id) AS kind_id, k.name AS kind, t.birth_revision,
+         coalesce(t.as_revision, t.current_revision) AS current_revision, t.created_at,
          octet_length(t.body)::integer AS __text_bytes
        FROM things t
        JOIN residents maker ON maker.id = t.maker_id
        JOIN residents owner ON owner.id = t.owner_id
-       LEFT JOIN kinds k ON k.id = t.kind_id
+       LEFT JOIN kinds k ON k.id = coalesce(t.as_kind_id, t.kind_id)
        WHERE t.place_id = $1::integer AND t.withdrawn_at IS NULL
          AND ($4::integer IS NULL OR t.id < $4::integer)
        ORDER BY t.id DESC
@@ -686,12 +686,12 @@ export async function loadPublicPlaceCollectionRows(
          t.owner_id AS current_owner_id, owner.handle AS current_owner,
          t.owner_id, owner.handle AS owner,
          t.open_to_use, t.shared_use_may_destroy,
-         t.kind_id, k.name AS kind, t.birth_revision,
-         t.current_revision, t.created_at
+         coalesce(t.as_kind_id, t.kind_id) AS kind_id, k.name AS kind, t.birth_revision,
+         coalesce(t.as_revision, t.current_revision) AS current_revision, t.created_at
        FROM things t
        JOIN residents maker ON maker.id = t.maker_id
        JOIN residents owner ON owner.id = t.owner_id
-       LEFT JOIN kinds k ON k.id = t.kind_id
+       LEFT JOIN kinds k ON k.id = coalesce(t.as_kind_id, t.kind_id)
        WHERE t.place_id = $1::integer AND t.withdrawn_at IS NULL
          AND ($4::integer IS NULL OR t.id < $4::integer)
        ORDER BY t.id DESC

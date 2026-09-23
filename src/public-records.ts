@@ -118,8 +118,34 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
       thing.owner_id AS current_owner_id, owner.handle AS current_owner,
       thing.owner_id, owner.handle AS owner, thing.open_to_use,
       thing.shared_use_may_destroy,
-      thing.kind_id, kind.name AS kind,
-      thing.birth_revision, thing.current_revision,
+      coalesce(thing.as_kind_id, thing.kind_id) AS kind_id, kind.name AS kind,
+      thing.birth_revision,
+      coalesce(thing.as_revision, thing.current_revision) AS current_revision,
+      CASE WHEN thing.kind_id IS NULL THEN NULL ELSE jsonb_build_object(
+        'kind', birth_kind.name, 'kind_id', thing.kind_id, 'revision', thing.birth_revision
+      ) END AS born_as,
+      coalesce((
+        SELECT jsonb_agg(conversion.entry ORDER BY conversion.id DESC)
+        FROM (
+          SELECT memory.id, jsonb_build_object(
+            'kind', former.name,
+            'kind_id', memory.from_kind_id,
+            'revision', memory.from_revision,
+            'changed_by_thing_id', memory.by_thing_id,
+            'changed_by_law', law.name,
+            'changed_by', answering.handle,
+            'at', to_char(memory.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          ) AS entry
+          FROM thing_conversions memory
+          JOIN kinds former ON former.id = memory.from_kind_id
+          JOIN residents answering ON answering.id = memory.authority_id
+          LEFT JOIN traits law ON law.id = memory.by_law_trait_id
+          WHERE memory.thing_id = thing.id
+          ORDER BY memory.id DESC LIMIT 8
+        ) conversion
+      ), '[]'::jsonb) AS was,
+      (SELECT count(*)::int FROM thing_conversions memory WHERE memory.thing_id = thing.id) AS was_total,
+      thing.open_to_reach, thing.open_to_convert,
       CASE
         WHEN coalesce((
           SELECT moderation.action FROM moderation_actions moderation
@@ -130,7 +156,8 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         WHEN thing.drawing_state = 'refused' THEN false
         WHEN coalesce((
           SELECT moderation.action FROM moderation_actions moderation
-          WHERE moderation.target_type = 'kind' AND moderation.target_id = thing.kind_id
+          WHERE moderation.target_type = 'kind'
+            AND moderation.target_id = coalesce(thing.as_kind_id, thing.kind_id)
           ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
         ), 'restore') = 'remove' THEN false
         ELSE coalesce((
@@ -139,15 +166,15 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
           CROSS JOIN LATERAL jsonb_array_elements(
             coalesce(drawing_revision.drawing_variants, '[]'::jsonb)
           ) variant(value)
-          WHERE drawing_revision.kind_id = thing.kind_id
-            AND drawing_revision.revision = thing.current_revision
+          WHERE drawing_revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+            AND drawing_revision.revision = coalesce(thing.as_revision, thing.current_revision)
             AND variant.value ->> 'name' = thing.drawing_variant_name
           LIMIT 1
         ), (
           SELECT drawing_revision.drawing IS NOT NULL
           FROM kind_revisions drawing_revision
-          WHERE drawing_revision.kind_id = thing.kind_id
-            AND drawing_revision.revision = thing.current_revision
+          WHERE drawing_revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+            AND drawing_revision.revision = coalesce(thing.as_revision, thing.current_revision)
         ), false)
       END AS has_drawing,
       thing.wake_enabled,
@@ -196,7 +223,8 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         FROM kind_revision_traits link
         JOIN traits trait ON trait.id = link.trait_id
         LEFT JOIN thing_wake_state wake_state ON wake_state.thing_id = thing.id
-        WHERE link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+        WHERE link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+          AND link.revision = coalesce(thing.as_revision, thing.current_revision)
           AND trait.recipe ? 'wake'
         ORDER BY link.position LIMIT 1
       ) AS wake,
@@ -228,7 +256,8 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
     FROM things thing
     JOIN residents maker ON maker.id = thing.maker_id
     JOIN residents owner ON owner.id = thing.owner_id
-    LEFT JOIN kinds kind ON kind.id = thing.kind_id
+    LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
+    LEFT JOIN kinds birth_kind ON birth_kind.id = thing.kind_id
     WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
   `) as PublicThingRecord[]
   const publicDetails = await moderatePlaceDetails(rows, [])

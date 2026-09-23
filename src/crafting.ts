@@ -308,7 +308,8 @@ export async function craftKindThing(
             AND offer.status = 'open'
         ) AS has_open_offer
       FROM things AS ingredient
-      LEFT JOIN kinds AS definition ON definition.id = ingredient.kind_id
+      LEFT JOIN kinds AS definition
+        ON definition.id = coalesce(ingredient.as_kind_id, ingredient.kind_id)
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
     ` as unknown as readonly IngredientRow[]
   }
@@ -356,7 +357,8 @@ export async function craftKindThing(
     ), locked_ingredients AS MATERIALIZED (
       SELECT ingredient.id, lower(definition.name) AS kind
       FROM things AS ingredient
-      JOIN kinds AS definition ON definition.id = ingredient.kind_id
+      JOIN kinds AS definition
+        ON definition.id = coalesce(ingredient.as_kind_id, ingredient.kind_id)
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
         AND ingredient.owner_id = ${input.actorId}
         AND ingredient.place_id = ${input.placeId}
