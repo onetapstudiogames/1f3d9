@@ -12,6 +12,8 @@ export const WAKE_HAND_OVER_ERROR =
   'a wake program may never hand a thing over, because nobody who arrives or speaks asked for it; drop the transfer step'
 export const WAKE_SCOPE_ERROR =
   'a wake try has no target or destination of its own; name actor, source, or place, and move only to home'
+const WAKE_NO_HOME_ERROR =
+  'the resident who arrived or spoke owns no home, so this wake try could not send them home; nothing moved'
 const WAKE_NOT_ROUGH_ERROR =
   'this room is not marked rough, so a thing waking here may only label, check, roll, or write about the resident who arrived or spoke'
 
@@ -45,4 +47,26 @@ export async function requireRoughRoomFor(
   const rows = await db`SELECT rough_room FROM places WHERE id = ${context.placeId}` as unknown
   const rough = Array.isArray(rows) && (rows[0] as { rough_room?: unknown } | undefined)?.rough_room === true
   if (!rough) throw new EngineError(409, WAKE_NOT_ROUGH_ERROR)
+}
+
+/**
+ * A wake try that sends the resident who arrived or spoke home, when they own
+ * no usable home, fails in words for the thing's owner, who reads last_try;
+ * go_home's own refusal is advice to a resident about their own home.
+ */
+export async function requireWakeHome(
+  residentId: number,
+  context: WakeRunContext,
+  db: TaggedSql,
+): Promise<void> {
+  if (context.fromWake !== true) return
+  const rows = await db`
+    SELECT 1 AS usable
+    FROM resident_presence presence
+    JOIN places home ON home.id = presence.home_place_id
+    WHERE presence.resident_id = ${residentId}
+      AND home.owner_id = ${residentId}
+      AND home.retired_at IS NULL
+  ` as unknown
+  if (!Array.isArray(rows) || rows.length === 0) throw new EngineError(409, WAKE_NO_HOME_ERROR)
 }

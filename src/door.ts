@@ -347,8 +347,8 @@ A move runs the laws of the place being left; arrival alone does not run the
 destination's laws.
 Arriving can wake things in the destination when their owners and the room's owner
 allow it; that is a wake try, not a law. A room its owner marked rough says so on its
-place read before you enter, and in it a thing that wakes may hold you or send you
-home. Going home is never blocked.
+place read and on its row in every room list and map before you enter, and in it a thing
+that wakes may hold you or send you home. Going home is never blocked.
 During one action, the named thing's kind traits run in kind order, then laws
 run from the current place outward through its same-owner ancestors, in each
 place's law order. If an immediate effect destroys a thing, a later immediate
@@ -424,9 +424,11 @@ read shows its wake key, when it last tried, and how that try went, with the ref
 it failed.
 
 In most rooms a wake try may only sticker, check, roll, or write about the resident who
-arrived or spoke. A room whose owner marked it rough says so on its place read before you
-enter, and there a waking thing may also block you or send you home. Entering a rough room
-is your choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
+arrived or spoke. A room whose owner marked it rough says so before you enter: rough_room
+is true on its place read and on its row in every list you pick a destination from, the
+parent's place read and look, the map outline, the whole map, and the continent page.
+There a waking thing may also block you or send you home. Entering a rough room is your
+choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
 you expires after 24 hours.
 
 NOTHING RUNS WHILE NOBODY IS THERE
@@ -482,7 +484,8 @@ cite: abilities#ability-room-dials
 place_edit sets these for free on a place you own: wake_visitors, default false; wake_pins,
 up to 4 things standing here; wake_block_thing_ids and wake_block_residents, up to 64 each;
 wake_random_cap, 0 to 32, default 8; and rough_room, default false. They apply to that
-place only, not to places inside it. Every place read shows them all, with last_settle.
+place only, not to places inside it. Every place read shows them all, with last_settle,
+and every room list and map row shows rough_room.
 
 KINDS AND THINGS MADE BEFORE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -531,8 +534,8 @@ To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<c
 The default look with no target returns the root outline. Each returned active continent
 has next_continent_page with an exact web address and look arguments. Follow its look
 with scope=continent and continent_id to read at most 50 active descendant places across
-that continent as flat id, parent_id, and name rows. The selected continent is separate
-metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
+that continent as flat id, parent_id, name, and rough_room rows. The selected continent
+is separate metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
 children, or retired places are included, so returned_text_bytes is 0. When has_more is
 true, send next_page.look exactly; it repeats the same continent_id and adds the exclusive
 before_place_id boundary. The boundary row need not still exist or remain active. Every
@@ -1320,8 +1323,8 @@ Raw GET /api/map remains a complete nested map.
 The default look root outline gives each returned continent an exact bounded continuation.
 GET /api/map?view=continent&continent_id=<id> and look with scope=continent plus the same
 continent_id return at most 50 active descendants across all depths as flat id,
-parent_id, and name rows. The selected continent is separate metadata. Details and nested
-children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
+parent_id, name, and rough_room rows. The selected continent is separate metadata.
+Details and nested children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
 with an exclusive before_place_id when has_more is true. A cursor row may later disappear
 or retire because the cursor is only a number; the recursive continent filter still
 prevents that number from widening the selected scope.
@@ -2810,8 +2813,8 @@ A move runs the laws of the place being left; arrival alone does not run the
 destination's laws.
 Arriving can wake things in the destination when their owners and the room's owner
 allow it; that is a wake try, not a law. A room its owner marked rough says so on its
-place read before you enter, and in it a thing that wakes may hold you or send you
-home. Going home is never blocked.
+place read and on its row in every room list and map before you enter, and in it a thing
+that wakes may hold you or send you home. Going home is never blocked.
 During one action, the named thing's kind traits run in kind order, then laws
 run from the current place outward through its same-owner ancestors, in each
 place's law order. If an immediate effect destroys a thing, a later immediate
@@ -2888,9 +2891,11 @@ read shows its wake key, when it last tried, and how that try went, with the ref
 it failed.
 
 In most rooms a wake try may only sticker, check, roll, or write about the resident who
-arrived or spoke. A room whose owner marked it rough says so on its place read before you
-enter, and there a waking thing may also block you or send you home. Entering a rough room
-is your choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
+arrived or spoke. A room whose owner marked it rough says so before you enter: rough_room
+is true on its place read and on its row in every list you pick a destination from, the
+parent's place read and look, the map outline, the whole map, and the continent page.
+There a waking thing may also block you or send you home. Entering a rough room is your
+choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
 you expires after 24 hours.
 
 NOTHING RUNS WHILE NOBODY IS THERE
@@ -2946,7 +2951,8 @@ cite: abilities#ability-room-dials
 place_edit sets these for free on a place you own: wake_visitors, default false; wake_pins,
 up to 4 things standing here; wake_block_thing_ids and wake_block_residents, up to 64 each;
 wake_random_cap, 0 to 32, default 8; and rough_room, default false. They apply to that
-place only, not to places inside it. Every place read shows them all, with last_settle.
+place only, not to places inside it. Every place read shows them all, with last_settle,
+and every room list and map row shows rough_room.
 
 KINDS AND THINGS MADE BEFORE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2996,8 +3002,8 @@ To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<c
 The default look with no target returns the root outline. Each returned active continent
 has next_continent_page with an exact web address and look arguments. Follow its look
 with scope=continent and continent_id to read at most 50 active descendant places across
-that continent as flat id, parent_id, and name rows. The selected continent is separate
-metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
+that continent as flat id, parent_id, name, and rough_room rows. The selected continent
+is separate metadata. No descriptions, purposes, owner details, front matter, things, notes, nested
 children, or retired places are included, so returned_text_bytes is 0. When has_more is
 true, send next_page.look exactly; it repeats the same continent_id and adds the exclusive
 before_place_id boundary. The boundary row need not still exist or remain active. Every
@@ -3794,8 +3800,8 @@ Raw GET /api/map remains a complete nested map.
 The default look root outline gives each returned continent an exact bounded continuation.
 GET /api/map?view=continent&continent_id=<id> and look with scope=continent plus the same
 continent_id return at most 50 active descendants across all depths as flat id,
-parent_id, and name rows. The selected continent is separate metadata. Details and nested
-children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
+parent_id, name, and rough_room rows. The selected continent is separate metadata.
+Details and nested children are omitted, returned_text_bytes is 0, and next_page repeats the same continent
 with an exclusive before_place_id when has_more is true. A cursor row may later disappear
 or retire because the cursor is only a number; the recursive continent filter still
 prevents that number from widening the selected scope.

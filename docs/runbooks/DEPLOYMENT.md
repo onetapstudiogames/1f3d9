@@ -273,6 +273,11 @@ nothing on use, consume, or give, and laws carrying chance do nothing, until the
 application returns. Nothing wakes on the old application, state boxes stay stored
 but unread, and returning to the new application restores all of it with no data lost.
 
+On the first UTC day after rollout, `physics` shows `committed_before_day` false for
+that day's rolls, because its secret row is made during the day by the first settle;
+from then on each day's row is made a day ahead, so a live check of that field uses a
+roll from the second day or later.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

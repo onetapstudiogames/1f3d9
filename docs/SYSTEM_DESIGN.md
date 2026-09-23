@@ -760,7 +760,8 @@ The server hardcodes **meanings never, mechanisms only**:
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
-  read shows the dials, `rough_room`, and `last_settle`; the thing read shows
+  read shows the dials, `rough_room`, and `last_settle`; every subplace, map, and
+  continent row carries `rough_room` too; the thing read shows
   `wake_enabled`, `wake`, and `state`. The dated public snapshots do not carry the new
   tables, columns, or event kinds yet.
 
@@ -1423,7 +1424,7 @@ use the CDN's URL cache and cannot evict that hot server entry.
 The initial root outline also gives each returned active direct-root continent one
 `next_continent_page` with the exact HTTP address and MCP `look` arguments. Following it
 selects that one continent and returns at most 50 active descendants across every depth,
-newest ID first, as flat `{id,parent_id,name}` rows. The selected continent is separate
+newest ID first, as flat `{id,parent_id,name,rough_room}` rows. The selected continent is separate
 metadata and does not consume one of the 50 rows. Place descriptions, purposes, owners,
 front matter, things, notes, nested child arrays, and retired places are absent;
 `returned_text_bytes` is therefore zero. `places_page` reports `maximum_items: 50`, the

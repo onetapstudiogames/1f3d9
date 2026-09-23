@@ -736,6 +736,28 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal((home.json.action as Json).place_id, rooms.continentId)
     })
 
+    await t.test('a waking thing that cannot send a homeless visitor home tells its owner why', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(VISITOR.id, rooms.continentId)
+      await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.eastRoomId])
+      assert.equal((await coin(app, FOUNDER.secret, 'bouncer', {
+        wake: { then: [{ effect: 'move', target: 'actor', to: 'home' }] },
+      })).status, 201)
+      const bouncer = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'bouncers', [await traitId('bouncer')]), 'a bouncer', { wakeEnabled: true })
+      const entered = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.equal(entered.status, 200)
+      const sentence = 'the resident who arrived or spoke owns no home, so this wake try could not send them home; nothing moved'
+      assert.deepEqual((await db.query('SELECT status, error FROM wake_tries')).rows, [{
+        status: 'failed',
+        error: 'the resident who arrived or spoke owns no home, so this wake try could not send them home; nothing moved',
+      }])
+      const lastTry = ((await call(app, null, 'GET', `/api/thing/${bouncer}`)).json.thing as Json).wake as Json
+      assert.equal((lastTry.last_try as Json).error, sentence, "the thing's owner reads why, not advice meant for the visitor")
+      const presence = (await db.query('SELECT current_place_id FROM resident_presence WHERE resident_id = $1', [VISITOR.id])).rows[0]
+      assert.equal(presence!.current_place_id, rooms.eastRoomId, 'the visitor stays where they walked')
+    })
+
     await t.test('a place read never settles, and concurrent settles claim each owed try once', async () => {
       const rooms = await resetCity([FOUNDER, MAKER])
       const db = connectedDatabase()
@@ -883,6 +905,62 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.deepEqual({ ...(after.last_settle as Json), at: undefined }, {
         settle_id: settleId, at: undefined, trigger: 'arrive', by: 'far-walker', budget: 4,
         tried: 1, woke: 1, stopped: 0, forfeited: 0, roll_id: null,
+      })
+    })
+
+    await t.test("a rough room's row carries the mark in every list a resident picks a destination from", async t2 => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      await standIn(FOUNDER.id, rooms.continentId)
+      const marked = await call(app, FOUNDER.secret, 'PATCH', `/api/place/${rooms.eastRoomId}`, { rough_room: true })
+      assert.equal(marked.status, 200, JSON.stringify(marked.json))
+      const continentMark = await call(app, FOUNDER.secret, 'PATCH', `/api/place/${rooms.continentId}`, { rough_room: true })
+      assert.equal(continentMark.status, 200, JSON.stringify(continentMark.json))
+      const marks = (rows: readonly Json[]) => Object.fromEntries(rows
+        .filter(row => row.id === rooms.eastRoomId || row.id === rooms.westRoomId || row.id === rooms.continentId)
+        .map(row => [String(row.name), row.rough_room]))
+      const findTree = (rows: readonly Json[], id: number): Json | null => {
+        for (const row of rows) {
+          if (row.id === id) return row
+          const inner = findTree((row.children ?? []) as Json[], id)
+          if (inner) return inner
+        }
+        return null
+      }
+
+      await t2.test('the parent place read, outline and full, marks its rough child row', async () => {
+        for (const view of ['outline', 'full']) {
+          const read = await call(app, null, 'GET', `/api/place/${rooms.continentId}?view=${view}`)
+          assert.equal(read.status, 200)
+          assert.deepEqual(marks(read.json.subplaces as Json[]), { 'East Room': true, 'West Room': false }, view)
+        }
+      })
+      await t2.test('the map outline under a parent marks its rough subplace row', async () => {
+        const read = await call(app, null, 'GET', `/api/map?view=outline&parent_id=${rooms.continentId}`)
+        assert.equal(read.status, 200)
+        assert.deepEqual(marks(read.json.subplaces as Json[]), { 'East Room': true, 'West Room': false })
+        assert.equal((read.json.place as Json).rough_room, true, 'the outline parent row carries it too')
+      })
+      await t2.test('the root map outline marks a rough continent row', async () => {
+        const read = await call(app, null, 'GET', `/api/map?view=outline&subplace_limit=50`)
+        assert.equal(read.status, 200)
+        assert.deepEqual(marks(read.json.subplaces as Json[]), { 'Walking Continent': true })
+        assert.equal((read.json.place as Json).rough_room, false, 'the world row is never rough')
+      })
+      await t2.test('the whole map tree marks a rough child row', async () => {
+        for (const path of ['/api/map', '/api/map?view=full']) {
+          const read = await call(app, null, 'GET', path)
+          assert.equal(read.status, 200)
+          const places = read.json.places as Json[]
+          assert.equal(findTree(places, rooms.eastRoomId)?.rough_room, true, path)
+          assert.equal(findTree(places, rooms.westRoomId)?.rough_room, false, path)
+          assert.equal(findTree(places, rooms.continentId)?.rough_room, true, path)
+        }
+      })
+      await t2.test('the continent page marks a rough place row and the continent itself', async () => {
+        const read = await call(app, null, 'GET', `/api/map?view=continent&continent_id=${rooms.continentId}`)
+        assert.equal(read.status, 200)
+        assert.deepEqual(marks(read.json.places as Json[]), { 'East Room': true, 'West Room': false })
+        assert.equal((read.json.continent as Json).rough_room, true)
       })
     })
 

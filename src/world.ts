@@ -290,13 +290,14 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const rows = (await sql`
     WITH RECURSIVE place_tree AS (
       SELECT p.id, p.parent_id, p.name, p.description, p.purpose, p.owner_id,
-        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.created_at,
+        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
       WHERE p.parent_id IS NULL AND p.retired_at IS NULL
       UNION ALL
       SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
-        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.created_at,
+        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.rough_room,
+        child.created_at,
         parent.path || child.id
       FROM places child
       JOIN place_tree parent ON parent.id = child.parent_id
@@ -304,7 +305,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
     )
     SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
-      tree.open_to_notes, tree.quiet, tree.created_at,
+      tree.open_to_notes, tree.quiet, tree.rough_room, tree.created_at,
       (SELECT count(*)::int FROM places child
         WHERE child.parent_id = tree.id AND child.retired_at IS NULL) AS places,
       (SELECT count(*)::int FROM things thing

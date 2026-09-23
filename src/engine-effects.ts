@@ -39,7 +39,7 @@ import {
   recordFailedRolls,
   type RollLog,
 } from './engine-chance.ts'
-import { requireRoughRoomFor, requireWakeActor } from './wake-guard.ts'
+import { requireRoughRoomFor, requireWakeActor, requireWakeHome } from './wake-guard.ts'
 import { writeStateBox } from './engine-state.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
@@ -694,6 +694,7 @@ async function moveEffectTarget(
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
+      await requireWakeHome(target.id, context, db)
        await goHome(target.id, db, context.actionId)
       return false
     }
