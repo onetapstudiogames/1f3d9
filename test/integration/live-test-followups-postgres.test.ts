@@ -94,6 +94,34 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
       assert.equal((changed.json.kind as Json).revision, 2)
       assert.equal(await creditUnits(GROWER.id), '0', 'the change spent its one credit')
     })
+
+    await t.test('a revision names the traits its new list left out', async () => {
+      await resetCity([FOUNDER, GROWER])
+      for (const name of ['moss', 'fern', 'ivy', 'oak-bark']) {
+        assert.equal((await coin(app, GROWER.secret, name, null)).status, 201, name)
+      }
+      const lichen = await seedKind(GROWER.id, 'lichen', [
+        await traitId('moss'), await traitId('fern'), await traitId('ivy'),
+      ])
+      await fundOneCredit(GROWER.id)
+      await fundOneCredit(GROWER.id)
+
+      // traits replaces the whole list: sending [fern, oak-bark] drops moss and ivy.
+      const replaced = await revise(app, lichen, { traits: ['fern', 'oak-bark'] }, creditRequestId())
+      assert.equal(replaced.status, 200, JSON.stringify(replaced.json))
+      assert.deepEqual((replaced.json.kind as Json).traits, ['fern', 'oak-bark'])
+      assert.deepEqual(replaced.json.dropped_traits, ['moss', 'ivy'])
+      assert.equal(
+        replaced.json.dropped_traits_note,
+        'traits replaces the whole list, so revision 2 left out moss, ivy that revision 1 had; to keep a trait, send it in traits with the rest',
+      )
+
+      // Keeping every trait and adding one drops nothing, and says nothing about it.
+      const kept = await revise(app, lichen, { traits: ['fern', 'oak-bark', 'moss'] }, creditRequestId())
+      assert.equal(kept.status, 200, JSON.stringify(kept.json))
+      assert.deepEqual(kept.json.dropped_traits, [])
+      assert.equal('dropped_traits_note' in kept.json, false)
+    })
   } finally {
     await postgres.stop()
   }

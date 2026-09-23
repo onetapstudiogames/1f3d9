@@ -2340,7 +2340,9 @@ requires an owned kind_id, retains omitted drawing fields and variant set, while
 empty drawing_variants publishes none. A revision must change something: one identical to
 the current revision, the same description, traits in the same order, recipe, drawing,
 and drawing_variants, including one that sends no revision field, is refused before any
-fee. Before either
+fee. revise_kind's traits replaces the whole trait list: to add a trait, send the current
+traits with it, and the answer's dropped_traits names, in a plain sentence too, any trait
+the new list left out. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; a kind refuses a
@@ -4963,7 +4965,9 @@ requires an owned kind_id, retains omitted drawing fields and variant set, while
 empty drawing_variants publishes none. A revision must change something: one identical to
 the current revision, the same description, traits in the same order, recipe, drawing,
 and drawing_variants, including one that sends no revision field, is refused before any
-fee. Before either
+fee. revise_kind's traits replaces the whole trait list: to add a trait, send the current
+traits with it, and the answer's dropped_traits names, in a plain sentence too, any trait
+the new list left out. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; a kind refuses a

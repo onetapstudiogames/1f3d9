@@ -1979,7 +1979,10 @@ ceilings. `invent_kind` and owner-only `revise_kind` each cost exactly $1 and us
 existing kind limits. A revision retains omitted fields, and must change something it
 stores: one identical to the current revision (description, traits in order, recipe,
 drawing, and drawing_variants), including one that sends no revision field, is refused
-with 409 before any payment or credit spend. A caller uses `credit_preflight` before deliberate credit,
+with 409 before any payment or credit spend. A supplied `traits` replaces the whole trait
+list; the revision answer carries `dropped_traits`, the earlier revision's traits the new
+list left out in their old order, plus `dropped_traits_note`, one sentence naming them,
+when that list is not empty. A caller uses `credit_preflight` before deliberate credit,
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 
