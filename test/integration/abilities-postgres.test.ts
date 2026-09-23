@@ -108,6 +108,7 @@ async function ageRoom(placeId: number, seconds: number): Promise<void> {
 // Put the database back to how it stood before this change, so the migration meets
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
+  DROP TABLE thing_conversions, family_growth_marks, place_copy_counts;
   DROP TABLE thing_state_changes, chance_rolls, chance_days, wake_tries, wake_settles, thing_wake_state;
   DROP SEQUENCE chance_rolls_id_seq;
   DROP TRIGGER things_sleep_on_owner_change ON things;

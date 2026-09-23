@@ -32,6 +32,11 @@ export const abilitiesWakeChanceWriteMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const abilitiesCopyReachConvertMigrationUrl = new URL(
+  '../../../db/migrations/20260922_abilities_copy_reach_convert.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,
