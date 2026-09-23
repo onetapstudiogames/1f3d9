@@ -809,7 +809,10 @@ The server hardcodes **meanings never, mechanisms only**:
   reach filter, crafting, the public kind and drawing). Consent is `open_to_convert`, or
   the answerer's own thing in their own program. Each conversion appends
   `thing_conversions` and a `thing_edited` event with mode `converted` and clears the old
-  family's open growth marks; the thing sleeps and shows its new kind's base drawing;
+  family's open growth marks. A thing's conversion also sets `family_id` to the
+  converter's family (decision #115), so the converted thing's `family_maker`,
+  `growth_mark`, and later copies belong to that family; `parent_thing_id` and the maker
+  stay its own, and a law's conversion leaves `family_id` unchanged. The thing sleeps and shows its new kind's base drawing;
   `thing_upgrade` moves only the overlay. The conversion and a converted thing's upgrade
   each append a thing `drawing_revisions` row when what the thing shows changes
   (`src/thing-presentation.ts`; author relation `kind_owner` for the conversion, `owner`
