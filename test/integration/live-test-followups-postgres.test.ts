@@ -4,17 +4,19 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import {
-  FOUNDER, GROWER, coin, seedKind, traitId, type CityApp, type Json,
+  FOUNDER, GROWER, call, coin, seedKind, seedThing, traitId, use, type CityApp, type Json,
 } from '../helpers/abilities-fixtures.ts'
 import {
   bearer,
   connectedDatabase,
   resetCity,
+  standIn,
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
 
 // Loaded only after the fixture points src/db.ts at the test container.
 const { issueCityFeeCredit } = await import('../../src/city-credit.ts')
+const { PUBLIC_THING_LABELS_MAX } = await import('../../src/read-limits.ts')
 
 function creditRequestId(): string {
   return `fee-${randomBytes(16).toString('hex')}`
@@ -121,6 +123,52 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
       assert.equal(kept.status, 200, JSON.stringify(kept.json))
       assert.deepEqual(kept.json.dropped_traits, [])
       assert.equal('dropped_traits_note' in kept.json, false)
+    })
+
+    await t.test('a public thing read shows its current labels, newest first and capped', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      assert.equal((await coin(app, GROWER.secret, 'soaking', {
+        use: [{ effect: 'label', target: 'source', label: 'wet' }],
+      })).status, 201)
+      const sponge = await seedKind(GROWER.id, 'sponge', [await traitId('soaking')])
+      const thingId = await seedThing(GROWER.id, rooms.eastRoomId, sponge, 'a sponge')
+      // An expired label never shows.
+      await db.query(`
+        INSERT INTO active_labels (target_type, target_id, label, actor_id, created_at, expires_at)
+        VALUES ('thing', $1, 'dried', $2, now() - interval '2 hours', now() - interval '1 hour')
+      `, [thingId, GROWER.id])
+      const used = await use(app, GROWER.secret, thingId)
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+
+      const read = await call(app, null, 'GET', `/api/thing/${thingId}`)
+      assert.equal(read.status, 200, JSON.stringify(read.json))
+      const thing = read.json.thing as Json
+      const labels = thing.labels as Json[]
+      assert.equal(labels.length, 1, JSON.stringify(labels))
+      assert.equal(labels[0]!.label, 'wet')
+      assert.equal(labels[0]!.set_by, GROWER.handle)
+      assert.match(String(labels[0]!.set_at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+      assert.equal(labels[0]!.expires_at, null)
+      assert.equal(thing.labels_total, 1)
+
+      // Past the cap, the read keeps the newest 32 and counts every current label.
+      for (let index = 0; index < 33; index += 1) {
+        await db.query(`
+          INSERT INTO active_labels (target_type, target_id, label, actor_id, expires_at)
+          VALUES ('thing', $1, $2, $3, now() + interval '1 day')
+        `, [thingId, `mark-${index}`, GROWER.id])
+      }
+      const capped = (await call(app, null, 'GET', `/api/thing/${thingId}`)).json.thing as Json
+      const shown = (capped.labels as Json[]).map(entry => entry.label)
+      assert.equal(PUBLIC_THING_LABELS_MAX, 32)
+      assert.equal(shown.length, PUBLIC_THING_LABELS_MAX, 'the read and the stated cap agree')
+      assert.equal(shown[0], 'mark-32', 'newest first')
+      assert.equal(shown.includes('wet'), false, 'the oldest current label falls past the cap')
+      assert.equal(capped.labels_total, 34)
+      assert.notEqual((capped.labels as Json[])[0]!.expires_at, null)
     })
   } finally {
     await postgres.stop()

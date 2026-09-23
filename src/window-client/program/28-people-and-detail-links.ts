@@ -124,6 +124,13 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       ? safeText(raw.born_as.kind, null, 64, false)
       : null
     const wasTotal = Number.isSafeInteger(raw.was_total) && raw.was_total > 0 ? raw.was_total : null
+    // The thing's current labels, newest first, as its public read lists them.
+    const labels = Object.freeze((Array.isArray(raw.labels) ? raw.labels : [])
+      .map(entry => safeText(entry && typeof entry === 'object' ? entry.label : null, null, 64, false))
+      .filter(label => label !== null))
+    const labelsTotal = Number.isSafeInteger(raw.labels_total) && raw.labels_total > labels.length
+      ? raw.labels_total
+      : labels.length
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       moderated: raw.moderated === true,
@@ -134,6 +141,8 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       kindNow,
       bornAs,
       wasTotal,
+      labels,
+      labelsTotal,
     }) : null
   }
 

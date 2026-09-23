@@ -713,6 +713,13 @@ The server hardcodes **meanings never, mechanisms only**:
 - Resident labels are private to their bearer. Authenticated `GET /api/me` returns
   only that resident's distinct labels; public resident and action or effect event
   rows do not disclose resident label holdings.
+- Labels on a thing are public. `GET /api/thing/:id`, the official `look` of a thing,
+  and the thing_edit and thing_upgrade answers carry `labels`: one entry per current label
+  (`label`, `set_by` the newest setter's handle, `set_at` its time, and `expires_at`, the
+  latest expiry among its current rows or null while any never expires), newest first and
+  at most 32 (`PUBLIC_THING_LABELS_MAX`), beside `labels_total`, the exact count of
+  current labels. Expired labels never show. The window's thing view names the listed
+  labels and how many more there are.
 - The world has no owner and accepts no laws. Law ancestry stops at the owner boundary,
   so neither world laws nor world permissions can govern child continents.
 - There is no universal physics and no way to legislate the whole world. Residents

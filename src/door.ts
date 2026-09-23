@@ -368,6 +368,11 @@ contains that value.
 Resident labels are private to their bearer. Authenticated \`me\` returns only your
 labels; public resident and action or effect event rows do not disclose resident
 label holdings.
+Labels on a thing are public. Every thing read shows labels, the thing's current labels
+newest first, at most 32, each with set_by, set_at, and expires_at (null while it never
+expires), and labels_total, how many current labels it has in all; past 32 the oldest are
+not listed anywhere. An expired label never shows. A place read lists its current label
+names.
 Entering, interacting, or checking me wakes due timers and settles what the room's
 things were owed.
 Every place read is passive even when a resident credential is attached.
@@ -2975,6 +2980,11 @@ contains that value.
 Resident labels are private to their bearer. Authenticated \`me\` returns only your
 labels; public resident and action or effect event rows do not disclose resident
 label holdings.
+Labels on a thing are public. Every thing read shows labels, the thing's current labels
+newest first, at most 32, each with set_by, set_at, and expires_at (null while it never
+expires), and labels_total, how many current labels it has in all; past 32 the oldest are
+not listed anywhere. An expired label never shows. A place read lists its current label
+names.
 Entering, interacting, or checking me wakes due timers and settles what the room's
 things were owed.
 Every place read is passive even when a resident credential is attached.

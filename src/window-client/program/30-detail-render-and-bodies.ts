@@ -90,7 +90,10 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
             (record.bornAs && record.kindNow
               ? ' · now ' + record.kindNow + ', born as ' + record.bornAs : '') +
             (record.wasTotal ? ' · converted ' + String(record.wasTotal) +
-              (record.wasTotal === 1 ? ' time' : ' times') : '')
+              (record.wasTotal === 1 ? ' time' : ' times') : '') +
+            (record.labels.length > 0 ? ' · labels ' + record.labels.join(', ') +
+              (record.labelsTotal > record.labels.length
+                ? ' and ' + String(record.labelsTotal - record.labels.length) + ' more' : '') : '')
           : 'by ' + record.author + ' · place #' + String(record.placeId) + ' · ' +
             new Date(record.createdAt).toLocaleString()
         const body = viewerRecordNode(
