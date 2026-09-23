@@ -258,9 +258,14 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query(`UPDATE things SET body = 'green words' WHERE id = $1`, [parentId])
       // The kind moves on to revision 2; the parent stays at 1, and so will its copy.
       await addRevision(fern, 2, [await traitId('fern-sprout')])
-      // Sold to the neighbour, who wakes it again; the maker of the words stays the grower.
+      // Sold to the neighbour, where it arrives asleep and closed; the neighbour wakes it
+      // and opens it to reach again. The maker of the words stays the grower.
       await db.query('UPDATE things SET owner_id = $2 WHERE id = $1', [parentId, NEIGHBOUR.id])
-      await db.query('UPDATE things SET wake_enabled = TRUE WHERE id = $1', [parentId])
+      assert.deepEqual(
+        (await db.query('SELECT wake_enabled, open_to_reach FROM things WHERE id = $1', [parentId])).rows[0],
+        { wake_enabled: false, open_to_reach: false },
+      )
+      await db.query('UPDATE things SET wake_enabled = TRUE, open_to_reach = TRUE WHERE id = $1', [parentId])
       const thingsToday = Number((await db.query('SELECT things_today FROM residents WHERE id = $1', [NEIGHBOUR.id])).rows[0]!.things_today)
 
       const used = await use(app, NEIGHBOUR.secret, parentId)
