@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  FOUNDER, GROWER, NEIGHBOUR, call, coin, seedKind, seedThing, traitId, use,
+  FOUNDER, GROWER, NEIGHBOUR, addRevision, call, coin, seedKind, seedThing, traitId, use,
   type CityApp, type Json,
 } from '../helpers/abilities-fixtures.ts'
 import {
@@ -263,6 +263,129 @@ test('converted things read true, reaches stay within 512, and families copy wit
         const made = answers.flatMap(answer => ((answer.json.action as Json).copied_thing_ids as number[] | undefined) ?? [])
         assert.equal(made.length, 1, `round ${round}: the family's share of one holds`)
       }
+    })
+    await t.test("an adjacent copy clears its room's no_arrivals mark, and the neighbour's cap shows on the thing", async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const gardenId = Number((await db.query(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+        VALUES ($1, 'place', 'G4 Garden', 'a garden', 1) RETURNING id
+      `, [rooms.eastRoomId])).rows[0]!.id)
+      assert.equal((await coin(app, GROWER.secret, 'g4-spore', { use: [{ effect: 'copy', to: 'adjacent', copies: 'unlimited' }] })).status, 201)
+      const spore = await seedKind(GROWER.id, 'g4-spore', [await traitId('g4-spore')])
+      const parentId = await seedThing(GROWER.id, rooms.eastRoomId, spore, 'a g4 spore')
+      const markOf = async (thingId: number) =>
+        ((await call(app, null, 'GET', `/api/thing/${thingId}`)).json.thing as Json).growth_mark as Json | null
+
+      const closed = await use(app, GROWER.secret, parentId)
+      assert.equal(closed.status, 200, JSON.stringify(closed.json))
+      const first = await markOf(parentId)
+      assert.deepEqual([first?.cap, first?.place_id], ['no_arrivals', rooms.eastRoomId], 'no neighbour allows arrivals')
+
+      await db.query('UPDATE places SET allow_arriving_copies = TRUE WHERE id = $1', [gardenId])
+      const landed = await use(app, GROWER.secret, parentId)
+      const [copyId] = (landed.json.action as Json).copied_thing_ids as [number]
+      assert.equal(Number((await db.query('SELECT place_id FROM things WHERE id = $1', [copyId])).rows[0]!.place_id), gardenId)
+      assert.equal(await markOf(parentId), null, 'a later copy landing next door clears the no_arrivals mark')
+      assert.deepEqual((await db.query(`
+        SELECT cap, cleared_reason FROM family_growth_marks WHERE family_id = $1 ORDER BY id
+      `, [parentId])).rows, [{ cap: 'no_arrivals', cleared_reason: 'copy_succeeded' }])
+
+      await db.query('UPDATE places SET growth_cap_per_day = 1 WHERE id = $1', [gardenId])
+      const capped = await use(app, GROWER.secret, parentId)
+      const [skip] = (capped.json.action as Json).skipped_effects as [Json]
+      assert.deepEqual([skip.cap, skip.limit, skip.over_by], ['place_daily', 1, 1])
+      const expected = { family_id: parentId, place_id: gardenId, source_thing_id: parentId, cap: 'place_daily', limit: 1, over_by: 1 }
+      for (const thingId of [parentId, copyId]) {
+        const mark = await markOf(thingId)
+        assert.ok(mark, `thing ${thingId}: the family's mark shows on the thing`)
+        const { at: _at, ...facts } = mark
+        assert.deepEqual(facts, expected, `thing ${thingId}: which cap, by how much, and which place`)
+      }
+      const garden = (await call(app, null, 'GET', `/api/place/${gardenId}?view=full`)).json.place as Json
+      const [placeMark] = garden.growth_marks as [Json]
+      assert.deepEqual([placeMark.family_id, placeMark.cap, placeMark.limit, placeMark.over_by], [parentId, 'place_daily', 1, 1])
+    })
+
+    await t.test('the thing_edit and thing_upgrade answers are the public thing read', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const lamp = await seedKind(GROWER.id, 'x1-lamp', [])
+      const lampId = await seedThing(GROWER.id, rooms.eastRoomId, lamp, 'x1 lamp')
+      const publicRead = async () => (await call(app, null, 'GET', `/api/thing/${lampId}`)).json.thing as Json
+      const rawColumns = ['as_kind_id', 'as_revision', 'held_by', 'active_offer_id']
+
+      const edited = await call(app, GROWER.secret, 'PATCH', `/api/thing/${lampId}`, { name: 'x1 lamp renamed', open_to_reach: true })
+      assert.equal(edited.status, 200, JSON.stringify(edited.json))
+      const editAnswer = edited.json.thing as Json
+      assert.equal(editAnswer.family_id, lampId, "a first thing's family is its own id")
+      for (const column of rawColumns) assert.equal(Object.hasOwn(editAnswer, column), false, `thing_edit answer: no ${column}`)
+      assert.deepEqual(editAnswer, await publicRead(), 'the thing_edit answer is the public thing read')
+      assert.ok(edited.json.reading_cost, 'the edit answer keeps its reading-cost meter')
+
+      await addRevision(lamp, 2, [])
+      const upgraded = await call(app, GROWER.secret, 'POST', `/api/thing/${lampId}/upgrade`, {})
+      assert.equal(upgraded.status, 200, JSON.stringify(upgraded.json))
+      const upgradeAnswer = upgraded.json.thing as Json
+      assert.equal(upgradeAnswer.current_revision, 2)
+      for (const column of rawColumns) assert.equal(Object.hasOwn(upgradeAnswer, column), false, `thing_upgrade answer: no ${column}`)
+      assert.deepEqual(upgradeAnswer, await publicRead(), 'the thing_upgrade answer is the public thing read')
+    })
+
+    await t.test('a thing that changes owner arrives closed to reach and conversion', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET open_to_things = TRUE WHERE id = $1', [rooms.eastRoomId])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, GROWER.secret, 'l3r2-touch', { use: [{ effect: 'convert', target: 'target' }] })).status, 201)
+      const oak = await seedKind(FOUNDER.id, 'l3r2-oak', [])
+      assert.equal((await coin(app, GROWER.secret, 'l3r2-sweep', {
+        use: [{ effect: 'reach', kind: 'l3r2-oak', then: [{ effect: 'convert', target: 'target' }] }],
+      })).status, 201)
+      const ash = await seedKind(GROWER.id, 'l3r2-ash', [await traitId('l3r2-touch')])
+      const cinder = await seedKind(GROWER.id, 'l3r2-cinder', [await traitId('l3r2-sweep')])
+      const ember = await seedThing(GROWER.id, rooms.eastRoomId, ash, 'l3r2 ember')
+      const sweeper = await seedThing(GROWER.id, rooms.eastRoomId, cinder, 'l3r2 sweeper')
+      const oakId = await seedThing(FOUNDER.id, rooms.eastRoomId, oak, 'l3r2 oak', { openToReach: true, openToConvert: true })
+      const switches = async (thingId: number) => {
+        const read = (await call(app, null, 'GET', `/api/thing/${thingId}`)).json.thing as Json
+        return [read.current_owner, read.open_to_reach, read.open_to_convert]
+      }
+      assert.deepEqual(await switches(oakId), ['founder', true, true])
+
+      const given = await call(app, FOUNDER.secret, 'POST', '/api/transfer', { type: 'thing', id: oakId, to_handle: NEIGHBOUR.handle })
+      assert.equal(given.status, 200, JSON.stringify(given.json))
+      assert.deepEqual(await switches(oakId), [NEIGHBOUR.handle, false, false], 'a thing you are given arrives closed')
+
+      const touched = await use(app, GROWER.secret, ember, { target_type: 'thing', target_id: oakId })
+      assert.equal(touched.status, 403, JSON.stringify(touched.json))
+      assert.match(String(touched.json.error), /has not agreed to be converted/)
+      const swept = await use(app, GROWER.secret, sweeper)
+      assert.equal(swept.status, 200, JSON.stringify(swept.json))
+      assert.equal(((swept.json.action as Json).reaches as Json[])[0]!.reached, 0, 'a closed thing is not reached by a harder step')
+      assert.equal((await db.query('SELECT as_kind_id FROM things WHERE id = $1', [oakId])).rows[0]!.as_kind_id, null)
+
+      const opened = await call(app, NEIGHBOUR.secret, 'PATCH', `/api/thing/${oakId}`, { open_to_reach: true, open_to_convert: true })
+      assert.equal(opened.status, 200, JSON.stringify(opened.json))
+      const sweptAgain = await use(app, GROWER.secret, sweeper)
+      assert.equal(sweptAgain.status, 200, JSON.stringify(sweptAgain.json))
+      assert.deepEqual((sweptAgain.json.action as Json).converted_thing_ids, [oakId], 'once its new owner opens it, it may be converted')
+
+      // Every change of owner closes them, whichever door changed it, a market sale included.
+      const other = await seedThing(GROWER.id, rooms.eastRoomId, oak, 'l3r2 sold oak', { openToReach: true, openToConvert: true })
+      await db.query('UPDATE things SET owner_id = $2 WHERE id = $1', [other, NEIGHBOUR.id])
+      assert.deepEqual((await db.query('SELECT open_to_reach, open_to_convert, wake_enabled FROM things WHERE id = $1', [other])).rows[0], {
+        open_to_reach: false, open_to_convert: false, wake_enabled: false,
+      })
+      await db.query('UPDATE things SET name = $2 WHERE id = $1', [oakId, 'l3r2 oak kept'])
+      assert.deepEqual((await db.query('SELECT open_to_reach, open_to_convert FROM things WHERE id = $1', [oakId])).rows[0], {
+        open_to_reach: true, open_to_convert: true,
+      }, 'an update that keeps the owner leaves the switches alone')
     })
   } finally {
     await postgres.stop()
