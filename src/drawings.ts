@@ -129,14 +129,14 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
     /* drawing:thing-read */
     SELECT thing.id,
       CASE
-        WHEN thing.kind_id IS NULL THEN thing.drawing
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN thing.drawing
         WHEN thing.drawing_state = 'refused' THEN NULL::jsonb
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN NULL::jsonb
         WHEN selected.variant IS NOT NULL THEN selected.variant -> 'drawing'
         ELSE revision.drawing
       END AS drawing,
       CASE
-        WHEN thing.kind_id IS NULL THEN thing.drawing_state
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN thing.drawing_state
         WHEN thing.drawing_state = 'refused' THEN 'refused'
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN 'undrawn'
         WHEN selected.variant IS NOT NULL
@@ -144,7 +144,7 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
         ELSE coalesce(revision.drawing_state, 'undrawn')
       END AS drawing_state,
       CASE
-        WHEN thing.kind_id IS NULL THEN thing.drawing_description
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN thing.drawing_description
         WHEN thing.drawing_state = 'refused' THEN thing.drawing_description
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN NULL::text
         WHEN selected.variant IS NOT NULL
@@ -152,8 +152,8 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
         ELSE revision.drawing_description
       END AS drawing_description,
       CASE
-        WHEN thing.kind_id IS NULL AND thing.drawing_state = 'undrawn' THEN 'none'
-        WHEN thing.kind_id IS NULL THEN 'thing'
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL AND thing.drawing_state = 'undrawn' THEN 'none'
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN 'thing'
         WHEN thing.drawing_state = 'refused' THEN 'thing'
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN 'none'
         WHEN selected.variant IS NOT NULL THEN 'kind_variant'
@@ -162,23 +162,23 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
       END AS source,
       CASE
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN NULL
-        WHEN thing.drawing_state = 'refused' THEN thing.kind_id
-        WHEN selected.variant IS NOT NULL THEN thing.kind_id
-        WHEN coalesce(revision.drawing_state, 'undrawn') <> 'undrawn' THEN thing.kind_id
+        WHEN thing.drawing_state = 'refused' THEN coalesce(thing.as_kind_id, thing.kind_id)
+        WHEN selected.variant IS NOT NULL THEN coalesce(thing.as_kind_id, thing.kind_id)
+        WHEN coalesce(revision.drawing_state, 'undrawn') <> 'undrawn' THEN coalesce(thing.as_kind_id, thing.kind_id)
         ELSE NULL
       END AS kind_id,
       CASE
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN NULL
-        WHEN thing.kind_id IS NOT NULL AND thing.drawing_state = 'undrawn'
+        WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NOT NULL AND thing.drawing_state = 'undrawn'
           AND (selected.variant IS NOT NULL OR coalesce(revision.drawing_state, 'undrawn') <> 'undrawn')
           THEN kind.name
         ELSE NULL
       END AS kind_name,
       CASE
         WHEN coalesce(kind_moderation.action, 'restore') = 'remove' THEN NULL
-        WHEN thing.drawing_state = 'refused' THEN thing.current_revision
-        WHEN selected.variant IS NOT NULL THEN thing.current_revision
-        WHEN coalesce(revision.drawing_state, 'undrawn') <> 'undrawn' THEN thing.current_revision
+        WHEN thing.drawing_state = 'refused' THEN coalesce(thing.as_revision, thing.current_revision)
+        WHEN selected.variant IS NOT NULL THEN coalesce(thing.as_revision, thing.current_revision)
+        WHEN coalesce(revision.drawing_state, 'undrawn') <> 'undrawn' THEN coalesce(thing.as_revision, thing.current_revision)
         ELSE NULL
       END AS revision,
       CASE WHEN thing.drawing_state = 'undrawn'
@@ -186,9 +186,9 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
           AND coalesce(kind_moderation.action, 'restore') <> 'remove'
         THEN thing.drawing_variant_name ELSE NULL END AS variant_name
     FROM things thing
-    LEFT JOIN kinds kind ON kind.id = thing.kind_id
+    LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
     LEFT JOIN kind_revisions revision
-      ON revision.kind_id = thing.kind_id AND revision.revision = thing.current_revision
+      ON revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id) AND revision.revision = coalesce(thing.as_revision, thing.current_revision)
     LEFT JOIN LATERAL (
       SELECT candidate AS variant
       FROM jsonb_array_elements(coalesce(revision.drawing_variants, '[]'::jsonb)) candidate
@@ -205,7 +205,7 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
     LEFT JOIN LATERAL (
       SELECT action
       FROM moderation_actions
-      WHERE target_type = 'kind' AND target_id = thing.kind_id
+      WHERE target_type = 'kind' AND target_id = coalesce(thing.as_kind_id, thing.kind_id)
       ORDER BY created_at DESC, id DESC
       LIMIT 1
     ) kind_moderation ON TRUE

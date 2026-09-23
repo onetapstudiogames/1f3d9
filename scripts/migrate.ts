@@ -83,6 +83,7 @@ type RemoteMigration =
   | 'note-walk-to-read'
   | 'public-snapshot-walk-to-read'
   | 'abilities-wake-chance-write'
+  | 'abilities-copy-reach-convert'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -98,6 +99,7 @@ export type MigrationFile =
   | 'db/migrations/20260922_note_walk_to_read.sql'
   | 'db/migrations/20260922_public_snapshot_walk_to_read.sql'
   | 'db/migrations/20260922_abilities_wake_chance_write.sql'
+  | 'db/migrations/20260922_abilities_copy_reach_convert.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -265,6 +267,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'note-walk-to-read': 'db/migrations/20260922_note_walk_to_read.sql',
   'public-snapshot-walk-to-read': 'db/migrations/20260922_public_snapshot_walk_to_read.sql',
   'abilities-wake-chance-write': 'db/migrations/20260922_abilities_wake_chance_write.sql',
+  'abilities-copy-reach-convert': 'db/migrations/20260922_abilities_copy_reach_convert.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

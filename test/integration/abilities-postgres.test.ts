@@ -108,6 +108,7 @@ async function ageRoom(placeId: number, seconds: number): Promise<void> {
 // Put the database back to how it stood before this change, so the migration meets
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
+  DROP TABLE thing_conversions, family_growth_marks, place_copy_counts;
   DROP TABLE thing_state_changes, chance_rolls, chance_days, wake_tries, wake_settles, thing_wake_state;
   DROP SEQUENCE chance_rolls_id_seq;
   DROP TRIGGER things_sleep_on_owner_change ON things;
@@ -224,7 +225,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         wake: { then: [{ effect: 'label', target: 'target', label: 'touched' }] },
       })
       assert.equal(outside.status, 400)
-      assert.equal(outside.json.error, 'a wake try has no target or destination of its own; name actor, source, or place, and move only to home')
+      assert.equal(outside.json.error, 'a wake try has no target, destination, or recipient of its own; use target only inside a reach, and move things only to home')
 
       const outOfRange = await coin(app, MAKER.secret, 'sure-thing', {
         use: [{ effect: 'chance', percent: 100, then: [] }],
@@ -254,7 +255,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       for (const name of ['counter', 'greeter']) {
         const law = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
         assert.equal(law.status, 400, name)
-        assert.equal(law.json.error, `trait ${name} carries write or a wake key, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
       }
       const chanceLaw = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['lucky-floor'] })
       assert.equal(chanceLaw.status, 200, 'chance works as a law')
@@ -675,7 +676,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(stickerTries.length, 8)
       assert.ok(stickerTries.every(row => (
         row.status === 'failed'
-        && row.error === "this wake try came from the thing's clock, so there is no actor; name source or place instead"
+        && row.error === "this wake try came from the thing's clock, so there is no actor; name source or place, or reach the room instead"
       )))
       const settled = (await db.query(`SELECT detail FROM events WHERE kind = 'room_settled'`)).rows[0]!.detail
       assert.equal(settled.forfeited, 24, 'twenty owed tries each, eight run, twelve forfeited each')
@@ -1008,7 +1009,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
 
       const refusals: Array<[Json, number, string]> = [
         [{ wake_random_cap: 33 }, 400, 'wake_random_cap must be a whole number from 0 to 32'],
-        [{ rough_room: 'yes' }, 400, 'wake_visitors and rough_room must be boolean when present'],
+        [{ rough_room: 'yes' }, 400, 'allow_arriving_copies, wake_visitors, and rough_room must be boolean when present'],
         [{ wake_pins: [here, here] }, 400, 'wake_pins must be [] or 1 to 4 unique positive thing ids'],
         [{ wake_pins: [elsewhere] }, 409, `wake_pins must name active things standing in place ${rooms.eastRoomId}; thing ${elsewhere} is elsewhere or gone`],
         [{ wake_block_thing_ids: Array.from({ length: 65 }, (_, index) => index + 1) }, 400, 'wake_block_thing_ids must be [] or up to 64 unique positive thing ids'],
@@ -1141,7 +1142,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(woken.status, 200, JSON.stringify(woken.json))
       assert.equal(((await call(app, null, 'GET', `/api/thing/${quietId}`)).json.thing as Json).wake_enabled, true)
       const unknown = await call(app, FOUNDER.secret, 'PATCH', `/api/thing/${quietId}`, { wake_now: true })
-      assert.equal(unknown.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      assert.equal(unknown.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
 
       const given = await call(app, FOUNDER.secret, 'POST', '/api/transfer', { type: 'thing', id: quietId, to_handle: 'bell-maker' })
       assert.equal(given.status, 200, JSON.stringify(given.json))

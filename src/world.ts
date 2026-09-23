@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import { err, postgresErrorCode } from './core.ts'
+import { err, postgresErrorCode, type Resident } from './core.ts'
 import { sql } from './db.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
@@ -9,15 +9,22 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
+import {
+  loadTraitRecipe,
+  parseKindRecipe,
+  parseTraitRecipe,
+  recipeConvertsIntoNamedKind,
+  traitRecipeFault,
+} from './physics.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { clearStateBox } from './engine-state.ts'
+import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
 import {
   blockedResidentUnknownRefusal,
-  parseWakeDials,
+  parsePlaceDials,
   pinnedThingElsewhereRefusal,
-  WAKE_DIAL_FIELDS,
+  PLACE_DIAL_FIELDS,
 } from './place-abilities.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
@@ -27,7 +34,12 @@ import {
   type PlaceLifecycleAction,
   type PlaceLifecycleFacts,
 } from './place-lifecycle.ts'
-import { moderatePlaceDetails, moderatePublicKinds, moderatePublicRows } from './moderation-store.ts'
+import {
+  moderatePlaceDetails,
+  moderatePublicKinds,
+  moderatePublicRows,
+} from './moderation-store.ts'
+import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 import {
   effectiveLaws,
   engineSql,
@@ -261,18 +273,59 @@ async function everyTraitExists(names: readonly string[]): Promise<boolean> {
   return names.every(name => found.has(name))
 }
 
-/** A kind revision may list only one trait with a wake key, so a thing has one clock. */
-async function secondWakeTrait(names: readonly string[]): Promise<string | null> {
-  if (names.length < 2) return null
+/**
+ * A kind revision may list only one trait with a wake key, so a thing has one
+ * clock, and no trait whose convert names into_kind, which only a law may do.
+ */
+async function kindTraitRefusal(names: readonly string[]): Promise<string | null> {
+  if (names.length === 0) return null
   const rows = await sql`
     SELECT name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
   ` as Array<{ name: string; recipe: unknown }>
-  const waking = names.filter(name => (
-    rows.some(row => row.name === name && wakeProgramOf(row.recipe) !== null)
-  ))
-  return waking.length > 1
-    ? `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
-    : null
+  const recipeOf = (name: string) => loadTraitRecipe(rows.find(row => row.name === name)?.recipe)
+  const waking = names.filter(name => recipeOf(name).wake !== undefined)
+  if (waking.length > 1) {
+    return `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
+  }
+  const lawOnly = names.find(name => recipeConvertsIntoNamedKind(recipeOf(name)))
+  return lawOnly === undefined
+    ? null
+    : `trait ${lawOnly} converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself`
+}
+
+/**
+ * A converted thing upgrades to its new kind's newest revision. Its birth kind
+ * and revision never change, a family's open growth marks clear, and a changed
+ * presentation is appended to its drawing history.
+ */
+async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
+  await withEngineTransaction(engineSql, async transaction => {
+    const shownBefore = await readThingPresentation(id, transaction)
+    const changed = await transaction`
+      WITH changed AS (
+        UPDATE things thing SET as_revision = kind.current_revision
+        FROM kinds kind
+        WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+          AND thing.withdrawn_at IS NULL AND kind.id = thing.as_kind_id
+          AND thing.as_revision IS DISTINCT FROM kind.current_revision
+        RETURNING thing.id, thing.as_kind_id, thing.as_revision,
+          coalesce(thing.family_id, thing.id) AS family_id
+      ), cleared_marks AS (
+        UPDATE family_growth_marks mark
+        SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+        FROM changed
+        WHERE mark.family_id = changed.family_id AND mark.cleared_at IS NULL
+      )
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
+        'thing_id', id, 'kind_id', as_kind_id, 'current_revision', as_revision
+      ) FROM changed
+      RETURNING id
+    ` as unknown[]
+    if (changed.length > 0 && shownBefore) {
+      await appendThingPresentationRevision(id, shownBefore, { id: resident.id, relation: 'owner' }, transaction)
+    }
+  })
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -1071,7 +1124,7 @@ export function mountWorldRoutes(app: Hono): void {
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
       'drawing', 'drawing_state', 'drawing_description',
-      ...WAKE_DIAL_FIELDS,
+      ...PLACE_DIAL_FIELDS,
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
@@ -1079,9 +1132,9 @@ export function mountWorldRoutes(app: Hono): void {
         ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
         : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial')
     }
-    const wakeDials = parseWakeDials(body)
-    if (!wakeDials.ok) return err(c, 400, wakeDials.error)
-    const dials = wakeDials.dials
+    const placeDials = parsePlaceDials(body)
+    if (!placeDials.ok) return err(c, 400, placeDials.error)
+    const dials = placeDials.dials
 
     const description = body.description === undefined
       ? undefined
@@ -1218,6 +1271,13 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
             quiet = coalesce(${quiet ?? null}::boolean, quiet),
+            growth_cap_per_day = coalesce(${dials.growthCapPerDay ?? null}::smallint, growth_cap_per_day),
+            growth_share_per_family = coalesce(
+              ${dials.growthSharePerFamily ?? null}::smallint, growth_share_per_family
+            ),
+            allow_arriving_copies = coalesce(
+              ${dials.allowArrivingCopies ?? null}::boolean, allow_arriving_copies
+            ),
             wake_visitors = coalesce(${dials.wakeVisitors ?? null}::boolean, wake_visitors),
             rough_room = coalesce(${dials.roughRoom ?? null}::boolean, rough_room),
             wake_random_cap = coalesce(${dials.wakeRandomCap ?? null}::smallint, wake_random_cap),
@@ -1256,6 +1316,12 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
               OR (${quiet !== undefined}::boolean
                 AND quiet IS DISTINCT FROM ${quiet ?? false}::boolean)
+              OR (${dials.growthCapPerDay !== undefined}::boolean
+                AND growth_cap_per_day IS DISTINCT FROM ${dials.growthCapPerDay ?? 0}::smallint)
+              OR (${dials.growthSharePerFamily !== undefined}::boolean
+                AND growth_share_per_family IS DISTINCT FROM ${dials.growthSharePerFamily ?? 1}::smallint)
+              OR (${dials.allowArrivingCopies !== undefined}::boolean
+                AND allow_arriving_copies IS DISTINCT FROM ${dials.allowArrivingCopies ?? false}::boolean)
               OR (${dials.wakeVisitors !== undefined}::boolean
                 AND wake_visitors IS DISTINCT FROM ${dials.wakeVisitors ?? false}::boolean)
               OR (${dials.roughRoom !== undefined}::boolean
@@ -1309,6 +1375,17 @@ export function mountWorldRoutes(app: Hono): void {
           INSERT INTO events (kind, actor, detail)
           SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
           FROM changed
+        ), cleared_marks AS (
+          -- A changed growth dial clears the open family marks here: the caps that bit have moved.
+          UPDATE family_growth_marks mark
+          SET cleared_at = now(), cleared_reason = 'place_dials_changed'
+          FROM changed JOIN editable ON editable.id = changed.id
+          WHERE mark.place_id = changed.id AND mark.cleared_at IS NULL
+            AND (
+              changed.growth_cap_per_day IS DISTINCT FROM editable.growth_cap_per_day
+              OR changed.growth_share_per_family IS DISTINCT FROM editable.growth_share_per_family
+              OR changed.allow_arriving_copies IS DISTINCT FROM editable.allow_arriving_copies
+            )
         ), result AS (
           SELECT changed.* FROM changed
           UNION ALL
@@ -1446,8 +1523,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const wakeConflict = await secondWakeTrait(traits)
-    if (wakeConflict) return err(c, 400, wakeConflict)
+    const traitConflict = await kindTraitRefusal(traits)
+    if (traitConflict) return err(c, 400, traitConflict)
 
     const fee = await treasuryFee(
       c,
@@ -1605,8 +1682,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const wakeConflict = await secondWakeTrait(traits)
-    if (wakeConflict) return err(c, 400, wakeConflict)
+    const traitConflict = await kindTraitRefusal(traits)
+    if (traitConflict) return err(c, 400, traitConflict)
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing
@@ -1806,12 +1883,12 @@ export function mountWorldRoutes(app: Hono): void {
     if (!body) return err(c, 400, 'body must be a JSON object')
     {
       const fields = [
-        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy', 'wake_enabled',
-        'kind_id', 'ingredient_ids',
+        'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
+        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional wake_enabled, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids`)
       }
     }
     const placeId = positiveId(body.place_id)
@@ -1827,6 +1904,12 @@ export function mountWorldRoutes(app: Hono): void {
     const wakeEnabled = body.wake_enabled === undefined
       ? true
       : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
+    const openToReach = body.open_to_reach === undefined
+      ? false
+      : typeof body.open_to_reach === 'boolean' ? body.open_to_reach : null
+    const openToConvert = body.open_to_convert === undefined
+      ? false
+      : typeof body.open_to_convert === 'boolean' ? body.open_to_convert : null
     const kindId = body.kind_id == null ? null : positiveId(body.kind_id)
     const ingredientIds = body.ingredient_ids ?? []
     if (!placeId) return err(c, 400, 'place_id must be a positive integer')
@@ -1837,6 +1920,8 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
+    if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
+    if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
     if (body.kind_id != null && !kindId) return err(c, 400, 'kind_id must be a positive integer')
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
@@ -1872,6 +1957,8 @@ export function mountWorldRoutes(app: Hono): void {
       body: thingBody,
       openToUse,
       sharedUseMayDestroy,
+      openToReach,
+      openToConvert,
       wakeEnabled,
       kindId,
       ingredientIds,
@@ -1898,9 +1985,9 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
-      'wake_enabled', 'state_clear',
+      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
     }
     if (body.state_clear !== undefined && body.state_clear !== true) {
       return err(c, 400, 'state_clear must be true when present')
@@ -1919,6 +2006,12 @@ export function mountWorldRoutes(app: Hono): void {
     const wakeEnabled = body.wake_enabled === undefined
       ? undefined
       : typeof body.wake_enabled === 'boolean' ? body.wake_enabled : null
+    const openToReach = body.open_to_reach === undefined
+      ? undefined
+      : typeof body.open_to_reach === 'boolean' ? body.open_to_reach : null
+    const openToConvert = body.open_to_convert === undefined
+      ? undefined
+      : typeof body.open_to_convert === 'boolean' ? body.open_to_convert : null
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariant = Object.hasOwn(body, 'drawing_variant_name')
@@ -1934,15 +2027,19 @@ export function mountWorldRoutes(app: Hono): void {
       return err(c, 400, 'shared_use_may_destroy must be boolean when present')
     }
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
+    if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
+    if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
+        thing.as_kind_id IS NOT NULL AS converted,
         thing.drawing_state, thing.drawing_variant_name, pinned.drawing_variants,
         thing.active_offer_id,
         (offer.id IS NOT NULL) AS has_open_offer
       FROM things thing
       LEFT JOIN kind_revisions pinned
-        ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
+        ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+        AND pinned.revision = coalesce(thing.as_revision, thing.current_revision)
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
@@ -1951,6 +2048,7 @@ export function mountWorldRoutes(app: Hono): void {
       owner_id: number
       kind_id: number | null
       current_revision: number | null
+      converted?: boolean
       drawing_state?: DrawingState
       drawing_variant_name?: string | null
       drawing_variants?: unknown
@@ -1960,6 +2058,9 @@ export function mountWorldRoutes(app: Hono): void {
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
+    if (existing.converted === true && requestedVariant !== undefined) {
+      return err(c, 409, convertedVariantRefusal(id))
+    }
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be edited while it has an open sale offer; close that offer before editing the thing')
     }
@@ -1993,13 +2094,16 @@ export function mountWorldRoutes(app: Hono): void {
     const rows = (await sql`
       WITH editable AS MATERIALIZED (
         SELECT thing.*,
+          coalesce(thing.as_kind_id, thing.kind_id) AS shown_kind_id,
+          coalesce(thing.as_revision, thing.current_revision) AS shown_revision,
           pinned.drawing AS kind_drawing,
           pinned.drawing_state AS kind_drawing_state,
           pinned.drawing_description AS kind_drawing_description,
           selected_variant.value AS kind_variant
         FROM things thing
         LEFT JOIN kind_revisions pinned
-          ON pinned.kind_id = thing.kind_id AND pinned.revision = thing.current_revision
+          ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+          AND pinned.revision = coalesce(thing.as_revision, thing.current_revision)
         LEFT JOIN LATERAL (
           SELECT variant.value
           FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
@@ -2021,6 +2125,8 @@ export function mountWorldRoutes(app: Hono): void {
             ${sharedUseMayDestroy ?? null}::boolean, shared_use_may_destroy
           ),
           wake_enabled = coalesce(${wakeEnabled ?? null}::boolean, wake_enabled),
+          open_to_reach = coalesce(${openToReach ?? null}::boolean, open_to_reach),
+          open_to_convert = coalesce(${openToConvert ?? null}::boolean, open_to_convert),
           drawing = CASE WHEN ${requestedDrawing.supplied}::boolean
             THEN ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb
             ELSE drawing END,
@@ -2043,6 +2149,10 @@ export function mountWorldRoutes(app: Hono): void {
                 ${sharedUseMayDestroy ?? null}::boolean)
             OR (${wakeEnabled !== undefined}::boolean
               AND wake_enabled IS DISTINCT FROM ${wakeEnabled ?? null}::boolean)
+            OR (${openToReach !== undefined}::boolean
+              AND open_to_reach IS DISTINCT FROM ${openToReach ?? null}::boolean)
+            OR (${openToConvert !== undefined}::boolean
+              AND open_to_convert IS DISTINCT FROM ${openToConvert ?? null}::boolean)
             OR (${requestedDrawing.supplied}::boolean
               AND drawing IS DISTINCT FROM ${requestedDrawing.supplied ? requestedDrawing.storedDrawing : null}::jsonb)
             OR (${requestedDrawing.supplied}::boolean
@@ -2057,13 +2167,16 @@ export function mountWorldRoutes(app: Hono): void {
         RETURNING *
       ), current_presentation AS MATERIALIZED (
         SELECT changed.*,
+          coalesce(changed.as_kind_id, changed.kind_id) AS shown_kind_id,
+          coalesce(changed.as_revision, changed.current_revision) AS shown_revision,
           pinned.drawing AS kind_drawing,
           pinned.drawing_state AS kind_drawing_state,
           pinned.drawing_description AS kind_drawing_description,
           selected_variant.value AS kind_variant
         FROM changed
         LEFT JOIN kind_revisions pinned
-          ON pinned.kind_id = changed.kind_id AND pinned.revision = changed.current_revision
+          ON pinned.kind_id = coalesce(changed.as_kind_id, changed.kind_id)
+          AND pinned.revision = coalesce(changed.as_revision, changed.current_revision)
         LEFT JOIN LATERAL (
           SELECT variant.value
           FROM jsonb_array_elements(coalesce(pinned.drawing_variants, '[]'::jsonb)) variant(value)
@@ -2081,72 +2194,72 @@ export function mountWorldRoutes(app: Hono): void {
         )
         SELECT 'thing', current.id, NULL,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_state
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_state
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'state'
             ELSE prior.kind_drawing_state
           END,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_description
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing_description
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->>'description'
             ELSE prior.kind_drawing_description
           END,
           CASE
-            WHEN prior.kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing
+            WHEN prior.shown_kind_id IS NULL OR prior.drawing_state = 'refused' THEN prior.drawing
             WHEN prior.drawing_variant_name IS NOT NULL THEN prior.kind_variant->'drawing'
             ELSE prior.kind_drawing
           END,
           CASE
-            WHEN prior.kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN prior.shown_kind_id IS NULL THEN CASE WHEN prior.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN prior.drawing_state = 'refused' THEN 'thing'
             WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
             WHEN prior.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          CASE WHEN prior.kind_id IS NOT NULL AND (
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND (
               prior.drawing_state = 'refused'
               OR prior.drawing_variant_name IS NOT NULL
               OR prior.kind_drawing_state <> 'undrawn'
-            ) THEN prior.kind_id ELSE NULL END,
-          CASE WHEN prior.kind_id IS NOT NULL AND (
+            ) THEN prior.shown_kind_id ELSE NULL END,
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND (
               prior.drawing_state = 'refused'
               OR prior.drawing_variant_name IS NOT NULL
               OR prior.kind_drawing_state <> 'undrawn'
-            ) THEN prior.current_revision ELSE NULL END,
-          CASE WHEN prior.kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
+            ) THEN prior.shown_revision ELSE NULL END,
+          CASE WHEN prior.shown_kind_id IS NOT NULL AND prior.drawing_state <> 'refused'
             THEN prior.drawing_variant_name ELSE NULL END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_state
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_state
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'state'
             ELSE current.kind_drawing_state
           END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_description
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing_description
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->>'description'
             ELSE current.kind_drawing_description
           END,
           CASE
-            WHEN current.kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing
+            WHEN current.shown_kind_id IS NULL OR current.drawing_state = 'refused' THEN current.drawing
             WHEN current.drawing_variant_name IS NOT NULL THEN current.kind_variant->'drawing'
             ELSE current.kind_drawing
           END,
           CASE
-            WHEN current.kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
+            WHEN current.shown_kind_id IS NULL THEN CASE WHEN current.drawing_state = 'undrawn' THEN 'none' ELSE 'thing' END
             WHEN current.drawing_state = 'refused' THEN 'thing'
             WHEN current.drawing_variant_name IS NOT NULL THEN 'kind_variant'
             WHEN current.kind_drawing_state = 'undrawn' THEN 'none'
             ELSE 'kind_base'
           END,
-          CASE WHEN current.kind_id IS NOT NULL AND (
+          CASE WHEN current.shown_kind_id IS NOT NULL AND (
               current.drawing_state = 'refused'
               OR current.drawing_variant_name IS NOT NULL
               OR current.kind_drawing_state <> 'undrawn'
-            ) THEN current.kind_id ELSE NULL END,
-          CASE WHEN current.kind_id IS NOT NULL AND (
+            ) THEN current.shown_kind_id ELSE NULL END,
+          CASE WHEN current.shown_kind_id IS NOT NULL AND (
               current.drawing_state = 'refused'
               OR current.drawing_variant_name IS NOT NULL
               OR current.kind_drawing_state <> 'undrawn'
-            ) THEN current.current_revision ELSE NULL END,
-          CASE WHEN current.kind_id IS NOT NULL AND current.drawing_state <> 'refused'
+            ) THEN current.shown_revision ELSE NULL END,
+          CASE WHEN current.shown_kind_id IS NOT NULL AND current.drawing_state <> 'refused'
             THEN current.drawing_variant_name ELSE NULL END,
           ${resident.id}, 'owner'
         FROM current_presentation current
@@ -2179,16 +2292,19 @@ export function mountWorldRoutes(app: Hono): void {
       FROM result
       JOIN residents maker ON maker.id = result.maker_id
       JOIN residents current_owner ON current_owner.id = result.owner_id
-      LEFT JOIN kinds kind_definition ON kind_definition.id = result.kind_id
+      LEFT JOIN kinds kind_definition
+        ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
     `) as ThingRow[]
-    if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    const written = rows[0]
+    if (!written) return err(c, 409, 'thing changed or received an open sale offer; retry')
     // The owner empties the state box; values are never written by hand.
-    const edited = body.state_clear === true
-      ? { ...rows[0], state: {}, state_version: await clearStateBox(id, resident.id, engineSql) }
-      : rows[0]
+    if (body.state_clear === true) await clearStateBox(id, resident.id, engineSql)
+    // The answer is the same public thing read every other door gives.
+    const edited = await loadPublicThingRecord(id)
+    if (!edited) return err(c, 409, 'thing changed or received an open sale offer; retry')
     return c.json({
       thing: edited,
-      reading_cost: await safeReadingCostMeter(edited.place_id, edited.body),
+      reading_cost: await safeReadingCostMeter(written.place_id, written.body),
     })
   })
 
@@ -2219,6 +2335,7 @@ export function mountWorldRoutes(app: Hono): void {
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.birth_revision,
+        thing.as_kind_id,
         thing.current_revision, kind.current_revision AS latest_revision,
         thing.drawing_state, thing.drawing_variant_name,
         latest.drawing_variants AS latest_drawing_variants,
@@ -2232,6 +2349,7 @@ export function mountWorldRoutes(app: Hono): void {
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     `) as Array<ThingRow & {
+      as_kind_id?: number | null
       latest_revision?: number
       drawing_state?: DrawingState
       drawing_variant_name?: string | null
@@ -2246,6 +2364,13 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be upgraded while it has an open sale offer; close that offer before upgrading the thing')
+    }
+    if (existing.as_kind_id != null) {
+      if (requestedVariant !== undefined) return err(c, 409, convertedVariantRefusal(id))
+      await upgradeConvertedThing(id, resident)
+      const converted = await loadPublicThingRecord(id)
+      if (!converted) return err(c, 409, 'thing changed or received an open sale offer; retry')
+      return c.json({ thing: converted })
     }
     if (requestedVariant !== undefined && existing.drawing_state === 'refused') {
       return err(c, 409, 'clear the thing refusal before choosing a base or variant during upgrade')
@@ -2401,6 +2526,13 @@ export function mountWorldRoutes(app: Hono): void {
           'thing_id', id, 'birth_revision', birth_revision,
           'current_revision', current_revision
         ) FROM changed
+      ), cleared_marks AS (
+        UPDATE family_growth_marks mark
+        SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+        FROM changed
+        WHERE mark.family_id = coalesce(changed.family_id, changed.id)
+          AND mark.cleared_at IS NULL
+          AND changed.current_revision IS DISTINCT FROM ${existing.current_revision ?? null}::integer
       ), result AS (
         SELECT changed.* FROM changed
         UNION ALL
@@ -2426,7 +2558,10 @@ export function mountWorldRoutes(app: Hono): void {
       throw error
     }
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
-    return c.json({ thing: rows[0] })
+    // The answer is the same public thing read every other door gives.
+    const upgraded = await loadPublicThingRecord(id)
+    if (!upgraded) return err(c, 409, 'thing changed or received an open sale offer; retry')
+    return c.json({ thing: upgraded })
   })
 
   app.post('/api/thing/:id/withdraw', async c => {

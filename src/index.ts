@@ -62,6 +62,7 @@ import { publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ARRIVAL_LINE } from './world-root.ts'
 import {
   moderatePublicEvents,
+  moderateThingKindHistory,
   moderationHistory,
   moderationTargetExists,
   recordModeration,
@@ -222,6 +223,7 @@ import {
   PAYPAL_CREDIT_UNAVAILABLE_MESSAGE,
 } from './paypal-credit-routes.ts'
 import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
+import { thingBornAsColumnsSql } from './thing-kind-read.ts'
 
 const domainConfiguration = configuredPublicDomain()
 if (!domainConfiguration.identityBrowserReady) {
@@ -1079,8 +1081,9 @@ app.get('/api/me', async c => {
         thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
         thing.owner_id, current_owner.handle AS owner,
         thing.open_to_use, thing.shared_use_may_destroy,
-        thing.kind_id, thing.birth_revision,
-        thing.current_revision, thing.created_at
+        coalesce(thing.as_kind_id, thing.kind_id) AS kind_id, thing.birth_revision,
+        coalesce(thing.as_revision, thing.current_revision) AS current_revision,
+        ${thingBornAsColumnsSql('thing')}, thing.created_at
       FROM things thing
       JOIN residents maker ON maker.id = thing.maker_id
       JOIN residents current_owner ON current_owner.id = thing.owner_id
@@ -1143,7 +1146,8 @@ app.get('/api/me', async c => {
     placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
   )
   const things = finalizePublicPage(
-    thingRows as Array<Record<string, unknown> & { id: number }>, thingRequest.limit,
+    await moderateThingKindHistory(thingRows as Array<Record<string, unknown> & { id: number }>),
+    thingRequest.limit,
   )
   const kinds = finalizePublicPage(
     kindRows as Array<Record<string, unknown> & { id: number }>, kindRequest.limit,

@@ -7,12 +7,12 @@ export const PUBLIC_THING_HAS_DRAWING_SQL = `CASE
     ORDER BY moderation.created_at DESC, moderation.id DESC
     LIMIT 1
   ), 'restore') = 'remove' THEN false
-  WHEN thing.kind_id IS NULL THEN thing.drawing IS NOT NULL
+  WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN thing.drawing IS NOT NULL
   WHEN thing.drawing_state = 'refused' THEN false
   WHEN coalesce((
     SELECT moderation.action
     FROM moderation_actions moderation
-    WHERE moderation.target_type = 'kind' AND moderation.target_id = thing.kind_id
+    WHERE moderation.target_type = 'kind' AND moderation.target_id = coalesce(thing.as_kind_id, thing.kind_id)
     ORDER BY moderation.created_at DESC, moderation.id DESC
     LIMIT 1
   ), 'restore') = 'remove' THEN false
@@ -22,15 +22,15 @@ export const PUBLIC_THING_HAS_DRAWING_SQL = `CASE
     CROSS JOIN LATERAL jsonb_array_elements(
       coalesce(drawing_revision.drawing_variants, '[]'::jsonb)
     ) variant(value)
-    WHERE drawing_revision.kind_id = thing.kind_id
-      AND drawing_revision.revision = thing.current_revision
+    WHERE drawing_revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND drawing_revision.revision = coalesce(thing.as_revision, thing.current_revision)
       AND variant.value ->> 'name' = thing.drawing_variant_name
     LIMIT 1
   ), (
     SELECT drawing_revision.drawing IS NOT NULL
     FROM kind_revisions drawing_revision
-    WHERE drawing_revision.kind_id = thing.kind_id
-      AND drawing_revision.revision = thing.current_revision
+    WHERE drawing_revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND drawing_revision.revision = coalesce(thing.as_revision, thing.current_revision)
   ), false)
 END`
 

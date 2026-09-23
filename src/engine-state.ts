@@ -20,9 +20,22 @@ export type StateValues = Readonly<Record<string, StateValue>>
 const KIND_ONLY_BRICK_ERROR =
   "a kind-only brick reached a program that is not a thing's own kind traits; the city could not complete this effect"
 
-const STATE_TRIGGERS = new Set([
+// The triggers that run a thing's own kind traits, directly or through its timers.
+const THING_PROGRAM_TRIGGERS = new Set([
   'use', 'consume', 'give', 'timer', 'wake_arrive', 'wake_talk', 'wake_clock',
 ])
+
+/**
+ * The thing whose own kind traits run this program. Copy, write, and a convert
+ * without into_kind need it; reaching any of them from elsewhere is a city fault.
+ */
+export function ownThingOf(context: Readonly<{ originThingId?: number | null; trigger?: string }>): number {
+  const thingId = context.originThingId
+  if (thingId == null || !THING_PROGRAM_TRIGGERS.has(context.trigger ?? '')) {
+    throw new EngineError(500, KIND_ONLY_BRICK_ERROR)
+  }
+  return thingId
+}
 
 export function stateBoxBytes(values: StateValues): number {
   return Buffer.byteLength(JSON.stringify(values), 'utf8')
@@ -144,10 +157,7 @@ export async function writeStateBox(
   context: WriteContext,
   db: TaggedSql,
 ): Promise<void> {
-  const thingId = context.originThingId
-  if (thingId == null || !STATE_TRIGGERS.has(context.trigger ?? '')) {
-    throw new EngineError(500, KIND_ONLY_BRICK_ERROR)
-  }
+  const thingId = ownThingOf(context)
   const rows = await db`
     SELECT state, place_id, withdrawn_at FROM things WHERE id = ${thingId} FOR UPDATE
   ` as Array<{ state?: unknown; place_id?: unknown; withdrawn_at?: unknown }>

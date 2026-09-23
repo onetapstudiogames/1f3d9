@@ -125,7 +125,7 @@ of four dispositions.
 
 | Class | Why it is omitted |
 |---|---|
-| `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, and the wake and state columns are live public records not carried by format v2 yet (decisions #104 to #110); the `chance_rolled` and `room_settled` event kinds stay out of `events` with them. |
+| `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns on things and places are live public records not carried by format v2 yet (decisions #104 to #115); the `chance_rolled` and `room_settled` event kinds stay out of `events` with them. A converted thing appears in a snapshot as its birth kind, while its `thing_edited` event with mode `converted` and a copy's `thing_created` event with mode `copy` are exported like other events. |
 | `action_runtime` | Action, block, timer, pending-effect, and resolution rows are represented by public events and current public records. |
 | `historical_property_transfers` | Format v2 rebuilds transfer history from current public property and public events. |
 | `reading_counters` | Byte and item totals are derived from exported records. |
@@ -176,7 +176,7 @@ contract and links back to this document at the manifest's exact source commit:
       "buyer", "client_class", "commitment", "current_revision", "day", "error",
       "fee_tx_hash", "forfeited", "from", "from_id", "frontier",
       "gazette_submission_room_opened", "gazette_withdrawals_opened",
-      "ingredient_ids", "json_door_human_approval_declared", "key",
+      "ingredient_ids", "json_door_human_approval_declared", "key", "law_trait_id",
       "market_checkout_id", "market_draft_id", "market_listing_id",
       "mechanical", "model", "moderated", "moderation", "name", "op", "outcome",
       "output_thing_id", "parties", "payment_status", "percent", "place_name",

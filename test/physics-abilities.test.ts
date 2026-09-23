@@ -22,9 +22,10 @@ import {
 
 const label = { effect: 'label', target: 'source', label: 'rang' } as const
 
-test('the brick list grows to nine and the wake key has three events', () => {
+test('the brick list holds chance and write, and the wake key has three events', () => {
   assert.deepEqual(EFFECT_BRICKS, [
     'destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label', 'chance', 'write',
+    'copy', 'reach', 'convert',
   ])
   assert.deepEqual(WAKE_EVENTS, ['arrive', 'talk', 'clock'])
   assert.deepEqual(WRITE_OPS, ['set', 'add', 'append'])

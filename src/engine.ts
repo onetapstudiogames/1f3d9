@@ -12,11 +12,16 @@ import {
 } from './physics.ts'
 import {
   executeEffectsWithOutcome,
+  newAbilityLog,
   SHARED_SOURCE_DESTROY_CLOSED_ERROR,
   SHARED_SOURCE_MUTATION_ERROR,
+  SKIP_REASONS,
   thingState,
   withdrawOwnedThing,
+  type AbilityLog,
   type EffectExecutionContext,
+  type GrowthCap,
+  type ReachReport,
   type SkippedEffect,
 } from './engine-effects.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
@@ -229,6 +234,10 @@ export interface ActionExecution {
   readonly skippedEffects: readonly SkippedEffect[]
   /** Every public chance roll this action drew, including rolls in a refused action. */
   readonly rolls?: ReturnType<typeof publicRolls>
+  /** Things this action's copies made, conversions it made, and how each reach went. */
+  readonly copiedThingIds?: readonly number[]
+  readonly convertedThingIds?: readonly number[]
+  readonly reaches?: readonly ReachReport[]
 }
 
 export interface SymbolicContext {
@@ -791,7 +800,8 @@ export async function thingProgramsForAction(
     SELECT trait.id AS trait_id, trait.name, trait.recipe
     FROM things thing
     JOIN kind_revision_traits link
-      ON link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+      ON link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+      AND link.revision = coalesce(thing.as_revision, thing.current_revision)
     JOIN traits trait ON trait.id = link.trait_id
     WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
     ORDER BY link.position ASC
@@ -945,7 +955,35 @@ export function publicSkippedEffects(skippedEffects: readonly SkippedEffect[]) {
     source_trait_id: effect.sourceTraitId,
     source_place_id: effect.sourcePlaceId,
     reason: effect.reason,
+    ...(effect.memberId === undefined ? {} : { member_id: effect.memberId }),
+    ...(effect.cap === undefined ? {} : { cap: effect.cap }),
+    ...(effect.limit === undefined ? {} : { limit: effect.limit }),
+    ...(effect.overBy === undefined ? {} : { over_by: effect.overBy }),
+    ...(effect.error === undefined ? {} : { error: effect.error }),
   }))
+}
+
+const GROWTH_CAPS: ReadonlySet<string> = new Set<GrowthCap>([
+  'generations', 'copies', 'no_arrivals', 'place_daily', 'family_share',
+])
+
+/** The optional keys a stored skip may carry; a malformed one drops the whole entry. */
+function skipExtras(row: Readonly<Record<string, unknown>>): Partial<SkippedEffect> | null {
+  const memberId = row.member_id === undefined ? undefined : integer(row.member_id)
+  const limit = row.limit === undefined ? undefined : integer(row.limit)
+  const overBy = row.over_by === undefined ? undefined : integer(row.over_by)
+  const cap = row.cap === undefined
+    ? undefined
+    : typeof row.cap === 'string' && GROWTH_CAPS.has(row.cap) ? row.cap as GrowthCap : null
+  const error = row.error === undefined ? undefined : typeof row.error === 'string' ? row.error : null
+  if ([memberId, limit, overBy, cap, error].some(value => value === null)) return null
+  return {
+    ...(memberId == null ? {} : { memberId }),
+    ...(cap == null ? {} : { cap }),
+    ...(limit == null ? {} : { limit }),
+    ...(overBy == null ? {} : { overBy }),
+    ...(error == null ? {} : { error }),
+  }
 }
 
 function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): readonly SkippedEffect[] {
@@ -965,10 +1003,13 @@ function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): re
       ? null : integer(row.source_trait_id)
     const sourcePlaceId = row.source_place_id === null
       ? null : integer(row.source_place_id)
+    const reason = SKIP_REASONS.find(known => known === row.reason) ?? null
+    const extras = skipExtras(row)
     if (
       effect === null
       || target === null
-      || row.reason !== 'target thing was destroyed earlier in this use'
+      || reason === null
+      || extras === null
       || (row.source_trait !== null && sourceTrait === null)
       || (row.source_trait_id !== null && sourceTraitId === null)
       || (row.source_place_id !== null && sourcePlaceId === null)
@@ -979,9 +1020,21 @@ function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): re
       sourceTrait,
       sourceTraitId,
       sourcePlaceId,
-      reason: 'target thing was destroyed earlier in this use' as const,
+      reason,
+      ...extras,
     })]
   })
+}
+
+/** The ability parts of an action answer; each is absent when empty. */
+function abilityAnswer(
+  log: AbilityLog,
+): Pick<ActionExecution, 'copiedThingIds' | 'convertedThingIds' | 'reaches'> {
+  return {
+    ...(log.copied.length === 0 ? {} : { copiedThingIds: Object.freeze([...log.copied]) }),
+    ...(log.converted.length === 0 ? {} : { convertedThingIds: Object.freeze([...log.converted]) }),
+    ...(log.reaches.length === 0 ? {} : { reaches: Object.freeze([...log.reaches]) }),
+  }
 }
 
 /** The resolution row commits atomically with the action, so it is the canonical outcome. */
@@ -1188,6 +1241,11 @@ function sharedUseTouchesSourceDestructively(
       effect.effect === 'wait'
       && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
     ) return true
+    // Inside a reach, target is each member, and the source is never a member.
+    if (
+      effect.effect === 'reach'
+      && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, null, destroyAllowed)
+    ) return true
     if (
       (effect.effect === 'check_label' || effect.effect === 'chance')
       && (
@@ -1384,6 +1442,7 @@ function actionContext(
   input: RequiredActionInput,
   sharedSourceThingId: number | null = null,
   rollLog: RollLog = newRollLog(),
+  abilityLog: AbilityLog = newAbilityLog(),
 ): EffectExecutionContext {
   return {
     actionId: actionId > 0 ? actionId : null,
@@ -1405,6 +1464,7 @@ function actionContext(
     destroyedThingIds: [],
     trigger: input.action === 'go_home' ? 'move' : input.action,
     rollLog,
+    abilityLog,
   }
 }
 
@@ -1449,6 +1509,7 @@ export async function runAction(
   }
   const actionId = await recordAction(input, db)
   const rollLog = newRollLog()
+  const abilityLog = newAbilityLog()
   try {
     return await withEngineTransaction(db, async transaction => {
       if (input.action === 'go_home') await ensurePresence(input.actorId, transaction)
@@ -1532,7 +1593,7 @@ export async function runAction(
         input.primitiveHandledByCaller,
         async () => {
           const intrinsic = await intrinsicAction(input, actionId, transaction)
-          const base = actionContext(actionId, input, sharedSourceThingId, rollLog)
+          const base = actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog)
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
           let destroyedThingIds: readonly number[] = []
@@ -1545,6 +1606,8 @@ export async function runAction(
               sourceThingId: program.sourceThingId ?? base.sourceThingId,
               originThingId: program.sourceThingId,
               originPlaceId: program.lawSourcePlaceId,
+              // A thing's own traits run for its owner; a law or a shared use never does.
+              ownProgram: program.sourceThingId !== null && sharedSourceThingId === null,
               destroyedThingIds,
               lawAuthority: program.lawSourcePlaceId === null || program.sourceTraitId === null
                 ? null
@@ -1627,6 +1690,7 @@ export async function runAction(
       return {
         actionId, status, httpStatus: 200, error: null, effectsApplied, skippedEffects,
         ...(rollLog.rolls.length === 0 ? {} : { rolls: publicRolls(rollLog, 'counted') }),
+        ...abilityAnswer(abilityLog),
       }
     })
   } catch (error) {

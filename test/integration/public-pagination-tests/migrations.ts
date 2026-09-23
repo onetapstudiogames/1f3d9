@@ -13,14 +13,18 @@ export async function registerMigrationsTests(
 ): Promise<void> {
   await t.test('drawing presence matches public moderation and inherited drawing rules', async () => {
     const thingRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`
-        WITH things (id, kind_id, drawing, drawing_state, current_revision, drawing_variant_name) AS (
+        WITH things (id, kind_id, drawing, drawing_state, current_revision, drawing_variant_name, as_kind_id, as_revision) AS (
           VALUES
-            (1, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
-            (2, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text),
-            (3, 10, NULL::jsonb, 'refused', 1, NULL::text),
-            (4, 10, NULL::jsonb, 'complete', 1, NULL::text),
-            (5, 11, NULL::jsonb, 'complete', 1, 'lit'::text),
-            (6, 12, NULL::jsonb, 'complete', 1, NULL::text)
+            (1, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text, NULL::integer, NULL::integer),
+            (2, NULL::integer, '{}'::jsonb, 'complete', 1, NULL::text, NULL, NULL),
+            (3, 10, NULL::jsonb, 'refused', 1, NULL::text, NULL, NULL),
+            (4, 10, NULL::jsonb, 'complete', 1, NULL::text, NULL, NULL),
+            (5, 11, NULL::jsonb, 'complete', 1, 'lit'::text, NULL, NULL),
+            (6, 12, NULL::jsonb, 'complete', 1, NULL::text, NULL, NULL),
+            -- Born kind 11 (no base drawing), converted to kind 10: it shows 10's base drawing.
+            (7, 11, NULL::jsonb, 'complete', 1, NULL::text, 10, 1),
+            -- Born kind 10, converted to the removed kind 12: it shows nothing.
+            (8, 10, NULL::jsonb, 'complete', 1, NULL::text, 12, 1)
         ),
         moderation_actions (id, target_type, target_id, action, created_at) AS (
           VALUES
@@ -44,6 +48,8 @@ export async function registerMigrationsTests(
       { id: 4, has_drawing: true },
       { id: 5, has_drawing: true },
       { id: 6, has_drawing: false },
+      { id: 7, has_drawing: true },
+      { id: 8, has_drawing: false },
     ])
 
     const residentRows = (await postgres.client.query<{ id: number; has_drawing: boolean }>(`

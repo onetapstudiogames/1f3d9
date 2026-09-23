@@ -74,7 +74,7 @@ test('world body refusals name the rejected field(s) by name and the accepted fi
     'kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants',
     'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs',
     'trait body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, and an optional inert recipe',
-    'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional wake_enabled, optional kind_id, and ingredient_ids',
+    'thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids',
     'thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name',
   ])
   assert.doesNotMatch(source('world.ts'), /`kind(?: revision)? \$\{unknownTrait\}`/u)

@@ -30,6 +30,8 @@ export interface CraftThingInput {
   readonly body: unknown
   readonly openToUse?: unknown
   readonly sharedUseMayDestroy?: unknown
+  readonly openToReach?: unknown
+  readonly openToConvert?: unknown
   readonly wakeEnabled?: unknown
   readonly ingredientIds: unknown
 }
@@ -47,6 +49,8 @@ export interface CraftedThing {
   readonly owner: string
   readonly open_to_use: boolean
   readonly shared_use_may_destroy: boolean
+  readonly open_to_reach: boolean
+  readonly open_to_convert: boolean
   readonly wake_enabled: boolean
   readonly kind_id: number
   readonly birth_revision: number
@@ -84,6 +88,8 @@ interface ValidCraftInput {
   readonly body: string
   readonly openToUse: boolean
   readonly sharedUseMayDestroy: boolean
+  readonly openToReach: boolean
+  readonly openToConvert: boolean
   readonly wakeEnabled: boolean
   readonly ingredientIds: readonly number[]
 }
@@ -160,6 +166,8 @@ function validateRequest(input: CraftThingInput): ValidCraftInput | null {
   })
   const openToUse = optionalBoolean(input.openToUse)
   const sharedUseMayDestroy = optionalBoolean(input.sharedUseMayDestroy)
+  const openToReach = optionalBoolean(input.openToReach)
+  const openToConvert = optionalBoolean(input.openToConvert)
   const wakeEnabled = input.wakeEnabled === undefined ? true : optionalBoolean(input.wakeEnabled)
   const ingredientIds = ingredientIdList(input.ingredientIds)
   if (
@@ -171,12 +179,14 @@ function validateRequest(input: CraftThingInput): ValidCraftInput | null {
     || body === null
     || openToUse === null
     || sharedUseMayDestroy === null
+    || openToReach === null
+    || openToConvert === null
     || wakeEnabled === null
     || ingredientIds === null
   ) return null
   return Object.freeze({
     actorId, actorHandle, kindId, placeId, name, body, openToUse, sharedUseMayDestroy,
-    wakeEnabled, ingredientIds,
+    openToReach, openToConvert, wakeEnabled, ingredientIds,
   })
 }
 
@@ -219,6 +229,8 @@ function craftedThing(row: CraftSqlRow): CraftedThing {
     owner: String(row.owner),
     open_to_use: row.open_to_use === true,
     shared_use_may_destroy: row.shared_use_may_destroy === true,
+    open_to_reach: row.open_to_reach === true,
+    open_to_convert: row.open_to_convert === true,
     wake_enabled: row.wake_enabled === true,
     kind_id: Number(row.kind_id),
     birth_revision: Number(row.birth_revision),
@@ -243,7 +255,7 @@ export async function craftKindThing(
   const input = validateRequest(request)
   const dailyThingLimit = options.dailyThingLimit ?? QUOTAS.things
   if (!input || !Number.isSafeInteger(dailyThingLimit) || dailyThingLimit < 1) {
-    return failure(400, 'crafting request was rejected because its resident, kind, place, body, open_to_use, shared_use_may_destroy, or wake_enabled value is invalid; retry with the documented craft fields and limits')
+    return failure(400, 'crafting request was rejected because its resident, kind, place, body, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, or wake_enabled value is invalid; retry with the documented craft fields and limits')
   }
 
   const kindRows = await sql`
@@ -308,7 +320,8 @@ export async function craftKindThing(
             AND offer.status = 'open'
         ) AS has_open_offer
       FROM things AS ingredient
-      LEFT JOIN kinds AS definition ON definition.id = ingredient.kind_id
+      LEFT JOIN kinds AS definition
+        ON definition.id = coalesce(ingredient.as_kind_id, ingredient.kind_id)
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
     ` as unknown as readonly IngredientRow[]
   }
@@ -356,7 +369,8 @@ export async function craftKindThing(
     ), locked_ingredients AS MATERIALIZED (
       SELECT ingredient.id, lower(definition.name) AS kind
       FROM things AS ingredient
-      JOIN kinds AS definition ON definition.id = ingredient.kind_id
+      JOIN kinds AS definition
+        ON definition.id = coalesce(ingredient.as_kind_id, ingredient.kind_id)
       WHERE ingredient.id = ANY(${input.ingredientIds}::integer[])
         AND ingredient.owner_id = ${input.actorId}
         AND ingredient.place_id = ${input.placeId}
@@ -406,10 +420,11 @@ export async function craftKindThing(
     ), new_thing AS (
       INSERT INTO things (
         place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy,
-        wake_enabled, kind_id, birth_revision, current_revision
+        open_to_reach, open_to_convert, wake_enabled, kind_id, birth_revision, current_revision
       )
       SELECT locked_place.id, ${input.name}, ${input.body}, quota_spend.id, quota_spend.id,
-        ${input.openToUse}, ${input.sharedUseMayDestroy}, ${input.wakeEnabled},
+        ${input.openToUse}, ${input.sharedUseMayDestroy}, ${input.openToReach},
+        ${input.openToConvert}, ${input.wakeEnabled},
         locked_kind.id, locked_kind.current_revision, locked_kind.current_revision
       FROM locked_kind CROSS JOIN locked_place CROSS JOIN quota_spend
       RETURNING *

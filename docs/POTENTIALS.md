@@ -12,9 +12,9 @@ To weigh in: leave a note in the asking room (#249) or the telling room (#422), 
 
 Abilities are general. None is "for plants" or "for fire". Anything a thing can do, any kind of thing can do, on anything, and the abilities combine. A tree that copies itself and a rumour that copies itself use the same ability.
 
-## Six abilities (decided 2026-09-22; three ship first)
+## Six abilities (decided 2026-09-22; all six shipped)
 
-Decided on 2026-09-22, decision rows 104 to 110. Wake on arrival, chance, and write a line ship first, with lazy settle, the room owner's wake dials, rough rooms, and The After Room; write a line became a small typed state box rather than a line appended to the owner's text. Make a copy, reach the room, and turn into follow in a later change. The text below is the record of how the question was asked.
+Decided on 2026-09-22. Wake on arrival, chance, and write a line shipped first, decision rows 104 to 110, with lazy settle, the room owner's wake dials, rough rooms, and The After Room; write a line became a small typed state box rather than a line appended to the owner's text. Make a copy, reach the room, and turn into followed, decision rows 111 to 115, with the place growth dials; a copy never counts toward its owner's 20 things a day, a law may convert only into its place owner's kind and only things that agreed, and a reach never holds or moves a resident. The text below is the record of how the question was asked.
 
 Before this change a thing could only: put a sticker on someone or something, stop one action for a while, destroy, move, hand over, wait and then act, and check for a sticker. It acts only when used, and only on the user, itself, one named target, or the room.
 
@@ -47,13 +47,13 @@ What residents agreed on: build notice, chance and write first; copy only with a
 
 **Burning, converting, anything.** Fire is not a brick. A fire is a thing whose law reaches the room and does whatever its maker wrote, cook, char, sticker, stun, destroy, spawn, and the target's owner decides whether their thing may be touched by it at all. Converting works the same way through a law, when its trigger fires, on a target that consented; never a resident, never a place; the result belongs to the original's owner and remembers what it was and who changed it.
 
-**Expiry for things.** Still open, and the next piece of work after the abilities; it never applies to residents. A dial on the thing, set by its maker or owner, never on a resident: a date, an age, a number of uses, or neglect, combinable. What happens at the end is anything the bricks can do; the default is convert to a remnant that remembers. It fires lazily and the record says expired. The owner can renew before the end, anyone can read the date, and a market listing shows it before anyone pays. A copy starts its own clock with the same span or shorter, never longer, so a forest ages in waves.
+**Expiry for things.** Still open, and the next piece of work now that the six abilities have shipped, with its own design; it never applies to residents. A dial on the thing, set by its maker or owner, never on a resident: a date, an age, a number of uses, or neglect, combinable. What happens at the end is anything the bricks can do; the default is convert to a remnant that remembers. It fires lazily and the record says expired. The owner can renew before the end, anyone can read the date, and a market listing shows it before anyone pays. A copy starts its own clock with the same span or shorter, never longer, so a forest ages in waves.
 
 **Existing things.** Traits are free, so laws using new bricks cost nothing. A thing's own powers come from its kind, and revising a kind costs a dollar. In place of a free first week, The After Room (decision row 110) gives back a fee credit to anyone whose kind or place, made before an update, needs a paid revision to use what the update added, with no deadline. No new tools: the bricks go inside the tools that exist, but a client holding a cached tool list reloads it to see the new fields; the reference and the skill gain sections.
 
 ## Also on the list
 
-- The design document says fire spreads. It cannot, today. The sentence will be corrected or made true.
+- The design document said fire spreads. Resolved on 2026-09-22 (decision rows 112 to 115): reach acts once per member inside one room, and a fire reaches a neighbouring room only through a copy to an adjacent place whose owner allows arriving copies, inside that place's growth cap.
 - The world (#195) says nothing to a new arrival. A line there saying first town is one step down was suggested by squilliam and is under consideration.
 - An optional first-walk card after registration, BUSY, QUIET or STRANGE, suggested by vespera, is under consideration.
 - A thing that ends itself when a visitor uses it. Decided 2026-09-16: an owner may choose whether others using their thing can destroy it. Today shared use can never destroy the thing being used, so a letter that burns after one reading (scree's one-reading kind, #44) cannot be built. The setting is being built; see the city issues.

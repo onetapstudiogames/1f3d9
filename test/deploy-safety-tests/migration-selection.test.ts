@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveMigrationRun, splitSqlStatements } from '../../scripts/migrate.ts'
 import { packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
-import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
+import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, abilitiesCopyReachConvertMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
 
 export function registerMigrationSelectionTests(): void {
   test('migration target must be named explicitly', () => {
@@ -239,6 +239,88 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.migrationFile, 'db/migrations/20260922_abilities_wake_chance_write.sql')
   })
 
+  test('the abilities-copy-reach-convert migration is additive and idempotent', () => {
+    const migration = readFileSync(abilitiesCopyReachConvertMigrationUrl, 'utf8')
+    const uncommented = migration.replace(/^\s*--.*$/gm, '')
+    assert.doesNotMatch(uncommented, /^\s*(?:INSERT|UPDATE|DELETE|TRUNCATE)\b/im)
+    assert.doesNotMatch(uncommented, /DROP\s+(?:TABLE|COLUMN|INDEX|FUNCTION|SEQUENCE)\b/i)
+    for (const statement of splitSqlStatements(migration)) {
+      const trimmed = statement.replace(/^\s*--.*$/gm, '').trim()
+      assert.match(
+        trimmed,
+        /^(?:(?:ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS|CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+IF\s+NOT\s+EXISTS|CREATE\s+OR\s+REPLACE\s+FUNCTION|DROP\s+TRIGGER\s+IF\s+EXISTS|CREATE\s+TRIGGER)\b|DO\s+\$\w+\$\s)/i,
+        `every statement must be additive and repeatable: ${trimmed.slice(0, 80)}`,
+      )
+    }
+    for (const column of [
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+generation\s+SMALLINT\s+NOT\s+NULL\s+DEFAULT\s+0/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+parent_thing_id\s+INTEGER\b/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+family_id\s+INTEGER\b/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+copies_made\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+open_to_reach\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+open_to_convert\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+as_kind_id\s+INTEGER\b/i,
+      /ALTER\s+TABLE\s+things\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+as_revision\s+INTEGER\b/i,
+      /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+growth_cap_per_day\s+SMALLINT\s+NOT\s+NULL\s+DEFAULT\s+10/i,
+      /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+growth_share_per_family\s+SMALLINT\s+NOT\s+NULL\s+DEFAULT\s+5/i,
+      /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+allow_arriving_copies\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+FALSE/i,
+    ]) assert.match(uncommented, column)
+    for (const table of ['thing_conversions', 'place_copy_counts', 'family_growth_marks']) {
+      assert.match(uncommented, new RegExp(String.raw`CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+${table}\b`, 'i'))
+    }
+    assert.match(
+      uncommented,
+      /CREATE\s+TRIGGER\s+thing_conversions_append_only[\s\S]*?EXECUTE\s+FUNCTION\s+deny_history_mutation\(\)/i,
+    )
+    // A change of owner closes both consent switches, as it already puts the thing to sleep.
+    assert.match(
+      uncommented,
+      /CREATE\s+TRIGGER\s+things_close_consent_on_owner_change\s+BEFORE\s+UPDATE\s+OF\s+owner_id\s+ON\s+things\s+FOR\s+EACH\s+ROW\s+EXECUTE\s+FUNCTION\s+close_thing_consent_on_owner_change\(\)/i,
+    )
+    assert.match(uncommented, /NEW\.open_to_reach\s*:=\s*FALSE;\s*NEW\.open_to_convert\s*:=\s*FALSE;/i)
+    // The only dropped constraints are narrower checks, each after its wider replacement exists.
+    const drops = [...uncommented.matchAll(/DROP\s+CONSTRAINT\b/gi)]
+    assert.equal(drops.length, 1, 'one guarded drop of a narrower check, inside the widening block')
+    const widening = uncommented.slice(uncommented.indexOf('$abilities_widen_vocabularies$'))
+    for (const wider of ['chance_rolls_purpose_known', 'chance_rolls_outcome_known', 'thing_state_changes_op_known', 'thing_state_changes_trigger_known']) {
+      const added = widening.search(new RegExp(String.raw`ADD\s+CONSTRAINT\s+${wider}\b`, 'i'))
+      assert.ok(added > 0 && added < widening.search(/DROP\s+CONSTRAINT/i), `${wider} is added before any narrower check is dropped`)
+    }
+    for (const value of ["'copy_place'", "'member_refused'", "'inherit'", "'copy'"]) {
+      assert.ok(widening.includes(value), `${value} joins its vocabulary`)
+    }
+    // A copy never counts toward its owner's daily things, so no mark names that cap.
+    assert.doesNotMatch(uncommented, /owner_daily_things/)
+  })
+
+  test('abilities-copy-reach-convert is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'abilities-copy-reach-convert'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260922_abilities_copy_reach_convert.sql')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'abilities-copy-reach-convert'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-abilities-copy-reach-convert-20260922',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260922_abilities_copy_reach_convert.sql')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -324,6 +406,7 @@ export function registerMigrationSelectionTests(): void {
       [readFileSync(sharedUseMayDestroyMigrationUrl, 'utf8'), 'shared-use-may-destroy'],
       [readFileSync(noteWalkToReadMigrationUrl, 'utf8'), 'note-walk-to-read'],
       [readFileSync(abilitiesWakeChanceWriteMigrationUrl, 'utf8'), 'abilities-wake-chance-write'],
+      [readFileSync(abilitiesCopyReachConvertMigrationUrl, 'utf8'), 'abilities-copy-reach-convert'],
       [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
       [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
       [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
@@ -396,6 +479,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:public-snapshot-walk-to-read'] ?? '', /--target production --migration public-snapshot-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:preview:abilities-wake-chance-write'] ?? '', /--target preview --migration abilities-wake-chance-write$/)
     assert.match(packageJson.scripts['migrate:production:abilities-wake-chance-write'] ?? '', /--target production --migration abilities-wake-chance-write$/)
+    assert.match(packageJson.scripts['migrate:preview:abilities-copy-reach-convert'] ?? '', /--target preview --migration abilities-copy-reach-convert$/)
+    assert.match(packageJson.scripts['migrate:production:abilities-copy-reach-convert'] ?? '', /--target production --migration abilities-copy-reach-convert$/)
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)

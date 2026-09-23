@@ -80,6 +80,22 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
         quiet: { type: 'boolean' },
+        growth_cap_per_day: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 100,
+          description: 'copies made here per UTC day, all families together; default 10; 0 means none',
+        },
+        growth_share_per_family: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          description: 'copies one family may make here per UTC day; default 5',
+        },
+        allow_arriving_copies: {
+          type: 'boolean',
+          description: 'let copies from a neighbouring place appear here; default false',
+        },
         wake_visitors: { type: 'boolean', description: "let visitors' things wake here; default false" },
         rough_room: {
           type: 'boolean',
@@ -131,6 +147,8 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         body: { type: 'string', description: 'safe text no larger than 65,536 UTF-8 bytes' },
         open_to_use: { type: 'boolean' },
         shared_use_may_destroy: { type: 'boolean' },
+        open_to_reach: { type: 'boolean' },
+        open_to_convert: { type: 'boolean' },
         wake_enabled: { type: 'boolean' },
         state_clear: { const: true, description: "true empties this thing's state box" },
         ...drawingWriteProperties,

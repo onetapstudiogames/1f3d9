@@ -7,8 +7,9 @@ const omittedFieldsByKind = {
   trait_coined: ['mechanical', 'name'],
   thing_created: ['birth_revision', 'name'],
   thing_crafted: ['birth_revision', 'ingredient_ids'],
-  // A state-box write is a thing_edited event with mode state (decision #108).
-  thing_edited: ['key', 'op', 'trimmed', 'version'],
+  // A state-box write is a thing_edited event with mode state (decision #108); a law's
+  // conversion names its trait only in the live record (decision #114).
+  thing_edited: ['key', 'law_trait_id', 'op', 'trimmed', 'version'],
   thing_upgraded: ['birth_revision', 'current_revision'],
   thing_withdrawn: ['output_thing_id', 'reason'],
   laws_changed: ['traits'],
