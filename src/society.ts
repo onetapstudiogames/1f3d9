@@ -42,7 +42,7 @@ import {
   PaymentSaleConflictError,
 } from './payment-sale-operations.ts'
 import { EngineError, residentPresence, runAction } from './engine.ts'
-import { settleRoom, type SettleSummary } from './engine-settle.ts'
+import { settleRoom, settleTimers, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
   GAZETTE_ROOM_ID,
@@ -321,7 +321,9 @@ export function mountSocietyRoutes(app: Hono): void {
     }
     if (place.place_permits_notes !== true)
       return err(c, 403, 'this place is not open to notes; its owner can enable open_to_notes, or you can write in another open place')
-    await settleRoom(placeId, 'act', resident.id)
+    // Timers only: the note's own settle, after it commits, runs this room's wake
+    // tries, so an earlier settle here can never put speech inside the room's quiet.
+    await settleTimers(placeId)
     if (resident.notes_today >= QUOTAS.notes)
       return err(c, 429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
     const talk = await runTalkNoteAction({

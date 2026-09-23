@@ -157,7 +157,19 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
           'on', trait.recipe -> 'wake' -> 'on',
           'every_seconds', trait.recipe -> 'wake' -> 'every_seconds',
           'last_try_at', to_char(wake_state.last_try_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-          'clock_at', to_char(wake_state.clock_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+          'clock_at', to_char(wake_state.clock_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'last_try', (
+            SELECT jsonb_build_object(
+              'settle_id', attempt.settle_id,
+              'reason', attempt.reason,
+              'status', attempt.status,
+              'effects_applied', attempt.effects_applied,
+              'error', attempt.error,
+              'at', to_char(attempt.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+            )
+            FROM wake_tries attempt WHERE attempt.thing_id = thing.id
+            ORDER BY attempt.id DESC LIMIT 1
+          )
         )
         FROM kind_revision_traits link
         JOIN traits trait ON trait.id = link.trait_id

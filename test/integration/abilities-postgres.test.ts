@@ -511,9 +511,12 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(((owned.state as Json).last_write as Json).by, 'far-walker')
       assert.equal(owned.wake_enabled, true)
       const wake = owned.wake as Json
-      assert.deepEqual({ ...wake, last_try_at: undefined }, {
+      assert.deepEqual({ ...wake, last_try_at: undefined, last_try: undefined }, {
         trait_id: await traitId('greeter'), on: ['arrive'], every_seconds: 60,
-        last_try_at: undefined, clock_at: null,
+        last_try_at: undefined, clock_at: null, last_try: undefined,
+      })
+      assert.deepEqual({ ...(wake.last_try as Json), at: undefined }, {
+        settle_id: settle.settle_id, reason: 'arrive', status: 'woke', effects_applied: 2, error: null, at: undefined,
       })
       assert.match(String(wake.last_try_at), /^\d{4}-\d{2}-\d{2}T/u)
       const visitors = (await call(app, null, 'GET', `/api/thing/${visitorBell}`)).json.thing as Json
@@ -698,7 +701,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
           { effect: 'block', target: 'actor', action: 'move', seconds: 600 },
         ] },
       })).status, 201)
-      await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'gates', [await traitId('gatekeeper')]), 'a gate', { wakeEnabled: true })
+      const gate = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'gates', [await traitId('gatekeeper')]), 'a gate', { wakeEnabled: true })
 
       const refused = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
       assert.equal(refused.status, 200, 'the move stands even though the wake try was refused')
@@ -712,6 +715,13 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       }])
       assert.equal((await db.query(`SELECT count(*)::int AS labels FROM active_labels WHERE target_type = 'resident'`)).rows[0]!.labels, 0,
         'the refused try rolls back its sticker too')
+      const gateRead = (await call(app, null, 'GET', `/api/thing/${gate}`)).json.thing as Json
+      const lastTry = (gateRead.wake as Json).last_try as Json
+      assert.deepEqual({ reason: lastTry.reason, status: lastTry.status, error: lastTry.error }, {
+        reason: 'arrive',
+        status: 'failed',
+        error: 'this room is not marked rough, so a thing waking here may only label, check, roll, or write about the resident who arrived or spoke',
+      }, "the thing read says why its last try failed")
 
       await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.eastRoomId])
       await ageRoom(rooms.eastRoomId, 120)
@@ -764,6 +774,46 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       const tries = (await db.query(`SELECT count(*)::int AS tries FROM wake_tries`)).rows[0]!.tries
       assert.equal(tries, 3, 'three owed intervals are claimed exactly once')
       assert.deepEqual((await db.query('SELECT state FROM things WHERE id = $1', [clock])).rows[0]!.state, { ticks: 3 })
+    })
+
+    await t.test('speech in a room with an owed clock still wakes the things that listen for talk', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(VISITOR.id, rooms.eastRoomId)
+      assert.equal((await coin(app, FOUNDER.secret, 'hall-clock', {
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }] },
+      })).status, 201)
+      assert.equal((await coin(app, FOUNDER.secret, 'hall-ear', {
+        wake: { on: ['talk'], then: [{ effect: 'write', key: 'heard', op: 'add' }] },
+      })).status, 201)
+      const clock = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'hall-clocks', [await traitId('hall-clock')]), 'hall clock', { wakeEnabled: true })
+      const ear = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'hall-ears', [await traitId('hall-ear')]), 'hall ear', { wakeEnabled: true })
+      await db.query(`INSERT INTO thing_wake_state (thing_id, clock_at) VALUES ($1, now() - interval '25 seconds')`, [clock])
+
+      const said = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'is anyone here' })
+      assert.equal(said.status, 201, JSON.stringify(said.json))
+      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 3, woke: 3, forfeited: 0 })
+      const states = (await db.query('SELECT id, state FROM things WHERE id = ANY($1::int[]) ORDER BY id', [[clock, ear]])).rows
+      assert.deepEqual(states.map(row => row.state), [{ ticks: 2 }, { heard: 1 }])
+      assert.equal((await db.query('SELECT count(*)::int AS settles FROM wake_settles')).rows[0]!.settles, 1,
+        'the note settles its room once, after it commits')
+    })
+
+    await t.test('state box versions stay serial under concurrent writes', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER])
+      await standIn(MAKER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, MAKER.secret, 'tally', { use: [{ effect: 'write', key: 'count', op: 'add' }] })).status, 201)
+      const tally = await seedThing(MAKER.id, rooms.eastRoomId, await seedKind(MAKER.id, 'tallies', [await traitId('tally')]), 'a tally')
+      const uses = await Promise.all(Array.from({ length: 6 }, () => (
+        call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: tally })
+      )))
+      assert.deepEqual(uses.map(use => use.status), [200, 200, 200, 200, 200, 200])
+      const db = connectedDatabase()
+      assert.deepEqual((await db.query('SELECT state, state_version FROM things WHERE id = $1', [tally])).rows[0], {
+        state: { count: 6 }, state_version: 6,
+      })
+      const versions = (await db.query('SELECT version FROM thing_state_changes WHERE thing_id = $1 ORDER BY version', [tally])).rows
+      assert.deepEqual(versions.map(row => row.version), [1, 2, 3, 4, 5, 6])
     })
 
     await t.test("place_edit sets the wake dials and rough_room, and a room's public read carries them before anyone enters", async () => {

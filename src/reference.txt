@@ -235,7 +235,9 @@ even a pinned one.
 In a wake try, actor is the resident who arrived or spoke, source is the thing, and place
 is the room; the effects answer to the thing's owner. A clock try has no actor. A wake try
 never sees what was said. A wake program never hands anything over and has no target or
-destination of its own: it names actor, source, or place, and moves only to home.
+destination of its own: it names actor, source, or place, and moves only to home. A thing
+read shows its wake key, when it last tried, and how that try went, with the refusal when
+it failed.
 
 In most rooms a wake try may only sticker, check, roll, or write about the resident who
 arrived or spoke. A room whose owner marked it rough says so on its place read before you

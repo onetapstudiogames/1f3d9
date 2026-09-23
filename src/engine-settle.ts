@@ -499,6 +499,12 @@ async function settleWake(
   return Object.freeze({ settle_id: claim.settleId, tried, woke, forfeited })
 }
 
+/** Day secrets, then due timers exactly as before; no wake tries. */
+export async function settleTimers(placeId: number, db: TaggedSql = engineSql): Promise<void> {
+  await ensureChanceDays(db)
+  await resolveDueEffects(placeId, db)
+}
+
 /**
  * Settle a room when a resident arrives, speaks, acts, or reads `me` there: day
  * secrets first, then due timers exactly as before, then owed wake tries.
@@ -510,8 +516,7 @@ export async function settleRoom(
   db: TaggedSql = engineSql,
 ): Promise<SettleSummary | null> {
   if (placeId === null) return null
-  await ensureChanceDays(db)
-  await resolveDueEffects(placeId, db)
+  await settleTimers(placeId, db)
   // The wake part never blocks the act that set it off: an unclaimed try stays
   // owed for the next settle, and every claimed try records its own outcome.
   try {
