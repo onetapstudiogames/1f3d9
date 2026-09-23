@@ -6,13 +6,13 @@
 import { EngineError, type TaggedSql } from './engine.ts'
 import type { Effect } from './physics.ts'
 
-export const WAKE_NO_ACTOR_ERROR =
+const WAKE_NO_ACTOR_ERROR =
   "this wake try came from the thing's clock, so there is no actor; name source or place instead"
 export const WAKE_HAND_OVER_ERROR =
   'a wake program may never hand a thing over, because nobody who arrives or speaks asked for it; drop the transfer step'
 export const WAKE_SCOPE_ERROR =
   'a wake try has no target or destination of its own; name actor, source, or place, and move only to home'
-export const WAKE_NOT_ROUGH_ERROR =
+const WAKE_NOT_ROUGH_ERROR =
   'this room is not marked rough, so a thing waking here may only label, check, roll, or write about the resident who arrived or spoke'
 
 /** Where a program came from, as far as the wake rules care. */

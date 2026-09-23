@@ -6,8 +6,8 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { EngineError, engineSql, withEngineTransaction, type TaggedSql } from './engine.ts'
 
 const CHANCE_DAYS_LOCK_CLASS = 0x1f3d9007
-export const CHANCE_SIDES = 100
-export const ROLL_RECORD_ERROR =
+const CHANCE_SIDES = 100
+const ROLL_RECORD_ERROR =
   'the city could not record this roll; retry once, then contact the city operator'
 
 export type RollPurpose = 'chance' | 'wake_pick'

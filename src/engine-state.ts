@@ -17,7 +17,7 @@ import { requireWakeActor } from './wake-guard.ts'
 export type StateValue = number | boolean | string | readonly string[]
 export type StateValues = Readonly<Record<string, StateValue>>
 
-export const KIND_ONLY_BRICK_ERROR =
+const KIND_ONLY_BRICK_ERROR =
   "a kind-only brick reached a program that is not a thing's own kind traits; the city could not complete this effect"
 
 const STATE_TRIGGERS = new Set([
