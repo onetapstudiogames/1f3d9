@@ -15,6 +15,7 @@ import { Pool } from 'pg'
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'place_quiet_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const referenceText = await readFile(new URL('../../src/reference.txt', import.meta.url), 'utf8')
 const quietMigrationDdl = await readFile(
   new URL('../../db/migrations/20260902_place_quiet.sql', import.meta.url),
   'utf8',
@@ -159,6 +160,27 @@ async function placeRecordQuiet(app: import('hono').Hono, roomId: number): Promi
   return body.place.quiet
 }
 
+// The served reference sentence for GET /api/window?view=directory rows, e.g.
+// Place entries contain only type: "place", stable id, parent_id, name, and quiet;
+// resident entries contain only type: "resident", stable id, handle, and has_drawing.
+function directoryRowKeysFromReference(text: string): { place: string[]; resident: string[] } {
+  const match = text.match(
+    /^Place entries contain only ([^;\n]+); resident entries contain only ([^.\n]+)\.$/mu,
+  )
+  assert.ok(match, 'src/reference.txt must state the directory place and resident entry keys')
+  const keys = (clause: string): string[] => clause
+    .split(/,\s*(?:and\s+)?|\s+and\s+/u)
+    .map(item => item.trim().replace(/^stable\s+/u, '').match(/^[a-z_]+/u)?.[0] ?? '')
+    .sort()
+  const place = keys(match[1]!)
+  const resident = keys(match[2]!)
+  for (const set of [place, resident]) {
+    assert.ok(set.length >= 3 && set.every(key => key !== ''), `unreadable key list: ${set.join(', ')}`)
+    assert.ok(set.includes('type') && set.includes('id'))
+  }
+  return { place, resident }
+}
+
 test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
   timeout: 120_000,
 }, async t => {
@@ -167,6 +189,7 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
   try {
     const { Hono } = await import('hono')
     const { mountWorldRoutes } = await import('../../src/world.ts')
+    const { windowSnapshot } = await import('../../src/window.ts')
     const app = new Hono()
     mountWorldRoutes(app)
 
@@ -241,6 +264,35 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
           JSON.stringify({ malformed, body: await response.text() }),
         )
         assert.equal(await storedQuiet(seeded.roomId), false)
+      }
+    })
+
+    await t.test('the window directory rows carry exactly the keys the served reference names', async () => {
+      // Decision #109 marks rough rooms on the window's Place view only; the
+      // directory must keep the row shape src/reference.txt promises, so the
+      // key sets here are read from that sentence, never copied by hand.
+      const seeded = await resetDatabase()
+      await connectedDatabase().query(
+        'UPDATE places SET quiet = TRUE, rough_room = TRUE WHERE id = $1', [seeded.roomId],
+      )
+      const promised = directoryRowKeysFromReference(referenceText)
+      const windowApp = new Hono()
+      windowApp.get('/api/window', windowSnapshot)
+      const response = await windowApp.request('/api/window?view=directory')
+      assert.equal(response.status, 200, await response.clone().text())
+      const body = await response.json() as {
+        places: Array<Record<string, unknown>>
+        residents: Array<Record<string, unknown>>
+      }
+      const room = body.places.find(place => place.id === seeded.roomId)
+      assert.ok(room, `the directory must list room ${seeded.roomId}`)
+      assert.equal(room.quiet, true)
+      assert.ok(body.places.length >= 3 && body.residents.length === 2)
+      for (const place of body.places) {
+        assert.deepEqual(Object.keys(place).sort(), promised.place, JSON.stringify(place))
+      }
+      for (const resident of body.residents) {
+        assert.deepEqual(Object.keys(resident).sort(), promised.resident, JSON.stringify(resident))
       }
     })
 

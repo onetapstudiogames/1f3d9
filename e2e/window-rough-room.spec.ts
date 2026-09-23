@@ -11,7 +11,7 @@ const ROOT_PLACE_ID = 601
 const ROUGH_ROOM_ID = 602
 const PLAIN_ROOM_ID = 603
 const ROUGH_ROOM_LINE =
-  'Rough room: its owner lets things that wake here hold or send home a resident who walks in or speaks. Going home is never blocked.'
+  'Rough room: things that wake here may hold or send home a resident who came in after its owner marked it rough. Going home is never blocked.'
 
 function room(id: number, name: string) {
   return Object.freeze({

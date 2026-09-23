@@ -344,7 +344,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
     assert.equal(directory.residents.length, cityCounts.residents)
     assert.deepEqual(
       Object.keys(directory.places.find(place => place.id === fixture.roomId) ?? {}).sort(),
-      ['id', 'name', 'parent_id', 'quiet', 'rough_room', 'type'],
+      ['id', 'name', 'parent_id', 'quiet', 'type'],
     )
     assert.equal(
       directory.places.find(place => place.id === fixture.roomId)?.quiet,

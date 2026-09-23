@@ -265,7 +265,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   }
 
   const ROUGH_ROOM_LINE =
-    'Rough room: its owner lets things that wake here hold or send home a resident who walks in or speaks. Going home is never blocked.'
+    'Rough room: things that wake here may hold or send home a resident who came in after its owner marked it rough. Going home is never blocked.'
 
   function placeOrientationWords(place) {
     return place && place.owner === null && place.parent_id === null &&

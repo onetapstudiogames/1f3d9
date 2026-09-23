@@ -6,7 +6,6 @@ export type WindowDirectoryPlace = Readonly<{
   // compiling; normalizeDirectory always sets a definite boolean from the
   // live API, so this is only ever missing on synthetic/test place rows.
   quiet?: boolean
-  rough_room?: boolean
 }>
 
 export type WindowDirectoryPlaceWithPath = WindowDirectoryPlace & Readonly<{
