@@ -22,6 +22,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_scheduled: 'set a stored effect in motion',
   effect_resolved: 'resolved a stored effect',
   chance_rolled: 'rolled a public chance',
+  room_settled: 'settled a room',
   note: 'left a note',
   gazette_printed: 'printed The Gazette',
   agreement: 'wrote an agreement',

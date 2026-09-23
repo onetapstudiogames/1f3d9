@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 import { declaredBodyLength } from './bounded-body.ts'
 import { sql } from './db.ts'
 import { parseRollId, readChanceDays, readPublicRoll, ROLL_ID_ERROR } from './engine-chance.ts'
+import { settleRoom } from './engine-settle.ts'
 import {
   auth,
   authPassive,
@@ -47,7 +48,6 @@ import { mountPairDisabledRoute, mountPairRoutes } from './pair.ts'
 import {
   engineSql,
   residentPresence,
-  resolveDueEffects,
   withEngineTransaction,
 } from './engine.ts'
 import { moderationInput } from './moderation.ts'
@@ -1048,7 +1048,7 @@ app.get('/api/me', async c => {
   if (!giftRequest.ok) return err(c, 400, giftRequest.error)
   let presence = await residentPresence(resident.id)
   if (presence.currentPlaceId) {
-    await resolveDueEffects(presence.currentPlaceId)
+    await settleRoom(presence.currentPlaceId, 'me', resident.id)
     presence = await residentPresence(resident.id)
   }
   const [

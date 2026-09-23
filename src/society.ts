@@ -41,7 +41,8 @@ import {
   completeDirectSalePayment,
   PaymentSaleConflictError,
 } from './payment-sale-operations.ts'
-import { EngineError, residentPresence, resolveDueEffects, runAction } from './engine.ts'
+import { EngineError, residentPresence, runAction } from './engine.ts'
+import { settleRoom, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
   GAZETTE_ROOM_ID,
@@ -320,7 +321,7 @@ export function mountSocietyRoutes(app: Hono): void {
     }
     if (place.place_permits_notes !== true)
       return err(c, 403, 'this place is not open to notes; its owner can enable open_to_notes, or you can write in another open place')
-    await resolveDueEffects(placeId)
+    await settleRoom(placeId, 'act', resident.id)
     if (resident.notes_today >= QUOTAS.notes)
       return err(c, 429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
     const talk = await runTalkNoteAction({
@@ -332,6 +333,16 @@ export function mountSocietyRoutes(app: Hono): void {
     })
     if (!talk.ok) return err(c, talk.status, talk.error)
     const { note } = talk
+    // Speaking may wake things that listen for talk; the note has already
+    // committed, so a failed settle never repaints it as an error.
+    let settle: SettleSummary | null = null
+    if (!talk.replayed) {
+      try {
+        settle = await settleRoom(placeId, 'talk', resident.id)
+      } catch (error) {
+        console.error('post-note settle failed', error)
+      }
+    }
     return c.json({
       note: writtenNote({
         id: note.id,
@@ -342,6 +353,7 @@ export function mountSocietyRoutes(app: Hono): void {
         walk_to_read: note.walk_to_read ?? walkToRead,
       }),
       ...(talk.gazetteWithdrawal ? { gazette_withdrawal: talk.gazetteWithdrawal } : {}),
+      ...(settle === null ? {} : { settle }),
       reading_cost: await safeReadingCostMeter(placeId, note.body ?? text),
     }, talk.replayed ? 200 : 201)
   })
@@ -498,7 +510,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!recipient) return err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     if (recipient === resident.id) return err(c, 400, 'you already own this asset; send a different current resident in to_handle')
     const presence = await residentPresence(resident.id)
-    if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
+    await settleRoom(presence.currentPlaceId, 'act', resident.id)
     const { table, transferable } = ASSETS[type]
     let transfer: { id: number; created_at?: string; home_cleared?: boolean } | undefined
     const actionGate = await runAction({
@@ -701,7 +713,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!buyerId) return err(c, 404, `buyer handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself; choose another current resident in to_handle')
     const presence = await residentPresence(resident.id)
-    if (presence.currentPlaceId !== null) await resolveDueEffects(presence.currentPlaceId)
+    await settleRoom(presence.currentPlaceId, 'act', resident.id)
     const { table, transferable } = ASSETS[type]
     let offer: Record<string, unknown> | undefined
     const actionGate = await runAction({

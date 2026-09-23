@@ -164,6 +164,8 @@ export function respondToDatabaseStage4(
   }
   // Today's and tomorrow's day secrets already exist, so no settle writes one.
   if (q.includes('select count(*)::int as present from chance_days')) return [{ present: 2 }]
+  // No fixture room holds a thing that can wake, so every settle stops after its timers.
+  if (q.includes('/* wake:probe */')) return [{ waking: false }]
   if (q.includes('from pending_effects pending')) {
     if (fixtureState.current.scheduledLabelAt == null || fixtureState.current.scheduledLabelAt > Date.now() || fixtureState.current.pendingResolved) return []
     return [{

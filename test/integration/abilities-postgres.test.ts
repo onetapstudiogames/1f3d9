@@ -12,7 +12,8 @@ import {
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
 // Loaded only after the fixture points src/db.ts at the test container.
-const { rollCommitment, rollValue } = await import('../../src/engine-chance.ts')
+const { rollCommitment, rollValue, wakePickKey } = await import('../../src/engine-chance.ts')
+const { settleRoom } = await import('../../src/engine-settle.ts')
 
 const migrationDdl = await readFile(
   new URL('../../db/migrations/20260922_abilities_wake_chance_write.sql', import.meta.url),
@@ -82,6 +83,28 @@ async function traitId(name: string): Promise<number> {
   )).rows[0]!.id)
 }
 
+
+/**
+ * Move a room's recent settles and its things' last tries into the past, so a
+ * test can step past the ten-second quiet and "not more often than" without
+ * waiting. The append-only guard is paused only for this test-time shift.
+ */
+async function ageRoom(placeId: number, seconds: number): Promise<void> {
+  const db = connectedDatabase()
+  await db.query('ALTER TABLE wake_settles DISABLE TRIGGER wake_settles_append_only')
+  try {
+    await db.query(
+      'UPDATE wake_settles SET created_at = created_at - make_interval(secs => $2) WHERE place_id = $1',
+      [placeId, seconds],
+    )
+  } finally {
+    await db.query('ALTER TABLE wake_settles ENABLE TRIGGER wake_settles_append_only')
+  }
+  await db.query(`
+    UPDATE thing_wake_state SET last_try_at = last_try_at - make_interval(secs => $2)
+    WHERE thing_id IN (SELECT id FROM things WHERE place_id = $1)
+  `, [placeId, seconds])
+}
 // Put the database back to how it stood before this change, so the migration meets
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
@@ -461,6 +484,286 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         version: 2, key: null, op: 'clear', trimmed: 0, source_trait: null, source_trait_id: null,
         trigger: 'owner', by: 'bell-maker', at: undefined,
       })
+    })
+
+    await t.test("wake on arrival: the room owner's things wake, a visitor's thing waits for the room's word", async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      await standIn(VISITOR.id, rooms.continentId)
+      assert.equal((await coin(app, FOUNDER.secret, 'greeter', {
+        wake: { then: [
+          { effect: 'label', target: 'actor', label: 'greeted' },
+          { effect: 'write', key: 'guests', op: 'append', value: { from: 'actor' } },
+        ] },
+      })).status, 201)
+      const kindId = await seedKind(FOUNDER.id, 'bells', [await traitId('greeter')])
+      const ownBell = await seedThing(FOUNDER.id, rooms.eastRoomId, kindId, 'the door bell', { wakeEnabled: true })
+      const visitorBell = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'a guest bell', { wakeEnabled: true })
+
+      const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.equal(arrived.status, 200, JSON.stringify(arrived.json))
+      const settle = (arrived.json.action as Json).settle as Json
+      assert.deepEqual({ ...settle, settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      const owned = (await call(app, null, 'GET', `/api/thing/${ownBell}`)).json.thing as Json
+      assert.deepEqual((owned.state as Json).values, { guests: ['far-walker'] })
+      assert.equal(((owned.state as Json).last_write as Json).trigger, 'wake_arrive')
+      assert.equal(((owned.state as Json).last_write as Json).by, 'far-walker')
+      assert.equal(owned.wake_enabled, true)
+      const wake = owned.wake as Json
+      assert.deepEqual({ ...wake, last_try_at: undefined }, {
+        trait_id: await traitId('greeter'), on: ['arrive'], every_seconds: 60,
+        last_try_at: undefined, clock_at: null,
+      })
+      assert.match(String(wake.last_try_at), /^\d{4}-\d{2}-\d{2}T/u)
+      const visitors = (await call(app, null, 'GET', `/api/thing/${visitorBell}`)).json.thing as Json
+      assert.deepEqual((visitors.state as Json).values, {}, "a visitor's thing does not wake unless the room allows it")
+
+      const sticker = (await db.query(`
+        SELECT actor_id, source_thing_id, extract(epoch FROM expires_at - created_at)::int AS lasts
+        FROM active_labels WHERE target_type = 'resident' AND target_id = $1 AND label = 'greeted'
+      `, [VISITOR.id])).rows
+      assert.deepEqual(sticker, [{ actor_id: FOUNDER.id, source_thing_id: ownBell, lasts: 86_400 }],
+        "the effects answer to the thing's owner, and a sticker on a resident expires after a day")
+      const event = (await db.query(`SELECT actor, detail FROM events WHERE kind = 'room_settled'`)).rows
+      assert.equal(event.length, 1)
+      assert.equal(event[0]!.actor, 'far-walker')
+      assert.deepEqual({ ...event[0]!.detail, settle_id: undefined }, {
+        settle_id: undefined, place_id: rooms.eastRoomId, mode: 'arrive', status: 'woke',
+        tried: 1, woke: 1, forfeited: 0, budget: 8,
+      })
+
+      // The room owner lets visitors' things wake; the owner's bell is inside "not more often than".
+      await db.query('UPDATE places SET wake_visitors = TRUE WHERE id = $1', [rooms.eastRoomId])
+      await ageRoom(rooms.eastRoomId, 30)
+      await standIn(VISITOR.id, rooms.continentId)
+      const again = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.deepEqual({ ...((again.json.action as Json).settle as Json), settle_id: undefined }, {
+        settle_id: undefined, tried: 1, woke: 1, forfeited: 0,
+      })
+      const guestBell = (await call(app, null, 'GET', `/api/thing/${visitorBell}`)).json.thing as Json
+      assert.deepEqual((guestBell.state as Json).values, { guests: ['far-walker'] })
+      const ownerBellAgain = (await call(app, null, 'GET', `/api/thing/${ownBell}`)).json.thing as Json
+      assert.equal((ownerBellAgain.state as Json).version, 1, 'not more often than every_seconds')
+    })
+
+    await t.test('pins try outside the random cap, a block beats a pin, and a sleeping thing never wakes', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(VISITOR.id, rooms.continentId)
+      assert.equal((await coin(app, MAKER.secret, 'chime', {
+        wake: { then: [{ effect: 'write', key: 'rings', op: 'add' }] },
+      })).status, 201)
+      const kindId = await seedKind(MAKER.id, 'chimes', [await traitId('chime')])
+      const pinned = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'pinned chime', { wakeEnabled: true })
+      const blocked = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'blocked chime', { wakeEnabled: true })
+      const asleep = await seedThing(MAKER.id, rooms.eastRoomId, kindId, 'sleeping chime')
+      await db.query(`
+        UPDATE places SET wake_random_cap = 0, wake_pins = $2::int[], wake_block_thing_ids = $3::int[]
+        WHERE id = $1
+      `, [rooms.eastRoomId, [pinned, blocked, asleep], [blocked]])
+
+      const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.deepEqual({ ...((arrived.json.action as Json).settle as Json), settle_id: undefined }, {
+        settle_id: undefined, tried: 1, woke: 1, forfeited: 0,
+      })
+      const rings = (await db.query(`SELECT id, state FROM things WHERE id = ANY($1::int[]) ORDER BY id`, [[pinned, blocked, asleep]])).rows
+      assert.deepEqual(rings.map(row => row.state), [{ rings: 1 }, {}, {}])
+    })
+
+    await t.test('the random pick is reproducible from the settle roll', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(VISITOR.id, rooms.continentId)
+      assert.equal((await coin(app, FOUNDER.secret, 'chirp', {
+        wake: { then: [{ effect: 'write', key: 'chirps', op: 'add' }] },
+      })).status, 201)
+      const kindId = await seedKind(FOUNDER.id, 'crickets', [await traitId('chirp')])
+      const crickets = [
+        await seedThing(FOUNDER.id, rooms.eastRoomId, kindId, 'cricket one', { wakeEnabled: true }),
+        await seedThing(FOUNDER.id, rooms.eastRoomId, kindId, 'cricket two', { wakeEnabled: true }),
+        await seedThing(FOUNDER.id, rooms.eastRoomId, kindId, 'cricket three', { wakeEnabled: true }),
+      ]
+      await db.query('UPDATE places SET wake_random_cap = 1 WHERE id = $1', [rooms.eastRoomId])
+      const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      const settle = (arrived.json.action as Json).settle as Json
+      assert.equal(settle.tried, 1)
+      const roll = (await db.query(`
+        SELECT roll.id::int AS id, encode(day.secret, 'hex') AS secret FROM chance_rolls roll
+        JOIN chance_days day ON day.day = roll.day
+        WHERE roll.purpose = 'wake_pick' AND roll.settle_id = $1
+      `, [settle.settle_id])).rows[0]!
+      const expected = crickets
+        .map(thingId => ({ thingId, key: wakePickKey(String(roll.secret), Number(settle.settle_id), thingId, 0) }))
+        .sort((a, b) => (a.key < b.key ? -1 : 1))[0]!.thingId
+      const woke = (await db.query(`SELECT thing_id FROM wake_tries WHERE settle_id = $1`, [settle.settle_id])).rows
+      assert.deepEqual(woke, [{ thing_id: expected }])
+      const read = (await call(app, null, 'GET', `/api/physics?roll_id=${roll.id}`)).json.roll as Json
+      assert.equal(read.purpose, 'wake_pick')
+      assert.equal(read.sides, 3)
+      assert.equal((read.units as Json[]).length, 3)
+      assert.deepEqual((read.picked as Json[]).map(unit => unit.thing_id), [expected])
+    })
+
+    await t.test('a clock settles at most eight owed tries per thing, forfeits the rest, and has no actor', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER])
+      const db = connectedDatabase()
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, FOUNDER.secret, 'ticker', {
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }] },
+      })).status, 201)
+      assert.equal((await coin(app, FOUNDER.secret, 'sticker-clock', {
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'label', target: 'actor', label: 'late' }] },
+      })).status, 201)
+      const ticker = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'tickers', [await traitId('ticker')]), 'a clock', { wakeEnabled: true })
+      const stickerClock = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'sticker-clocks', [await traitId('sticker-clock')]), 'a sticker clock', { wakeEnabled: true })
+      await db.query('UPDATE places SET wake_random_cap = 32 WHERE id = $1', [rooms.eastRoomId])
+
+      const first = await call(app, FOUNDER.secret, 'GET', '/api/me')
+      assert.equal(first.status, 200)
+      const anchors = (await db.query(`SELECT thing_id, last_try_at FROM thing_wake_state ORDER BY thing_id`)).rows
+      assert.deepEqual(anchors.map(row => [row.thing_id, row.last_try_at]), [[ticker, null], [stickerClock, null]],
+        'the first settle only sets each clock anchor; nothing is owed yet')
+      assert.equal((await db.query(`SELECT count(*)::int AS settles FROM wake_settles`)).rows[0]!.settles, 0)
+
+      await db.query(`UPDATE thing_wake_state SET clock_at = clock_at - interval '205 seconds'`)
+      const before = (await db.query(`SELECT clock_at FROM thing_wake_state WHERE thing_id = $1`, [ticker])).rows[0]!.clock_at as Date
+      await call(app, FOUNDER.secret, 'GET', '/api/me')
+      const tries = (await db.query(`
+        SELECT thing_id, status, error FROM wake_tries ORDER BY thing_id, unit_index
+      `)).rows
+      const tickerTries = tries.filter(row => row.thing_id === ticker)
+      assert.equal(tickerTries.length, 8)
+      assert.ok(tickerTries.every(row => row.status === 'woke'))
+      const ticks = (await db.query(`SELECT state FROM things WHERE id = $1`, [ticker])).rows[0]!.state
+      assert.deepEqual(ticks, { ticks: 8 })
+      const stickerTries = tries.filter(row => row.thing_id === stickerClock)
+      assert.equal(stickerTries.length, 8)
+      assert.ok(stickerTries.every(row => (
+        row.status === 'failed'
+        && row.error === "this wake try came from the thing's clock, so there is no actor; name source or place instead"
+      )))
+      const settled = (await db.query(`SELECT detail FROM events WHERE kind = 'room_settled'`)).rows[0]!.detail
+      assert.equal(settled.forfeited, 24, 'twenty owed tries each, eight run, twelve forfeited each')
+      assert.equal(settled.mode, 'me')
+      const after = (await db.query(`SELECT clock_at FROM thing_wake_state WHERE thing_id = $1`, [ticker])).rows[0]!.clock_at as Date
+      assert.equal(after.getTime() - before.getTime(), 200_000, 'the clock advances by whole owed intervals and the remainder carries')
+    })
+
+    await t.test('speech wakes things that listen for talk; going home and a quiet room wake nothing', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(VISITOR.id, rooms.eastRoomId)
+      await db.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES ($1, $2, $2)
+        ON CONFLICT (resident_id) DO UPDATE SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+      `, [FOUNDER.id, rooms.continentId])
+      assert.equal((await coin(app, FOUNDER.secret, 'listener', {
+        wake: { on: ['talk', 'arrive'], every_seconds: 10, then: [{ effect: 'write', key: 'heard', op: 'add' }] },
+      })).status, 201)
+      const ear = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'ears', [await traitId('listener')]), 'an ear', { wakeEnabled: true })
+
+      const said = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'hello, room' })
+      assert.equal(said.status, 201, JSON.stringify(said.json))
+      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      assert.equal(((await db.query('SELECT state FROM things WHERE id = $1', [ear])).rows[0]!.state as Json).heard, 1)
+
+      // Inside the room's ten-second quiet the wake part is skipped, and nothing is queued.
+      const second = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'hello again' })
+      assert.equal(second.status, 201)
+      assert.equal(second.json.settle, undefined)
+
+      // Going home into the room settles timers and clock tries only; it is not an arrival.
+      await ageRoom(rooms.eastRoomId, 60)
+      await db.query(`UPDATE resident_presence SET home_place_id = $2 WHERE resident_id = $1`, [FOUNDER.id, rooms.eastRoomId])
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      const home = await call(app, FOUNDER.secret, 'POST', '/api/go-home', {})
+      assert.equal(home.status, 200, JSON.stringify(home.json))
+      assert.equal(((await db.query('SELECT state FROM things WHERE id = $1', [ear])).rows[0]!.state as Json).heard, 1)
+    })
+
+    await t.test('a rough room lets a waking thing hold or send home a visitor; elsewhere the try is refused and the move stands', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await db.query(`
+        INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+        VALUES ($1, $2, $2)
+        ON CONFLICT (resident_id) DO UPDATE SET current_place_id = EXCLUDED.current_place_id, home_place_id = EXCLUDED.home_place_id
+      `, [VISITOR.id, rooms.continentId])
+      await db.query(`UPDATE places SET owner_id = $1 WHERE id = $2`, [VISITOR.id, rooms.continentId])
+      assert.equal((await coin(app, FOUNDER.secret, 'gatekeeper', {
+        wake: { then: [
+          { effect: 'label', target: 'actor', label: 'held' },
+          { effect: 'block', target: 'actor', action: 'move', seconds: 600 },
+        ] },
+      })).status, 201)
+      await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'gates', [await traitId('gatekeeper')]), 'a gate', { wakeEnabled: true })
+
+      const refused = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.equal(refused.status, 200, 'the move stands even though the wake try was refused')
+      const refusedAction = refused.json.action as Json
+      assert.equal(refusedAction.place_id, rooms.eastRoomId)
+      assert.deepEqual({ ...(refusedAction.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 0, forfeited: 0 })
+      const failed = (await db.query(`SELECT status, error FROM wake_tries`)).rows
+      assert.deepEqual(failed, [{
+        status: 'failed',
+        error: 'this room is not marked rough, so a thing waking here may only label, check, roll, or write about the resident who arrived or spoke',
+      }])
+      assert.equal((await db.query(`SELECT count(*)::int AS labels FROM active_labels WHERE target_type = 'resident'`)).rows[0]!.labels, 0,
+        'the refused try rolls back its sticker too')
+
+      await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.eastRoomId])
+      await ageRoom(rooms.eastRoomId, 120)
+      await standIn(VISITOR.id, rooms.continentId)
+      const held = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      assert.deepEqual({ ...((held.json.action as Json).settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      const blockedMove = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.continentId })
+      assert.equal(blockedMove.status, 403, 'in a rough room the waking gate may hold the visitor')
+      assert.match(String(blockedMove.json.error), /^move is temporarily blocked by thing trait "gatekeeper" from thing_id \d+/u)
+      const home = await call(app, VISITOR.secret, 'POST', '/api/go-home', {})
+      assert.equal(home.status, 200, 'going home is never blocked, even by a rough room')
+      assert.equal((home.json.action as Json).place_id, rooms.continentId)
+    })
+
+    await t.test('a place read never settles, and concurrent settles claim each owed try once', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER])
+      const db = connectedDatabase()
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      assert.equal((await coin(app, FOUNDER.secret, 'slow-clock', {
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }] },
+      })).status, 201)
+      const clock = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'slow-clocks', [await traitId('slow-clock')]), 'a slow clock', { wakeEnabled: true })
+      await db.query(`INSERT INTO thing_wake_state (thing_id, clock_at) VALUES ($1, now() - interval '35 seconds')`, [clock])
+
+      assert.equal((await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).status, 200)
+      assert.equal((await call(app, FOUNDER.secret, 'GET', `/api/place/${rooms.eastRoomId}`)).status, 200)
+      assert.equal((await db.query(`SELECT count(*)::int AS settles FROM wake_settles`)).rows[0]!.settles, 0, 'place reads never settle')
+
+      // Hold the thing row the way an action does; the claim still commits.
+      const holder = await db.connect()
+      try {
+        await holder.query('BEGIN')
+        await holder.query('SELECT id FROM things WHERE id = $1 FOR UPDATE', [clock])
+        const settling = Promise.all([
+          settleRoom(rooms.eastRoomId, 'me', FOUNDER.id),
+          settleRoom(rooms.eastRoomId, 'me', FOUNDER.id),
+        ])
+        let claimed = 0
+        for (let attempt = 0; attempt < 50 && claimed === 0; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+          claimed = (await db.query(`SELECT count(*)::int AS settles FROM wake_settles`)).rows[0]!.settles
+        }
+        assert.equal(claimed, 1, "a settle's claim never waits on an action's lock of the thing's row")
+        await holder.query('COMMIT')
+        const results = await settling
+        assert.equal(results.filter(result => result !== null).length, 1, 'the second settle is inside the quiet')
+      } finally {
+        holder.release()
+      }
+      const tries = (await db.query(`SELECT count(*)::int AS tries FROM wake_tries`)).rows[0]!.tries
+      assert.equal(tries, 3, 'three owed intervals are claimed exactly once')
+      assert.deepEqual((await db.query('SELECT state FROM things WHERE id = $1', [clock])).rows[0]!.state, { ticks: 3 })
     })
   } finally {
     await postgres.stop()

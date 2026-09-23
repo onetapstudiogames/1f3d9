@@ -117,6 +117,21 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         ), false)
       END AS has_drawing,
       thing.wake_enabled,
+      (
+        SELECT jsonb_build_object(
+          'trait_id', trait.id,
+          'on', trait.recipe -> 'wake' -> 'on',
+          'every_seconds', trait.recipe -> 'wake' -> 'every_seconds',
+          'last_try_at', to_char(wake_state.last_try_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'clock_at', to_char(wake_state.clock_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )
+        FROM kind_revision_traits link
+        JOIN traits trait ON trait.id = link.trait_id
+        LEFT JOIN thing_wake_state wake_state ON wake_state.thing_id = thing.id
+        WHERE link.kind_id = thing.kind_id AND link.revision = thing.current_revision
+          AND trait.recipe ? 'wake'
+        ORDER BY link.position LIMIT 1
+      ) AS wake,
       jsonb_build_object(
         'version', thing.state_version,
         'values', thing.state,

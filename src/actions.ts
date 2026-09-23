@@ -5,7 +5,6 @@ import {
   EngineError,
   engineSql,
   residentPresence,
-  resolveDueEffects,
   runAction,
   setHome,
   withEngineTransaction,
@@ -17,7 +16,7 @@ import {
   type TargetType,
 } from './engine.ts'
 import { isBasicAction, type BasicAction } from './physics.ts'
-import { ensureChanceDays } from './engine-chance.ts'
+import { settleRoom, type SettleSummary } from './engine-settle.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 
@@ -126,8 +125,10 @@ function expectedPlaceAfterAction(
 
 /**
  * The action outcome is already durably recorded, so observing the city after
- * it is best-effort: a failed read or due-effect pass must never repaint a
- * committed action as an error. Deferred effects stay due for the next observer.
+ * it is best-effort: a failed read or settle must never repaint a committed
+ * action as an error. Deferred effects and owed tries stay for the next observer.
+ * Arriving by move settles the new room as an arrival; going home settles it
+ * only for timers and owed clock tries.
  */
 async function observePlaceAfterAction(
   residentId: number,
@@ -135,19 +136,20 @@ async function observePlaceAfterAction(
   result: ActionExecution,
   before: Presence,
   destinationPlaceId: number | null,
-): Promise<number | null> {
+): Promise<Readonly<{ placeId: number | null; settle: SettleSummary | null }>> {
   let placeId = expectedPlaceAfterAction(action, result, before, destinationPlaceId)
+  let settle: SettleSummary | null = null
   try {
     const after = await residentPresence(residentId)
     placeId = after.currentPlaceId
     if (result.httpStatus === 200 && after.currentPlaceId !== null
       && after.currentPlaceId !== before.currentPlaceId) {
-      await resolveDueEffects(after.currentPlaceId)
+      settle = await settleRoom(after.currentPlaceId, action === 'move' ? 'arrive' : 'act', residentId)
     }
   } catch (error) {
     console.error('post-action observation failed', error)
   }
-  return placeId
+  return Object.freeze({ placeId, settle })
 }
 
 async function runResidentAction(
@@ -213,8 +215,7 @@ async function runResidentAction(
 
   try {
     const before = await residentPresence(resident.id)
-    await ensureChanceDays()
-    if (before.currentPlaceId !== null) await resolveDueEffects(before.currentPlaceId)
+    await settleRoom(before.currentPlaceId, 'act', resident.id)
     const result = await runAction({
       actorId: resident.id,
       actorHandle: resident.handle,
@@ -226,7 +227,7 @@ async function runResidentAction(
       recipientId: toResidentId,
       payload: {},
     })
-    const placeId = await observePlaceAfterAction(
+    const { placeId, settle } = await observePlaceAfterAction(
       resident.id, action, result, before, destinationPlaceId,
     )
     const publicAction = {
@@ -243,6 +244,7 @@ async function runResidentAction(
         reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
       } : {}),
       ...(carryThingId === null ? {} : { carried_thing_id: carryThingId }),
+      ...(settle === null ? {} : { settle }),
       ...(result.error === null ? {} : { error: result.error }),
     }
     if (result.error) {

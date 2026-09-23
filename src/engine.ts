@@ -1018,13 +1018,14 @@ async function committedResolution(
 }
 
 export function logUnrecognizedExecutionFailure(
-  subject: 'action' | 'stored effect',
+  subject: 'action' | 'stored effect' | 'wake try' | 'room settle',
   executionId: number,
   error: unknown,
 ): void {
   const fields: Record<string, unknown> = subject === 'action'
     ? { action_id: executionId }
-    : { effect_id: executionId }
+    : subject === 'wake try' ? { settle_id: executionId }
+      : subject === 'room settle' ? { place_id: executionId } : { effect_id: executionId }
   if (error instanceof Error) {
     fields.error_name = error.name.slice(0, 120)
     fields.error_message = error.message.slice(0, 1_000)

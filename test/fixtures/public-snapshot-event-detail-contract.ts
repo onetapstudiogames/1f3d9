@@ -7,6 +7,8 @@ const omittedFieldsByKind = {
   trait_coined: ['mechanical', 'name'],
   thing_created: ['birth_revision', 'name'],
   thing_crafted: ['birth_revision', 'ingredient_ids'],
+  // A state-box write is a thing_edited event with mode state (decision #109).
+  thing_edited: ['key', 'op', 'trimmed', 'version'],
   thing_upgraded: ['birth_revision', 'current_revision'],
   thing_withdrawn: ['output_thing_id', 'reason'],
   laws_changed: ['traits'],
@@ -16,6 +18,7 @@ const omittedFieldsByKind = {
   chance_rolled: [
     'commitment', 'day', 'outcome', 'percent', 'purpose', 'roll', 'roll_id', 'settle_id', 'sides',
   ],
+  room_settled: ['budget', 'forfeited', 'settle_id', 'tried', 'woke'],
   note: ['moderated', 'moderation'],
   agreement: ['accession_open', 'parties'],
   agreement_sign: ['acceded'],

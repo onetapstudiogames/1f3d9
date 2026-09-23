@@ -16,6 +16,7 @@ import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
+  RESIDENT_ABILITY_LABEL_SECONDS,
   parseTraitRecipe,
   type Effect,
   type SymbolicTarget,
@@ -38,7 +39,7 @@ import {
   recordFailedRolls,
   type RollLog,
 } from './engine-chance.ts'
-import { requireWakeActor } from './wake-guard.ts'
+import { requireRoughRoomFor, requireWakeActor } from './wake-guard.ts'
 import { writeStateBox } from './engine-state.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
@@ -405,18 +406,25 @@ async function executeEffectWithOutcome(
       `)
       if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
     }
+    // A sticker a waking thing puts on a resident expires after a day.
+    const expiresInSeconds = context.fromWake === true && target.type === 'resident'
+      ? RESIDENT_ABILITY_LABEL_SECONDS
+      : null
     await queryRows(db`
       INSERT INTO active_labels (
         target_type, target_id, label, actor_id,
-        source_trait_id, source_place_id, source_thing_id
+        source_trait_id, source_place_id, source_thing_id, expires_at
       ) VALUES (
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
-        ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId}
+        ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId},
+        CASE WHEN ${expiresInSeconds}::int IS NULL THEN NULL
+          ELSE now() + make_interval(secs => ${expiresInSeconds}::int) END
       ) RETURNING id
     `)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'block') {
+    await requireRoughRoomFor(effect, context, db)
     const target = await requireScopedBrickTarget(effect.target, context, db)
     if (target.type !== 'resident') throw new EngineError(400, 'block target must be a resident')
     const origin = effectOrigin(context)
@@ -447,6 +455,7 @@ async function executeEffectWithOutcome(
     )
   }
   if (effect.effect === 'move') {
+    await requireRoughRoomFor(effect, context, db)
     const resolved = resolveSymbolicTarget(effect.target, context)
     if (resolved?.type === 'thing' && resolved.id === context.sharedSourceThingId) {
       throw new EngineError(403, SHARED_SOURCE_MUTATION_ERROR)

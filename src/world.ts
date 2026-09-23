@@ -12,6 +12,7 @@ import {
 import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { clearStateBox } from './engine-state.ts'
+import { settleRoom } from './engine-settle.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
 import {
@@ -25,7 +26,6 @@ import {
   effectiveLaws,
   engineSql,
   residentPresence,
-  resolveDueEffects,
   withEngineTransaction,
 } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
@@ -1790,7 +1790,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (place.place_permits_things !== true) {
       return err(c, 403, 'this place does not permit visitors to make things; its owner can enable open_to_things, or you can choose your own or another open place')
     }
-    await resolveDueEffects(placeId)
+    await settleRoom(placeId, 'act', resident.id)
 
     const made = await makeThingThroughEngine({
       actor: resident,
