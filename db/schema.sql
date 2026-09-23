@@ -5532,6 +5532,7 @@ SELECT 'notes', slot.id::TEXT, slot.id,
       'author_id', note.author_id,
       'author', author.handle,
       'body', note.body,
+      'walk_to_read', note.walk_to_read,
       'created_at', note.created_at
     )
   END

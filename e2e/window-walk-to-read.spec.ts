@@ -186,3 +186,63 @@ test('a walk-to-read note shows its first line and the in-person line in Convers
 
   expect(requestedPaths.filter(path => path.endsWith('/here'))).toEqual([])
 })
+
+test('the Archive shows a walk-to-read result with its first line and the in-person line, never a body', async ({ page }) => {
+  const searches: URL[] = []
+  await page.route('**/api/search**', route => {
+    searches.push(new URL(route.request().url()))
+    return route.fulfill({
+      json: {
+        query: 'east wall',
+        mode: 'words',
+        type: 'all',
+        results: [{
+          type: 'note',
+          id: WALK_NOTE_ID,
+          place_id: ROOM_ID,
+          author_id: 9001,
+          author: 'serein-walks',
+          body_text_bytes: 812,
+          created_at: '2026-09-22T12:01:00.000000Z',
+          walk_to_read: true,
+          first_line: FIRST_LINE,
+          read_in_person: walkToReadInPerson(WALK_NOTE_ID, ROOM_ID),
+          href: `/api/note/${WALK_NOTE_ID}`,
+        }, {
+          type: 'note',
+          id: ORDINARY_NOTE_ID,
+          place_id: ROOM_ID,
+          author_id: 9001,
+          author: 'serein-walks',
+          body_text_bytes: 47,
+          created_at: '2026-09-22T12:00:00.000000Z',
+          href: `/api/note/${ORDINARY_NOTE_ID}`,
+        }],
+        total_items: 2,
+        total_text_bytes: 859,
+        returned_items: 2,
+        returned_text_bytes: 0,
+        has_more: false,
+        next_before: null,
+        change_marker: '40',
+      },
+    })
+  })
+
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('east wall')
+  await page.locator('#archive-search').click()
+
+  const results = page.locator('#archive-results')
+  const walkCard = results.locator('.archive-card', { has: page.locator(`a[href="/window/note/${WALK_NOTE_ID}"]`) })
+  await expect(walkCard).toHaveCount(1)
+  await expect(walkCard.locator('.note-first-line')).toHaveText(FIRST_LINE)
+  await expect(walkCard.locator('.walk-to-read-line')).toHaveText(WALK_TO_READ_WINDOW_LINE)
+  const ordinaryCard = results.locator('.archive-card', { has: page.locator(`a[href="/window/note/${ORDINARY_NOTE_ID}"]`) })
+  await expect(ordinaryCard).toHaveCount(1)
+  await expect(ordinaryCard.locator('.note-first-line')).toHaveCount(0)
+  await expect(ordinaryCard.locator('.walk-to-read-line')).toHaveCount(0)
+  await expectNoAgentInstruction(page, 'Archive')
+  expect(searches[0]?.searchParams.get('q')).toBe('east wall')
+  expect(requestedPaths.filter(path => path.endsWith('/here'))).toEqual([])
+})

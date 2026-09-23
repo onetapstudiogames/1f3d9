@@ -1,7 +1,8 @@
 // Walk-to-read notes (docs/DECISIONS.md row 102) against real PostgreSQL: the
 // column, the write, every remote read that must withhold the body, the one
 // passive signed-in read that opens it where the reader stands, the retired-place
-// opening, the unchanged moderation reach, and the dated snapshot that keeps it.
+// opening, the unchanged moderation reach, search on the public first line only, and
+// the dated snapshot that keeps every body and carries the mark.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -16,6 +17,14 @@ import {
 
 const migrationDdl = await readFile(
   new URL('../../db/migrations/20260922_note_walk_to_read.sql', import.meta.url),
+  'utf8',
+)
+const previousSnapshotViewDdl = await readFile(
+  new URL('../../db/migrations/20260902_public_snapshot_quiet.sql', import.meta.url),
+  'utf8',
+)
+const snapshotMarkMigrationDdl = await readFile(
+  new URL('../../db/migrations/20260922_public_snapshot_walk_to_read.sql', import.meta.url),
   'utf8',
 )
 
@@ -292,20 +301,116 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       }
     })
 
-    await t.test('search never matches a withheld body, not even its first line', async () => {
+    await t.test('search matches only the public first line and shows what the note read shows', async () => {
       const seeded = await seedNotes(app)
-      // The answer echoes the query itself, so only its results are checked for the note.
-      for (const q of [SENTINEL, 'third stone', 'Field note east wall']) {
-        const found = await json<{ results: Array<{ id: number }>; total_items: number }>(
-          await app.request(`http://city.test/api/search?q=${encodeURIComponent(q)}&type=note`), 200, `search ${q}`,
-        )
-        assert.deepEqual(found.results, [], q)
-        assert.equal(found.total_items, 0, q)
+      const noteRead = await json<{ note: Record<string, unknown> }>(
+        await app.request(`http://city.test/api/note/${seeded.walkNoteId}`), 200, 'note read',
+      )
+      const expected = {
+        type: 'note',
+        id: seeded.walkNoteId,
+        place_id: seeded.eastRoomId,
+        author_id: WRITER.id,
+        author: WRITER.handle,
+        body_text_bytes: noteRead.note.body_text_bytes,
+        walk_to_read: true,
+        first_line: noteRead.note.first_line,
+        read_in_person: noteRead.note.read_in_person,
+        href: `/api/note/${seeded.walkNoteId}`,
       }
-      const ordinary = await json<{ results: Array<{ id: number }> }>(
+      assert.equal(expected.first_line, FIRST_LINE)
+      for (const [q, mode, type] of [
+        ['Field note east wall', 'words', 'note'],
+        ['note, east wall', 'phrase', 'note'],
+        ['wall', 'words', 'all'],
+      ] as const) {
+        const label = `search ${mode} ${type} ${q}`
+        const found = await json<{ results: Array<Record<string, unknown>>; total_items: number }>(
+          await app.request(`http://city.test/api/search?q=${encodeURIComponent(q)}&mode=${mode}&type=${type}`),
+          200, label,
+        )
+        assert.equal(found.total_items, 1, label)
+        const { created_at: createdAt, ...result } = found.results[0]!
+        assert.equal(typeof createdAt, 'string', label)
+        assert.deepEqual(result, expected, label)
+        assert.equal(JSON.stringify(found.results).includes(SENTINEL), false, `${label} leaked the body`)
+      }
+      // The answer echoes the query itself, so only its results are checked for the note.
+      for (const [q, mode] of [
+        [SENTINEL, 'words'],
+        [SENTINEL, 'phrase'],
+        ['third stone', 'phrase'],
+        ['east kestrelvault', 'words'],
+      ] as const) {
+        const missed = await json<{ results: unknown[]; total_items: number }>(
+          await app.request(`http://city.test/api/search?q=${encodeURIComponent(q)}&mode=${mode}&type=all`),
+          200, `search ${mode} ${q}`,
+        )
+        assert.deepEqual(missed.results, [], q)
+        assert.equal(missed.total_items, 0, q)
+      }
+      const ordinary = await json<{ results: Array<Record<string, unknown>> }>(
         await app.request('http://city.test/api/search?q=ordinary%20note&type=note'), 200, 'ordinary search',
       )
       assert.deepEqual(ordinary.results.map(result => result.id), [seeded.ordinaryNoteId])
+      assert.equal(Object.hasOwn(ordinary.results[0]!, 'walk_to_read'), false)
+      assert.equal(Object.hasOwn(ordinary.results[0]!, 'first_line'), false)
+
+      const tool = await mcpCall(app, WALKER.secret, 'search', { q: 'east wall', type: 'note' })
+      assert.equal(tool.isError, false)
+      assert.equal(tool.text.includes(SENTINEL), false)
+      const toolResults = (JSON.parse(tool.text) as { results: Array<Record<string, unknown>> }).results
+      assert.deepEqual(toolResults.map(({ created_at: _createdAt, ...result }) => result), [expected])
+    })
+
+    await t.test('search cuts the first line exactly where the note read cuts it', async () => {
+      const rooms = await resetCity([FOUNDER, WRITER])
+      await standIn(WRITER.id, rooms.eastRoomId)
+      const ids: number[] = []
+      for (const body of [
+        `Tide table posted\r\n${SENTINEL} after a carriage return`,
+        `${'word '.repeat(39)}wordy cliffmarker past the cut\nsecond line`,
+        `${'\u{1F30A}'.repeat(199)}Zq wave count past the cut`,
+      ]) {
+        const written = await json<{ note: { id: number } }>(
+          await say(app, WRITER.secret, { place_id: rooms.eastRoomId, body, walk_to_read: true }),
+          201, 'edge note',
+        )
+        ids.push(written.note.id)
+      }
+      // The write door refuses a line separator today, but an older note may hold one,
+      // and the first-line rule breaks there too.
+      ids.push(Number((await connectedDatabase().query<{ id: number }>(`
+        INSERT INTO notes (place_id, author_id, body, walk_to_read)
+        VALUES ($1, $2, $3, TRUE) RETURNING id
+      `, [rooms.eastRoomId, WRITER.id, `Harbor lamp lit\u2028${SENTINEL} after a line separator`])).rows[0]!.id))
+
+      // The real search SQL runs directly here, so these cases spend none of the
+      // per-caller search allowance the HTTP and MCP cases above use.
+      const { loadPublicSearchResults, parsePublicSearchQuery } = await import('../../src/public-search.ts')
+      const search = async (q: string, mode: 'words' | 'phrase'): Promise<number[]> => {
+        const parsed = parsePublicSearchQuery({ q: [q], mode: [mode], type: ['note'] })
+        assert.ok(parsed.ok, q)
+        const found = await loadPublicSearchResults(
+          async (text, params) => (await connectedDatabase().query(text, [...params])).rows,
+          parsed,
+        )
+        const results = found.items as ReadonlyArray<{ id: number; first_line: unknown }>
+        for (const result of results) {
+          const read = await json<{ note: Record<string, unknown> }>(
+            await app.request(`http://city.test/api/note/${result.id}`), 200, `note ${result.id}`,
+          )
+          assert.equal(result.first_line, read.note.first_line, `first line of note ${result.id}`)
+        }
+        return results.map(result => result.id)
+      }
+      assert.deepEqual(await search('table posted', 'words'), [ids[0]])
+      assert.deepEqual(await search('wordy', 'words'), [ids[1]])
+      assert.deepEqual(await search('cliffmarker', 'words'), [])
+      assert.deepEqual(await search('\u{1F30A}Z', 'phrase'), [ids[2]])
+      assert.deepEqual(await search('Zq', 'phrase'), [])
+      assert.deepEqual(await search('lamp lit', 'phrase'), [ids[3]])
+      assert.deepEqual(await search(SENTINEL, 'words'), [])
     })
 
     await t.test('a walk-to-read body never counts as a mention remotely, while its writer keeps it in me', async () => {
@@ -471,14 +576,29 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       )
     })
 
-    await t.test('the dated public snapshot keeps the full walk-to-read body', async () => {
+    await t.test('the dated public snapshot keeps every body and carries the walk_to_read mark', async () => {
       const seeded = await seedNotes(app)
-      const record = (await connectedDatabase().query(`
-        SELECT payload FROM city_snapshot.public_records_v2
-        WHERE class_name = 'notes' AND record_id = $1
-      `, [String(seeded.walkNoteId)])).rows[0] as { payload: Record<string, unknown> }
-      assert.equal(record.payload.status, 'exported')
-      assert.equal(record.payload.body, WALK_BODY)
+      const snapshotNotes = async (): Promise<Map<number, Record<string, unknown>>> => new Map(
+        (await connectedDatabase().query<{ payload: Record<string, unknown> }>(`
+          SELECT payload FROM city_snapshot.public_records_v2
+          WHERE class_name = 'notes' AND payload->>'status' = 'exported'
+        `)).rows.map(row => [Number(row.payload.id), row.payload]),
+      )
+      const current = await snapshotNotes()
+      assert.equal(current.get(seeded.walkNoteId)?.body, WALK_BODY)
+      assert.equal(current.get(seeded.walkNoteId)?.walk_to_read, true)
+      assert.equal(current.get(seeded.ordinaryNoteId)?.body, ORDINARY_BODY)
+      assert.equal(current.get(seeded.ordinaryNoteId)?.walk_to_read, false)
+
+      // A database still on the earlier snapshot view gains the mark from the migration,
+      // and running it again changes nothing.
+      await connectedDatabase().query(previousSnapshotViewDdl)
+      const before = await snapshotNotes()
+      assert.equal(Object.hasOwn(before.get(seeded.walkNoteId)!, 'walk_to_read'), false)
+      assert.equal(before.get(seeded.walkNoteId)?.body, WALK_BODY)
+      await connectedDatabase().query(snapshotMarkMigrationDdl)
+      await connectedDatabase().query(snapshotMarkMigrationDdl)
+      assert.deepEqual(await snapshotNotes(), current)
     })
   } finally {
     await postgres.stop()

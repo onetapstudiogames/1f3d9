@@ -62,6 +62,11 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     const name = type === 'thing'
       ? safeText(rawResult.name, '', 160, false)
       : ''
+    // Decision #103: a walk-to-read result carries only its public first line.
+    const walkToRead = type === 'note' && rawResult.walk_to_read === true &&
+      rawResult.first_line !== undefined
+    const firstLine = walkToRead ? safeText(rawResult.first_line, null, 2000, true) : null
+    if (walkToRead && firstLine === null) return null
     return Object.freeze({
       type,
       id,
@@ -74,6 +79,8 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
       currentOwner,
       name,
       hasDrawing: rawResult.has_drawing === true,
+      walkToRead,
+      firstLine,
       textBytes: safeCount(rawResult.body_text_bytes ?? rawResult.text_bytes),
       href: '/window/' + type + '/' + String(id),
     })
@@ -130,7 +137,9 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     ].filter(Boolean)
     const meta = element('p', 'archive-result-meta', details.join(' · '))
     const link = openDetailLink(result.type, result.id, 'Open detail', 'archive-open')
-    card.append(heading, meta, link)
+    card.append(heading, meta)
+    if (result.walkToRead) card.append(walkToReadNoteBlock({ first_line: result.firstLine }))
+    card.append(link)
     return card
   }
 

@@ -190,6 +190,29 @@ The column is additive and defaults to ordinary notes, so the old application ke
 working against it and the rollback is to merge the previous application, never to drop
 the column.
 
+### Public snapshot walk-to-read mark prerequisite
+
+Before merging the change that states the dated snapshots mark walk-to-read notes
+(decision #103), and only after the note-walk-to-read migration above, apply
+`npm run migrate:preview:public-snapshot-walk-to-read` to the isolated Preview database,
+then apply it a second time to prove it is safe to repeat. It replaces only
+`city_snapshot.public_records_without_drawing_contract` with the reviewed view plus
+`walk_to_read` on each exported note. Take the required Production snapshot, apply
+`npm run migrate:production:public-snapshot-walk-to-read`, and record the check below
+before merging. Every exported note must carry the mark, and the true count must equal
+the stored walk-to-read notes that are not hidden. The rollout does not apply this
+migration, and `--prepare` does not query either database.
+
+```sql
+SELECT payload->>'walk_to_read' AS walk_to_read, count(*) AS notes
+FROM city_snapshot.public_records_v2
+WHERE class_name = 'notes' AND payload->>'status' = 'exported'
+GROUP BY 1 ORDER BY 1;
+```
+
+The rollback is to reapply `npm run migrate:production:public-snapshot-quiet`, which
+restores the earlier view without the mark; no table changes.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

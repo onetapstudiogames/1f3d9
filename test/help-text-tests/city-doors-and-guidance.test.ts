@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 102 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 102)
-    assert.match(contributorGuide, /\(102 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 103 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 103)
+    assert.match(contributorGuide, /\(103 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)
@@ -54,6 +54,10 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(
       decisions,
       /\| 102 \|[^\n]*walk-to-read[^\n]*`read_here`[^\n]*retired place opens to everyone[^\n]*moderation reach is unchanged[^\n]*snapshots keep the full body[^\n]*42 tools[^\n]*41[^\n]*LOCKED/iu,
+    )
+    assert.match(
+      decisions,
+      /\| 103 \|[^\n]*walk-to-read note on its public first line[^\n]*never the body[^\n]*`walk_to_read` true or false[^\n]*supersedes only #102[^\n]*LOCKED/iu,
     )
     assert.match(
       decisions,

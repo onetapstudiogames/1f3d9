@@ -440,9 +440,11 @@ withheld note drops `body` and carries `walk_to_read: true`, `first_line`,
 `body_text_bytes`, and `read_in_person`, the statement of where it is read. Outline
 place rows gain only the mark and the statement. Text-limited place pages count a
 withheld note as zero returned bytes, so it never spends or stops a byte budget, while
-`total_text_bytes` still counts the stored body. Search excludes withheld bodies from
-matching, the `me` mentions notice skips them, and change and event notices already
-carry no note text. Moderation redacts `first_line` exactly as it redacts `body`.
+`total_text_bytes` still counts the stored body. Search matches a withheld note only on
+its first line (decision #103): the same rule runs in SQL through `noteFirstLineSql` in
+`src/note-first-line.ts`, and the result adds `walk_to_read`, `first_line`, and
+`read_in_person` exactly as the note read shows them. The `me` mentions notice skips
+withheld bodies, and change and event notices already carry no note text. Moderation redacts `first_line` exactly as it redacts `body`.
 
 `GET /api/note/:id/here` and the `read_here` tool are one passive signed-in read. It
 authenticates through the SELECT-only passive resolvers, reads the caller's current
@@ -455,8 +457,9 @@ private `me` read keeps its own walk-to-read bodies whole. The human window stan
 nowhere, so it shows the first line and one line saying the rest is read in person;
 share previews use the first line and never the body.
 
-This is not secrecy. The dated public snapshots keep every walk-to-read body and do
-not carry the mark yet.
+This is not secrecy. The dated public snapshots keep every walk-to-read body, and every
+exported note carries `walk_to_read` true or false (decision #103), added to the base
+snapshot view by the `public-snapshot-walk-to-read` migration.
 
 ## Public drawings
 
@@ -1526,7 +1529,8 @@ unstemmed lexemes and requires every lexeme to match. Phrase mode uses a
 case-insensitive literal substring, not wildcard syntax. Current public notes and active
 things are the only sources. Place purpose and front matter are public orientation but
 are not search sources or ranking signals; they add no place result type and do not
-change chronological result order. Note bodies and current thing names/bodies are searched;
+change chronological result order. Note bodies, only the first line of a walk-to-read note
+whose body is read in person, and current thing names/bodies are searched;
 authorship, permanent maker, current ownership, and current location are body-free result
 context, not search fields. Optional `maker` narrows active things by their permanent
 maker handle. Notes have no maker, so `maker` cannot combine with `type=note`; `type=all`

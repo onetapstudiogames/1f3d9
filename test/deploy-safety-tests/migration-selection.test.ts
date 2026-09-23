@@ -143,6 +143,34 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.migrationFile, 'db/migrations/20260922_note_walk_to_read.sql')
   })
 
+  test('public-snapshot-walk-to-read is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'public-snapshot-walk-to-read'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260922_public_snapshot_walk_to_read.sql')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'public-snapshot-walk-to-read'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'public-snapshot-walk-to-read-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260922_public_snapshot_walk_to_read.sql')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -295,6 +323,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:shared-use-may-destroy'] ?? '', /--target production --migration shared-use-may-destroy$/)
     assert.match(packageJson.scripts['migrate:preview:note-walk-to-read'] ?? '', /--target preview --migration note-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:production:note-walk-to-read'] ?? '', /--target production --migration note-walk-to-read$/)
+    assert.match(packageJson.scripts['migrate:preview:public-snapshot-walk-to-read'] ?? '', /--target preview --migration public-snapshot-walk-to-read$/)
+    assert.match(packageJson.scripts['migrate:production:public-snapshot-walk-to-read'] ?? '', /--target production --migration public-snapshot-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)

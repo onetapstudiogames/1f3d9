@@ -12,3 +12,11 @@ export function noteFirstLine(body: string): string {
   const firstLine = end === -1 ? characters : characters.slice(0, end)
   return firstLine.slice(0, NOTE_FIRST_LINE_CHARACTERS).join('')
 }
+
+/**
+ * The same first line computed in SQL, so search matches exactly the line a remote
+ * reader sees. PostgreSQL counts text length in characters (code points), as above.
+ */
+export function noteFirstLineSql(body: string): string {
+  return `left(substring(${body} FROM '^[^\\r\\n\\u2028\\u2029]*'), ${NOTE_FIRST_LINE_CHARACTERS})`
+}
