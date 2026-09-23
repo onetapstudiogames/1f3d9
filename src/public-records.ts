@@ -218,8 +218,8 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
           'at', to_char(mark.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         )
         FROM family_growth_marks mark
-        WHERE mark.family_id = coalesce(thing.family_id, thing.id)
-          AND mark.place_id = thing.place_id AND mark.cleared_at IS NULL
+        WHERE mark.family_id = coalesce(thing.family_id, thing.id) AND mark.cleared_at IS NULL
+        ORDER BY mark.created_at DESC, mark.id DESC LIMIT 1
       ) AS growth_mark,
       (
         SELECT jsonb_build_object(

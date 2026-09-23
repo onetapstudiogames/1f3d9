@@ -267,7 +267,11 @@ async function insertCopy(
       RETURNING copies
     ), cleared AS (
       UPDATE family_growth_marks SET cleared_at = now(), cleared_reason = 'copy_succeeded'
-      WHERE place_id = ${destinationId} AND family_id = ${parent.familyId} AND cleared_at IS NULL
+      WHERE family_id = ${parent.familyId} AND cleared_at IS NULL
+        AND (
+          place_id = ${destinationId}
+          OR (place_id = ${parent.placeId} AND cap = 'no_arrivals')
+        )
       RETURNING id
     ), inherited AS (
       INSERT INTO thing_state_changes (
