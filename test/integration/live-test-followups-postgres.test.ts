@@ -170,6 +170,40 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
       assert.equal(capped.labels_total, 34)
       assert.notEqual((capped.labels as Json[])[0]!.expires_at, null)
     })
+
+    await t.test('me reports the settle it caused, in the shape a move uses', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const db = connectedDatabase()
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      assert.equal((await coin(app, GROWER.secret, 'ticking', {
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }] },
+      })).status, 201)
+      const clock = await seedKind(GROWER.id, 'clock', [await traitId('ticking')])
+      const clockThing = await seedThing(GROWER.id, rooms.eastRoomId, clock, 'a clock')
+      await db.query('UPDATE things SET wake_enabled = TRUE WHERE id = $1', [clockThing])
+
+      // The first visit only anchors the clock; nothing is owed, so no settle is reported.
+      const first = await call(app, GROWER.secret, 'GET', '/api/me')
+      assert.equal(first.status, 200, JSON.stringify(first.json))
+      assert.equal('settle' in first.json, false)
+
+      await db.query(`UPDATE thing_wake_state SET clock_at = clock_at - interval '25 seconds'`)
+      const second = await call(app, GROWER.secret, 'GET', '/api/me')
+      assert.equal(second.status, 200, JSON.stringify(second.json))
+      const settled = (await db.query(
+        `SELECT detail FROM events WHERE kind = 'room_settled' ORDER BY id DESC LIMIT 1`,
+      )).rows[0]!.detail as Json
+      assert.equal(settled.mode, 'me')
+      assert.deepEqual(second.json.settle, {
+        settle_id: settled.settle_id,
+        tried: settled.tried,
+        woke: settled.woke,
+        forfeited: settled.forfeited,
+      })
+      assert.equal(settled.tried, 2)
+      assert.equal(settled.woke, 2)
+    })
   } finally {
     await postgres.stop()
   }

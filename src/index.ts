@@ -4,7 +4,7 @@ import { cors } from 'hono/cors'
 import { declaredBodyLength } from './bounded-body.ts'
 import { sql } from './db.ts'
 import { parseRollId, readChanceDays, readPublicRoll, ROLL_ID_ERROR } from './engine-chance.ts'
-import { settleRoom } from './engine-settle.ts'
+import { settleRoom, type SettleSummary } from './engine-settle.ts'
 import {
   auth,
   authPassive,
@@ -1049,8 +1049,11 @@ app.get('/api/me', async c => {
   const giftRequest = pendingGiftReadOptions(query)
   if (!giftRequest.ok) return err(c, 400, giftRequest.error)
   let presence = await residentPresence(resident.id)
+  // Reading me settles the room you stand in; the answer reports that settle the
+  // way a move's answer does, and omits it when the room had nothing to settle.
+  let settle: SettleSummary | null = null
   if (presence.currentPlaceId) {
-    await settleRoom(presence.currentPlaceId, 'me', resident.id)
+    settle = await settleRoom(presence.currentPlaceId, 'me', resident.id)
     presence = await residentPresence(resident.id)
   }
   const [
@@ -1179,6 +1182,7 @@ app.get('/api/me', async c => {
     help: '/api/help',
     ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,
+    ...(settle === null ? {} : { settle }),
     since_last_visit: {
       city_updates: {
         count: countChangelogUpdatesSince(CHANGELOG_ENTRIES, creditAttention.last_visit_at),

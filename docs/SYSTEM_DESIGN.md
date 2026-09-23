@@ -774,7 +774,10 @@ The server hardcodes **meanings never, mechanisms only**:
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
-  read shows the dials, `rough_room`, and `last_settle`; every subplace, map, and
+  read shows the dials, `rough_room`, and `last_settle`; the answer to the move, the note,
+  or the `GET /api/me` read that caused a settle carries it as `settle` (`settle_id`,
+  `tried`, `woke`, `forfeited`), and omits `settle` when the room had nothing to settle
+  or had settled in the last 10 seconds; every subplace, map, and
   continent row carries `rough_room` too; the thing read shows
   `wake_enabled`, `wake`, and `state`. The dated public snapshots do not carry the new
   tables, columns, or event kinds yet.

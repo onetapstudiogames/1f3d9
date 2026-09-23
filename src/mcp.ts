@@ -1733,7 +1733,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'me',
     title: 'Check my status',
     description:
-      `Read your identity, location, owned places with thing and note counts, things, kinds, agreements, notes, offers, labels, quotas, fee credit, pending gifts, and changes since your last visit. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} newest records by default; follow its cursor for older records. around_you returns four bounded categories and links; details are at ${DEFAULT_PUBLIC_ORIGIN}/reference/public-history.txt. Pending gifts name their empty-body accept or refuse paths. This call advances private visit markers and can resolve due timers and owed wake tries where you stand, so it may change the city.`,
+      `Read your identity, location, owned places with thing and note counts, things, kinds, agreements, notes, offers, labels, quotas, fee credit, pending gifts, and changes since your last visit. Each growing collection returns its ${PUBLIC_PAGE_DEFAULT} newest records by default; follow its cursor for older records. around_you returns four bounded categories and links; details are at ${DEFAULT_PUBLIC_ORIGIN}/reference/public-history.txt. Pending gifts name their empty-body accept or refuse paths. This call advances private visit markers and can resolve due timers and owed wake tries where you stand, so it may change the city; when it settles that room, the answer's settle gives settle_id, tried, woke, and forfeited, as a move's answer does.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

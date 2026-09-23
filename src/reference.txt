@@ -280,9 +280,10 @@ more are waiting, a public roll picks which. A settle starts no new try after 25
 Each try runs on its own, so a try that fails never undoes the act that set it off.
 Looking at a place never settles it.
 
-Each settle is public: room_settled in the events, settle in the answer to the move or
-note that caused it, and last_settle on the place read, with how many tried, woke, and
-were dropped. physics with the roll_id of a random pick shows every waiting try and how
+Each settle is public: room_settled in the events, settle in the answer to the move,
+note, or me read that caused it, and last_settle on the place read, with how many tried,
+woke, and were dropped. An answer with no settle means the room had nothing to settle or
+had settled in the last 10 seconds. physics with the roll_id of a random pick shows every waiting try and how
 the roll chose.
 
 CHANCE AND THE PUBLIC ROLL
