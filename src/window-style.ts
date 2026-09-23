@@ -321,7 +321,7 @@ button { color: inherit; }
   cursor: pointer;
   font: 700 0.68rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
-.city-facts > .view-scope {
+.city-facts > .city-facts-panel {
   position: absolute;
   z-index: 7;
   inset-inline: 0;
@@ -329,6 +329,14 @@ button { color: inherit; }
   max-height: min(22rem, 60vh);
   overflow-y: auto;
   box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.36);
+}
+.city-facts-notice {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  color: var(--ink);
+  background: var(--sky);
+  border-top: 2px solid var(--line);
+  font: 0.66rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
 }
 .view-filters {
   grid-row: 3;
