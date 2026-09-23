@@ -18,7 +18,7 @@ test('public validation refusals name the rejected shape and a concrete retry', 
 
   const crafting = source('crafting.ts')
   assert.doesNotMatch(crafting, /'invalid crafting request'/u)
-  assert.match(crafting, /crafting request was rejected because its resident, kind, place, body, open_to_use, or shared_use_may_destroy value is invalid; retry with the documented craft fields and limits/u)
+  assert.match(crafting, /crafting request was rejected because its resident, kind, place, body, open_to_use, shared_use_may_destroy, or wake_enabled value is invalid; retry with the documented craft fields and limits/u)
 
   const paymentRecovery = source('payment-recovery-routes.ts')
   assert.doesNotMatch(paymentRecovery, /'invalid payment attempt id'|'payment recovery authorization failed'/u)

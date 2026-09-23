@@ -280,7 +280,7 @@ export function respondToDatabaseStage6(
     mechanical: fixtureState.current.traitHasRecipe,
     coiner: fixtureState.current.actorHandle,
   }]
-  if (q.includes('kind_revision_traits')) {
+  if (q.includes('kind_revision_traits') && !q.includes('as has_drawing')) {
     return fixtureState.current.thingTraitRecipe
       ? [{ trait_id: 4, name: 'glowing', recipe: fixtureState.current.thingTraitRecipe }]
       : []

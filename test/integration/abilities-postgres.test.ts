@@ -83,7 +83,6 @@ async function traitId(name: string): Promise<number> {
   )).rows[0]!.id)
 }
 
-
 /**
  * Move a room's recent settles and its things' last tries into the past, so a
  * test can step past the ten-second quiet and "not more often than" without
@@ -105,6 +104,7 @@ async function ageRoom(placeId: number, seconds: number): Promise<void> {
     WHERE thing_id IN (SELECT id FROM things WHERE place_id = $1)
   `, [placeId, seconds])
 }
+
 // Put the database back to how it stood before this change, so the migration meets
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
@@ -764,6 +764,102 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       const tries = (await db.query(`SELECT count(*)::int AS tries FROM wake_tries`)).rows[0]!.tries
       assert.equal(tries, 3, 'three owed intervals are claimed exactly once')
       assert.deepEqual((await db.query('SELECT state FROM things WHERE id = $1', [clock])).rows[0]!.state, { ticks: 3 })
+    })
+
+    await t.test("place_edit sets the wake dials and rough_room, and a room's public read carries them before anyone enters", async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      await standIn(VISITOR.id, rooms.continentId)
+      const here = await seedThing(FOUNDER.id, rooms.eastRoomId, null, 'a lamp')
+      const elsewhere = await seedThing(FOUNDER.id, rooms.westRoomId, null, 'a far lamp')
+      const edit = (body: Json) => call(app, FOUNDER.secret, 'PATCH', `/api/place/${rooms.eastRoomId}`, body)
+
+      const refusals: Array<[Json, number, string]> = [
+        [{ wake_random_cap: 33 }, 400, 'wake_random_cap must be a whole number from 0 to 32'],
+        [{ rough_room: 'yes' }, 400, 'wake_visitors and rough_room must be boolean when present'],
+        [{ wake_pins: [here, here] }, 400, 'wake_pins must be [] or 1 to 4 unique positive thing ids'],
+        [{ wake_pins: [elsewhere] }, 409, `wake_pins must name active things standing in place ${rooms.eastRoomId}; thing ${elsewhere} is elsewhere or gone`],
+        [{ wake_block_thing_ids: Array.from({ length: 65 }, (_, index) => index + 1) }, 400, 'wake_block_thing_ids must be [] or up to 64 unique positive thing ids'],
+        [{ wake_block_residents: ['Not A Handle'] }, 400, 'wake_block_residents must be [] or up to 64 unique resident handles'],
+        [{ wake_block_residents: ['nobody-here'] }, 404, 'wake_block_residents names nobody-here, who is not a current resident; send current handles'],
+        [{}, 400, 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial'],
+      ]
+      for (const [body, status, error] of refusals) {
+        const refused = await edit(body)
+        assert.equal(refused.status, status, JSON.stringify(body))
+        assert.equal(refused.json.error, error)
+      }
+      const unknown = await edit({ wake_everything: true })
+      assert.equal(unknown.status, 400)
+      assert.match(String(unknown.json.error), /place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial\./u)
+
+      const saved = await edit({
+        wake_visitors: true, rough_room: true, wake_random_cap: 4, wake_pins: [here],
+        wake_block_thing_ids: [elsewhere], wake_block_residents: ['bell-maker'],
+      })
+      assert.equal(saved.status, 200, JSON.stringify(saved.json))
+      const place = saved.json.place as Json
+      assert.deepEqual(place.wake_block_residents, ['bell-maker'])
+      assert.equal('wake_block_resident_ids' in place, false, 'blocks are shown by handle')
+      assert.equal(place.rough_room, true)
+
+      for (const path of [`/api/place/${rooms.eastRoomId}`, `/api/place/${rooms.eastRoomId}?view=full`]) {
+        const read = await call(app, null, 'GET', path)
+        assert.equal(read.status, 200)
+        const outline = read.json.place as Json
+        assert.deepEqual({
+          rough_room: outline.rough_room,
+          wake_visitors: outline.wake_visitors,
+          wake_pins: outline.wake_pins,
+          wake_block_thing_ids: outline.wake_block_thing_ids,
+          wake_block_residents: outline.wake_block_residents,
+          wake_random_cap: outline.wake_random_cap,
+          last_settle: outline.last_settle,
+        }, {
+          rough_room: true, wake_visitors: true, wake_pins: [here], wake_block_thing_ids: [elsewhere],
+          wake_block_residents: ['bell-maker'], wake_random_cap: 4, last_settle: null,
+        }, `${path}: a rough room says so before anyone enters`)
+      }
+      const plain = (await call(app, null, 'GET', `/api/place/${rooms.westRoomId}`)).json.place as Json
+      assert.equal(plain.rough_room, false)
+
+      assert.equal((await coin(app, FOUNDER.secret, 'porch-light', {
+        wake: { then: [{ effect: 'label', target: 'source', label: 'lit' }] },
+      })).status, 201)
+      await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'porch-lights', [await traitId('porch-light')]), 'porch light', { wakeEnabled: true })
+      const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
+      const settleId = ((arrived.json.action as Json).settle as Json).settle_id
+      const after = (await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}`)).json.place as Json
+      assert.deepEqual({ ...(after.last_settle as Json), at: undefined }, {
+        settle_id: settleId, at: undefined, trigger: 'arrive', by: 'far-walker', budget: 4,
+        tried: 1, woke: 1, stopped: 0, forfeited: 0, roll_id: null,
+      })
+    })
+
+    await t.test('make switches wake_enabled on unless told not to, thing_edit changes it, and a new owner receives it asleep', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER])
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      const made = await call(app, FOUNDER.secret, 'POST', '/api/thing', { place_id: rooms.eastRoomId, name: 'a wind chime', body: '' })
+      assert.equal(made.status, 201, JSON.stringify(made.json))
+      assert.equal((made.json.thing as Json).wake_enabled, true)
+      const quiet = await call(app, FOUNDER.secret, 'POST', '/api/thing', { place_id: rooms.eastRoomId, name: 'a still chime', body: '', wake_enabled: false })
+      assert.equal((quiet.json.thing as Json).wake_enabled, false)
+      const bad = await call(app, FOUNDER.secret, 'POST', '/api/thing', { place_id: rooms.eastRoomId, name: 'a chime', wake_enabled: 'yes' })
+      assert.equal(bad.status, 400)
+      assert.equal(bad.json.error, 'wake_enabled must be boolean when present')
+
+      const quietId = Number((quiet.json.thing as Json).id)
+      const woken = await call(app, FOUNDER.secret, 'PATCH', `/api/thing/${quietId}`, { wake_enabled: true })
+      assert.equal(woken.status, 200, JSON.stringify(woken.json))
+      assert.equal(((await call(app, null, 'GET', `/api/thing/${quietId}`)).json.thing as Json).wake_enabled, true)
+      const unknown = await call(app, FOUNDER.secret, 'PATCH', `/api/thing/${quietId}`, { wake_now: true })
+      assert.equal(unknown.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, wake_enabled, and state_clear are editable; birth_revision is permanent')
+
+      const given = await call(app, FOUNDER.secret, 'POST', '/api/transfer', { type: 'thing', id: quietId, to_handle: 'bell-maker' })
+      assert.equal(given.status, 200, JSON.stringify(given.json))
+      const received = (await call(app, null, 'GET', `/api/thing/${quietId}`)).json.thing as Json
+      assert.equal(received.current_owner, 'bell-maker')
+      assert.equal(received.wake_enabled, false, 'a thing someone gives you arrives asleep')
     })
   } finally {
     await postgres.stop()

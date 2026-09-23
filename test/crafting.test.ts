@@ -143,7 +143,7 @@ test('invalid actor, output, kind, and place fields fail without a database quer
     assert.deepEqual(result, {
       ok: false,
       status: 400,
-      error: 'crafting request was rejected because its resident, kind, place, body, open_to_use, or shared_use_may_destroy value is invalid; retry with the documented craft fields and limits',
+      error: 'crafting request was rejected because its resident, kind, place, body, open_to_use, shared_use_may_destroy, or wake_enabled value is invalid; retry with the documented craft fields and limits',
     })
     assert.equal(fake.calls.length, 0)
   }
@@ -346,7 +346,7 @@ test('typed crafting persists an explicit open-to-use permission', async () => {
   assert.equal(result.thing.open_to_use, true)
   const commit = fake.calls.find(call => call.marker === 'commit')
   assert.ok(commit)
-  assert.match(commit.query, /owner_id, maker_id, open_to_use, shared_use_may_destroy,[\s\S]{0,4}kind_id/i)
+  assert.match(commit.query, /owner_id, maker_id, open_to_use, shared_use_may_destroy,[\s\S]{0,4}wake_enabled, kind_id/i)
   assert.equal(commit.values.includes(true), true)
 })
 
