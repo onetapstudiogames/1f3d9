@@ -1547,6 +1547,9 @@ CREATE INDEX IF NOT EXISTS notes_public_search_words
   ON notes USING GIN (to_tsvector('simple', body));
 CREATE INDEX IF NOT EXISTS notes_public_search_phrase
   ON notes USING GIN (lower(body) public.gin_trgm_ops);
+-- Search finds walk-to-read notes by their first line, not through the whole-body
+-- indexes (decision #103), so it reads them through this small index.
+CREATE INDEX IF NOT EXISTS notes_walk_to_read ON notes (id) WHERE walk_to_read;
 
 -- Exact room-reading totals live beside each place so a read does not rescan an
 -- entire room. Triggers keep the counters in the same transaction as the write.

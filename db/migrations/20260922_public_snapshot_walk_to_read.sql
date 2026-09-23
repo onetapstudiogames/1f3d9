@@ -26,6 +26,12 @@ BEGIN
 END
 $public_snapshot_walk_to_read_prerequisites$;
 
+-- Decision #103: search finds a walk-to-read note by its first line alone, never
+-- through the whole-body indexes, so it reads those notes through this small index.
+-- Notes are few and the index holds only walk-to-read ones, so the brief write lock
+-- while it builds is short.
+CREATE INDEX IF NOT EXISTS notes_walk_to_read ON public.notes (id) WHERE walk_to_read;
+
 CREATE OR REPLACE VIEW city_snapshot.public_records_without_drawing_contract
 WITH (security_barrier = true)
 AS

@@ -269,6 +269,9 @@ function literalPhrasePattern(value: string): string {
 // A walk-to-read body is read in person, so while it is withheld a note matches
 // only on its public first line, the same line every remote read shows (decisions
 // #102 and #103); its whole body matches again once its place is retired.
+// The whole-body index only narrows ordinary notes. It never decides for a
+// walk-to-read note, because how the whole body splits into words can differ from
+// how its first line does; the final match on search_text decides alone.
 function publicSearchSql(mode: PublicSearchMode): string {
   return `
     /* public:search */
@@ -301,7 +304,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
       ) public_note
       WHERE $2::text IN ('all', 'note')
         AND $9::text IS NULL
-        AND ${indexedMatchExpression(mode, 'note.body')}
+        AND (${indexedMatchExpression(mode, 'note.body')} OR note.walk_to_read)
         AND coalesce((
           SELECT moderation.action
           FROM moderation_actions moderation

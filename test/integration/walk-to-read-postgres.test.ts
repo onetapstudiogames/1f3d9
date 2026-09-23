@@ -413,6 +413,54 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.deepEqual(await search(SENTINEL, 'words'), [])
     })
 
+    await t.test('two notes with the same first line find the same results, whatever follows it', async () => {
+      const rooms = await resetCity([FOUNDER, WRITER])
+      await standIn(WRITER.id, rooms.eastRoomId)
+      const write = async (body: string): Promise<number> => (await json<{ note: { id: number } }>(
+        await say(app, WRITER.secret, { place_id: rooms.eastRoomId, body, walk_to_read: true }),
+        201, 'same first line note',
+      )).note.id
+      // The 200-character cut splits zorbatic, so both notes show the same line ending
+      // in zorba. Only the first note's hidden rest holds zorba as a word of its own.
+      const cutLine = `${'word '.repeat(39)}zorbatic`
+      const cutIds = [
+        await write(`${cutLine}\nthe hidden rest says zorba again`),
+        await write(`${cutLine}\nthe hidden rest says nothing more`),
+      ]
+      // The first note's hidden rest closes the tag its first line opens, which
+      // changes how the whole body splits into words; the second note's does not.
+      const tagIds = [
+        await write(`Signal lamp <b\nclass='x'> the rest`),
+        await write('Signal lamp <b\nthe plain rest'),
+      ]
+      const { loadPublicSearchResults, parsePublicSearchQuery } = await import('../../src/public-search.ts')
+      const search = async (q: string, mode: 'words' | 'phrase'): Promise<number[]> => {
+        const parsed = parsePublicSearchQuery({ q: [q], mode: [mode], type: ['note'] })
+        assert.ok(parsed.ok, q)
+        const found = await loadPublicSearchResults(
+          async (text, params) => (await connectedDatabase().query(text, [...params])).rows,
+          parsed,
+        )
+        return (found.items as ReadonlyArray<{ id: number }>).map(result => result.id).sort((a, b) => a - b)
+      }
+      const sorted = (values: readonly number[]): number[] => [...values].sort((a, b) => a - b)
+      for (const [ids, cases] of [
+        [cutIds, [['zorba', 'words'], ['word zorba', 'words'], ['zorba', 'phrase']]],
+        [tagIds, [['b', 'words'], ['lamp b', 'words'], ['lamp <b', 'phrase']]],
+      ] as const) {
+        const read = await Promise.all(ids.map(async id => (await json<{ note: Record<string, unknown> }>(
+          await app.request(`http://city.test/api/note/${id}`), 200, `note ${id}`,
+        )).note.first_line))
+        assert.equal(read[0], read[1], 'both notes show the same first line')
+        for (const [q, mode] of cases) {
+          assert.deepEqual(await search(q, mode), sorted(ids), `${mode} ${q}`)
+        }
+      }
+      assert.deepEqual(await search('zorbatic', 'words'), [])
+      assert.deepEqual(await search('again', 'words'), [])
+      assert.deepEqual(await search('plain rest', 'words'), [])
+    })
+
     await t.test('a walk-to-read body never counts as a mention remotely, while its writer keeps it in me', async () => {
       const rooms = await resetCity([FOUNDER, WRITER, WALKER])
       await standIn(WRITER.id, rooms.eastRoomId)
@@ -593,12 +641,21 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       // A database still on the earlier snapshot view gains the mark from the migration,
       // and running it again changes nothing.
       await connectedDatabase().query(previousSnapshotViewDdl)
+      await connectedDatabase().query('DROP INDEX public.notes_walk_to_read')
       const before = await snapshotNotes()
       assert.equal(Object.hasOwn(before.get(seeded.walkNoteId)!, 'walk_to_read'), false)
       assert.equal(before.get(seeded.walkNoteId)?.body, WALK_BODY)
       await connectedDatabase().query(snapshotMarkMigrationDdl)
       await connectedDatabase().query(snapshotMarkMigrationDdl)
       assert.deepEqual(await snapshotNotes(), current)
+      // The same migration adds the index search reads walk-to-read notes through,
+      // exactly as a fresh install has it.
+      const index = await connectedDatabase().query<{ indexdef: string }>(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'notes_walk_to_read'",
+      )
+      assert.deepEqual(index.rows.map(row => row.indexdef), [
+        'CREATE INDEX notes_walk_to_read ON public.notes USING btree (id) WHERE walk_to_read',
+      ])
     })
   } finally {
     await postgres.stop()

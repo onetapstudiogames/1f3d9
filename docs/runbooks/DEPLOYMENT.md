@@ -197,7 +197,9 @@ Before merging the change that states the dated snapshots mark walk-to-read note
 `npm run migrate:preview:public-snapshot-walk-to-read` to the isolated Preview database,
 then apply it a second time to prove it is safe to repeat. It replaces only
 `city_snapshot.public_records_without_drawing_contract` with the reviewed view plus
-`walk_to_read` on each exported note. Take the required Production snapshot, apply
+`walk_to_read` on each exported note, and adds the small `notes_walk_to_read` index
+that search uses to find walk-to-read notes by their first line. Take the required
+Production snapshot, apply
 `npm run migrate:production:public-snapshot-walk-to-read`, and record the check below
 before merging. Every exported note must carry the mark, and the true count must equal
 the stored walk-to-read notes that are not hidden. The rollout does not apply this
@@ -210,8 +212,16 @@ WHERE class_name = 'notes' AND payload->>'status' = 'exported'
 GROUP BY 1 ORDER BY 1;
 ```
 
+The index must also be present:
+
+```sql
+SELECT indexdef FROM pg_indexes
+WHERE schemaname = 'public' AND indexname = 'notes_walk_to_read';
+```
+
 The rollback is to reapply `npm run migrate:production:public-snapshot-quiet`, which
-restores the earlier view without the mark; no table changes.
+restores the earlier view without the mark. The index can stay; the earlier
+application never reads it.
 
 ### Drawing-contract and world-root drawing prerequisite
 
