@@ -9,7 +9,8 @@ import {
   publicText,
   stringList,
   worldName, containsBearerSecret, SECRET_REJECTION } from './input.ts'
-import { parseKindRecipe, parseTraitRecipe } from './physics.ts'
+import { parseKindRecipe, parseTraitRecipe, traitRecipeFault, wakeProgramOf } from './physics.ts'
+import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { completeTreasuryPaymentOperation } from './payment-treasury-operations.ts'
 import { completePlaceLifecycleOperation } from './place-lifecycle-operation.ts'
 import {
@@ -236,6 +237,20 @@ async function everyTraitExists(names: readonly string[]): Promise<boolean> {
   ` as Array<{ name: string }>
   const found = new Set(rows.map(row => row.name))
   return names.every(name => found.has(name))
+}
+
+/** A kind revision may list only one trait with a wake key, so a thing has one clock. */
+async function secondWakeTrait(names: readonly string[]): Promise<string | null> {
+  if (names.length < 2) return null
+  const rows = await sql`
+    SELECT name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
+  ` as Array<{ name: string; recipe: unknown }>
+  const waking = names.filter(name => (
+    rows.some(row => row.name === name && wakeProgramOf(row.recipe) !== null)
+  ))
+  return waking.length > 1
+    ? `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
+    : null
 }
 
 async function activePlaceLabels(placeId: number): Promise<string[]> {
@@ -1361,6 +1376,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
+    const wakeConflict = await secondWakeTrait(traits)
+    if (wakeConflict) return err(c, 400, wakeConflict)
 
     const fee = await treasuryFee(
       c,
@@ -1518,6 +1535,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
+    const wakeConflict = await secondWakeTrait(traits)
+    if (wakeConflict) return err(c, 400, wakeConflict)
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing
@@ -1679,7 +1698,10 @@ export function mountWorldRoutes(app: Hono): void {
     if (!name) return err(c, 400, 'trait name must use lowercase letters, numbers, hyphens, or underscores')
     if (description == null) return err(c, 400, 'description must be at most 4000 safe characters')
     if (hasRecipe && recipe == null) {
-      return err(c, 400, 'recipe must use only the frozen actions and effect bricks within the hard limits')
+      const fault = traitRecipeFault(body.recipe)
+      if (fault === 'wake_hand_over') return err(c, 400, WAKE_HAND_OVER_ERROR)
+      if (fault === 'wake_scope') return err(c, 400, WAKE_SCOPE_ERROR)
+      return err(c, 400, "recipe must use only the frozen actions, the wake key, and the effect bricks, each within its stated range; call physics for every brick's fields, defaults, and limits")
     }
 
     try {

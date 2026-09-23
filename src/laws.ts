@@ -1,6 +1,7 @@
 import type { Resident } from './core.ts'
 import { sql } from './db.ts'
 import { stringList } from './input.ts'
+import { loadTraitRecipe, recipeUsesKindOnlyAbility } from './physics.ts'
 import { missingRecordRefusal } from './refusal-text.ts'
 import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 
@@ -12,7 +13,7 @@ export interface PublicLaw {
 
 export type LawFailure = Readonly<{
   error: string
-  status: 403 | 404 | 409
+  status: 400 | 403 | 404 | 409
 }>
 
 export function lawNames(value: unknown): readonly string[] | null {
@@ -57,8 +58,8 @@ export async function replacePlaceLaws(
   }
 
   const traits = names.length === 0 ? [] : await sql`
-    SELECT id, name FROM traits WHERE name = ANY(${[...names]}::text[])
-  ` as Array<{ id: number; name: string }>
+    SELECT id, name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
+  ` as Array<{ id: number; name: string; recipe: unknown }>
   if (traits.length !== names.length) {
     const found = new Set(traits.map(trait => trait.name))
     const missing = names.filter(name => !found.has(name))
@@ -68,6 +69,17 @@ export async function replacePlaceLaws(
         'call browse with view traits, or use GET /api/traits if your client can open URLs, and send only current trait names',
       ),
       status: 404,
+    })
+  }
+
+  const kindOnly = names.find(name => {
+    const trait = traits.find(candidate => candidate.name === name)
+    return trait !== undefined && recipeUsesKindOnlyAbility(loadTraitRecipe(trait.recipe))
+  })
+  if (kindOnly !== undefined) {
+    return Object.freeze({
+      error: `trait ${kindOnly} carries write or a wake key, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`,
+      status: 400,
     })
   }
 

@@ -278,7 +278,8 @@ export function respondToDatabaseStage4(
     fixtureState.current = { ...fixtureState.current, placeLawNames: laws.map(law => law.name) }
     return [{ id: 2, laws }]
   }
-  if (q.includes('select id, name from traits where name = any')) {
+  if (q.includes('select name, recipe from traits where name = any')) return []
+  if (q.includes('select id, name, recipe from traits where name = any')) {
     const raw = params[0]
     let names: string[]
     if (Array.isArray(raw)) {

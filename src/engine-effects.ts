@@ -441,6 +441,9 @@ async function executeEffectWithOutcome(
     const scheduled = await scheduleEffect(effect, context, db)
     return effectExecutionOutcome(scheduled ? 1 : 0, scheduled, destroyedThingIds)
   }
+  if (effect.effect === 'chance' || effect.effect === 'write') {
+    throw new EngineError(500, 'the city could not complete this effect')
+  }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
   const law = await matchingLaw(target, effect.label, db)

@@ -32,7 +32,7 @@ test('the frozen action, block, brick, and target vocabularies match bedrock phy
   ])
   assert.deepEqual(BLOCKABLE_ACTIONS, ['talk', 'move', 'use', 'give', 'consume', 'make'])
   assert.deepEqual(EFFECT_BRICKS, [
-    'destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label',
+    'destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label', 'chance', 'write',
   ])
   assert.deepEqual(SYMBOLIC_TARGETS, ['actor', 'source', 'target', 'place'])
   assert.deepEqual(MOVE_DESTINATIONS, ['destination', 'home'])

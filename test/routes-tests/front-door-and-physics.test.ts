@@ -107,7 +107,7 @@ export function registerFrontDoorAndPhysicsTests(): void {
     }
     assert.deepEqual(body.act_actions, ['move', 'use', 'give', 'consume', 'go_home'])
     assert.deepEqual(body.other_basic_actions, { talk: 'say', make: 'make' })
-    assert.deepEqual(body.effect_bricks, ['destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label'])
+    assert.deepEqual(body.effect_bricks, ['destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label', 'chance', 'write'])
     assert.equal(body.limits.max_block_seconds, 86_400)
     assert.equal(body.limits.max_generation, 8)
     assert.equal(body.limits.max_timer_seconds, 86_400)

@@ -5,6 +5,7 @@
  * `loadTraitRecipe`, which turns malformed legacy data into an inert program.
  */
 import { containsPublicCredential } from './credential-safety.ts'
+import { publicLabel } from './input.ts'
 
 export const BASIC_ACTIONS = Object.freeze([
   'talk',
@@ -33,7 +34,14 @@ export const EFFECT_BRICKS = Object.freeze([
   'block',
   'wait',
   'check_label',
+  'chance',
+  'write',
 ] as const)
+
+/** What sets off a thing's wake key: an arrival, a note, or its own clock. */
+export const WAKE_EVENTS = Object.freeze(['arrive', 'talk', 'clock'] as const)
+export const WRITE_OPS = Object.freeze(['set', 'add', 'append'] as const)
+export const WRITE_FROM = Object.freeze(['actor', 'roll', 'time'] as const)
 
 export const SYMBOLIC_TARGETS = Object.freeze([
   'actor',
@@ -54,6 +62,22 @@ export const MAX_TIMER_SECONDS = 24 * 60 * 60
 export const MAX_EFFECT_GENERATIONS = 8
 export const MAX_KIND_INGREDIENTS = 64
 export const MAX_CRAFT_INGREDIENTS = 1_024
+/** Each action key and the wake program may weigh at most this many effect applications. */
+export const MAX_APPLICATIONS_PER_PROGRAM = 512
+export const CHANCE_PERCENT_MIN = 1
+export const CHANCE_PERCENT_MAX = 99
+export const WAKE_MIN_EVERY_SECONDS = 10
+export const WAKE_DEFAULT_EVERY_SECONDS = 60
+export const WAKE_MAX_EVERY_SECONDS = 24 * 60 * 60
+export const WAKE_DEFAULT_EVENTS = Object.freeze(['arrive'] as const)
+export const STATE_BOX_MAX_KEYS = 16
+export const STATE_BOX_MAX_BYTES = 4_096
+export const STATE_TEXT_MAX_CHARACTERS = 200
+export const STATE_LIST_MAX_ITEMS = 20
+export const STATE_INTEGER_LIMIT = 1_000_000_000
+export const STATE_ADD_LIMIT = 1_000_000
+/** A sticker a wake try puts on a resident expires after a day, like the longest block. */
+export const RESIDENT_ABILITY_LABEL_SECONDS = MAX_BLOCK_SECONDS
 
 export type BasicAction = typeof BASIC_ACTIONS[number]
 export type BlockableAction = typeof BLOCKABLE_ACTIONS[number]
@@ -61,6 +85,9 @@ export type EffectBrick = typeof EFFECT_BRICKS[number]
 export type SymbolicTarget = typeof SYMBOLIC_TARGETS[number]
 export type MoveDestination = typeof MOVE_DESTINATIONS[number]
 export type TransferRecipient = typeof TRANSFER_RECIPIENTS[number]
+export type WakeEvent = typeof WAKE_EVENTS[number]
+export type WriteOp = typeof WRITE_OPS[number]
+export type WriteFrom = typeof WRITE_FROM[number]
 
 export interface DestroyEffect {
   readonly effect: 'destroy'
@@ -107,6 +134,23 @@ export interface CheckLabelEffect {
   readonly else?: readonly Effect[]
 }
 
+export interface ChanceEffect {
+  readonly effect: 'chance'
+  readonly percent: number
+  readonly then: readonly Effect[]
+  readonly else?: readonly Effect[]
+}
+
+export type WriteValue = number | boolean | string | Readonly<{ from: WriteFrom }>
+
+/** Writes the state box of the thing whose own kind traits run it; it has no target. */
+export interface WriteEffect {
+  readonly effect: 'write'
+  readonly key: string
+  readonly op: WriteOp
+  readonly value: WriteValue
+}
+
 export type Effect =
   | DestroyEffect
   | MoveEffect
@@ -115,8 +159,25 @@ export type Effect =
   | BlockEffect
   | WaitEffect
   | CheckLabelEffect
+  | ChanceEffect
+  | WriteEffect
 
-export type TraitRecipe = Readonly<Partial<Record<BasicAction, readonly Effect[]>>>
+export interface WakeProgram {
+  readonly on: readonly WakeEvent[]
+  readonly every_seconds: number
+  readonly then: readonly Effect[]
+}
+
+export type TraitRecipe = Readonly<Partial<Record<BasicAction, readonly Effect[]>> & {
+  wake?: WakeProgram
+}>
+
+/**
+ * Why a new recipe was refused: a grammar fault, or one of the wake key's two
+ * coining rules (a wake program never hands a thing over, and it has no target
+ * or destination of its own).
+ */
+export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope'
 
 export interface KindIngredient {
   readonly kind: string
@@ -135,6 +196,10 @@ const EFFECT_BRICK_SET: ReadonlySet<string> = new Set(EFFECT_BRICKS)
 const SYMBOLIC_TARGET_SET: ReadonlySet<string> = new Set(SYMBOLIC_TARGETS)
 const MOVE_DESTINATION_SET: ReadonlySet<string> = new Set(MOVE_DESTINATIONS)
 const TRANSFER_RECIPIENT_SET: ReadonlySet<string> = new Set(TRANSFER_RECIPIENTS)
+const WAKE_EVENT_SET: ReadonlySet<string> = new Set(WAKE_EVENTS)
+const WRITE_OP_SET: ReadonlySet<string> = new Set(WRITE_OPS)
+const WRITE_FROM_SET: ReadonlySet<string> = new Set(WRITE_FROM)
+const RECIPE_KEY_SET: ReadonlySet<string> = new Set([...BASIC_ACTIONS, 'wake'])
 
 type UnknownRecord = Record<PropertyKey, unknown>
 type ParseState = { count: number }
@@ -205,6 +270,40 @@ function boundedInteger(value: unknown, minimum: number, maximum: number): numbe
 
 function symbolicTarget(value: unknown): SymbolicTarget | null {
   return canonicalToken(value, SYMBOLIC_TARGET_SET) as SymbolicTarget | null
+}
+
+function stateText(value: unknown): string | null {
+  return publicLabel(value, STATE_TEXT_MAX_CHARACTERS)
+}
+
+function writeFrom(value: unknown): Readonly<{ from: WriteFrom }> | null {
+  if (!isRecord(value) || !hasExactKeys(value, ['from'])) return null
+  const from = canonicalToken(value.from, WRITE_FROM_SET) as WriteFrom | null
+  return from ? Object.freeze({ from }) : null
+}
+
+function writeValue(op: WriteOp, value: UnknownRecord): WriteValue | null {
+  const present = Object.hasOwn(value, 'value')
+  const raw = value.value
+  if (op === 'add') {
+    return present ? boundedInteger(raw, -STATE_ADD_LIMIT, STATE_ADD_LIMIT) : 1
+  }
+  if (!present) return null
+  if (op === 'append') return writeFrom(raw) ?? stateText(raw)
+  if (typeof raw === 'boolean') return raw
+  if (typeof raw === 'number') return boundedInteger(raw, -STATE_INTEGER_LIMIT, STATE_INTEGER_LIMIT)
+  return writeFrom(raw) ?? stateText(raw)
+}
+
+function parseWrite(value: UnknownRecord): WriteEffect | null {
+  if (!hasExactKeys(value, ['effect', 'key'], ['op', 'value'])) return null
+  const key = canonicalName(value.key)
+  const op = Object.hasOwn(value, 'op')
+    ? canonicalToken(value.op, WRITE_OP_SET) as WriteOp | null
+    : 'set'
+  if (!key || !op) return null
+  const written = writeValue(op, value)
+  return written === null ? null : Object.freeze({ effect: 'write', key, op, value: written })
 }
 
 function parseEffectList(
@@ -288,6 +387,21 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
       : Object.freeze({ effect: 'wait', seconds, then, repeat })
   }
 
+  if (discriminator === 'chance') {
+    if (!hasExactKeys(value, ['effect', 'percent', 'then'], ['else'])) return null
+    const percent = boundedInteger(value.percent, CHANCE_PERCENT_MIN, CHANCE_PERCENT_MAX)
+    if (percent === null) return null
+    const then = parseEffectList(value.then, depth + 1, state)
+    if (!then) return null
+    if (!Object.hasOwn(value, 'else')) return Object.freeze({ effect: 'chance', percent, then })
+    const otherwise = parseEffectList(value.else, depth + 1, state)
+    return otherwise
+      ? Object.freeze({ effect: 'chance', percent, then, else: otherwise })
+      : null
+  }
+
+  if (discriminator === 'write') return parseWrite(value)
+
   if (!hasExactKeys(value, ['effect', 'target', 'label', 'then'], ['else'])) return null
   const target = symbolicTarget(value.target)
   const label = canonicalName(value.label)
@@ -303,38 +417,131 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
     : null
 }
 
-/** Parse and canonicalize a newly authored trait recipe. */
-export function parseTraitRecipe(value: unknown): TraitRecipe | null {
-  try {
-    let input: UnknownRecord
-    if (Array.isArray(value)) {
-      if (value.length > MAX_EFFECT_COUNT || !isDenseArray(value)) return null
-      input = { use: value }
-    } else {
-      if (!isRecord(value)) return null
-      input = value
+function effectBranches(effect: Effect): readonly (readonly Effect[])[] {
+  if (effect.effect === 'wait') return [effect.then]
+  if (effect.effect === 'check_label' || effect.effect === 'chance') {
+    return [effect.then, effect.else ?? EMPTY_EFFECTS]
+  }
+  return []
+}
+
+function someEffect(effects: readonly Effect[], matches: (effect: Effect) => boolean): boolean {
+  return effects.some(effect => (
+    matches(effect) || effectBranches(effect).some(branch => someEffect(branch, matches))
+  ))
+}
+
+/**
+ * The most effect applications one run of a program can make: wait and chance
+ * weigh one plus a branch, check_label weighs its larger branch, and every
+ * other brick weighs one.
+ */
+export function programWeight(effects: readonly Effect[]): number {
+  return effects.reduce((total, effect) => {
+    if (effect.effect === 'wait') return total + 1 + programWeight(effect.then)
+    if (effect.effect === 'check_label' || effect.effect === 'chance') {
+      const larger = Math.max(
+        programWeight(effect.then),
+        programWeight(effect.else ?? EMPTY_EFFECTS),
+      )
+      return total + (effect.effect === 'chance' ? 1 : 0) + larger
     }
+    return total + 1
+  }, 0)
+}
 
-    const keys = Reflect.ownKeys(input)
-    if (keys.some(key => typeof key !== 'string' || !BASIC_ACTION_SET.has(key))) return null
-    if (keys.some(key => {
-      const descriptor = Object.getOwnPropertyDescriptor(input, key)
-      return descriptor === undefined || !Object.hasOwn(descriptor, 'value')
-    })) return null
+function wakeFault(effects: readonly Effect[]): RecipeFault | null {
+  if (someEffect(effects, effect => effect.effect === 'transfer')) return 'wake_hand_over'
+  const reachesOutside = someEffect(effects, effect => (
+    ('target' in effect && effect.target === 'target')
+    || (effect.effect === 'move' && effect.to !== 'home')
+  ))
+  return reachesOutside ? 'wake_scope' : null
+}
 
+function parseWakeEvents(value: unknown): readonly WakeEvent[] | null {
+  if (!isDenseArray(value) || value.length < 1 || value.length > WAKE_EVENTS.length) return null
+  const chosen = value.map(event => canonicalToken(event, WAKE_EVENT_SET))
+  if (chosen.some(event => event === null) || new Set(chosen).size !== chosen.length) return null
+  return Object.freeze(WAKE_EVENTS.filter(event => chosen.includes(event)))
+}
+
+function parseWake(value: unknown, state: ParseState): WakeProgram | null {
+  if (!isRecord(value) || !hasExactKeys(value, ['then'], ['on', 'every_seconds'])) return null
+  const on = Object.hasOwn(value, 'on') ? parseWakeEvents(value.on) : WAKE_DEFAULT_EVENTS
+  const everySeconds = Object.hasOwn(value, 'every_seconds')
+    ? boundedInteger(value.every_seconds, WAKE_MIN_EVERY_SECONDS, WAKE_MAX_EVERY_SECONDS)
+    : WAKE_DEFAULT_EVERY_SECONDS
+  if (!on || everySeconds === null) return null
+  const then = parseEffectList(value.then, 1, state)
+  return then ? Object.freeze({ on, every_seconds: everySeconds, then }) : null
+}
+
+type RecipeParse = Readonly<{ recipe: TraitRecipe | null; fault: RecipeFault | null }>
+
+const GRAMMAR_FAULT: RecipeParse = Object.freeze({ recipe: null, fault: 'grammar' })
+
+function recipeInput(value: unknown): UnknownRecord | null {
+  if (Array.isArray(value)) {
+    return value.length <= MAX_EFFECT_COUNT && isDenseArray(value) ? { use: value } : null
+  }
+  if (!isRecord(value)) return null
+  const keys = Reflect.ownKeys(value)
+  if (keys.some(key => typeof key !== 'string' || !RECIPE_KEY_SET.has(key))) return null
+  const plain = keys.every(key => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor !== undefined && Object.hasOwn(descriptor, 'value')
+  })
+  return plain ? value : null
+}
+
+function parseRecipe(value: unknown): RecipeParse {
+  try {
+    const input = recipeInput(value)
+    if (!input) return GRAMMAR_FAULT
     const state: ParseState = { count: 0 }
-    const canonical: Partial<Record<BasicAction, readonly Effect[]>> = {}
+    const canonical: { -readonly [Key in keyof TraitRecipe]: TraitRecipe[Key] } = {}
     for (const action of BASIC_ACTIONS) {
       if (!Object.hasOwn(input, action)) continue
       const effects = parseEffectList(input[action], 1, state)
-      if (!effects) return null
+      if (!effects || programWeight(effects) > MAX_APPLICATIONS_PER_PROGRAM) return GRAMMAR_FAULT
       canonical[action] = effects
     }
-    const recipe = Object.freeze(canonical)
-    return isWithinJsonBudget(recipe) ? recipe : null
+    if (Object.hasOwn(input, 'wake')) {
+      const wake = parseWake(input.wake, state)
+      if (!wake || programWeight(wake.then) > MAX_APPLICATIONS_PER_PROGRAM) return GRAMMAR_FAULT
+      const fault = wakeFault(wake.then)
+      if (fault) return Object.freeze({ recipe: null, fault })
+      canonical.wake = wake
+    }
+    const recipe: TraitRecipe = Object.freeze(canonical)
+    return isWithinJsonBudget(recipe) ? Object.freeze({ recipe, fault: null }) : GRAMMAR_FAULT
   } catch {
-    return null
+    return GRAMMAR_FAULT
   }
+}
+
+/** Parse and canonicalize a newly authored trait recipe. */
+export function parseTraitRecipe(value: unknown): TraitRecipe | null {
+  return parseRecipe(value).recipe
+}
+
+/** Why a newly authored recipe is refused, or null when it is accepted. */
+export function traitRecipeFault(value: unknown): RecipeFault | null {
+  return parseRecipe(value).fault
+}
+
+/** Write and the wake key need a thing of their own, so they work only in a kind's traits. */
+export function recipeUsesKindOnlyAbility(recipe: TraitRecipe): boolean {
+  if (recipe.wake) return true
+  return BASIC_ACTIONS.some(action => (
+    someEffect(recipe[action] ?? EMPTY_EFFECTS, effect => effect.effect === 'write')
+  ))
+}
+
+/** The stored wake program of a trait, or null when it has none or is malformed. */
+export function wakeProgramOf(value: unknown): WakeProgram | null {
+  return loadTraitRecipe(value).wake ?? null
 }
 
 /** Load untrusted stored data without ever executing a malformed partial recipe. */
