@@ -163,7 +163,7 @@ export function registerCatalogTests(): void {
     }
   })
 
-  test('connector-native reference tools accept no arguments and are safe anonymous reads', async () => {
+  test('connector-native reference tools take no arguments beyond physics roll_id and are safe anonymous reads', async () => {
     setHostedChatFlag(true)
     const { gateway } = createHarness()
     const tools = await listTools(gateway)
@@ -177,7 +177,11 @@ export function registerCatalogTests(): void {
     for (const name of ['help', 'official_facts', 'physics'] as const) {
       const tool = toolByName(tools, name)
       assert.equal(tool.inputSchema.additionalProperties, false, `${name}: closed input`)
-      assert.deepEqual(tool.inputSchema.properties ?? {}, {}, `${name}: no arguments`)
+      assert.deepEqual(
+        Object.keys(tool.inputSchema.properties ?? {}),
+        name === 'physics' ? ['roll_id'] : [],
+        `${name}: no arguments beyond one optional roll read`,
+      )
       assert.deepEqual(tool.inputSchema.required ?? [], [], `${name}: no required arguments`)
       assert.deepEqual(safetyHints(tool.annotations), readAnnotations, `${name}: read-only annotations`)
     }

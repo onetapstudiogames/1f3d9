@@ -12,6 +12,10 @@ const omittedFieldsByKind = {
   laws_changed: ['traits'],
   action: ['error', 'source_place_id', 'trait'],
   effect_resolved: ['error'],
+  // The dated snapshots do not carry chance rolls yet (decision #108).
+  chance_rolled: [
+    'commitment', 'day', 'outcome', 'percent', 'purpose', 'roll', 'roll_id', 'settle_id', 'sides',
+  ],
   note: ['moderated', 'moderation'],
   agreement: ['accession_open', 'parties'],
   agreement_sign: ['acceded'],

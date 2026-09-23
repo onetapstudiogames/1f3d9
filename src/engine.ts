@@ -24,6 +24,12 @@ import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import {
+  newRollLog,
+  publicRolls,
+  recordFailedRolls,
+  type RollLog,
+} from './engine-chance.ts'
 
 export {
   MAX_DUE_EFFECTS_PER_OBSERVATION,
@@ -221,10 +227,14 @@ export interface ActionExecution {
   readonly error: string | null
   readonly effectsApplied: number
   readonly skippedEffects: readonly SkippedEffect[]
+  /** Every public chance roll this action drew, including rolls in a refused action. */
+  readonly rolls?: ReturnType<typeof publicRolls>
 }
 
 export interface SymbolicContext {
   readonly actorId: number
+  /** Who `actor` names when it is not the answering resident; null names nobody. */
+  readonly actorSymbolId?: number | null
   readonly placeId: number | null
   readonly sourceThingId: number | null
   readonly target: RuntimeTarget | null
@@ -325,7 +335,10 @@ export function resolveSymbolicTarget(
   symbolic: SymbolicTarget,
   context: SymbolicContext,
 ): RuntimeTarget | null {
-  if (symbolic === 'actor') return { type: 'resident', id: context.actorId }
+  if (symbolic === 'actor') {
+    const id = context.actorSymbolId === undefined ? context.actorId : context.actorSymbolId
+    return id === null ? null : { type: 'resident', id }
+  }
   if (symbolic === 'source') {
     return context.sourceThingId === null ? null : { type: 'thing', id: context.sourceThingId }
   }
@@ -1050,6 +1063,7 @@ async function recordFailedExecution(
   action: BasicAction,
   error: unknown,
   db: TaggedSql,
+  rollLog: RollLog,
 ): Promise<ActionExecution> {
   const failure = failureFromError(error, actionId)
   const won = await recordActionResolution(
@@ -1062,6 +1076,9 @@ async function recordFailedExecution(
     const committed = await committedResolution(actionId, db)
     if (committed) return committed
   }
+  // Every roll drawn before the refusal stays public, marked as failed, so an
+  // action can never be retried quietly until a roll lands.
+  await recordFailedRolls(rollLog, db)
   return {
     actionId,
     status: 'failed',
@@ -1069,6 +1086,7 @@ async function recordFailedExecution(
     error: failure.message,
     effectsApplied: 0,
     skippedEffects: [],
+    ...(rollLog.rolls.length === 0 ? {} : { rolls: publicRolls(rollLog, 'action_failed') }),
   }
 }
 
@@ -1086,11 +1104,14 @@ async function resolveUncertainCommit(
   action: BasicAction,
   failure: CommitOutcomeUnknownError,
   db: TaggedSql,
+  rollLog: RollLog,
 ): Promise<ActionExecution> {
   try {
     const committed = await committedResolution(actionId, db)
     if (committed) return committed
-    return await recordFailedExecution(actionId, actorHandle, action, failure.sourceError, db)
+    return await recordFailedExecution(
+      actionId, actorHandle, action, failure.sourceError, db, rollLog,
+    )
   } catch {
     return {
       actionId,
@@ -1167,7 +1188,7 @@ function sharedUseTouchesSourceDestructively(
       && sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
     ) return true
     if (
-      effect.effect === 'check_label'
+      (effect.effect === 'check_label' || effect.effect === 'chance')
       && (
         sharedUseTouchesSourceDestructively(effect.then, sourceThingId, target, destroyAllowed)
         || sharedUseTouchesSourceDestructively(
@@ -1361,6 +1382,7 @@ function actionContext(
   actionId: number,
   input: RequiredActionInput,
   sharedSourceThingId: number | null = null,
+  rollLog: RollLog = newRollLog(),
 ): EffectExecutionContext {
   return {
     actionId: actionId > 0 ? actionId : null,
@@ -1380,6 +1402,8 @@ function actionContext(
     logicalAt: new Date(),
     sameUseDestroySkip: input.action === 'use',
     destroyedThingIds: [],
+    trigger: input.action === 'go_home' ? 'move' : input.action,
+    rollLog,
   }
 }
 
@@ -1423,6 +1447,7 @@ export async function runAction(
     input = { ...input, placeId: presence.currentPlaceId }
   }
   const actionId = await recordAction(input, db)
+  const rollLog = newRollLog()
   try {
     return await withEngineTransaction(db, async transaction => {
       if (input.action === 'go_home') await ensurePresence(input.actorId, transaction)
@@ -1506,7 +1531,7 @@ export async function runAction(
         input.primitiveHandledByCaller,
         async () => {
           const intrinsic = await intrinsicAction(input, actionId, transaction)
-          const base = actionContext(actionId, input, sharedSourceThingId)
+          const base = actionContext(actionId, input, sharedSourceThingId, rollLog)
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
           let destroyedThingIds: readonly number[] = []
@@ -1600,12 +1625,13 @@ export async function runAction(
       )
       return {
         actionId, status, httpStatus: 200, error: null, effectsApplied, skippedEffects,
+        ...(rollLog.rolls.length === 0 ? {} : { rolls: publicRolls(rollLog, 'counted') }),
       }
     })
   } catch (error) {
     if (error instanceof CommitOutcomeUnknownError) {
-      return resolveUncertainCommit(actionId, input.actorHandle, input.action, error, db)
+      return resolveUncertainCommit(actionId, input.actorHandle, input.action, error, db, rollLog)
     }
-    return recordFailedExecution(actionId, input.actorHandle, input.action, error, db)
+    return recordFailedExecution(actionId, input.actorHandle, input.action, error, db, rollLog)
   }
 }

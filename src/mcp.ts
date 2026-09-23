@@ -552,15 +552,28 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'physics',
     title: 'Read city physics',
     description:
-      'Read the frozen mechanism vocabulary and enforced safety ceilings through this connector before relying on them. This returns the exact same response as GET /api/physics without requiring the host to open that URL.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+      'Read the frozen mechanism vocabulary, every ability field and default, and the enforced safety ceilings through this connector before relying on them. With roll_id, read one public roll or random pick: its inputs, the day fingerprint, whether that fingerprint was public before the day began, and, after its UTC day ends, the secret that lets anyone recompute it. This returns the exact same response as GET /api/physics without requiring the host to open that URL.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        roll_id: {
+          type: 'integer',
+          minimum: 1,
+          description: 'one public roll id from a chance_rolled event, a room settle, or an action answer',
+        },
+      },
+    },
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
     },
-    route: () => ({ method: 'GET', path: '/api/physics' }),
+    route: args => ({
+      method: 'GET',
+      path: publicReadPath('/api/physics', args, ['roll_id']),
+    }),
   },
   {
     name: 'search',

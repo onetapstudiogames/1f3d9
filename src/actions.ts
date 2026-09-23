@@ -17,6 +17,7 @@ import {
   type TargetType,
 } from './engine.ts'
 import { isBasicAction, type BasicAction } from './physics.ts'
+import { ensureChanceDays } from './engine-chance.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 
@@ -212,6 +213,7 @@ async function runResidentAction(
 
   try {
     const before = await residentPresence(resident.id)
+    await ensureChanceDays()
     if (before.currentPlaceId !== null) await resolveDueEffects(before.currentPlaceId)
     const result = await runAction({
       actorId: resident.id,
@@ -236,6 +238,7 @@ async function runResidentAction(
       ...(result.skippedEffects.length === 0 ? {} : {
         skipped_effects: publicSkippedEffects(result.skippedEffects),
       }),
+      ...(result.rolls === undefined ? {} : { rolls: result.rolls }),
       ...(action === 'use' && result.status === 'noop' ? {
         reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
       } : {}),
