@@ -396,7 +396,8 @@ function skipAfterEarlierDestroy(
   })
 }
 
-function effectOrigin(context: EffectExecutionContext): Readonly<{
+/** The thing, or for a law the place, whose recipe this run follows. */
+export function effectOrigin(context: EffectExecutionContext): Readonly<{
   thingId: number | null
   placeId: number | null
 }> {

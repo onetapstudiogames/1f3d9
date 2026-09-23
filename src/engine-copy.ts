@@ -173,19 +173,38 @@ async function placeCapHit(destinationId: number, familyId: number, db: TaggedSq
   return null
 }
 
-/** Mark the family where a cap bit; one open mark per family and place, updated in place. */
+/**
+ * Mark the family where a cap bit, one open mark per family and place updated in
+ * place, and record the skip as a public copy_skipped event by the thing's owner.
+ */
 async function markFamily(parent: Parent, hit: CapHit, context: EffectExecutionContext, db: TaggedSql) {
   await db`
-    INSERT INTO family_growth_marks (
-      family_id, place_id, source_thing_id, cap, cap_limit, over_by, action_id, settle_id
-    ) VALUES (
-      ${parent.familyId}, ${hit.placeId}, ${parent.id}, ${hit.cap}, ${hit.limit}, ${hit.overBy},
-      ${context.actionId}, ${context.settleId ?? null}
+    WITH marked AS (
+      INSERT INTO family_growth_marks (
+        family_id, place_id, source_thing_id, cap, cap_limit, over_by, action_id, settle_id
+      ) VALUES (
+        ${parent.familyId}, ${hit.placeId}, ${parent.id}, ${hit.cap}, ${hit.limit}, ${hit.overBy},
+        ${context.actionId}, ${context.settleId ?? null}
+      )
+      ON CONFLICT (place_id, family_id) WHERE cleared_at IS NULL DO UPDATE SET
+        source_thing_id = EXCLUDED.source_thing_id, cap = EXCLUDED.cap,
+        cap_limit = EXCLUDED.cap_limit, over_by = EXCLUDED.over_by,
+        action_id = EXCLUDED.action_id, settle_id = EXCLUDED.settle_id, created_at = now()
+      RETURNING id
     )
-    ON CONFLICT (place_id, family_id) WHERE cleared_at IS NULL DO UPDATE SET
-      source_thing_id = EXCLUDED.source_thing_id, cap = EXCLUDED.cap,
-      cap_limit = EXCLUDED.cap_limit, over_by = EXCLUDED.over_by,
-      action_id = EXCLUDED.action_id, settle_id = EXCLUDED.settle_id, created_at = now()
+    INSERT INTO events (kind, actor, detail)
+    SELECT 'copy_skipped', owner.handle, jsonb_build_object(
+      'thing_id', ${parent.id}::integer,
+      'trait_id', ${context.sourceTraitId}::integer,
+      'place_id', ${hit.placeId}::integer,
+      'family_id', ${parent.familyId}::integer,
+      'cap', ${hit.cap}::text,
+      'limit', ${hit.limit}::integer,
+      'over_by', ${hit.overBy}::integer,
+      'action_id', ${context.actionId}::bigint,
+      'settle_id', ${context.settleId ?? null}::bigint
+    )
+    FROM marked JOIN residents owner ON owner.id = ${parent.ownerId}
   `
 }
 
@@ -256,7 +275,7 @@ async function insertCopy(
         ${parent.generation + 1}, ${parent.id}, ${parent.familyId},
         ${JSON.stringify(state)}::jsonb, ${inheritsState ? 1 : 0}
       )
-      RETURNING id, place_id, name, kind_id, birth_revision
+      RETURNING id, place_id, name, kind_id, birth_revision, generation, family_id
     ), parent_count AS (
       UPDATE things SET copies_made = copies_made + 1 WHERE id = ${parent.id} RETURNING id
     ), counted AS (
@@ -292,7 +311,9 @@ async function insertCopy(
         'kind_id', new_thing.kind_id,
         'birth_revision', new_thing.birth_revision,
         'mode', 'copy',
-        'source_thing_id', ${parent.id}::integer
+        'source_thing_id', ${parent.id}::integer,
+        'generation', new_thing.generation,
+        'family_id', new_thing.family_id
       )
       FROM new_thing JOIN residents owner ON owner.id = ${parent.ownerId}
     )

@@ -321,6 +321,34 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.migrationFile, 'db/migrations/20260922_abilities_copy_reach_convert.sql')
   })
 
+  test('public-snapshot-thing-labels is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'public-snapshot-thing-labels'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260923_public_snapshot_thing_labels.sql')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'public-snapshot-thing-labels'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'public-snapshot-thing-labels-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260923_public_snapshot_thing_labels.sql')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -477,6 +505,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:note-walk-to-read'] ?? '', /--target production --migration note-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:preview:public-snapshot-walk-to-read'] ?? '', /--target preview --migration public-snapshot-walk-to-read$/)
     assert.match(packageJson.scripts['migrate:production:public-snapshot-walk-to-read'] ?? '', /--target production --migration public-snapshot-walk-to-read$/)
+    assert.match(packageJson.scripts['migrate:preview:public-snapshot-thing-labels'] ?? '', /--target preview --migration public-snapshot-thing-labels$/)
+    assert.match(packageJson.scripts['migrate:production:public-snapshot-thing-labels'] ?? '', /--target production --migration public-snapshot-thing-labels$/)
     assert.match(packageJson.scripts['migrate:preview:abilities-wake-chance-write'] ?? '', /--target preview --migration abilities-wake-chance-write$/)
     assert.match(packageJson.scripts['migrate:production:abilities-wake-chance-write'] ?? '', /--target production --migration abilities-wake-chance-write$/)
     assert.match(packageJson.scripts['migrate:preview:abilities-copy-reach-convert'] ?? '', /--target preview --migration abilities-copy-reach-convert$/)

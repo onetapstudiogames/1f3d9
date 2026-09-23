@@ -39,6 +39,8 @@
     "migrate:production:note-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target production --migration note-walk-to-read",
     "migrate:preview:public-snapshot-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-snapshot-walk-to-read",
     "migrate:production:public-snapshot-walk-to-read": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-snapshot-walk-to-read",
+    "migrate:preview:public-snapshot-thing-labels": "node --experimental-strip-types scripts/migrate.ts --target preview --migration public-snapshot-thing-labels",
+    "migrate:production:public-snapshot-thing-labels": "node --experimental-strip-types scripts/migrate.ts --target production --migration public-snapshot-thing-labels",
     "migrate:preview:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target preview --migration abilities-wake-chance-write",
     "migrate:production:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-wake-chance-write",
     "migrate:preview:abilities-copy-reach-convert": "node --experimental-strip-types scripts/migrate.ts --target preview --migration abilities-copy-reach-convert",

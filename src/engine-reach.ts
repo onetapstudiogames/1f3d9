@@ -7,6 +7,7 @@
 import { EngineError, type TaggedSql } from './engine.ts'
 import { recordMemberRefusedRolls } from './engine-chance.ts'
 import {
+  effectOrigin,
   executeEffectsWithOutcome,
   newAbilityLog,
   type EffectExecutionContext,
@@ -106,6 +107,7 @@ export async function runReach(
   let emitted = false
   let destroyedThingIds = context.destroyedThingIds
   let skipped: readonly SkippedEffect[] = []
+  let refusedMembers = 0
   let stopped: 'action_reach_limit' | null = null
   for (const member of members) {
     if (log.reachApplications + memberWeight > MAX_REACH_APPLICATIONS_PER_ACTION) {
@@ -138,6 +140,7 @@ export async function runReach(
       log.copied.splice(copiedBefore)
       log.converted.splice(convertedBefore)
       if (context.rollLog) await recordMemberRefusedRolls(context.rollLog, rollsBefore, db)
+      refusedMembers += 1
       skipped = [...skipped, Object.freeze({
         effect: 'reach',
         target: 'target',
@@ -150,14 +153,33 @@ export async function runReach(
       })]
     }
   }
+  const more = Math.max(0, total - reached)
   log.reaches.push(Object.freeze({
     sourceTrait: context.sourceTraitName ?? null,
     sourceTraitId: context.sourceTraitId,
     over: effect.over,
     reached,
-    more: Math.max(0, total - reached),
+    more,
     stopped,
   }))
+  if (context.placeId !== null) {
+    await db`
+      INSERT INTO events (kind, actor, detail)
+      SELECT 'room_reached', resident.handle, jsonb_build_object(
+        'thing_id', ${effectOrigin(context).thingId}::integer,
+        'trait_id', ${context.sourceTraitId}::integer,
+        'place_id', ${context.placeId}::integer,
+        'over', ${effect.over}::text,
+        'reached', ${reached}::integer,
+        'more', ${more}::integer,
+        'skipped', ${refusedMembers}::integer,
+        'stopped', ${stopped}::text,
+        'action_id', ${context.actionId}::bigint,
+        'settle_id', ${context.settleId ?? null}::bigint
+      )
+      FROM residents resident WHERE resident.id = ${context.actorId}
+    `
+  }
   return Object.freeze({
     effectsApplied: applied,
     emittedTypedPublicEvent: emitted,

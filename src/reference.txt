@@ -188,7 +188,8 @@ label holdings.
 Labels on a thing are public. Every thing read shows labels, the thing's current labels
 newest first, at most 32, each with set_by, set_at, and expires_at (null while it never
 expires), and labels_total, how many current labels it has in all; past 32 the oldest are
-not listed anywhere. An expired label never shows. A place read lists its current label
+not listed anywhere. An expired label never shows. The dated public snapshots carry the
+same labels and labels_total for every exported thing. A place read lists its current label
 names.
 Entering, interacting, or checking me wakes due timers and settles what the room's
 things were owed.
@@ -342,7 +343,8 @@ a public roll picks one in place-id order.
 
 When a limit bites, the copy is skipped and the action goes on. skipped_effects names the
 limit in cap, one of generations, copies, no_arrivals, place_daily, or family_share, with
-limit and over_by, how far over it was. The family keeps a mark with the same facts in
+limit and over_by, how far over it was. The skip is also public as a copy_skipped event by
+the thing's owner, with the same cap, limit, and over_by and the place where it bit. The family keeps a mark with the same facts in
 the place where the limit bit: the copying thing's own room for generations, copies, and
 no_arrivals, and the place the copy would have landed in for place_daily and
 family_share. Every thing of the family shows its newest mark as growth_mark, with
@@ -374,6 +376,8 @@ changes: a reach stops before any member whose steps could pass that limit, coun
 member at the most its steps can make. The answer's reaches lists, for each reach, how
 many members it reached, how many more there were, and whether that limit stopped it. If one member refuses a step, that
 member is skipped and named in skipped_effects, its rolls stay public, and the rest go on.
+Each reach is also public as a room_reached event with the same counts and how many
+members were skipped. It never names a resident it reached.
 
 TURN INTO
 ~~~~~~~~~
@@ -1185,6 +1189,17 @@ An effect_resolved notice names its status; failed and skipped effects also name
 bounded cause, with unexpected internal failures kept distinct from rule refusals.
 /api/changes returns reference-only notices: detail is limited to whitelisted scalars and
 IDs, never the full event detail or resident-authored body.
+Ability notices also carry the numbers that say what happened. chance_rolled names
+roll_id, purpose, roll, sides, percent, outcome, and settle_id beside status; the day and
+its fingerprint are in physics with that roll_id. room_settled names settle_id, tried,
+woke, and forfeited beside mode and status. A thing_edited write names key, op, and the
+box's new version; a conversion names from_kind_id, the kind it was, and law_trait_id
+beside kind_id. A copy's thing_created names generation and family_id beside
+source_thing_id, its parent. copy_skipped names thing_id, trait_id, place_id where the
+limit bit, family_id, cap, limit, and over_by. room_reached names thing_id (null for a
+law), trait_id, place_id, over, reached, more, skipped, and stopped. Both sit beside the
+action's own notice, never in place of it. A sticker a wake try or a reach puts on a
+resident has no notice, because resident labels are private.
 Successful move and go_home notices name from_place_id and to_place_id. A carried move
 also names thing_id and mode carry, paired with a thing_moved notice carrying the same
 action_id. Successful use
@@ -2193,6 +2208,8 @@ root carry a full 64-character SHA-256 hash.
 Full snapshot resident, place, and current kind-revision records include stored drawings.
 Things include their resolved drawing and drawing_source from their own override or pinned
 kind revision. Ordinary map, room, window, directory, and census reads still omit drawings.
+Each exported thing also carries labels and labels_total exactly as the thing read shows
+them; resident labels stay out of every class.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
 resident homes and quotas, resident label holdings, flag report text, payment attempts,
