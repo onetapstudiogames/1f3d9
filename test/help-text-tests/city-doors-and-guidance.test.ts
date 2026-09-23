@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 115 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 115)
-    assert.match(contributorGuide, /\(115 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 116 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 116)
+    assert.match(contributorGuide, /\(116 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -56,6 +56,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 113 \|[^\n]*Reach may sticker[^\n]*open_to_reach[^\n]*no reach ever blocks or moves a resident[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 114 \|[^\n]*open_to_convert[^\n]*born_as[^\n]*`was`[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 115 \|[^\n]*less authority than its parent[^\n]*generation 8[^\n]*LOCKED/iu)
+    assert.match(decisions, /\| 116 \|[^\n]*must change something[^\n]*before any payment or fee credit is spent[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)

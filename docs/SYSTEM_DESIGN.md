@@ -1976,8 +1976,10 @@ event or drawing revision.
 
 `coin_trait` is free and uses the existing safe name, description, recipe, and physics
 ceilings. `invent_kind` and owner-only `revise_kind` each cost exactly $1 and use the
-existing kind limits. A revision retains omitted fields but still creates and charges
-when no revision field is sent. A caller uses `credit_preflight` before deliberate credit,
+existing kind limits. A revision retains omitted fields, and must change something it
+stores: one identical to the current revision (description, traits in order, recipe,
+drawing, and drawing_variants), including one that sends no revision field, is refused
+with 409 before any payment or credit spend. A caller uses `credit_preflight` before deliberate credit,
 then supplies one new `city_credit_request_id`; omitting it selects outer X-PAYMENT, and
 the two rails cannot be combined.
 

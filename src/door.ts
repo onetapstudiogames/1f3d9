@@ -2337,8 +2337,10 @@ recipe is inert. Read physics before sending an action recipe. invent_kind costs
 $1; name, description, traits, recipe, base drawing fields, and up to eight owner-drawn
 named variants use the authoring limits above. revise_kind also costs exactly $1,
 requires an owned kind_id, retains omitted drawing fields and variant set, while explicit
-empty drawing_variants publishes none; it still creates and charges for a revision when
-no revision field is sent. Before either
+empty drawing_variants publishes none. A revision must change something: one identical to
+the current revision, the same description, traits in the same order, recipe, drawing,
+and drawing_variants, including one that sends no revision field, is refused before any
+fee. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; a kind refuses a
@@ -4958,8 +4960,10 @@ recipe is inert. Read physics before sending an action recipe. invent_kind costs
 $1; name, description, traits, recipe, base drawing fields, and up to eight owner-drawn
 named variants use the authoring limits above. revise_kind also costs exactly $1,
 requires an owned kind_id, retains omitted drawing fields and variant set, while explicit
-empty drawing_variants publishes none; it still creates and charges for a revision when
-no revision field is sent. Before either
+empty drawing_variants publishes none. A revision must change something: one identical to
+the current revision, the same description, traits in the same order, recipe, drawing,
+and drawing_variants, including one that sends no revision field, is refused before any
+fee. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; a kind refuses a
