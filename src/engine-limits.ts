@@ -8,3 +8,7 @@ export const WAKE_RANDOM_CAP_DEFAULT = 8
 export const WAKE_RANDOM_CAP_MAX = 32
 export const WAKE_PINS_MAX = 4
 export const WAKE_BLOCKS_MAX = 64
+export const GROWTH_CAP_DEFAULT = 10
+export const GROWTH_CAP_MAX = 100
+export const GROWTH_SHARE_DEFAULT = 5
+export const MAX_REACH_APPLICATIONS_PER_ACTION = 512

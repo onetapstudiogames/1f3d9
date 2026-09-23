@@ -240,6 +240,18 @@ async function runResidentAction(
         skipped_effects: publicSkippedEffects(result.skippedEffects),
       }),
       ...(result.rolls === undefined ? {} : { rolls: result.rolls }),
+      ...(result.copiedThingIds === undefined ? {} : { copied_thing_ids: result.copiedThingIds }),
+      ...(result.convertedThingIds === undefined ? {} : { converted_thing_ids: result.convertedThingIds }),
+      ...(result.reaches === undefined ? {} : {
+        reaches: result.reaches.map(reach => Object.freeze({
+          source_trait: reach.sourceTrait,
+          source_trait_id: reach.sourceTraitId,
+          over: reach.over,
+          reached: reach.reached,
+          more: reach.more,
+          stopped: reach.stopped,
+        })),
+      }),
       ...(action === 'use' && result.status === 'noop' ? {
         reason: 'no use effect applied: this thing has no applicable recipe or effect in the current place',
       } : {}),

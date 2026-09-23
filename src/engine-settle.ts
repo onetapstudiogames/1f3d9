@@ -21,7 +21,11 @@ import {
   recordRoll,
   wakePickKey,
 } from './engine-chance.ts'
-import { executeEffectsWithOutcome, type EffectExecutionContext } from './engine-effects.ts'
+import {
+  executeEffectsWithOutcome,
+  newAbilityLog,
+  type EffectExecutionContext,
+} from './engine-effects.ts'
 import { GAZETTE_ROOM_ID } from './gazette.ts'
 import {
   MAX_WAKE_EFFECTS_PER_SETTLE,
@@ -420,6 +424,9 @@ async function runTry(
         fromWake: true,
         trigger: `wake_${unit.reason}`,
         rollLog,
+        // A wake try is its owner's own thing acting for its owner.
+        ownProgram: true,
+        abilityLog: newAbilityLog(),
         settleId: claim.settleId,
         placeId,
         sourceThingId: candidate.thingId,

@@ -151,6 +151,28 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         ), false)
       END AS has_drawing,
       thing.wake_enabled,
+      thing.generation, thing.parent_thing_id,
+      coalesce(thing.family_id, thing.id) AS family_id,
+      (
+        SELECT root_maker.handle FROM things root
+        JOIN residents root_maker ON root_maker.id = root.maker_id
+        WHERE root.id = coalesce(thing.family_id, thing.id)
+      ) AS family_maker,
+      thing.copies_made,
+      (
+        SELECT jsonb_build_object(
+          'family_id', mark.family_id,
+          'place_id', mark.place_id,
+          'source_thing_id', mark.source_thing_id,
+          'cap', mark.cap,
+          'limit', mark.cap_limit,
+          'over_by', mark.over_by,
+          'at', to_char(mark.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )
+        FROM family_growth_marks mark
+        WHERE mark.family_id = coalesce(thing.family_id, thing.id)
+          AND mark.place_id = thing.place_id AND mark.cleared_at IS NULL
+      ) AS growth_mark,
       (
         SELECT jsonb_build_object(
           'trait_id', trait.id,

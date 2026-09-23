@@ -10,8 +10,8 @@ const CHANCE_SIDES = 100
 const ROLL_RECORD_ERROR =
   'the city could not record this roll; retry once, then contact the city operator'
 
-export type RollPurpose = 'chance' | 'wake_pick'
-export type RollOutcome = 'counted' | 'action_failed'
+export type RollPurpose = 'chance' | 'wake_pick' | 'copy_place'
+export type RollOutcome = 'counted' | 'action_failed' | 'member_refused'
 
 /** Every input of one drawn roll, kept so a failed run can still record it exactly. */
 export interface DrawnRoll {
@@ -166,22 +166,26 @@ export async function recordRoll(
   `
 }
 
+interface RollContext {
+  readonly placeId: number | null
+  readonly sourceThingId: number | null
+  readonly sourceTraitId: number | null
+  readonly actorId: number
+  readonly actionId: number | null
+  readonly settleId?: number | null
+  readonly rollLog?: RollLog
+}
+
 /**
- * Draw one public chance roll inside the run's transaction and write it down
- * before its branch runs. The roll also stays in the run's log, so a run that
- * later refuses can still record it as failed.
+ * Draw one public roll inside the run's transaction and write it down before
+ * anything it decides happens. The roll also stays in the run's log, so a run
+ * that later refuses can still record it as failed.
  */
-export async function drawChanceRoll(
-  percent: number,
-  context: Readonly<{
-    placeId: number | null
-    sourceThingId: number | null
-    sourceTraitId: number | null
-    actorId: number
-    actionId: number | null
-    settleId?: number | null
-    rollLog?: RollLog
-  }>,
+async function drawRoll(
+  purpose: 'chance' | 'copy_place',
+  sides: number,
+  percent: number | null,
+  context: RollContext,
   db: TaggedSql,
 ): Promise<DrawnRoll> {
   if (context.placeId === null) {
@@ -191,11 +195,11 @@ export async function drawChanceRoll(
   const rollId = await nextRollId(db)
   const input = {
     rollId,
-    purpose: 'chance' as const,
+    purpose,
     placeId: context.placeId,
     sourceThingId: context.sourceThingId,
     sourceTraitId: context.sourceTraitId,
-    sides: CHANCE_SIDES,
+    sides,
   }
   const roll = rollValue(day.secret, input)
   const drawn: DrawnRoll = Object.freeze({
@@ -207,11 +211,29 @@ export async function drawChanceRoll(
     settleId: context.settleId ?? null,
     percent,
     roll,
-    branch: roll <= percent ? 'then' : 'else',
+    branch: percent === null ? null : roll <= percent ? 'then' : 'else',
   })
   context.rollLog?.rolls.push(drawn)
   await recordRoll(drawn, 'counted', db)
   return drawn
+}
+
+/** A chance roll: 1 to 100, and its branch is then when the roll is at most percent. */
+export async function drawChanceRoll(
+  percent: number,
+  context: RollContext,
+  db: TaggedSql,
+): Promise<DrawnRoll> {
+  return drawRoll('chance', CHANCE_SIDES, percent, context, db)
+}
+
+/** Which of several neighbouring places an adjacent copy lands in, in place-id order. */
+export async function drawCopyPlaceRoll(
+  sides: number,
+  context: RollContext,
+  db: TaggedSql,
+): Promise<DrawnRoll> {
+  return drawRoll('copy_place', sides, null, context, db)
 }
 
 /** After a run refuses, keep every roll it drew public, marked as failed. */
@@ -222,6 +244,7 @@ export async function recordFailedRolls(log: RollLog, db: TaggedSql): Promise<vo
 export function publicRolls(log: RollLog, outcome: RollOutcome) {
   return log.rolls.map(roll => Object.freeze({
     roll_id: roll.rollId,
+    purpose: roll.purpose,
     percent: roll.percent,
     roll: roll.roll,
     branch: roll.branch,

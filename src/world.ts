@@ -2413,6 +2413,13 @@ export function mountWorldRoutes(app: Hono): void {
           'thing_id', id, 'birth_revision', birth_revision,
           'current_revision', current_revision
         ) FROM changed
+      ), cleared_marks AS (
+        UPDATE family_growth_marks mark
+        SET cleared_at = now(), cleared_reason = 'kind_revision_changed'
+        FROM changed
+        WHERE mark.family_id = coalesce(changed.family_id, changed.id)
+          AND mark.cleared_at IS NULL
+          AND changed.current_revision IS DISTINCT FROM ${existing.current_revision ?? null}::integer
       ), result AS (
         SELECT changed.* FROM changed
         UNION ALL

@@ -6,6 +6,7 @@ import {
   goHome,
   logUnrecognizedExecutionFailure,
   moveResident,
+  publicSkippedEffects,
   resolveSymbolicTarget,
   withEngineTransaction,
   type RuntimeTarget,
@@ -41,6 +42,7 @@ import {
 } from './engine-chance.ts'
 import { requireRoughRoomFor, requireWakeActor, requireWakeHome } from './wake-guard.ts'
 import { writeStateBox } from './engine-state.ts'
+import { makeCopy } from './engine-copy.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -90,17 +92,61 @@ export interface EffectExecutionContext {
   /** The rolls drawn in this run, kept so a refused run still records them. */
   readonly rollLog?: RollLog
   readonly settleId?: number | null
+  /**
+   * True only when the program is the answering resident's own thing's kind
+   * traits: their own use, consume, or give, a wake try of their own thing, or a
+   * timer one of those scheduled. False for every law and every shared use.
+   */
+  readonly ownProgram?: boolean
+  /** What this run made beyond its count: copies, conversions, and reaches. */
+  readonly abilityLog?: AbilityLog
+}
+
+/** How one reach went: members reached, members past its max, and whether the action's limit stopped it. */
+export interface ReachReport {
+  readonly sourceTrait: string | null
+  readonly sourceTraitId: number | null
+  readonly over: 'things' | 'residents'
+  readonly reached: number
+  readonly more: number
+  readonly stopped: 'action_reach_limit' | null
+}
+
+/** Collected across one action, timer resolution, or wake try, shared by all its programs. */
+export interface AbilityLog {
+  readonly copied: number[]
+  readonly converted: number[]
+  readonly reaches: ReachReport[]
+  reachApplications: number
+}
+
+export function newAbilityLog(): AbilityLog {
+  return { copied: [], converted: [], reaches: [], reachApplications: 0 }
 }
 export type EffectTrigger =
   | 'use' | 'consume' | 'give' | 'talk' | 'move' | 'make' | 'timer'
   | 'wake_arrive' | 'wake_talk' | 'wake_clock'
+export const SKIP_REASONS = Object.freeze([
+  'target thing was destroyed earlier in this use',
+  'a growth cap refused the copy',
+  'the family reached its generation or copy limit',
+  'this reach member refused the step',
+] as const)
+export type SkipReason = typeof SKIP_REASONS[number]
+/** Which limit stopped a copy: the family's depth or count, no open destination, or a place cap. */
+export type GrowthCap = 'generations' | 'copies' | 'no_arrivals' | 'place_daily' | 'family_share'
 export interface SkippedEffect {
   readonly effect: Effect['effect']
   readonly target: SymbolicTarget
   readonly sourceTrait: string | null
   readonly sourceTraitId: number | null
   readonly sourcePlaceId: number | null
-  readonly reason: 'target thing was destroyed earlier in this use'
+  readonly reason: SkipReason
+  readonly memberId?: number
+  readonly cap?: GrowthCap
+  readonly limit?: number
+  readonly overBy?: number
+  readonly error?: string
 }
 export interface EffectExecutionOutcome {
   readonly effectsApplied: number
@@ -142,6 +188,7 @@ interface PendingRow {
   readonly actorSymbolId: number | null | undefined
   readonly fromWake: boolean
   readonly settleId: number | null
+  readonly ownProgram: boolean
 }
 function objectRecord(value: unknown): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
@@ -289,20 +336,22 @@ async function matchingLaw(
   return (await effectiveLaws(target.id, db)).find(law => law.name === label) ?? null
 }
 
+/** Skips are always kept, for every trigger; the destroyed list only for a literal use. */
 function effectExecutionOutcome(
   effectsApplied: number,
   emittedTypedPublicEvent: boolean,
   destroyedThingIds?: readonly number[],
   skippedEffects: readonly SkippedEffect[] = [],
 ): EffectExecutionOutcome {
-  if (destroyedThingIds === undefined) {
-    return Object.freeze({ effectsApplied, emittedTypedPublicEvent })
-  }
   return Object.freeze({
     effectsApplied,
     emittedTypedPublicEvent,
-    destroyedThingIds: Object.freeze([...destroyedThingIds]),
-    skippedEffects: Object.freeze([...skippedEffects]),
+    ...(destroyedThingIds === undefined ? {} : {
+      destroyedThingIds: Object.freeze([...destroyedThingIds]),
+    }),
+    ...(destroyedThingIds === undefined && skippedEffects.length === 0 ? {} : {
+      skippedEffects: Object.freeze([...skippedEffects]),
+    }),
   })
 }
 
@@ -310,8 +359,10 @@ function skipAfterEarlierDestroy(
   effect: Effect,
   context: EffectExecutionContext,
 ): SkippedEffect | null {
-  // A write changes the box of its own thing, so it is aimed at source.
-  const symbol = effect.effect === 'write' ? 'source' : 'target' in effect ? effect.target : null
+  // A write or a copy acts on its own thing, so it is aimed at source.
+  const symbol = effect.effect === 'write' || effect.effect === 'copy'
+    ? 'source'
+    : 'target' in effect ? effect.target : null
   if (context.sameUseDestroySkip !== true || symbol === null) return null
   const target = resolveSymbolicTarget(symbol, context)
   if (target?.type !== 'thing' || !context.destroyedThingIds?.includes(target.id)) return null
@@ -355,9 +406,7 @@ export async function executeEffectsWithOutcome(
   let destroyedThingIds = context.sameUseDestroySkip === true
     ? (context.destroyedThingIds ?? [])
     : undefined
-  let skippedEffects: readonly SkippedEffect[] | undefined = context.sameUseDestroySkip === true
-    ? []
-    : undefined
+  let skippedEffects: readonly SkippedEffect[] = []
   for (const effect of effects) {
     const outcomeContext = destroyedThingIds === undefined
       ? context
@@ -366,9 +415,7 @@ export async function executeEffectsWithOutcome(
     effectsApplied += outcome.effectsApplied
     emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
     destroyedThingIds = outcome.destroyedThingIds ?? destroyedThingIds
-    if (skippedEffects !== undefined) {
-      skippedEffects = [...skippedEffects, ...(outcome.skippedEffects ?? [])]
-    }
+    skippedEffects = [...skippedEffects, ...(outcome.skippedEffects ?? [])]
   }
   return effectExecutionOutcome(
     effectsApplied,
@@ -494,7 +541,13 @@ async function executeEffectWithOutcome(
     await writeStateBox(effect, context, db)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
-  if (effect.effect === 'copy' || effect.effect === 'reach' || effect.effect === 'convert') {
+  if (effect.effect === 'copy') {
+    const copied = await makeCopy(effect, context, db)
+    return 'skipped' in copied
+      ? effectExecutionOutcome(0, false, destroyedThingIds, [copied.skipped])
+      : effectExecutionOutcome(1, true, destroyedThingIds)
+  }
+  if (effect.effect === 'reach' || effect.effect === 'convert') {
     throw new EngineError(500, UNKNOWN_STORED_EFFECT_ERROR)
   }
 
@@ -945,6 +998,8 @@ async function scheduleEffect(
       actor_symbol_id: context.actorSymbolId ?? null,
       settle_id: context.settleId ?? null,
     } : {}),
+    // A timer from its owner's own thing stays that owner's own program.
+    ...(context.ownProgram === true ? { own_program: true } : {}),
   }
   await insertPendingEffect({
     actionId: context.actionId,
@@ -1043,6 +1098,7 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
   const settleId = !fromWake || payload.settle_id == null ? null : integer(payload.settle_id)
   if (
     (payload.from_wake !== undefined && typeof payload.from_wake !== 'boolean')
+    || (payload.own_program !== undefined && typeof payload.own_program !== 'boolean')
     || (fromWake && payload.actor_symbol_id != null && (actorSymbolId === null || actorSymbolId <= 0))
     || (fromWake && payload.settle_id != null && (settleId === null || settleId <= 0))
   ) return null
@@ -1069,6 +1125,7 @@ function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
     actorSymbolId: fromWake ? actorSymbolId : undefined,
     fromWake,
     settleId,
+    ownProgram: payload.own_program === true,
   }
 }
 
@@ -1176,15 +1233,21 @@ async function resolveOne(
     logicalAt: row.logicalDueAt,
     trigger: 'timer',
     rollLog,
+    ownProgram: row.ownProgram,
+    abilityLog: newAbilityLog(),
     ...(row.fromWake ? {
       fromWake: true,
       actorSymbolId: row.actorSymbolId ?? null,
       settleId: row.settleId,
     } : {}),
   }
-  const effectsApplied = await executeEffects(row.effects, context, db)
+  const outcome = await executeEffectsWithOutcome(row.effects, context, db)
   await repeatPending(row, context, db)
-  await recordEffectResolution(row.id, 'applied', { effects_applied: effectsApplied }, db)
+  const skipped = outcome.skippedEffects ?? []
+  await recordEffectResolution(row.id, 'applied', {
+    effects_applied: outcome.effectsApplied,
+    ...(skipped.length === 0 ? {} : { skipped_effects: publicSkippedEffects(skipped) }),
+  }, db)
   return 'resolved'
 }
 
