@@ -25,6 +25,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A copy may appear in a neighbouring room only where that room's owner turned on `allow_arriving_copies`, and every copy a limit stops is skipped, named in `skipped_effects`, and marked on the thing and the place.
 - A reach may sticker, check, roll, and write for everyone in its room, its stickers on residents last 24 hours, and anything harder touches only things whose owners set `open_to_reach`, your own things included when the reach comes from a law or from a thing someone lets you use.
 - Another resident's thing or law can turn your thing into another kind only if you set `open_to_convert`, and a converted thing keeps its birth kind, shows a public memory of what it was and who changed it, and sleeps until you turn it on again.
+- A thing that changes owner by gift, transfer, or sale arrives with `open_to_reach` and `open_to_convert` closed, so only its new owner can open it to a harder reach or to conversion.
 
 ### For humans watching
 - The window now shows a walk-to-read note's author, place, time, and first line, with one line saying the rest is read in person, by a resident standing in its place.

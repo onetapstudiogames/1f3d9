@@ -527,10 +527,14 @@ a public roll picks one in place-id order.
 
 When a limit bites, the copy is skipped and the action goes on. skipped_effects names the
 limit in cap, one of generations, copies, no_arrivals, place_daily, or family_share, with
-limit and over_by, how far over it was. The family carries one mark with the same facts,
-shown as growth_mark on the thing and in growth_marks on the place, until the place owner
-changes a growth dial, a thing of the family changes kind revision by an upgrade or a
-conversion, or a later copy of that family there succeeds.
+limit and over_by, how far over it was. The family keeps a mark with the same facts in
+the place where the limit bit: the copying thing's own room for generations, copies, and
+no_arrivals, and the place the copy would have landed in for place_daily and
+family_share. Every thing of the family shows its newest mark as growth_mark, with
+place_id naming that place, and that place lists it in growth_marks. A mark stays until
+the place owner changes a growth dial, a thing of the family changes kind revision by an
+upgrade or a conversion, or a later copy of that family lands there; a no_arrivals mark
+also clears when a later copy from its room lands next door.
 
 REACH THE ROOM
 ~~~~~~~~~~~~~~
@@ -571,7 +575,7 @@ the thing running it or being used.
 The thing keeps its owner, maker, name, body, state box, and birth kind. Every read shows
 the kind it is now and the kind and revision it was born as in born_as, with its
 generation: the thing read, its row in me, in a place read, and in the window, and the
-thing_edit answer. kind_id and current_revision are the kind it is now, and
+thing_edit and thing_upgrade answers, which are that same thing read. kind_id and current_revision are the kind it is now, and
 birth_revision is the revision in born_as. It shows its new kind's base drawing, and it
 sleeps until its owner turns wake_enabled on again. Its drawing history records the
 change, under the new kind's owner as kind_owner, and an upgrade that changes what it
@@ -595,8 +599,10 @@ holds only residents who come in afterward.
 
 Your things have their own switches. open_to_reach and open_to_convert start false, and
 while they are false nobody else's thing or law can reach your thing with a harder step
-or convert it. wake_enabled says whether your thing may wake at all. You set all three
-with make or thing_edit.
+or convert it. Both close again whenever a thing changes owner, by gift, transfer, or
+sale, so a thing you receive arrives closed until you open it. wake_enabled says whether
+your thing may wake at all, and it too turns off when a thing changes owner. You set all
+three with make or thing_edit.
 
 KINDS AND THINGS MADE BEFORE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2313,9 +2319,11 @@ upgrade returns 409 without change; retry against the committed latest revision,
 base or an available variant if the prior selection disappeared. Exact no-op retries record
 no event or drawing revision. wake_enabled is an owner-only boolean: it starts on for a
 thing you make and off for a thing you receive or that is converted. open_to_reach and
-open_to_convert are owner-only booleans that start false. state_clear true empties the
-thing's state box and records the clear. Upgrading a converted thing moves it to its new
-kind's newest revision, and a converted thing cannot select a drawing variant.
+open_to_convert are owner-only booleans that start false and turn off for a thing you
+receive. state_clear true empties the thing's state box and records the clear. The
+thing_edit and thing_upgrade answers are the same public thing read as GET
+/api/thing/:id. Upgrading a converted thing moves it to its new kind's newest revision,
+and a converted thing cannot select a drawing variant.
 
 TRAITS AND KINDS
 ~~~~~~~~~~~~~~~~
@@ -3120,10 +3128,14 @@ a public roll picks one in place-id order.
 
 When a limit bites, the copy is skipped and the action goes on. skipped_effects names the
 limit in cap, one of generations, copies, no_arrivals, place_daily, or family_share, with
-limit and over_by, how far over it was. The family carries one mark with the same facts,
-shown as growth_mark on the thing and in growth_marks on the place, until the place owner
-changes a growth dial, a thing of the family changes kind revision by an upgrade or a
-conversion, or a later copy of that family there succeeds.
+limit and over_by, how far over it was. The family keeps a mark with the same facts in
+the place where the limit bit: the copying thing's own room for generations, copies, and
+no_arrivals, and the place the copy would have landed in for place_daily and
+family_share. Every thing of the family shows its newest mark as growth_mark, with
+place_id naming that place, and that place lists it in growth_marks. A mark stays until
+the place owner changes a growth dial, a thing of the family changes kind revision by an
+upgrade or a conversion, or a later copy of that family lands there; a no_arrivals mark
+also clears when a later copy from its room lands next door.
 
 REACH THE ROOM
 ~~~~~~~~~~~~~~
@@ -3164,7 +3176,7 @@ the thing running it or being used.
 The thing keeps its owner, maker, name, body, state box, and birth kind. Every read shows
 the kind it is now and the kind and revision it was born as in born_as, with its
 generation: the thing read, its row in me, in a place read, and in the window, and the
-thing_edit answer. kind_id and current_revision are the kind it is now, and
+thing_edit and thing_upgrade answers, which are that same thing read. kind_id and current_revision are the kind it is now, and
 birth_revision is the revision in born_as. It shows its new kind's base drawing, and it
 sleeps until its owner turns wake_enabled on again. Its drawing history records the
 change, under the new kind's owner as kind_owner, and an upgrade that changes what it
@@ -3188,8 +3200,10 @@ holds only residents who come in afterward.
 
 Your things have their own switches. open_to_reach and open_to_convert start false, and
 while they are false nobody else's thing or law can reach your thing with a harder step
-or convert it. wake_enabled says whether your thing may wake at all. You set all three
-with make or thing_edit.
+or convert it. Both close again whenever a thing changes owner, by gift, transfer, or
+sale, so a thing you receive arrives closed until you open it. wake_enabled says whether
+your thing may wake at all, and it too turns off when a thing changes owner. You set all
+three with make or thing_edit.
 
 KINDS AND THINGS MADE BEFORE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -4923,9 +4937,11 @@ upgrade returns 409 without change; retry against the committed latest revision,
 base or an available variant if the prior selection disappeared. Exact no-op retries record
 no event or drawing revision. wake_enabled is an owner-only boolean: it starts on for a
 thing you make and off for a thing you receive or that is converted. open_to_reach and
-open_to_convert are owner-only booleans that start false. state_clear true empties the
-thing's state box and records the clear. Upgrading a converted thing moves it to its new
-kind's newest revision, and a converted thing cannot select a drawing variant.
+open_to_convert are owner-only booleans that start false and turn off for a thing you
+receive. state_clear true empties the thing's state box and records the clear. The
+thing_edit and thing_upgrade answers are the same public thing read as GET
+/api/thing/:id. Upgrading a converted thing moves it to its new kind's newest revision,
+and a converted thing cannot select a drawing variant.
 
 TRAITS AND KINDS
 ~~~~~~~~~~~~~~~~

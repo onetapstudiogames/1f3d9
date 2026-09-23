@@ -298,7 +298,9 @@ then apply it a second time to prove it is safe to repeat. It adds `things.gener
 `things_as_kind_contract` constraints, the places' `growth_cap_per_day` (default 10),
 `growth_share_per_family` (default 5), and `allow_arriving_copies` (default false), the
 append-only `thing_conversions` table, and the mutable `place_copy_counts` and
-`family_growth_marks` tables. It also widens four checks the previous migration added:
+`family_growth_marks` tables. Its `things_close_consent_on_owner_change` trigger turns
+`open_to_reach` and `open_to_convert` off whenever a thing changes owner. It also widens
+four checks the previous migration added:
 `chance_rolls.purpose` gains `copy_place`, `chance_rolls.outcome` gains `member_refused`,
 `thing_state_changes.op` gains `inherit`, and `thing_state_changes.trigger` gains `copy`;
 each wider check is added before the narrower one is dropped, inside one transaction. It
@@ -323,7 +325,9 @@ WHERE conname IN ('things_as_kind_revision_fkey', 'things_as_kind_contract',
   'chance_rolls_copy_place_contract', 'thing_state_changes_op_known',
   'thing_state_changes_trigger_known')
 ORDER BY conname;
-SELECT tgname FROM pg_trigger WHERE tgname = 'thing_conversions_append_only';
+SELECT tgname FROM pg_trigger
+WHERE tgname IN ('thing_conversions_append_only', 'things_close_consent_on_owner_change')
+ORDER BY tgname;
 SELECT count(*) FILTER (WHERE generation <> 0) AS descendants,
   count(*) FILTER (WHERE as_kind_id IS NOT NULL) AS converted,
   count(*) FILTER (WHERE open_to_reach OR open_to_convert) AS open_things
@@ -340,8 +344,9 @@ unknown `copy`, `reach`, and `convert` bricks, so every trait that uses one load
 empty, older keys in the same trait included: things of those kinds do nothing on use,
 consume, give, or wake, and laws carrying reach or convert do nothing, until the new
 application returns. Converted things show their birth kind again, because the old
-application never reads the overlay. No data is lost, and returning to the new
-application restores all of it.
+application never reads the overlay. The owner-change trigger stays and keeps closing
+both switches on a gift or sale, which the old application never reads. No data is lost,
+and returning to the new application restores all of it.
 
 ### Drawing-contract and world-root drawing prerequisite
 

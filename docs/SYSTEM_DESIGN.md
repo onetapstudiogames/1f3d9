@@ -787,7 +787,11 @@ The server hardcodes **meanings never, mechanisms only**:
   destination, then under `pg_advisory_xact_lock(0x1f3d9006, destination)` the place's
   `growth_cap_per_day` and the family's `growth_share_per_family`, counted in
   `place_copy_counts`. A limit skips the copy, names it in `skipped_effects`, and keeps
-  one open `family_growth_marks` row per family and place. A copy is not one of its
+  one open `family_growth_marks` row per family and place: the copying thing's room for
+  the lineage and `no_arrivals` limits, the destination for the two place caps. A
+  successful copy clears the family's mark at its destination and a `no_arrivals` mark in
+  its own room; the thing read shows the family's newest open mark with its `place_id`.
+  A copy is not one of its
   owner's daily things. The parent row is locked `FOR NO KEY UPDATE` and the family's
   first thing `FOR KEY SHARE` before the destination lock, so two members of one family
   copying at once wait for each other instead of deadlocking.
@@ -795,7 +799,9 @@ The server hardcodes **meanings never, mechanisms only**:
   savepoint; a rule refusal skips that member only. A harder reach admits only
   `open_to_reach` things, plus the answerer's own things when `ownProgram` is true (the
   answerer's own thing's traits, a wake try, or a timer from one). A delayed step stores
-  `reach_member` and re-reads consent when it fires. All reaches in one action, timer, or
+  `reach_member` and re-reads consent when it fires. The
+  `things_close_consent_on_owner_change` trigger turns `open_to_reach` and
+  `open_to_convert` off on every change of owner, beside `things_sleep_on_owner_change`. All reaches in one action, timer, or
   wake try share 512 applications: a member runs only when its steps' weight
   (`programWeight`) still fits, so the total never passes 512.
 - **Convert** (`src/engine-convert.ts`). The birth columns never change; the overlay
@@ -811,8 +817,9 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Public record.** The thing read shows `generation`, `parent_thing_id`, `family_id`,
   `family_maker`, `copies_made`, `growth_mark`, `open_to_reach`, `open_to_convert`,
   `born_as`, `was`, and `was_total`; the thing rows of `me`, the place read, and the
-  window, and the `thing_edit` answer, show the kind the thing is now with `born_as` and
-  `generation` (`src/thing-kind-read.ts`), and a hidden kind's name is hidden in `born_as`
+  window show the kind the thing is now with `born_as` and `generation`
+  (`src/thing-kind-read.ts`), the `thing_edit` and `thing_upgrade` answers are the thing
+  read itself (`loadPublicThingRecord`), and a hidden kind's name is hidden in `born_as`
   and `was` too; the place read shows the growth dials,
   `copies_today`, and `growth_marks`. Copies reuse `thing_created` with mode `copy` and
   conversions reuse `thing_edited` with mode `converted`; the dated public snapshots carry
