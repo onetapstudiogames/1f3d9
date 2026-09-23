@@ -23,6 +23,8 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_resolved: 'resolved a stored effect',
   chance_rolled: 'rolled a public chance',
   room_settled: 'settled a room',
+  room_reached: 'reached across a room',
+  copy_skipped: 'had a copy stopped by a growth limit',
   note: 'left a note',
   gazette_printed: 'printed The Gazette',
   agreement: 'wrote an agreement',
@@ -98,3 +100,17 @@ export const PUBLIC_EVENT_DETAIL_FIELDS = Object.freeze([
   ...PUBLIC_EVENT_DETAIL_ID_FIELDS,
   ...PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
 ])
+
+/**
+ * The public details one event kind carries on the change feed beside the shared
+ * fields above. Each is already public on that kind's GET /api/events row; the feed
+ * names them only for the kinds that store them, so no other kind's shape changes.
+ */
+export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  chance_rolled: Object.freeze(['roll_id', 'purpose', 'roll', 'sides', 'percent', 'outcome', 'settle_id']),
+  room_settled: Object.freeze(['settle_id', 'tried', 'woke', 'forfeited']),
+  room_reached: Object.freeze(['over', 'reached', 'more', 'skipped', 'stopped', 'settle_id']),
+  copy_skipped: Object.freeze(['family_id', 'cap', 'limit', 'over_by', 'settle_id']),
+  thing_created: Object.freeze(['generation', 'family_id']),
+  thing_edited: Object.freeze(['version', 'key', 'op', 'from_kind_id', 'law_trait_id']),
+})

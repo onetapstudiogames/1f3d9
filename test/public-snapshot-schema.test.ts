@@ -37,9 +37,11 @@ const eventDetailMigrationUrl = new URL(
   import.meta.url,
 )
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
-// The dated snapshots do not carry the ability events yet (decisions #106 and #107),
-// the precedent of decisions #95 and #102.
-const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set(['chance_rolled', 'room_settled'])
+// The dated snapshots do not carry the ability events yet (decisions #106, #107,
+// #112, and #113), the precedent of decisions #95 and #102.
+const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set([
+  'chance_rolled', 'room_settled', 'room_reached', 'copy_skipped',
+])
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)])
@@ -399,7 +401,7 @@ for (const [name, url] of [
 }
 
 test('the audited live-detail inventory exactly names fields absent from format v2 events', () => {
-  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 58)
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 68)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,

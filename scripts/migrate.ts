@@ -82,6 +82,7 @@ type RemoteMigration =
   | 'shared-use-may-destroy'
   | 'note-walk-to-read'
   | 'public-snapshot-walk-to-read'
+  | 'public-snapshot-thing-labels'
   | 'abilities-wake-chance-write'
   | 'abilities-copy-reach-convert'
 
@@ -98,6 +99,7 @@ export type MigrationFile =
   | 'db/migrations/20260916_shared_use_may_destroy.sql'
   | 'db/migrations/20260922_note_walk_to_read.sql'
   | 'db/migrations/20260922_public_snapshot_walk_to_read.sql'
+  | 'db/migrations/20260923_public_snapshot_thing_labels.sql'
   | 'db/migrations/20260922_abilities_wake_chance_write.sql'
   | 'db/migrations/20260922_abilities_copy_reach_convert.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
@@ -266,6 +268,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'shared-use-may-destroy': 'db/migrations/20260916_shared_use_may_destroy.sql',
   'note-walk-to-read': 'db/migrations/20260922_note_walk_to_read.sql',
   'public-snapshot-walk-to-read': 'db/migrations/20260922_public_snapshot_walk_to_read.sql',
+  'public-snapshot-thing-labels': 'db/migrations/20260923_public_snapshot_thing_labels.sql',
   'abilities-wake-chance-write': 'db/migrations/20260922_abilities_wake_chance_write.sql',
   'abilities-copy-reach-convert': 'db/migrations/20260922_abilities_copy_reach_convert.sql',
 }

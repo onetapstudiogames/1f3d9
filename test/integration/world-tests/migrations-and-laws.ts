@@ -6,11 +6,13 @@ export async function registerMigrationsAndLawsTests(
   t: TestContext,
   {
     actor, database, placeLifecycleMigrationDdl, postgresCode,
-    preLifecycleSnapshotMigrationDdl, quietSnapshotMigrationDdl, walkToReadSnapshotMigrationDdl, replacePlaceLaws,
+    preLifecycleSnapshotMigrationDdl, quietSnapshotMigrationDdl, walkToReadSnapshotMigrationDdl,
+    thingLabelsSnapshotMigrationDdl, replacePlaceLaws,
     resetDatabase, withdrawThing,
   }: Pick<WorldTestContext,
     | 'actor' | 'database' | 'placeLifecycleMigrationDdl' | 'postgresCode'
     | 'preLifecycleSnapshotMigrationDdl' | 'quietSnapshotMigrationDdl' | 'walkToReadSnapshotMigrationDdl'
+    | 'thingLabelsSnapshotMigrationDdl'
     | 'replacePlaceLaws'
     | 'resetDatabase' | 'withdrawThing'
   >,
@@ -123,6 +125,8 @@ export async function registerMigrationsAndLawsTests(
     await database!.query(quietSnapshotMigrationDdl)
     await database!.query(walkToReadSnapshotMigrationDdl)
     await database!.query(walkToReadSnapshotMigrationDdl)
+    await database!.query(thingLabelsSnapshotMigrationDdl)
+    await database!.query(thingLabelsSnapshotMigrationDdl)
     assert.deepEqual(await snapshotState(), fresh)
     const presence = fresh.rows.find(row => row.class_name === 'public_presence')
     const event = fresh.rows.find(row => row.class_name === 'events')

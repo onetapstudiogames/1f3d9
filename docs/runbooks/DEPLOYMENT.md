@@ -223,6 +223,31 @@ The rollback is to reapply `npm run migrate:production:public-snapshot-quiet`, w
 restores the earlier view without the mark. The index can stay; the earlier
 application never reads it.
 
+### Public snapshot thing labels prerequisite
+
+Before merging the change that states the dated snapshots carry each thing's current
+labels, and only after the public-snapshot-walk-to-read migration above, apply
+`npm run migrate:preview:public-snapshot-thing-labels` to the isolated Preview database,
+then apply it a second time to prove it is safe to repeat. It replaces only
+`city_snapshot.public_records_without_drawing_contract` with the reviewed view plus
+`labels` and `labels_total` on each exported thing, in the shape the public thing read
+gives them. It adds no table, column, or index. Take the required Production snapshot,
+apply `npm run migrate:production:public-snapshot-thing-labels`, and record the check
+below before merging. Every exported thing must carry both fields, and the labelled count
+must equal the active, unhidden things that hold at least one current label. The rollout
+does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT count(*) AS things,
+  count(*) FILTER (WHERE payload ? 'labels' AND payload ? 'labels_total') AS carrying,
+  count(*) FILTER (WHERE (payload->>'labels_total')::int > 0) AS labelled
+FROM city_snapshot.public_records_v2
+WHERE class_name = 'things' AND payload->>'status' = 'exported';
+```
+
+The rollback is to reapply `npm run migrate:production:public-snapshot-walk-to-read`,
+which restores the earlier view without the labels.
+
 ### Abilities (wake, chance, write) prerequisite
 
 Before merging the application that wakes things, rolls chance, and writes state boxes

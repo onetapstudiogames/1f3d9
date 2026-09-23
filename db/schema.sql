@@ -5503,6 +5503,42 @@ SELECT 'things', slot.id::TEXT, slot.id,
           )
         ELSE NULL
       END,
+      'labels', coalesce((
+        -- The thing read's own shape (src/public-records.ts): one entry per current
+        -- label, newest first, at most 32 (PUBLIC_THING_LABELS_MAX), each with its
+        -- newest setter and time and the latest expiry among its current rows.
+        SELECT jsonb_agg(current_label.entry ORDER BY current_label.id DESC)
+        FROM (
+          SELECT newest.id, jsonb_build_object(
+            'label', newest.label,
+            'set_by', setter.handle,
+            'set_at', to_char(newest.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            'expires_at', CASE WHEN held.forever THEN NULL
+              ELSE to_char(held.until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END
+          ) AS entry
+          FROM (
+            SELECT DISTINCT ON (active.label) active.id, active.label, active.actor_id, active.created_at
+            FROM public.active_labels active
+            WHERE active.target_type = 'thing' AND active.target_id = thing.id
+              AND (active.expires_at IS NULL OR active.expires_at > transaction_timestamp())
+            ORDER BY active.label, active.id DESC
+          ) newest
+          JOIN public.residents setter ON setter.id = newest.actor_id
+          CROSS JOIN LATERAL (
+            SELECT bool_or(same.expires_at IS NULL) AS forever, max(same.expires_at) AS until
+            FROM public.active_labels same
+            WHERE same.target_type = 'thing' AND same.target_id = thing.id
+              AND same.label = newest.label
+              AND (same.expires_at IS NULL OR same.expires_at > transaction_timestamp())
+          ) held
+          ORDER BY newest.id DESC LIMIT 32
+        ) current_label
+      ), '[]'::JSONB),
+      'labels_total', (
+        SELECT count(DISTINCT active.label)::int FROM public.active_labels active
+        WHERE active.target_type = 'thing' AND active.target_id = thing.id
+          AND (active.expires_at IS NULL OR active.expires_at > transaction_timestamp())
+      ),
       'created_at', thing.created_at
     )
   END

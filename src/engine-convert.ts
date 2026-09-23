@@ -178,7 +178,8 @@ export async function convertThing(
       'mode', 'converted',
       'source_thing_id', ${conversion.byThingId}::integer,
       'law_trait_id', ${conversion.byLawTraitId}::integer,
-      'kind_id', ${conversion.into.kindId}::integer
+      'kind_id', ${conversion.into.kindId}::integer,
+      'from_kind_id', ${Number(target.kind_id_now)}::integer
     )
     FROM changed CROSS JOIN remembered JOIN residents resident ON resident.id = ${context.actorId}
   `

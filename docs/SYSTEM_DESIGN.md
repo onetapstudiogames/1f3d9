@@ -719,7 +719,9 @@ The server hardcodes **meanings never, mechanisms only**:
   latest expiry among its current rows or null while any never expires), newest first and
   at most 32 (`PUBLIC_THING_LABELS_MAX`), beside `labels_total`, the exact count of
   current labels. Expired labels never show. The window's thing view names the listed
-  labels and how many more there are.
+  labels and how many more there are. Every exported thing in the dated public snapshots
+  carries the same `labels` and `labels_total`, added to the base snapshot view by the
+  `public-snapshot-thing-labels` migration; resident labels appear in no snapshot class.
 - The world has no owner and accepts no laws. Law ancestry stops at the owner boundary,
   so neither world laws nor world permissions can govern child continents.
 - There is no universal physics and no way to legislate the whole world. Residents
@@ -779,7 +781,11 @@ The server hardcodes **meanings never, mechanisms only**:
   `tried`, `woke`, `forfeited`), and omits `settle` when the room had nothing to settle
   or had settled in the last 10 seconds; every subplace, map, and
   continent row carries `rough_room` too; the thing read shows
-  `wake_enabled`, `wake`, and `state`. The dated public snapshots do not carry the new
+  `wake_enabled`, `wake`, and `state`. `GET /api/changes` carries a roll's `roll_id`,
+  `purpose`, `roll`, `sides`, `percent`, `outcome`, and `settle_id`, a settle's
+  `settle_id`, `tried`, `woke`, and `forfeited`, and a write's `key`, `op`, and `version`
+  (`PUBLIC_EVENT_KIND_DETAIL_FIELDS` in `src/public-events.ts`); the day and its
+  commitment stay in `physics`. The dated public snapshots do not carry the new
   tables, columns, or event kinds yet.
 
 ## Abilities: copy, reach, and convert (decisions #111 to #115)
@@ -834,10 +840,18 @@ The server hardcodes **meanings never, mechanisms only**:
   (`src/thing-kind-read.ts`), the `thing_edit` and `thing_upgrade` answers are the thing
   read itself (`loadPublicThingRecord`), and a hidden kind's name is hidden in `born_as`
   and `was` too; the place read shows the growth dials,
-  `copies_today`, and `growth_marks`. Copies reuse `thing_created` with mode `copy` and
-  conversions reuse `thing_edited` with mode `converted`; the dated public snapshots carry
-  those events but not the new tables or columns yet, so a converted thing appears there as
-  its birth kind.
+  `copies_today`, and `growth_marks`. Copies reuse `thing_created` with mode `copy`, now
+  also storing `generation` and `family_id`, and conversions reuse `thing_edited` with mode
+  `converted`, now also storing `from_kind_id`. Two kinds are their own: `copy_skipped`,
+  written with the family's growth mark by the thing's owner (thing, source trait, the
+  place where the limit bit, family, `cap`, `limit`, `over_by`), and `room_reached`, one
+  per reach by the answering resident (the origin thing or null for a law, source trait,
+  place, `over`, `reached`, `more`, `skipped` refused members, and `stopped`). Neither
+  replaces the action's own event (decision #117), and neither names a resident member,
+  so resident labels stay private. `GET /api/changes` carries all of these fields for
+  those kinds only. The dated public snapshots carry the copy and conversion events,
+  a copy's `generation` included, but not `copy_skipped`, `room_reached`, or the new
+  tables or columns yet, so a converted thing appears there as its birth kind.
 
 ## Bedrock rights (frozen at creation, owned by nobody, above every law)
 
@@ -1708,6 +1722,10 @@ caller-address hash used by the search rate guard above. A singleton
 so a marker becomes visible in commit order and rollback publishes nothing. This is not
 `MAX(events.id)`, whose sequence values can be allocated in a different order from
 commits. Existing events are backfilled into the log by the Wave 5 migration.
+Each notice's `detail` keeps only scalar values of the shared allowlist
+(`PUBLIC_EVENT_DETAIL_FIELDS`) plus, for the ability kinds, the fields
+`PUBLIC_EVENT_KIND_DETAIL_FIELDS` names for that kind; both lists are applied in the SQL
+and again in `publicChange`, so every other kind keeps exactly its earlier shape.
 
 `GET /api/replay?span=1h|2h|6h|24h` uses plain `sql.query` reads inside
 `readAtStablePublicChangeCheckpoint`, then caches by span plus checkpoint. Its recorded

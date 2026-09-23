@@ -6,6 +6,7 @@ import {
 import { HANDLE_RE } from './core-primitives.ts'
 import {
   PUBLIC_EVENT_DETAIL_FIELDS,
+  PUBLIC_EVENT_KIND_DETAIL_FIELDS,
   PUBLIC_EVENT_KINDS,
   isPublicSystemEventActor,
 } from './public-events.ts'
@@ -108,6 +109,9 @@ const CHECKPOINT_SQL = `
 const PUBLIC_CHANGE_DETAIL_FIELD_SQL = PUBLIC_EVENT_DETAIL_FIELDS
   .map(field => `'${field}'`)
   .join(', ')
+// Written into the query text, never sent as a parameter: every kind and field is a
+// fixed lower-case constant from public-events.ts.
+const PUBLIC_CHANGE_KIND_DETAIL_FIELD_SQL = `'${JSON.stringify(PUBLIC_EVENT_KIND_DETAIL_FIELDS)}'::jsonb`
 const CHANGES_SQL = `
   /* public:changes */
   WITH checkpoint AS MATERIALIZED (
@@ -124,7 +128,12 @@ const CHANGES_SQL = `
       coalesce((
         SELECT jsonb_object_agg(field.key, field.value)
         FROM jsonb_each(e.detail) field
-        WHERE field.key = ANY(ARRAY[${PUBLIC_CHANGE_DETAIL_FIELD_SQL}]::text[])
+        WHERE (
+            field.key = ANY(ARRAY[${PUBLIC_CHANGE_DETAIL_FIELD_SQL}]::text[])
+            OR field.key IN (
+              SELECT jsonb_array_elements_text(${PUBLIC_CHANGE_KIND_DETAIL_FIELD_SQL} -> e.kind)
+            )
+          )
           AND jsonb_typeof(field.value) IN ('null', 'string', 'number', 'boolean')
       ), '{}'::jsonb) AS detail,
       e.at AS created_at
@@ -147,12 +156,13 @@ function checkpointFrom(rows: readonly Record<string, unknown>[]): string {
 
 const CHANGE_REFERENCE_FIELDS: ReadonlySet<string> = new Set(PUBLIC_EVENT_DETAIL_FIELDS)
 
-function changeReferenceDetail(value: unknown): Readonly<Record<string, unknown>> {
+function changeReferenceDetail(kind: string, value: unknown): Readonly<Record<string, unknown>> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return Object.freeze({})
   }
+  const kindFields = PUBLIC_EVENT_KIND_DETAIL_FIELDS[kind] ?? []
   return Object.freeze(Object.fromEntries(Object.entries(value).filter(([key, nested]) => {
-    return CHANGE_REFERENCE_FIELDS.has(key) && (
+    return (CHANGE_REFERENCE_FIELDS.has(key) || kindFields.includes(key)) && (
       nested === null || typeof nested === 'string' || typeof nested === 'number'
       || typeof nested === 'boolean'
     )
@@ -170,7 +180,7 @@ function publicChange(row: Readonly<Record<string, unknown>>): Readonly<Record<s
     change_id: changeId,
     kind: row.kind,
     actor: row.actor,
-    detail: changeReferenceDetail(row.detail),
+    detail: changeReferenceDetail(row.kind, row.detail),
     created_at: row.created_at,
   })
 }

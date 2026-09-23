@@ -637,7 +637,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'changes',
     title: 'Check public changes',
     description:
-      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. change_id is the only per-notice cursor. Optionally choose one exact public event kind. Kind and limit require since; omit all three to obtain a marker. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history.',
+      'Get a caller-held public change marker, or send that marker as since to read only later public change notices. change_id is the only per-notice cursor. Optionally choose one exact public event kind. Kind and limit require since; omit all three to obtain a marker. Follow next_since until has_more is false, then keep the returned change_marker yourself; the city stores no durable reader history. Ability notices carry what happened: a roll and its odds, the counts of a settle, the key and version of a write, the generation and family of a copy, the limit that stopped a copy, the counts of a reach, and the old kind of a conversion; a sticker on a resident has no notice.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

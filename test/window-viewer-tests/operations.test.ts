@@ -194,7 +194,7 @@ export function registerWindowOperationsTests(): void {
       'kind_invented', 'kind_revised', 'trait_coined', 'thing_created',
       'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded', 'thing_withdrawn',
       'laws_changed', 'action', 'effect_scheduled', 'effect_resolved', 'chance_rolled',
-      'room_settled', 'note', 'gazette_printed',
+      'room_settled', 'room_reached', 'copy_skipped', 'note', 'gazette_printed',
       'agreement', 'agreement_accession', 'agreement_sign', 'transfer',
       'transfer_offer', 'sale', 'transfer_cancel', 'world_listed', 'world_sale',
       'world_cancel', 'payment_repair', 'flag', 'moderation',
