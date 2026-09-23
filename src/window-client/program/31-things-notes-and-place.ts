@@ -264,6 +264,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     frontMatterEmpty: 'The world has no owner, so nothing can be chosen as front matter here.',
   }
 
+  const ROUGH_ROOM_LINE =
+    'Rough room: its owner lets things that wake here hold or send home a resident who walks in or speaks. Going home is never blocked.'
+
   function placeOrientationWords(place) {
     return place && place.owner === null && place.parent_id === null &&
       place.name === WORLD_ROOT_NAME
@@ -309,6 +312,10 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(nodes.placeDescription,
         description.record.description ? 'place-description-text' : 'empty-row',
         description.record.description || words.descriptionEmpty)
+      // Decision #109: a rough room says so before anyone walks in.
+      if (description.record.rough_room === true) {
+        nodes.placeDescription?.append(element('p', 'place-rough-room', ROUGH_ROOM_LINE))
+      }
     }
     if (nodes.placePurpose) {
       nodes.placePurpose.replaceChildren(element(

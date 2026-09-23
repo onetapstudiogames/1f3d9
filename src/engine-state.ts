@@ -1,5 +1,5 @@
 /**
- * The state box (decision #109): a small typed box of values on a thing, written
+ * The state box (decision #108): a small typed box of values on a thing, written
  * only by that thing's own kind traits and never touching its name or body.
  */
 import { EngineError, type TaggedSql } from './engine.ts'

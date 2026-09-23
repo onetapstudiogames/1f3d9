@@ -1,5 +1,5 @@
 /**
- * Lazy settle (decisions #106 and #107): nothing runs while nobody is there. When
+ * Lazy settle (decisions #105 and #106): nothing runs while nobody is there. When
  * a resident arrives, speaks, acts, or reads `me` in a room, the room first
  * resolves its due timers, then runs the wake tries its things are owed.
  */

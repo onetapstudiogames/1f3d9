@@ -1,6 +1,6 @@
 /**
  * The one place that says what a waking thing may do to the resident who
- * arrived or spoke (decisions #107 and #110). Coining refuses what no room can
+ * arrived or spoke (decisions #105 and #109). Coining refuses what no room can
  * allow; the room decides the rest at the moment a step runs.
  */
 import { EngineError, type TaggedSql } from './engine.ts'

@@ -7,14 +7,14 @@ const omittedFieldsByKind = {
   trait_coined: ['mechanical', 'name'],
   thing_created: ['birth_revision', 'name'],
   thing_crafted: ['birth_revision', 'ingredient_ids'],
-  // A state-box write is a thing_edited event with mode state (decision #109).
+  // A state-box write is a thing_edited event with mode state (decision #108).
   thing_edited: ['key', 'op', 'trimmed', 'version'],
   thing_upgraded: ['birth_revision', 'current_revision'],
   thing_withdrawn: ['output_thing_id', 'reason'],
   laws_changed: ['traits'],
   action: ['error', 'source_place_id', 'trait'],
   effect_resolved: ['error'],
-  // The dated snapshots do not carry chance rolls yet (decision #108).
+  // The dated snapshots do not carry chance rolls yet (decision #107).
   chance_rolled: [
     'commitment', 'day', 'outcome', 'percent', 'purpose', 'roll', 'roll_id', 'settle_id', 'sides',
   ],

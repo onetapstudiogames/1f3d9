@@ -37,7 +37,7 @@ const eventDetailMigrationUrl = new URL(
   import.meta.url,
 )
 const schemaUrl = new URL('../db/schema.sql', import.meta.url)
-// The dated snapshots do not carry the ability events yet (decisions #106 and #108),
+// The dated snapshots do not carry the ability events yet (decisions #106 and #107),
 // the precedent of decisions #95 and #102.
 const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set(['chance_rolled', 'room_settled'])
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')

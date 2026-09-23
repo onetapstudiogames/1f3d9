@@ -643,8 +643,11 @@ The server hardcodes **meanings never, mechanisms only**:
   nobody climbs bare-handed, someone invents a rope whose *use* moves you up.
 - **Effect bricks** — the only things the server knows how to execute: destroy a thing,
   move something, change an owner, stick a word (label) on someone or something, block
-  a basic action for a limited time, wait-then-do (repeatable, on a schedule), and
-  check-for-a-label as a condition. Traits compose these. A successful destroy emits the
+  a basic action for a limited time, wait-then-do (repeatable, on a schedule),
+  check-for-a-label as a condition, roll a public chance, and write a thing's own state
+  box. A trait may also carry one wake key that lets a thing act when someone arrives,
+  speaks, or its clock comes due (decisions #104 to #109). Only a numbered decision adds
+  a brick. Traits compose these. A successful destroy emits the
   typed public `thing_withdrawn` event (`reason: "destroyed"`, actor the resident who ran
   the action) in place of a duplicate generic action notice, and counts once toward that
   use's `effects_applied`.
@@ -691,7 +694,8 @@ The server hardcodes **meanings never, mechanisms only**:
   crosses another owner's land to reach the original owner's land beyond it.
   Building, thing, and note permissions stay per-place; they do not inherit.
 - A move runs the laws of the place being left; arrival alone does not run the
-  destination's laws.
+  destination's laws. Arriving may wake things there under their owners' and the room
+  owner's wake switches; that is a wake try, not a law (decision #105).
 - During one action, the named thing's kind traits run in kind order, then laws run
   from the current place outward through its same-owner ancestors, in each place's
   law order. If an immediate effect destroys a thing, a later immediate effect in
@@ -722,8 +726,43 @@ The server hardcodes **meanings never, mechanisms only**:
   hardcoded generation ceiling. Fire spreads and then dies. "Forever" is not in the
   vocabulary.
 - **The world resolves on active triggers.** No background simulation: timers are stored.
-  Entering, interacting, or checking `me` wakes due timers.
+  Entering, interacting, or checking `me` wakes due timers, then settles the wake tries
+  the room's things were owed (decision #106).
   Every place read is passive even when a resident credential is attached.
+
+## Abilities: wake, chance, and write (decisions #104 to #110)
+
+- **Grammar.** `EFFECT_BRICKS` adds `chance` and `write`; a recipe object may carry one
+  `wake` key, `{on, every_seconds, then}`, beside the basic-action keys. Write and the
+  wake key work only in a kind's traits and `laws` refuses them; a kind revision lists
+  at most one wake trait. Each action key and the wake program weigh at most 512 effect
+  applications (`src/physics.ts`).
+- **Chance** (`src/engine-chance.ts`). One 32-byte secret per UTC day in `chance_days`,
+  made a day ahead in its own short transaction; the SHA-256 commitment is public at
+  once and the secret after the day ends. A roll takes the next `chance_rolls_id_seq`
+  value and is `HMAC-SHA256(secret, "1f3d9-roll|v1|<roll_id>|<purpose>|<place_id>|<thing or 0>|<trait or 0>")`,
+  first four bytes big-endian, mod sides, plus one. The `chance_rolls` row and the
+  `chance_rolled` event are written before the branch runs; a run that then refuses
+  records every roll it drew with outcome `action_failed`. `GET /api/physics?roll_id=N`
+  reads one roll.
+- **Write** (`src/engine-state.ts`). `things.state` and `things.state_version` hold a
+  box of at most 16 keys and 4,096 bytes; `append` drops a list's oldest lines to fit.
+  Every write appends `thing_state_changes` and a `thing_edited` event with mode
+  `state`; the owner's `thing_edit` `state_clear` is the only hand-made change.
+- **Wake and settle** (`src/engine-settle.ts`, `src/wake-guard.ts`). Every request-path
+  timer pass became `settleRoom`: day secrets, due timers as before, then a claim under
+  a per-room advisory lock that writes `wake_settles` and advances `thing_wake_state`
+  before anything runs, then each try in its own transaction, recorded in `wake_tries`,
+  then one `room_settled` event. A thing needs its kind's wake key, `wake_enabled`, and
+  the room owner's leave (`wake_visitors`, `wake_pins`, `wake_block_thing_ids`,
+  `wake_block_resident_ids`, `wake_random_cap`). A wake try may block or send home the
+  resident who arrived only where `rough_room` is true; going home is never blockable.
+  The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
+  of owner.
+- **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
+  read shows the dials, `rough_room`, and `last_settle`; the thing read shows
+  `wake_enabled`, `wake`, and `state`. The dated public snapshots do not carry the new
+  tables, columns, or event kinds yet.
 
 ## Bedrock rights (frozen at creation, owned by nobody, above every law)
 

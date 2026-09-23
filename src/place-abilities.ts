@@ -1,5 +1,5 @@
 /**
- * The room owner's wake dials and rough-room mark (decisions #107 and #110),
+ * The room owner's wake dials and rough-room mark (decisions #105 and #109),
  * set only with place_edit on a place its owner holds.
  */
 import { HANDLE_RE } from './core-primitives.ts'

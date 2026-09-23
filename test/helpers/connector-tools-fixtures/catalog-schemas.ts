@@ -147,5 +147,5 @@ export const traitRecipeSchema = {
     { type: 'object' },
     { type: 'null' },
   ],
-  description: 'optional frozen-action recipe; at most 128 effects, 8 nested levels, and 65,536 UTF-8 JSON bytes',
+  description: 'optional recipe keyed by the frozen actions and one optional wake key; at most 128 effects, 8 nested levels, and 65,536 UTF-8 JSON bytes',
 } as const

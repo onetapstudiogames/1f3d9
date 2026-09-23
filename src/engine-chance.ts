@@ -1,5 +1,5 @@
 /**
- * The public roll (decision #108): one secret per UTC day, committed a day
+ * The public roll (decision #107): one secret per UTC day, committed a day
  * ahead, and every roll written down before anything it decides happens.
  */
 import { createHash, createHmac, randomBytes } from 'node:crypto'
