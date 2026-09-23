@@ -15,7 +15,7 @@ import {
   type SkippedEffect,
 } from './engine-effects.ts'
 import { MAX_REACH_APPLICATIONS_PER_ACTION } from './engine-limits.ts'
-import { reachIsHard, type ReachEffect } from './physics.ts'
+import { programWeight, reachIsHard, type ReachEffect } from './physics.ts'
 
 export const REACH_MEMBER_REFUSED = 'this reach member refused the step' as const
 
@@ -98,6 +98,9 @@ export async function runReach(
   const hard = reachIsHard(effect)
   const { members, total } = await loadMembers(effect, context, hard, db)
   const memberType = effect.over === 'residents' ? 'resident' as const : 'thing' as const
+  // The most applications one member's steps can make; a member runs only when
+  // all of them still fit, so all reaches together never pass the limit.
+  const memberWeight = programWeight(effect.then)
   let applied = 0
   let reached = 0
   let emitted = false
@@ -105,7 +108,7 @@ export async function runReach(
   let skipped: readonly SkippedEffect[] = []
   let stopped: 'action_reach_limit' | null = null
   for (const member of members) {
-    if (log.reachApplications >= MAX_REACH_APPLICATIONS_PER_ACTION) {
+    if (log.reachApplications + memberWeight > MAX_REACH_APPLICATIONS_PER_ACTION) {
       stopped = 'action_reach_limit'
       break
     }
