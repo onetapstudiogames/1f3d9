@@ -106,6 +106,20 @@ async function loadOlderNote(page: Page) {
   return selector
 }
 
+test('reading notice stays inside the closed City facts drop-down until opened', async ({ page, baseURL }) => {
+  const fixture = await installReadingFixture(page, baseURL)
+  violationsByPage.set(page, fixture.networkViolations)
+  await ready(page, '/window/conversations')
+  const facts = page.locator('#city-facts')
+  const notice = facts.locator('#window-reading-notice')
+  await expect(notice, 'reading notice inside City facts compared with one node').toHaveCount(1)
+  await expect(facts, 'City facts compared with closed').not.toHaveAttribute('open', '')
+  await expect(notice, 'reading notice with City facts closed compared with hidden').toBeHidden()
+  await facts.locator('summary').click()
+  await expect(notice, 'reading notice with City facts open compared with visible').toBeVisible()
+  await expect(notice).toContainText('expanded text stays open through refresh.')
+})
+
 test('Conversations keeps the open note and list attached while adding new notes', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL)
   violationsByPage.set(page, fixture.networkViolations)
