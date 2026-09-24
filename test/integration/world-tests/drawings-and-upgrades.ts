@@ -165,6 +165,68 @@ export async function registerDrawingsAndUpgradesTests(
     })
   })
 
+  await t.test('thing upgrade between two undrawn kind revisions records no drawing change', async () => {
+    const roomId = await resetDatabase()
+    const kindId = Number((await database!.query<{ id: number }>(`
+        INSERT INTO kinds (name, owner_id, current_revision)
+        VALUES ('undrawn-upgrade', 1, 2)
+        RETURNING id
+      `)).rows[0]!.id)
+    await database!.query(`
+        INSERT INTO kind_revisions (
+          kind_id, revision, description, traits, recipe,
+          drawing, drawing_state, drawing_description, drawing_variants
+        ) VALUES
+          ($1, 1, 'The original kind is undrawn.', '{}', '[]',
+            NULL, 'undrawn', NULL, '[]'),
+          ($1, 2, 'The revised kind is also undrawn.', '{}', '[]',
+            NULL, 'undrawn', NULL, '[]')
+      `, [kindId])
+    await database!.query(`
+        INSERT INTO things (
+          id, place_id, name, body, owner_id, maker_id,
+          kind_id, birth_revision, current_revision,
+          drawing, drawing_state, drawing_description, drawing_variant_name
+        ) VALUES (2, $1, 'undrawn revision test', '', 1, 1, $2, 1, 1,
+          NULL, 'undrawn', NULL, NULL)
+      `, [roomId, kindId])
+
+    const upgraded = await app.request('/api/thing/2/upgrade', {
+      method: 'POST',
+      headers: bearer(founderSecret),
+    })
+    assert.equal(upgraded.status, 200, await upgraded.clone().text())
+    assert.equal(
+      (await upgraded.json() as { thing: { current_revision: number } }).thing.current_revision,
+      2,
+    )
+
+    const thing = (await database!.query(`
+        SELECT current_revision, drawing, drawing_state, drawing_description,
+          (SELECT count(*)::integer FROM drawing_revisions
+            WHERE target_type = 'thing' AND target_id = 2) AS drawing_revisions,
+          (SELECT count(*)::integer FROM events
+            WHERE kind = 'thing_upgraded' AND (detail->>'thing_id')::integer = 2) AS events
+        FROM things WHERE id = 2
+      `)).rows[0]
+    assert.deepEqual(thing, {
+      current_revision: 2,
+      drawing: null,
+      drawing_state: 'undrawn',
+      drawing_description: null,
+      drawing_revisions: 0,
+      events: 1,
+    })
+
+    const currentDrawing = await app.request('/api/drawing/thing/2')
+    assert.equal(currentDrawing.status, 200, await currentDrawing.clone().text())
+    assert.deepEqual(await currentDrawing.json(), {
+      type: 'thing', id: 2,
+      state: 'undrawn', presentation_state: 'undrawn',
+      description: null, drawing: null, rows: null, source: 'none',
+    })
+  })
+
   await t.test('thing upgrade refuses a busy kind promptly, then adopts the committed latest revision', async () => {
     const roomId = await resetDatabase()
     const completeDrawing = Object.freeze({

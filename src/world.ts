@@ -2489,71 +2489,93 @@ export function mountWorldRoutes(app: Hono): void {
           author_id, author_relation
         )
         SELECT 'thing', changed.id, NULL,
-          CASE
-            WHEN prior.drawing_state = 'refused' THEN prior.drawing_state
-            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'state'
-            ELSE prior.prior_kind_drawing_state
-          END,
-          CASE
-            WHEN prior.drawing_state = 'refused' THEN prior.drawing_description
-            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'description'
-            ELSE prior.prior_kind_drawing_description
-          END,
-          CASE
-            WHEN prior.drawing_state = 'refused' THEN prior.drawing
-            WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->'drawing'
-            ELSE prior.prior_kind_drawing
-          END,
-          CASE
-            WHEN prior.drawing_state = 'refused' THEN 'thing'
-            WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
-            WHEN prior.prior_kind_drawing_state = 'undrawn' THEN 'none'
-            ELSE 'kind_base'
-          END,
-          CASE WHEN prior.drawing_state = 'refused'
-              OR prior.drawing_variant_name IS NOT NULL
-              OR prior.prior_kind_drawing_state <> 'undrawn'
-            THEN prior.kind_id ELSE NULL END,
-          CASE WHEN prior.drawing_state = 'refused'
-              OR prior.drawing_variant_name IS NOT NULL
-              OR prior.prior_kind_drawing_state <> 'undrawn'
-            THEN prior.current_revision ELSE NULL END,
-          CASE WHEN prior.drawing_state = 'refused'
-            THEN NULL ELSE prior.drawing_variant_name END,
-          CASE
-            WHEN changed.drawing_state = 'refused' THEN changed.drawing_state
-            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'state'
-            ELSE prior.target_kind_drawing_state
-          END,
-          CASE
-            WHEN changed.drawing_state = 'refused' THEN changed.drawing_description
-            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'description'
-            ELSE prior.target_kind_drawing_description
-          END,
-          CASE
-            WHEN changed.drawing_state = 'refused' THEN changed.drawing
-            WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->'drawing'
-            ELSE prior.target_kind_drawing
-          END,
-          CASE
-            WHEN changed.drawing_state = 'refused' THEN 'thing'
-            WHEN ${upgradeVariant !== null}::boolean THEN 'kind_variant'
-            WHEN prior.target_kind_drawing_state = 'undrawn' THEN 'none'
-            ELSE 'kind_base'
-          END,
-          CASE WHEN changed.drawing_state = 'refused'
-              OR ${upgradeVariant !== null}::boolean
-              OR prior.target_kind_drawing_state <> 'undrawn'
-            THEN changed.kind_id ELSE NULL END,
-          CASE WHEN changed.drawing_state = 'refused'
-              OR ${upgradeVariant !== null}::boolean
-              OR prior.target_kind_drawing_state <> 'undrawn'
-            THEN changed.current_revision ELSE NULL END,
-          CASE WHEN changed.drawing_state = 'refused'
-            THEN NULL ELSE changed.drawing_variant_name END,
+          presentation.prior_state, presentation.prior_description,
+          presentation.prior_drawing, presentation.prior_source,
+          presentation.prior_kind_id, presentation.prior_kind_revision,
+          presentation.prior_variant_name,
+          presentation.current_state, presentation.current_description,
+          presentation.current_drawing, presentation.current_source,
+          presentation.current_kind_id, presentation.current_kind_revision,
+          presentation.current_variant_name,
           ${resident.id}, 'owner'
         FROM changed
         JOIN upgradeable prior ON prior.id = changed.id
+        CROSS JOIN LATERAL (
+          SELECT
+            CASE
+              WHEN prior.drawing_state = 'refused' THEN prior.drawing_state
+              WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'state'
+              ELSE prior.prior_kind_drawing_state
+            END AS prior_state,
+            CASE
+              WHEN prior.drawing_state = 'refused' THEN prior.drawing_description
+              WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->>'description'
+              ELSE prior.prior_kind_drawing_description
+            END AS prior_description,
+            CASE
+              WHEN prior.drawing_state = 'refused' THEN prior.drawing
+              WHEN prior.drawing_variant_name IS NOT NULL THEN prior.prior_kind_variant->'drawing'
+              ELSE prior.prior_kind_drawing
+            END AS prior_drawing,
+            CASE
+              WHEN prior.drawing_state = 'refused' THEN 'thing'
+              WHEN prior.drawing_variant_name IS NOT NULL THEN 'kind_variant'
+              WHEN prior.prior_kind_drawing_state = 'undrawn' THEN 'none'
+              ELSE 'kind_base'
+            END AS prior_source,
+            CASE WHEN prior.drawing_state = 'refused'
+                OR prior.drawing_variant_name IS NOT NULL
+                OR prior.prior_kind_drawing_state <> 'undrawn'
+              THEN prior.kind_id ELSE NULL END AS prior_kind_id,
+            CASE WHEN prior.drawing_state = 'refused'
+                OR prior.drawing_variant_name IS NOT NULL
+                OR prior.prior_kind_drawing_state <> 'undrawn'
+              THEN prior.current_revision ELSE NULL END AS prior_kind_revision,
+            CASE WHEN prior.drawing_state = 'refused'
+              THEN NULL ELSE prior.drawing_variant_name END AS prior_variant_name,
+            CASE
+              WHEN changed.drawing_state = 'refused' THEN changed.drawing_state
+              WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'state'
+              ELSE prior.target_kind_drawing_state
+            END AS current_state,
+            CASE
+              WHEN changed.drawing_state = 'refused' THEN changed.drawing_description
+              WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->>'description'
+              ELSE prior.target_kind_drawing_description
+            END AS current_description,
+            CASE
+              WHEN changed.drawing_state = 'refused' THEN changed.drawing
+              WHEN ${upgradeVariant !== null}::boolean THEN prior.target_kind_variant->'drawing'
+              ELSE prior.target_kind_drawing
+            END AS current_drawing,
+            CASE
+              WHEN changed.drawing_state = 'refused' THEN 'thing'
+              WHEN ${upgradeVariant !== null}::boolean THEN 'kind_variant'
+              WHEN prior.target_kind_drawing_state = 'undrawn' THEN 'none'
+              ELSE 'kind_base'
+            END AS current_source,
+            CASE WHEN changed.drawing_state = 'refused'
+                OR ${upgradeVariant !== null}::boolean
+                OR prior.target_kind_drawing_state <> 'undrawn'
+              THEN changed.kind_id ELSE NULL END AS current_kind_id,
+            CASE WHEN changed.drawing_state = 'refused'
+                OR ${upgradeVariant !== null}::boolean
+                OR prior.target_kind_drawing_state <> 'undrawn'
+              THEN changed.current_revision ELSE NULL END AS current_kind_revision,
+            CASE WHEN changed.drawing_state = 'refused'
+              THEN NULL ELSE changed.drawing_variant_name END AS current_variant_name
+        ) presentation
+        WHERE ROW(
+          presentation.prior_state, presentation.prior_description,
+          presentation.prior_drawing, presentation.prior_source,
+          presentation.prior_kind_id, presentation.prior_kind_revision,
+          presentation.prior_variant_name
+        ) IS DISTINCT FROM ROW(
+          presentation.current_state, presentation.current_description,
+          presentation.current_drawing, presentation.current_source,
+          presentation.current_kind_id, presentation.current_kind_revision,
+          presentation.current_variant_name
+        )
         RETURNING id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
