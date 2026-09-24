@@ -703,6 +703,10 @@ app.get('/api/search', async c => {
     })),
     total_items: result.totalItems,
     total_text_bytes: result.totalBodyBytes,
+    totals_capped: result.totalsCapped,
+    ...(result.totalsCapped ? {
+      note: 'More than 1000 records match. The totals stop counting at 1000. Use rarer words for exact totals.',
+    } : {}),
     returned_items: result.items.length,
     returned_text_bytes: 0,
     has_more: result.hasMore,

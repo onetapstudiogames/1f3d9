@@ -43,6 +43,8 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
             results: [],
             totalItems: 0,
             totalTextBytes: 0,
+            totalsCapped: false,
+            note: null,
             nextBefore: null,
             hasMore: false,
             loading: false,

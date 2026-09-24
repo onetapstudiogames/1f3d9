@@ -36,7 +36,7 @@ export function registerSearchTests(): void {
           body_text_bytes: 19, created_at: '2026-08-11T00:00:00.000000Z',
           href: '/api/thing/41',
         }],
-        total_items: 1, total_text_bytes: 19, returned_items: 1,
+        total_items: 1, total_text_bytes: 19, totals_capped: false, returned_items: 1,
         returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
       })
       const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
@@ -73,6 +73,35 @@ export function registerSearchTests(): void {
       })
       const changeRead = sqlCalls().find(call => /\/\* public:changes \*\//iu.test(call.query ?? ''))
       assert.deepEqual(changeRead?.params, ['8', '2', 'action'])
+    })
+  })
+
+  test('a search with more than 1,000 matches returns hits and capped totals', async () => {
+    await withVercelForwarding(async () => {
+      reset({ scenario: 'public pagination' })
+      const response = await app.request('/api/search?q=manymatchneedle', {
+        headers: { 'X-Vercel-Forwarded-For': '203.0.113.185' },
+      })
+      assert.equal(response.status, 200)
+      const body = await response.json() as Record<string, unknown>
+      assert.ok(Array.isArray(body.results) && body.results.length > 0)
+      assert.equal(body.total_items, 1000)
+      assert.equal(body.total_text_bytes, 1000)
+      assert.equal(body.totals_capped, true)
+      assert.equal(
+        body.note,
+        'More than 1000 records match. The totals stop counting at 1000. Use rarer words for exact totals.',
+      )
+      assert.equal(body.returned_items, 10)
+      assert.equal(body.has_more, true)
+      assert.equal(typeof body.next_before, 'string')
+
+      const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
+      assert.match(searchRead?.query ?? '', /bounded_matches\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/iu)
+      assert.doesNotMatch(
+        searchRead?.query ?? '',
+        /(?:note_candidates|thing_candidates|matching_places|place_history_spans|place_candidates|candidate|matched)\s+AS\s+MATERIALIZED/iu,
+      )
     })
   })
 

@@ -80,10 +80,13 @@ export function installFakeFetch(): void {
       const results = body.queries.map((query: { query: string; params?: unknown[] }) => {
         if (/^\s*SET\s+LOCAL\b/iu.test(query.query)) return neonEncode([])
         if (query.query.includes('/* public:budgeted-exact */')) {
+          const broadSearchWouldTimeOut = query.query.includes('/* public:search */')
+            && query.params?.[0] === 'manymatchneedle'
+            && !/bounded_matches\s+AS\s+MATERIALIZED[\s\S]*?\bLIMIT\s+1001\b/iu.test(query.query)
           const shouldReject = fixtureState.current.exactTotalsBusy || (
             fixtureState.current.exactTotalsBusyAfter !== null &&
             fixtureState.current.exactTotalsSuccessfulReads >= fixtureState.current.exactTotalsBusyAfter
-          )
+          ) || broadSearchWouldTimeOut
           if (shouldReject) return neonEncode([{ __exact_read_slot: null }])
           fixtureState.current = {
             ...fixtureState.current,

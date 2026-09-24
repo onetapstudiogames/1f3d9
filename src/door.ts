@@ -1386,7 +1386,11 @@ The default is words across both types, newest first in plain date order. A quer
 one-line text no longer than 256 UTF-8 bytes. Words mode requires every one of up to
 16 simple, unstemmed words. Phrase mode finds the literal text without case
 sensitivity. Results contain identity, maker and current ownership or authorship, place, dates, links,
-and exact item/body-byte totals, never bodies, snippets, scores, or summaries. A note
+and numeric \`total_items\` and \`total_text_bytes\`, never bodies, snippets, scores, or summaries.
+\`totals_capped\` is always present and false when totals are exact. Searches with up to
+1,000 matches report exact totals.
+Above 1,000 matches, both totals stop at 1,000 records, \`totals_capped\` is true, and
+\`note\` says: "More than 1000 records match. The totals stop counting at 1000. Use rarer words for exact totals." A note
 has no heading; the human Archive synthesizes its display label. There is no relevance
 ranking. Choose a result's direct note or thing URL for the full record. A walk-to-read
 note matches only on its first line while its body is read in person, never on anything
@@ -1403,8 +1407,8 @@ keep that marker until the search walk is complete, then ask /api/changes from i
 SEARCH LIMITS
 ~~~~~~~~~~~~~
 cite: search-and-changes#search-limits
-Search uses the same two-slot, 1.5-second exact-work budget. A busy or timed-out search
-returns 503 with Retry-After: 1, not an estimate or partial total.
+Search uses the same two-slot, 1.5-second exact-work budget. A busy slot or timed-out
+search statement returns 503 with Retry-After: 1, not an estimate or partial total.
 Each caller may burst 12 searches, then regains one search every 5 seconds. A 429 names
 Retry-After. The bounded ephemeral process-local bucket stores only a hash of the caller
 address, never the raw address, query, or result.
@@ -4029,7 +4033,11 @@ The default is words across both types, newest first in plain date order. A quer
 one-line text no longer than 256 UTF-8 bytes. Words mode requires every one of up to
 16 simple, unstemmed words. Phrase mode finds the literal text without case
 sensitivity. Results contain identity, maker and current ownership or authorship, place, dates, links,
-and exact item/body-byte totals, never bodies, snippets, scores, or summaries. A note
+and numeric \`total_items\` and \`total_text_bytes\`, never bodies, snippets, scores, or summaries.
+\`totals_capped\` is always present and false when totals are exact. Searches with up to
+1,000 matches report exact totals.
+Above 1,000 matches, both totals stop at 1,000 records, \`totals_capped\` is true, and
+\`note\` says: "More than 1000 records match. The totals stop counting at 1000. Use rarer words for exact totals." A note
 has no heading; the human Archive synthesizes its display label. There is no relevance
 ranking. Choose a result's direct note or thing URL for the full record. A walk-to-read
 note matches only on its first line while its body is read in person, never on anything
@@ -4046,8 +4054,8 @@ keep that marker until the search walk is complete, then ask /api/changes from i
 SEARCH LIMITS
 ~~~~~~~~~~~~~
 cite: search-and-changes#search-limits
-Search uses the same two-slot, 1.5-second exact-work budget. A busy or timed-out search
-returns 503 with Retry-After: 1, not an estimate or partial total.
+Search uses the same two-slot, 1.5-second exact-work budget. A busy slot or timed-out
+search statement returns 503 with Retry-After: 1, not an estimate or partial total.
 Each caller may burst 12 searches, then regains one search every 5 seconds. A 429 names
 Retry-After. The bounded ephemeral process-local bucket stores only a hash of the caller
 address, never the raw address, query, or result.

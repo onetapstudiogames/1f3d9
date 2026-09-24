@@ -275,7 +275,7 @@ function literalPhrasePattern(value: string): string {
 function publicSearchSql(mode: PublicSearchMode): string {
   return `
     /* public:search */
-    WITH note_candidates AS MATERIALIZED (
+    WITH note_candidates AS NOT MATERIALIZED (
       SELECT 'note'::text AS result_type,
         note.id, note.place_id,
         NULL::text AS name,
@@ -312,7 +312,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
-    ), thing_candidates AS MATERIALIZED (
+    ), thing_candidates AS NOT MATERIALIZED (
       SELECT 'thing'::text AS result_type,
         thing.id, thing.place_id,
         thing.name,
@@ -346,7 +346,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
-    ), matching_places AS MATERIALIZED (
+    ), matching_places AS NOT MATERIALIZED (
       SELECT place.*
       FROM places place
       WHERE $2::text IN ('all', 'place')
@@ -364,7 +364,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
-    ), place_history_spans AS MATERIALIZED (
+    ), place_history_spans AS NOT MATERIALIZED (
       SELECT matched.id AS place_id,
         aggregated_history.name_history, aggregated_history.search_names
       FROM matching_places matched
@@ -386,7 +386,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
           WHERE history.place_id = matched.id
         ) span
       ) aggregated_history
-    ), place_candidates AS MATERIALIZED (
+    ), place_candidates AS NOT MATERIALIZED (
       SELECT 'place'::text AS result_type,
         place.id, place.id AS place_id,
         place.name,
@@ -407,20 +407,32 @@ function publicSearchSql(mode: PublicSearchMode): string {
         place.created_at
       FROM matching_places place
       JOIN place_history_spans history ON history.place_id = place.id
-    ), candidate AS MATERIALIZED (
+    ), candidate AS NOT MATERIALIZED (
       SELECT * FROM note_candidates
       UNION ALL
       SELECT * FROM thing_candidates
       UNION ALL
       SELECT * FROM place_candidates
-    ), matched AS MATERIALIZED (
+    ), matched AS NOT MATERIALIZED (
       SELECT candidate.*
       FROM candidate
       WHERE ${matchExpression(mode)}
-    ), totals AS MATERIALIZED (
-      SELECT count(*)::integer AS total_items,
-        coalesce(sum(octet_length(matched.body)), 0)::bigint AS total_body_bytes
+    ), bounded_matches AS MATERIALIZED (
+      SELECT matched.body
       FROM matched
+      LIMIT 1001
+    ), totals AS MATERIALIZED (
+      SELECT least(count(*), 1000)::integer AS total_items,
+        coalesce((
+          SELECT sum(octet_length(first_thousand.body))
+          FROM (
+            SELECT bounded_matches.body
+            FROM bounded_matches
+            LIMIT 1000
+          ) first_thousand
+        ), 0)::bigint AS total_body_bytes,
+        count(*) > 1000 AS totals_capped
+      FROM bounded_matches
     ), checkpoint AS MATERIALIZED (
       SELECT current_change_id::text AS change_marker
       FROM public_change_state
@@ -438,7 +450,8 @@ function publicSearchSql(mode: PublicSearchMode): string {
       page.walk_to_read, page.body_withheld, page.first_line,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
-      totals.total_items, totals.total_body_bytes, checkpoint.change_marker
+      totals.total_items, totals.total_body_bytes, totals.totals_capped,
+      checkpoint.change_marker
     FROM totals
     CROSS JOIN checkpoint
     LEFT JOIN LATERAL (
@@ -551,6 +564,7 @@ export interface PublicSearchResults {
   readonly items: readonly Readonly<Record<string, unknown>>[]
   readonly totalItems: number
   readonly totalBodyBytes: number
+  readonly totalsCapped: boolean
   readonly hasMore: boolean
   readonly nextBefore: string | null
   readonly changeMarker: string
@@ -585,6 +599,7 @@ export async function loadPublicSearchResults(
   })
   const totalItems = safeCount(rows[0]?.total_items, 'public search total')
   const totalBodyBytes = safeCount(rows[0]?.total_body_bytes, 'public search body total')
+  const totalsCapped = rows[0]?.totals_capped === true
   const currentChangeMarker = parsePublicChangeMarker(rows[0]?.change_marker)
   if (currentChangeMarker === null) throw new Error('public search change marker is invalid')
   if (
@@ -616,6 +631,6 @@ export async function loadPublicSearchResults(
     })
     : null
   return Object.freeze({
-    items, totalItems, totalBodyBytes, hasMore, nextBefore, changeMarker,
+    items, totalItems, totalBodyBytes, totalsCapped, hasMore, nextBefore, changeMarker,
   })
 }

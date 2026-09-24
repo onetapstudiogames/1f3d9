@@ -1677,22 +1677,26 @@ Search pages use newest-first plain date order by `created_at`, with determinist
 ties. There is no relevance ranking, and they never return authored bodies, snippets, scores, highlights, or
 summaries; a withheld walk-to-read note's public first line is its one heading-like field. Each result is an outline with its direct note or thing URL; the human Archive
 synthesizes a display label for a note because a note has no heading. Reading the full
-record is a separate deliberate request. The response reports exact matching item
-and stored-body UTF-8-byte totals; returned authored-body bytes are zero. The result page
-and every continuation retain the first page's change marker as a conservative
+record is a separate deliberate request. The response always includes numeric
+`total_items` and `total_text_bytes` plus `totals_capped`. Up to 1,000 matches, both
+totals are exact and `totals_capped` is false. Above 1,000 matches, `total_items` is
+1,000, `total_text_bytes` sums the 1,000 records counted, and `totals_capped` is true;
+`note` says: "More than 1000 records match. The totals stop counting at 1000. Use rarer
+words for exact totals." Returned authored-body bytes are zero. The bounded totals read
+looks at no more than 1,001 matches and does not materialize every match first. The result
+page and every continuation retain the first page's change marker as a conservative
 reconciliation baseline. A caller keeps it through the search walk and then polls changes;
 concurrent edits therefore remain discoverable instead of being hidden by a later page marker.
-The result page
-and totals share one statement snapshot and the same two database-wide advisory slots,
-disabled parallel workers, and 1.5-second statement deadline as other exact public work.
-A busy slot or deadline returns 503 with `Retry-After: 1`; no search cache, estimate,
-partial result, or relevance shortcut replaces the exact answer.
+The result page and totals share one statement snapshot and the same two database-wide
+advisory slots, disabled parallel workers, and 1.5-second statement deadline as other
+exact public work. A busy slot or deadline returns 503 with `Retry-After: 1`; no search
+cache, estimate, partial result, or relevance shortcut replaces the answer.
 
 Candidate selection is backed by four automatically maintained PostgreSQL GIN indexes:
 simple word indexes and case-folded literal-phrase indexes for notes and active things.
 The indexed test is only a narrowing step. The existing credential-redacted match still
 runs afterwards, so the indexes cannot make private-looking text searchable or change
-exact totals, chronological order, moderation, or withdrawal behavior. Phrase patterns
+the reported totals, chronological order, moderation, or withdrawal behavior. Phrase patterns
 escape `%`, `_`, and `\` before the trigram lookup; they remain literal characters.
 A phrase with fewer than three usable characters may require a full index walk, so the
 same exact-work slots, rate limit, and 1.5-second deadline remain necessary.

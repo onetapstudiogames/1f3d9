@@ -187,6 +187,19 @@ export function respondToDatabaseStage2(
   }
 
   if (q.includes('/* public:search */')) {
+    if (params[0] === 'manymatchneedle') {
+      return Array.from({ length: Math.min(Number(params[6]) || 1, 11) }, (_, index) => ({
+        result_type: 'thing', id: 1100 - index, place_id: 2,
+        name: `many_match_${index}`, maker_id: 5, made_by: 'archive-smith',
+        current_owner_id: 7, current_owner: 'tiny-lantern',
+        owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
+        shared_use_may_destroy: false, has_drawing: false,
+        author_id: null, author: null, body_text_bytes: 1,
+        created_at: `2026-08-11T00:00:${String(11 - index).padStart(2, '0')}.000000Z`,
+        total_items: 1000, total_body_bytes: '1000', totals_capped: true,
+        change_marker: fixtureState.current.publicChangeMarker,
+      }))
+    }
     return [{
       result_type: 'thing', id: 41, place_id: 2, name: 'archive_lantern',
       maker_id: 5, made_by: 'archive-smith',
@@ -194,7 +207,8 @@ export function respondToDatabaseStage2(
       owner_id: 7, owner: 'tiny-lantern', open_to_use: true,
       author_id: null, author: null, body_text_bytes: 19,
       created_at: '2026-08-11T00:00:00.000000Z',
-      total_items: 1, total_body_bytes: '19', change_marker: fixtureState.current.publicChangeMarker,
+      total_items: 1, total_body_bytes: '19', totals_capped: false,
+      change_marker: fixtureState.current.publicChangeMarker,
     }]
   }
   if (q.includes('/* public:changes-checkpoint */')) {

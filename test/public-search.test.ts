@@ -73,7 +73,7 @@ test('place search matches current or former names and returns stable lifecycle 
       ],
       retired_at: '2026-09-01T00:00:00.000000Z', status: 'retired',
       body_text_bytes: 0, created_at: '2026-08-01T00:00:00.000000Z',
-      total_items: 1, total_body_bytes: '0', change_marker: '12',
+      total_items: 1, total_body_bytes: '0', totals_capped: false, change_marker: '12',
     }]
   }, parsed)
 
@@ -221,6 +221,7 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       created_at: '2026-08-21T19:20:21.654321Z',
       total_items: 3,
       total_body_bytes: '47',
+      totals_capped: false,
       change_marker: '12',
       body: 'must never leave the search boundary',
       snippet: 'must not exist',
@@ -236,6 +237,7 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       created_at: '2026-08-21T19:20:21.654320Z',
       total_items: 3,
       total_body_bytes: '47',
+      totals_capped: false,
       change_marker: '12',
       body: 'must never leave the search boundary',
       secret_hash: 'must never leave the search boundary',
@@ -256,6 +258,7 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
       created_at: '2026-08-21T19:20:21.654319Z',
       total_items: 3,
       total_body_bytes: '47',
+      totals_capped: false,
       change_marker: '12',
     },
   ]
@@ -296,6 +299,7 @@ test('search extraction returns exact body-free outlines, exact totals, and a st
   ])
   assert.equal(result.totalItems, 3)
   assert.equal(result.totalBodyBytes, 47)
+  assert.equal(result.totalsCapped, false)
   assert.equal(result.hasMore, true)
   assert.equal(result.changeMarker, '12')
   assert.equal(typeof result.nextBefore, 'string')
@@ -317,13 +321,13 @@ test('every continuation keeps the first search marker as its reconciliation bas
     maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-21T19:20:21.000000Z',
-    total_items: 2, total_body_bytes: '8', change_marker: '12',
+    total_items: 2, total_body_bytes: '8', totals_capped: false, change_marker: '12',
   }, {
     result_type: 'thing', id: 2, place_id: 1, name: 'old lantern',
     maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-20T19:20:21.000000Z',
-    total_items: 2, total_body_bytes: '8', change_marker: '12',
+    total_items: 2, total_body_bytes: '8', totals_capped: false, change_marker: '12',
   }], firstQuery)
   const continuation = validSearch({ q: ['lantern'], limit: ['1'], before: [first.nextBefore!] })
   assert.equal(continuation.before?.changeMarker, '12')
@@ -333,13 +337,13 @@ test('every continuation keeps the first search marker as its reconciliation bas
     maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-20T19:20:21.000000Z',
-    total_items: 2, total_body_bytes: '8', change_marker: '14',
+    total_items: 2, total_body_bytes: '8', totals_capped: false, change_marker: '14',
   }, {
     result_type: 'thing', id: 1, place_id: 1, name: 'older lantern',
     maker_id: 2, made_by: 'alice', current_owner_id: 2, current_owner: 'alice',
     owner_id: 2, owner: 'alice', open_to_use: true, body_text_bytes: 4,
     created_at: '2026-08-19T19:20:21.000000Z',
-    total_items: 2, total_body_bytes: '8', change_marker: '14',
+    total_items: 2, total_body_bytes: '8', totals_capped: false, change_marker: '14',
   }], continuation)
   assert.equal(later.changeMarker, '12')
   assert.equal(decodePublicSearchCursor(later.nextBefore!)?.changeMarker, '12')
@@ -363,6 +367,7 @@ test('a continuation cursor cannot claim a marker ahead of the database checkpoi
       id: null,
       total_items: 0,
       total_body_bytes: '0',
+      totals_capped: false,
       change_marker: '12',
     }], continuation),
     /search marker 999 is ahead of checkpoint 12/iu,
@@ -382,6 +387,7 @@ test('search SQL filters private rows before matching and pages by creation time
       id: null,
       total_items: 0,
       total_body_bytes: '0',
+      totals_capped: false,
       change_marker: '12',
     }]
   }, phrase)
@@ -415,6 +421,12 @@ test('search SQL filters private rows before matching and pages by creation time
   )
   assert.match(compactPhraseSql, /count\s*\(\s*\*\s*\)[\s\S]*total_items/i)
   assert.match(compactPhraseSql, /sum\s*\([\s\S]*octet_length\([\s\S]*body[\s\S]*total_body_bytes/i)
+  assert.match(compactPhraseSql, /bounded_matches\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/i)
+  assert.match(compactPhraseSql, /totals_capped/i)
+  assert.doesNotMatch(
+    compactPhraseSql,
+    /(?:note_candidates|thing_candidates|matching_places|place_history_spans|place_candidates|candidate|matched)\s+AS\s+MATERIALIZED/i,
+  )
   assert.doesNotMatch(
     compactPhraseSql,
     /\b(?:ts_rank(?:_cd)?|ts_headline|similarity|snippet|score)\b/i,
@@ -439,6 +451,7 @@ test('search SQL filters private rows before matching and pages by creation time
       id: null,
       total_items: 0,
       total_body_bytes: '0',
+      totals_capped: false,
       change_marker: '12',
     }]
   }, words)
@@ -463,6 +476,7 @@ test('maker filtering uses the permanent thing maker and excludes notes before t
       id: null,
       total_items: 0,
       total_body_bytes: '0',
+      totals_capped: false,
       change_marker: '12',
     }]
   }, query)

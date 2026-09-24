@@ -220,6 +220,7 @@ test('the Archive shows a walk-to-read result with its first line and the in-per
         }],
         total_items: 2,
         total_text_bytes: 859,
+        totals_capped: false,
         returned_items: 2,
         returned_text_bytes: 0,
         has_more: false,
