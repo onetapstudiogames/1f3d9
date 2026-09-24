@@ -14,6 +14,7 @@ import {
   moderationReason,
   moderationStateFromActions,
   moderationTargetType,
+  moderatedTalkEvent,
   redactAgreement,
   redactKind,
   redactModeratedTarget,
@@ -48,6 +49,74 @@ test('the moderation vocabulary is frozen and has no governance powers', () => {
   for (const value of ['pin', 'unpin', 'delete', ' remove', 'REMOVE', '', null, 1]) {
     assert.equal(moderationAction(value), null)
   }
+})
+
+test('a removed talk event keeps its order and kind and loses its speaker, place, other resident, and answer', () => {
+  const moderation = Object.freeze({
+    target_type: 'line',
+    target_id: 21,
+    action: 'remove',
+    reason: 'private details',
+    created_at: '2026-09-24T12:00:00.000Z',
+  })
+  const events = [
+    {
+      id: 51,
+      change_id: 71,
+      at: '2026-09-24T12:00:01.000Z',
+      kind: 'line_said',
+      actor: 'speaker',
+      place_id: 8,
+      target_type: 'line',
+      target_id: 21,
+      answer: 'yes',
+      detail: { line_id: 21, body: 'private line', speaker: 'speaker' },
+    },
+    {
+      id: 52,
+      change_id: 72,
+      at: '2026-09-24T12:00:02.000Z',
+      kind: 'ping_sent',
+      actor: 'sender',
+      place_id: 8,
+      target_type: 'resident',
+      target_id: 9,
+      answer: 'yes',
+      detail: { ping_id: 31, target: 'other resident' },
+    },
+    {
+      id: 53,
+      change_id: 73,
+      at: '2026-09-24T12:00:03.000Z',
+      kind: 'ping_answered',
+      actor: 'recipient',
+      place_id: 8,
+      target_type: 'resident',
+      target_id: 9,
+      answer: 'no',
+      detail: { ping_id: 31, answer: 'no' },
+    },
+  ] as const
+
+  const redacted = [
+    moderatedTalkEvent(events[0], 'line_id', 21, moderation),
+    moderatedTalkEvent(events[1], 'ping_id', 31, moderation),
+    moderatedTalkEvent(events[2], 'ping_id', 31, moderation),
+  ]
+
+  assert.deepEqual(redacted, events.map((event, index) => ({
+    id: event.id,
+    change_id: event.change_id,
+    at: event.at,
+    kind: event.kind,
+    actor: '',
+    detail: {
+      [index === 0 ? 'line_id' : 'ping_id']: index === 0 ? 21 : 31,
+      moderated: true,
+      moderation,
+    },
+  })))
+  assert.ok(redacted.every(event => Object.isFrozen(event)))
 })
 
 test('public moderation reasons are safe, nonempty, and capped at 4000 UTF-8 bytes', () => {

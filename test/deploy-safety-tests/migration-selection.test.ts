@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveMigrationRun, splitSqlStatements } from '../../scripts/migrate.ts'
 import { packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
-import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, abilitiesCopyReachConvertMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
+import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, abilitiesCopyReachConvertMigrationUrl, sameRoomTalkMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
 
 export function registerMigrationSelectionTests(): void {
   test('migration target must be named explicitly', () => {
@@ -349,6 +349,36 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.migrationFile, 'db/migrations/20260923_public_snapshot_thing_labels.sql')
   })
 
+  test('same-room-talk is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'same-room-talk'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260924_same_room_talk.sql')
+    assert.equal(preview.executionMode, 'transactional')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'same-room-talk'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'same-room-talk-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260924_same_room_talk.sql')
+    assert.equal(production.executionMode, 'transactional')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -435,6 +465,7 @@ export function registerMigrationSelectionTests(): void {
       [readFileSync(noteWalkToReadMigrationUrl, 'utf8'), 'note-walk-to-read'],
       [readFileSync(abilitiesWakeChanceWriteMigrationUrl, 'utf8'), 'abilities-wake-chance-write'],
       [readFileSync(abilitiesCopyReachConvertMigrationUrl, 'utf8'), 'abilities-copy-reach-convert'],
+      [readFileSync(sameRoomTalkMigrationUrl, 'utf8'), 'same-room-talk'],
       [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
       [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
       [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
@@ -511,6 +542,8 @@ export function registerMigrationSelectionTests(): void {
     assert.match(packageJson.scripts['migrate:production:abilities-wake-chance-write'] ?? '', /--target production --migration abilities-wake-chance-write$/)
     assert.match(packageJson.scripts['migrate:preview:abilities-copy-reach-convert'] ?? '', /--target preview --migration abilities-copy-reach-convert$/)
     assert.match(packageJson.scripts['migrate:production:abilities-copy-reach-convert'] ?? '', /--target production --migration abilities-copy-reach-convert$/)
+    assert.equal(packageJson.scripts['migrate:preview:same-room-talk'], 'node --experimental-strip-types scripts/migrate.ts --target preview --migration same-room-talk')
+    assert.equal(packageJson.scripts['migrate:production:same-room-talk'], 'node --experimental-strip-types scripts/migrate.ts --target production --migration same-room-talk')
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)

@@ -15,8 +15,16 @@ export const MODERATION_REASON_MAX_BYTES = 4_000
 export const MODERATED_TEXT = '[removed by maintainer]'
 
 export type ModerationTargetType = typeof MODERATION_TARGET_TYPES[number]
+export type TalkTargetType = 'line' | 'ping'
+export type StoredModerationTargetType = ModerationTargetType | TalkTargetType
 export type ModerationAction = typeof MODERATION_ACTIONS[number]
 export type ModerationActionId = number | bigint | `${bigint}`
+
+export const TALK_EVENT_TARGETS = Object.freeze({
+  line_said: Object.freeze(['line', 'line_id'] as const),
+  ping_sent: Object.freeze(['ping', 'ping_id'] as const),
+  ping_answered: Object.freeze(['ping', 'ping_id'] as const),
+})
 
 export interface ModerationInput {
   readonly target_type: ModerationTargetType
@@ -40,6 +48,26 @@ export interface ModerationState {
 
 type PublicRecord = Readonly<object>
 type UnknownRecord = Record<PropertyKey, unknown>
+
+export function moderatedTalkEvent<T extends object>(
+  row: T,
+  idField: 'line_id' | 'ping_id',
+  id: number,
+  moderation: Readonly<Record<string, unknown>>,
+): T {
+  const safeRow = Object.fromEntries(Object.entries(row).filter(([field]) => (
+    !['place_id', 'target_type', 'target_id', 'answer'].includes(field)
+  )))
+  return Object.freeze({
+    ...safeRow,
+    actor: '',
+    detail: Object.freeze({
+      [idField]: id,
+      moderated: true,
+      moderation,
+    }),
+  }) as unknown as T
+}
 
 export type ModeratedRecord<T extends PublicRecord> = Readonly<
   Omit<T, 'moderated'> & { readonly moderated: true }

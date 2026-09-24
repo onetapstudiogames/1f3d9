@@ -3,9 +3,13 @@ import { sql } from './db.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
   MODERATED_TEXT,
+  TALK_EVENT_TARGETS,
+  moderatedTalkEvent,
   redactModeratedTarget,
   type ModerationInput,
   type ModerationTargetType,
+  type StoredModerationTargetType,
+  type TalkTargetType,
 } from './moderation.ts'
 
 interface ModerationOverlay {
@@ -52,7 +56,7 @@ export async function moderationTargetExists(
 }
 
 async function currentOverlays(
-  targetType: ModerationTargetType,
+  targetType: StoredModerationTargetType,
   ids: readonly number[],
 ): Promise<ReadonlyMap<number, ModerationOverlay>> {
   if (ids.length === 0) return new Map()
@@ -95,8 +99,24 @@ const positiveIds = (rows: readonly object[], field: string): number[] => [...ne
   return Number.isSafeInteger(id) && id > 0 ? [id] : []
 }))]
 
+type TalkEventTarget = Readonly<{
+  targetType: TalkTargetType
+  idField: 'line_id' | 'ping_id'
+  id: number
+}>
+
+function talkEventTarget(row: object): TalkEventTarget | null {
+  const kind = (row as { kind?: unknown }).kind
+  if (typeof kind !== 'string' || !Object.hasOwn(TALK_EVENT_TARGETS, kind)) return null
+  const [targetType, idField] = TALK_EVENT_TARGETS[kind as keyof typeof TALK_EVENT_TARGETS]
+  const detail = (row as { detail?: unknown }).detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null
+  const id = Number((detail as Record<string, unknown>)[idField])
+  return Number.isSafeInteger(id) && id > 0 ? { targetType, idField, id } : null
+}
+
 function moderationDetail(
-  targetType: ModerationTargetType,
+  targetType: StoredModerationTargetType,
   targetId: number,
   overlay: ModerationOverlay,
 ) {
@@ -285,6 +305,18 @@ export async function moderatePublicKinds<T extends object>(rows: readonly T[]):
 
 /** Remove authored display text duplicated into event details, while retaining the event. */
 export async function moderatePublicEvents<T extends object>(rows: readonly T[]): Promise<readonly T[]> {
+  const talkTargets = rows.flatMap(row => {
+    const target = talkEventTarget(row)
+    return target ? [target] : []
+  })
+  const talkIds = {
+    line: [...new Set(talkTargets.flatMap(({ targetType, id }) => (
+      targetType === 'line' ? [id] : []
+    )))],
+    ping: [...new Set(talkTargets.flatMap(({ targetType, id }) => (
+      targetType === 'ping' ? [id] : []
+    )))],
+  }
   const idsByType = Object.fromEntries(EVENT_TARGET_FIELDS.map(([type, field]) => [
     type,
     [...new Set(rows.flatMap(row => {
@@ -298,10 +330,18 @@ export async function moderatePublicEvents<T extends object>(rows: readonly T[])
     const detail = (row as { detail?: unknown }).detail
     return detail && typeof detail === 'object' && !Array.isArray(detail) ? [detail as object] : []
   })
-  const [overlayEntries, traitNameOverlays, kindNameOverlays] = await Promise.all([
+  const [
+    overlayEntries,
+    lineOverlays,
+    pingOverlays,
+    traitNameOverlays,
+    kindNameOverlays,
+  ] = await Promise.all([
     Promise.all(EVENT_TARGET_FIELDS.map(async ([type]) => (
       [type, await currentOverlays(type, idsByType[type])] as const
     ))),
+    currentOverlays('line', talkIds.line),
+    currentOverlays('ping', talkIds.ping),
     currentNameOverlays('trait', namesInField(details, 'traits')),
     currentNameOverlays('kind', ingredientNames(details)),
   ])
@@ -309,8 +349,25 @@ export async function moderatePublicEvents<T extends object>(rows: readonly T[])
     ModerationTargetType,
     ReadonlyMap<number, ModerationOverlay>
   >
+  const talkOverlays: Readonly<Record<TalkTargetType, ReadonlyMap<number, ModerationOverlay>>> = {
+    line: lineOverlays,
+    ping: pingOverlays,
+  }
 
   return Object.freeze(rows.map(row => {
+    const talkTarget = talkEventTarget(row)
+    if (talkTarget) {
+      const { targetType, idField, id } = talkTarget
+      const overlay = talkOverlays[targetType].get(id)
+      if (overlay?.action === 'remove') {
+        return moderatedTalkEvent(
+          row,
+          idField,
+          id,
+          moderationDetail(targetType, id, overlay),
+        )
+      }
+    }
     const rawDetail = (row as { detail?: unknown }).detail
     if (!rawDetail || typeof rawDetail !== 'object' || Array.isArray(rawDetail)) return row
     const detail = rawDetail as Record<string, unknown>

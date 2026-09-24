@@ -143,15 +143,25 @@ test('export uses one frozen read-only transaction through the exact dual-view G
     assert.equal(calls.some(call => /SELECT\s+\*/iu.test(call.text)), false)
     assert.match(
       calls.find(call => /snapshot-export:records/iu.test(call.text))!.text,
-      /FROM city_snapshot\.public_records_v2 records/iu,
+      /FROM city_snapshot\.public_records_v3 records/iu,
     )
+    const attestationSql = calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text
     assert.match(
-      calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text,
+      attestationSql,
+      /'city_snapshot\.public_records_v3', 'SELECT'\) AS can_read_view/iu,
+    )
+    assert.match(attestationSql, /columns\.table_name = 'public_records_v3'/iu)
+    assert.match(
+      attestationSql,
       /city_snapshot\.public_records'[\s\S]+can_read_legacy_view/iu,
     )
     assert.match(
-      calls.find(call => /snapshot-export:attest-role/iu.test(call.text))!.text,
+      attestationSql,
       /public\.resident_refusal_state/iu,
+    )
+    assert.match(
+      attestationSql,
+      /'public\.ping_receipts', 'public\.ping_operations',\s*'public\.wait_leases'/iu,
     )
     const entryRecords = (await readFile(join(root, 'gazette_issue_entries.ndjson'), 'utf8'))
       .trimEnd().split('\n').map(line => (
@@ -191,7 +201,7 @@ test('export uses one frozen read-only transaction through the exact dual-view G
       officialEnvelope.record.public_snapshots.scope,
       'the full approved anonymous public record, not only the names directory',
     )
-    assert.equal(officialEnvelope.record.public_snapshots.format_version, 2)
+    assert.equal(officialEnvelope.record.public_snapshots.format_version, 3)
     assert.equal(
       officialEnvelope.record.public_snapshots.releases,
       'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',

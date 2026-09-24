@@ -68,10 +68,13 @@ const CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
   'due_at',
   'generation',
 ].sort()
-const EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+const EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
   ...CURRENT_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS.filter(field => field !== 'error'),
   'issue_number',
   'entry_count',
+  'line_id',
+  'ping_id',
+  'answer',
 ].sort()
 
 function snapshotEventDetailFields(projection: string): string[] {
@@ -400,7 +403,7 @@ for (const [name, url] of [
   })
 }
 
-test('the audited live-detail inventory exactly names fields absent from format v2 events', () => {
+test('the audited live-detail inventory exactly names fields absent from format v3 events', () => {
   assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 68)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
@@ -412,13 +415,13 @@ test('the audited live-detail inventory exactly names fields absent from format 
       .filter(kind => !publicKinds.has(kind)),
     [],
   )
-  const effectiveV2Fields = new Set(EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
+  const effectiveV3Fields = new Set(EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
   assert.deepEqual(
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(
-      field => effectiveV2Fields.has(field) && field !== 'name',
+      field => effectiveV3Fields.has(field) && field !== 'name',
     ),
     [],
-    'a field exported by effective format v2 must not remain in the omission disclosure',
+    'a field exported by effective format v3 must not remain in the omission disclosure',
   )
   const omittedFields = new Set<string>(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS)
   for (const required of [
@@ -439,7 +442,7 @@ test('every source-written event-detail field has an export or disclosure dispos
   assert.ok(scan.writerCount >= 46, `the source scan must find real writers, saw ${scan.writerCount}`)
 
   assertEveryEventDetailFieldClassified(scan.fields, [
-    ...EFFECTIVE_V2_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
+    ...EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
     ...PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS.events,
   ])
 })

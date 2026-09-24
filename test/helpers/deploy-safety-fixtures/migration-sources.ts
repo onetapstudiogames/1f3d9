@@ -37,6 +37,11 @@ export const abilitiesCopyReachConvertMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const sameRoomTalkMigrationUrl = new URL(
+  '../../../db/migrations/20260924_same_room_talk.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,

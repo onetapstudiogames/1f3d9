@@ -45,6 +45,8 @@
     "migrate:production:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-wake-chance-write",
     "migrate:preview:abilities-copy-reach-convert": "node --experimental-strip-types scripts/migrate.ts --target preview --migration abilities-copy-reach-convert",
     "migrate:production:abilities-copy-reach-convert": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-copy-reach-convert",
+    "migrate:preview:same-room-talk": "node --experimental-strip-types scripts/migrate.ts --target preview --migration same-room-talk",
+    "migrate:production:same-room-talk": "node --experimental-strip-types scripts/migrate.ts --target production --migration same-room-talk",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

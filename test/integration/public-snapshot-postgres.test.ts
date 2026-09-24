@@ -387,6 +387,10 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     bundle.files.map(file => file.path),
     [...exportedClasses.map(className => `${className}.ndjson`), 'manifest.json'],
   )
+  assert.equal(bundle.counts.lines, 0)
+  assert.equal(bundle.counts.pings, 0)
+  assert.equal(await readFile(join(outputDirectory, 'lines.ndjson'), 'utf8'), '\n')
+  assert.equal(await readFile(join(outputDirectory, 'pings.ndjson'), 'utf8'), '\n')
 
   const noteLines = (await readFile(join(outputDirectory, 'notes.ndjson'), 'utf8'))
     .trimEnd().split('\n').map(line => JSON.parse(line) as {

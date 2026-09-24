@@ -9,7 +9,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { containsPublicCredential } from './credential-safety.ts'
 
-export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 2 as const
+export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 3 as const
 export const PUBLIC_SNAPSHOT_FORMAT_NAME = '1f3d9-public-snapshot' as const
 
 export type SnapshotClassDisposition =
@@ -26,11 +26,11 @@ export type SnapshotClassRegistryEntry = Readonly<{
 }>
 
 /**
- * Version 2 is a closed registry. A new public or private class must be named
+ * Version 3 is the closed registry. A new public or private class must be named
  * here before a later exporter can describe it. The database view remains an
  * independent explicit-column allowlist, so a new table or column is never
- * included merely because it exists. Published version-1 bundles remain
- * immutable and verify with the source commit recorded in their manifest.
+ * included merely because it exists. Published version-1 and version-2 bundles
+ * stay immutable and verify from the source commit in their manifest.
  */
 export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry[] =
   Object.freeze(([
@@ -39,10 +39,12 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'places', disposition: 'exported', reason: 'anonymous public land, orientation, labels, and effective laws', database_sources: ['places', 'active_labels', 'place_law_changes', 'traits', 'things', 'moderation_actions'] },
     { class_name: 'things', disposition: 'exported', reason: 'active public things with their current labels plus body-free withdrawn, hidden, and gap markers', database_sources: ['things', 'residents', 'kinds', 'active_labels', 'moderation_actions'] },
     { class_name: 'notes', disposition: 'exported', reason: 'public speech plus legacy-body, hidden, and gap markers', database_sources: ['notes', 'residents', 'moderation_actions'] },
+    { class_name: 'lines', disposition: 'exported', reason: 'public same-room lines plus hidden and gap markers', database_sources: ['room_lines', 'residents', 'moderation_actions'] },
+    { class_name: 'pings', disposition: 'exported', reason: 'public body-free pings with their fixed answers plus hidden and gap markers', database_sources: ['pings', 'residents', 'moderation_actions'] },
     { class_name: 'traits', disposition: 'exported', reason: 'current public trait vocabulary plus hidden and gap markers', database_sources: ['traits', 'residents', 'moderation_actions'] },
     { class_name: 'kinds', disposition: 'exported', reason: 'current public kind definitions plus hidden and gap markers', database_sources: ['kinds', 'kind_revisions', 'residents', 'moderation_actions'] },
     { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, and signatures', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions'] },
-    { class_name: 'events', disposition: 'exported', reason: 'append-only approved public event headings and safe references plus body-free private-or-gap markers', database_sources: ['events', 'gazette_issues'] },
+    { class_name: 'events', disposition: 'exported', reason: 'append-only approved public event headings and safe references plus body-free private-or-gap and hidden markers', database_sources: ['events', 'gazette_issues', 'moderation_actions'] },
     { class_name: 'moderation', disposition: 'exported', reason: 'append-only public moderation history', database_sources: ['moderation_actions', 'residents'] },
     { class_name: 'drawing_revisions', disposition: 'exported', reason: 'deliberately fetched immutable owner-authored drawing history with parent moderation', database_sources: ['drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions'] },
     { class_name: 'treasury_fees', disposition: 'exported', reason: 'public city-fee books', database_sources: ['fees', 'residents'] },
@@ -55,7 +57,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'credentials', disposition: 'not_public', reason: 'resident secrets, hashes, registration, rotation, and recovery material are private', database_sources: ['residents.secret_hash', 'pending_resident_registrations', 'pending_resident_registration_recovery_codes', 'resident_recovery_codes', 'resident_key_rotations'] },
     { class_name: 'oauth', disposition: 'not_public', reason: 'hosted sign-in requests, codes, tokens, families, and limits are private', database_sources: ['oauth_authorization_requests', 'oauth_authorization_request_recovery_codes', 'oauth_authorization_codes', 'oauth_token_families', 'oauth_tokens', 'oauth_rate_limits'] },
     { class_name: 'infrastructure_limits', disposition: 'not_public', reason: 'IP hashes and identity, flag, drawing, or community-tool rate-limit rows are private operations data', database_sources: ['reg_log', 'identity_rate_limits', 'anonymous_flag_limits', 'resident_drawing_rate_limits', 'community_tool_submission_limits'] },
-    { class_name: 'resident_private_state', disposition: 'not_public', reason: 'home location, personal quota state, and repeated-refusal state stay private to the resident', database_sources: ['resident_presence.home_place_id', 'residents.quota_day', 'residents.things_today', 'residents.notes_today', 'residents.agreement_actions_today', 'resident_refusal_state'] },
+    { class_name: 'resident_private_state', disposition: 'not_public', reason: 'home location, personal quota state including line allowances, and repeated-refusal state stay private to the resident', database_sources: ['resident_presence.home_place_id', 'residents.quota_day', 'residents.things_today', 'residents.notes_today', 'residents.agreement_actions_today', 'line_quota', 'line_minute_quota', 'resident_refusal_state'] },
     { class_name: 'private_flags', disposition: 'not_public', reason: 'flag report bodies and the founder answers to them stay private; their safe public event references remain in events', database_sources: ['flags', 'flag_reviews'] },
     { class_name: 'private_community_tool_submissions', disposition: 'not_public', reason: 'unreviewed community-tool proposals and their links, categories, tags, resident attribution, and review state stay private to the maintainer', database_sources: ['community_tool_submissions'] },
     { class_name: 'payment_attempts', disposition: 'not_public', reason: 'attempt request bodies, leases, and recovery state are private', database_sources: ['payment_attempts', 'payment_uses'] },
@@ -64,9 +66,11 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'later_holder_marks', disposition: 'not_public', reason: 'deliberate later-holder navigation is private', database_sources: ['thing_later_holder_marks'] },
     { class_name: 'chance_day_secrets', disposition: 'not_public', reason: 'each day secret stays private until its UTC day ends; physics serves its public fingerprint and, afterwards, the secret itself', database_sources: ['chance_days'] },
     { class_name: 'reader_state', disposition: 'not_public', reason: 'the private last-me credit marker is not a public read receipt, opened state, or event', database_sources: ['city_credit_last_me_reads'] },
-    { class_name: 'ability_runtime', disposition: 'not_exported', reason: 'wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns are live public records not carried by format v2 yet', database_sources: ['wake_settles', 'wake_tries', 'chance_rolls', 'thing_state_changes', 'thing_wake_state', 'thing_conversions', 'place_copy_counts', 'family_growth_marks', 'things.wake_enabled', 'things.state', 'things.state_version', 'things.generation', 'things.parent_thing_id', 'things.family_id', 'things.copies_made', 'things.open_to_reach', 'things.open_to_convert', 'things.as_kind_id', 'things.as_revision', 'places.wake_visitors', 'places.wake_pins', 'places.wake_block_thing_ids', 'places.wake_block_resident_ids', 'places.wake_random_cap', 'places.rough_room', 'places.rough_since', 'resident_presence.arrived_at', 'places.growth_cap_per_day', 'places.growth_share_per_family', 'places.allow_arriving_copies'] },
+    { class_name: 'ping_receipts', disposition: 'not_public', reason: 'each pinged resident keeps private pending, seen, and dismissed receipt state', database_sources: ['ping_receipts'] },
+    { class_name: 'talk_requests', disposition: 'not_public', reason: 'line and ping request_id replay records and their stored first answers are private', database_sources: ['room_lines.request_id', 'ping_operations'] },
+    { class_name: 'ability_runtime', disposition: 'not_exported', reason: 'wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns are live public records not carried by format v3 yet', database_sources: ['wake_settles', 'wake_tries', 'chance_rolls', 'thing_state_changes', 'thing_wake_state', 'thing_conversions', 'place_copy_counts', 'family_growth_marks', 'things.wake_enabled', 'things.state', 'things.state_version', 'things.generation', 'things.parent_thing_id', 'things.family_id', 'things.copies_made', 'things.open_to_reach', 'things.open_to_convert', 'things.as_kind_id', 'things.as_revision', 'places.wake_visitors', 'places.wake_pins', 'places.wake_block_thing_ids', 'places.wake_block_resident_ids', 'places.wake_random_cap', 'places.rough_room', 'places.rough_since', 'resident_presence.arrived_at', 'places.growth_cap_per_day', 'places.growth_share_per_family', 'places.allow_arriving_copies'] },
     { class_name: 'action_runtime', disposition: 'not_exported', reason: 'runtime action, block, timer, and resolution rows are represented by exported public events and current records', database_sources: ['active_blocks', 'action_runs', 'action_resolutions', 'pending_effects', 'effect_resolutions'] },
-    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v2', database_sources: ['transfers', 'sale_payments'] },
+    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v3', database_sources: ['transfers', 'sale_payments'] },
     { class_name: 'reading_counters', disposition: 'not_exported', reason: 'derived byte and item counters can be reproduced from exported records', database_sources: ['place_reading_totals'] },
     { class_name: 'change_markers', disposition: 'not_exported', reason: 'derived cursor state can be rebuilt from exported events', database_sources: ['public_change_state', 'public_change_log'] },
     { class_name: 'window', disposition: 'not_exported', reason: 'derived bounded human presentation', database_sources: [] },
@@ -75,7 +79,9 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'changes', disposition: 'not_exported', reason: 'derived event cursor surface', database_sources: [] },
     { class_name: 'names_directory', disposition: 'not_exported', reason: 'derived from exported resident and place identities', database_sources: [] },
     { class_name: 'counters', disposition: 'not_exported', reason: 'derived from exported records', database_sources: [] },
-    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v2 never edits original records; release errata are separate assets and releases', database_sources: [] },
+    { class_name: 'ping_arrival_marks', disposition: 'not_exported', reason: 'each ping keeps when its two residents arrived only so that a later move ends the offer; arrival times stay out of snapshots like resident_presence.arrived_at', database_sources: ['pings.sender_arrived_at', 'pings.target_arrived_at'] },
+    { class_name: 'listening_cues', disposition: 'not_exported', reason: 'an open wait is a brief presentation cue that exists only while its request is open and is never history', database_sources: ['wait_leases'] },
+    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v3 never edits original records; release errata are separate assets and releases', database_sources: [] },
   ] satisfies readonly SnapshotClassRegistryEntry[]).map(entry => Object.freeze({
     ...entry,
     database_sources: Object.freeze([...entry.database_sources]),

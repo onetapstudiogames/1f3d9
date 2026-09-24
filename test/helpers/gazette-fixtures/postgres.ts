@@ -19,9 +19,28 @@ assert.ok(
   postGazetteSchemaOffset > gazetteSchemaOffset,
   'schema must keep the stable post-Gazette section marker',
 )
+// Same-room talk (20260924) builds its format-v3 view on the format-v2 view
+// that 20260827_gazette.sql created, so production ran it after the Gazette.
+// A pre-Gazette database cannot hold it; the upgrade test applies it last.
+export const sameRoomTalkMigrationDdl = await readFile(
+  new URL('../../../db/migrations/20260924_same_room_talk.sql', import.meta.url),
+  'utf8',
+)
+const sameRoomTalkSchemaOffset = schemaDdl.indexOf(sameRoomTalkMigrationDdl)
+assert.ok(
+  sameRoomTalkSchemaOffset > postGazetteSchemaOffset,
+  'schema must carry the same-room-talk migration after the Gazette section',
+)
+const postGazetteSchemaDdl = schemaDdl.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
+  + schemaDdl.slice(sameRoomTalkSchemaOffset + sameRoomTalkMigrationDdl.length)
 export const preGazetteSchemaDdl = schemaDdl.slice(0, gazetteSchemaOffset)
-  + schemaDdl.slice(postGazetteSchemaOffset)
+  + postGazetteSchemaDdl
 assert.doesNotMatch(preGazetteSchemaDdl, /gazette_/iu)
+assert.doesNotMatch(
+  preGazetteSchemaDdl,
+  /public_records_v2/u,
+  'the format-v2 snapshot view arrives with the Gazette; a pre-Gazette schema cannot depend on it',
+)
 export const migrationDdl = await readFile(
   new URL('../../../db/migrations/20260827_gazette.sql', import.meta.url),
   'utf8',

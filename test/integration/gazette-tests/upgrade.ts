@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import type { Pool } from 'pg'
 import { runTalkNoteAction } from '../../../src/note-action.ts'
-import { activationDdl, gazetteRuntime, migrationDdl, preGazetteSchemaDdl, taggedFor, withdrawalActivationDdl, withdrawalMigrationDdl } from '../../helpers/gazette-fixtures/postgres.ts'
+import { activationDdl, gazetteRuntime, migrationDdl, preGazetteSchemaDdl, sameRoomTalkMigrationDdl, taggedFor, withdrawalActivationDdl, withdrawalMigrationDdl } from '../../helpers/gazette-fixtures/postgres.ts'
 
 export async function registerUpgradeTests(
   database: Pool,
@@ -241,4 +241,10 @@ export async function registerUpgradeTests(
     },
     'the dormant exact-looking note remained a printable ordinary submission',
   )
+
+  // Production order: same-room talk (20260924) follows every Gazette migration.
+  await database.query(sameRoomTalkMigrationDdl)
+  assert.deepEqual((await database.query(`
+    SELECT to_regclass('city_snapshot.public_records_v3') IS NOT NULL AS v3_installed
+  `)).rows[0], { v3_installed: true })
 }
