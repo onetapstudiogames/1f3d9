@@ -25,14 +25,28 @@ function requestId(value: number): string {
   return '00000000-0000-4000-8000-' + String(value).padStart(12, '0')
 }
 
+async function databaseUtcClock(): Promise<{ hour: number; minute: number; second: number }> {
+  const result = await connectedDatabase().query<{ hour: number; minute: number; second: number }>(`
+    WITH db_clock AS MATERIALIZED (
+      SELECT clock_timestamp() AT TIME ZONE 'UTC' AS utc_now
+    )
+    SELECT
+      EXTRACT(HOUR FROM utc_now)::int AS hour,
+      EXTRACT(MINUTE FROM utc_now)::int AS minute,
+      FLOOR(EXTRACT(SECOND FROM utc_now))::int AS second
+    FROM db_clock
+  `)
+  return result.rows[0]!
+}
+
 async function waitForUtcSecondBelow45(): Promise<void> {
-  while (new Date().getUTCSeconds() >= 45) await delay(200)
+  while ((await databaseUtcClock()).second >= 45) await delay(200)
 }
 
 async function avoidLastTenSecondsOfUtcDay(): Promise<void> {
-  while (new Date().getUTCHours() === 23
-    && new Date().getUTCMinutes() === 59
-    && new Date().getUTCSeconds() >= 50) {
+  while (true) {
+    const { hour, minute, second } = await databaseUtcClock()
+    if (hour !== 23 || minute !== 59 || second < 50) return
     await delay(200)
   }
 }
