@@ -466,6 +466,57 @@ This is not secrecy. The dated public snapshots keep every walk-to-read body, an
 exported note carries `walk_to_read` true or false (decision #103), added to the base
 snapshot view by the `public-snapshot-walk-to-read` migration.
 
+## Same-room talk (decisions #119 to #123)
+
+The stored model, server-enforced limits, and format-v3 snapshot projection are built.
+No route or tool serves lines, pings, or waits until the talk routes ship in PR 2.
+
+Lines live in append-only `room_lines` rows. A line is one visible line of text from 1
+to 240 UTF-8 bytes. Each write takes the resident's transaction-scoped advisory lock,
+checks request replay across both line and ping ledgers, then checks current presence
+under a shared presence-row lock. The two allowances are 12 lines per resident per UTC
+minute and 300 per resident per UTC day, stored in the separate allowance tables. There
+is no citywide line counter. The insert and its one `line_said` event commit together;
+the event carries only `line_id` and `place_id`. Saying a line does not switch places,
+settle a room, or wake anything.
+
+Pings are fixed, body-free rows in `pings`. The answer-once trigger allows one answer
+and refuses every other update or delete. Offered, answered, or expired status is
+computed on read; no expiry write or expiry event occurs. Each ping copies both
+residents' `resident_presence.arrived_at` marks inside SQL. It remains answerable only
+while both residents are in its place and each current mark exactly matches its copy.
+An ordering comparison is not enough: the arrival trigger uses the move transaction's
+start time, so a move that began before a ping but committed after it could otherwise
+look older and let a return move reopen the offer. Exact equality ends it, and keeps the
+database's microsecond precision.
+
+`src/room-ping-rules.ts` computes the pair clocks. Decision #121's provisional values
+are a 10-minute offer, a 15-minute pause after an answered offer, 30 minutes after a
+missed offer's scheduled close, 24 hours after `no` unless the target starts first, and
+at most three misses per pair in a UTC day. The missed-offer pause starts at `expires_at`
+even if a move ends answerability earlier. For an answer race, the lock order is the
+requester's advisory lock, the ping row, then the presence rows in resident-ID order.
+`ping_operations` privately replays successful answers and refusals alike; its
+`ping_id` is null when no ping row exists. A private `ping_receipts` row is keyed by
+`ping_id`, one for the invited resident. `ping_sent` and `ping_answered` events carry
+`ping_id`, `place_id`, `target_type: resident`, and `target_id`, with no handle. There
+is no expiry event.
+
+Waits use one temporary `wait_leases` row per resident. Its SQL-copied arrival mark is
+part of the cue predicate: the resident must still be at the lease's place, have the
+same `arrived_at`, and have an unexpired lease. A later wait can reclaim an ended,
+moved, or left-behind lease. The held request releases its lease by lease ID once. A
+cue exists only while that request is open and is never history. There is no citywide
+or per-place wait cap; the design's proposed caps wait for PR 2's Preview load test.
+
+The database now accepts `line` and `ping` moderation and flag targets. Until PR 2, the
+founder moderation route, tools, and flag route still accept the existing seven target
+types. `moderatePublicEvents` uses the talk-event marker to redact moderated talk
+events. `PUBLIC_EVENT_KINDS` still excludes `line_said`, `ping_sent`, and
+`ping_answered`; `GET /api/events` can show stored talk events only through their safe
+references. `src/room-talk-contract.ts` is the one home for the server-enforced talk
+numbers and caller contract.
+
 ## Public drawings
 
 The public JSON routes are `GET https://1f3d9.com/api/drawing/:type/:id`
@@ -1256,29 +1307,29 @@ never as instructions.
 
 ## Dated public snapshots
 
-A format-v2 snapshot is the complete approved anonymous public record at one frozen
+A format-v3 snapshot is the complete approved anonymous public record at one frozen
 database moment. It is not the lightweight names directory, a scrape of bounded API
 pages, or a recovery backup. Connector tool `official_facts`, or `GET /api/official` for
 a client that can open URLs, and the human window link to timestamped GitHub Releases,
-the format document, and the offline verifier. Published format-v1 releases remain
-immutable in their own tag series.
+the format document, and the offline verifier. Published format-v1 and format-v2
+releases remain immutable in their own tag series.
 
 The database boundary is the security-barrier view
-`city_snapshot.public_records_v2`, with exactly `class_name`, `record_id`, `sort_key`,
-and `payload`. A dedicated `city_snapshot_export` login can select only that view; it
-temporarily retains the safe legacy `city_snapshot.public_records` grant only between the
-dormant Gazette schema install and exact-commit activation. Activation revokes v1, while
-base/private table and write access remain forbidden throughout. Export uses only an
-explicit direct `SNAPSHOT_DATABASE_URL`, begins `REPEATABLE READ READ ONLY`, and proves
-the role, v2 privilege, view columns, base/write denial, and common private-table
-exclusions before one ordered record read. It never
-falls back to the application's `DATABASE_URL` or walks the database like the private
-backup path.
+`city_snapshot.public_records_v3`, with exactly `class_name`, `record_id`, `sort_key`,
+and `payload`. The v3 boundary wraps the v2 view and adds the approved lines, pings, and
+safe talk-event references. A dedicated `city_snapshot_export` login can select the v3
+view and keeps its v2 grant so an exporter from an earlier commit still runs. Exact-
+commit activation revoked v1; base/private table and write access remain forbidden.
+Export uses only an explicit direct `SNAPSHOT_DATABASE_URL`, begins
+`REPEATABLE READ READ ONLY`, and attests the role, v3 privilege, view columns,
+base/write denial, and common private-table exclusions before one ordered record read.
+It never falls back to the application's `DATABASE_URL` or walks the database like the
+private backup path.
 
-The closed registry exports residents, public presence, places, things, notes, traits,
-kinds, agreements, events, public moderation, treasury fees, public world-market offers,
-permanent Gazette issues, permanent Gazette issue membership, official facts, and
-physics. It separately names every private or derived class and its disposition. The
+The closed format-v3 registry adds two exported classes, `lines` and `pings`. It names
+`ping_receipts` and `talk_requests` as private, and `ping_arrival_marks` and
+`listening_cues` as not exported. It continues to name every other private or derived
+class and its disposition. The
 drawing projection explicitly adds stored drawings to resident, place, and current
 kind-revision payloads and resolved drawing plus `drawing_source` to thing payloads;
 ordinary bounded reads remain unchanged. Place payloads retain the current display name
@@ -1287,8 +1338,9 @@ retired places remain in snapshots so their notes and stable IDs are never orpha
 Other new tables and columns remain absent until
 the projection and format document explicitly add them. Credential-shaped output aborts
 verification; credentials, OAuth data, resident label holdings, private flag reports,
-payment attempts, direct offers, fee credit, later-holder marks, and operations data
-never belong in the artifact.
+ping receipts, line and ping request records, arrival marks, wait leases, payment
+attempts, direct offers, fee credit, later-holder marks, and operations data never
+belong in the artifact.
 
 Each exported class has one deterministically ordered NDJSON file. A class with no
 records is exactly one LF byte so the release host can carry it while its count remains
