@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { isoTimestamp } from './timestamp.ts'
 import { engineSql, withEngineTransaction, type TaggedSql } from './engine.ts'
 import {
-  WAIT_ALREADY_OPEN_REFUSAL,
   WAIT_NO_PLACE_REFUSAL,
+  waitAlreadyOpenRefusal,
   type ListeningResident,
   type TalkOutcome,
   type WaitLease,
@@ -83,7 +83,16 @@ export async function openWait(
       RETURNING lease_id, place_id, started_at, expires_at
     `)
     const row = inserted[0]
-    if (row === undefined) return { ok: false, refusal: WAIT_ALREADY_OPEN_REFUSAL }
+    if (row === undefined) {
+      const existing = await queryRows<Readonly<{ expires_at: Date | string }>>(transaction`
+        /* private:room-wait-already-open-expiry */
+        SELECT expires_at FROM wait_leases WHERE resident_id = ${input.residentId}
+      `)
+      return {
+        ok: false,
+        refusal: waitAlreadyOpenRefusal(isoTimestamp(existing[0]?.expires_at) ?? ''),
+      }
+    }
     return { ok: true, status: 201, answer: { lease: leaseFromRow(row) } }
   })
 }

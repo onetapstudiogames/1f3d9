@@ -19,6 +19,7 @@ import {
   PING_SELF_REFUSAL,
   PING_OFFER_MINUTES,
   pingNotFoundRefusal,
+  receiptNotFoundRefusal,
   receiptStillOpenRefusal,
   requestReuseRefusal,
   TALK_REQUEST_ID_REFUSAL,
@@ -537,7 +538,7 @@ export async function dismissPing(
       const now = await sampledNow(transaction)
       return recordOutcome(transaction, {
         residentId, requestId, operation: 'dismiss', pingId: null, payloadFingerprint, now,
-      }, refusal(pingNotFoundRefusal(pingId)))
+      }, refusal(receiptNotFoundRefusal(pingId)))
     }
     const receipts = await queryRows<ReceiptRow>(transaction`
       SELECT receipt.ping_id, receipt.recipient_id, receipt.dismissed_at

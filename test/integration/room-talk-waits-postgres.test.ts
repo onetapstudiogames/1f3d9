@@ -15,7 +15,7 @@ import {
 } from '../helpers/note-suite-fixtures/postgres.ts'
 import {
   leaseSeconds,
-  WAIT_ALREADY_OPEN_REFUSAL,
+  waitAlreadyOpenRefusal,
   WAIT_NO_PLACE_REFUSAL,
 } from '../../src/room-talk-contract.ts'
 
@@ -108,13 +108,14 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
       }
     })
 
-    await t.test('a second open while one is live is refused with the exact sentence', async () => {
+    await t.test("a second open wait is refused with the open lease's end time in open_until and in the sentence", async () => {
       await prepare()
       const first = await open()
       assert.equal(first.ok, true)
+      if (!first.ok) return
       const second = await open()
       assert.equal(second.ok, false)
-      if (!second.ok) assert.deepEqual(second.refusal, WAIT_ALREADY_OPEN_REFUSAL)
+      if (!second.ok) assert.deepEqual(second.refusal, waitAlreadyOpenRefusal(first.answer.lease.expires_at))
     })
 
     await t.test('ten concurrent opens from separate connections admit exactly one lease', async () => {
