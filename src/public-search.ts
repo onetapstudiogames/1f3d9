@@ -266,13 +266,33 @@ function literalPhrasePattern(value: string): string {
   return `%${value.replace(/[\\%_]/gu, character => `\\${character}`)}%`
 }
 
+function pageCursorPredicate(
+  itemType: PublicSearchItemType,
+  before: PublicSearchBoundary | null,
+): string {
+  if (before === null) {
+    return '$4::timestamptz IS NULL AND $5::text IS NULL AND $6::integer IS NULL'
+  }
+  const typeOrder: readonly PublicSearchItemType[] = ['note', 'place', 'thing']
+  const itemPosition = typeOrder.indexOf(itemType)
+  const cursorPosition = typeOrder.indexOf(before.itemType)
+  if (itemPosition < cursorPosition) return 'candidate.created_at < $4::timestamptz'
+  if (itemPosition > cursorPosition) return 'candidate.created_at <= $4::timestamptz'
+  return `(candidate.created_at < $4::timestamptz OR (
+    candidate.created_at = $4::timestamptz AND candidate.id < $6::integer
+  )) AND $5::text = '${before.itemType}'`
+}
+
 // A walk-to-read body is read in person, so while it is withheld a note matches
 // only on its public first line, the same line every remote read shows (decisions
 // #102 and #103); its whole body matches again once its place is retired.
 // The whole-body index only narrows ordinary notes. It never decides for a
 // walk-to-read note, because how the whole body splits into words can differ from
 // how its first line does; the final match on search_text decides alone.
-function publicSearchSql(mode: PublicSearchMode): string {
+function publicSearchSql(
+  mode: PublicSearchMode,
+  before: PublicSearchBoundary | null,
+): string {
   return `
     /* public:search */
     WITH note_candidates AS NOT MATERIALIZED (
@@ -285,7 +305,7 @@ function publicSearchSql(mode: PublicSearchMode): string {
         NULL::boolean AS open_to_use,
         NULL::boolean AS shared_use_may_destroy,
         NULL::boolean AS has_drawing,
-        note.author_id, author.handle AS author,
+        note.author_id, NULL::text AS author,
         NULL::text AS founding_name, NULL::jsonb AS name_history,
         NULL::timestamptz AS retired_at, NULL::text AS status,
         note.walk_to_read, withheld.body_withheld,
@@ -294,7 +314,6 @@ function publicSearchSql(mode: PublicSearchMode): string {
         CASE WHEN public_note.text !~* $3::text THEN public_note.text ELSE '' END AS search_text,
         note.created_at
       FROM notes note
-      JOIN residents author ON author.id = note.author_id
       CROSS JOIN LATERAL (
         SELECT ${noteBodyWithheldSql('note')} AS body_withheld
       ) withheld
@@ -316,9 +335,9 @@ function publicSearchSql(mode: PublicSearchMode): string {
       SELECT 'thing'::text AS result_type,
         thing.id, thing.place_id,
         thing.name,
-        thing.maker_id, maker.handle AS made_by,
-        thing.owner_id AS current_owner_id, owner.handle AS current_owner,
-        thing.owner_id, owner.handle AS owner,
+        thing.maker_id, NULL::text AS made_by,
+        thing.owner_id AS current_owner_id, NULL::text AS current_owner,
+        thing.owner_id, NULL::text AS owner,
         thing.open_to_use,
         thing.shared_use_may_destroy,
         ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
@@ -333,11 +352,13 @@ function publicSearchSql(mode: PublicSearchMode): string {
         ) AS search_text,
         thing.created_at
       FROM things thing
-      JOIN residents maker ON maker.id = thing.maker_id
-      JOIN residents owner ON owner.id = thing.owner_id
       WHERE $2::text IN ('all', 'thing')
         AND thing.withdrawn_at IS NULL
-        AND ($9::text IS NULL OR maker.handle = $9::text)
+        AND ($9::text IS NULL OR EXISTS (
+          SELECT 1
+          FROM residents maker_filter
+          WHERE maker_filter.id = thing.maker_id AND maker_filter.handle = $9::text
+        ))
         AND ${indexedMatchExpression(mode, "thing.name || ' ' || thing.body")}
         AND coalesce((
           SELECT moderation.action
@@ -407,43 +428,133 @@ function publicSearchSql(mode: PublicSearchMode): string {
         place.created_at
       FROM matching_places place
       JOIN place_history_spans history ON history.place_id = place.id
-    ), candidate AS NOT MATERIALIZED (
-      SELECT * FROM note_candidates
-      UNION ALL
-      SELECT * FROM thing_candidates
-      UNION ALL
-      SELECT * FROM place_candidates
-    ), matched AS NOT MATERIALIZED (
-      SELECT candidate.*
-      FROM candidate
-      WHERE ${matchExpression(mode)}
     ), bounded_matches AS MATERIALIZED (
-      SELECT matched.body
-      FROM matched
+      (
+        SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
+        FROM note_candidates candidate
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT 1001
+      )
+      UNION ALL
+      (
+        SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
+        FROM thing_candidates candidate
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT 1001
+      )
+      UNION ALL
+      (
+        SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
+        FROM place_candidates candidate
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT 1001
+      )
+    ), totals_input AS MATERIALIZED (
+      SELECT bounded_matches.body, bounded_matches.result_type,
+        bounded_matches.id, bounded_matches.created_at
+      FROM bounded_matches
+      ORDER BY bounded_matches.created_at DESC,
+        bounded_matches.result_type ASC, bounded_matches.id DESC
       LIMIT 1001
+    ), first_page_ids AS MATERIALIZED (
+      SELECT totals_input.result_type, totals_input.id,
+        totals_input.created_at
+      FROM totals_input
+      WHERE $4::timestamptz IS NULL
+      ORDER BY totals_input.created_at DESC,
+        totals_input.result_type ASC, totals_input.id DESC
+      LIMIT $7::integer
     ), totals AS MATERIALIZED (
       SELECT least(count(*), 1000)::integer AS total_items,
-        coalesce((
-          SELECT sum(octet_length(first_thousand.body))
-          FROM (
-            SELECT bounded_matches.body
-            FROM bounded_matches
-            LIMIT 1000
-          ) first_thousand
+        coalesce(sum(octet_length(counted.body)) FILTER (
+          WHERE counted.total_position <= 1000
         ), 0)::bigint AS total_body_bytes,
         count(*) > 1000 AS totals_capped
-      FROM bounded_matches
+      FROM (
+        SELECT totals_input.body,
+          row_number() OVER (
+            ORDER BY totals_input.created_at DESC,
+              totals_input.result_type ASC, totals_input.id DESC
+          ) AS total_position
+        FROM totals_input
+      ) counted
+    ), page_matches AS MATERIALIZED (
+      (
+        SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM note_candidates candidate
+          WHERE chosen.result_type = 'note' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM thing_candidates candidate
+          WHERE chosen.result_type = 'thing' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM place_candidates candidate
+          WHERE chosen.result_type = 'place' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM note_candidates candidate
+        WHERE ${matchExpression(mode)}
+          AND ${pageCursorPredicate('note', before)}
+          AND $4::timestamptz IS NOT NULL
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT $7::integer
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM thing_candidates candidate
+        WHERE ${matchExpression(mode)}
+          AND ${pageCursorPredicate('thing', before)}
+          AND $4::timestamptz IS NOT NULL
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT $7::integer
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM place_candidates candidate
+        WHERE ${matchExpression(mode)}
+          AND ${pageCursorPredicate('place', before)}
+          AND $4::timestamptz IS NOT NULL
+        ORDER BY candidate.created_at DESC, candidate.id DESC
+        LIMIT $7::integer
+      )
     ), checkpoint AS MATERIALIZED (
       SELECT current_change_id::text AS change_marker
       FROM public_change_state
       WHERE singleton = true
     )
     SELECT page.result_type, page.id, page.place_id,
-      page.name, page.maker_id, page.made_by,
-      page.current_owner_id, page.current_owner,
-      page.owner_id, page.owner, page.open_to_use, page.shared_use_may_destroy,
+      page.name, page.maker_id, maker.handle AS made_by,
+      page.current_owner_id, owner.handle AS current_owner,
+      page.owner_id, owner.handle AS owner, page.open_to_use, page.shared_use_may_destroy,
       page.has_drawing,
-      page.author_id, page.author,
+      page.author_id, author.handle AS author,
       page.founding_name, page.name_history,
       to_char(page.retired_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS retired_at,
       page.status,
@@ -455,21 +566,18 @@ function publicSearchSql(mode: PublicSearchMode): string {
     FROM totals
     CROSS JOIN checkpoint
     LEFT JOIN LATERAL (
-      SELECT matched.*
-      FROM matched
-      WHERE (
-        $4::timestamptz IS NULL
-        OR matched.created_at < $4::timestamptz
-        OR (matched.created_at = $4::timestamptz AND matched.result_type > $5::text)
-        OR (
-          matched.created_at = $4::timestamptz
-          AND matched.result_type = $5::text
-          AND matched.id < $6::integer
-        )
-      )
-      ORDER BY matched.created_at DESC, matched.result_type ASC, matched.id DESC
+      SELECT page_matches.*
+      FROM page_matches
+      ORDER BY page_matches.created_at DESC,
+        page_matches.result_type ASC, page_matches.id DESC
       LIMIT $7::integer
     ) page ON true
+    LEFT JOIN residents author
+      ON page.result_type = 'note' AND author.id = page.author_id
+    LEFT JOIN residents maker
+      ON page.result_type = 'thing' AND maker.id = page.maker_id
+    LEFT JOIN residents owner
+      ON page.result_type = 'thing' AND owner.id = page.owner_id
     ORDER BY page.created_at DESC NULLS LAST,
       page.result_type ASC NULLS LAST, page.id DESC NULLS LAST
   `
@@ -581,7 +689,7 @@ export async function loadPublicSearchResults(
   execute: PublicQueryExecutor,
   query: PublicSearchQuery,
 ): Promise<PublicSearchResults> {
-  const rows = await execute(publicSearchSql(query.mode), [
+  const rows = await execute(publicSearchSql(query.mode, query.before), [
     query.q,
     query.type,
     PUBLIC_CREDENTIAL_PATTERN_SOURCE,

@@ -406,7 +406,7 @@ test('search SQL filters private rows before matching and pages by creation time
   assert.match(compactPhraseSql, /maker\.handle AS made_by/i)
   assert.match(compactPhraseSql, /thing\.owner_id AS current_owner_id/i)
   assert.match(compactPhraseSql, /owner\.handle AS current_owner/i)
-  assert.match(compactPhraseSql, /JOIN residents maker ON maker\.id = thing\.maker_id/i)
+  assert.match(compactPhraseSql, /LEFT JOIN residents maker ON page\.result_type = 'thing' AND maker\.id = page\.maker_id/i)
   assert.match(compactPhraseSql, /thing\.withdrawn_at IS NULL/i)
   assert.match(compactPhraseSql, /moderation_actions/i)
   assert.match(compactPhraseSql, /\bremove\b/i)
@@ -421,7 +421,24 @@ test('search SQL filters private rows before matching and pages by creation time
   )
   assert.match(compactPhraseSql, /count\s*\(\s*\*\s*\)[\s\S]*total_items/i)
   assert.match(compactPhraseSql, /sum\s*\([\s\S]*octet_length\([\s\S]*body[\s\S]*total_body_bytes/i)
-  assert.match(compactPhraseSql, /bounded_matches\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/i)
+  const totalsBranches = compactPhraseSql.split('bounded_matches AS MATERIALIZED')[1]
+    ?.split('totals_input AS MATERIALIZED')[0] ?? ''
+  for (const branch of ['note_candidates', 'thing_candidates', 'place_candidates']) {
+    assert.match(
+      totalsBranches,
+      new RegExp(`FROM\\s+${branch}\\s+candidate WHERE CASE WHEN \\([\\s\\S]*?\\) THEN true ELSE false END ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
+      `${branch} totals must stop after 1,001 newest matches`,
+    )
+    assert.match(
+      compactPhraseSql,
+      new RegExp(`FROM\\s+${branch}\\s+candidate[\\s\\S]*?ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT \\$7::integer`, 'iu'),
+      `${branch} page must stop after the requested page plus one`,
+    )
+  }
+  assert.match(compactPhraseSql, /totals_input\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/i)
+  assert.match(compactPhraseSql, /first_page_ids AS MATERIALIZED \([\s\S]*?FROM totals_input WHERE \$4::timestamptz IS NULL[\s\S]*?LIMIT \$7::integer/i)
+  assert.match(compactPhraseSql, /FROM first_page_ids chosen CROSS JOIN LATERAL/i)
+  assert.match(compactPhraseSql, /AND \$4::timestamptz IS NOT NULL ORDER BY candidate\.created_at DESC, candidate\.id DESC LIMIT \$7::integer/i)
   assert.match(compactPhraseSql, /totals_capped/i)
   assert.doesNotMatch(
     compactPhraseSql,
@@ -435,6 +452,33 @@ test('search SQL filters private rows before matching and pages by creation time
   const matchPosition = compactPhraseSql.search(/\b(?:strpos|position)\s*\(/i)
   assert.ok(matchPosition > compactPhraseSql.search(/moderation_actions/i))
   assert.ok(matchPosition > compactPhraseSql.search(/!~\*/u))
+
+  const cursor = encodePublicSearchCursor({
+    q: 'hush lantern',
+    mode: 'phrase',
+    type: 'all',
+    createdAt: '2026-08-21T19:20:21.123456Z',
+    itemType: 'place',
+    id: 73,
+    changeMarker: '12',
+  })
+  let cursorSql = ''
+  await loadPublicSearchResults(async text => {
+    cursorSql = text
+    return [{
+      result_type: null,
+      id: null,
+      total_items: 0,
+      total_body_bytes: '0',
+      totals_capped: false,
+      change_marker: '12',
+    }]
+  }, validSearch({ q: ['hush lantern'], mode: ['phrase'], before: [cursor] }))
+  const compactCursorPageSql = cursorSql.replace(/\s+/gu, ' ').trim()
+    .split('page_matches AS MATERIALIZED')[1] ?? ''
+  assert.match(compactCursorPageSql, /FROM note_candidates candidate WHERE[\s\S]*?candidate\.created_at < \$4::timestamptz/i)
+  assert.match(compactCursorPageSql, /FROM place_candidates candidate WHERE[\s\S]*?AND \(candidate\.created_at < \$4::timestamptz OR \( candidate\.created_at = \$4::timestamptz AND candidate\.id < \$6::integer \)\)/i)
+  assert.match(compactCursorPageSql, /FROM thing_candidates candidate WHERE[\s\S]*?candidate\.created_at <= \$4::timestamptz/i)
 
   const words = validSearch({
     q: ['garden gardens'],
@@ -483,5 +527,5 @@ test('maker filtering uses the permanent thing maker and excludes notes before t
 
   assert.ok(params.includes('first-maker'))
   assert.match(sql, /note_candidates[\s\S]*AND \$9::text IS NULL/iu)
-  assert.match(sql, /thing_candidates[\s\S]*maker\.handle\s*=\s*\$\d+::text/iu)
+  assert.match(sql, /thing_candidates[\s\S]*maker_filter\.handle\s*=\s*\$9::text/iu)
 })

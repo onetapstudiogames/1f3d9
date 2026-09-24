@@ -929,6 +929,7 @@ CREATE INDEX IF NOT EXISTS places_parent ON places (parent_id, created_at, id);
 CREATE INDEX IF NOT EXISTS places_owner ON places (owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS places_parent_id_desc ON places (parent_id, id DESC);
 CREATE INDEX IF NOT EXISTS places_owner_id_desc ON places (owner_id, id DESC);
+CREATE INDEX IF NOT EXISTS places_public_search_recent ON places (created_at DESC, id DESC);
 
 -- Presence is the only mutable round-two state. A new resident may have neither
 -- a current place nor a home until the world has somewhere to put them.
@@ -1100,6 +1101,8 @@ CREATE INDEX IF NOT EXISTS things_place_active_id_desc
   ON things (place_id, id DESC) WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_owner_active_id_desc
   ON things (owner_id, id DESC) WHERE withdrawn_at IS NULL;
+CREATE INDEX IF NOT EXISTS things_public_search_recent_active
+  ON things (created_at DESC, id DESC) WHERE withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_public_search_words_active
   ON things USING GIN (to_tsvector('simple', name || ' ' || body))
   WHERE withdrawn_at IS NULL;
@@ -1543,6 +1546,7 @@ CREATE INDEX IF NOT EXISTS notes_place ON notes (place_id, created_at DESC, id D
 CREATE INDEX IF NOT EXISTS notes_author ON notes (author_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS notes_place_id_desc ON notes (place_id, id DESC);
 CREATE INDEX IF NOT EXISTS notes_author_id_desc ON notes (author_id, id DESC);
+CREATE INDEX IF NOT EXISTS notes_public_search_recent ON notes (created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS notes_public_search_words
   ON notes USING GIN (to_tsvector('simple', body));
 CREATE INDEX IF NOT EXISTS notes_public_search_phrase
