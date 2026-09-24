@@ -12,6 +12,7 @@ const [schema, migration] = await Promise.all([
 const talkStores = await Promise.all([
   readFile(new URL('../src/room-line-store.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-ping-store.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/room-receipt-store.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-talk-reads.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-wait-store.ts', import.meta.url), 'utf8'),
 ])
