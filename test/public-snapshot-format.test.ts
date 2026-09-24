@@ -49,20 +49,23 @@ test('canonical JSON and short record fingerprints are stable without text norma
 })
 
 test('the registry explicitly classifies exported, private, derived, and absent classes', () => {
-  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 2)
+  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 3)
   const classes = new Map(PUBLIC_SNAPSHOT_CLASS_REGISTRY.map(entry => [entry.class_name, entry]))
   for (const name of [
     'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
     'agreements', 'events', 'moderation', 'drawing_revisions', 'treasury_fees',
-    'world_market_offers',
+    'world_market_offers', 'lines', 'pings',
     'gazette_issues', 'gazette_issue_entries', 'gazette_withdrawals', 'official', 'physics',
   ]) assert.equal(classes.get(name)?.disposition, 'exported', name)
   for (const name of [
     'credentials', 'oauth', 'resident_private_state', 'private_flags',
     'private_community_tool_submissions', 'payment_attempts',
-    'city_fee_credit', 'later_holder_marks', 'reader_state',
+    'city_fee_credit', 'later_holder_marks', 'reader_state', 'ping_receipts', 'talk_requests',
   ]) assert.equal(classes.get(name)?.disposition, 'not_public', name)
-  for (const name of ['window', 'map', 'search', 'changes', 'names_directory', 'counters']) {
+  for (const name of [
+    'window', 'map', 'search', 'changes', 'names_directory', 'counters',
+    'ping_arrival_marks', 'listening_cues',
+  ]) {
     assert.equal(classes.get(name)?.disposition, 'not_exported', name)
   }
   assert.deepEqual(classes.get('world_market_offers')?.database_sources, [
@@ -71,7 +74,9 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   assert.deepEqual(classes.get('drawing_revisions')?.database_sources, [
     'drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions',
   ])
-  assert.deepEqual(classes.get('events')?.database_sources, ['events', 'gazette_issues'])
+  assert.deepEqual(classes.get('events')?.database_sources, [
+    'events', 'gazette_issues', 'moderation_actions',
+  ])
   assert.deepEqual(classes.get('gazette_issues')?.database_sources, ['gazette_issues'])
   assert.deepEqual(classes.get('gazette_issue_entries')?.database_sources, [
     'gazette_issue_entries', 'gazette_withdrawals', 'notes', 'residents',
@@ -85,6 +90,8 @@ test('the registry explicitly classifies exported, private, derived, and absent 
     'residents.things_today',
     'residents.notes_today',
     'residents.agreement_actions_today',
+    'line_quota',
+    'line_minute_quota',
     'resident_refusal_state',
   ])
   assert.deepEqual(classes.get('private_community_tool_submissions')?.database_sources, [
@@ -126,7 +133,7 @@ test('snapshot bundles are deterministic, split by class, and verify offline', a
     })
     assert.equal(first.city_root_sha256, second.city_root_sha256)
     assert.match(first.city_root_sha256, /^[0-9a-f]{64}$/u)
-    assert.equal(first.tag, 'city-snapshot-v2-20260823T123456Z')
+    assert.equal(first.tag, 'city-snapshot-v3-20260823T123456Z')
     const exportedClasses = PUBLIC_SNAPSHOT_CLASS_REGISTRY
       .filter(entry => entry.disposition === 'exported')
       .map(entry => entry.class_name)

@@ -61,7 +61,7 @@ export function registerOfficialAndFlagsTests(): void {
       PUBLIC_CONTENT_RETELLING_LINE,
     )
     assert.deepEqual(facts.public_snapshots, {
-      format_version: 2,
+      format_version: 3,
       releases: 'https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-',
       format: 'https://github.com/onetapstudiogames/1f3d9/blob/main/docs/PUBLIC_SNAPSHOTS.md',
       verifier: 'https://github.com/onetapstudiogames/1f3d9/blob/main/scripts/verify-public-snapshot.ts',
