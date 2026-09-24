@@ -16,6 +16,7 @@ const talkStores = await Promise.all([
   readFile(new URL('../src/room-talk-reads.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-wait-store.ts', import.meta.url), 'utf8'),
 ])
+const roomTalkRoutes = await readFile(new URL('../src/room-talk-routes.ts', import.meta.url), 'utf8')
 
 const migrationStatements = splitSqlStatements(migration).map(statement => (
   statement.replace(/^\s*--.*$/gmu, '').trim()
@@ -87,4 +88,8 @@ test('talk stores never settle or wake a room, and only the contract names an er
     assert.doesNotMatch(source, /\brunAction\b/u)
     assert.doesNotMatch(source, /error:/u)
   }
+})
+
+test('the talk routes read bodies only through text, json, or arrayBuffer', () => {
+  assert.doesNotMatch(roomTalkRoutes, /raw\.(?:body|signal)|\.clone\(|\.formData\(|parseBody\(/u)
 })

@@ -38,7 +38,7 @@ test('the source scan resolves constants, imported messages, templates, and loca
 
   const residentAuth = 'resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>'
   assert.ok(rows('src/actions.ts', residentAuth).length > 0)
-  const talkAuthKeys = [1, 2, 3, 4].map(ordinal => (
+  const talkAuthKeys = [1, 2, 3, 4, 5].map(ordinal => (
     `src/room-talk-routes.ts::${residentAuth}::${ordinal}`
   ))
   const talkAuthCandidates = candidates.filter(row => (
@@ -212,8 +212,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // GET /api/founder/flags and POST /api/founder/flags/:id/handle are the two
   // founder-only reading and answering boundaries added for issue #316.
   // GET /api/note/:id/here is the passive walk-to-read body read (decision #102).
-  // Same-room talk adds POST /api/line, POST /api/ping, POST /api/ping/:id/answer, POST /api/ping/:id/dismiss, GET /api/line/:id, GET /api/ping/:id, and GET /api/place/:id/lines.
-  assert.equal(http.registrations.length, 142)
+  // Same-room talk adds POST /api/line, POST /api/ping, POST /api/ping/:id/answer, POST /api/ping/:id/dismiss, POST /api/wait-here, GET /api/line/:id, GET /api/ping/:id, and GET /api/place/:id/lines.
+  assert.equal(http.registrations.length, 143)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

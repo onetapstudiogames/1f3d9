@@ -2630,8 +2630,8 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
 
   try {
     const response = hostedChat
-      ? await app.request(hostedBackingRequest(route.path, init))
-      : await app.request(route.path, init)
+      ? await app.request(hostedBackingRequest(route.path, init), undefined, c.env)
+      : await app.request(route.path, init, c.env)
     const rawText = await response.text()
     // Every legacy and hosted tool response is a public/transcript surface,
     // so all of them share the same credential backstop. Registration is a

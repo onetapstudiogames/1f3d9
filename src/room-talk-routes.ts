@@ -1,13 +1,24 @@
 import type { Context, Hono } from 'hono'
+import { setTimeout as timerSleep } from 'node:timers/promises'
 import { auth, err, RESIDENT_AUTH_REFUSAL } from './core.ts'
+import { sql } from './db.ts'
 import { moderatePublicRows } from './moderation-store.ts'
-import { allowedPublicQuery, parsePublicPage, parsePublicRangeStart, utf8TextBytes } from './public-pagination.ts'
+import {
+  allowedPublicQuery,
+  parsePublicPage,
+  parsePublicRangeStart,
+  utf8TextBytes,
+  type PublicQueryExecutor,
+} from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
 import { positiveId } from './input.ts'
 import { hasOnly, jsonObject } from './society.ts'
 import { answerPing, dismissPing, invitePing } from './room-ping-store.ts'
+import { loadPublicChangeCheckpoint, parsePublicChangeMarker } from './public-changes.ts'
 import { readLine, readPing, readPlaceLines } from './room-talk-reads.ts'
 import { sayLine } from './room-line-store.ts'
+import { holdWait } from './room-wait-hold.ts'
+import { openWait, readWaitChanges, releaseWait } from './room-wait-store.ts'
 import {
   LINE_FIELDS_REFUSAL,
   LINE_ID_REFUSAL,
@@ -18,12 +29,25 @@ import {
   PING_INVITE_FIELDS_REFUSAL,
   PING_READ_ID_REFUSAL,
   PLACE_LINES_ID_REFUSAL,
+  WAIT_CURSOR_REFUSAL,
+  WAIT_FIELDS_REFUSAL,
+  WAIT_SECONDS_REFUSAL,
   lineNotFoundRefusal,
   pingReadNotFoundRefusal,
   placeLinesNotFoundRefusal,
+  requestedWaitSeconds,
   type TalkOutcome,
   type TalkRefusal,
 } from './room-talk-contract.ts'
+
+const executeTalkQuery: PublicQueryExecutor = async (text, params) =>
+  await sql.query(text, [...params]) as Record<string, unknown>[]
+
+type OutgoingCloseEmitter = Readonly<{
+  once?: (event: 'close', listener: () => void) => unknown
+  off?: (event: 'close', listener: () => void) => unknown
+  destroyed?: boolean
+}>
 
 export function talkRefusalResponse(c: Context, refusal: TalkRefusal): Response {
   const { status, ...body } = refusal
@@ -104,6 +128,122 @@ export function mountRoomTalkRoutes(app: Hono): void {
       pingId: positiveId(c.req.param('id')),
       requestId: body.request_id,
     }))
+  })
+
+  app.post('/api/wait-here', async c => {
+    talkWriteHeaders(c)
+    const resident = await auth(c)
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
+
+    const text = await c.req.text()
+    let parsedBody: unknown = {}
+    if (text.trim().length > 0) {
+      try {
+        parsedBody = JSON.parse(text) as unknown
+      } catch {
+        return talkRefusalResponse(c, WAIT_FIELDS_REFUSAL)
+      }
+    }
+    if (
+      parsedBody === null
+      || typeof parsedBody !== 'object'
+      || Array.isArray(parsedBody)
+      || !hasOnly(parsedBody as Record<string, unknown>, [
+        'after_line_change',
+        'after_ping_change',
+        'seconds',
+      ])
+    ) return talkRefusalResponse(c, WAIT_FIELDS_REFUSAL)
+    const body = parsedBody as Record<string, unknown>
+
+    const seconds = requestedWaitSeconds(body.seconds)
+    if (seconds === null) return talkRefusalResponse(c, WAIT_SECONDS_REFUSAL)
+    const afterLine = body.after_line_change === undefined
+      ? null
+      : parsePublicChangeMarker(body.after_line_change)
+    const afterPing = body.after_ping_change === undefined
+      ? null
+      : parsePublicChangeMarker(body.after_ping_change)
+    if (
+      (body.after_line_change !== undefined && afterLine === null)
+      || (body.after_ping_change !== undefined && afterPing === null)
+    ) return talkRefusalResponse(c, WAIT_CURSOR_REFUSAL)
+
+    const checkpoint = await loadPublicChangeCheckpoint(executeTalkQuery)
+    if (
+      (afterLine !== null && BigInt(afterLine) > BigInt(checkpoint))
+      || (afterPing !== null && BigInt(afterPing) > BigInt(checkpoint))
+    ) return talkRefusalResponse(c, WAIT_CURSOR_REFUSAL)
+
+    const opened = await openWait({ residentId: resident.id, seconds })
+    if (!opened.ok) return talkRefusalResponse(c, opened.refusal)
+    const { lease } = opened.answer
+    const outgoing = (c.env as { outgoing?: unknown } | undefined)?.outgoing
+    const emitter = outgoing !== null && typeof outgoing === 'object'
+      ? outgoing as OutgoingCloseEmitter
+      : null
+    const canListen = emitter !== null
+      && typeof emitter.once === 'function'
+      && typeof emitter.off === 'function'
+    const controller = new AbortController()
+    let closed = false
+    const onClose = () => {
+      closed = true
+      controller.abort()
+    }
+    if (canListen) {
+      emitter.once!('close', onClose)
+      if (emitter.destroyed === true) onClose()
+    }
+
+    let held: Awaited<ReturnType<typeof holdWait>>
+    try {
+      held = await holdWait({
+        seconds,
+        start: {
+          line: afterLine ?? checkpoint,
+          ping: afterPing ?? checkpoint,
+        },
+        read: cursors => readWaitChanges({
+          residentId: resident.id,
+          leaseId: lease.lease_id,
+          placeId: lease.place_id,
+          cursors,
+        }),
+        closed: () => closed,
+        sleep: milliseconds => timerSleep(milliseconds, undefined, { signal: controller.signal })
+          .then(() => undefined)
+          .catch(() => undefined),
+        now: Date.now,
+      })
+    } finally {
+      try {
+        await releaseWait({ residentId: resident.id, leaseId: lease.lease_id })
+      } catch (error) {
+        console.error('wait_release_failure', error instanceof Error ? error.name : 'UnknownError')
+      } finally {
+        if (canListen) emitter.off!('close', onClose)
+      }
+    }
+
+    const [lines, publicPings] = await Promise.all([
+      moderatePublicRows('line', held.read.lines),
+      moderatePublicRows('ping', held.read.pings.map(entry => entry.ping)),
+    ])
+    const pings = held.read.pings.map((entry, index) => ({
+      ...entry,
+      ping: publicPings[index]!,
+    }))
+    return c.json({
+      place_id: lease.place_id,
+      reason: held.reason === 'closed' ? 'timeout' : held.reason,
+      lines,
+      lines_has_more: held.read.linesHasMore,
+      next_after_line_change: held.read.next.line,
+      pings,
+      pings_has_more: held.read.pingsHasMore,
+      next_after_ping_change: held.read.next.ping,
+    }, 200)
   })
 
   app.get('/api/line/:id', async c => {
