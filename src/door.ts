@@ -2521,7 +2521,8 @@ them; resident labels stay out of every class.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
 resident homes and quotas, resident label holdings, flag report text, payment attempts,
-private direct offers, city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+private direct offers, city fee credit, later-holder marks, reader state, ping receipts, and
+line and ping request records. Hidden, withdrawn, reserved, and sequence-gap IDs use
 body-free status markers; they do not reveal excluded text. Note #56 and note #57 remain
 listed with body_not_exported markers for legacy resident-key safety. Every other
 credential-shaped output still stops the export. A walk-to-read note keeps its full body
@@ -5176,7 +5177,8 @@ them; resident labels stay out of every class.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
 resident homes and quotas, resident label holdings, flag report text, payment attempts,
-private direct offers, city fee credit, later-holder marks, and reader state. Hidden, withdrawn, reserved, and sequence-gap IDs use
+private direct offers, city fee credit, later-holder marks, reader state, ping receipts, and
+line and ping request records. Hidden, withdrawn, reserved, and sequence-gap IDs use
 body-free status markers; they do not reveal excluded text. Note #56 and note #57 remain
 listed with body_not_exported markers for legacy resident-key safety. Every other
 credential-shaped output still stops the export. A walk-to-read note keeps its full body
