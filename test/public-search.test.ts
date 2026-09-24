@@ -421,10 +421,12 @@ test('search SQL filters private rows before matching and pages by creation time
   )
   assert.match(compactPhraseSql, /count\s*\(\s*\*\s*\)[\s\S]*total_items/i)
   assert.match(compactPhraseSql, /sum\s*\([\s\S]*octet_length\([\s\S]*body[\s\S]*total_body_bytes/i)
+  const totalsBranches = compactPhraseSql.split('bounded_matches AS MATERIALIZED')[1]
+    ?.split('totals_input AS MATERIALIZED')[0] ?? ''
   for (const branch of ['note_candidates', 'thing_candidates', 'place_candidates']) {
     assert.match(
-      compactPhraseSql,
-      new RegExp(`FROM\\s+${branch}\\s+candidate[\\s\\S]*?ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
+      totalsBranches,
+      new RegExp(`FROM\\s+${branch}\\s+candidate WHERE CASE WHEN \\([\\s\\S]*?\\) THEN true ELSE false END ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
       `${branch} totals must stop after 1,001 newest matches`,
     )
     assert.match(
@@ -434,6 +436,9 @@ test('search SQL filters private rows before matching and pages by creation time
     )
   }
   assert.match(compactPhraseSql, /totals_input\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/i)
+  assert.match(compactPhraseSql, /first_page_ids AS MATERIALIZED \([\s\S]*?FROM totals_input WHERE \$4::timestamptz IS NULL[\s\S]*?LIMIT \$7::integer/i)
+  assert.match(compactPhraseSql, /FROM first_page_ids chosen CROSS JOIN LATERAL/i)
+  assert.match(compactPhraseSql, /AND \$4::timestamptz IS NOT NULL ORDER BY candidate\.created_at DESC, candidate\.id DESC LIMIT \$7::integer/i)
   assert.match(compactPhraseSql, /totals_capped/i)
   assert.doesNotMatch(
     compactPhraseSql,

@@ -432,7 +432,7 @@ function publicSearchSql(
       (
         SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
         FROM note_candidates candidate
-        WHERE ${matchExpression(mode)}
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT 1001
       )
@@ -440,7 +440,7 @@ function publicSearchSql(
       (
         SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
         FROM thing_candidates candidate
-        WHERE ${matchExpression(mode)}
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT 1001
       )
@@ -448,7 +448,7 @@ function publicSearchSql(
       (
         SELECT candidate.result_type, candidate.id, candidate.body, candidate.created_at
         FROM place_candidates candidate
-        WHERE ${matchExpression(mode)}
+        WHERE CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT 1001
       )
@@ -459,6 +459,14 @@ function publicSearchSql(
       ORDER BY bounded_matches.created_at DESC,
         bounded_matches.result_type ASC, bounded_matches.id DESC
       LIMIT 1001
+    ), first_page_ids AS MATERIALIZED (
+      SELECT totals_input.result_type, totals_input.id,
+        totals_input.created_at
+      FROM totals_input
+      WHERE $4::timestamptz IS NULL
+      ORDER BY totals_input.created_at DESC,
+        totals_input.result_type ASC, totals_input.id DESC
+      LIMIT $7::integer
     ), totals AS MATERIALIZED (
       SELECT least(count(*), 1000)::integer AS total_items,
         coalesce(sum(octet_length(counted.body)) FILTER (
@@ -476,9 +484,43 @@ function publicSearchSql(
     ), page_matches AS MATERIALIZED (
       (
         SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM note_candidates candidate
+          WHERE chosen.result_type = 'note' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM thing_candidates candidate
+          WHERE chosen.result_type = 'thing' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
+        FROM first_page_ids chosen
+        CROSS JOIN LATERAL (
+          SELECT candidate.*
+          FROM place_candidates candidate
+          WHERE chosen.result_type = 'place' AND candidate.id = chosen.id
+          LIMIT 1
+        ) candidate
+      )
+      UNION ALL
+      (
+        SELECT candidate.*
         FROM note_candidates candidate
         WHERE ${matchExpression(mode)}
           AND ${pageCursorPredicate('note', before)}
+          AND $4::timestamptz IS NOT NULL
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT $7::integer
       )
@@ -488,6 +530,7 @@ function publicSearchSql(
         FROM thing_candidates candidate
         WHERE ${matchExpression(mode)}
           AND ${pageCursorPredicate('thing', before)}
+          AND $4::timestamptz IS NOT NULL
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT $7::integer
       )
@@ -497,6 +540,7 @@ function publicSearchSql(
         FROM place_candidates candidate
         WHERE ${matchExpression(mode)}
           AND ${pageCursorPredicate('place', before)}
+          AND $4::timestamptz IS NOT NULL
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT $7::integer
       )

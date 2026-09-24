@@ -98,10 +98,12 @@ export function registerSearchTests(): void {
 
       const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
       const firstPageSql = (searchRead?.query ?? '').replace(/\s+/gu, ' ')
+      const totalsBranches = firstPageSql.split('bounded_matches AS MATERIALIZED')[1]
+        ?.split('totals_input AS MATERIALIZED')[0] ?? ''
       for (const branch of ['note_candidates', 'thing_candidates', 'place_candidates']) {
         assert.match(
-          firstPageSql,
-          new RegExp(`FROM\\s+${branch}\\s+candidate[\\s\\S]*?ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
+          totalsBranches,
+          new RegExp(`FROM\\s+${branch}\\s+candidate WHERE CASE WHEN \\([\\s\\S]*?\\) THEN true ELSE false END ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
           `${branch} totals must have a branch-local limit`,
         )
         assert.match(
@@ -111,6 +113,9 @@ export function registerSearchTests(): void {
         )
       }
       assert.match(firstPageSql, /totals_input\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/iu)
+      assert.match(firstPageSql, /first_page_ids AS MATERIALIZED \([\s\S]*?FROM totals_input WHERE \$4::timestamptz IS NULL[\s\S]*?LIMIT \$7::integer/iu)
+      assert.match(firstPageSql, /FROM first_page_ids chosen CROSS JOIN LATERAL/iu)
+      assert.match(firstPageSql, /AND \$4::timestamptz IS NOT NULL ORDER BY candidate\.created_at DESC, candidate\.id DESC LIMIT \$7::integer/iu)
       assert.doesNotMatch(
         firstPageSql,
         /(?:note_candidates|thing_candidates|matching_places|place_history_spans|place_candidates|candidate|matched)\s+AS\s+MATERIALIZED/iu,
