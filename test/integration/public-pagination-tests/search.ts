@@ -55,6 +55,7 @@ export async function registerSearchTests(
       }),
     )
     assert.equal(result.totalItems, 3)
+    assert.equal(result.totalsCapped, false)
     assert.equal(
       result.totalBodyBytes,
       Buffer.byteLength(noteBody, 'utf8') + Buffer.byteLength(thingBody, 'utf8'),
@@ -202,6 +203,7 @@ export async function registerSearchTests(
     )
     assert.equal(complete.totalItems, Number(directTotals.total_items))
     assert.equal(complete.totalBodyBytes, Number(directTotals.total_body_bytes))
+    assert.equal(complete.totalsCapped, false)
 
     const pagedItems: typeof complete.items[number][] = []
     let before: string | null = null
@@ -218,6 +220,7 @@ export async function registerSearchTests(
       )
       assert.equal(page.totalItems, complete.totalItems)
       assert.equal(page.totalBodyBytes, complete.totalBodyBytes)
+      assert.equal(page.totalsCapped, false)
       pagedItems.push(...page.items)
       if (!page.hasMore) break
       assert.ok(page.nextBefore, 'every nonterminal page needs an honest continuation')
@@ -226,6 +229,56 @@ export async function registerSearchTests(
     const identity = (item: Readonly<Record<string, unknown>>) => `${String(item.type)}:${Number(item.id)}`
     assert.deepEqual(pagedItems.map(identity), complete.items.map(identity))
     assert.equal(new Set(pagedItems.map(identity)).size, complete.totalItems)
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined)
+      client.release()
+    }
+  })
+
+  await t.test('search caps totals after 1,000 matches and keeps its continuation', async () => {
+    const client = await postgres.client.connect()
+    await client.query('BEGIN')
+    const searchExecute: PublicQueryExecutor = async (text, values) => (
+      await client.query(text, [...values])
+    ).rows as Record<string, unknown>[]
+    try {
+      const phrase = 'wavecapmanymatchneedle'
+      const body = `${phrase} has a fixed byte size for every matching record`
+      await client.query(`
+        INSERT INTO notes (place_id, author_id, body, created_at)
+        SELECT $1, 2, $2,
+          '2026-08-22T18:00:00.000000Z'::timestamptz
+            + item_number * interval '1 microsecond'
+        FROM generate_series(1, 1001) AS item_number
+      `, [city.targetPlaceId, body])
+
+      const first = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({
+          q: [phrase], mode: ['phrase'], type: ['note'], limit: ['200'],
+        }),
+      )
+      assert.equal(first.totalItems, 1000)
+      assert.equal(first.totalBodyBytes, Buffer.byteLength(body, 'utf8') * 1000)
+      assert.equal(first.totalsCapped, true)
+      assert.equal(first.items.length, 200)
+      assert.equal(first.hasMore, true)
+      assert.ok(first.nextBefore)
+
+      const next = await loadPublicSearchResults(
+        searchExecute,
+        publicSearchQuery({
+          q: [phrase], mode: ['phrase'], type: ['note'], limit: ['200'],
+          before: [first.nextBefore],
+        }),
+      )
+      assert.equal(next.totalItems, 1000)
+      assert.equal(next.totalBodyBytes, Buffer.byteLength(body, 'utf8') * 1000)
+      assert.equal(next.totalsCapped, true)
+      assert.equal(next.items.length, 200)
+      assert.equal(next.hasMore, true)
+      assert.ok(next.nextBefore)
+      assert.equal(new Set([...first.items, ...next.items].map(item => item.id)).size, 400)
     } finally {
       await client.query('ROLLBACK').catch(() => undefined)
       client.release()

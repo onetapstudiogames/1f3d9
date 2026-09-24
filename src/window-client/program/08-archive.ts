@@ -98,6 +98,9 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     if (payload.returned_items !== results.length || totalItems < results.length) {
       throw new Error('invalid archive response')
     }
+    if (typeof payload.totals_capped !== 'boolean') throw new Error('invalid archive response')
+    const note = payload.totals_capped ? payload.note : null
+    if (payload.totals_capped && typeof note !== 'string') throw new Error('invalid archive response')
     const hasMore = payload.has_more === true || payload.hasMore === true
     const nextBefore = safeArchiveCursor(payload.next_before ?? payload.nextBefore)
     if (hasMore !== Boolean(nextBefore)) throw new Error('invalid archive response')
@@ -108,6 +111,8 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
         payload.total_text_bytes ?? payload.total_body_bytes ??
           payload.totalTextBytes ?? payload.totalBodyBytes,
       ),
+      totalsCapped: payload.totals_capped,
+      note,
       hasMore,
       nextBefore,
     })
@@ -204,15 +209,19 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
       renderArchivePage(archive)
       return
     }
+    const matchCount = archive.totalsCapped
+      ? String(archive.totalItems) + ' matches counted (maximum 1,000)'
+      : String(archive.totalItems) + (archive.totalItems === 1 ? ' exact match' : ' exact matches')
     const summary = element(
       'p',
       'archive-summary',
-      String(archive.totalItems) + (archive.totalItems === 1 ? ' exact match · ' : ' exact matches · ') +
-        String(archive.totalTextBytes) + ' public text bytes total · bodies stay on their original records',
+      matchCount + ' · ' + String(archive.totalTextBytes) +
+        ' public text bytes in the counted matches · bodies stay on their original records',
     )
+    const note = archive.note ? element('p', 'archive-summary', archive.note) : null
     const list = element('ol', 'archive-list')
     list.append(...archive.results.map(archiveResultCard))
-    nodes.archiveResults.replaceChildren(summary, list)
+    nodes.archiveResults.replaceChildren(...(note ? [summary, note, list] : [summary, list]))
     renderArchivePage(archive)
   }
 
@@ -311,6 +320,8 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
           results: [...combined.values()],
           totalItems: page.totalItems,
           totalTextBytes: page.totalTextBytes,
+          totalsCapped: page.totalsCapped,
+          note: page.note,
           nextBefore: page.nextBefore,
           hasMore: page.hasMore && Boolean(page.nextBefore),
           loading: false,

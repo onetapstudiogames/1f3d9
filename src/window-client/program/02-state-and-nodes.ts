@@ -114,7 +114,8 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     detailDrawingHistories: {},
     archive: {
       query: '', mode: 'words', type: 'all', results: [], totalItems: 0,
-      totalTextBytes: 0, nextBefore: null, hasMore: false, loading: false,
+      totalTextBytes: 0, totalsCapped: false, note: null,
+      nextBefore: null, hasMore: false, loading: false,
       initialized: false, error: null,
     },
     thingIndex: {

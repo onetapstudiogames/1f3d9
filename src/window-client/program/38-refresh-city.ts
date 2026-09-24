@@ -110,7 +110,8 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       const archive = replaceAuthored
         ? {
             ...state.archive,
-            results: [], totalItems: 0, totalTextBytes: 0, nextBefore: null,
+            results: [], totalItems: 0, totalTextBytes: 0, totalsCapped: false,
+            note: null, nextBefore: null,
             hasMore: false, loading: false, initialized: false, error: null,
           }
         : state.archive

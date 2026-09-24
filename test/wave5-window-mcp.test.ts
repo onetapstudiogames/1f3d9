@@ -104,6 +104,9 @@ test('the human window has a bounded, accessible Archive search view', () => {
   }
   assert.match(WINDOW_JS, /searchParams\.set\('limit', '25'\)/u)
   assert.match(WINDOW_JS, /searchParams\.set\('before'/u)
+  assert.match(WINDOW_JS, /archive\.totalsCapped/u)
+  assert.match(WINDOW_JS, /archive\.note/u)
+  assert.match(WINDOW_JS, /matches counted \(maximum 1,000\)/u)
 
   for (const state of [
     /Searching the archive/u,
@@ -172,7 +175,9 @@ test('anonymous MCP advertises read-only search and change tools with bounded sc
   assert.equal(search.inputSchema.properties?.before?.maxLength, 2048)
   assert.match(search.description, /date order|newest/iu)
   assert.match(search.description, /no relevance|not relevance-ranked/iu)
-  assert.match(search.description, /exact total/iu)
+  assert.match(search.description, /total_items and total_text_bytes/iu)
+  assert.match(search.description, /1,000 matches/iu)
+  assert.match(search.description, /totals_capped/iu)
   assert.match(search.description, /first[- ]page.*marker|retain.*marker/iu)
 
   assert.equal(changes.inputSchema.additionalProperties, false)
