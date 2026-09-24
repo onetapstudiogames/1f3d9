@@ -38,6 +38,7 @@ import {
   oauthChallenge,
 } from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
+import { mountRoomTalkRoutes } from './room-talk-routes.ts'
 import { mountWorldRoutes } from './world.ts'
 import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
@@ -871,6 +872,7 @@ mountGazetteReadingRoutes(app, {
 })
 mountWorldRoutes(app)
 mountSocietyRoutes(app)
+mountRoomTalkRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {

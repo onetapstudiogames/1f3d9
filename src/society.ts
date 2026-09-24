@@ -124,14 +124,14 @@ function assetType(value: unknown): AssetType | null {
     : null
 }
 
-async function jsonObject(c: Context): Promise<JsonObject | null> {
+export async function jsonObject(c: Context): Promise<JsonObject | null> {
   const value = await c.req.json().catch(() => null) as unknown
   return value != null && typeof value === 'object' && !Array.isArray(value)
     ? value as JsonObject
     : null
 }
 
-function hasOnly(value: JsonObject, names: readonly string[]): boolean {
+export function hasOnly(value: JsonObject, names: readonly string[]): boolean {
   return Object.keys(value).every(name => names.includes(name))
 }
 

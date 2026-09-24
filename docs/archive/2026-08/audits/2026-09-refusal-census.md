@@ -21,7 +21,7 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1479 resolved source refusal producers**: **1063 caller-visible** and **416 internal-only**.
+There are **1483 resolved source refusal producers**: **1067 caller-visible** and **416 internal-only**.
 
 The 37 caller-visible rows produced by src/room-talk-contract.ts are same-room talk refusals (decisions #119 to #126) recorded ahead of their routes; the talk routes connect each one.
 
@@ -34,7 +34,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 210 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 215 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -176,6 +176,11 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/public-changes.ts::minimumMarker::1`
 - `src/public-changes.ts::crossed!.before::1`
 - `src/public-search.ts::query.before.changeMarker::1`
+- `src/room-talk-routes.ts::allowed.error::1`
+- `src/room-talk-routes.ts::allowed.error::2`
+- `src/room-talk-routes.ts::allowed.error::3`
+- `src/room-talk-routes.ts::parsed.error::1`
+- `src/room-talk-routes.ts::rangeStart.error::1`
 - `src/society.ts::allowed.error::1`
 - `src/society.ts::allowed.error::2`
 - `src/society.ts::read.error::1`
@@ -251,7 +256,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 
 ## HTTP boundary inventory
 
-The scan found **119 non-identity route registrations**, plus the
+The scan found **126 non-identity route registrations**, plus the
 global **onError** and **notFound** boundaries. Identity browser and OAuth modules are excluded,
 now joined by decision row 74's src/identity-api.ts and src/pair.ts (the coding-client JSON
 identity doors and the pairing-code mint door), each covered exhaustively by its own dedicated
@@ -281,6 +286,7 @@ itself, not an excluded identity module.
 | GET /api/internal/gazette-print (src/gazette-routes.ts) |
 | GET /api/internal/payment-recovery (src/payment-recovery-routes.ts) |
 | GET /api/kinds (src/world.ts) |
+| GET /api/line/:id (src/room-talk-routes.ts) |
 | GET /api/map (src/world.ts) |
 | GET /api/me (src/index.ts) |
 | GET /api/moderation (src/index.ts) |
@@ -289,7 +295,9 @@ itself, not an excluded identity module.
 | GET /api/official (src/index.ts) |
 | GET /api/payment-attempt/:id (src/payment-recovery-routes.ts) |
 | GET /api/physics (src/index.ts) |
+| GET /api/ping/:id (src/room-talk-routes.ts) |
 | GET /api/place/:id (src/world.ts) |
+| GET /api/place/:id/lines (src/room-talk-routes.ts) |
 | GET /api/residents (src/index.ts) |
 | GET /api/search (src/index.ts) |
 | GET /api/thing/:id (src/world.ts) |
@@ -350,12 +358,16 @@ itself, not an excluded identity module.
 | POST /api/internal/log-drain (src/log-drain-routes.ts) |
 | POST /api/kind (src/world.ts) |
 | POST /api/kind/:id/revise (src/world.ts) |
+| POST /api/line (src/room-talk-routes.ts) |
 | POST /api/me (src/index.ts) |
 | POST /api/me/home (src/actions.ts) |
 | POST /api/moderation (src/index.ts) |
 | POST /api/note (src/society.ts) |
 | POST /api/pair (src/index.ts) |
 | POST /api/payment-attempt/:id/recheck (src/payment-recovery-routes.ts) |
+| POST /api/ping (src/room-talk-routes.ts) |
+| POST /api/ping/:id/answer (src/room-talk-routes.ts) |
+| POST /api/ping/:id/dismiss (src/room-talk-routes.ts) |
 | POST /api/place (src/world.ts) |
 | POST /api/recovery (src/index.ts) |
 | POST /api/rotate (src/index.ts) |
@@ -1659,6 +1671,10 @@ machine-readable so review proves provenance instead of trusting stale hand-coun
 {"key":"src/world-support.ts::${reason}; city fee credit returned::1","disposition":"included","status":"expression:typed adapter status","finalText":"${reason}; city fee credit returned","cause":"Yes","next":"Yes","causeEvidence":"${reason}","nextEvidence":"city fee credit returned","producer":"src/world-support.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/city-credit-tests/deadline-recovery.test.ts","exclusionReason":"","expressionKey":"${reason}; city fee credit returned"}
 {"key":"src/world-support.ts::credit return is being reconciled; retry the same request id::1","disposition":"included","status":"expression:typed adapter status","finalText":"credit return is being reconciled; retry the same request id","producer":"src/world-support.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"credit return is being reconciled; retry the same request id","cause":"Yes","next":"Yes","causeEvidence":"credit return is being reconciled","nextEvidence":"retry the same request id","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal"}
 {"key":"src/world-support.ts::credit return is being reconciled::1","disposition":"included","status":"expression:typed adapter status","finalText":"credit return is being reconciled","producer":"src/world-support.ts","adapter":"typed result/JSON error adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"credit return is being reconciled","cause":"Yes","next":"No","causeEvidence":"credit return is being","nextEvidence":"","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal"}
+{"key":"src/room-talk-routes.ts::resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>::1","disposition":"included","status":"401","finalText":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","producer":"src/room-talk-routes.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","cause":"Yes","next":"Yes","causeEvidence":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key","nextEvidence":"send your saved current key as Authorization: Bearer <key>","testProof":"structural:test/refusal-census-audit.test.ts exact-set checks this source refusal"}
+{"key":"src/room-talk-routes.ts::resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>::2","disposition":"included","status":"401","finalText":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","producer":"src/room-talk-routes.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","cause":"Yes","next":"Yes","causeEvidence":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key","nextEvidence":"send your saved current key as Authorization: Bearer <key>","testProof":"structural:test/refusal-census-audit.test.ts exact-set checks this source refusal"}
+{"key":"src/room-talk-routes.ts::resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>::3","disposition":"included","status":"401","finalText":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","producer":"src/room-talk-routes.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","cause":"Yes","next":"Yes","causeEvidence":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key","nextEvidence":"send your saved current key as Authorization: Bearer <key>","testProof":"structural:test/refusal-census-audit.test.ts exact-set checks this source refusal"}
+{"key":"src/room-talk-routes.ts::resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>::4","disposition":"included","status":"401","finalText":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","producer":"src/room-talk-routes.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key; send your saved current key as Authorization: Bearer <key>","cause":"Yes","next":"Yes","causeEvidence":"resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key","nextEvidence":"send your saved current key as Authorization: Bearer <key>","testProof":"structural:test/refusal-census-audit.test.ts exact-set checks this source refusal"}
 {"key":"src/world.ts::view must be outline or full::1","disposition":"included","status":"400","finalText":"view must be outline or full","cause":"Yes","next":"Yes","causeEvidence":"view must be","nextEvidence":"outline or full","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:source extraction and src/world.ts adapter mapping only; no exact behavioral assertion located","exclusionReason":"","expressionKey":"view must be outline or full"}
 {"key":"src/world.ts::view must be outline, continent, or full::1","disposition":"included","status":"400","finalText":"view must be outline, continent, or full","cause":"Yes","next":"Yes","causeEvidence":"view must be","nextEvidence":"outline, continent, or full","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"view must be outline, continent, or full"}
 {"key":"src/world.ts::continent map pages return at most 50 places; remove limit and retry::1","disposition":"included","status":"400","finalText":"continent map pages return at most 50 places; remove limit and retry","cause":"Yes","next":"Yes","causeEvidence":"continent map pages return at most 50 places","nextEvidence":"remove limit and retry","producer":"src/world.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal","exclusionReason":"","expressionKey":"continent map pages return at most 50 places; remove limit and retry"}
