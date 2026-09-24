@@ -9,6 +9,11 @@ const [schema, migration] = await Promise.all([
   readFile(new URL('../db/schema.sql', import.meta.url), 'utf8'),
   readFile(new URL('../db/migrations/20260924_same_room_talk.sql', import.meta.url), 'utf8'),
 ])
+const talkStores = await Promise.all([
+  readFile(new URL('../src/room-line-store.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/room-ping-store.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/room-wait-store.ts', import.meta.url), 'utf8'),
+])
 
 const migrationStatements = splitSqlStatements(migration).map(statement => (
   statement.replace(/^\s*--.*$/gmu, '').trim()
@@ -72,4 +77,12 @@ test('snapshot v3 reads no private talk table, request_id, or arrival mark', () 
 
 test('no allowlisted public feed carries a talk event yet', () => {
   assert.deepEqual(PUBLIC_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [])
+})
+
+test('talk stores never settle or wake a room, and only the contract names an error', () => {
+  for (const source of talkStores) {
+    assert.doesNotMatch(source, /(?:engine-settle|wake-guard|note-action)\.ts/u)
+    assert.doesNotMatch(source, /\brunAction\b/u)
+    assert.doesNotMatch(source, /error:/u)
+  }
 })
