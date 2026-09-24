@@ -373,6 +373,104 @@ application never reads the overlay. The owner-change trigger stays and keeps cl
 both switches on a gift or sale, which the old application never reads. No data is lost,
 and returning to the new application restores all of it.
 
+### Same-room talk prerequisite
+
+Before merging the change that installs the talk tables and snapshot format v3
+(decisions #119 to #123), apply `npm run migrate:preview:same-room-talk` to the
+PR's Preview database branch and to the shared Preview branch the Vercel preview
+reads. Apply it a second time to each branch to prove it is safe to repeat. For
+each Preview branch, run Q0, Q1, and Q4 before the first pass and after each pass.
+Run Q7, Q9, and Q10 only after each pass. Record the results for both Preview
+branches.
+
+Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-same-room-talk-20260925`, then apply
+`npm run migrate:production:same-room-talk` from a fresh clone of the reviewed
+head. Record the checks before merging. Never chain the migration with the merge.
+The rollout does not apply this migration, and `--prepare` does not query either
+database.
+
+Rollback is forward only: merge the previous application; the tables, wider
+checks, and v3 view stay unused and harmless.
+
+The following checks are read-only. On Preview, Q0, Q1, and Q4 run before the
+first pass and after each pass; Q7, Q9, and Q10 run only after each pass. On
+Production, run Q0, Q1, and Q4 before the migration, then run all six checks
+after it.
+
+Q0, the talk objects (before: every column NULL; after: none NULL):
+
+```sql
+SELECT to_regclass('public.room_lines') AS room_lines,
+  to_regclass('public.line_quota') AS line_quota,
+  to_regclass('public.line_minute_quota') AS line_minute_quota,
+  to_regclass('public.pings') AS pings,
+  to_regclass('public.ping_receipts') AS ping_receipts,
+  to_regclass('public.ping_operations') AS ping_operations,
+  to_regclass('public.wait_leases') AS wait_leases,
+  to_regclass('city_snapshot.public_records_v3') AS v3_view,
+  to_regprocedure('public.pings_answer_once()') AS pings_answer_once,
+  to_regprocedure('public.ping_receipts_mark_once()') AS ping_receipts_mark_once;
+```
+
+Q1, the seven tables (before: no rows; after: seven rows):
+
+```sql
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name IN ('room_lines', 'line_quota',
+  'line_minute_quota', 'pings', 'ping_receipts', 'ping_operations', 'wait_leases')
+ORDER BY table_name;
+```
+
+Q4, the target checks (before: the existing checks naming seven types, recorded
+as found; after: exactly two rows, `flags_target_type_check` and
+`moderation_actions_target_type_allowed`, each naming nine types including line
+and ping):
+
+```sql
+SELECT conrelid::regclass::text AS table_name, conname, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid IN ('moderation_actions'::regclass, 'flags'::regclass) AND contype = 'c'
+  AND pg_get_constraintdef(oid) LIKE '%target_type%'
+ORDER BY 1, 2;
+```
+
+Q7, empty talk tables (after only; all zero):
+
+```sql
+SELECT (SELECT count(*) FROM room_lines) AS lines, (SELECT count(*) FROM pings) AS pings,
+  (SELECT count(*) FROM ping_receipts) AS receipts, (SELECT count(*) FROM ping_operations) AS operations,
+  (SELECT count(*) FROM line_quota) AS day_counters,
+  (SELECT count(*) FROM line_minute_quota) AS minute_counters,
+  (SELECT count(*) FROM wait_leases) AS leases;
+```
+
+Q9, the export boundary (after only; expect true, true, false, false, false,
+false, false, and the four columns `class_name`, `record_id`, `sort_key`,
+`payload`):
+
+```sql
+SELECT has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v3', 'SELECT') AS reads_v3,
+  has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v2', 'SELECT') AS reads_v2,
+  has_table_privilege('city_snapshot_export', 'public.room_lines', 'SELECT') AS reads_lines_table,
+  has_table_privilege('city_snapshot_export', 'public.pings', 'SELECT') AS reads_pings_table,
+  has_table_privilege('city_snapshot_export', 'public.ping_receipts', 'SELECT') AS reads_receipts,
+  has_table_privilege('city_snapshot_export', 'public.ping_operations', 'SELECT') AS reads_ledger,
+  has_table_privilege('city_snapshot_export', 'public.wait_leases', 'SELECT') AS reads_leases,
+  (SELECT array_agg(column_name::text ORDER BY ordinal_position) FROM information_schema.columns
+   WHERE table_schema = 'city_snapshot' AND table_name = 'public_records_v3') AS v3_columns;
+```
+
+Q10, class counts (after only; every v2 class equal in v3; no `lines` or
+`pings` rows while both tables are empty):
+
+```sql
+WITH v2 AS (SELECT class_name, count(*) AS records FROM city_snapshot.public_records_v2 GROUP BY 1),
+v3 AS (SELECT class_name, count(*) AS records FROM city_snapshot.public_records_v3 GROUP BY 1)
+SELECT class_name, v2.records AS v2_records, v3.records AS v3_records
+FROM v2 FULL JOIN v3 USING (class_name) ORDER BY class_name;
+```
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

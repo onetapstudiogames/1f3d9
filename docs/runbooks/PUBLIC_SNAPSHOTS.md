@@ -7,8 +7,11 @@ It never creates or restores a private recovery backup. Read the format and
 class registry in [`../PUBLIC_SNAPSHOTS.md`](../PUBLIC_SNAPSHOTS.md) before
 enabling publication.
 
-Published format-v1 releases are immutable. Format v2 begins a separate tag
-series and adds the permanent Gazette issue and membership classes.
+Published format-v1 and format-v2 releases are immutable. Format v2 begins a
+separate tag series and adds the permanent Gazette issue and membership
+classes. Format v3 begins a separate tag series,
+`city-snapshot-v3-YYYYMMDDTHHMMSSZ`, and adds same-room lines and body-free
+pings.
 
 ## 1. Install the restricted database projection
 
@@ -16,11 +19,14 @@ Time: usually 2–10 minutes for preview, plus the normal production migration
 review window.
 
 1. Review `db/migrations/20260823_public_snapshots.sql`,
-   `db/migrations/20260827_gazette.sql`, and the separately guarded Gazette
-   activation. The first supplies v1. The dormant Gazette migration adds one
-   explicit four-column `city_snapshot.public_records_v2` security-barrier view
-   and grants v2 while retaining v1 for the still-deployed exporter. Exact-commit
-   room activation performs the final v1 revoke in its opening transaction.
+   `db/migrations/20260827_gazette.sql`, the separately guarded Gazette
+   activation, and `db/migrations/20260924_same_room_talk.sql`. The first
+   supplies v1. The dormant Gazette migration adds one explicit four-column
+   `city_snapshot.public_records_v2` security-barrier view and grants v2 while
+   retaining v1 for the still-deployed exporter. Exact-commit room activation
+   performs the final v1 revoke in its opening transaction. The same-room-talk
+   migration adds `city_snapshot.public_records_v3` and grants v3 while keeping
+   the v2 grant in place.
 2. On a new target, install the base snapshot projection first. On every target,
    apply the Gazette migration in Preview before Production with the normal
    target proof:
@@ -28,6 +34,7 @@ review window.
    ```sh
    npm run migrate:preview:public-snapshots
    npm run migrate:preview:gazette
+   npm run migrate:preview:same-room-talk
    ```
 
 3. Provision a strong password for `city_snapshot_export` through the database
@@ -52,7 +59,12 @@ review window.
    ```sh
    npm run migrate:production:public-snapshots
    npm run migrate:production:gazette
+   npm run migrate:production:same-room-talk
    ```
+
+   For same-room talk, take the required Production snapshot and record its
+   migration checks as described in [`DEPLOYMENT.md`](DEPLOYMENT.md) before
+   running the Production command.
 
 The migration runner's existing production safeguards still apply. The snapshot
 exporter refuses a pooler, a missing host/database/password, another username,
@@ -91,12 +103,14 @@ The export proves all of these before it reads the four-column view:
 
 - Current login is `city_snapshot_export`.
 - The transaction is read-only and has one repeatable-read moment.
-- The account can read `city_snapshot.public_records_v2`. During the documented
-  dormant Gazette transition it may also read the safe v1 view; after exact-commit
-  activation it must be v2-only.
+- The account can read `city_snapshot.public_records_v3`; the same-room-talk
+  migration leaves its `city_snapshot.public_records_v2` grant in place. During
+  the documented dormant Gazette transition it may also read the safe v1 view;
+  exact-commit room activation revokes that v1 grant.
 - The account cannot read or write any base relation in `public`.
 - The account cannot read private tables such as OAuth, flags, payments, fee credit,
-  later-holder marks, or repeated-refusal state.
+  later-holder marks, repeated-refusal state, ping receipts, the ping request ledger,
+  or wait leases.
 - The view columns are exactly `class_name`, `record_id`, `sort_key`, `payload`.
 
 Stop on any failure. Do not broaden the role to make an export pass. Fix the
