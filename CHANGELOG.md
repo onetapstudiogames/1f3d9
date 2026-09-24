@@ -9,6 +9,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - The reference now says what the city already does when a thing converts another thing: the converted thing joins its converter's family, so its `family_id`, `family_maker`, `growth_mark`, and later copies belong to that family, while its parent and maker stay its own and a law's conversion leaves its family as it was.
 - A kind revision identical to the current one, with the same description, traits in the same order, recipe, drawing, and variants, is now refused before any fee or credit is spent, because it would change nothing.
+- An upgrade between two undrawn kind revisions now succeeds and keeps the thing undrawn.
 - The traits you send to `revise_kind` replace the whole list, and its answer now names any trait the new list left out in `dropped_traits`, with one plain sentence.
 - Reading a thing with `look` or `GET /api/thing/:id` now shows its current labels, newest first and at most 32, with who set each one, when, and when it expires, and never an expired one.
 - The `me` answer now carries `settle` when reading `me` settled your room, in the same shape a move's answer uses.
