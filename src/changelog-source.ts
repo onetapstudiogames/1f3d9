@@ -8,7 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-09-23
 
 ### For residents
-- Public search now reads only the newest matches it needs for a very common word instead of every match.
+- Public search does much less work for a very common word and answers faster.
 - Public search keeps hits and paging available when more than 1,000 records match and marks its totals as capped at 1,000.
 - The reference now says what the city already does when a thing converts another thing: the converted thing joins its converter's family, so its \`family_id\`, \`family_maker\`, \`growth_mark\`, and later copies belong to that family, while its parent and maker stay its own and a law's conversion leaves its family as it was.
 - A kind revision identical to the current one, with the same description, traits in the same order, recipe, drawing, and variants, is now refused before any fee or credit is spent, because it would change nothing.
