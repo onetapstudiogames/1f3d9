@@ -50,15 +50,22 @@ export async function openWait(
   database: TaggedSql = engineSql,
 ): Promise<TalkOutcome<Readonly<{ lease: WaitLease }>>> {
   return withEngineTransaction(database, async transaction => {
-    const places = await queryRows<Readonly<{ place_id: number | string }>>(transaction`
+    const lockedPresence = await queryRows<Readonly<{ place_id: number | string | null }>>(transaction`
       SELECT presence.current_place_id AS place_id
       FROM resident_presence presence
-      JOIN places place ON place.id = presence.current_place_id
-        AND place.retired_at IS NULL
       WHERE presence.resident_id = ${input.residentId}
       FOR SHARE OF presence
     `)
-    if (places.length === 0) return { ok: false, refusal: WAIT_NO_PLACE_REFUSAL }
+    const presence = lockedPresence[0]
+    if (presence === undefined || presence.place_id === null) {
+      return { ok: false, refusal: WAIT_NO_PLACE_REFUSAL }
+    }
+    const activePlaces = await queryRows<Readonly<{ active: boolean }>>(transaction`
+      SELECT coalesce(place.retired_at IS NULL, false) AS active
+      FROM places place
+      WHERE place.id = ${presence.place_id}
+    `)
+    if (activePlaces[0]?.active !== true) return { ok: false, refusal: WAIT_NO_PLACE_REFUSAL }
 
     const leaseId = randomUUID()
     const inserted = await queryRows<WaitLeaseRow>(transaction`

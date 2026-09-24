@@ -447,6 +447,34 @@ test('room lines use their own per-resident allowances against real PostgreSQL',
       assert.equal(await count("SELECT count(*)::int AS count FROM events WHERE kind = 'line_said'"), 0)
     })
 
+    await t.test('a line waiting for a move uses the place where the speaker arrives', async () => {
+      rooms = await prepare()
+      const db = connectedDatabase()
+      const holder = await db.connect()
+      try {
+        await holder.query('BEGIN')
+        await holder.query(
+          'UPDATE resident_presence SET current_place_id = $2 WHERE resident_id = $1',
+          [NEIGHBOUR.id, rooms.westRoomId],
+        )
+        const speaking = say(rooms.westRoomId, 'the new room wins')
+        await waitForPresenceLockWait()
+        await holder.query('COMMIT')
+        const result = await speaking
+        assert.equal(result.ok, true)
+        if (!result.ok) return
+        assert.equal(result.answer.line.place_id, rooms.westRoomId)
+        assert.equal(result.answer.line.author_id, NEIGHBOUR.id)
+        const stored = (await db.query<{ place_id: number }>(
+          'SELECT place_id FROM room_lines WHERE id = $1', [result.answer.line.id],
+        )).rows[0]!
+        assert.equal(stored.place_id, rooms.westRoomId)
+      } finally {
+        await holder.query('ROLLBACK').catch(() => undefined)
+        holder.release()
+      }
+    })
+
     await t.test('a quiet room takes lines', async () => {
       rooms = await prepare()
       await connectedDatabase().query('UPDATE places SET quiet = TRUE WHERE id = $1', [rooms.eastRoomId])

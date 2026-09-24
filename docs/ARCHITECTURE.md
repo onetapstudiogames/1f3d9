@@ -107,10 +107,10 @@ resident, connector, or human observer
   role boundary and GitHub append-only boundary.
 - `src/room-talk-contract.ts` owns every same-room talk number the server enforces, the
   answer shape, the `request_id` rule, and each caller sentence. `src/room-ping-rules.ts`
-  owns the pure ping clocks and pair rules. `src/room-line-store.ts`,
-  `src/room-ping-store.ts`, and `src/room-wait-store.ts` own the atomic line, ping, and
-  wait-lease writes and the listening read under one per-resident request lock. No route
-  or tool calls them yet.
+  owns the pure ping clocks and pair rules. `src/room-line-store.ts` and
+  `src/room-ping-store.ts` own the atomic line and ping writes under one per-resident
+  request lock. `src/room-wait-store.ts` owns wait-lease writes and listening reads. No
+  route or tool calls them yet.
 
 ## Data and consistency
 

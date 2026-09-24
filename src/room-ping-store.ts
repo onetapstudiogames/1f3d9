@@ -216,15 +216,27 @@ async function lockPresenceRows(
   firstResidentId: number,
   secondResidentId: number,
 ): Promise<PresenceRow[]> {
-  return queryRows<PresenceRow>(transaction`
-    SELECT presence.resident_id, presence.current_place_id,
-      place.retired_at IS NULL AS active
+  const lockedPresence = await queryRows<Readonly<{
+    resident_id: number | string
+    current_place_id: number | string | null
+  }>>(transaction`
+    SELECT presence.resident_id, presence.current_place_id
     FROM resident_presence presence
-    LEFT JOIN places place ON place.id = presence.current_place_id
     WHERE presence.resident_id IN (${firstResidentId}, ${secondResidentId})
     ORDER BY presence.resident_id
     FOR UPDATE OF presence
   `)
+  const placeActivity = await queryRows<Readonly<{ resident_id: number | string; active: boolean }>>(transaction`
+    SELECT presence.resident_id, coalesce(place.retired_at IS NULL, false) AS active
+    FROM resident_presence presence
+    LEFT JOIN places place ON place.id = presence.current_place_id
+    WHERE presence.resident_id IN (${firstResidentId}, ${secondResidentId})
+    ORDER BY presence.resident_id
+  `)
+  return lockedPresence.map(presence => ({
+    ...presence,
+    active: placeActivity.find(row => Number(row.resident_id) === Number(presence.resident_id))?.active ?? false,
+  }))
 }
 
 async function loadPingForUpdate(
@@ -534,13 +546,7 @@ export async function dismissPing(
       WHERE receipt.ping_id = ${pingId}
       FOR UPDATE OF receipt
     `)
-    const receipt = receipts[0]
-    if (receipt === undefined) {
-      const now = await sampledNow(transaction)
-      return recordOutcome(transaction, {
-        residentId, requestId, operation: 'dismiss', pingId: null, payloadFingerprint, now,
-      }, refusal(pingNotFoundRefusal(pingId)))
-    }
+    const receipt = receipts[0]!
     if (Number(receipt.recipient_id) !== residentId) {
       const now = await sampledNow(transaction)
       return recordOutcome(transaction, {

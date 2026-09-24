@@ -45,7 +45,6 @@ type LineRow = Readonly<{
 
 type PresenceRow = Readonly<{
   current_place_id: number | string | null
-  active: boolean | null
   now: Date
 }>
 
@@ -202,17 +201,22 @@ export async function sayLine(
     if (pingOperation) return refusal(requestReuseRefusal(pingOperation as TalkRequestOperation))
 
     const presenceRows = await queryRows<PresenceRow>(transaction`
-      SELECT presence.current_place_id, place.retired_at IS NULL AS active,
-        clock_timestamp() AS now
+      SELECT presence.current_place_id, clock_timestamp() AS now
       FROM resident_presence presence
-      LEFT JOIN places place ON place.id = presence.current_place_id
       WHERE presence.resident_id = ${residentId}
       FOR SHARE OF presence
     `)
     const presence = presenceRows[0]
+    const activePlaces = presence?.current_place_id == null
+      ? []
+      : await queryRows<Readonly<{ active: boolean }>>(transaction`
+        SELECT coalesce(place.retired_at IS NULL, false) AS active
+        FROM places place
+        WHERE place.id = ${presence.current_place_id}
+      `)
     if (presence === undefined
       || Number(presence.current_place_id) !== placeId
-      || presence.active !== true) {
+      || activePlaces[0]?.active !== true) {
       return refusal(LINE_NOT_HERE_REFUSAL)
     }
 

@@ -244,6 +244,42 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
       })
     })
 
+    await t.test('an invite waiting for a move uses the shared place and current arrival marks', async () => {
+      await reset()
+      await standIn(GROWER.id, rooms.westRoomId)
+      const holder = await db.connect()
+      try {
+        await holder.query('BEGIN')
+        await holder.query(
+          'UPDATE resident_presence SET current_place_id = $2 WHERE resident_id = $1',
+          [GROWER.id, rooms.eastRoomId],
+        )
+        const inviting = invite()
+        await waitForLock('FOR UPDATE OF presence')
+        await holder.query('COMMIT')
+        const result = await inviting
+        assert.equal(result.ok, true)
+        if (!result.ok) return
+        assert.equal(result.answer.ping.place_id, rooms.eastRoomId)
+        const marks = (await db.query<{
+          sender_mark_matches: boolean
+          target_mark_matches: boolean
+        }>(`
+          SELECT ping.sender_arrived_at = sender_presence.arrived_at AS sender_mark_matches,
+            ping.target_arrived_at = target_presence.arrived_at AS target_mark_matches
+          FROM pings ping
+          JOIN resident_presence sender_presence ON sender_presence.resident_id = ping.sender_id
+          JOIN resident_presence target_presence ON target_presence.resident_id = ping.target_id
+          WHERE ping.id = $1
+        `, [result.answer.ping.id])).rows[0]!
+        assert.equal(marks.sender_mark_matches, true)
+        assert.equal(marks.target_mark_matches, true)
+      } finally {
+        await holder.query('ROLLBACK').catch(() => undefined)
+        holder.release()
+      }
+    })
+
     await t.test('absent, elsewhere, and unknown handles share one refusal and write nothing public', async () => {
       await reset()
       await db.query('DELETE FROM resident_presence WHERE resident_id = $1', [GROWER.id])

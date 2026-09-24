@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   FOUNDER,
   GROWER,
@@ -20,6 +21,24 @@ import {
 
 const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR] as const
 const SECONDS = leaseSeconds(30)!
+
+async function waitForPresenceLockWait(): Promise<void> {
+  const db = connectedDatabase()
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    const waiting = await db.query<{ waiting: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND wait_event_type = 'Lock'
+          AND query LIKE '%FOR SHARE OF presence%'
+      ) AS waiting
+    `)
+    if (waiting.rows[0]!.waiting) return
+    await delay(10)
+  }
+  assert.fail('openWait did not wait for the move lock')
+}
 
 test('room waits use temporary leases against real PostgreSQL', { timeout: 600_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('room-talk-waits')
@@ -61,6 +80,32 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
       )).rows[0]!
       assert.equal(stored.lease_id, result.answer.lease.lease_id)
       assert.ok(stored.arrived_at instanceof Date)
+    })
+
+    await t.test('a move that commits while openWait waits gives the lease to the new place', async () => {
+      await prepare()
+      const holder = await db.connect()
+      try {
+        await holder.query('BEGIN')
+        await holder.query(
+          'UPDATE resident_presence SET current_place_id = $2 WHERE resident_id = $1',
+          [FOUNDER.id, rooms.westRoomId],
+        )
+        const opening = open()
+        await waitForPresenceLockWait()
+        await holder.query('COMMIT')
+        const result = await opening
+        assert.equal(result.ok, true)
+        if (!result.ok) return
+        assert.equal(result.answer.lease.place_id, rooms.westRoomId)
+        const stored = (await db.query<{ place_id: number }>(
+          'SELECT place_id FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+        )).rows[0]!
+        assert.equal(stored.place_id, rooms.westRoomId)
+      } finally {
+        await holder.query('ROLLBACK').catch(() => undefined)
+        holder.release()
+      }
     })
 
     await t.test('a second open while one is live is refused with the exact sentence', async () => {
