@@ -97,11 +97,37 @@ export function registerSearchTests(): void {
       assert.equal(typeof body.next_before, 'string')
 
       const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
-      assert.match(searchRead?.query ?? '', /bounded_matches\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/iu)
+      const firstPageSql = (searchRead?.query ?? '').replace(/\s+/gu, ' ')
+      for (const branch of ['note_candidates', 'thing_candidates', 'place_candidates']) {
+        assert.match(
+          firstPageSql,
+          new RegExp(`FROM\\s+${branch}\\s+candidate[\\s\\S]*?ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT 1001`, 'iu'),
+          `${branch} totals must have a branch-local limit`,
+        )
+        assert.match(
+          firstPageSql,
+          new RegExp(`FROM\\s+${branch}\\s+candidate[\\s\\S]*?ORDER BY candidate\\.created_at DESC, candidate\\.id DESC LIMIT \\$7::integer`, 'iu'),
+          `${branch} page must have a branch-local limit`,
+        )
+      }
+      assert.match(firstPageSql, /totals_input\s+AS\s+MATERIALIZED[\s\S]*?LIMIT\s+1001/iu)
       assert.doesNotMatch(
-        searchRead?.query ?? '',
+        firstPageSql,
         /(?:note_candidates|thing_candidates|matching_places|place_history_spans|place_candidates|candidate|matched)\s+AS\s+MATERIALIZED/iu,
       )
+
+      const continuation = await app.request(
+        `/api/search?q=manymatchneedle&before=${encodeURIComponent(String(body.next_before))}`,
+        { headers: { 'X-Vercel-Forwarded-For': '203.0.113.186' } },
+      )
+      assert.equal(continuation.status, 200)
+      const continuationSql = sqlCalls()
+        .filter(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
+        .at(-1)?.query?.replace(/\s+/gu, ' ') ?? ''
+      const cursorBranches = continuationSql.split('page_matches AS MATERIALIZED')[1] ?? ''
+      assert.match(cursorBranches, /FROM note_candidates candidate WHERE[\s\S]*?candidate\.created_at < \$4::timestamptz/iu)
+      assert.match(cursorBranches, /FROM place_candidates candidate WHERE[\s\S]*?candidate\.created_at < \$4::timestamptz/iu)
+      assert.match(cursorBranches, /FROM thing_candidates candidate WHERE[\s\S]*?AND \(candidate\.created_at < \$4::timestamptz OR \( candidate\.created_at = \$4::timestamptz AND candidate\.id < \$6::integer \)\)/iu)
     })
   })
 

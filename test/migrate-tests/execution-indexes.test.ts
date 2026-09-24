@@ -23,6 +23,7 @@ export function registerExecutionIndexTests(): void {
   const affordableReadingMigrationFile = 'db/migrations/20260820_affordable_reading_totals.sql' as const
   const eventsPresenceIndexMigrationFile = 'db/migrations/20260821_events_presence_index.sql' as const
   const publicSearchIndexesMigrationFile = 'db/migrations/20260821_public_search_indexes.sql' as const
+  const publicSearchOrderIndexesMigrationFile = 'db/migrations/20260923_public_search_order_indexes.sql' as const
 
   test('round-two records are append-only rather than deleted after resolution', () => {
     for (const table of [
@@ -137,6 +138,29 @@ export function registerExecutionIndexTests(): void {
     ])
     assert.equal(execution.statements.length, 1)
     assert.doesNotMatch(execution.statements.join('\n'), /\b(?:BEGIN|COMMIT|ROLLBACK)\b/i)
+  })
+
+  test('public search order indexes match the schema and use an additive transaction migration', () => {
+    const migration = migrationDdl(publicSearchOrderIndexesMigrationFile)
+    const statements = splitSqlStatements(migration)
+      .map(statement => statement.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+    assert.deepEqual(statements, [
+      'CREATE INDEX IF NOT EXISTS notes_public_search_recent ON public.notes (created_at DESC, id DESC)',
+      'CREATE INDEX IF NOT EXISTS things_public_search_recent_active ON public.things (created_at DESC, id DESC) WHERE withdrawn_at IS NULL',
+      'CREATE INDEX IF NOT EXISTS places_public_search_recent ON public.places (created_at DESC, id DESC)',
+    ])
+    for (const indexName of [
+      'notes_public_search_recent',
+      'things_public_search_recent_active',
+      'places_public_search_recent',
+    ]) {
+      assert.match(schemaDdl, new RegExp(`CREATE INDEX IF NOT EXISTS ${indexName}\\b`, 'u'))
+    }
+    assert.equal(
+      prepareMigrationExecution(publicSearchOrderIndexesMigrationFile, migration).mode,
+      'transactional',
+    )
   })
 
   test('only the reviewed presence-index file may bypass the migration transaction', () => {

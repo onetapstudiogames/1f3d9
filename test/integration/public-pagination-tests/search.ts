@@ -179,6 +179,29 @@ export async function registerSearchTests(
             + item_number * interval '1 microsecond'
         FROM generate_series(1, 3) AS item_number
       `, [city.targetPlaceId, phrase])
+    await client.query(`
+        INSERT INTO places (parent_id, place_kind, name, description, owner_id, created_at)
+        SELECT $1, 'place', $2 || ' place ' || item_number, '', 2,
+          '2026-08-21T18:10:00.654321Z'::timestamptz
+            + item_number * interval '1 microsecond'
+        FROM generate_series(1, 4) AS item_number
+      `, [city.targetPlaceId, phrase])
+
+    const noteIds = (await client.query<{ id: number }>(`
+        SELECT id FROM notes
+        WHERE strpos(lower(body), lower($1)) > 0
+        ORDER BY created_at, id
+      `, [phrase])).rows.map(row => row.id)
+    const thingIds = (await client.query<{ id: number }>(`
+        SELECT id FROM things
+        WHERE withdrawn_at IS NULL AND strpos(lower(name || ' ' || body), lower($1)) > 0
+        ORDER BY created_at, id
+      `, [phrase])).rows.map(row => row.id)
+    const placeIds = (await client.query<{ id: number }>(`
+        SELECT id FROM places
+        WHERE strpos(lower(name), lower($1)) > 0
+        ORDER BY created_at, id
+      `, [phrase])).rows.map(row => row.id)
 
     const directTotals = (await client.query<{
       total_items: string
@@ -191,9 +214,12 @@ export async function registerSearchTests(
           UNION ALL
           SELECT body FROM things
           WHERE withdrawn_at IS NULL AND strpos(lower(name || ' ' || body), lower($1)) > 0
+          UNION ALL
+          SELECT ''::text AS body FROM places
+          WHERE strpos(lower(name), lower($1)) > 0
         ) matching
       `, [phrase])).rows[0]!
-    assert.equal(directTotals.total_items, '7')
+    assert.equal(directTotals.total_items, '11')
 
     const complete = await loadPublicSearchResults(
       searchExecute,
@@ -204,6 +230,13 @@ export async function registerSearchTests(
     assert.equal(complete.totalItems, Number(directTotals.total_items))
     assert.equal(complete.totalBodyBytes, Number(directTotals.total_body_bytes))
     assert.equal(complete.totalsCapped, false)
+    const identity = (item: Readonly<Record<string, unknown>>) => `${String(item.type)}:${Number(item.id)}`
+    const expectedMergeOrder: string[] = []
+    for (let index = noteIds.length - 1; index >= 0; index -= 1) {
+      expectedMergeOrder.push(`note:${noteIds[index]}`, `place:${placeIds[index]}`)
+      if (index < thingIds.length) expectedMergeOrder.push(`thing:${thingIds[index]}`)
+    }
+    assert.deepEqual(complete.items.map(identity), expectedMergeOrder)
 
     const pagedItems: typeof complete.items[number][] = []
     let before: string | null = null
@@ -226,7 +259,6 @@ export async function registerSearchTests(
       assert.ok(page.nextBefore, 'every nonterminal page needs an honest continuation')
       before = page.nextBefore
     }
-    const identity = (item: Readonly<Record<string, unknown>>) => `${String(item.type)}:${Number(item.id)}`
     assert.deepEqual(pagedItems.map(identity), complete.items.map(identity))
     assert.equal(new Set(pagedItems.map(identity)).size, complete.totalItems)
     } finally {
