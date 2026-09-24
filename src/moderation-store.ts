@@ -8,7 +8,6 @@ import {
   redactModeratedTarget,
   type ModerationInput,
   type ModerationTargetType,
-  type StoredModerationTargetType,
   type TalkTargetType,
 } from './moderation.ts'
 
@@ -41,6 +40,8 @@ const TARGET_TABLES: Readonly<Record<ModerationTargetType, string>> = Object.fre
   trait: 'traits',
   note: 'notes',
   agreement: 'agreements',
+  line: 'room_lines',
+  ping: 'pings',
 })
 
 export async function moderationTargetExists(
@@ -56,7 +57,7 @@ export async function moderationTargetExists(
 }
 
 async function currentOverlays(
-  targetType: StoredModerationTargetType,
+  targetType: ModerationTargetType,
   ids: readonly number[],
 ): Promise<ReadonlyMap<number, ModerationOverlay>> {
   if (ids.length === 0) return new Map()
@@ -116,7 +117,7 @@ function talkEventTarget(row: object): TalkEventTarget | null {
 }
 
 function moderationDetail(
-  targetType: StoredModerationTargetType,
+  targetType: ModerationTargetType,
   targetId: number,
   overlay: ModerationOverlay,
 ) {

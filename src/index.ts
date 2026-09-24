@@ -108,6 +108,7 @@ import {
   submitCommunityTool,
 } from './community-tool-submissions.ts'
 import {
+  FLAG_TARGET_TYPES,
   flagHandleDecision,
   handleFlag,
   readFounderFlagQueue,
@@ -1772,7 +1773,7 @@ app.post('/api/flag', async c => {
   const targetId = Number(body?.target_id)
   const reasonCandidate = String(body?.reason ?? '').trim()
   const reasonText = publicText(reasonCandidate, { maximumCharacters: PUBLIC_ACTION_LIMITS.flagReasonCharacters })
-  const allowed = ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident']
+  const allowed: readonly string[] = FLAG_TARGET_TYPES
   if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || reasonText === null) {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters of safe text`)
   }

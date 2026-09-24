@@ -8,6 +8,8 @@ export const MODERATION_TARGET_TYPES = Object.freeze([
   'trait',
   'note',
   'agreement',
+  'line',
+  'ping',
 ] as const)
 
 export const MODERATION_ACTIONS = Object.freeze(['remove', 'restore'] as const)
@@ -16,7 +18,7 @@ export const MODERATED_TEXT = '[removed by maintainer]'
 
 export type ModerationTargetType = typeof MODERATION_TARGET_TYPES[number]
 export type TalkTargetType = 'line' | 'ping'
-export type StoredModerationTargetType = ModerationTargetType | TalkTargetType
+type RecordModerationTargetType = Exclude<ModerationTargetType, TalkTargetType>
 export type ModerationAction = typeof MODERATION_ACTIONS[number]
 export type ModerationActionId = number | bigint | `${bigint}`
 
@@ -25,6 +27,36 @@ export const TALK_EVENT_TARGETS = Object.freeze({
   ping_sent: Object.freeze(['ping', 'ping_id'] as const),
   ping_answered: Object.freeze(['ping', 'ping_id'] as const),
 })
+
+export function talkEventRemovedSql(eventAlias: string): string {
+  const targets = Object.entries(TALK_EVENT_TARGETS)
+  const targetTypeCases = targets.map(([kind, [targetType]]) => (
+    `WHEN '${kind}' THEN '${targetType}'`
+  )).join('\n')
+  const targetIdCases = targets.map(([kind, [, idField]]) => (
+    `WHEN ${eventAlias}.kind = '${kind}' AND ${eventAlias}.detail ->> '${idField}' ~ '^[0-9]{1,9}$' THEN (${eventAlias}.detail ->> '${idField}')::integer`
+  )).join('\n')
+
+  return `EXISTS (
+    SELECT 1
+    FROM moderation_actions action
+    WHERE action.target_type = CASE ${eventAlias}.kind
+      ${targetTypeCases}
+    END
+      AND action.target_id = CASE
+        ${targetIdCases}
+      END
+      AND action.action = 'remove'
+      AND action.id = (
+        SELECT latest.id
+        FROM moderation_actions latest
+        WHERE latest.target_type = action.target_type
+          AND latest.target_id = action.target_id
+        ORDER BY latest.created_at DESC, latest.id DESC
+        LIMIT 1
+      )
+  )`
+}
 
 export interface ModerationInput {
   readonly target_type: ModerationTargetType
@@ -88,7 +120,7 @@ const DISPLAY_FIELDS = Object.freeze({
   // A walk-to-read note read remotely shows its first line instead of its body.
   note: Object.freeze(['body', 'first_line'] as const),
   agreement: Object.freeze(['body'] as const),
-} satisfies Readonly<Record<ModerationTargetType, readonly string[]>>)
+} satisfies Readonly<Record<RecordModerationTargetType, readonly string[]>>)
 
 const DRAWING_TOMBSTONE = Object.freeze({
   drawing: null,
@@ -117,7 +149,7 @@ const CONTENT_TOMBSTONES = Object.freeze({
   trait: Object.freeze({ recipe: null, mechanical: false }),
   note: Object.freeze({}),
   agreement: Object.freeze({}),
-} satisfies Readonly<Record<ModerationTargetType, Readonly<Record<string, unknown>>>>)
+} satisfies Readonly<Record<RecordModerationTargetType, Readonly<Record<string, unknown>>>>)
 
 export function moderationTargetType(value: unknown): ModerationTargetType | null {
   return typeof value === 'string' && TARGET_TYPE_SET.has(value)
@@ -236,6 +268,12 @@ export function redactModeratedTarget<T extends PublicRecord>(
   targetType: ModerationTargetType,
   record: T,
 ): ModeratedRecord<T> {
+  if (targetType === 'line' || targetType === 'ping') {
+    return deepFreeze({
+      id: (record as { id?: unknown }).id,
+      moderated: true as const,
+    }) as unknown as ModeratedRecord<T>
+  }
   if (targetType === 'place') return redactPlace(record)
   return redactFields(record, DISPLAY_FIELDS[targetType], CONTENT_TOMBSTONES[targetType])
 }

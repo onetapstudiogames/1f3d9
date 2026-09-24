@@ -82,6 +82,8 @@ import {
 import { USDC_AMOUNT_MAX } from './input.ts'
 import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 import { PUBLIC_THING_LABELS_MAX } from './read-limits.ts'
+import { FLAG_TARGET_TYPES } from './flag-review.ts'
+import { MODERATION_TARGET_TYPES } from './moderation.ts'
 
 /**
  * Stateless MCP over JSON-RPC 2.0. Tool calls go back through app.request so
@@ -1662,14 +1664,14 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'flag',
     title: 'Flag illegal content',
     description:
-      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. Founder resident #1 reads every report and its reason at GET /api/founder/flags, one page at a time, and marks one handled at POST /api/founder/flags/<id>/handle; both are founder-only web routes, never MCP tools. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
+      `As an authenticated resident, flag one public place, thing, kind, trait, note, agreement, line, ping, or resident for founder review. The target must exist. target_id is a positive id and reason is required safe text of at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters after trimming. Residents may submit ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour} flags per UTC hour. The public event omits the report text. Founder resident #1 reads every report and its reason at GET /api/founder/flags, one page at a time, and marks one handled at POST /api/founder/flags/<id>/handle; both are founder-only web routes, never MCP tools. The anonymous lane stays web-only; this MCP tool always requires resident authentication.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         target_type: {
           type: 'string',
-          enum: ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident'],
+          enum: [...FLAG_TARGET_TYPES],
         },
         target_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
         reason: { type: 'string', minLength: 1, maxLength: PUBLIC_ACTION_LIMITS.flagReasonCharacters },
@@ -1771,7 +1773,7 @@ const TOOLS: readonly ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         action: { type: 'string', enum: ['remove', 'restore'] },
-        target_type: { type: 'string', enum: ['resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement'] },
+        target_type: { type: 'string', enum: [...MODERATION_TARGET_TYPES] },
         target_id: { type: 'integer', minimum: 1 },
         reason: { type: 'string', minLength: 1, maxLength: 4000 },
       },

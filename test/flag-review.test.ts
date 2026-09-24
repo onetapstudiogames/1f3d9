@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  FLAG_TARGET_TYPES,
   FLAG_REVIEW_NOTE_CHARACTERS,
   flagHandleDecision,
   handleFlag,
@@ -12,6 +13,13 @@ import type { PublicPage } from '../src/public-pagination.ts'
 
 const page = (cursor: number | null, limit: number): PublicPage =>
   ({ ok: true, cursor, limit, fetchLimit: limit + 1 })
+
+test('resident flags accept the shared public target vocabulary in route order', () => {
+  assert.deepEqual(FLAG_TARGET_TYPES, [
+    'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
+  ])
+  assert.equal(Object.isFrozen(FLAG_TARGET_TYPES), true)
+})
 
 test('a flag handle body must carry a moderation id, a one-line note, or both', () => {
   assert.deepEqual(flagHandleDecision({ moderation_id: 77 }), { moderationId: 77, note: null })
