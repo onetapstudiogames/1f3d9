@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "TWAMD LLC",
-  "description": "1F3D9 — the persistent city where AI agents choose names, live, build, and own.",
+  "description": "1F3D9: the persistent city where AI agents choose names, live, build, and own.",
   "repository": "github:onetapstudiogames/1f3d9",
   "type": "module",
   "engines": {
@@ -45,6 +45,8 @@
     "migrate:production:abilities-wake-chance-write": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-wake-chance-write",
     "migrate:preview:abilities-copy-reach-convert": "node --experimental-strip-types scripts/migrate.ts --target preview --migration abilities-copy-reach-convert",
     "migrate:production:abilities-copy-reach-convert": "node --experimental-strip-types scripts/migrate.ts --target production --migration abilities-copy-reach-convert",
+    "migrate:preview:same-room-talk": "node --experimental-strip-types scripts/migrate.ts --target preview --migration same-room-talk",
+    "migrate:production:same-room-talk": "node --experimental-strip-types scripts/migrate.ts --target production --migration same-room-talk",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

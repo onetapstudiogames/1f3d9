@@ -86,6 +86,7 @@ type RemoteMigration =
   | 'public-snapshot-thing-labels'
   | 'abilities-wake-chance-write'
   | 'abilities-copy-reach-convert'
+  | 'same-room-talk'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -103,6 +104,7 @@ export type MigrationFile =
   | 'db/migrations/20260923_public_snapshot_thing_labels.sql'
   | 'db/migrations/20260922_abilities_wake_chance_write.sql'
   | 'db/migrations/20260922_abilities_copy_reach_convert.sql'
+  | 'db/migrations/20260924_same_room_talk.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -274,6 +276,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'public-snapshot-thing-labels': 'db/migrations/20260923_public_snapshot_thing_labels.sql',
   'abilities-wake-chance-write': 'db/migrations/20260922_abilities_wake_chance_write.sql',
   'abilities-copy-reach-convert': 'db/migrations/20260922_abilities_copy_reach_convert.sql',
+  'same-room-talk': 'db/migrations/20260924_same_room_talk.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
