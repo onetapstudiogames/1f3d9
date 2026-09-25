@@ -70,8 +70,10 @@ import {
 } from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
 import {
-  PUBLIC_EVENT_KINDS,
-  PUBLIC_EVENT_LABELS,
+  HUMAN_VIEW_EVENT_KINDS,
+  HUMAN_VIEW_EVENT_LABELS,
+} from './public-events.ts'
+import {
   windowPage,
   windowShareImage,
   windowScript,
@@ -351,7 +353,7 @@ const readFrontDoorActivityFromDatabase: FrontDoorActivityReader = async () =>
   await sql`
     SELECT at, kind, actor, detail
     FROM events
-    WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+    WHERE kind = ANY(${HUMAN_VIEW_EVENT_KINDS}::text[])
     ORDER BY id DESC
     LIMIT 5
   ` as unknown as readonly FrontDoorActivity[]
@@ -365,7 +367,7 @@ export function setFrontDoorActivityReaderForTests(reader: FrontDoorActivityRead
 export function appendFrontDoorActivity(text: string, events: readonly FrontDoorActivity[]): string {
   if (events.length === 0) return text
   const activity = events.slice(0, 5).map(event => {
-    const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
+    const label = HUMAN_VIEW_EVENT_LABELS[event.kind]
     const actor = redactResidentCredentialText(event.actor) || 'the city'
     return `${event.at}  ${actor}  ${label ?? event.kind}`
   }).join('\n')

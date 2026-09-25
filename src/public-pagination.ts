@@ -3,6 +3,7 @@ export const PUBLIC_PAGE_MAX = 200
 import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
+import { talkEventRemovedSql } from './moderation.ts'
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
@@ -227,6 +228,7 @@ function publicEventFilter(includeDescendants: boolean): string {
   return `
   ($1::text IS NULL OR event.kind = $1::text)
   AND ($2::text IS NULL OR event.actor = $2::text)
+  AND (($2::text IS NULL AND $3::integer IS NULL) OR NOT ${talkEventRemovedSql('event')})
   AND ($6::integer IS NULL OR event.at >= transaction_timestamp()
     - ($6::integer * INTERVAL '1 second'))
   AND ($3::integer IS NULL
