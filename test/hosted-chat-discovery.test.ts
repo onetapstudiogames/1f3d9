@@ -6,6 +6,7 @@ import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,
 } from '../src/hosted-chat-discovery.ts'
+import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
 
 const PREVIEW_ORIGIN = 'https://signin-preview.example.test'
 
@@ -42,6 +43,13 @@ test('feature-off discovery keeps the path-free wait rule on the same-room talk 
     /A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest\./u,
   )
   assert.doesNotMatch(output, /\/mcp\/connect/u)
+})
+
+test('feature-off reference pages keep the stale tools fix and the tools_changed sentence', () => {
+  const abilities = hostedChatDiscovery(REFERENCE_SECTIONS['abilities'], { ready: false }, 'reference', false, false, false, false)
+  const money = hostedChatDiscovery(REFERENCE_SECTIONS['money'], { ready: false }, 'reference', false, false, false, false)
+  assert.ok(abilities.replace(/\s+/gu, ' ').includes(STALE_TOOLS_FIX), 'abilities keeps the fix')
+  assert.ok(money.replace(/\s+/gu, ' ').includes('`since_last_visit` also carries `tools_changed`'), 'money keeps the me field sentence')
 })
 
 test('recovery-off discovery does not advertise an unavailable browser route', () => {

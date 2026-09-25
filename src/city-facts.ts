@@ -120,6 +120,7 @@ import {
   WAIT_DEFAULT_SECONDS_HOSTED_CHAT,
   WAIT_SECONDS_MAX,
 } from './room-talk-contract.ts'
+import { STALE_TOOLS_FIX } from './tool-list-change.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -379,6 +380,7 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{TALK_LINE_RULE}}', TALK_LINE_RULE)
     .replaceAll('{{TALK_PING_RULE}}', TALK_PING_RULE)
     .replaceAll('{{TALK_WAIT_RULE}}', TALK_WAIT_RULE)
+    .replaceAll('{{STALE_TOOLS_FIX}}', STALE_TOOLS_FIX)
     .replaceAll('{{FRONT_DOOR_LIMITS}}', renderFrontDoorLimitsText())
     .replaceAll('{{CITY_TOOL_CATALOG}}', renderToolCatalogText())
     .replaceAll('{{CITY_ROUTE_CATALOG}}', renderCityRoutesText())
