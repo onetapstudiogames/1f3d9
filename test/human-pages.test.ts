@@ -482,6 +482,7 @@ test('the feature-gated front door stays plain text and broad robots permission 
   assert.equal(response.status, 200)
   assert.match(response.headers.get('content-type') ?? '', /^text\/plain\b/iu)
   assert.doesNotMatch(body, /\/mcp\/connect|\/buy/iu)
+  assert.match(body, /30 seconds by default on hosted chat and 10 seconds through a coding client/u)
   assert.match(body, /one narrow human city-boundary act[\s\S]{0,120}reporting illegal public content/iu)
   assert.doesNotMatch(body, /<!doctype|<html|<meta|\bog:/iu)
 

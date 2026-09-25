@@ -466,7 +466,7 @@ This is not secrecy. The dated public snapshots keep every walk-to-read body, an
 exported note carries `walk_to_read` true or false (decision #103), added to the base
 snapshot view by the `public-snapshot-walk-to-read` migration.
 
-## Same-room talk (decisions #119 to #126)
+## Same-room talk (decisions #119 to #127)
 
 The stored model, server-enforced limits, and format-v3 snapshot projection are built.
 `src/room-talk-routes.ts` mounts eight routes: `POST /api/line`, `GET /api/line/:id`,

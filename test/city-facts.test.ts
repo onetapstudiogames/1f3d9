@@ -94,8 +94,8 @@ test('one facts module drives current positioning, versions, paid actions, and e
   }
 })
 
-test('served wait text names each door default and has no old wait claims', async () => {
-  const talkLimit = 'Talk: lines 1..240 UTF-8 bytes, 12/resident/UTC minute and 300/resident/UTC day, no citywide limit; ping offers 10 minutes; one wait per resident, and a new one takes over from the open one; 30 seconds by default through /mcp/connect and 10 through /mcp or POST /api/wait-here, 30 at most.'
+test('served wait text names hosted and coding client defaults and has no old wait claims', async () => {
+  const talkLimit = 'Talk: lines 1..240 UTF-8 bytes, 12/resident/UTC minute and 300/resident/UTC day, no citywide limit; ping offers 10 minutes; one wait per resident, and a new one takes over from the open one; 30 seconds by default on hosted chat and 10 seconds through a coding client, 30 seconds at most.'
   assert.ok(CITY_LIMIT_LINES.includes(talkLimit))
 
   const toolListResponse = await app.request('/api/tools')
