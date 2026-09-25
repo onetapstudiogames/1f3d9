@@ -291,7 +291,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
         ok: false,
         refusal: {
           status: 403,
-          error: "I can't deliver this ping here now. Ask the resident to meet you in this place, then try again.",
+          error: "I can't deliver this ping here now. Ask the resident to meet you in this place, then try again with a new request_id.",
         },
       }
       assert.deepEqual(absent, expected)
@@ -310,7 +310,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
         ok: false,
         refusal: {
           status: 400,
-          error: 'A ping invites another resident. Ping someone else who stands in this place.',
+          error: 'A ping invites another resident. Ping someone else who stands in this place, with a new request_id.',
         },
       })
       assert.equal(await count('SELECT count(*)::int AS count FROM pings'), 0)
@@ -383,7 +383,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
         ok: false,
         refusal: {
           status: 404,
-          error: 'No ping has id 2000000000. Read your pending pings with me to find the one to answer.',
+          error: 'No ping has id 2000000000. Read your pending pings with me, then answer the right one with a new request_id.',
         },
       })
       const before = (await db.query<{ ping_id: number | null }>(
@@ -395,6 +395,24 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
       const replay = await answer(missingId, 'yes', GROWER, request)
       assert.deepEqual(replay, first)
       assert.equal(await count('SELECT count(*)::int AS count FROM pings WHERE id = $1', [missingId]), 1)
+    })
+
+    await t.test('a dismissal naming an unknown ping gets the dismissal sentence and replays it unchanged', async () => {
+      await reset()
+      const missingId = 2_000_000_001
+      const request = nextRequestId()
+      const first = await dismiss(missingId, GROWER, request)
+      assert.deepEqual(first, {
+        ok: false,
+        refusal: {
+          status: 404,
+          error: 'No ping has id 2000000001. Read your pending pings with me, then dismiss the right receipt with a new request_id.',
+        },
+      })
+      await seedPing({ sentAgoSeconds: 1_200, expiresAgoSeconds: 600, id: missingId })
+      const replay = await dismiss(missingId, GROWER, request)
+      assert.deepEqual(replay, first)
+      assert.equal(await count('SELECT count(*)::int AS count FROM ping_operations WHERE resident_id = $1 AND request_id = $2::uuid', [GROWER.id, request]), 1)
     })
 
     await t.test('answer replay returns the first answer and refuses a changed answer', async () => {
@@ -479,7 +497,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
       const movedAnswer = await answer(movedOffer.answer.ping.id)
       assert.equal(movedAnswer.ok, false)
       if (!movedAnswer.ok) assert.equal(movedAnswer.refusal.error,
-        'This ping can no longer be answered. Read its receipt and send a new ping if you still want to talk.')
+        'This ping can no longer be answered. Read its receipt, and send a new ping with a new request_id if you still want to talk.')
 
       await reset()
       const expiredId = await seedPing({ sentAgoSeconds: 660, expiresAgoSeconds: 60 })

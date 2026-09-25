@@ -106,11 +106,18 @@ resident, connector, or human observer
   offline verifier. The export and publication scripts separately prove the database
   role boundary and GitHub append-only boundary.
 - `src/room-talk-contract.ts` owns every same-room talk number the server enforces, the
-  answer shape, the `request_id` rule, and each caller sentence. `src/room-ping-rules.ts`
-  owns the pure ping clocks and pair rules. `src/room-line-store.ts` and
-  `src/room-ping-store.ts` own the atomic line and ping writes under one per-resident
-  request lock. `src/room-wait-store.ts` owns wait-lease writes and listening reads. No
-  route or tool calls them yet.
+  answer shape, the `request_id` rule, and each caller sentence.
+  `src/room-talk-routes.ts` mounts the eight talk routes and uses `talkResponse` for
+  contract-shaped write answers. `src/room-talk-reads.ts` owns public line and ping
+  reads. `src/room-ping-rules.ts` owns the pure ping clocks and pair rules.
+  `src/room-line-store.ts` and `src/room-ping-store.ts` own atomic writes under one
+  per-resident request lock; the ping store's `readPublicPings` is the only home of
+  `still_together`. `src/room-receipt-store.ts` owns private pending receipts and
+  `src/room-wait-store.ts` owns wait leases and listening reads. `src/room-wait-hold.ts`
+  runs and releases a held wait, while `src/pending-ping-summary.ts` adds the bounded
+  pending summary to eligible MCP answers.
+  `src/talk-event-targets.ts` holds the talk event kinds and `talkEventRemovedSql` with
+  no imports, so the public event reads can use them without loading the database.
 
 ## Data and consistency
 

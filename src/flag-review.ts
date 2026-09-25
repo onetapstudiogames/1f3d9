@@ -5,7 +5,7 @@ import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 export const FLAG_REVIEW_NOTE_CHARACTERS = PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters
 
 export const FLAG_TARGET_TYPES = Object.freeze([
-  'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement',
+  'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
 ] as const)
 
 const FLAG_TARGET_TYPE_SET: ReadonlySet<string> = new Set(FLAG_TARGET_TYPES)

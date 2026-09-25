@@ -22,6 +22,8 @@ import {
   redactPlace,
   redactThing,
   redactTrait,
+  talkEventRemovedSql,
+  TALK_EVENT_TARGETS,
   type ModerationActionRow,
 } from '../src/moderation.ts'
 
@@ -32,7 +34,7 @@ test('public moderation casts its record id to the numeric route contract', () =
 
 test('the moderation vocabulary is frozen and has no governance powers', () => {
   assert.deepEqual(MODERATION_TARGET_TYPES, [
-    'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement',
+    'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
   ])
   assert.deepEqual(MODERATION_ACTIONS, ['remove', 'restore'])
   assert.equal(Object.isFrozen(MODERATION_TARGET_TYPES), true)
@@ -49,6 +51,49 @@ test('the moderation vocabulary is frozen and has no governance powers', () => {
   for (const value of ['pin', 'unpin', 'delete', ' remove', 'REMOVE', '', null, 1]) {
     assert.equal(moderationAction(value), null)
   }
+})
+
+test('a removed line or ping reads as its id and the moderation marker only', () => {
+  const line = redactModeratedTarget('line', {
+    id: 21,
+    place_id: 8,
+    resident_id: 7,
+    author: 'speaker',
+    body: 'private line text',
+    body_bytes: 17,
+    created_at: '2026-09-24T12:00:00.000Z',
+  })
+  const ping = redactModeratedTarget('ping', {
+    id: 31,
+    place_id: 8,
+    sender_id: 7,
+    sender: 'speaker',
+    target_id: 9,
+    target: 'listener',
+    status: 'answered',
+    answer: 'yes',
+    sent_at: '2026-09-24T12:00:00.000Z',
+    expires_at: '2026-09-24T12:10:00.000Z',
+  })
+
+  assert.deepEqual(line, { id: 21, moderated: true })
+  assert.deepEqual(ping, { id: 31, moderated: true })
+  assert.equal(Object.isFrozen(line), true)
+  assert.equal(Object.isFrozen(ping), true)
+})
+
+test('the removed-talk clause maps each talk kind to its target type', () => {
+  const clause = talkEventRemovedSql('event')
+
+  assert.equal((clause.match(/\bEXISTS\s*\(/giu) ?? []).length, 1)
+  for (const [kind, [targetType, idField]] of Object.entries(TALK_EVENT_TARGETS)) {
+    assert.ok(clause.includes(`WHEN '${kind}' THEN '${targetType}'`), kind)
+    assert.ok(clause.includes(
+      `WHEN event.kind = '${kind}' AND event.detail ->> '${idField}' ~ '^[0-9]{1,9}$' THEN`,
+    ), kind)
+  }
+  assert.match(clause, /action\.action = 'remove'/u)
+  assert.match(clause, /ORDER BY latest\.created_at DESC, latest\.id DESC/u)
 })
 
 test('a removed talk event keeps its order and kind and loses its speaker, place, other resident, and answer', () => {

@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import { PUBLIC_EVENT_KINDS } from '../src/public-events.ts'
 import { splitSqlStatements } from '../scripts/migrate.ts'
+import { WINDOW_JS } from '../src/window-client.ts'
 
 const [schema, migration] = await Promise.all([
   readFile(new URL('../db/schema.sql', import.meta.url), 'utf8'),
@@ -12,8 +13,11 @@ const [schema, migration] = await Promise.all([
 const talkStores = await Promise.all([
   readFile(new URL('../src/room-line-store.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-ping-store.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/room-receipt-store.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/room-talk-reads.ts', import.meta.url), 'utf8'),
   readFile(new URL('../src/room-wait-store.ts', import.meta.url), 'utf8'),
 ])
+const roomTalkRoutes = await readFile(new URL('../src/room-talk-routes.ts', import.meta.url), 'utf8')
 
 const migrationStatements = splitSqlStatements(migration).map(statement => (
   statement.replace(/^\s*--.*$/gmu, '').trim()
@@ -75,8 +79,15 @@ test('snapshot v3 reads no private talk table, request_id, or arrival mark', () 
   assert.doesNotMatch(view, /arrived_at/iu)
 })
 
-test('no allowlisted public feed carries a talk event yet', () => {
-  assert.deepEqual(PUBLIC_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [])
+test('the change feed carries talk events, and the human views do not yet', async () => {
+  const { HUMAN_VIEW_EVENT_KINDS, HUMAN_VIEW_EVENT_LABELS } = await import('../src/public-events.ts')
+  assert.deepEqual(PUBLIC_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [...talkEventKinds])
+  assert.deepEqual(HUMAN_VIEW_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [])
+  assert.deepEqual(Object.keys(HUMAN_VIEW_EVENT_LABELS).filter(kind => talkEventKinds.has(kind)), [])
+})
+
+test('the window program has no talk label', () => {
+  assert.doesNotMatch(WINDOW_JS, /"line_said"|said a line/u)
 })
 
 test('talk stores never settle or wake a room, and only the contract names an error', () => {
@@ -85,4 +96,8 @@ test('talk stores never settle or wake a room, and only the contract names an er
     assert.doesNotMatch(source, /\brunAction\b/u)
     assert.doesNotMatch(source, /error:/u)
   }
+})
+
+test('the talk routes read bodies only through text, json, or arrayBuffer', () => {
+  assert.doesNotMatch(roomTalkRoutes, /raw\.(?:body|signal)|\.clone\(|\.formData\(|parseBody\(/u)
 })

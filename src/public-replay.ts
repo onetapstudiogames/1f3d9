@@ -16,7 +16,7 @@ import {
 } from './public-changes.ts'
 import {
   PUBLIC_EVENT_DETAIL_FIELDS,
-  PUBLIC_EVENT_KINDS,
+  HUMAN_VIEW_EVENT_KINDS,
   isPublicSystemEventActor,
 } from './public-events.ts'
 import {
@@ -368,7 +368,7 @@ function replayTimelineRow(row: Readonly<Record<string, unknown>>): PublicReplay
   const eventId = positiveId(row.event_id)
   if (
     changeId === null || eventId === null
-    || typeof row.kind !== 'string' || !PUBLIC_EVENT_KINDS.includes(row.kind)
+    || typeof row.kind !== 'string' || !HUMAN_VIEW_EVENT_KINDS.includes(row.kind)
     || typeof row.actor !== 'string'
     || !(HANDLE_RE.test(row.actor) || isPublicSystemEventActor(row.actor))
   ) return null
@@ -503,10 +503,10 @@ export async function buildPublicReplay(
     const [mapRows, rawTimelineRows, startRows, countRows] = await Promise.all([
       execute(REPLAY_MAP_SQL, [MODERATED_TEXT]),
       execute(REPLAY_TIMELINE_SQL, [
-        PUBLIC_REPLAY_SPAN_HOURS[query.span], [...PUBLIC_EVENT_KINDS],
+        PUBLIC_REPLAY_SPAN_HOURS[query.span], [...HUMAN_VIEW_EVENT_KINDS],
         PUBLIC_REPLAY_ROW_CEILING + 1,
       ]),
-      execute(REPLAY_START_SQL, [PUBLIC_REPLAY_SPAN_HOURS[query.span], [...PUBLIC_EVENT_KINDS]]),
+      execute(REPLAY_START_SQL, [PUBLIC_REPLAY_SPAN_HOURS[query.span], [...HUMAN_VIEW_EVENT_KINDS]]),
       execute(REPLAY_COUNTS_SQL, []),
     ])
     const sortedRows = [...rawTimelineRows]

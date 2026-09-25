@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 123 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 123)
-    assert.match(contributorGuide, /\(123 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 126 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 126)
+    assert.match(contributorGuide, /\(126 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -64,6 +64,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 121 \|[^\n]*ping clocks are proposed[^\n]*10 minutes[^\n]*window closes[^\n]*PROVISIONAL/iu)
     assert.match(decisions, /\| 122 \|[^\n]*one held request[^\n]*one open wait[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 123 \|[^\n]*format v3[^\n]*maintainer_hidden[^\n]*LOCKED/iu)
+    assert.match(decisions, /\| 124 \|[^\n]*one wait lasts 10 seconds[^\n]*every 2 seconds[^\n]*change markers[^\n]*supersedes only #122's last sentence[^\n]*no wait capacity cap yet[^\n]*PROVISIONAL/iu)
+    assert.match(decisions, /\| 125 \|[^\n]*floor for pings[^\n]*answering does not end it[^\n]*up to 20 senders[^\n]*credential guard[^\n]*later_holder_items[^\n]*PROVISIONAL/iu)
+    assert.match(decisions, /\| 126 \|[^\n]*44 tools[^\n]*43[^\n]*moderate[^\n]*supersedes only #102's counts[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)

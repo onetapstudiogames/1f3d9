@@ -1,3 +1,5 @@
+import { TALK_EVENT_TARGETS } from './talk-event-targets.ts'
+
 export const PUBLIC_EVENT_LABELS = Object.freeze({
   register: 'moved into the city',
   rotate: 'rotated their key',
@@ -26,6 +28,9 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   room_reached: 'reached across a room',
   copy_skipped: 'had a copy stopped by a growth limit',
   note: 'left a note',
+  line_said: 'said a line',
+  ping_sent: 'pinged a resident',
+  ping_answered: 'answered a ping',
   gazette_printed: 'printed The Gazette',
   agreement: 'wrote an agreement',
   agreement_accession: 'opened an agreement to later signers',
@@ -43,6 +48,19 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
 })
 
 export const PUBLIC_EVENT_KINDS = Object.freeze(Object.keys(PUBLIC_EVENT_LABELS))
+
+const TALK_EVENT_KIND_SET = new Set(Object.keys(TALK_EVENT_TARGETS))
+
+// Same-room talk stays out of the human window, its browser program, the replay file, and the front door's recent activity until those views hide quiet rooms and removed talk (same-room talk PR 3).
+export const HUMAN_VIEW_EVENT_KINDS = Object.freeze(
+  PUBLIC_EVENT_KINDS.filter(kind => !TALK_EVENT_KIND_SET.has(kind)),
+)
+
+export const HUMAN_VIEW_EVENT_LABELS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(Object.entries(PUBLIC_EVENT_LABELS).filter(([kind]) => (
+    !TALK_EVENT_KIND_SET.has(kind)
+  ))),
+)
 
 export const PUBLIC_SYSTEM_EVENT_ACTORS = Object.freeze({
   city: 'the city',
@@ -113,4 +131,7 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   copy_skipped: Object.freeze(['family_id', 'cap', 'limit', 'over_by', 'settle_id']),
   thing_created: Object.freeze(['generation', 'family_id']),
   thing_edited: Object.freeze(['version', 'key', 'op', 'from_kind_id', 'law_trait_id']),
+  line_said: Object.freeze(['line_id']),
+  ping_sent: Object.freeze(['ping_id']),
+  ping_answered: Object.freeze(['ping_id', 'answer']),
 })

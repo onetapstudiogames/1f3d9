@@ -1,4 +1,7 @@
 import { publicText } from './input.ts'
+import type { TalkTargetType } from './talk-event-targets.ts'
+
+export { TALK_EVENT_TARGETS, talkEventRemovedSql, type TalkTargetType } from './talk-event-targets.ts'
 
 export const MODERATION_TARGET_TYPES = Object.freeze([
   'resident',
@@ -8,6 +11,8 @@ export const MODERATION_TARGET_TYPES = Object.freeze([
   'trait',
   'note',
   'agreement',
+  'line',
+  'ping',
 ] as const)
 
 export const MODERATION_ACTIONS = Object.freeze(['remove', 'restore'] as const)
@@ -15,16 +20,9 @@ export const MODERATION_REASON_MAX_BYTES = 4_000
 export const MODERATED_TEXT = '[removed by maintainer]'
 
 export type ModerationTargetType = typeof MODERATION_TARGET_TYPES[number]
-export type TalkTargetType = 'line' | 'ping'
-export type StoredModerationTargetType = ModerationTargetType | TalkTargetType
+type RecordModerationTargetType = Exclude<ModerationTargetType, TalkTargetType>
 export type ModerationAction = typeof MODERATION_ACTIONS[number]
 export type ModerationActionId = number | bigint | `${bigint}`
-
-export const TALK_EVENT_TARGETS = Object.freeze({
-  line_said: Object.freeze(['line', 'line_id'] as const),
-  ping_sent: Object.freeze(['ping', 'ping_id'] as const),
-  ping_answered: Object.freeze(['ping', 'ping_id'] as const),
-})
 
 export interface ModerationInput {
   readonly target_type: ModerationTargetType
@@ -88,7 +86,7 @@ const DISPLAY_FIELDS = Object.freeze({
   // A walk-to-read note read remotely shows its first line instead of its body.
   note: Object.freeze(['body', 'first_line'] as const),
   agreement: Object.freeze(['body'] as const),
-} satisfies Readonly<Record<ModerationTargetType, readonly string[]>>)
+} satisfies Readonly<Record<RecordModerationTargetType, readonly string[]>>)
 
 const DRAWING_TOMBSTONE = Object.freeze({
   drawing: null,
@@ -117,7 +115,7 @@ const CONTENT_TOMBSTONES = Object.freeze({
   trait: Object.freeze({ recipe: null, mechanical: false }),
   note: Object.freeze({}),
   agreement: Object.freeze({}),
-} satisfies Readonly<Record<ModerationTargetType, Readonly<Record<string, unknown>>>>)
+} satisfies Readonly<Record<RecordModerationTargetType, Readonly<Record<string, unknown>>>>)
 
 export function moderationTargetType(value: unknown): ModerationTargetType | null {
   return typeof value === 'string' && TARGET_TYPE_SET.has(value)
@@ -236,6 +234,12 @@ export function redactModeratedTarget<T extends PublicRecord>(
   targetType: ModerationTargetType,
   record: T,
 ): ModeratedRecord<T> {
+  if (targetType === 'line' || targetType === 'ping') {
+    return deepFreeze({
+      id: (record as { id?: unknown }).id,
+      moderated: true as const,
+    }) as unknown as ModeratedRecord<T>
+  }
   if (targetType === 'place') return redactPlace(record)
   return redactFields(record, DISPLAY_FIELDS[targetType], CONTENT_TOMBSTONES[targetType])
 }

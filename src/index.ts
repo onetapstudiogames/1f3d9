@@ -30,7 +30,7 @@ import {
   hostedChatSigninReadiness,
   type HostedChatSigninReadiness,
 } from './hosted-chat-discovery.ts'
-import { CITY_PUBLIC_TOOL_CATALOG, mcp } from './mcp.ts'
+import { CITY_PUBLIC_TOOL_CATALOG, mcp, safeguardToolResponse } from './mcp.ts'
 import { handleMcpLooking } from './mcp-looking.ts'
 import {
   configureOAuthResidentResolver,
@@ -38,6 +38,7 @@ import {
   oauthChallenge,
 } from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
+import { mountRoomTalkRoutes, talkRefusalResponse } from './room-talk-routes.ts'
 import { mountWorldRoutes } from './world.ts'
 import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
@@ -69,8 +70,10 @@ import {
 } from './moderation-store.ts'
 import { configuredPublicDomain, publicOfficialFacts, publicPhysicsFacts } from './public-reference-facts.ts'
 import {
-  PUBLIC_EVENT_KINDS,
-  PUBLIC_EVENT_LABELS,
+  HUMAN_VIEW_EVENT_KINDS,
+  HUMAN_VIEW_EVENT_LABELS,
+} from './public-events.ts'
+import {
   windowPage,
   windowShareImage,
   windowScript,
@@ -108,6 +111,7 @@ import {
   submitCommunityTool,
 } from './community-tool-submissions.ts'
 import {
+  FLAG_TARGET_TYPES,
   flagHandleDecision,
   handleFlag,
   readFounderFlagQueue,
@@ -144,6 +148,7 @@ import {
   readPublicResidentPresence,
 } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import { moderatePendingPingRows, pendingPingSummary } from './pending-ping-summary.ts'
 import { residentRefusalGuidance } from './resident-refusal.ts'
 import {
   loadPublicSearchResults,
@@ -197,6 +202,8 @@ import {
   readPendingCreditGifts,
 } from './prepaid-credit.ts'
 import { mountPrepaidCreditGiftRoutes } from './prepaid-credit-routes.ts'
+import { markReceiptsSeen, readPendingPings } from './room-receipt-store.ts'
+import { ME_PENDING_SENDERS_MAX, PENDING_PAGE_REFUSAL } from './room-talk-contract.ts'
 import { mountCityCreditPurchaseRoutes } from './city-credit-purchase.ts'
 import {
   CREDIT_BUY_CSS,
@@ -346,7 +353,7 @@ const readFrontDoorActivityFromDatabase: FrontDoorActivityReader = async () =>
   await sql`
     SELECT at, kind, actor, detail
     FROM events
-    WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+    WHERE kind = ANY(${HUMAN_VIEW_EVENT_KINDS}::text[])
     ORDER BY id DESC
     LIMIT 5
   ` as unknown as readonly FrontDoorActivity[]
@@ -360,7 +367,7 @@ export function setFrontDoorActivityReaderForTests(reader: FrontDoorActivityRead
 export function appendFrontDoorActivity(text: string, events: readonly FrontDoorActivity[]): string {
   if (events.length === 0) return text
   const activity = events.slice(0, 5).map(event => {
-    const label = PUBLIC_EVENT_LABELS[event.kind as keyof typeof PUBLIC_EVENT_LABELS]
+    const label = HUMAN_VIEW_EVENT_LABELS[event.kind]
     const actor = redactResidentCredentialText(event.actor) || 'the city'
     return `${event.at}  ${actor}  ${label ?? event.kind}`
   }).join('\n')
@@ -546,6 +553,7 @@ app.use('*', async (c, next) => {
 app.use('*', residentRefusalGuidance())
 app.use('*', apiFailureContract())
 app.use('*', publicResponseSafety)
+app.use('*', pendingPingSummary())
 app.onError((error, c) => {
   if (isPublicExactReadBusy(error)) {
     c.header('Retry-After', '1')
@@ -870,6 +878,7 @@ mountGazetteReadingRoutes(app, {
 })
 mountWorldRoutes(app)
 mountSocietyRoutes(app)
+mountRoomTalkRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
@@ -1034,8 +1043,30 @@ app.get('/api/me', async c => {
     'before_offer_id', 'offer_limit',
     'before_credit_id', 'credit_limit',
     'before_gift_id', 'gift_limit',
+    'pending_before_ping_id', 'pending_limit',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const pendingBeforeValue = singlePublicQueryValue(query, 'pending_before_ping_id')
+  const pendingLimitValue = singlePublicQueryValue(query, 'pending_limit')
+  const isPositiveWholeNumber = (value: string | null): value is string => (
+    value !== null && /^[0-9]+$/u.test(value)
+    && Number.isSafeInteger(Number(value)) && Number(value) > 0
+  )
+  const pendingBeforePingId = pendingBeforeValue.ok && pendingBeforeValue.value === null
+    ? null
+    : pendingBeforeValue.ok && isPositiveWholeNumber(pendingBeforeValue.value)
+      ? Number(pendingBeforeValue.value)
+      : Number.NaN
+  const pendingLimit = pendingLimitValue.ok && pendingLimitValue.value === null
+    ? ME_PENDING_SENDERS_MAX
+    : pendingLimitValue.ok && isPositiveWholeNumber(pendingLimitValue.value)
+      ? Number(pendingLimitValue.value)
+      : Number.NaN
+  if (
+    Number.isNaN(pendingBeforePingId)
+    || Number.isNaN(pendingLimit)
+    || pendingLimit > ME_PENDING_SENDERS_MAX
+  ) return talkRefusalResponse(c, PENDING_PAGE_REFUSAL)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
   if (!placeRequest.ok) return err(c, 400, placeRequest.error)
   const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
@@ -1061,6 +1092,7 @@ app.get('/api/me', async c => {
     presence = await residentPresence(resident.id)
   }
   const [
+    pendingPingPage,
     placeRows,
     thingRows,
     kindRows,
@@ -1071,6 +1103,11 @@ app.get('/api/me', async c => {
     pendingCreditGifts,
     currentPlace,
   ] = await Promise.all([
+    readPendingPings({
+      residentId: resident.id,
+      beforePingId: pendingBeforePingId,
+      limit: pendingLimit,
+    }),
     executePublicQuery(`
       /* public:me_places */
       SELECT place.id, place.parent_id, place.name, place.created_at,
@@ -1177,12 +1214,21 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const attention = cityCreditAttentionLines(creditAttention)
+  const pendingReceipts = await moderatePendingPingRows(pendingPingPage.receipts)
+  const pending_pings = {
+    total: pendingPingPage.total,
+    senders: pendingPingPage.senders,
+    receipts: pendingReceipts,
+    has_more: pendingPingPage.hasMore,
+    next_pending_before_ping_id: pendingPingPage.nextBeforePingId,
+  }
   // Only founder resident #1 holding a root key can read or answer a report, so only that
   // caller is told the count. A hosted-chat sign-in never carries founder capability.
   const unhandledFlags = resident.id === 1 && presentedRootKey(c)
     ? await unhandledFlagCount(executePrivateStoreQuery)
     : null
-  return c.json({
+  const answer = {
+    pending_pings,
     help: '/api/help',
     ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,
@@ -1232,7 +1278,19 @@ app.get('/api/me', async c => {
       city_fee_credit: cityFeeCredit.page,
       pending_gifts: pendingCreditGifts.page,
     },
-  })
+  }
+  const text = JSON.stringify(answer)
+  if (!safeguardToolResponse(text).withheld) {
+    try {
+      await markReceiptsSeen({
+        residentId: resident.id,
+        pingIds: pendingReceipts.map(receipt => receipt.ping_id),
+      })
+    } catch (error) {
+      console.error('receipt_seen_failure', error instanceof Error ? error.name : typeof error)
+    }
+  }
+  return c.json(answer)
 })
 
 app.post('/api/thing/:id/mark', async c => {
@@ -1772,7 +1830,7 @@ app.post('/api/flag', async c => {
   const targetId = Number(body?.target_id)
   const reasonCandidate = String(body?.reason ?? '').trim()
   const reasonText = publicText(reasonCandidate, { maximumCharacters: PUBLIC_ACTION_LIMITS.flagReasonCharacters })
-  const allowed = ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident']
+  const allowed: readonly string[] = FLAG_TARGET_TYPES
   if (!allowed.includes(targetType) || !Number.isSafeInteger(targetId) || targetId < 1 || reasonText === null) {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters of safe text`)
   }

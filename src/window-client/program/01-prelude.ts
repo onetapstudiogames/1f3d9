@@ -2,7 +2,7 @@ import { WORLD_ROOT_NAME } from '../../world-root.ts'
 import { BASIC_ACTIONS } from '../../physics.ts'
 import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
-  PUBLIC_EVENT_LABELS,
+  HUMAN_VIEW_EVENT_LABELS,
   PUBLIC_SYSTEM_EVENT_ACTORS,
 } from '../../public-events.ts'
 import { containsMalformedPublicText } from '../../input.ts'
@@ -41,7 +41,8 @@ import {
   WINDOW_HISTORY_FILL_ROWS,
   WINDOW_HISTORY_KEEP_ROWS,
 } from '../../window-history-limits.ts'
-const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(PUBLIC_EVENT_LABELS)
+// Same-room talk stays out of the human window, its browser program, the replay file, and the front door's recent activity until those views hide quiet rooms and removed talk (same-room talk PR 3).
+const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
 const BASIC_ACTIONS_JSON = JSON.stringify(BASIC_ACTIONS)

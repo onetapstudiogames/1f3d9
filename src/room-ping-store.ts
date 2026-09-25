@@ -19,6 +19,7 @@ import {
   PING_SELF_REFUSAL,
   PING_OFFER_MINUTES,
   pingNotFoundRefusal,
+  receiptNotFoundRefusal,
   receiptStillOpenRefusal,
   requestReuseRefusal,
   TALK_REQUEST_ID_REFUSAL,
@@ -45,6 +46,11 @@ type PingDbRow = Readonly<{
   answered_at: Date | string | null
 }>
 
+type PingPresenceRow = PingDbRow & Readonly<{
+  now: Date | string
+  still_together: boolean
+}>
+
 type PairHistoryRow = Readonly<{
   id: number | string
   sender_id: number | string
@@ -53,7 +59,6 @@ type PairHistoryRow = Readonly<{
   expires_at: Date | string
   answer: PingAnswer | null
   answered_at: Date | string | null
-  still_together: boolean
 }>
 
 type PresenceRow = Readonly<{
@@ -257,20 +262,41 @@ async function loadPingForUpdate(
 }
 
 async function stillTogether(transaction: TaggedSql, pingId: number): Promise<boolean> {
-  const rows = await queryRows<Readonly<{ still_together: boolean }>>(transaction`
-    SELECT coalesce(
-      sender_presence.current_place_id = ping.place_id
-        AND sender_presence.arrived_at = ping.sender_arrived_at
-        AND target_presence.current_place_id = ping.place_id
-        AND target_presence.arrived_at = ping.target_arrived_at,
-      false
-    ) AS still_together
+  return (await pingRowsWithPresence(transaction, [pingId]))[0]?.still_together === true
+}
+
+async function pingRowsWithPresence(database: TaggedSql, ids: readonly number[]): Promise<PingPresenceRow[]> {
+  if (ids.length === 0) return []
+  return queryRows<PingPresenceRow>(database`/* public:talk_pings */
+    SELECT ping.id, ping.place_id, ping.sender_id, sender.handle AS sender,
+      ping.target_id, target.handle AS target, ping.sent_at, ping.expires_at,
+      ping.answer, ping.answered_at, clock_timestamp() AS now,
+      coalesce(
+        sender_presence.current_place_id = ping.place_id
+          AND sender_presence.arrived_at = ping.sender_arrived_at
+          AND target_presence.current_place_id = ping.place_id
+          AND target_presence.arrived_at = ping.target_arrived_at,
+        false
+      ) AS still_together
     FROM pings ping
+    JOIN residents sender ON sender.id = ping.sender_id
+    JOIN residents target ON target.id = ping.target_id
     LEFT JOIN resident_presence sender_presence ON sender_presence.resident_id = ping.sender_id
     LEFT JOIN resident_presence target_presence ON target_presence.resident_id = ping.target_id
-    WHERE ping.id = ${pingId}
+    WHERE ping.id = ANY(${ids}::int[])
   `)
-  return rows[0]?.still_together === true
+}
+
+export async function readPublicPings(
+  ids: readonly number[],
+  database: TaggedSql = engineSql,
+): Promise<ReadonlyMap<number, PublicPing>> {
+  if (ids.length === 0) return new Map()
+  const rows = await pingRowsWithPresence(database, ids)
+  return new Map(rows.map(row => [
+    Number(row.id),
+    pingAnswer(row, dateValue(row.now), row.still_together, false).ping,
+  ]))
 }
 
 export async function invitePing(
@@ -327,22 +353,15 @@ export async function invitePing(
 
     const historyRows = await queryRows<PairHistoryRow>(transaction`
       SELECT ping.id, ping.sender_id, ping.target_id, ping.sent_at, ping.expires_at,
-        ping.answer, ping.answered_at,
-        coalesce(
-          sender_presence.current_place_id = ping.place_id
-            AND sender_presence.arrived_at = ping.sender_arrived_at
-            AND target_presence.current_place_id = ping.place_id
-            AND target_presence.arrived_at = ping.target_arrived_at,
-          false
-        ) AS still_together
+        ping.answer, ping.answered_at
       FROM pings ping
-      LEFT JOIN resident_presence sender_presence ON sender_presence.resident_id = ping.sender_id
-      LEFT JOIN resident_presence target_presence ON target_presence.resident_id = ping.target_id
       WHERE ((ping.sender_id = ${residentId} AND ping.target_id = ${targetId})
         OR (ping.sender_id = ${targetId} AND ping.target_id = ${residentId}))
         AND ping.sent_at >= ${pairHistoryStart(now.date)}::timestamptz
       ORDER BY ping.sent_at DESC, ping.id DESC
     `)
+    const historyPresence = await pingRowsWithPresence(transaction, historyRows.map(row => Number(row.id)))
+    const togetherByPing = new Map(historyPresence.map(row => [Number(row.id), row.still_together]))
     const admission = pingAdmission({
       senderId: residentId,
       targetId,
@@ -355,7 +374,7 @@ export async function invitePing(
         expiresAt: dateValue(row.expires_at),
         answer: row.answer,
         answeredAt: row.answered_at === null ? null : dateValue(row.answered_at),
-        stillTogether: row.still_together,
+        stillTogether: togetherByPing.get(Number(row.id)) === true,
       })),
     })
     if (!admission.ok) {
@@ -364,7 +383,7 @@ export async function invitePing(
       }, refusal(admission.refusal))
     }
 
-    const inserted = await queryRows<PingDbRow & Readonly<{ still_together: boolean }>>(transaction`
+    const inserted = await queryRows<PingDbRow>(transaction`
       WITH
       new_ping AS (
         INSERT INTO pings (
@@ -397,19 +416,10 @@ export async function invitePing(
       )
       SELECT new_ping.id, new_ping.place_id, new_ping.sender_id,
         sender.handle AS sender, new_ping.target_id, target.handle AS target,
-        new_ping.sent_at, new_ping.expires_at, new_ping.answer, new_ping.answered_at,
-        coalesce(
-          sender_presence.current_place_id = new_ping.place_id
-            AND sender_presence.arrived_at = new_ping.sender_arrived_at
-            AND target_presence.current_place_id = new_ping.place_id
-            AND target_presence.arrived_at = new_ping.target_arrived_at,
-          false
-        ) AS still_together
+        new_ping.sent_at, new_ping.expires_at, new_ping.answer, new_ping.answered_at
       FROM new_ping
       JOIN residents sender ON sender.id = new_ping.sender_id
       JOIN residents target ON target.id = new_ping.target_id
-      JOIN resident_presence sender_presence ON sender_presence.resident_id = new_ping.sender_id
-      JOIN resident_presence target_presence ON target_presence.resident_id = new_ping.target_id
       CROSS JOIN receipt
       CROSS JOIN ping_event
     `)
@@ -417,7 +427,7 @@ export async function invitePing(
     const outcome: TalkOutcome<PingResult> = {
       ok: true,
       status: 201,
-      answer: pingAnswer(row, now.date, row.still_together, false),
+      answer: pingAnswer(row, now.date, true, false),
     }
     return recordOutcome(transaction, {
       residentId, requestId, operation: 'invite', pingId: Number(row.id), payloadFingerprint, now,
@@ -537,7 +547,7 @@ export async function dismissPing(
       const now = await sampledNow(transaction)
       return recordOutcome(transaction, {
         residentId, requestId, operation: 'dismiss', pingId: null, payloadFingerprint, now,
-      }, refusal(pingNotFoundRefusal(pingId)))
+      }, refusal(receiptNotFoundRefusal(pingId)))
     }
     const receipts = await queryRows<ReceiptRow>(transaction`
       SELECT receipt.ping_id, receipt.recipient_id, receipt.dismissed_at

@@ -52,6 +52,9 @@ import { lawNames, replacePlaceLaws } from './laws.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { readLookingResidentsAtPlace } from './resident-looking.ts'
+import { RESIDENT_LOOKING_READ_LIMIT } from './resident-looking-limits.ts'
+import { readLineHeadings } from './room-talk-reads.ts'
+import { readListening } from './room-wait-store.ts'
 import {
   isWorldRootRow,
   WORLD_ARRIVAL_LINE,
@@ -84,6 +87,7 @@ import {
   type ThingRow,
 } from './world-support.ts'
 import {
+  PUBLIC_PAGE_DEFAULT,
   allowedPublicQuery,
   effectivePublicPlaceTextLimit,
   extractPublicCollectionRows,
@@ -646,7 +650,7 @@ export function mountWorldRoutes(app: Hono): void {
       })
     }
 
-    const [collections, labels, laws, frontMatterByPlace, lookingResidents] = await Promise.all([
+    const [collections, labels, laws, frontMatterByPlace, lookingResidents, listeningResidents, lineHeadings] = await Promise.all([
       loadPublicPlaceCollectionRows(executePublicQuery, id, {
         subplaces: subplaceRequest,
         things: thingRequest,
@@ -656,6 +660,8 @@ export function mountWorldRoutes(app: Hono): void {
       effectiveLaws(id),
       loadPublicPlaceFrontMatter(executePublicQuery, [id]),
       readLookingResidentsAtPlace(id),
+      readListening({ placeId: id, limit: RESIDENT_LOOKING_READ_LIMIT }),
+      readLineHeadings({ placeId: id, limit: PUBLIC_PAGE_DEFAULT }),
     ])
     const subplacesPage = collections.pages == null
       ? {
@@ -711,10 +717,11 @@ export function mountWorldRoutes(app: Hono): void {
           items: collections.notes as Array<Record<string, unknown> & { id: number }>,
           ...collections.pages.notes,
         }
-    const [publicSubplaces, publicDetails, publicNotes] = await Promise.all([
+    const [publicSubplaces, publicDetails, publicNotes, publicLineHeadings] = await Promise.all([
       moderatePublicRows('place', subplacesPage.items),
       moderatePlaceDetails(thingsPage.items, laws),
       moderatePublicRows('note', notesPage.items),
+      moderatePublicRows('line', lineHeadings.headings),
     ])
     return publicJson(c, {
       view,
@@ -731,6 +738,19 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: lookingResidents.total,
         returned_items: lookingResidents.residents.length,
         has_more: lookingResidents.has_more,
+      },
+      listening_residents: listeningResidents.residents,
+      listening_residents_page: {
+        total_items: listeningResidents.total,
+        returned_items: listeningResidents.residents.length,
+        has_more: listeningResidents.total > listeningResidents.residents.length,
+      },
+      line_headings: publicLineHeadings,
+      line_headings_page: {
+        total_items: lineHeadings.total,
+        returned_items: publicLineHeadings.length,
+        has_more: lineHeadings.total > publicLineHeadings.length,
+        read: `/api/place/${id}/lines`,
       },
       subplaces_page: {
         total_items: collections.totals.subplaces.items,

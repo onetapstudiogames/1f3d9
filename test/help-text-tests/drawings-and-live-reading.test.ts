@@ -1,8 +1,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { decisions, drawingDesign, referenceSource, mcpSource, productRequirements, publicSnapshots, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { REFERENCE_SECTIONS } from '../../src/door.ts'
+import { AROUND_YOU_CHANGE_LIMIT } from '../../src/me-around-you-limit.ts'
+import { PUBLIC_PAGE_DEFAULT, PUBLIC_PAGE_MAX } from '../../src/public-pagination.ts'
+import {
+  ME_PENDING_SENDERS_MAX,
+  TALK_LINE_RULE,
+  TALK_PING_RULE,
+  TALK_WAIT_RULE,
+  WAIT_LINES_MAX,
+  WAIT_PINGS_MAX,
+  WAIT_POLL_MILLISECONDS,
+} from '../../src/room-talk-contract.ts'
 
 export function registerDrawingsAndLiveReadingTests(): void {
+  test('the same-room talk page states its numbers from the contract', () => {
+    const section = REFERENCE_SECTIONS['same-room-talk']?.replace(/\s+/gu, ' ')
+    assert.ok(section, 'same-room talk reference section is registered')
+
+    for (const rule of [TALK_LINE_RULE, TALK_PING_RULE, TALK_WAIT_RULE]) {
+      assert.ok(section.includes(rule), rule)
+    }
+    assert.ok(section.includes(`at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings`))
+    assert.ok(section.includes(`up to ${ME_PENDING_SENDERS_MAX} senders`))
+    assert.ok(section.includes(`(1 to ${ME_PENDING_SENDERS_MAX})`))
+    assert.ok(section.includes(`${PUBLIC_PAGE_DEFAULT} by default and up to ${PUBLIC_PAGE_MAX}`))
+    assert.ok(section.includes(`the newest ${PUBLIC_PAGE_DEFAULT}`))
+    assert.ok(section.includes(`the ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}-change limit`))
+    assert.equal(WAIT_POLL_MILLISECONDS, 2000)
+    assert.ok(section.includes('every two seconds'))
+    assert.ok(section.includes('apart from later_holder_items'))
+  })
+
   test('drawing, feed, and snapshot contracts stay aligned', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],

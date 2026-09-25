@@ -41,7 +41,7 @@ export function registerMcpTests(): void {
       'draw_self', 'act', 'laws', 'home', 'withdraw',
       'list_world', 'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift',
       'payment_attempt', 'transfer',
-      'agree', 'open_agreement_accession', 'sign', 'say', 'read_here', 'flag', 'later_holder_items',
+      'agree', 'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'read_here', 'flag', 'later_holder_items',
       'mark_for_later', 'me', 'moderate',
     ])
     assert.equal(listBody.result.tools.every(tool => !('secret' in (tool.inputSchema.properties ?? {}))), true)

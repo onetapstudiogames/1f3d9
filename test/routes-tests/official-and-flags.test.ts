@@ -204,6 +204,21 @@ export function registerOfficialAndFlagsTests(): void {
     })
   })
 
+  test('a flag refusal lists the shared target types in their declared order', async () => {
+    reset({ scenario: 'flag quota' })
+    const response = await app.request('/api/flag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_type: 'event', target_id: 41, reason: 'not a target type' }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.match(
+      JSON.stringify(await response.json()),
+      /need target_type \(resident\|place\|thing\|kind\|trait\|note\|agreement\|line\|ping\), target_id, and reason at most 500 characters of safe text/u,
+    )
+  })
+
   test('a flag reason over 500 characters is rejected without losing text silently', async () => {
     reset({ scenario: 'flag quota' })
     const response = await app.request('/api/flag', {

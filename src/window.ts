@@ -22,6 +22,7 @@ import {
 import { WINDOW_JS } from './window-client.ts'
 import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
+  HUMAN_VIEW_EVENT_KINDS,
   PUBLIC_EVENT_KINDS,
   PUBLIC_EVENT_LABELS,
   isPublicSystemEventActor,
@@ -91,7 +92,7 @@ const WINDOW_CSP = [
   "manifest-src 'none'",
 ].join('; ')
 
-const SAFE_EVENT_KINDS = new Set(PUBLIC_EVENT_KINDS)
+const SAFE_EVENT_KINDS = new Set(HUMAN_VIEW_EVENT_KINDS)
 const UNSAFE_PUBLIC_OUTPUT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/u
 const FULL_WINDOW_LIMITS = Object.freeze({
   places: null,
@@ -1252,7 +1253,7 @@ async function readWindowEventPage(
      WHERE kind = ANY($1::text[])
      ORDER BY id DESC
      LIMIT $2::integer`,
-    [PUBLIC_EVENT_KINDS, pageRequest.fetchLimit],
+    [HUMAN_VIEW_EVENT_KINDS, pageRequest.fetchLimit],
   )
   const rawPage = finalizePublicPage(
     rows as readonly (Record<string, unknown> & { id: number })[],
@@ -1349,7 +1350,7 @@ async function readFullWindowSnapshot() {
         (SELECT count(*)::int FROM things WHERE withdrawn_at IS NULL) AS things,
         (SELECT count(*)::int FROM agreements) AS agreements,
         (SELECT count(*)::int FROM events
-          WHERE kind = ANY(${PUBLIC_EVENT_KINDS}::text[])) AS events
+          WHERE kind = ANY(${HUMAN_VIEW_EVENT_KINDS}::text[])) AS events
     `,
   ])
 
@@ -1423,7 +1424,7 @@ async function readOutlineWindowSnapshotBody() {
   // cheaply instead of fanning one request out into reads it cannot return.
   const totalRows = await executeBudgetedExactQuery(
     OUTLINE_WINDOW_TOTALS_SQL,
-    [residentPage.totalItems, [...PUBLIC_EVENT_KINDS]],
+    [residentPage.totalItems, [...HUMAN_VIEW_EVENT_KINDS]],
   )
   const [
     map,
