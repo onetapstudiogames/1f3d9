@@ -18,6 +18,10 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:pending_ping_summary */')) {
     return [{ total: 0, senders: 0, ping_id: null }]
   }
+  if (q.includes('/* public:place_listening */')) return []
+  if (q.includes('/* public:place_line_headings */')) {
+    return q.includes('select count(*) as total') ? [{ total: 0 }] : []
+  }
   if (fixtureState.current.scenario === 'root arrival' && Number(params[0]) === 195) {
     if (q.includes('from places p') && q.includes('where p.id =')) {
       return [{

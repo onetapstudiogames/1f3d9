@@ -67,6 +67,14 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
         [...values],
       )).rows[0]!.count,
     )
+    const waitForLease = async (residentId: number): Promise<void> => {
+      const deadline = Date.now() + 4_000
+      while (Date.now() < deadline) {
+        if (await count('wait_leases', ' WHERE resident_id = $1', [residentId]) > 0) return
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      assert.fail('wait route did not open a lease')
+    }
     const lastEventId = async () => Number((await db.query<{ id: number }>(
       'SELECT coalesce(max(id), 0)::integer AS id FROM events',
     )).rows[0]!.id)
@@ -458,6 +466,79 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
         '/api/place/' + rooms.eastRoomId + '/lines?unknown=1',
         '/api/place/' + rooms.eastRoomId + '/lines?limit=0',
       ]) assert.equal((await call(app, null, 'GET', path)).status, 400)
+    })
+
+    await t.test('a place read lists body-free line headings newest first with the transcript address', async () => {
+      await reset()
+      const ids: number[] = []
+      for (const body of ['oldest heading', 'middle heading', 'newest heading']) {
+        const result = await call(app, FOUNDER.secret, 'POST', '/api/line', {
+          place_id: rooms.eastRoomId,
+          body,
+          request_id: nextRequestId(),
+        })
+        assert.equal(result.status, 201)
+        ids.push(Number((result.json.line as Record<string, unknown>).id))
+      }
+
+      const response = await call(app, null, 'GET', '/api/place/' + rooms.eastRoomId)
+      assert.equal(response.status, 200)
+      const headings = response.json.line_headings as Record<string, unknown>[]
+      assert.deepEqual(headings.map(heading => heading.id), [...ids].reverse())
+      assert.equal(headings.every(heading => !('body' in heading)), true)
+      assert.deepEqual(response.json.line_headings_page, {
+        total_items: 3,
+        returned_items: 3,
+        has_more: false,
+        read: '/api/place/' + rooms.eastRoomId + '/lines',
+      })
+    })
+
+    await t.test('a place read lists a resident as listening only while its wait is open and it has not moved', async () => {
+      await reset()
+      const placePath = '/api/place/' + rooms.eastRoomId
+      const before = await call(app, null, 'GET', placePath)
+      assert.deepEqual(before.json.listening_residents, [])
+      assert.deepEqual(before.json.listening_residents_page, {
+        total_items: 0,
+        returned_items: 0,
+        has_more: false,
+      })
+
+      const firstWait = call(app, FOUNDER.secret, 'POST', '/api/wait-here', { seconds: 5 })
+      await waitForLease(FOUNDER.id)
+      const listening = await call(app, null, 'GET', placePath)
+      const listeners = listening.json.listening_residents as Record<string, unknown>[]
+      assert.equal(listeners.length, 1)
+      assert.equal(listeners[0]?.resident_id, FOUNDER.id)
+      assert.equal(listeners[0]?.handle, FOUNDER.handle)
+      assert.equal(typeof listeners[0]?.listening_until, 'string')
+      assert.deepEqual(listening.json.listening_residents_page, {
+        total_items: 1,
+        returned_items: 1,
+        has_more: false,
+      })
+
+      const said = await call(app, GROWER.secret, 'POST', '/api/line', {
+        place_id: rooms.eastRoomId,
+        body: 'end the first wait',
+        request_id: nextRequestId(),
+      })
+      assert.equal(said.status, 201)
+      const firstAnswer = await firstWait
+      assert.equal(firstAnswer.status, 200)
+      assert.equal(firstAnswer.json.reason, 'change')
+      const afterWait = await call(app, null, 'GET', placePath)
+      assert.deepEqual(afterWait.json.listening_residents, [])
+
+      const secondWait = call(app, FOUNDER.secret, 'POST', '/api/wait-here', { seconds: 5 })
+      await waitForLease(FOUNDER.id)
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      const afterMove = await call(app, null, 'GET', placePath)
+      assert.deepEqual(afterMove.json.listening_residents, [])
+      const secondAnswer = await secondWait
+      assert.equal(secondAnswer.status, 200)
+      assert.equal(secondAnswer.json.reason, 'moved')
     })
 
     await t.test('public ping reads show unanswered for offered or expired and answered after a yes', async () => {
