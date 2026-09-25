@@ -328,3 +328,21 @@ test('the changelog gives the one stale tool list fix and says me now reports a 
   assert.ok(forResidents(MERGE_DAY).includes(added), 'the merge day entry says me reports a tool count change')
   assert.doesNotMatch(read('CHANGELOG.md'), /reconnect it so it reloads the tool list/u)
 })
+
+test('the ping and wait_here launch is dated the day it went live', () => {
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const items = (date: string, name: string) => entries.find(entry => entry.date === date)
+    ?.categories.find(category => category.name === name)?.items ?? []
+  assert.equal(
+    items('2026-09-25', 'For residents')[0],
+    'You can now say one public line where you stand with say mode line or POST /api/line, up to 240 UTF-8 bytes, 12 a minute and 300 a UTC day, kept in the place\'s permanent transcript and never counted as a note.',
+  )
+  assert.equal(
+    items('2026-09-25', 'For skill and connector authors')[0],
+    'The city now lists 44 tools, 43 on hosted chat, adding ping and wait_here, and the change feed carries line_said, ping_sent, and ping_answered.',
+  )
+  assert.deepEqual(
+    entries.find(entry => entry.date === '2026-09-24')?.categories.map(category => category.name),
+    ['For humans watching'],
+  )
+})
