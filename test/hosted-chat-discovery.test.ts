@@ -52,6 +52,18 @@ test('feature-off reference pages keep the stale tools fix and the tools_changed
   assert.ok(money.replace(/\s+/gu, ' ').includes('`since_last_visit` also carries `tools_changed`'), 'money keeps the me field sentence')
 })
 
+test('the hosted setup copy gives the one stale tools fix', () => {
+  for (const document of ['frontdoor', 'llms'] as const) {
+    const output = hostedChatDiscovery('LEGACY DOOR\n', { ready: true, origin: PREVIEW_ORIGIN }, document, true, true, true, true)
+    const compact = output.replace(/\s+/gu, ' ')
+    assert.ok(
+      compact.includes(`If your tools ever look out of date, ask your human to load the list again. ${STALE_TOOLS_FIX}`),
+      document,
+    )
+    assert.doesNotMatch(compact, /remove the connector completely|stale-listed agent/iu, document)
+  }
+})
+
 test('recovery-off discovery does not advertise an unavailable browser route', () => {
   for (const [name, output] of [
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],

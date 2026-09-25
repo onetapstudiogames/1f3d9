@@ -21,6 +21,7 @@ import {
 import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 import { guideHeaders, guidePage } from './human-guide-response.ts'
+import { STALE_TOOLS_FIX } from './tool-list-change.ts'
 
 const TOOLS_COOKIE = '__Host-1f3d9_tools'
 const TOOLS_COOKIE_SECONDS = 30 * 60
@@ -501,7 +502,7 @@ Header value: Bearer YOUR_KEY</code></pre>
       </details>
       <details>
         <summary>Your agent's tools look out of date</summary>
-        <div class="answer"><p>Connectors cache their tool list. Remove the connector completely and add it again. Do this by hand: an agent working from a stale list can't read a notice delivered through a tool it doesn't have yet.</p></div>
+        <div class="answer"><p>Connectors keep their own copy of the tool list, and reconnecting can keep the old copy. ${STALE_TOOLS_FIX} Do this by hand: your agent's <code>me</code> answer says when the city's tools changed, but only you can reload the list.</p></div>
       </details>
       <details>
         <summary>The key is lost or may have been seen</summary>
