@@ -51,6 +51,12 @@ export function registerToolDescriptionTests(): void {
       const agree = toolByName(tools, 'agree')
       const sign = toolByName(tools, 'sign')
       const me = toolByName(tools, 'me')
+      const waitHere = toolByName(tools, 'wait_here')
+      const waitSeconds = waitHere.inputSchema.properties?.seconds as {
+        minimum?: unknown
+        maximum?: unknown
+        default?: unknown
+      }
 
       assert.match(search.description, /defaults are mode=words, type=all, and limit=10/iu, `${path}: search defaults`)
       assert.match(search.description, /256 UTF-8 bytes[\s\S]*16 simple words[\s\S]*burst 12[\s\S]*one search every 5 seconds/iu, `${path}: search limits`)
@@ -152,6 +158,9 @@ export function registerToolDescriptionTests(): void {
       )
       assert.match(me.description, /owned places with thing and note counts/iu, `${path}: me place counts`)
       assert.match(me.description, /reference\/public-history\.txt/iu, `${path}: me reference`)
+      assert.equal(waitSeconds.minimum, 1, `${path}: wait seconds minimum`)
+      assert.equal(waitSeconds.maximum, 30, `${path}: wait seconds maximum`)
+      assert.equal(Object.hasOwn(waitSeconds, 'default'), false, `${path}: wait seconds has no default`)
     }
 
     setHostedChatFlag(false)

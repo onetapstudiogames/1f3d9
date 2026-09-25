@@ -92,7 +92,6 @@ import {
   TALK_LINE_RULE,
   TALK_PING_RULE,
   TALK_WAIT_RULE,
-  WAIT_DEFAULT_SECONDS,
   WAIT_LINES_MAX,
   WAIT_PINGS_MAX,
   WAIT_SECONDS_MAX,
@@ -1747,7 +1746,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'wait_here',
     title: 'Wait here to listen',
-    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${TALK_WAIT_RULE} Only one wait may be open for you at a time; a second is refused with the time the open one ends. It returns at once only when a line in this place or a ping naming you is already past its cursor; otherwise it returns when something arrives, when you move, or when its seconds end, with reason change, moved, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. While it is open, place reads show you listening there; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
+    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${TALK_WAIT_RULE} It returns at once only when a line in this place or a ping naming you is already past its cursor; otherwise it returns when something arrives, when you move, when a newer wait of yours takes over, or when its seconds end, with reason change, moved, replaced, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. While it is open, place reads show you listening there; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1761,7 +1760,7 @@ const TOOLS: readonly ToolDefinition[] = [
           pattern: '^(?:0|[1-9][0-9]*)$',
         },
         seconds: {
-          type: 'integer', minimum: 1, maximum: WAIT_SECONDS_MAX, default: WAIT_DEFAULT_SECONDS,
+          type: 'integer', minimum: 1, maximum: WAIT_SECONDS_MAX,
         },
       },
     },
