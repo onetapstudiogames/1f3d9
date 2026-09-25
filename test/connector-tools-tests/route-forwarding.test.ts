@@ -5,6 +5,7 @@ import {
   HOSTED_AUTHORIZATION,
   assertCall,
   callTool,
+  callToolResult,
   connectorHarness,
   withHostedConnector,
 } from '../helpers/connector-tools-fixtures/transport-harness.ts'
@@ -189,11 +190,119 @@ export function registerRouteForwardingTests(): void {
       },
     },
     {
+      name: 'say',
+      args: { place_id: 12, body: 'One line', mode: 'line', request_id: '00000000-0000-4000-8000-000000000001' },
+      expected: {
+        method: 'POST', path: '/api/line',
+        body: { place_id: 12, body: 'One line', request_id: '00000000-0000-4000-8000-000000000001' },
+      },
+    },
+    {
+      name: 'say',
+      args: {
+        place_id: 12, body: 'One line', mode: 'line', walk_to_read: false,
+        request_id: '00000000-0000-4000-8000-000000000002',
+      },
+      expected: {
+        method: 'POST', path: '/api/line',
+        body: { place_id: 12, body: 'One line', request_id: '00000000-0000-4000-8000-000000000002' },
+      },
+    },
+    {
+      name: 'say',
+      args: {
+        place_id: 12, body: 'One line', mode: 'line', walk_to_read: true,
+        request_id: '00000000-0000-4000-8000-000000000003',
+      },
+      expected: {
+        method: 'POST', path: '/api/line',
+        body: {
+          place_id: 12, body: 'One line', walk_to_read: true,
+          request_id: '00000000-0000-4000-8000-000000000003',
+        },
+      },
+    },
+    {
+      name: 'ping',
+      args: { action: 'invite', to_handle: 'grower', request_id: '00000000-0000-4000-8000-000000000004' },
+      expected: {
+        method: 'POST', path: '/api/ping',
+        body: { to_handle: 'grower', request_id: '00000000-0000-4000-8000-000000000004' },
+      },
+    },
+    {
+      name: 'ping',
+      args: {
+        action: 'answer', ping_id: 73, answer: 'in_a_moment',
+        request_id: '00000000-0000-4000-8000-000000000005',
+      },
+      expected: {
+        method: 'POST', path: '/api/ping/73/answer',
+        body: { answer: 'in_a_moment', request_id: '00000000-0000-4000-8000-000000000005' },
+      },
+    },
+    {
+      name: 'ping',
+      args: { action: 'dismiss', ping_id: 73, request_id: '00000000-0000-4000-8000-000000000006' },
+      expected: {
+        method: 'POST', path: '/api/ping/73/dismiss',
+        body: { request_id: '00000000-0000-4000-8000-000000000006' },
+      },
+    },
+    {
+      name: 'wait_here',
+      args: {},
+      expected: { method: 'POST', path: '/api/wait-here', body: {} },
+    },
+    {
+      name: 'wait_here',
+      args: { after_line_change: '12', after_ping_change: '18', seconds: 10 },
+      expected: {
+        method: 'POST', path: '/api/wait-here',
+        body: { after_line_change: '12', after_ping_change: '18', seconds: 10 },
+      },
+    },
+    {
+      name: 'look',
+      args: { line_id: 918 },
+      expected: { method: 'GET', path: '/api/line/918' },
+    },
+    {
+      name: 'look',
+      args: { place_id: 12, view: 'lines', before_line_id: 918, after_line_id: 700, limit: 20 },
+      expected: {
+        method: 'GET', path: '/api/place/12/lines',
+        query: { before_line_id: '918', after_line_id: '700', limit: '20' },
+      },
+    },
+    {
+      name: 'me',
+      args: { pending_before_ping_id: 912, pending_limit: 15 },
+      expected: {
+        method: 'GET', path: '/api/me',
+        query: { pending_before_ping_id: '912', pending_limit: '15' },
+      },
+    },
+    {
       name: 'read_here',
       args: { note_id: 17942 },
       expected: { method: 'GET', path: '/api/note/17942/here' },
     },
   ] as const
+
+  test('look refuses line_id beside place_id with the caller sentence', async () => {
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'look', { line_id: 918, place_id: 12 }, {
+      authorization: AUTHORIZATION,
+    })
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.text ?? ''
+    assert.equal(
+      (JSON.parse(text) as { error: string }).error,
+      'Choose thing_id alone, note_id alone, line_id alone, or place_id with its place options.',
+    )
+    assert.equal(calls.length, 0)
+  })
 
   test('legacy MCP forwards every connector tool to its exact existing web route', async t => {
     for (const entry of forwardingCases) {
@@ -203,7 +312,7 @@ export function registerRouteForwardingTests(): void {
           authorization: AUTHORIZATION,
           ...('headers' in entry ? entry.headers : {}),
         })
-        assert.equal(calls.length, 1)
+        assert.equal(calls.length, entry.name === 'look' ? 2 : 1)
         assertCall(calls[0]!, { ...entry.expected, authorization: AUTHORIZATION })
       })
     }
@@ -218,7 +327,7 @@ export function registerRouteForwardingTests(): void {
             authorization: HOSTED_AUTHORIZATION,
             ...('headers' in entry ? entry.headers : {}),
           })
-          assert.equal(calls.length, 1)
+          assert.equal(calls.length, entry.name === 'look' ? 2 : 1)
           assertCall(calls[0]!, { ...entry.expected, authorization: HOSTED_AUTHORIZATION })
         })
       }

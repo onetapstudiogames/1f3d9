@@ -268,6 +268,11 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'open_agreement_accession', writesPublicOrPermanent: true },
   { name: 'sign', writesPublicOrPermanent: true },
   { name: 'say', writesPublicOrPermanent: true },
+  { name: 'ping', writesPublicOrPermanent: true },
+  {
+    name: 'wait_here', writesPublicOrPermanent: true,
+    annotationNote: 'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
+  },
   { name: 'read_here' },
   { name: 'flag', writesPublicOrPermanent: true },
   { name: 'later_holder_items' },

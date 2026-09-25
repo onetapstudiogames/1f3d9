@@ -217,7 +217,7 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
-  assert.equal(mcp.tools.length, 42)
+  assert.equal(mcp.tools.length, 44)
   assert.deepEqual(mcp.protocol, [
     'invalid-json',
     'invalid-message',

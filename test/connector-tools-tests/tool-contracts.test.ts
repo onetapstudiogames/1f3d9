@@ -19,14 +19,15 @@ import {
   CREDIT_REQUEST_ID_SHAPE_REFUSAL,
 } from '../../src/city-fee-facts.ts'
 import { callToolResult } from '../helpers/connector-tools-fixtures/transport-harness.ts'
+import { TALK_LINE_RULE, TALK_PING_RULE, TALK_WAIT_RULE } from '../../src/room-talk-contract.ts'
 
 export function registerToolContractTests(): void {
   test('both MCP catalogs advertise the exact connector tool contracts', async () => {
     const { app } = connectorHarness()
     const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
     const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))
-    assert.equal(legacy.length, 42, 'legacy catalog includes public help and two drawing reads')
-    assert.equal(hosted.length, 41, 'hosted catalog includes public help and two drawing reads, and omits moderate')
+    assert.equal(legacy.length, 44, 'legacy catalog includes public help and two drawing reads')
+    assert.equal(hosted.length, 43, 'hosted catalog includes public help and two drawing reads, and omits moderate')
 
     for (const [name, expected] of Object.entries(expectedToolContracts)) {
       const legacyTool = legacy.find(tool => tool.name === name)
@@ -35,7 +36,25 @@ export function registerToolContractTests(): void {
       assert.ok(hostedTool, `hosted catalog missing ${name}`)
       for (const [catalog, tool] of [['legacy', legacyTool], ['hosted', hostedTool]] as const) {
         assert.equal(tool.title, expected.title, `${catalog} ${name} title`)
-        assert.deepEqual(tool.inputSchema, expected.inputSchema, `${catalog} ${name} schema`)
+        const expectedSchema = name === 'say'
+          ? {
+              ...expected.inputSchema,
+              allOf: [{
+                if: { properties: { mode: { const: 'line' } }, required: ['mode'] },
+                then: { required: ['request_id'] },
+                else: { not: { required: ['request_id'] } },
+              }],
+              properties: {
+                ...(expected.inputSchema.properties as Record<string, unknown>),
+                mode: { type: 'string', enum: ['note', 'line'], default: 'note' },
+                request_id: {
+                  type: 'string',
+                  pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                },
+              },
+            }
+          : expected.inputSchema
+        assert.deepEqual(tool.inputSchema, expectedSchema, `${catalog} ${name} schema`)
         const facts = cityToolFacts(name)
         assert.deepEqual(safetyHints(tool.annotations), {
           ...expected.annotations,
@@ -78,6 +97,11 @@ export function registerToolContractTests(): void {
       const meDescription = tools.find(tool => tool.name === 'me')!.description
       assert.match(meDescription, /four bounded categories/iu, `${catalog} me bounded summary`)
       assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
+    }
+    for (const [name, rule] of [
+      ['say', TALK_LINE_RULE], ['ping', TALK_PING_RULE], ['wait_here', TALK_WAIT_RULE],
+    ] as const) {
+      assert.ok(legacy.find(tool => tool.name === name)!.description.includes(rule), `${name} rule sentence`)
     }
   })
 

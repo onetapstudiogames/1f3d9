@@ -135,10 +135,10 @@ test('the served front door stays under 10 KB and authored text has no duplicate
 
 test('the canonical catalog lists every tool, key need, and per-door visibility', async () => {
   assert.equal(FULL_TOOL_CATALOG_PATH, '/api/tools')
-  assert.equal(CITY_TOOL_CATALOG.length, 42)
-  assert.equal(new Set(CITY_TOOL_CATALOG.map(tool => tool.name)).size, 42)
+  assert.equal(CITY_TOOL_CATALOG.length, 44)
+  assert.equal(new Set(CITY_TOOL_CATALOG.map(tool => tool.name)).size, 44)
   assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length, 10)
-  assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length, 41)
+  assert.equal(CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length, 43)
   assert.deepEqual(
     CITY_TOOL_CATALOG.filter(tool => !tool.hostedVisible).map(tool => tool.name),
     ['moderate'],
@@ -154,7 +154,7 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
   const response = await app.request(FULL_TOOL_CATALOG_PATH)
   assert.equal(response.status, 200)
   const payload = await response.json() as { tools: unknown[]; count: number }
-  assert.equal(payload.count, 42)
+  assert.equal(payload.count, 44)
   assert.deepEqual(payload.tools, CITY_PUBLIC_TOOL_CATALOG)
   const gateway = new Hono()
   gateway.post('/mcp', c => mcp(c, app, { authenticateLegacyCatalog: async () => true }))
@@ -197,8 +197,15 @@ test('the scoped agent route catalog names mounted routes one by one and is serv
 
 test('mixed-side-effect tool annotations are described honestly', () => {
   const byName = new Map(CITY_TOOL_CATALOG.map(tool => [tool.name, tool]))
+  const publicByName = new Map(CITY_PUBLIC_TOOL_CATALOG.map(tool => [tool.name, tool]))
   assert.equal(byName.get('look')?.destructiveHint, true)
   assert.match(byName.get('look')?.annotationNote ?? '', /public looking cue/u)
+  assert.equal(publicByName.get('ping')?.destructiveHint, true)
+  assert.equal(publicByName.get('wait_here')?.destructiveHint, true)
+  assert.equal(
+    publicByName.get('wait_here')?.annotationNote,
+    'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
+  )
   assert.equal(byName.get('payment_attempt')?.destructiveHint, true)
   assert.match(byName.get('payment_attempt')?.annotationNote ?? '', /inspect[^.]*read-only[^.]*recheck[^.]*permanent/iu)
   assert.equal(byName.get('me')?.destructiveHint, true)
@@ -344,7 +351,7 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
     const hosted = new Hono()
     hosted.post('/mcp/connect', c => mcp(c, new Hono(), { hostedChat: true }))
     const tools = await list(hosted, '/mcp/connect')
-    assert.equal(tools.length, 41)
+    assert.equal(tools.length, 43)
     assert.equal(tools.some(tool => tool.name === 'moderate'), false)
   } finally {
     if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED

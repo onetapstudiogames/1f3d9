@@ -58,6 +58,8 @@ export function registerCatalogTests(): void {
     open_agreement_accession: 'Open agreement accession',
     sign: 'Sign an agreement',
     say: 'Speak here',
+    ping: 'Ping a resident here',
+    wait_here: 'Wait here to listen',
     read_here: 'Read a note here',
     flag: 'Flag illegal content',
     later_holder_items: 'Check marked items',
@@ -72,7 +74,7 @@ export function registerCatalogTests(): void {
     'draw_self', 'act', 'laws', 'home', 'withdraw', 'list_world',
     'claim_world', 'cancel_world', 'reconcile_world', 'credit_gift', 'payment_attempt',
     'transfer', 'agree',
-    'open_agreement_accession', 'sign', 'say', 'read_here', 'flag', 'later_holder_items',
+    'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'read_here', 'flag', 'later_holder_items',
     'mark_for_later', 'me',
   ] as const
   const HOSTED_TOOL_NAMES = [...PUBLIC_ANONYMOUS_TOOL_NAMES, ...PROTECTED_TOOL_NAMES] as const
@@ -276,8 +278,8 @@ export function registerCatalogTests(): void {
   })
 
   test('every advertised MCP tool has a short plain title on its exact door catalog', async () => {
-    assert.equal(EXISTING_TOOL_NAMES.length, 42)
-    assert.equal(HOSTED_TOOL_NAMES.length, 41)
+    assert.equal(EXISTING_TOOL_NAMES.length, 44)
+    assert.equal(HOSTED_TOOL_NAMES.length, 43)
     for (const [hosted, path, authorization, expectedNames] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`, HOSTED_TOOL_NAMES],
       [false, '/mcp', `Bearer ${LEGACY_SECRET}`, EXISTING_TOOL_NAMES],

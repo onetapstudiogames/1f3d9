@@ -111,14 +111,17 @@ test('same-room wait route holds one request and releases its lease exactly once
       return body
     }
     const addReleaseProbe = async () => {
-      await db.query('CREATE TABLE wait_release_probe (resident_id integer NOT NULL, lease_id uuid NOT NULL)')
+      await db.query('CREATE TABLE IF NOT EXISTS wait_release_probe (resident_id integer NOT NULL, lease_id uuid NOT NULL)')
       await db.query(`
-        CREATE FUNCTION record_wait_release_probe() RETURNS trigger LANGUAGE plpgsql AS $$
+        CREATE OR REPLACE FUNCTION record_wait_release_probe() RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
           INSERT INTO wait_release_probe (resident_id, lease_id) VALUES (OLD.resident_id, OLD.lease_id);
           RETURN OLD;
         END
         $$
+      `)
+      await db.query(`
+        DROP TRIGGER IF EXISTS record_wait_release_probe ON wait_leases
       `)
       await db.query(`
         CREATE TRIGGER record_wait_release_probe AFTER DELETE ON wait_leases
@@ -356,6 +359,37 @@ test('same-room wait route holds one request and releases its lease exactly once
         SELECT count(*)::integer AS count FROM wait_release_probe WHERE resident_id = $1
       `, [FOUNDER.id])).rows[0]!.count), 2)
       await assertNoLease()
+    })
+
+    await t.test("an MCP wait_here call ends early when the connector's own connection closes", async () => {
+      await reset()
+      await addReleaseProbe()
+      const outgoing = Object.assign(new EventEmitter(), { destroyed: false })
+      const headers = new Headers(bearer(FOUNDER.secret))
+      headers.set('Content-Type', 'application/json')
+      const started = Date.now()
+      const waiting = boundApp.request('http://city.test/mcp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'wait_here', arguments: { seconds: 10 } },
+        }),
+      }, { outgoing })
+      const lease = await waitForLease()
+      outgoing.emit('close')
+      const response = await waiting
+      assert.equal(response.status, 200)
+      const rpc = await response.json() as { result: { content: Array<{ text: string }> } }
+      const answer = JSON.parse(rpc.result.content[0]!.text) as Record<string, unknown>
+      assert.equal(answer.reason, 'timeout')
+      assert.ok(Date.now() - started < 1_500)
+      assert.equal(Number((await db.query<{ count: number }>(`
+        SELECT count(*)::integer AS count FROM wait_release_probe
+        WHERE resident_id = $1 AND lease_id = $2
+      `, [FOUNDER.id, lease.lease_id])).rows[0]!.count), 1)
+      await assertNoLease()
+      assert.equal(outgoing.listenerCount('close'), 0)
     })
 
     await t.test('a failed lease release logs only its error name and still sends the timeout answer', async () => {
