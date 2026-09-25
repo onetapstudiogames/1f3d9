@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 127 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 127)
-    assert.match(contributorGuide, /\(127 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 128 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 128)
+    assert.match(contributorGuide, /\(128 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -68,6 +68,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 127 \|[^\n]*30 seconds by default through `\/mcp\/connect`[^\n]*10 through `\/mcp`[^\n]*takes over[^\n]*`replaced`[^\n]*deleted at most once[^\n]*supersedes only #124's numbers[^\n]*released exactly once[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 125 \|[^\n]*floor for pings[^\n]*answering does not end it[^\n]*up to 20 senders[^\n]*credential guard[^\n]*later_holder_items[^\n]*PROVISIONAL/iu)
     assert.match(decisions, /\| 126 \|[^\n]*44 tools[^\n]*43[^\n]*moderate[^\n]*supersedes only #102's counts[^\n]*LOCKED/iu)
+    assert.match(decisions, /\| 128 \|[^\n]*`since_last_visit\.tools_changed`[^\n]*44 through `\/mcp` with a key, 43 through `\/mcp\/connect`[^\n]*ask the human to load the list again[^\n]*In ChatGPT, press Refresh tools on the plugin page[^\n]*No migration[^\n]*the instant the change went live[^\n]*never on a first visit[^\n]*declares no `listChanged`[^\n]*LOCKED \(owner, 2026-09-25\)[^\n]*flag-12-and-stale-remedy-2026-09-25[^\n]*tools-list-changed-research-2026-09-25/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)
