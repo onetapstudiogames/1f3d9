@@ -2,12 +2,26 @@ import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { parseCityCreditRequestId } from '../../src/city-credit.ts'
 
+const STALE_FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
+const KEY_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 44 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const HOSTED_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 43 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const BEFORE_TOOL_CHANGE = '2026-09-25T09:31:05.999Z'
+const ME_TOOL_CALL = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'me', arguments: {} } })
+
+async function meAnswerFromTool(response: Response): Promise<{ since_last_visit: Record<string, unknown> }> {
+  assert.equal(response.status, 200, await response.clone().text())
+  const payload = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
+  assert.equal(payload.result.isError, false, payload.result.content[0]?.text)
+  return JSON.parse(payload.result.content[0]!.text) as { since_last_visit: Record<string, unknown> }
+}
 
 export function registerCityCreditAccountTests(): void {
   const {
+    Hono,
     app,
     authHeaders,
     fixtureState,
+    mcp,
     reset,
     test,
   } = getRoutesTestContext()
@@ -81,6 +95,71 @@ export function registerCityCreditAccountTests(): void {
       next_before_gift_id: null,
     })
     assert.equal(response.headers.get('cache-control'), 'no-store')
+  })
+
+  test('/api/me gives no tools_changed line on a first visit', async () => {
+    reset()
+    const response = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as { since_last_visit: Record<string, unknown> }
+    assert.equal(Object.hasOwn(body.since_last_visit, 'tools_changed'), false)
+  })
+
+  test('/api/me tells a resident whose last visit came before the tool list changed, with the key door count', async () => {
+    reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
+    const response = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json() as { since_last_visit: Record<string, unknown> }
+    assert.equal(body.since_last_visit.tools_changed, KEY_DOOR_LINE)
+    assert.deepEqual(Object.keys(body.since_last_visit), [
+      'city_updates', 'tools_changed', 'fee_credit_received', 'around_you', 'last_visit_at',
+    ])
+    assert.equal(body.since_last_visit.last_visit_at, BEFORE_TOOL_CHANGE)
+  })
+
+  test('me through the /mcp door names 44 tools, and the tool-call header cannot claim the hosted count', async () => {
+    reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
+    const viaMcp = await meAnswerFromTool(await app.request('/mcp', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: ME_TOOL_CALL,
+    }))
+    assert.equal(viaMcp.since_last_visit.tools_changed, KEY_DOOR_LINE)
+
+    reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
+    const withHeader = await app.request('/api/me', { headers: { ...authHeaders(), 'x-1f3d9-tool-call': '1' } })
+    assert.equal(withHeader.status, 200, await withHeader.clone().text())
+    const withHeaderBody = await withHeader.json() as { since_last_visit: Record<string, unknown> }
+    assert.equal(withHeaderBody.since_last_visit.tools_changed, KEY_DOOR_LINE)
+  })
+
+  test('me through the hosted /mcp/connect door names 43 tools', async () => {
+    const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    try {
+      reset({ attentionLastVisitAt: BEFORE_TOOL_CHANGE })
+      const gateway = new Hono()
+      gateway.post('/mcp/connect', c => mcp(c, app, { hostedChat: true }))
+      const viaHosted = await meAnswerFromTool(await gateway.request('/mcp/connect', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: ME_TOOL_CALL,
+      }))
+      assert.equal(viaHosted.since_last_visit.tools_changed, HOSTED_DOOR_LINE)
+    } finally {
+      if (previousHostedFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedFlag
+    }
+  })
+
+  test('/api/me stays quiet about the tool list when the last visit came after the change went live', async () => {
+    for (const lastVisitAt of ['2026-09-25T09:31:06.000Z', '2026-09-25T20:00:00.000Z', '2026-09-26T00:00:00.000Z']) {
+      reset({ attentionLastVisitAt: lastVisitAt })
+      const response = await app.request('/api/me', { headers: authHeaders() })
+      assert.equal(response.status, 200, await response.clone().text())
+      const body = await response.json() as { since_last_visit: Record<string, unknown> }
+      assert.equal(Object.hasOwn(body.since_last_visit, 'tools_changed'), false, lastVisitAt)
+    }
   })
 
   test('/api/me reports current pending gifts on a first visit while received amounts stay zero', async () => {

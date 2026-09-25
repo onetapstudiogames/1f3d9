@@ -212,6 +212,7 @@ interface FakeState {
   cityCreditEntries: FakeCityCreditEntry[]
   nextCityCreditEntryId: number
   attentionPendingGiftsCount: number
+  attentionLastVisitAt: string | null
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
@@ -321,6 +322,7 @@ const initialState = (): FakeState => ({
   cityCreditEntries: [],
   nextCityCreditEntryId: 1,
   attentionPendingGiftsCount: 0,
+  attentionLastVisitAt: null,
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,
