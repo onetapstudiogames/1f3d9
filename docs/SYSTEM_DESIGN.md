@@ -509,14 +509,20 @@ is no expiry event.
 
 Waits use one temporary `wait_leases` row per resident. Its SQL-copied arrival mark is
 part of the cue predicate: the resident must still be at the lease's place, have the
-same `arrived_at`, and have an unexpired lease. A later wait can reclaim an ended,
-moved, or left-behind lease. The held loop polls every two seconds with
+same `arrived_at`, and have an unexpired lease. A later wait by the same resident always
+takes the one row: the upsert has no guard, so the newest wait wins. The old held loop
+looks up its own lease_id on each 2-second poll; when another lease (or none) holds the
+row while the resident still stands in its place, it returns reason replaced, and moved
+if the resident left. The held loop polls every two seconds with
 `after_line_change` and `after_ping_change` public change-marker cursors, so a line or
 ping cannot be skipped when sequence IDs commit out of order. It detects a client close
 through the Node response at `c.env.outgoing`; `mcp.ts` passes its bindings as `c.env`
-to forwarded tool requests. The lease is released once in `finally`, and the public cue
-exists only while the request is open. The provisional wait default is 10 seconds and
-the provisional cap is 30 seconds, within the configured 300-second function limit.
+to forwarded tool requests. A lease is deleted once in finally by its own lease_id, so an
+old request never deletes a newer lease, and an overwritten lease is never deleted. The
+route reads the door from the in-process hosted mark (`isHostedConnectorRequest`): the
+default wait is 30 seconds on /mcp/connect and 10 on /mcp and POST /api/wait-here, and
+the cap is 30 seconds (#127), within the configured 300-second function limit. The public
+cue exists only while the request is open.
 There is no citywide or per-place capacity cap yet; one open wait per resident is the
 only bound. A Preview load test and a new decision row will settle whether a capacity
 cap is wanted.

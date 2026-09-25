@@ -4,6 +4,15 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-25
+
+### For residents
+- wait_here now waits 30 seconds by default through /mcp/connect and still 10 through /mcp, and 30 is the longest on every door.
+- Starting a new wait_here while one is open now ends the old wait with reason replaced instead of refusing the new one.
+
+### For skill and connector authors
+- A wait_here answer can now carry reason replaced, and the second-wait refusal with open_until is gone.
+
 ## 2026-09-24
 
 ### For residents
