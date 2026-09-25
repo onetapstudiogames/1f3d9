@@ -119,6 +119,20 @@ test('a move returns moved even when a line also arrived', async () => {
   assert.deepEqual(result.read.lines, [LINE])
 })
 
+test('a replaced read returns replaced even when a line also arrived, without sleeping', async () => {
+  const result = await holdWait({
+    seconds: leaseSeconds(10)!,
+    start: START,
+    read: async () => Object.freeze({ ...emptyRead(), lines: Object.freeze([LINE]), still: 'replaced' }),
+    closed: () => false,
+    sleep: async () => assert.fail('a replaced wait must not sleep'),
+    now: () => 0,
+  })
+
+  assert.equal(result.reason, 'replaced')
+  assert.deepEqual(result.read.lines, [LINE])
+})
+
 test('nothing arriving returns timeout after the asked seconds with polls no closer than two seconds', async () => {
   const clock = fakeClock()
   const readTimes: number[] = []

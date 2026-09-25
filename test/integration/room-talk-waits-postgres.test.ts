@@ -15,7 +15,6 @@ import {
 } from '../helpers/note-suite-fixtures/postgres.ts'
 import {
   leaseSeconds,
-  waitAlreadyOpenRefusal,
   WAIT_NO_PLACE_REFUSAL,
 } from '../../src/room-talk-contract.ts'
 
@@ -123,22 +122,45 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
       }
     })
 
-    await t.test("a second open wait is refused with the open lease's end time in open_until and in the sentence", async () => {
+    await t.test('a second open wait takes over the one lease', async () => {
       await prepare()
       const first = await open()
       assert.equal(first.ok, true)
       if (!first.ok) return
       const second = await open()
-      assert.equal(second.ok, false)
-      if (!second.ok) assert.deepEqual(second.refusal, waitAlreadyOpenRefusal(first.answer.lease.expires_at))
+      assert.equal(second.ok, true)
+      if (!second.ok) return
+      assert.notEqual(second.answer.lease.lease_id, first.answer.lease.lease_id)
+      assert.equal(await count('SELECT count(*)::int AS count FROM wait_leases'), 1)
+      const stored = (await db.query<{ lease_id: string; expires_at: Date | string }>(
+        'SELECT lease_id, expires_at FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]!
+      assert.equal(stored.lease_id, second.answer.lease.lease_id)
+      assert.equal(new Date(stored.expires_at).toISOString(), second.answer.lease.expires_at)
     })
 
-    await t.test('ten concurrent opens from separate connections admit exactly one lease', async () => {
+    await t.test('ten concurrent opens all succeed and leave exactly one lease, owned by one of them', async () => {
       await prepare()
       const results = await Promise.all(Array.from({ length: 10 }, () => open()))
-      assert.equal(results.filter(result => result.ok && result.status === 201).length, 1)
-      assert.equal(results.filter(result => !result.ok).length, 9)
+      assert.equal(results.filter(result => result.ok && result.status === 201).length, 10)
       assert.equal(await count('SELECT count(*)::int AS count FROM wait_leases'), 1)
+      const leases = results.flatMap(result => result.ok ? [result.answer.lease] : [])
+      assert.equal(leases.length, 10)
+      const stored = (await db.query<{ lease_id: string }>(
+        'SELECT lease_id FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]!
+      const ownerIndex = leases.findIndex(lease => lease.lease_id === stored.lease_id)
+      assert.notEqual(ownerIndex, -1)
+      const cursors = await cursorsAtCheckpoint()
+      const states = await Promise.all(leases.map(lease => readWaitChanges({
+        residentId: FOUNDER.id,
+        leaseId: lease.lease_id,
+        placeId: rooms.eastRoomId,
+        cursors,
+      })))
+      states.forEach((state, index) => {
+        assert.equal(state.still, index === ownerIndex ? 'here' : 'replaced')
+      })
     })
 
     await t.test('release by lease id happens exactly once and a wrong lease id releases nothing', async () => {
@@ -159,6 +181,25 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
         leaseId: opened.answer.lease.lease_id,
       })
       assert.deepEqual(repeated, { released: false })
+    })
+
+    await t.test('release by the replaced lease id releases nothing', async () => {
+      await prepare()
+      const first = await open()
+      assert.equal(first.ok, true)
+      if (!first.ok) return
+      const second = await open()
+      assert.equal(second.ok, true)
+      if (!second.ok) return
+
+      const oldRelease = await releaseWait({ residentId: FOUNDER.id, leaseId: first.answer.lease.lease_id })
+      assert.deepEqual(oldRelease, { released: false })
+      const stored = (await db.query<{ lease_id: string }>(
+        'SELECT lease_id FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]!
+      assert.equal(stored.lease_id, second.answer.lease.lease_id)
+      assert.deepEqual(await releaseWait({ residentId: FOUNDER.id, leaseId: second.answer.lease.lease_id }), { released: true })
+      assert.deepEqual(await releaseWait({ residentId: FOUNDER.id, leaseId: second.answer.lease.lease_id }), { released: false })
     })
 
     await t.test('an expired lease is reclaimed at the next open with a new lease id', async () => {
@@ -463,7 +504,41 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
       assert.equal(result.still, 'moved')
     })
 
-    await t.test('a released lease reads moved', async () => {
+    await t.test('readWaitChanges tells replaced from moved', async () => {
+      await prepare()
+      const cursors = await cursorsAtCheckpoint()
+      const first = await openLease()
+      const second = await openLease()
+
+      const firstRead = await readWaitChanges({
+        residentId: FOUNDER.id,
+        leaseId: first.lease_id,
+        placeId: rooms.eastRoomId,
+        cursors,
+      })
+      const secondRead = await readWaitChanges({
+        residentId: FOUNDER.id,
+        leaseId: second.lease_id,
+        placeId: rooms.eastRoomId,
+        cursors,
+      })
+      assert.equal(firstRead.still, 'replaced')
+      assert.equal(secondRead.still, 'here')
+
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      const third = await open()
+      assert.equal(third.ok, true)
+      if (!third.ok) return
+      const movedRead = await readWaitChanges({
+        residentId: FOUNDER.id,
+        leaseId: first.lease_id,
+        placeId: rooms.eastRoomId,
+        cursors,
+      })
+      assert.equal(movedRead.still, 'moved')
+    })
+
+    await t.test('a lease that is gone while its resident stays reads replaced', async () => {
       await prepare()
       const lease = await openLease()
       const cursors = await cursorsAtCheckpoint()
@@ -475,7 +550,7 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
         placeId: rooms.eastRoomId,
         cursors,
       })
-      assert.equal(result.still, 'moved')
+      assert.equal(result.still, 'replaced')
     })
   } finally {
     await postgres.stop()
