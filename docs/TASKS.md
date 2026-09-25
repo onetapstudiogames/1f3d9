@@ -10,24 +10,22 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 - [ ] After explicit release approval, apply the public-snapshot migration, provision
   the restricted export login, complete the manual dry run, and publish the first dated
   snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
-- [ ] Same-room talk PR 2: connect line, ping, wait, me, and public-read routes. Widen
-  the flag route and tool, `FLAG_TARGET_TYPES`, founder `moderate` enum, and
-  `MODERATION_TARGET_TYPES` together. Ensure `GET /api/events` actor and place filters
-  do not match a removed talk event. Add live feed kinds, reference, tools, and skill
-  copy, and update the privacy page's stored-data list. After the four-client test,
-  publish the measured wait default and longest wait. Decide whether a wait capacity cap
-  is wanted from a Preview load test and record that choice in a new decision row.
+- [ ] Same-room talk PR 2 follow-up: After the four-client plumbing test, publish the
+  measured wait default and longest wait in a new row that finalizes #124 (and #125 if
+  still provisional). Decide whether a wait capacity cap is wanted from a Preview load
+  test and record that choice in a new decision row.
+- [ ] If the Preview proof found that Vercel does not deliver a client close, record
+  that finding and decide whether the listening cue should end sooner.
+- [ ] Measure whether talk pushes daily visitors' `around_you` intervals over 20,000
+  changes; the owner decides whether talk should be excluded from that count.
 - [ ] Decide whether `resetCity` should re-grant PostgreSQL's default `USAGE` on
   schema `public`; it drops the grant when recreating the schema. Until then,
   export-role tests must re-grant it inside their transaction, as
   `test/integration/room-talk-migration-postgres.test.ts` does.
-- [ ] Before PR 2 serves ping refusal sentences, have the owner review that retries
-  with a refused `request_id` replay the stored refusal. "then try again" and
-  "You can ping this resident again at ..." must tell callers to use a new
-  `request_id`. Dismiss also reuses "No ping has id N" written for answer, so
-  review that wording then.
 - [ ] Same-room talk PR 3: add Window Talk and Conversations, the live page, and the
-  follow view.
+  follow view. Add talk kinds to the window's server reads and browser program, the
+  replay file, and front-door activity with quiet-room and moderation hiding. Make the
+  window's change check refetch its snapshot on every talk change.
 - [ ] After the first format-v3 snapshot publishes, decide in a reviewed migration
   whether to revoke the export role's v2 grant.
 - Report only: the reference's list of excluded private snapshot classes has never

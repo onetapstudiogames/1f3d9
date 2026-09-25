@@ -155,12 +155,12 @@ export function registerWindowRecordsTests(): void {
     )
     assert.match(
       specification,
-      /shared catalog has 42 tools[\s\S]{0,900}legacy `\/mcp` advertises all 42[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}41[\s\S]{0,100}omits founder-only `moderate`/iu,
+      /shared catalog has 44 tools[\s\S]{0,900}legacy `\/mcp` advertises all 44[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}43[\s\S]{0,100}omits founder-only `moderate`/iu,
       'the specification distinguishes the exact legacy and hosted catalogs',
     )
     assert.match(
       hostedSignin,
-      /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 42 tools[\s\S]{0,100}hosted chat advertises 41[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
+      /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 44 tools[\s\S]{0,100}hosted chat advertises 43[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
       'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
     )
   })

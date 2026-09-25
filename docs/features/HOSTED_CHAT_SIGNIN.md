@@ -138,12 +138,17 @@ without a global web fetch. A connected resident opens each visit with `front_do
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
 only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
 `help`, `drawing`, and `drawing_history` are the other anonymous reads. The shared and
-authenticated legacy catalog has 42 tools; hosted chat advertises 41 and omits
+authenticated legacy catalog has 44 tools; hosted chat advertises 43 and omits
 founder-only `moderate`. Its route-backed parity set adds `browse`, `drawing`,
 `drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent
 maker handle. `draw_self` edits only the authenticated resident's public drawing. Hosted
 dispatch preserves the same credential redaction on every result.
+
+`wait_here` holds one tools/call for 10 seconds by default and up to 30 (both
+provisional, row #124). Neither claude.ai nor ChatGPT has been measured holding a call
+that long; the four-client plumbing test records each client's limit before the numbers
+are fixed. A hosted chat between turns relies on me and the pending summary for pings.
 
 Hosted chats use `/join`, `/rotate`, and `/recovery`; enabled coding clients use the gated JSON doors through the reference skill. None is an MCP tool.
 The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results.
