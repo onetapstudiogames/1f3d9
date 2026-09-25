@@ -24,7 +24,7 @@ const EXTRA_RESIDENTS = [
 const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR, ...EXTRA_RESIDENTS] as const
 
 type AppWithBindings = Readonly<{
-  request: (input: string, init?: RequestInit, bindings?: unknown) => Response | Promise<Response>
+  request: (input: string | Request, init?: RequestInit, bindings?: unknown) => Response | Promise<Response>
 }>
 type WaitLeaseRow = Readonly<{
   lease_id: string
@@ -42,8 +42,28 @@ test('same-room wait route holds one request and releases its lease exactly once
 }, async t => {
   const postgres = await startNoteSuiteDatabase('room-talk-wait-route')
   try {
-    const app = (await import('../../src/index.ts')).default
-    const cityApp = app as CityApp
+    const previousHostedSignin = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    const previousPublicOrigin = process.env.PUBLIC_ORIGIN
+    const previousHostedOrigins = process.env.HOSTED_CHAT_CIMD_ORIGINS
+    const previousHostedClients = process.env.HOSTED_CHAT_OAUTH_CLIENTS
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    process.env.PUBLIC_ORIGIN = 'https://1f3d9.test'
+    process.env.HOSTED_CHAT_CIMD_ORIGINS = '["https://chatgpt.com"]'
+    process.env.HOSTED_CHAT_OAUTH_CLIENTS = '[]'
+    let app: (typeof import('../../src/index.ts'))['default']
+    try {
+      app = (await import('../../src/index.ts')).default
+    } finally {
+      if (previousHostedSignin === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedSignin
+      if (previousPublicOrigin === undefined) delete process.env.PUBLIC_ORIGIN
+      else process.env.PUBLIC_ORIGIN = previousPublicOrigin
+      if (previousHostedOrigins === undefined) delete process.env.HOSTED_CHAT_CIMD_ORIGINS
+      else process.env.HOSTED_CHAT_CIMD_ORIGINS = previousHostedOrigins
+      if (previousHostedClients === undefined) delete process.env.HOSTED_CHAT_OAUTH_CLIENTS
+      else process.env.HOSTED_CHAT_OAUTH_CLIENTS = previousHostedClients
+    }
+    const cityApp = app as CityApp & AppWithBindings
     const boundApp = app as unknown as AppWithBindings
     const db = connectedDatabase()
     const {
@@ -51,9 +71,8 @@ test('same-room wait route holds one request and releases its lease exactly once
       WAIT_FIELDS_REFUSAL,
       WAIT_NO_PLACE_REFUSAL,
       WAIT_SECONDS_REFUSAL,
-      waitAlreadyOpenRefusal,
     } = await import('../../src/room-talk-contract.ts')
-    const { RESIDENT_AUTH_REFUSAL } = await import('../../src/core.ts')
+    const { allowOAuthForHostedConnectorRequest, RESIDENT_AUTH_REFUSAL } = await import('../../src/core.ts')
     let rooms = await resetCity(RESIDENTS)
     let nextRequestNumber = 1
     const nextRequestId = () => requestId(nextRequestNumber++)
@@ -84,18 +103,25 @@ test('same-room wait route holds one request and releases its lease exactly once
     const postJson = (secret: string, body: unknown, bindings?: unknown) => (
       postWait(secret, JSON.stringify(body), bindings)
     )
-    const waitForLease = async (residentId = FOUNDER.id): Promise<WaitLeaseRow> => {
+    const waitForLease = async (
+      residentId = FOUNDER.id,
+      differentFromLeaseId?: string,
+    ): Promise<WaitLeaseRow> => {
       const deadline = Date.now() + 4_000
       while (Date.now() < deadline) {
         const row = (await db.query<WaitLeaseRow>(`
           SELECT lease_id, place_id, started_at, expires_at
           FROM wait_leases WHERE resident_id = $1
         `, [residentId])).rows[0]
-        if (row) return row
+        if (row && row.lease_id !== differentFromLeaseId) return row
         await delay(10)
       }
       assert.fail('wait route did not open a lease')
     }
+    const leaseDurationMilliseconds = async (leaseId: string) => Number((await db.query<{ milliseconds: string }>(`
+      SELECT (extract(epoch FROM expires_at - started_at) * 1000)::bigint::text AS milliseconds
+      FROM wait_leases WHERE lease_id = $1
+    `, [leaseId])).rows[0]!.milliseconds)
     const assertHeaders = (response: Response) => {
       assert.equal(response.headers.get('Cache-Control'), 'no-store')
       assert.equal(response.headers.get('Pragma'), 'no-cache')
@@ -277,24 +303,45 @@ test('same-room wait route holds one request and releases its lease exactly once
       await assertNoLease()
     })
 
-    await t.test("a second wait while one is open answers 409 with the exact sentence and open_until equal to the first lease's expires_at, and opens once the first ends", async () => {
+    await t.test('a second wait takes over: the first answers replaced within one poll, the cue follows the second, and only the second is ever deleted', async () => {
       await reset()
-      const first = postJson(FOUNDER.secret, { seconds: 1 })
-      const lease = await waitForLease()
-      const second = await postJson(FOUNDER.secret, { seconds: 1 })
-      const refusal = await assertRefusal(
-        second,
-        409,
-        waitAlreadyOpenRefusal(lease.expires_at.toISOString()).error,
-      )
-      assert.equal(refusal.error, waitAlreadyOpenRefusal(lease.expires_at.toISOString()).error)
-      assert.equal(refusal.open_until, lease.expires_at.toISOString())
-      const firstAnswer = await first
-      assert.equal(firstAnswer.status, 200)
-      const startedAgain = await postJson(FOUNDER.secret, { seconds: 1 })
-      assert.equal(startedAgain.status, 200)
-      assert.equal((await startedAgain.json() as Record<string, unknown>).reason, 'timeout')
+      await addReleaseProbe()
+      const first = postJson(FOUNDER.secret, { seconds: 5 })
+      const firstLease = await waitForLease()
+      const firstAnswer = first.then(response => ({ response, resolvedAt: Date.now() }))
+      const second = postJson(FOUNDER.secret, { seconds: 2 })
+      const opened = await Promise.race([
+        waitForLease(FOUNDER.id, firstLease.lease_id).then(lease => ({ lease })),
+        second.then(response => ({ response })),
+      ])
+      if ('response' in opened) {
+        assert.equal(opened.response.status, 200, `second wait returned ${opened.response.status}`)
+        assert.fail('second wait answered before opening its lease')
+      }
+      const secondLease = opened.lease
+      const listening = await call(cityApp, null, 'GET', '/api/place/' + rooms.eastRoomId)
+      const listeners = listening.json.listening_residents as Record<string, unknown>[]
+      assert.equal(listeners.length, 1)
+      assert.equal(listeners[0]?.resident_id, FOUNDER.id)
+      assert.equal(listeners[0]?.listening_until, secondLease.expires_at.toISOString())
+
+      const firstResult = await Promise.race([firstAnswer, delay(3_000).then(() => null)])
+      assert.ok(firstResult, 'first wait did not answer within 3,000 ms of the second lease opening')
+      assert.equal(firstResult.response.status, 200)
+      assertHeaders(firstResult.response)
+      const firstBody = await firstResult.response.json() as Record<string, unknown>
+      assert.equal(firstBody.reason, 'replaced')
+      assert.ok(firstResult.resolvedAt - secondLease.started_at.getTime() <= 3_000)
+
+      const secondResponse = await second
+      assert.equal(secondResponse.status, 200)
+      const secondBody = await secondResponse.json() as Record<string, unknown>
+      assert.equal(secondBody.reason, 'timeout')
       await assertNoLease()
+      const released = await db.query<{ lease_id: string }>(`
+        SELECT lease_id::text AS lease_id FROM wait_release_probe WHERE resident_id = $1
+      `, [FOUNDER.id])
+      assert.deepEqual(released.rows.map(row => row.lease_id), [secondLease.lease_id])
     })
 
     await t.test('thirty-one seconds, a numeric or negative cursor, a cursor ahead of the checkpoint, or an extra field is refused with its sentence and opens no lease', async () => {
@@ -425,36 +472,132 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.equal(await count('wait_leases'), 1)
     })
 
-    await t.test('an empty body waits the default ten seconds', async () => {
+    await t.test('an empty body and a whitespace body both wait ten seconds, and the newest wait hears the line', async () => {
       await reset()
-      const waiting = postWait(FOUNDER.secret, '')
-      const lease = await waitForLease()
-      const duration = Number((await db.query<{ milliseconds: string }>(`
-        SELECT (extract(epoch FROM expires_at - started_at) * 1000)::bigint::text AS milliseconds
-        FROM wait_leases WHERE resident_id = $1
-      `, [FOUNDER.id])).rows[0]!.milliseconds)
-      assert.equal(duration, 10_000)
-      const whitespace = await postWait(FOUNDER.secret, ' \n\t ')
-      const whitespaceRefusal = await assertRefusal(
-        whitespace,
-        409,
-        waitAlreadyOpenRefusal(lease.expires_at.toISOString()).error,
-      )
-      assert.equal(whitespaceRefusal.open_until, lease.expires_at.toISOString())
-      await delay(1_000)
+      const firstWait = postWait(FOUNDER.secret, '')
+      const firstLease = await waitForLease()
+      assert.equal(await leaseDurationMilliseconds(firstLease.lease_id), 10_000)
+      const secondWait = postWait(FOUNDER.secret, ' \n\t ')
+      const secondLease = await waitForLease(FOUNDER.id, firstLease.lease_id)
+      assert.equal(await leaseDurationMilliseconds(secondLease.lease_id), 10_000)
+
+      const firstResponse = await firstWait
+      assert.equal(firstResponse.status, 200)
+      const firstAnswer = await firstResponse.json() as Record<string, unknown>
+      assert.equal(firstAnswer.reason, 'replaced')
       const said = await call(cityApp, GROWER.secret, 'POST', '/api/line', {
         place_id: rooms.eastRoomId,
-        body: 'the empty-body wait heard this line',
+        body: 'the whitespace-body wait heard this line',
         request_id: nextRequestId(),
       })
       assert.equal(said.status, 201)
-      const response = await waiting
+      const response = await secondWait
       assert.equal(response.status, 200)
       const answer = await response.json() as Record<string, unknown>
       assert.equal(answer.reason, 'change')
-      assert.equal((answer.lines as Record<string, unknown>[])[0]?.body, 'the empty-body wait heard this line')
+      assert.equal((answer.lines as Record<string, unknown>[])[0]?.body, 'the whitespace-body wait heard this line')
       await assertNoLease()
-      assert.equal(lease.place_id, rooms.eastRoomId)
+      assert.equal(firstLease.place_id, rooms.eastRoomId)
+      assert.equal(secondLease.place_id, rooms.eastRoomId)
+    })
+
+    await t.test('a hosted-chat wait with no seconds waits thirty; unmarked requests default to ten', async () => {
+      await reset()
+      const wake = async (body: string) => {
+        const said = await call(cityApp, GROWER.secret, 'POST', '/api/line', {
+          place_id: rooms.eastRoomId,
+          body,
+          request_id: nextRequestId(),
+        })
+        assert.equal(said.status, 201)
+      }
+      const hostedRequest = new Request('http://1f3d9.internal/api/wait-here', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + FOUNDER.secret,
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      })
+      allowOAuthForHostedConnectorRequest(hostedRequest)
+      const hostedWait = cityApp.request(hostedRequest)
+      const hostedLease = await waitForLease()
+      const hostedDuration = await leaseDurationMilliseconds(hostedLease.lease_id)
+      await wake('wake the marked hosted-chat wait')
+      assert.equal((await hostedWait).status, 200)
+      assert.equal(hostedDuration, 30_000)
+
+      const unmarkedWait = cityApp.request(new Request('http://1f3d9.internal/api/wait-here', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + FOUNDER.secret,
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      }))
+      const unmarkedLease = await waitForLease()
+      const unmarkedDuration = await leaseDurationMilliseconds(unmarkedLease.lease_id)
+      await wake('wake the unmarked wait')
+      assert.equal((await unmarkedWait).status, 200)
+      assert.equal(unmarkedDuration, 10_000)
+
+      const forgedHeaderWait = cityApp.request(new Request('http://1f3d9.internal/api/wait-here', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + FOUNDER.secret,
+          'content-type': 'application/json',
+          'x-1f3d9-hosted': '1',
+        },
+        body: '{}',
+      }))
+      const forgedHeaderLease = await waitForLease()
+      const forgedHeaderDuration = await leaseDurationMilliseconds(forgedHeaderLease.lease_id)
+      await wake('wake the request with a made-up header')
+      assert.equal((await forgedHeaderWait).status, 200)
+      assert.equal(forgedHeaderDuration, 10_000)
+    })
+
+    await t.test('tools/call wait_here with no seconds waits thirty through /mcp/connect and ten through /mcp', async () => {
+      await reset()
+      const previousHosted = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+      try {
+        const postMcpWait = (path: '/mcp' | '/mcp/connect', outgoing: EventEmitter) => (
+          boundApp.request('http://city.test' + path, {
+            method: 'POST',
+            headers: {
+              ...bearer(FOUNDER.secret),
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'tools/call',
+              params: { name: 'wait_here', arguments: {} },
+            }),
+          }, { outgoing })
+        )
+        const hostedOutgoing = Object.assign(new EventEmitter(), { destroyed: false })
+        const hostedWait = postMcpWait('/mcp/connect', hostedOutgoing)
+        const hostedLease = await waitForLease()
+        const hostedDuration = await leaseDurationMilliseconds(hostedLease.lease_id)
+        hostedOutgoing.emit('close')
+        assert.equal((await hostedWait).status, 200)
+        await assertNoLease()
+        assert.equal(hostedDuration, 30_000)
+
+        const codingOutgoing = Object.assign(new EventEmitter(), { destroyed: false })
+        const codingWait = postMcpWait('/mcp', codingOutgoing)
+        const codingLease = await waitForLease()
+        const codingDuration = await leaseDurationMilliseconds(codingLease.lease_id)
+        codingOutgoing.emit('close')
+        assert.equal((await codingWait).status, 200)
+        await assertNoLease()
+        assert.equal(codingDuration, 10_000)
+      } finally {
+        if (previousHosted === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+        else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHosted
+      }
     })
   } finally {
     await postgres.stop()
