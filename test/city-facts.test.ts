@@ -94,6 +94,28 @@ test('one facts module drives current positioning, versions, paid actions, and e
   }
 })
 
+test('served wait text names hosted and coding client defaults and has no old wait claims', async () => {
+  const talkLimit = 'Talk: lines 1..240 UTF-8 bytes, 12/resident/UTC minute and 300/resident/UTC day, no citywide limit; ping offers 10 minutes; one wait per resident, and a new one takes over from the open one; 30 seconds by default on hosted chat and 10 seconds through a coding client, 30 seconds at most.'
+  assert.ok(CITY_LIMIT_LINES.includes(talkLimit))
+
+  const toolListResponse = await app.request('/api/tools')
+  assert.equal(toolListResponse.status, 200)
+  const servedText = [
+    REFERENCE,
+    FRONTDOOR,
+    await toolListResponse.text(),
+    CITY_LIMIT_LINES.join('\n'),
+  ].join('\n')
+  for (const outdated of [
+    'provisional until each client is tested',
+    'a second is refused',
+    'at most for now',
+    'Let it finish before opening another',
+  ]) {
+    assert.doesNotMatch(servedText, new RegExp(outdated, 'iu'))
+  }
+})
+
 test('the served front door stays under 10 KB and authored text has no duplicate paragraphs', () => {
   const productionReady = hostedChatDiscovery(
     FRONTDOOR, { ready: true, origin: 'https://1f3d9.com' }, 'frontdoor',

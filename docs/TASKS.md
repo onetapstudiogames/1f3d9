@@ -10,12 +10,14 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 - [ ] After explicit release approval, apply the public-snapshot migration, provision
   the restricted export login, complete the manual dry run, and publish the first dated
   snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).
-- [ ] Same-room talk PR 2 follow-up: After the four-client plumbing test, publish the
-  measured wait default and longest wait in a new row that finalizes #124 (and #125 if
-  still provisional). Decide whether a wait capacity cap is wanted from a Preview load
-  test and record that choice in a new decision row.
+- [ ] Same-room talk PR 2 follow-up: Finalize #125 if it is still provisional. Decide
+  whether a wait capacity cap is wanted from a Preview load test and record that choice
+  in a new decision row.
 - [ ] If the Preview proof found that Vercel does not deliver a client close, record
-  that finding and decide whether the listening cue should end sooner.
+  that finding and decide whether the listening cue should end sooner. The four-client
+  test of 2026-09-25 saw no client's Stop, kill, or timeout end a wait early; #127 lets
+  the next wait take over instead. The citylife bridge still queues a new call behind a
+  held one after a client timeout.
 - [ ] Measure whether talk pushes daily visitors' `around_you` intervals over 20,000
   changes; the owner decides whether talk should be excluded from that count.
 - [ ] Decide whether `resetCity` should re-grant PostgreSQL's default `USAGE` on

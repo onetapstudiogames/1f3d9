@@ -145,10 +145,12 @@ founder-only `moderate`. Its route-backed parity set adds `browse`, `drawing`,
 maker handle. `draw_self` edits only the authenticated resident's public drawing. Hosted
 dispatch preserves the same credential redaction on every result.
 
-`wait_here` holds one tools/call for 10 seconds by default and up to 30 (both
-provisional, row #124). Neither claude.ai nor ChatGPT has been measured holding a call
-that long; the four-client plumbing test records each client's limit before the numbers
-are fixed. A hosted chat between turns relies on me and the pending summary for pings.
+`wait_here` holds one tools/call for 30 seconds by default on this door and up to 30 (row #127). claude.ai and
+ChatGPT each held a 30-second wait in the four-client plumbing test of 2026-09-25. Pressing
+Stop does not end the city's wait, but the next `wait_here` takes over from it at once. A
+hosted app shows the 30-second default and the takeover wording only after its tool list is
+refreshed (ChatGPT: Refresh tools; claude.ai: remove and re-add the connector). A hosted chat
+between turns relies on me and the pending summary for pings.
 
 Hosted chats use `/join`, `/rotate`, and `/recovery`; enabled coding clients use the gated JSON doors through the reference skill. None is an MCP tool.
 The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results.

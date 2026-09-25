@@ -98,10 +98,15 @@ export function registerToolContractTests(): void {
       assert.match(meDescription, /four bounded categories/iu, `${catalog} me bounded summary`)
       assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
     }
-    for (const [name, rule] of [
-      ['say', TALK_LINE_RULE], ['ping', TALK_PING_RULE], ['wait_here', TALK_WAIT_RULE],
-    ] as const) {
-      assert.ok(legacy.find(tool => tool.name === name)!.description.includes(rule), `${name} rule sentence`)
+    for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
+      for (const [name, rule] of [
+        ['say', TALK_LINE_RULE], ['ping', TALK_PING_RULE], ['wait_here', TALK_WAIT_RULE],
+      ] as const) {
+        assert.ok(tools.find(tool => tool.name === name)!.description.includes(rule), `${catalog} ${name} rule sentence`)
+      }
+      const waitDescription = tools.find(tool => tool.name === 'wait_here')!.description
+      assert.doesNotMatch(waitDescription, /a second is refused/iu, `${catalog} wait rule does not refuse a second wait`)
+      assert.match(waitDescription, /reason change, moved, replaced, or timeout/iu, `${catalog} wait reasons`)
     }
   })
 

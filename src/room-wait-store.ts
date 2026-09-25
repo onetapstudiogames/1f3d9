@@ -7,7 +7,6 @@ import {
   WAIT_NO_PLACE_REFUSAL,
   WAIT_LINES_MAX,
   WAIT_PINGS_MAX,
-  waitAlreadyOpenRefusal,
   type ListeningResident,
   type RoomLine,
   type TalkOutcome,
@@ -57,8 +56,9 @@ type WaitPingRow = Readonly<{
 }>
 
 type WaitLeaseStateRow = Readonly<{
-  lease_place_id: number | string
-  lease_arrived_at: Date | string
+  lease_id: string | null
+  lease_place_id: number | string | null
+  lease_arrived_at: Date | string | null
   current_place_id: number | string | null
   current_arrived_at: Date | string | null
 }>
@@ -116,22 +116,10 @@ export async function openWait(
       ON CONFLICT (resident_id) DO UPDATE SET
         place_id = EXCLUDED.place_id, arrived_at = EXCLUDED.arrived_at, lease_id = EXCLUDED.lease_id,
         started_at = EXCLUDED.started_at, expires_at = EXCLUDED.expires_at
-      WHERE wait_leases.expires_at <= EXCLUDED.started_at
-        OR wait_leases.place_id <> EXCLUDED.place_id
-        OR wait_leases.arrived_at <> EXCLUDED.arrived_at
       RETURNING lease_id, place_id, started_at, expires_at
     `)
     const row = inserted[0]
-    if (row === undefined) {
-      const existing = await queryRows<Readonly<{ expires_at: Date | string }>>(transaction`
-        /* private:room-wait-already-open-expiry */
-        SELECT expires_at FROM wait_leases WHERE resident_id = ${input.residentId}
-      `)
-      return {
-        ok: false,
-        refusal: waitAlreadyOpenRefusal(isoTimestamp(existing[0]?.expires_at) ?? ''),
-      }
-    }
+    if (row === undefined) return { ok: false, refusal: WAIT_NO_PLACE_REFUSAL }
     return { ok: true, status: 201, answer: { lease: leaseFromRow(row) } }
   })
 }
@@ -234,12 +222,12 @@ export async function readWaitChanges(input: Readonly<{
       ORDER BY page.change_id::bigint ASC NULLS LAST
     `),
     queryRows<WaitLeaseStateRow>(database`/* private:wait_lease_state */
-      SELECT lease.place_id AS lease_place_id, lease.arrived_at AS lease_arrived_at,
+      SELECT lease.lease_id::text AS lease_id, lease.place_id AS lease_place_id,
+        lease.arrived_at AS lease_arrived_at,
         presence.current_place_id, presence.arrived_at AS current_arrived_at
-      FROM wait_leases lease
-      LEFT JOIN resident_presence presence ON presence.resident_id = lease.resident_id
-      WHERE lease.resident_id = ${input.residentId}
-        AND lease.lease_id = ${input.leaseId}::uuid
+      FROM resident_presence presence
+      LEFT JOIN wait_leases lease ON lease.resident_id = presence.resident_id
+      WHERE presence.resident_id = ${input.residentId}
     `),
   ])
 
@@ -279,13 +267,19 @@ export async function readWaitChanges(input: Readonly<{
   })
 
   const lease = leaseRows[0]
-  const still: WaitRead['still'] = lease !== undefined
-    && Number(lease.lease_place_id) === input.placeId
-    && Number(lease.current_place_id) === input.placeId
-    && lease.current_arrived_at !== null
-    && isoTimestamp(lease.lease_arrived_at) === isoTimestamp(lease.current_arrived_at)
-    ? 'here'
-    : 'moved'
+  const still: WaitRead['still'] = lease === undefined
+    || lease.current_place_id === null
+    || Number(lease.current_place_id) !== input.placeId
+    ? 'moved'
+    : lease.lease_id === null || lease.lease_id !== input.leaseId
+      ? 'replaced'
+      : lease.lease_place_id !== null
+        && Number(lease.lease_place_id) === input.placeId
+        && lease.lease_arrived_at !== null
+        && lease.current_arrived_at !== null
+        && isoTimestamp(lease.lease_arrived_at) === isoTimestamp(lease.current_arrived_at)
+        ? 'here'
+        : 'moved'
 
   return {
     lines,

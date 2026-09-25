@@ -28,6 +28,22 @@ test('feature-off discovery does not advertise the unavailable hosted connector'
   }
 })
 
+test('feature-off discovery keeps the path-free wait rule on the same-room talk reference page', () => {
+  const output = hostedChatDiscovery(
+    REFERENCE_SECTIONS['same-room-talk'],
+    { ready: false },
+    'reference',
+    false,
+    false,
+  )
+
+  assert.match(
+    output,
+    /A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest\./u,
+  )
+  assert.doesNotMatch(output, /\/mcp\/connect/u)
+})
+
 test('recovery-off discovery does not advertise an unavailable browser route', () => {
   for (const [name, output] of [
     ['front door', hostedChatDiscovery(FRONTDOOR, { ready: false }, 'frontdoor', false, true)],

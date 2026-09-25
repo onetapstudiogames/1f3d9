@@ -18,7 +18,7 @@ export type WaitRead = Readonly<{
   pings: readonly WaitPingRead[]
   pingsHasMore: boolean
   next: WaitCursors
-  still: 'here' | 'moved'
+  still: 'here' | 'moved' | 'replaced'
 }>
 
 export async function holdWait(input: Readonly<{
@@ -34,7 +34,7 @@ export async function holdWait(input: Readonly<{
 
   while (true) {
     const read = await input.read(cursors)
-    if (read.still === 'moved') return { reason: 'moved', read }
+    if (read.still !== 'here') return { reason: read.still, read }
     if (read.lines.length > 0 || read.pings.length > 0) return { reason: 'change', read }
     if (input.closed()) return { reason: 'closed', read }
 

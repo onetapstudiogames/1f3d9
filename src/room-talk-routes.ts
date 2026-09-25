@@ -1,6 +1,6 @@
 import type { Context, Hono } from 'hono'
 import { setTimeout as timerSleep } from 'node:timers/promises'
-import { auth, err, RESIDENT_AUTH_REFUSAL } from './core.ts'
+import { auth, err, isHostedConnectorRequest, RESIDENT_AUTH_REFUSAL } from './core.ts'
 import { sql } from './db.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import {
@@ -36,6 +36,7 @@ import {
   pingReadNotFoundRefusal,
   placeLinesNotFoundRefusal,
   requestedWaitSeconds,
+  type WaitDoor,
   type TalkOutcome,
   type TalkRefusal,
 } from './room-talk-contract.ts'
@@ -156,7 +157,8 @@ export function mountRoomTalkRoutes(app: Hono): void {
     ) return talkRefusalResponse(c, WAIT_FIELDS_REFUSAL)
     const body = parsedBody as Record<string, unknown>
 
-    const seconds = requestedWaitSeconds(body.seconds)
+    const door: WaitDoor = isHostedConnectorRequest(c.req.raw) ? 'hosted_chat' : 'coding'
+    const seconds = requestedWaitSeconds(body.seconds, door)
     if (seconds === null) return talkRefusalResponse(c, WAIT_SECONDS_REFUSAL)
     const afterLine = body.after_line_change === undefined
       ? null

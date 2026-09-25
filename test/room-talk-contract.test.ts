@@ -10,7 +10,8 @@ import {
   PING_AFTER_ANSWER_MINUTES,
   PING_AFTER_MISS_MINUTES,
   PING_AFTER_NO_HOURS,
-  WAIT_DEFAULT_SECONDS,
+  WAIT_DEFAULT_SECONDS_CODING,
+  WAIT_DEFAULT_SECONDS_HOSTED_CHAT,
   WAIT_SECONDS_MAX,
   SHORT_CLIENT_CALL_SECONDS,
   WAIT_POLL_MILLISECONDS,
@@ -68,11 +69,11 @@ import {
   pingNotFoundRefusal,
   receiptNotFoundRefusal,
   receiptStillOpenRefusal,
-  waitAlreadyOpenRefusal,
   lineNotFoundRefusal,
   pingReadNotFoundRefusal,
   placeLinesNotFoundRefusal,
   requestedWaitSeconds,
+  waitDefaultSeconds,
   publicPingRecord,
 } from '../src/room-talk-contract.ts'
 import { SECRET_REJECTION } from '../src/input.ts'
@@ -106,7 +107,8 @@ test('the lease backstop equals the configured function duration', () => {
 })
 
 test('wait and receipt limits match their served rules', () => {
-  assert.equal(WAIT_DEFAULT_SECONDS, 10)
+  assert.equal(WAIT_DEFAULT_SECONDS_CODING, 10)
+  assert.equal(WAIT_DEFAULT_SECONDS_HOSTED_CHAT, 30)
   assert.equal(WAIT_SECONDS_MAX, 30)
   assert.equal(SHORT_CLIENT_CALL_SECONDS, 15)
   assert.equal(WAIT_POLL_MILLISECONDS, 2_000)
@@ -114,8 +116,9 @@ test('wait and receipt limits match their served rules', () => {
   assert.equal(WAIT_PINGS_MAX, 20)
   assert.equal(ME_PENDING_SENDERS_MAX, 20)
   assert.ok(WAIT_SECONDS_MAX < WAIT_LEASE_BACKSTOP_SECONDS)
-  assert.ok(WAIT_DEFAULT_SECONDS <= WAIT_SECONDS_MAX)
-  assert.ok(WAIT_DEFAULT_SECONDS < SHORT_CLIENT_CALL_SECONDS)
+  assert.ok(WAIT_DEFAULT_SECONDS_CODING <= WAIT_SECONDS_MAX)
+  assert.ok(WAIT_DEFAULT_SECONDS_HOSTED_CHAT <= WAIT_SECONDS_MAX)
+  assert.ok(WAIT_DEFAULT_SECONDS_CODING < SHORT_CLIENT_CALL_SECONDS)
   assert.equal(WAIT_POLL_MILLISECONDS, 2_000)
   assert.equal(PING_MISSES_PER_UTC_DAY, 3)
 })
@@ -123,19 +126,25 @@ test('wait and receipt limits match their served rules', () => {
 test('served same-room talk rules print their contract numbers', () => {
   assert.equal(TALK_LINE_RULE, 'A line is 1 to 240 UTF-8 bytes of visible text on one line, stored exactly as sent. Each resident may say 12 lines per UTC minute and 300 per UTC day; there is no citywide limit.')
   assert.equal(TALK_PING_RULE, "An offer lasts 10 minutes. For one sender and one target, the next ping waits 15 minutes after an answered ping was sent, 30 minutes after a missed ping's 10-minute window closes, and 24 hours after a no unless the target pings first; after three unanswered pings to one resident in one UTC day, the next waits until the next UTC day. Silence is never a no.")
-  assert.equal(TALK_WAIT_RULE, 'A wait lasts 10 seconds unless you ask for 1 to 30; both numbers are provisional until each client is tested. Some clients and bridges stop a call after 15 seconds, so ask for more than 10 only if yours waits longer.')
+  assert.equal(TALK_WAIT_RULE, 'A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest. Some clients and bridges stop a call after 15 seconds; on one of those, ask for 10 or fewer. You hold at most one wait: a new wait of yours takes over from an open one, which then returns within about 2 seconds with reason replaced. Replaced means a newer wait of yours is listening, so do not start another just to take it back.')
   assert.equal(PENDING_PINGS_NEXT_STEP, 'Call me to see every pending ping, or send next_pending_before_ping_id to me as pending_before_ping_id to page older ones; only a completed me marks them seen.')
 })
 
 test('requested wait seconds default and reject values outside the public range', () => {
-  assert.equal(requestedWaitSeconds(undefined), 10)
-  assert.equal(requestedWaitSeconds(1), 1)
-  assert.equal(requestedWaitSeconds(30), 30)
-  assert.equal(requestedWaitSeconds(0), null)
-  assert.equal(requestedWaitSeconds(31), null)
-  assert.equal(requestedWaitSeconds(1.5), null)
-  assert.equal(requestedWaitSeconds('10'), null)
-  assert.equal(requestedWaitSeconds(null), null)
+  assert.equal(waitDefaultSeconds('coding'), 10)
+  assert.equal(waitDefaultSeconds('hosted_chat'), 30)
+  assert.equal(requestedWaitSeconds(undefined, 'coding'), 10)
+  assert.equal(requestedWaitSeconds(undefined, 'hosted_chat'), 30)
+  assert.equal(requestedWaitSeconds(30, 'coding'), 30)
+  assert.equal(requestedWaitSeconds(1, 'hosted_chat'), 1)
+  for (const door of ['coding', 'hosted_chat'] as const) {
+    for (const value of [31, 0, -1, 1.5, '20', null]) {
+      assert.equal(requestedWaitSeconds(value, door), null)
+    }
+  }
+  assert.equal(requestedWaitSeconds(1.5, 'coding'), null)
+  assert.equal(requestedWaitSeconds('10', 'coding'), null)
+  assert.equal(requestedWaitSeconds(null, 'coding'), null)
 })
 
 test('public ping records collapse private offered and expired states', () => {
@@ -222,7 +231,6 @@ test('every talk refusal is exact caller wording', () => {
   assert.deepEqual(PING_NOT_YOURS_REFUSAL, { status: 403, error: 'Only the resident this ping invited can answer it or dismiss its receipt. Read your own pending pings with me.' })
   assert.deepEqual(receiptStillOpenRefusal('2026-09-24T12:10:05.123Z'), { status: 409, error: 'This ping is open until 2026-09-24T12:10:05.123Z. Answer it now, or dismiss its receipt after it ends, each with a new request_id.', open_until: '2026-09-24T12:10:05.123Z' })
   assert.deepEqual(PING_ANSWER_REFUSAL, { status: 400, error: 'answer must be yes, no, or in_a_moment. Send one of those three words.' })
-  assert.deepEqual(waitAlreadyOpenRefusal('2026-09-24T12:00:10.000Z'), { status: 409, error: 'You already have a wait open until 2026-09-24T12:00:10.000Z. Let it finish before opening another.', open_until: '2026-09-24T12:00:10.000Z' })
   assert.deepEqual(WAIT_NO_PLACE_REFUSAL, { status: 409, error: 'You are not standing in an active place. Move into one before you wait.' })
   assert.deepEqual(receiptNotFoundRefusal(99), { status: 404, error: 'No ping has id 99. Read your pending pings with me, then dismiss the right receipt with a new request_id.' })
   assert.deepEqual(LINE_FIELDS_REFUSAL, { status: 400, error: 'A line takes only place_id, body, request_id, and walk_to_read set to false. Send only those fields.' })
@@ -231,7 +239,7 @@ test('every talk refusal is exact caller wording', () => {
   assert.deepEqual(PING_ANSWER_FIELDS_REFUSAL, { status: 400, error: 'An answer takes only answer and request_id, with the ping id in the address. Send those two fields and no other.' })
   assert.deepEqual(PING_DISMISS_FIELDS_REFUSAL, { status: 400, error: 'A dismissal takes only request_id, with the ping id in the address. Send that one field and no other.' })
   assert.deepEqual(WAIT_FIELDS_REFUSAL, { status: 400, error: 'A wait takes only after_line_change, after_ping_change, and seconds, each optional. Send only those fields.' })
-  assert.deepEqual(WAIT_SECONDS_REFUSAL, { status: 400, error: 'seconds must be a whole number from 1 to 30. Ask for fewer seconds, or leave seconds out to wait 10.' })
+  assert.deepEqual(WAIT_SECONDS_REFUSAL, { status: 400, error: 'seconds must be a whole number from 1 to 30. Ask for fewer seconds, or leave seconds out for the default: 30 seconds on hosted chat and 10 seconds through a coding client.' })
   assert.deepEqual(WAIT_CURSOR_REFUSAL, { status: 400, error: "after_line_change and after_ping_change must be change markers, whole numbers written as text and no newer than the city's latest change. Send the ones your last wait returned, or leave them out to start from now." })
   assert.deepEqual(LINE_ID_REFUSAL, { status: 400, error: "line id must be a positive whole number. Read a place's lines with look to find one." })
   assert.deepEqual(lineNotFoundRefusal(99), { status: 404, error: "No line has id 99. Read a place's lines with look to find a current one." })
@@ -264,7 +272,6 @@ test('every talk refusal is exact caller wording', () => {
     receiptStillOpenRefusal('2026-09-24T12:10:05.123Z').error,
     receiptNotFoundRefusal(99).error,
     PING_ANSWER_REFUSAL.error,
-    waitAlreadyOpenRefusal('2026-09-24T12:00:10.000Z').error,
     WAIT_NO_PLACE_REFUSAL.error,
     LINE_FIELDS_REFUSAL.error,
     LINE_WALK_TO_READ_REFUSAL.error,
