@@ -6,6 +6,7 @@ import {
   PUBLIC_EVENT_DETAIL_SCALAR_FIELDS,
   PUBLIC_EVENT_KINDS,
 } from '../src/public-events.ts'
+import { TALK_EVENT_TARGETS } from '../src/moderation.ts'
 import { PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS } from '../src/public-snapshot-format.ts'
 import {
   AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
@@ -42,10 +43,14 @@ const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set([
   'chance_rolled', 'room_settled', 'room_reached', 'copy_skipped',
 ])
+// Unlike the ability kinds above, these ARE in dated snapshots through the v3
+// talk_events branch, not the v1 or v2 VALUES allowlists.
+const V3_TALK_BRANCH_EVENT_KINDS = new Set(Object.keys(TALK_EVENT_TARGETS))
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)])
-  .filter(kind => !SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS.has(kind))
+  .filter(kind => !SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS.has(kind)
+    && !V3_TALK_BRANCH_EVENT_KINDS.has(kind))
 const PLACE_LIFECYCLE_EVENT_KINDS = new Set([
   'place_renamed', 'place_retired', 'place_restored',
 ])
@@ -185,6 +190,39 @@ for (const [name, url] of [['migration', migrationUrl], ['fresh schema', schemaU
       'residents', 'public_presence', 'places', 'things', 'notes', 'traits', 'kinds',
       'agreements', 'events', 'moderation', 'treasury_fees', 'world_market_offers',
     ]) assert.match(sql, new RegExp(`'${className}'`, 'u'), className)
+  })
+}
+
+for (const [name, url] of [
+  ['same-room talk migration', new URL('../db/migrations/20260924_same_room_talk.sql', import.meta.url)],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} exports talk events through the format-v3 branch`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records_v3/iu)
+    const viewEnd = sql.indexOf('GRANT SELECT ON city_snapshot.public_records_v3', viewStart)
+    assert.ok(viewStart >= 0 && viewEnd > viewStart, `${name}: format-v3 view`)
+    const view = sql.slice(viewStart, viewEnd)
+
+    const talkEventKinds = view.match(
+      /talk_events AS MATERIALIZED \([\s\S]*?WHERE event\.kind IN \(([^)]*)\)/iu,
+    )?.[1]
+    assert.ok(talkEventKinds, `${name}: talk_events kinds`)
+    assert.deepEqual(
+      [...talkEventKinds.matchAll(/'([a-z_]+)'/gu)].map(match => match[1]!),
+      [...V3_TALK_BRANCH_EVENT_KINDS],
+    )
+
+    const asleepKinds = view.match(/recent\.kind IN \(([^)]*)\)/iu)?.[1]
+    assert.ok(asleepKinds, `${name}: asleep kinds`)
+    assert.deepEqual(
+      [...asleepKinds.matchAll(/'([a-z_]+)'/gu)].map(match => match[1]!),
+      [...V3_TALK_BRANCH_EVENT_KINDS],
+    )
+    assert.match(
+      view,
+      /FROM city_snapshot\.public_records_v2 v2\s+WHERE NOT \(v2\.class_name = 'events' AND v2\.sort_key IN \(SELECT talk\.id FROM talk_events talk\)\)/iu,
+    )
   })
 }
 

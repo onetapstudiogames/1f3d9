@@ -355,9 +355,15 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
       assert.equal(refused.status, 429)
       const nextAllowedAt = String(refused.json.next_allowed_at)
       assertRefusalSentence(refused.json.error, pingPairWaitRefusal(nextAllowedAt).error)
-      assert.ok(Date.parse(nextAllowedAt) > Date.now())
-      const delay = Math.max(0, Date.parse(nextAllowedAt) - Date.now() + 250)
-      await new Promise(resolve => setTimeout(resolve, delay))
+      let waitEnded = (await db.query<{ ended: boolean }>(
+        'SELECT clock_timestamp() >= $1::timestamptz AS ended', [nextAllowedAt],
+      )).rows[0]!.ended
+      while (!waitEnded) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+        waitEnded = (await db.query<{ ended: boolean }>(
+          'SELECT clock_timestamp() >= $1::timestamptz AS ended', [nextAllowedAt],
+        )).rows[0]!.ended
+      }
       const replay = await call(app, FOUNDER.secret, 'POST', '/api/ping', body)
       assert.equal(replay.status, 429)
       assert.equal(replay.json.next_allowed_at, nextAllowedAt)
