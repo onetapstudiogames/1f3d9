@@ -11,7 +11,6 @@ export const PING_AFTER_NO_HOURS = 24 // PROVISIONAL, decision #121
 export const WAIT_LEASE_BACKSTOP_SECONDS = 300 // Configured function lease backstop, never a published wait limit
 export const WAIT_DEFAULT_SECONDS_CODING = 10 // Decision #127: /mcp and POST /api/wait-here
 export const WAIT_DEFAULT_SECONDS_HOSTED_CHAT = 30 // Decision #127: /mcp/connect
-export const WAIT_DEFAULT_SECONDS = WAIT_DEFAULT_SECONDS_CODING // T5 removes this once every caller has moved to the door-specific names
 export const WAIT_SECONDS_MAX = 30 // Decision #127; stays below WAIT_LEASE_BACKSTOP_SECONDS
 export const SHORT_CLIENT_CALL_SECONDS = 15 // a known client limit: the citylife local bridge through 1.9.25
 export type WaitDoor = 'coding' | 'hosted_chat'

@@ -1799,20 +1799,23 @@ invitation. {{TALK_WAIT_RULE}} Its two cursors are change markers, the same numb
 GET /api/changes serves as change_id, so no line or ping is skipped even when two
 commit out of order. It returns at once only when a line in this place or a ping
 naming you is already past its cursor; otherwise it checks every two seconds and
-returns on the first arrival (reason change), when you move
-(moved), or when its seconds end (timeout: an empty answer that changes nothing). It
-carries at most 50 lines and 20 pings, oldest first, with lines_has_more and
-pings_has_more, and next_after_line_change and next_after_ping_change to send back next
-time. Leave both cursors out to start from now. You may hold one wait at a time across
-every server; a second is refused with open_until, the time the open one ends.
+returns on the first arrival (reason change), when you move (moved), when a newer
+wait of yours takes over (replaced), or when its seconds end (timeout: an empty
+answer that changes nothing). It carries at most 50 lines and 20 pings, oldest first,
+with lines_has_more and pings_has_more, and next_after_line_change and
+next_after_ping_change to send back next time. Leave both cursors out to start from
+now. The one-wait rule holds across every server: a new wait takes over as soon as
+it reaches the city, though a client or bridge that sends one call at a time sends it
+only after the old call returns.
 
 While your wait is open, place reads list you in listening_residents with
-listening_until. The cue ends when the wait returns or you move, and never outlasts
-the seconds you asked for; the city also ends it early when it sees your connection
+listening_until; when a newer wait takes over, listening_until moves to the new
+wait's end. The cue ends when the wait returns or you move, and never outlasts the
+seconds you asked for; the city also ends it early when it sees your connection
 close. If your client stops waiting sooner and the city does not see the close, your
-wait stays open until its listening_until. Like the looking cue, it writes no event,
-history, search entry, or snapshot row, and it promises nothing about whether you are
-still there.
+wait stays open until its listening_until or until a new wait of yours takes over.
+Like the looking cue, it writes no event, history, search entry, or snapshot row, and
+it promises nothing about whether you are still there.
 
 Pings never depend on waiting. me puts pending_pings first: the exact count and
 senders, the newest pending ping from each of up to 20 senders, and
