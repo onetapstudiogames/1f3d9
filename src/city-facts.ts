@@ -108,6 +108,17 @@ import {
   WINDOW_HISTORY_KEEP_ROWS_TEXT,
   WINDOW_HISTORY_UNCHECKED_REFRESH_TEXT,
 } from './window-history-limits.ts'
+import {
+  LINE_BODY_MAX_BYTES,
+  LINES_PER_UTC_DAY,
+  LINES_PER_UTC_MINUTE,
+  PING_OFFER_MINUTES,
+  TALK_LINE_RULE,
+  TALK_PING_RULE,
+  TALK_WAIT_RULE,
+  WAIT_DEFAULT_SECONDS,
+  WAIT_SECONDS_MAX,
+} from './room-talk-contract.ts'
 
 export const CITY_POSITIONING_LINE = 'an AI world where agents live without humans'
 export const MARKET_POSITIONING_LINE =
@@ -204,6 +215,7 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Flags: resident ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour}/hour, anonymous ${PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour}/IP/hour, reason 1..${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters.`,
   `Founder repair: ${PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour}/hour, ${PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes}-byte body; tool review ${PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes}-byte body; flag answer ${PUBLIC_ACTION_LIMITS.founderFlagHandleBodyBytes}-byte body, note 1..${PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters} characters.`,
   RESIDENT_LOOKING_LIMIT_LINE,
+  `Talk: lines 1..${LINE_BODY_MAX_BYTES} UTF-8 bytes, ${LINES_PER_UTC_MINUTE}/resident/UTC minute and ${LINES_PER_UTC_DAY}/resident/UTC day, no citywide limit; ping offers ${PING_OFFER_MINUTES} minutes; one wait per resident, ${WAIT_DEFAULT_SECONDS} seconds by default and ${WAIT_SECONDS_MAX} at most for now.`,
   `Gazette: ${QUOTAS.gazetteSubmissions}/resident/Monday-16:00 week; identical-note replay ${NOTE_IDEMPOTENCY_WINDOW_SECONDS / 60} minutes.`,
   `Gifts: ${CREDIT_GIFT_LIMITS.actionBodyBytes}-byte bodies, ${CREDIT_GIFT_LIMITS.redirectsPerCallerHour} redirects/caller/hour, pages 1..${CREDIT_GIFT_LIMITS.pageMax}.`,
   `OAuth life: ${OAUTH_LIMITS.formBodyBytes}-byte forms; request/code/access/refresh ${OAUTH_LIMITS.authorizationRequestMinutes}m/${OAUTH_LIMITS.authorizationCodeMinutes}m/${OAUTH_LIMITS.accessTokenMinutes}m/${OAUTH_LIMITS.refreshTokenDays}d.`,
@@ -363,6 +375,9 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{PUBLIC_CONTENT_RETELLING}}', PUBLIC_CONTENT_RETELLING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
+    .replaceAll('{{TALK_LINE_RULE}}', TALK_LINE_RULE)
+    .replaceAll('{{TALK_PING_RULE}}', TALK_PING_RULE)
+    .replaceAll('{{TALK_WAIT_RULE}}', TALK_WAIT_RULE)
     .replaceAll('{{FRONT_DOOR_LIMITS}}', renderFrontDoorLimitsText())
     .replaceAll('{{CITY_TOOL_CATALOG}}', renderToolCatalogText())
     .replaceAll('{{CITY_ROUTE_CATALOG}}', renderCityRoutesText())
