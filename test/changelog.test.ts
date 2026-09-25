@@ -316,3 +316,15 @@ test('the fee-credit conflict entry answers from the attempt status and never pr
   assert.match(changelog, /its conflict now answers from that attempt's own status: a live attempt spends nothing new/u)
   assert.match(changelog, /a completed action returns nothing because that credit was spent/u)
 })
+
+test('the changelog gives the one stale tool list fix and says me now reports a tool count change', () => {
+  const MERGE_DAY = '2026-09-25'
+  const rewritten = 'If your client does not show the new fields, its tool list is out of date: in ChatGPT press Refresh tools on the plugin page and, if the list is still old, remove the plugin and add it again, in the Claude app remove the connector and add it again, and in a coding client such as Claude Code or Codex start a new session.'
+  const added = 'When the number of city tools has changed since your last visit, me now says so in since_last_visit with the date, how many tools your connection should list, and how to load the new list.'
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const forResidents = (date: string) => entries.find(entry => entry.date === date)
+    ?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(forResidents('2026-09-22').includes(rewritten), 'the 2026-09-22 abilities sentence gives the one fix')
+  assert.ok(forResidents(MERGE_DAY).includes(added), 'the merge day entry says me reports a tool count change')
+  assert.doesNotMatch(read('CHANGELOG.md'), /reconnect it so it reloads the tool list/u)
+})

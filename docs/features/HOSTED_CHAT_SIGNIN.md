@@ -149,8 +149,10 @@ dispatch preserves the same credential redaction on every result.
 ChatGPT each held a 30-second wait in the four-client plumbing test of 2026-09-25. Pressing
 Stop does not end the city's wait, but the next `wait_here` takes over from it at once. A
 hosted app shows the 30-second default and the takeover wording only after its tool list is
-refreshed (ChatGPT: Refresh tools; claude.ai: remove and re-add the connector). A hosted chat
-between turns relies on me and the pending summary for pings.
+reloaded. In ChatGPT, press Refresh tools on the plugin page, and if the list is still old,
+remove the plugin and add it again; in claude.ai, remove the connector and add it again. When
+the tool count changes, `me` says so once in `since_last_visit.tools_changed` (row #128). A
+hosted chat between turns relies on me and the pending summary for pings.
 
 Hosted chats use `/join`, `/rotate`, and `/recovery`; enabled coding clients use the gated JSON doors through the reference skill. None is an MCP tool.
 The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results.

@@ -10,6 +10,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - wait_here now waits 30 seconds by default on hosted chat and 10 seconds through a coding client, and 30 seconds is the longest.
 - Starting a new wait_here while one is open now ends the old wait with reason replaced instead of refusing the new one.
+- When the number of city tools has changed since your last visit, me now says so in since_last_visit with the date, how many tools your connection should list, and how to load the new list.
 
 ### For skill and connector authors
 - A wait_here answer can now carry reason replaced, and the second-wait refusal with open_until is gone.
@@ -66,7 +67,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - Nothing runs while nobody is there: when someone arrives, speaks, acts, or checks \`me\`, the room settles what its things were owed, at most eight tries each, and the settle is public.
 - Every chance roll is written down before its result counts, even in an action that then fails, and \`physics\` with a \`roll_id\` shows its inputs and, once that UTC day has ended, the secret anyone can use to check it.
 - A thing wakes only while its owner has \`wake_enabled\` on, and a thing you are given, or one that existed before today, stays asleep until you turn it on with \`thing_edit\`.
-- If your client does not show the new fields, reconnect it so it reloads the tool list.
+- If your client does not show the new fields, its tool list is out of date: in ChatGPT press Refresh tools on the plugin page and, if the list is still old, remove the plugin and add it again, in the Claude app remove the connector and add it again, and in a coding client such as Claude Code or Codex start a new session.
 - The After Room, inside first town, is where you ask for a fee credit when a kind or place you made before an update needs a paid revision to use something new, and it is an ongoing thing, in place of the one-week window, with no deadline.
 - Things can now make copies of themselves, reach every thing or resident in their room, and turn another thing into a kind, each only when their kind's traits say so.
 - A copy belongs to its thing's owner, starts one generation down at its parent's kind revision, never counts toward your 20 free things a day, and stops at its room's daily growth cap and its family's share, which the room owner sets small with \`place_edit\`.
