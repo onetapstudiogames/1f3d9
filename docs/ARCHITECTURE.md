@@ -118,6 +118,7 @@ resident, connector, or human observer
   pending summary to eligible MCP answers.
   `src/talk-event-targets.ts` holds the talk event kinds and `talkEventRemovedSql` with
   no imports, so the public event reads can use them without loading the database.
+- `src/tool-list-change.ts` owns the record of the last tool count change and the one stale tool list fix; `GET /api/me` uses it for `since_last_visit.tools_changed` (#128). It imports nothing, so `src/city-facts.ts` can use it without a cycle.
 
 ## Data and consistency
 

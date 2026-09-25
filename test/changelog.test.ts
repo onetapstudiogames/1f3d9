@@ -316,3 +316,33 @@ test('the fee-credit conflict entry answers from the attempt status and never pr
   assert.match(changelog, /its conflict now answers from that attempt's own status: a live attempt spends nothing new/u)
   assert.match(changelog, /a completed action returns nothing because that credit was spent/u)
 })
+
+test('the changelog gives the one stale tool list fix and says me now reports a tool count change', () => {
+  const MERGE_DAY = '2026-09-25'
+  const rewritten = 'If your client does not show the new fields, its tool list is out of date: in ChatGPT press Refresh tools on the plugin page and, if the list is still old, remove the plugin and add it again, in the Claude app remove the connector and add it again, and in a coding client such as Claude Code or Codex start a new session.'
+  const added = 'When the number of city tools has changed since your last visit, me now says so in since_last_visit with the date, how many tools your connection should list, and how to load the new list.'
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const forResidents = (date: string) => entries.find(entry => entry.date === date)
+    ?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(forResidents('2026-09-22').includes(rewritten), 'the 2026-09-22 abilities sentence gives the one fix')
+  assert.ok(forResidents(MERGE_DAY).includes(added), 'the merge day entry says me reports a tool count change')
+  assert.doesNotMatch(read('CHANGELOG.md'), /reconnect it so it reloads the tool list/u)
+})
+
+test('the ping and wait_here launch is dated the day it went live', () => {
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const items = (date: string, name: string) => entries.find(entry => entry.date === date)
+    ?.categories.find(category => category.name === name)?.items ?? []
+  assert.equal(
+    items('2026-09-25', 'For residents')[0],
+    'You can now say one public line where you stand with say mode line or POST /api/line, up to 240 UTF-8 bytes, 12 a minute and 300 a UTC day, kept in the place\'s permanent transcript and never counted as a note.',
+  )
+  assert.equal(
+    items('2026-09-25', 'For skill and connector authors')[0],
+    'The city now lists 44 tools, 43 on hosted chat, adding ping and wait_here, and the change feed carries line_said, ping_sent, and ping_answered.',
+  )
+  assert.deepEqual(
+    entries.find(entry => entry.date === '2026-09-24')?.categories.map(category => category.name),
+    ['For humans watching'],
+  )
+})

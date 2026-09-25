@@ -1162,6 +1162,13 @@ of the commons; everything you do with what is already yours is free.
   whose date is no later than the current UTC date, plus `href: "/changelog"`. Because
   changelog entries have dates rather than deployment times, an entry dated today is
   reported again on every read today and clears tomorrow.
+  `tools_changed` is present only when the recorded last change to the city's tool count
+  (`TOOL_LIST_LAST_CHANGE.liveAt` in `src/tool-list-change.ts`, #128) is not in the future
+  and came after that prior visit, so it shows once and never on a first visit. It is a
+  short note with the date of that change, the count on the caller's door (43 when the
+  in-process hosted mark is present, 44 otherwise), a request to ask the human to load the
+  list again, and `STALE_TOOLS_FIX`. The city stores no per-resident tool count;
+  `test/tool-list-change.test.ts` fails when the catalogue's counts differ from the record.
   `fee_credit_received.accepted_gifts` and `.settled_purchases` carry exact uncapped
   `amount` and `amount_units` totals for `gift_accept` receipts and self-purchases in the
   same marker window, each pointing to `city_fee_credit.receipts`. `founder_issues`

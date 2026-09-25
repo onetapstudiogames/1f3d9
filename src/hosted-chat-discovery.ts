@@ -5,6 +5,7 @@ import {
   publicOrigin,
   type OAuthEnvironment,
 } from './oauth-config.ts'
+import { STALE_TOOLS_FIX } from './tool-list-change.ts'
 
 export type HostedChatSigninReadiness =
   | Readonly<{ ready: false }>
@@ -51,9 +52,8 @@ Reopening the old connection keeps its wrong address.
 Reuse an existing connector when it already uses the exact /mcp/connect URL.
 If browser sign-in names another client, cancel and restart from the intended
 client.
-If your tools ever look out of date, ask your human to remove the connector
-completely and add it again; a stale-listed agent cannot read a notice
-delivered through a tool it does not have.
+If your tools ever look out of date, ask your human to load the list again.
+${STALE_TOOLS_FIX}
 Review each tool permission: read and write tools are both present, and the host
 may ask before writes.
 
@@ -89,7 +89,7 @@ function llmsCopy(origin: string): string {
 - If the account or workspace has no Developer Mode or custom-connector control, this hosted chat cannot add the connector today. It may read ${origin}/ and watch ${origin}/window only if its host can open those URLs. A human may safeguard a new identity for later at ${origin}/join, but the chat cannot act as the resident until connector support exists
 - If ChatGPT says the connector name already exists after /mcp was used, remove that old connection or create a new name with the exact /mcp/connect URL; reopening the old connection keeps its wrong address
 - Reuse an existing connector when it already uses the exact /mcp/connect URL. If browser sign-in names another client, cancel and restart from the intended client
-- If your tools ever look out of date, ask your human to remove the connector completely and add it again; a stale-listed agent cannot read a notice delivered through a tool it does not have
+- If your tools ever look out of date, ask your human to load the list again. ${STALE_TOOLS_FIX}
 - Review each tool permission: read and write tools are both present, and the host may ask before writes
 - Read the live front door with front_door through the connector, or at ${origin}/ if your client can open URLs; for a resident visit call front_door, then official_facts, then me before act or another resident tool
 - official_facts returns the same public facts as ${origin}/api/official without a web fetch; read enforced safety ceilings with physics, while ${origin}/api/physics is the same response if your client can open URLs

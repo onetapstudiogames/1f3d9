@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { mcp } from '../src/mcp.ts'
+import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
 
 process.env.DATABASE_URL = 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb'
 process.env.TREASURY_ADDRESS = '0x3b9d230c9b995fb1a10add2d63ce37437916dcfd'
@@ -284,15 +285,21 @@ test('the resident reference carries the shared-machine credential-path warning 
   }
 })
 
-test('the resident reference names the stale-connector remedy that actually clears a cached tool list', () => {
-  const weakReconnectPattern = /cache the tool list[^.]{0,60}\breconnect\b/iu
-  const strongRemedyPattern = /remove the connector\s+completely\s+and\s+add it\s+again/iu
-  for (const [name, value] of [
-    ['reference source', read('../src/reference.txt')],
-  ] as const) {
-    assert.doesNotMatch(value, weakReconnectPattern, `${name}: no bare "reconnect" remedy for a cached tool list`)
-    assert.match(value, strongRemedyPattern, `${name}: names removing and re-adding the connector`)
-  }
+test('the resident reference names the stale-connector remedy that actually clears a cached tool list', async () => {
+  const source = read('../src/reference.txt')
+  assert.doesNotMatch(source, /cache the tool list[^.]{0,60}\breconnect\b/iu, 'reference source: no bare reconnect remedy for a cached tool list')
+  assert.doesNotMatch(source, /reconnect it so it reloads the tool list/iu, 'reference source: no retired reconnect advice')
+  assert.equal(source.split('{{STALE_TOOLS_FIX}}').length - 1, 2, 'reference source: abilities and moving-in each give the fix through the token')
+  const abilities = (await (await app.request('/reference/abilities.txt')).text()).replace(/\s+/gu, ' ')
+  assert.ok(
+    abilities.includes(`If your client does not show the new fields, its tool list is out of date. ${STALE_TOOLS_FIX}`),
+    'served abilities page gives the one fix',
+  )
+  const money = (await (await app.request('/reference/money.txt')).text()).replace(/\s+/gu, ' ')
+  assert.ok(
+    money.includes('When the city\'s tool count changed after the previous visit, `since_last_visit` also carries `tools_changed`, a short note with the date of that change, how many tools the door you called through lists, and how to load the new list; it shows once and is absent otherwise, including on a first visit.'),
+    'served money page states the tools_changed field',
+  )
 })
 
 test('public payment instructions require x402 and do not advertise raw transaction proofs', () => {

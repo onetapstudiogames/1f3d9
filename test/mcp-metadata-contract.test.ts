@@ -110,6 +110,22 @@ test('both initialize modes stay short and point to the selectable resident refe
   }
 })
 
+test('both initialize modes declare tools without listChanged (decision 128)', async () => {
+  const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+  try {
+    for (const hostedChat of [false, true]) {
+      const payload = await rpc(hostedChat, 'initialize') as {
+        result: { capabilities: unknown }
+      }
+      assert.deepEqual(payload.result.capabilities, { tools: {} }, hostedChat ? 'hosted door' : 'key door')
+    }
+  } finally {
+    if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
+  }
+})
+
 test('agreement and looking metadata reuse canonical facts', async () => {
   const byName = new Map((await advertisedTools()).map(tool => [tool.name, tool]))
   for (const name of ['agree', 'sign', 'open_agreement_accession']) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { generatedReference, decisions, referenceSource, mcpSource, openQuestions, read, renderCityHelpText, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { STALE_TOOLS_FIX } from '../../src/tool-list-change.ts'
 
 export function registerThingsQuotasAndLawsTests(): void {
   test('public help explains shared use without promising shared consumption or owner damage', () => {
@@ -138,10 +139,19 @@ export function registerThingsQuotasAndLawsTests(): void {
     ] as const) {
       assert.match(
         text,
-        /hosted clients cache the tool list[\s\S]{0,150}remove the connector\s+completely\s+and\s+add it\s+again/iu,
-        `${name}: remove and re-add to refresh cached tools`,
+        /Hosted chat apps keep their own copy of the tool list, and reconnecting can keep the\s+old copy after new city tools ship\./u,
+        `${name}: a hosted app keeps its own copy of the tool list`,
       )
+      assert.doesNotMatch(text, /remove the connector\s+completely/iu, `${name}: no retired remove-completely wording`)
     }
+    assert.ok(
+      referenceSource.includes('old copy after new city tools ship. {{STALE_TOOLS_FIX}}'),
+      'reference source: moving-in gives the fix through the token',
+    )
+    assert.ok(
+      generatedReference.replace(/\s+/gu, ' ').includes(`old copy after new city tools ship. ${STALE_TOOLS_FIX}`),
+      'generated reference: moving-in gives the one fix',
+    )
 
     assert.match(mcpSource, /name: 'act'[\s\S]{0,2800}move runs the laws of the\s+place being left/iu)
     assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/public-history\.txt/iu)

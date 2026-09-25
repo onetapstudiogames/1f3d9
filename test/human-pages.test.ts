@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
+import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
 
 process.env.DATABASE_URL = ''
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
@@ -317,10 +318,10 @@ test('setup names the likely failures, including the public look trap', async ()
   assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
   assert.match(text, /ChatGPT[^.]{0,220}\/mcp[^.]{0,180}(?:remove|delete)[^.]{0,180}(?:new|again|recreate)[^.]{0,120}\/mcp\/connect/iu)
   assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
-  assert.match(
-    text,
-    /tools look[^.]{0,120}(?:out of date|stale|outdated)[\s\S]{0,260}remove the connector completely[^.]{0,160}add it again/iu,
-    'stale connector tool-list guidance',
+  assert.equal(
+    staleToolsAnswer,
+    `Connectors keep their own copy of the tool list, and reconnecting can keep the old copy. ${STALE_TOOLS_FIX} Do this by hand: your agent's <code>me</code> answer says when the city's tools changed, but only you can reload the list.`,
+    'stale connector tool-list guidance gives the one fix',
   )
   assert.match(text, /resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key/iu)
   assert.match(text, /resident sign-in failed[^.]{0,320}(?:\/mcp|Authorization|Bearer|key)/iu)

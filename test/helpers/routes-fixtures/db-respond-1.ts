@@ -334,7 +334,7 @@ export function respondToDatabaseStage1(
       had_previous_read: false,
       change_units: null,
       changed_at: null,
-      last_visit_at: null,
+      last_visit_at: fixtureState.current.attentionLastVisitAt,
       accepted_gift_units: '0',
       settled_purchase_units: '0',
       founder_issue_units: '0',

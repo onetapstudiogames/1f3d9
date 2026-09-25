@@ -104,6 +104,7 @@ import {
   countChangelogUpdatesSince,
   mountChangelogRoutes,
 } from './changelog.ts'
+import { toolsChangedLine } from './tool-list-change.ts'
 import {
   readCommunityToolQueue,
   readCommunityToolWaitingCount,
@@ -1214,6 +1215,10 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const attention = cityCreditAttentionLines(creditAttention)
+  const toolsChanged = toolsChangedLine(
+    creditAttention.last_visit_at,
+    isHostedConnectorRequest(c.req.raw) ? 'hosted_chat' : 'coding',
+  )
   const pendingReceipts = await moderatePendingPingRows(pendingPingPage.receipts)
   const pending_pings = {
     total: pendingPingPage.total,
@@ -1238,6 +1243,7 @@ app.get('/api/me', async c => {
         count: countChangelogUpdatesSince(CHANGELOG_ENTRIES, creditAttention.last_visit_at),
         href: '/changelog',
       },
+      ...(toolsChanged === null ? {} : { tools_changed: toolsChanged }),
       fee_credit_received: cityCreditSinceLastVisit(creditAttention),
       around_you: creditAttention.around_you,
       last_visit_at: creditAttention.last_visit_at,
