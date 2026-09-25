@@ -300,7 +300,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
       properties: {
         target_type: {
           type: 'string',
-          enum: ['place', 'thing', 'kind', 'trait', 'note', 'agreement', 'resident'],
+          enum: ['resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping'],
         },
         target_id: positiveIdSchema,
         reason: { type: 'string', minLength: 1, maxLength: 500 },

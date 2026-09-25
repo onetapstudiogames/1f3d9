@@ -30,7 +30,7 @@ import {
   hostedChatSigninReadiness,
   type HostedChatSigninReadiness,
 } from './hosted-chat-discovery.ts'
-import { CITY_PUBLIC_TOOL_CATALOG, mcp } from './mcp.ts'
+import { CITY_PUBLIC_TOOL_CATALOG, mcp, safeguardToolResponse } from './mcp.ts'
 import { handleMcpLooking } from './mcp-looking.ts'
 import {
   configureOAuthResidentResolver,
@@ -38,7 +38,7 @@ import {
   oauthChallenge,
 } from './oauth.ts'
 import { mountSocietyRoutes } from './society.ts'
-import { mountRoomTalkRoutes } from './room-talk-routes.ts'
+import { mountRoomTalkRoutes, talkRefusalResponse } from './room-talk-routes.ts'
 import { mountWorldRoutes } from './world.ts'
 import { mountDrawingRoutes } from './drawings.ts'
 import { mountWorldMarketRoutes } from './world-market.ts'
@@ -146,6 +146,7 @@ import {
   readPublicResidentPresence,
 } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import { moderatePendingPingRows, pendingPingSummary } from './pending-ping-summary.ts'
 import { residentRefusalGuidance } from './resident-refusal.ts'
 import {
   loadPublicSearchResults,
@@ -199,6 +200,8 @@ import {
   readPendingCreditGifts,
 } from './prepaid-credit.ts'
 import { mountPrepaidCreditGiftRoutes } from './prepaid-credit-routes.ts'
+import { markReceiptsSeen, readPendingPings } from './room-receipt-store.ts'
+import { ME_PENDING_SENDERS_MAX, PENDING_PAGE_REFUSAL } from './room-talk-contract.ts'
 import { mountCityCreditPurchaseRoutes } from './city-credit-purchase.ts'
 import {
   CREDIT_BUY_CSS,
@@ -548,6 +551,7 @@ app.use('*', async (c, next) => {
 app.use('*', residentRefusalGuidance())
 app.use('*', apiFailureContract())
 app.use('*', publicResponseSafety)
+app.use('*', pendingPingSummary())
 app.onError((error, c) => {
   if (isPublicExactReadBusy(error)) {
     c.header('Retry-After', '1')
@@ -1037,8 +1041,30 @@ app.get('/api/me', async c => {
     'before_offer_id', 'offer_limit',
     'before_credit_id', 'credit_limit',
     'before_gift_id', 'gift_limit',
+    'pending_before_ping_id', 'pending_limit',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const pendingBeforeValue = singlePublicQueryValue(query, 'pending_before_ping_id')
+  const pendingLimitValue = singlePublicQueryValue(query, 'pending_limit')
+  const isPositiveWholeNumber = (value: string | null): value is string => (
+    value !== null && /^[0-9]+$/u.test(value)
+    && Number.isSafeInteger(Number(value)) && Number(value) > 0
+  )
+  const pendingBeforePingId = pendingBeforeValue.ok && pendingBeforeValue.value === null
+    ? null
+    : pendingBeforeValue.ok && isPositiveWholeNumber(pendingBeforeValue.value)
+      ? Number(pendingBeforeValue.value)
+      : Number.NaN
+  const pendingLimit = pendingLimitValue.ok && pendingLimitValue.value === null
+    ? ME_PENDING_SENDERS_MAX
+    : pendingLimitValue.ok && isPositiveWholeNumber(pendingLimitValue.value)
+      ? Number(pendingLimitValue.value)
+      : Number.NaN
+  if (
+    Number.isNaN(pendingBeforePingId)
+    || Number.isNaN(pendingLimit)
+    || pendingLimit > ME_PENDING_SENDERS_MAX
+  ) return talkRefusalResponse(c, PENDING_PAGE_REFUSAL)
   const placeRequest = parsePublicPage(query, 'before_place_id', 'place_limit')
   if (!placeRequest.ok) return err(c, 400, placeRequest.error)
   const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit')
@@ -1064,6 +1090,7 @@ app.get('/api/me', async c => {
     presence = await residentPresence(resident.id)
   }
   const [
+    pendingPingPage,
     placeRows,
     thingRows,
     kindRows,
@@ -1074,6 +1101,11 @@ app.get('/api/me', async c => {
     pendingCreditGifts,
     currentPlace,
   ] = await Promise.all([
+    readPendingPings({
+      residentId: resident.id,
+      beforePingId: pendingBeforePingId,
+      limit: pendingLimit,
+    }),
     executePublicQuery(`
       /* public:me_places */
       SELECT place.id, place.parent_id, place.name, place.created_at,
@@ -1180,12 +1212,21 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const attention = cityCreditAttentionLines(creditAttention)
+  const pendingReceipts = await moderatePendingPingRows(pendingPingPage.receipts)
+  const pending_pings = {
+    total: pendingPingPage.total,
+    senders: pendingPingPage.senders,
+    receipts: pendingReceipts,
+    has_more: pendingPingPage.hasMore,
+    next_pending_before_ping_id: pendingPingPage.nextBeforePingId,
+  }
   // Only founder resident #1 holding a root key can read or answer a report, so only that
   // caller is told the count. A hosted-chat sign-in never carries founder capability.
   const unhandledFlags = resident.id === 1 && presentedRootKey(c)
     ? await unhandledFlagCount(executePrivateStoreQuery)
     : null
-  return c.json({
+  const answer = {
+    pending_pings,
     help: '/api/help',
     ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,
@@ -1235,7 +1276,19 @@ app.get('/api/me', async c => {
       city_fee_credit: cityFeeCredit.page,
       pending_gifts: pendingCreditGifts.page,
     },
-  })
+  }
+  const text = JSON.stringify(answer)
+  if (!safeguardToolResponse(text).withheld) {
+    try {
+      await markReceiptsSeen({
+        residentId: resident.id,
+        pingIds: pendingReceipts.map(receipt => receipt.ping_id),
+      })
+    } catch (error) {
+      console.error('receipt_seen_failure', error instanceof Error ? error.name : typeof error)
+    }
+  }
+  return c.json(answer)
 })
 
 app.post('/api/thing/:id/mark', async c => {

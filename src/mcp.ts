@@ -2283,7 +2283,7 @@ function invalidPublicReadArgument(
   return null
 }
 
-function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
+export function safeguardToolResponse(rawText: string): Readonly<{ text: string; withheld: boolean }> {
   let containsPrivateClaimToken = PRIVATE_CLAIM_TOKEN.test(rawText)
   if (!containsPrivateClaimToken && JSON_UNICODE_ESCAPE.test(rawText)) {
     try {
@@ -2612,7 +2612,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
 
   const route = tool.route(args)
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-1f3d9-tool-call': '1',
+  }
   const authorization = c.req.header('authorization')
   if (authorization) headers.authorization = authorization
   const payment = c.req.header('x-payment')
