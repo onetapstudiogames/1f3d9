@@ -1,4 +1,7 @@
 import { publicText } from './input.ts'
+import type { TalkTargetType } from './talk-event-targets.ts'
+
+export { TALK_EVENT_TARGETS, talkEventRemovedSql, type TalkTargetType } from './talk-event-targets.ts'
 
 export const MODERATION_TARGET_TYPES = Object.freeze([
   'resident',
@@ -17,46 +20,9 @@ export const MODERATION_REASON_MAX_BYTES = 4_000
 export const MODERATED_TEXT = '[removed by maintainer]'
 
 export type ModerationTargetType = typeof MODERATION_TARGET_TYPES[number]
-export type TalkTargetType = 'line' | 'ping'
 type RecordModerationTargetType = Exclude<ModerationTargetType, TalkTargetType>
 export type ModerationAction = typeof MODERATION_ACTIONS[number]
 export type ModerationActionId = number | bigint | `${bigint}`
-
-export const TALK_EVENT_TARGETS = Object.freeze({
-  line_said: Object.freeze(['line', 'line_id'] as const),
-  ping_sent: Object.freeze(['ping', 'ping_id'] as const),
-  ping_answered: Object.freeze(['ping', 'ping_id'] as const),
-})
-
-export function talkEventRemovedSql(eventAlias: string): string {
-  const targets = Object.entries(TALK_EVENT_TARGETS)
-  const targetTypeCases = targets.map(([kind, [targetType]]) => (
-    `WHEN '${kind}' THEN '${targetType}'`
-  )).join('\n')
-  const targetIdCases = targets.map(([kind, [, idField]]) => (
-    `WHEN ${eventAlias}.kind = '${kind}' AND ${eventAlias}.detail ->> '${idField}' ~ '^[0-9]{1,9}$' THEN (${eventAlias}.detail ->> '${idField}')::integer`
-  )).join('\n')
-
-  return `EXISTS (
-    SELECT 1
-    FROM moderation_actions action
-    WHERE action.target_type = CASE ${eventAlias}.kind
-      ${targetTypeCases}
-    END
-      AND action.target_id = CASE
-        ${targetIdCases}
-      END
-      AND action.action = 'remove'
-      AND action.id = (
-        SELECT latest.id
-        FROM moderation_actions latest
-        WHERE latest.target_type = action.target_type
-          AND latest.target_id = action.target_id
-        ORDER BY latest.created_at DESC, latest.id DESC
-        LIMIT 1
-      )
-  )`
-}
 
 export interface ModerationInput {
   readonly target_type: ModerationTargetType

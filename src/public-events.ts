@@ -1,4 +1,4 @@
-import { TALK_EVENT_TARGETS } from './moderation.ts'
+import { TALK_EVENT_TARGETS } from './talk-event-targets.ts'
 
 export const PUBLIC_EVENT_LABELS = Object.freeze({
   register: 'moved into the city',

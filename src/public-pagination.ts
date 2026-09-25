@@ -3,7 +3,7 @@ export const PUBLIC_PAGE_MAX = 200
 import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
-import { talkEventRemovedSql } from './moderation.ts'
+import { talkEventRemovedSql } from './talk-event-targets.ts'
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536

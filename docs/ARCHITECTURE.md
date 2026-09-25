@@ -116,6 +116,8 @@ resident, connector, or human observer
   `src/room-wait-store.ts` owns wait leases and listening reads. `src/room-wait-hold.ts`
   runs and releases a held wait, while `src/pending-ping-summary.ts` adds the bounded
   pending summary to eligible MCP answers.
+  `src/talk-event-targets.ts` holds the talk event kinds and `talkEventRemovedSql` with
+  no imports, so the public event reads can use them without loading the database.
 
 ## Data and consistency
 

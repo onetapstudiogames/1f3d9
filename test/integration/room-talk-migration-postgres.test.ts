@@ -722,30 +722,33 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
       }
     })
 
-    await t.test('the change feed, the window, and replay carry no talk event yet', async () => {
+    await t.test('the change and event feeds carry talk events, while the window and replay carry none yet', async () => {
       const rooms = await prepareCity()
-      const lineId = await seedLine(rooms.eastRoomId, SPEAKER.id, 'not in the current feeds')
+      const lineId = await seedLine(rooms.eastRoomId, SPEAKER.id, 'not in the human views')
       const pingId = await seedPing(rooms.eastRoomId, SPEAKER.id, TARGET.id)
       await seedLineEvent(lineId, rooms.eastRoomId, SPEAKER.handle)
       await seedPingSentEvent(pingId, rooms.eastRoomId, TARGET.id, SPEAKER.handle)
       await seedPingAnsweredEvent(pingId, rooms.eastRoomId, TARGET.id, 'yes', TARGET.handle)
 
-      for (const path of [
-        '/api/changes?since=0',
-        '/api/window',
-        '/api/replay?span=1h',
-      ]) {
+      for (const [path, carriesTalk] of [
+        ['/api/changes?since=0&limit=200', true],
+        ['/api/events?limit=200', true],
+        ['/api/window', false],
+        ['/api/replay?span=1h', false],
+      ] as const) {
         const response = await call(app, null, 'GET', path)
         assert.equal(response.status, 200, path + ': ' + JSON.stringify(response.json))
         const serialized = JSON.stringify(response.json)
-        assert.equal(serialized.includes('line_said'), false, path)
-        assert.equal(serialized.includes('ping_sent'), false, path)
-        assert.equal(serialized.includes('ping_answered'), false, path)
+        assert.equal(serialized.includes('line_said'), carriesTalk, path)
+        assert.equal(serialized.includes('ping_sent'), carriesTalk, path)
+        assert.equal(serialized.includes('ping_answered'), carriesTalk, path)
+        assert.equal(serialized.includes('not in the human views'), false, path)
       }
     })
 
-    await t.test('the founder moderation route still refuses a line target', async () => {
-      await prepareCity()
+    await t.test('the founder moderation route accepts a line target', async () => {
+      const rooms = await prepareCity()
+      const lineId = await seedLine(rooms.eastRoomId, SPEAKER.id, 'a line the founder removes')
       const db = connectedDatabase()
       const before = Number((await db.query<{ count: number }>(
         "SELECT count(*)::integer AS count FROM moderation_actions WHERE target_type = 'line'",
@@ -753,18 +756,19 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
       const response = await call(app, FOUNDER.secret, 'POST', '/api/moderation', {
         action: 'remove',
         target_type: 'line',
-        target_id: 1,
+        target_id: lineId,
         reason: 'test route vocabulary',
       })
-      assert.equal(response.status, 400)
-      assert.equal(
-        response.json.error,
-        'need exactly action (remove|restore), target_type, target_id, and a safe reason',
-      )
+      assert.equal(response.status, 201, JSON.stringify(response.json))
+      const moderation = response.json.moderation as Json
+      assert.equal(moderation.action, 'remove')
+      assert.equal(moderation.target_type, 'line')
+      assert.equal(moderation.target_id, lineId)
+      assert.equal(moderation.reason, 'test route vocabulary')
       const after = Number((await db.query<{ count: number }>(
         "SELECT count(*)::integer AS count FROM moderation_actions WHERE target_type = 'line'",
       )).rows[0]!.count)
-      assert.equal(after, before)
+      assert.equal(after, before + 1)
     })
   } finally {
     await postgres.stop()
