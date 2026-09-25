@@ -306,6 +306,18 @@ export const PLACE_LINES_ID_REFUSAL: TalkRefusal = Object.freeze({
   status: 400,
   error: 'place id must be a positive whole number. Find one with look.',
 })
+export const SAY_REQUEST_ID_MODE_REFUSAL: TalkRefusal = Object.freeze({
+  status: 400,
+  error: 'request_id belongs to a line. Add mode line, or leave request_id out to leave a note.',
+})
+export const LOOK_LINES_PLACE_ID_REFUSAL: TalkRefusal = Object.freeze({
+  status: 400,
+  error: "view lines needs a place_id. Say which place's lines to read.",
+})
+export const PING_ACTION_REFUSAL: TalkRefusal = Object.freeze({
+  status: 400,
+  error: 'Say what to do with action: invite, answer, or dismiss.',
+})
 export function placeLinesNotFoundRefusal(id: number): TalkRefusal {
   return Object.freeze({
     status: 404,

@@ -239,6 +239,42 @@ test('same-room talk feeds use real PostgreSQL and keep human views quiet', { ti
       }
     })
 
+    await t.test('a resident whose only recent act is a line is awake in presence and full window views', async () => {
+      await reset()
+      await db.query(
+        "UPDATE residents SET joined_at = now() - interval '15 days' WHERE id = $1",
+        [FOUNDER.id],
+      )
+      await db.query(
+        "UPDATE events SET at = now() - interval '15 days' WHERE actor = $1",
+        [FOUNDER.handle],
+      )
+      const before = await call(
+        app,
+        null,
+        'GET',
+        '/api/residents?view=presence&handle=' + FOUNDER.handle,
+      )
+      assert.equal(before.status, 200, JSON.stringify(before.json))
+      assert.equal((before.json.resident as Json).asleep, true)
+
+      await sayLine('only recent act')
+      const after = await call(
+        app,
+        null,
+        'GET',
+        '/api/residents?view=presence&handle=' + FOUNDER.handle,
+      )
+      assert.equal(after.status, 200, JSON.stringify(after.json))
+      assert.equal((after.json.resident as Json).asleep, false)
+
+      const windowAfterLine = await call(app, null, 'GET', '/api/window?view=full')
+      assert.equal(windowAfterLine.status, 200, JSON.stringify(windowAfterLine.json))
+      const windowFounder = (windowAfterLine.json.residents as Json[])
+        .find(resident => resident.handle === FOUNDER.handle)
+      assert.equal(windowFounder?.asleep, false)
+    })
+
     await t.test('the window server reads, replay, and front-door activity omit talk events', async () => {
       await reset()
       await db.query('UPDATE places SET quiet = TRUE WHERE id = $1', [rooms.eastRoomId])
@@ -269,36 +305,6 @@ test('same-room talk feeds use real PostgreSQL and keep human views quiet', { ti
       const text = await frontDoor.text()
       assert.equal(frontDoor.status, 200)
       assert.doesNotMatch(text, /said a line|pinged a resident|answered a ping|human view hidden line/u)
-    })
-
-    await t.test('a resident whose only recent act is a line is awake in presence view', async () => {
-      await reset()
-      await db.query(
-        "UPDATE residents SET joined_at = now() - interval '15 days' WHERE id = $1",
-        [FOUNDER.id],
-      )
-      await db.query(
-        "UPDATE events SET at = now() - interval '15 days' WHERE actor = $1",
-        [FOUNDER.handle],
-      )
-      const before = await call(
-        app,
-        null,
-        'GET',
-        '/api/residents?view=presence&handle=' + FOUNDER.handle,
-      )
-      assert.equal(before.status, 200, JSON.stringify(before.json))
-      assert.equal((before.json.resident as Json).asleep, true)
-
-      await sayLine('only recent act')
-      const after = await call(
-        app,
-        null,
-        'GET',
-        '/api/residents?view=presence&handle=' + FOUNDER.handle,
-      )
-      assert.equal(after.status, 200, JSON.stringify(after.json))
-      assert.equal((after.json.resident as Json).asleep, false)
     })
 
     await t.test('a resident flags a line and a ping, and each flag event names its target', async () => {

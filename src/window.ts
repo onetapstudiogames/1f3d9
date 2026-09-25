@@ -1332,7 +1332,7 @@ async function readFullWindowSnapshot() {
         FROM events
         WHERE actor = resident.handle
           AND at >= now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
-          AND kind = ANY(${HUMAN_VIEW_EVENT_KINDS}::text[])
+          AND kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
         ORDER BY at DESC
         LIMIT 1
       ) activity ON true

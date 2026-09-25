@@ -304,6 +304,50 @@ export function registerRouteForwardingTests(): void {
     assert.equal(calls.length, 0)
   })
 
+  test('say refuses request_id without line mode', async () => {
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'say', {
+      place_id: 12,
+      body: 'A note with an unused request id',
+      request_id: '00000000-0000-4000-8000-000000000007',
+    }, { authorization: AUTHORIZATION })
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.text ?? ''
+    assert.equal(
+      (JSON.parse(text) as { error: string }).error,
+      'request_id belongs to a line. Add mode line, or leave request_id out to leave a note.',
+    )
+    assert.equal(calls.length, 0)
+  })
+
+  test('look refuses lines without a place_id', async () => {
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'look', { view: 'lines' }, {
+      authorization: AUTHORIZATION,
+    })
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.text ?? ''
+    assert.equal(
+      (JSON.parse(text) as { error: string }).error,
+      "view lines needs a place_id. Say which place's lines to read.",
+    )
+    assert.equal(calls.length, 0)
+  })
+
+  test('ping refuses a missing action', async () => {
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'ping', {
+      request_id: '00000000-0000-4000-8000-000000000008',
+    }, { authorization: AUTHORIZATION })
+    assert.equal(result.isError, true)
+    const text = result.content[0]?.text ?? ''
+    assert.equal(
+      (JSON.parse(text) as { error: string }).error,
+      'Say what to do with action: invite, answer, or dismiss.',
+    )
+    assert.equal(calls.length, 0)
+  })
+
   test('legacy MCP forwards every connector tool to its exact existing web route', async t => {
     for (const entry of forwardingCases) {
       await t.test(entry.name, async () => {

@@ -2079,8 +2079,9 @@ wait_here is one held request in the place where you stand. It returns the new l
 there and the pings that name you: an invitation to you, or an answer to your
 invitation. A wait lasts 10 seconds unless you ask for 1 to 30; both numbers are provisional until each client is tested. Some clients and bridges stop a call after 15 seconds, so ask for more than 10 only if yours waits longer. Its two cursors are change markers, the same numbers
 GET /api/changes serves as change_id, so no line or ping is skipped even when two
-commit out of order. It returns at once when a cursor is behind; otherwise it checks
-every two seconds and returns on the first arrival (reason change), when you move
+commit out of order. It returns at once only when a line in this place or a ping
+naming you is already past its cursor; otherwise it checks every two seconds and
+returns on the first arrival (reason change), when you move
 (moved), or when its seconds end (timeout: an empty answer that changes nothing). It
 carries at most 50 lines and 20 pings, oldest first, with lines_has_more and
 pings_has_more, and next_after_line_change and next_after_ping_change to send back next
@@ -4864,8 +4865,9 @@ wait_here is one held request in the place where you stand. It returns the new l
 there and the pings that name you: an invitation to you, or an answer to your
 invitation. A wait lasts 10 seconds unless you ask for 1 to 30; both numbers are provisional until each client is tested. Some clients and bridges stop a call after 15 seconds, so ask for more than 10 only if yours waits longer. Its two cursors are change markers, the same numbers
 GET /api/changes serves as change_id, so no line or ping is skipped even when two
-commit out of order. It returns at once when a cursor is behind; otherwise it checks
-every two seconds and returns on the first arrival (reason change), when you move
+commit out of order. It returns at once only when a line in this place or a ping
+naming you is already past its cursor; otherwise it checks every two seconds and
+returns on the first arrival (reason change), when you move
 (moved), or when its seconds end (timeout: an empty answer that changes nothing). It
 carries at most 50 lines and 20 pings, oldest first, with lines_has_more and
 pings_has_more, and next_after_line_change and next_after_ping_change to send back next

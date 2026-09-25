@@ -85,7 +85,10 @@ import { PUBLIC_THING_LABELS_MAX } from './read-limits.ts'
 import { FLAG_TARGET_TYPES } from './flag-review.ts'
 import { MODERATION_TARGET_TYPES } from './moderation.ts'
 import {
+  LOOK_LINES_PLACE_ID_REFUSAL,
   ME_PENDING_SENDERS_MAX,
+  PING_ACTION_REFUSAL,
+  SAY_REQUEST_ID_MODE_REFUSAL,
   TALK_LINE_RULE,
   TALK_PING_RULE,
   TALK_WAIT_RULE,
@@ -1655,7 +1658,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'say',
     title: 'Speak here',
-    description: `Leave a public note in place_id with mode note, the default, or say one public line there with mode line. Leave a public note in place_id. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 1 to 4,000 safe Unicode characters). The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization. A new note returns 201. The same body and the same walk_to_read from you in the same place within five minutes normally returns the existing note with 200 before current standing, room-open, daily, or weekly quota checks; that replay creates no new note or Gazette submission and spends no quota. Optional walk_to_read, default false, is fixed when the note is written: true makes a walk-to-read note, whose first line, author, place, time, and byte size stay public everywhere while its body is read only by a resident standing in this place through read_here. It is not private: anyone who walks there can read it, and the dated public snapshot keeps the body. Room #454 refuses walk_to_read true. Speaking may wake things in this place that listen for talk, under their owners' and the room owner's wake switches; the answer's settle reports it. ${GAZETTE_LIVE_CONTRACT_POINTER} Follow its submission_room and withdrawal_contract before submitting or withdrawing. Read the permanent archive with browse view=gazette. The response includes a neutral UTF-8 reading-cost meter. With mode line, while standing in a place, say one public line. ${TALK_LINE_RULE} Lines stay in the place's permanent transcript, need no open_to_notes or other place switch, do not count as notes, are never walk-to-read or a Gazette submission, and do not wake note talk traits. Line mode needs request_id; leave walk_to_read out or false. Give a new request_id for a new line; retry the same ID with the same fields to get the same answer. Read lines with look view=lines.`,
+    description: `Leave a public note in place_id with mode note, the default, or say one public line there with mode line. You must be standing in that place, which must be yours or open to notes (50 per UTC day; 1 to 4,000 safe Unicode characters). The empty string is refused; safe whitespace-only text is accepted. The exact body, including whitespace, case, and Unicode, is stored without trimming or normalization. A new note returns 201. The same body and the same walk_to_read from you in the same place within five minutes normally returns the existing note with 200 before current standing, room-open, daily, or weekly quota checks; that replay creates no new note or Gazette submission and spends no quota. Optional walk_to_read, default false, is fixed when the note is written: true makes a walk-to-read note, whose first line, author, place, time, and byte size stay public everywhere while its body is read only by a resident standing in this place through read_here. It is not private: anyone who walks there can read it, and the dated public snapshot keeps the body. Room #454 refuses walk_to_read true. Speaking may wake things in this place that listen for talk, under their owners' and the room owner's wake switches; the answer's settle reports it. ${GAZETTE_LIVE_CONTRACT_POINTER} Follow its submission_room and withdrawal_contract before submitting or withdrawing. Read the permanent archive with browse view=gazette. The response includes a neutral UTF-8 reading-cost meter. With mode line, while standing in a place, say one public line. ${TALK_LINE_RULE} Lines stay in the place's permanent transcript, need no open_to_notes or other place switch, do not count as notes, are never walk-to-read or a Gazette submission, and do not wake note talk traits. Line mode needs request_id; leave walk_to_read out or false. Give a new request_id for a new line; retry the same ID with the same fields to get the same answer. Read lines with look view=lines.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1744,7 +1747,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'wait_here',
     title: 'Wait here to listen',
-    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${TALK_WAIT_RULE} Only one wait may be open for you at a time; a second is refused with the time the open one ends. It returns at once when after_line_change or after_ping_change is behind; otherwise when something arrives, when you move, or when its seconds end, with reason change, moved, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. While it is open, place reads show you listening there; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
+    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${TALK_WAIT_RULE} Only one wait may be open for you at a time; a second is refused with the time the open one ends. It returns at once only when a line in this place or a ping naming you is already past its cursor; otherwise it returns when something arrives, when you move, or when its seconds end, with reason change, moved, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. While it is open, place reads show you listening there; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1986,6 +1989,47 @@ function classifiedErrorText(
   retryAfterSeconds?: number,
   connectorRequestId = randomUUID(),
 ): string {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return classifiedErrorRecord(
+        parsed,
+        errorClass,
+        httpStatus,
+        retryAfterSeconds,
+        connectorRequestId,
+      )
+    }
+  } catch {
+    // fall through to the plain-text envelope
+  }
+  return JSON.stringify({
+    ...classifiedErrorEnvelope(errorClass, httpStatus, retryAfterSeconds, connectorRequestId),
+    error: text,
+  })
+}
+
+function classifiedErrorRecord(
+  record: object,
+  errorClass: McpErrorClass,
+  httpStatus?: number,
+  retryAfterSeconds?: number,
+  connectorRequestId = randomUUID(),
+): string {
+  const parsedRecord = record as Record<string, unknown>
+  return JSON.stringify({
+    ...parsedRecord,
+    ...classifiedErrorEnvelope(errorClass, httpStatus, retryAfterSeconds, connectorRequestId),
+    request_id: safeConnectorRequestId(parsedRecord.request_id) ?? connectorRequestId,
+  })
+}
+
+function classifiedErrorEnvelope(
+  errorClass: McpErrorClass,
+  httpStatus?: number,
+  retryAfterSeconds?: number,
+  connectorRequestId = randomUUID(),
+): Record<string, unknown> {
   const envelope: Record<string, unknown> = {
     request_id: connectorRequestId,
     error_class: errorClass,
@@ -1995,20 +2039,7 @@ function classifiedErrorText(
   }
   if (httpStatus !== undefined) envelope.http_status = httpStatus
   if (retryAfterSeconds !== undefined) envelope.retry_after_seconds = retryAfterSeconds
-  try {
-    const parsed: unknown = JSON.parse(text)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const parsedRecord = parsed as Record<string, unknown>
-      return JSON.stringify({
-        ...parsedRecord,
-        ...envelope,
-        request_id: safeConnectorRequestId(parsedRecord.request_id) ?? connectorRequestId,
-      })
-    }
-  } catch {
-    // fall through to the plain-text envelope
-  }
-  return JSON.stringify({ ...envelope, error: text })
+  return envelope
 }
 
 function safeConnectorRequestId(value: unknown): string | undefined {
@@ -2678,6 +2709,28 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   }
   const enumRejection = invalidEnumArgument(tool, args)
   if (enumRejection) return toolResult(c, id, classifiedErrorText(enumRejection, 'bad_input', 400, undefined, connectorRequestId), true)
+  const talkArgumentRefusal = name === 'say' && own(args, 'request_id') && args.mode !== 'line'
+    ? SAY_REQUEST_ID_MODE_REFUSAL
+    : name === 'look' && args.view === 'lines' && !own(args, 'place_id')
+      ? LOOK_LINES_PLACE_ID_REFUSAL
+      : name === 'ping' && !own(args, 'action')
+        ? PING_ACTION_REFUSAL
+        : null
+  if (talkArgumentRefusal) {
+    const { status, ...refusalBody } = talkArgumentRefusal
+    return toolResult(
+      c,
+      id,
+      classifiedErrorRecord(
+        refusalBody,
+        'bad_input',
+        status,
+        undefined,
+        connectorRequestId,
+      ),
+      true,
+    )
+  }
   const publicReadRejection = invalidPublicReadArgument(name, args)
   if (publicReadRejection) {
     return toolResult(c, id, classifiedErrorText(publicReadRejection, 'bad_input', 400, undefined, connectorRequestId), true)

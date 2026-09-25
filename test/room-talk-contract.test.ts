@@ -46,6 +46,9 @@ import {
   WAIT_SECONDS_REFUSAL,
   WAIT_CURSOR_REFUSAL,
   PLACE_LINES_ID_REFUSAL,
+  SAY_REQUEST_ID_MODE_REFUSAL,
+  LOOK_LINES_PLACE_ID_REFUSAL,
+  PING_ACTION_REFUSAL,
   PENDING_PAGE_REFUSAL,
   WAIT_NO_PLACE_REFUSAL,
   isTalkRequestId,
@@ -237,6 +240,9 @@ test('every talk refusal is exact caller wording', () => {
   assert.deepEqual(PLACE_LINES_ID_REFUSAL, { status: 400, error: 'place id must be a positive whole number. Find one with look.' })
   assert.deepEqual(placeLinesNotFoundRefusal(99), { status: 404, error: 'No place has id 99. Find a current place with look.' })
   assert.deepEqual(PENDING_PAGE_REFUSAL, { status: 400, error: 'pending_before_ping_id must be a positive whole number and pending_limit a whole number from 1 to 20. Send the cursor your last me or pending summary returned.' })
+  assert.deepEqual(SAY_REQUEST_ID_MODE_REFUSAL, { status: 400, error: 'request_id belongs to a line. Add mode line, or leave request_id out to leave a note.' })
+  assert.deepEqual(LOOK_LINES_PLACE_ID_REFUSAL, { status: 400, error: "view lines needs a place_id. Say which place's lines to read." })
+  assert.deepEqual(PING_ACTION_REFUSAL, { status: 400, error: 'Say what to do with action: invite, answer, or dismiss.' })
   const refusalTexts = [
     TALK_REQUEST_ID_REFUSAL.error,
     LINE_NOT_HERE_REFUSAL.error,
@@ -275,6 +281,9 @@ test('every talk refusal is exact caller wording', () => {
     PLACE_LINES_ID_REFUSAL.error,
     placeLinesNotFoundRefusal(99).error,
     PENDING_PAGE_REFUSAL.error,
+    SAY_REQUEST_ID_MODE_REFUSAL.error,
+    LOOK_LINES_PLACE_ID_REFUSAL.error,
+    PING_ACTION_REFUSAL.error,
     TALK_LINE_RULE,
     TALK_PING_RULE,
     TALK_WAIT_RULE,
