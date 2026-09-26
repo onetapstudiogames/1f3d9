@@ -79,14 +79,14 @@ test('snapshot v3 reads no private talk table, request_id, or arrival mark', () 
   assert.doesNotMatch(view, /arrived_at/iu)
 })
 
-test('the change feed carries talk events, and the human views do not yet', async () => {
+test('the change feed carries talk events, and Happenings, the replay file, and front-door activity leave them out', async () => {
   const { HUMAN_VIEW_EVENT_KINDS, HUMAN_VIEW_EVENT_LABELS } = await import('../src/public-events.ts')
   assert.deepEqual(PUBLIC_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [...talkEventKinds])
   assert.deepEqual(HUMAN_VIEW_EVENT_KINDS.filter(kind => talkEventKinds.has(kind)), [])
   assert.deepEqual(Object.keys(HUMAN_VIEW_EVENT_LABELS).filter(kind => talkEventKinds.has(kind)), [])
 })
 
-test('the window program has no talk label', () => {
+test('the window program has no talk event label; lines reach humans through Talk', () => {
   assert.doesNotMatch(WINDOW_JS, /"line_said"|said a line/u)
 })
 

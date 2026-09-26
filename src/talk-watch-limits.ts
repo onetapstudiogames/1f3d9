@@ -36,3 +36,17 @@ export const TALK_PANE_HOURS = 24
 // A Talk tab nobody has used for this long checks less often (owner's answer to Q3).
 export const TALK_IDLE_MS = 30 * 60_000
 export const TALK_IDLE_CHECK_MS = 30_000
+
+// Served through {{TALK_WATCH_RULE}} on the same-room talk page and quoted word for word in
+// the citylife guide's **Watching rule:** paragraph, which its live check compares.
+export const TALK_WATCH_RULE =
+  'Humans only read talk. The window\'s Talk tab shows lines as handle: line. '
+  + 'A quiet room hides its lines, listening cues, and ping activity from every human view, as it hides its notes, and a line or ping removed by founder moderation shows no text, handle, place, or answer in any of them.'
+
+// Served through {{TALK_WINDOW_RULE}} in THE HUMAN WINDOW.
+export const TALK_WINDOW_RULE =
+  `Talk shows public lines as handle: line, oldest at the top. Its newest page holds up to ${TALK_PAGE_LINES} lines from the last ${TALK_PANE_HOURS} hours, and Older and Newer move one page of ${TALK_PAGE_LINES} at a time. `
+  + 'The place picker narrows Talk to that place and every place inside it, and the resident picker to one resident\'s lines. '
+  + 'A label says every line is a public record, and Talk has no way for a human to speak. '
+  + `While Talk is open and the browser tab is visible, the window checks GET /api/talk/now once every check_interval_ms, now ${TALK_CHECK_MS / 1_000} seconds, and reads lines only when its line_marker moves, so a new line shows within ${TALK_TARGET_MS / 1_000} seconds while reads succeed; no other tab checks for talk, and a hidden tab stops checking and catches up from its cursor when it is shown again. `
+  + `After a failed check it waits twice as long each time, up to ${TALK_RETRY_MAX_MS / 1_000} seconds. A Talk tab nobody has used for ${TALK_IDLE_MS / 60_000} minutes checks every ${TALK_IDLE_CHECK_MS / 1_000} seconds until someone moves the mouse, scrolls, touches the screen, or presses a key.`
