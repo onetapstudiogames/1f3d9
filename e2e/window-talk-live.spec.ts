@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
+import { FOCUSED_PLACE, SNAPSHOT } from './helpers/public-window-snapshot-fixtures.ts'
 import {
   MINUTE_MS,
   linesPage,
@@ -67,6 +68,96 @@ function publicLine(id: number, body: string) {
   }
 }
 
+function snapshotAt(marker: string, quietRoot = false) {
+  return {
+    ...SNAPSHOT,
+    change_marker: marker,
+    places: SNAPSHOT.places.map(place => place.id === 11 && quietRoot
+      ? { ...place, quiet: true }
+      : { ...place }),
+  }
+}
+
+function emptyWindowHistoryPage(collection: string, marker: string) {
+  const page = { has_more: false, next_before_id: null, change_marker: marker }
+  if (collection === 'notes') return { ...page, notes: [] }
+  if (collection === 'things') return { ...page, things: [] }
+  if (collection === 'agreements') return { ...page, agreements: [] }
+  if (collection === 'events') return { ...page, events: [] }
+  return null
+}
+
+async function routeDeepRoom(
+  page: Page,
+  {
+    quietAt,
+    holdMapAt,
+  }: {
+    quietAt: (marker: string) => boolean
+    holdMapAt: string | null
+  },
+): Promise<{ changes: string[]; maps: string[]; release: () => void }> {
+  const changes: string[] = []
+  const maps: string[] = []
+  let releaseHeldMap = () => {}
+  const heldMap = new Promise<void>(resolve => { releaseHeldMap = resolve })
+
+  await page.unroute('**/api/changes**')
+  await page.route('**/api/changes**', async route => {
+    const url = new URL(route.request().url())
+    changes.push(url.toString())
+    const since = url.searchParams.get('since')
+    const marker = since ? String(BigInt(since) + 1n) : '20'
+    const change = since
+      ? [{ change_id: marker, kind: 'place_edited', actor: 'mapkeeper', detail: { place_id: since === '21' ? 11 : 77 }, created_at: '2026-09-25T11:59:30.000Z' }]
+      : []
+    await route.fulfill({ json: {
+      change_marker: marker,
+      changes: change,
+      returned_items: change.length,
+      unchanged: change.length === 0,
+      has_more: false,
+      next_since: marker,
+    } })
+  })
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    const collection = url.searchParams.get('collection')
+    if (!collection && url.searchParams.get('view') === 'outline' && marker) {
+      return route.fulfill({ json: snapshotAt(marker) })
+    }
+    if (marker && collection) {
+      const body = emptyWindowHistoryPage(collection, marker)
+      if (body) return route.fulfill({ json: body })
+    }
+    return route.fallback()
+  })
+  await page.route('**/api/events**', async route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    if (marker) {
+      return route.fulfill({ json: {
+        events: [], has_more: false, next_before_id: null, change_marker: marker,
+      } })
+    }
+    return route.fallback()
+  })
+  await page.route('**/api/map**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    maps.push(url.toString())
+    const marker = url.searchParams.get('after_change_marker') ?? '20'
+    if (marker === holdMapAt) await heldMap
+    return route.fulfill({ json: {
+      ...FOCUSED_PLACE,
+      change_marker: marker,
+      place: { ...FOCUSED_PLACE.place, quiet: quietAt(marker) },
+    } })
+  })
+  return { changes, maps, release: releaseHeldMap }
+}
+
 async function openTalk(page: import('@playwright/test').Page, requests: TalkRequests) {
   await page.locator('#talk-tab').click()
   await expect(page.locator('#talk-panel')).toBeVisible()
@@ -132,6 +223,162 @@ test('a head whose line marker does not move makes no lines read', async ({ page
 
   expect(requests.lines).toHaveLength(1)
   expect(requests.talkNow).toHaveLength(6)
+})
+
+test('a place edit newer than the city view refreshes it at once, and a room that turned quiet hides its lines', async ({ page }) => {
+  const changesRequests: string[] = []
+  await page.unroute('**/api/changes**')
+  await page.route('**/api/changes**', async route => {
+    const url = new URL(route.request().url())
+    changesRequests.push(url.toString())
+    const since = url.searchParams.get('since')
+    if (since === '20') {
+      return route.fulfill({ json: {
+        change_marker: '21',
+        changes: [{
+          change_id: '21', kind: 'place_edited', actor: 'mapkeeper',
+          detail: { place_id: 11 }, created_at: '2026-09-25T11:59:30.000Z',
+        }],
+        returned_items: 1, unchanged: false, has_more: false, next_since: '21',
+      } })
+    }
+    return route.fulfill({ json: {
+      change_marker: '21', changes: [], returned_items: 0,
+      unchanged: true, has_more: false, next_since: '21',
+    } })
+  })
+  await page.route('**/api/window**', async route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    const collection = url.searchParams.get('collection')
+    if (!collection && url.searchParams.get('view') === 'outline' && marker === '21') {
+      return route.fulfill({ json: snapshotAt('21', true) })
+    }
+    if (marker === '21' && collection) {
+      const body = emptyWindowHistoryPage(collection, marker)
+      if (body) return route.fulfill({ json: body })
+    }
+    return route.fallback()
+  })
+  await page.route('**/api/events**', async route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('after_change_marker') === '21') {
+      return route.fulfill({ json: {
+        events: [], has_more: false, next_before_id: null, change_marker: '21',
+      } })
+    }
+    return route.fallback()
+  })
+  const requests = await routeTalk(page, {
+    now: (_url, index) => talkNow({ placeMarker: index === 0 ? '20' : '21' }),
+    lines: linesPage([publicLine(101, 'QuietTurnLineZq9k7')]),
+  })
+  const changesAtTalkOpen = changesRequests.length
+  await openTalk(page, requests)
+  await expect(page.locator('#talk-lines')).toContainText('QuietTurnLineZq9k7')
+  expect(changesRequests.slice(changesAtTalkOpen)).toHaveLength(0)
+  expect(changesRequests.some(value => new URL(value).searchParams.get('since') === '21')).toBe(false)
+
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect.poll(() => changesRequests.slice(changesAtTalkOpen)
+    .filter(value => new URL(value).searchParams.get('since') === '20').length).toBe(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('QuietTurnLineZq9k7')
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  expect(requests.lines).toHaveLength(1)
+})
+
+test('a place marker at or below the city view makes no change feed read', async ({ page }) => {
+  const changesRequests: string[] = []
+  await page.route('**/api/changes**', async route => {
+    changesRequests.push(route.request().url())
+    return route.fallback()
+  })
+  const requests = await routeTalk(page, {
+    now: (_url, index) => talkNow({ placeMarker: index === 1 ? '19' : '20' }),
+    lines: linesPage([]),
+  })
+  const changesAtTalkOpen = changesRequests.length
+  await openTalk(page, requests)
+  await expect.poll(() => requests.lines.length).toBe(1)
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await stepTalk(page, 2_000, requests, { talkNow: 3, checks: 3 })
+  expect(changesRequests.slice(changesAtTalkOpen)).toHaveLength(0)
+})
+
+test('a deep room picked in Talk that turns quiet hides its lines after one check', async ({ page }) => {
+  const requests = await routeTalk(page, {
+    now: (_url, index) => talkNow({ placeMarker: index === 0 ? '20' : '21' }),
+    lines: linesPage([{ ...publicLine(102, 'DeepQuietLineRw4m8'), place_id: 77 }]),
+  })
+  const deepRoom = await routeDeepRoom(page, {
+    quietAt: marker => marker === '21',
+    holdMapAt: null,
+  })
+  const changesAtPick = deepRoom.changes.length
+  await page.evaluate(() => { window.location.hash = '#view=talk&place=77' })
+  await expect(page.locator('#talk-panel')).toBeVisible()
+  await expect.poll(() => requests.talkNow.length).toBe(1)
+  await expect(page.locator('#talk-lines')).toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect.poll(() => deepRoom.changes.slice(changesAtPick)
+    .filter(value => new URL(value).searchParams.get('since') === '20').length).toBe(1)
+  await expect.poll(() => deepRoom.maps.filter(value => {
+    const url = new URL(value)
+    return url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '21'
+  }).length).toBe(1)
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+  expect(requests.lines).toHaveLength(1)
+})
+
+test('a picked quiet room stays hidden while its own read is pending after a later refresh', async ({ page }) => {
+  const requests = await routeTalk(page, {
+    now: (_url, index) => talkNow({ placeMarker: ['20', '21', '22'][index] ?? '23' }),
+    lines: linesPage([{ ...publicLine(102, 'DeepQuietLineRw4m8'), place_id: 77 }]),
+  })
+  const deepRoom = await routeDeepRoom(page, {
+    quietAt: marker => marker === '21' || marker === '22',
+    holdMapAt: '22',
+  })
+  await page.evaluate(() => { window.location.hash = '#view=talk&place=77' })
+  await expect(page.locator('#talk-panel')).toBeVisible()
+  await expect.poll(() => requests.talkNow.length).toBe(1)
+  await expect(page.locator('#talk-lines')).toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 3, checks: 3 })
+  await expect.poll(() => deepRoom.maps.filter(value => {
+    const url = new URL(value)
+    return url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '22'
+  }).length).toBe(1)
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+  await new Promise(resolve => setTimeout(resolve, 500))
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  const heldMapResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' &&
+      url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '22'
+  })
+  deepRoom.release()
+  await heldMapResponse
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 4, checks: 4 })
+  await expect(page.locator('#talk-lines')).toContainText('DeepQuietLineRw4m8')
+  expect(requests.lines).toHaveLength(1)
 })
 
 test('a hidden tab stops checking and catches up at once when shown', async ({ page }) => {

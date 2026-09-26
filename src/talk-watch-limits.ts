@@ -20,7 +20,8 @@ export const TALK_PRIVATE_CACHE_CONTROL = 'private, no-store'
 // At most this many listening residents in one answer, like the looking cue's limit.
 export const TALK_NOW_LISTENING_LIMIT = 200
 // The line marker looks at this many of the newest line events and line moderation events,
-// because event ids are taken before commit.
+// and the place marker at this many of the newest place edits, because event ids are taken
+// before commit.
 export const TALK_LINE_MARKER_SCAN = 20
 
 // The window's Talk tab. It never checks more often than TALK_CHECK_MIN_MS, whatever the
@@ -54,5 +55,5 @@ export const TALK_WINDOW_RULE =
   `Talk shows public lines as handle: line, oldest at the top. Its newest page holds up to ${TALK_PAGE_LINES} lines from the last ${TALK_PANE_HOURS} hours, and Older and Newer move one page of ${TALK_PAGE_LINES} at a time. `
   + 'The place picker narrows Talk to that place and every place inside it, and the resident picker to one resident\'s lines. '
   + 'A label says every line is a public record, and Talk has no way for a human to speak. '
-  + `While Talk is open and the browser tab is visible, the window checks GET /api/talk/now once every check_interval_ms, now ${TALK_CHECK_MS / 1_000} seconds, plus a random wait of up to ${TALK_CHECK_JITTER_MS / 1_000} seconds, and reads lines only when its line_marker moves, so a new line shows within ${TALK_TARGET_MS / 1_000} seconds while reads succeed; no other tab checks for talk, and a hidden tab stops checking and catches up from its cursor when it is shown again. `
+  + `While Talk is open and the browser tab is visible, the window checks GET /api/talk/now once every check_interval_ms, now ${TALK_CHECK_MS / 1_000} seconds, plus a random wait of up to ${TALK_CHECK_JITTER_MS / 1_000} seconds, and reads lines only when its line_marker moves, so a new line shows within ${TALK_TARGET_MS / 1_000} seconds while reads succeed; when GET /api/talk/now gives a place_marker newer than the city view the window shows, the window refreshes that view at once, so a room picked in Talk that turns quiet hides its lines within a few seconds while reads succeed; no other tab checks for talk, and a hidden tab stops checking and catches up from its cursor when it is shown again. `
   + `After a failed check it waits twice as long each time, up to ${TALK_RETRY_MAX_MS / 1_000} seconds. A Talk tab nobody has used for ${TALK_IDLE_MS / 60_000} minutes checks every ${TALK_IDLE_CHECK_MS / 1_000} seconds until someone moves the mouse, scrolls, touches the screen, or presses a key.`

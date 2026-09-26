@@ -5,6 +5,7 @@ import {
   normalizeTalkNow,
   talkCheckDelay,
   talkCheckMs,
+  talkCityViewIsBehind,
   talkEmptyPaneText,
   talkIdleStatus,
   talkLinesPath,
@@ -64,10 +65,11 @@ test('Talk normalizes only a decimal marker and never copies the listening list'
   assert.deepEqual(
     normalizeTalkNow({
       line_marker: '167809',
+      place_marker: '167790',
       check_interval_ms: 2000,
       listening: [{ handle: 'smokecheck' }],
     }, { minMs: 2000, maxMs: 600000 }),
-    { lineMarker: '167809', checkMs: 2000 },
+    { lineMarker: '167809', placeMarker: '167790', checkMs: 2000 },
   )
   assert.deepEqual(
     normalizeTalkNow({
@@ -75,8 +77,15 @@ test('Talk normalizes only a decimal marker and never copies the listening list'
       check_interval_ms: 4000,
       listening: [],
     }, { minMs: 2000, maxMs: 600000 }),
-    { lineMarker: '167809', checkMs: 4000 },
+    { lineMarker: '167809', placeMarker: null, checkMs: 4000 },
   )
+  for (const placeMarker of ['01', '1.0', 5, '', null]) {
+    assert.deepEqual(
+      normalizeTalkNow({ line_marker: '7', place_marker: placeMarker, check_interval_ms: 2000 }, { minMs: 2000, maxMs: 600000 }),
+      { lineMarker: '7', placeMarker: null, checkMs: 2000 },
+      String(placeMarker),
+    )
+  }
   assert.equal(normalizeTalkNow({}, { minMs: 2000, maxMs: 600000 }), null)
   assert.equal(
     normalizeTalkNow({ line_marker: '01', check_interval_ms: 2000 }, { minMs: 2000, maxMs: 600000 }),
@@ -87,6 +96,16 @@ test('Talk normalizes only a decimal marker and never copies the listening list'
     null,
   )
   assert.equal(normalizeTalkNow(null, { minMs: 2000, maxMs: 600000 }), null)
+})
+
+test('Talk refreshes the city view only when a place edit is newer than the view it shows', () => {
+  assert.equal(talkCityViewIsBehind({ placeMarker: '21', changeMarker: '20' }), true)
+  assert.equal(talkCityViewIsBehind({ placeMarker: '9223372036854775807', changeMarker: '9223372036854775806' }), true)
+  assert.equal(talkCityViewIsBehind({ placeMarker: '20', changeMarker: '20' }), false)
+  assert.equal(talkCityViewIsBehind({ placeMarker: '19', changeMarker: '20' }), false)
+  assert.equal(talkCityViewIsBehind({ placeMarker: null, changeMarker: '20' }), false)
+  assert.equal(talkCityViewIsBehind({ placeMarker: '21', changeMarker: null }), false)
+  assert.equal(talkCityViewIsBehind({ placeMarker: '021', changeMarker: '20' }), false)
 })
 
 test('Talk normalizes safe line rows and drops unsafe public text and identity', () => {
@@ -286,8 +305,14 @@ test('the Talk tab is read only and is wired into the window program', () => {
   for (const helper of [
     'talkLinesPath', 'talkCheckMs', 'normalizeTalkNow', 'normalizeTalkLines',
     'talkPane', 'talkRenderRows', 'talkCheckDelay', 'talkEmptyPaneText', 'talkIdleStatus',
+    'talkCityViewIsBehind',
   ]) {
     assert.ok(WINDOW_JS.includes(helper), helper + ' must be injected into the browser program')
   }
+  assert.match(
+    WINDOW_JS,
+    /if \(!state\.refreshing && state\.failures === 0 &&\s+talkCityViewIsBehind\(\{ placeMarker: head\.placeMarker, changeMarker: state\.changeMarker \}\)\) \{\s+void refreshCity\(\)\s+\}/u,
+    'a newer place edit starts the city refresh unless one is running or failing',
+  )
   assert.doesNotMatch(WINDOW_JS, /line_said|said a line|chatting/u)
 })

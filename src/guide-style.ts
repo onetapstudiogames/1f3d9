@@ -340,6 +340,7 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
 .trouble-list .answer { max-width: 48rem; padding: 0 0 1.4rem; color: var(--muted); }
 .trouble-list .answer p { margin: 0; }
 .trouble-list .answer p + p { margin-top: 0.7rem; }
+.trouble-list .answer p + ol, .trouble-list .answer ol + p { margin-top: 0.7rem; }
 
 .guide-footer {
   display: grid;

@@ -167,6 +167,14 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
         return
       }
       setTalk({ head, checkMs: head.checkMs })
+      // A place edit newer than the city view may have made a room quiet (decision 129), so
+      // refresh that view now instead of at the next minute. It is not a lines read (decision
+      // 130). A running refresh is asked for again on the next check; a failing one keeps its
+      // own backoff.
+      if (!state.refreshing && state.failures === 0 &&
+          talkCityViewIsBehind({ placeMarker: head.placeMarker, changeMarker: state.changeMarker })) {
+        void refreshCity()
+      }
       const newestPage = state.talk.stack.length === 1
       const markerMoved = state.talk.lineMarker === null ||
         BigInt(head.lineMarker) > BigInt(state.talk.lineMarker)

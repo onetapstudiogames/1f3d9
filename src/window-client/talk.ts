@@ -51,16 +51,37 @@ export function talkIdleStatus({
 export function normalizeTalkNow(
   value: unknown,
   { minMs, maxMs }: { minMs: number; maxMs: number },
-): { lineMarker: string; checkMs: number } | null {
+): { lineMarker: string; placeMarker: string | null; checkMs: number } | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const source = value as Record<string, unknown>
   const lineMarker = source.line_marker
   if (typeof lineMarker !== 'string' ||
       !/^(?:0|[1-9][0-9]{0,18})$/u.test(lineMarker)) return null
+  const placeMarker = typeof source.place_marker === 'string' &&
+    /^(?:0|[1-9][0-9]{0,18})$/u.test(source.place_marker)
+    ? source.place_marker
+    : null
   return {
     lineMarker,
+    placeMarker,
     checkMs: talkCheckMs(source.check_interval_ms, minMs, maxMs),
   }
+}
+
+// True only when the newest place edit the talk head names is newer than the change marker
+// the window's city view covers, so a room that turned quiet may still look open (decision
+// 129). Both markers must be decimal change ids; anything else answers false.
+export function talkCityViewIsBehind({
+  placeMarker,
+  changeMarker,
+}: {
+  placeMarker: string | null
+  changeMarker: string | null
+}): boolean {
+  const decimal = /^(?:0|[1-9][0-9]{0,18})$/u
+  if (typeof placeMarker !== 'string' || !decimal.test(placeMarker)) return false
+  if (typeof changeMarker !== 'string' || !decimal.test(changeMarker)) return false
+  return BigInt(placeMarker) > BigInt(changeMarker)
 }
 
 export function normalizeTalkLines(value: unknown): {

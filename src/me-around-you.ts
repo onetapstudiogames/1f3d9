@@ -1,6 +1,6 @@
 import { HANDLE_RE } from './core-primitives.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
-import { parsePublicChangeMarker } from './public-changes.ts'
+import { PUBLIC_CHANGE_PAGE_MAX, parsePublicChangeMarker } from './public-changes.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { noteBodyWithheldSql } from './walk-to-read.ts'
 
@@ -204,7 +204,7 @@ function summary(value: unknown, category: Category, after: string | null, throu
   const hasMore = count > records.length
   return Object.freeze({
     count, records, has_more: hasMore,
-    more_href: hasMore ? `/api/changes?since=${records.at(-1)!.change_id}&limit=200` : null,
+    more_href: hasMore ? `/api/changes?since=${records.at(-1)!.change_id}&limit=${PUBLIC_CHANGE_PAGE_MAX}` : null,
   })
 }
 
@@ -226,7 +226,7 @@ export function mapAroundYou(value: unknown): AroundYou {
         : row.unavailable_reason === 'timeout'
         ? 'The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.'
         : 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
-      read_href: `/api/changes?since=${after}&limit=200`,
+      read_href: `/api/changes?since=${after}&limit=${PUBLIC_CHANGE_PAGE_MAX}`,
       notes_in_owned_places: null, new_things_in_owned_places: null,
       new_agreement_signers: null, mentions: null,
     })

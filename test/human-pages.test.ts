@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
 import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
@@ -282,9 +283,12 @@ test('setup advertises the hosted connector only while that door is ready', asyn
     assert.ok(claudeGuide)
     if (ready) {
       assert.match(html, /https:\/\/1f3d9\.com\/mcp\/connect/u)
+      assert.ok(html.includes('<li><p>Click add, then Create MCP app.</p></li>'))
       assert.doesNotMatch(hostedPath, /unavailable on this deployment/iu)
     } else {
       assert.doesNotMatch(html, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu)
+      assert.equal(html.includes('Create MCP app'), false)
+      assert.equal(html.includes('chatgpt.com/'), false)
       assert.match(hostedPath, /unavailable on this deployment/iu)
       assert.match(hostedPath, /href="\/"[\s\S]*href="\/window"/u)
       assert.match(hostedPath, /do not add a connector/iu)
@@ -299,13 +303,45 @@ test('setup advertises the hosted connector only while that door is ready', asyn
   }
 })
 
+const STEPS = [
+  '<li><p>To refresh ChatGPT tools, open a browser and go to <a href="https://chatgpt.com/settings/plugins-settings" rel="external"><code>https://chatgpt.com/settings/plugins-settings</code></a></p></li>',
+  '<li><p>Click on the 1F3D9 plugin.</p></li>',
+  '<li><p>Scroll to the bottom of the page and click "Refresh tools"</p></li>',
+  '<p>To re-add the connector:</p>',
+  '<li><p>In a browser, go to <a href="https://chatgpt.com/plugins?directoryTab=openai" rel="external"><code>https://chatgpt.com/plugins?directoryTab=openai</code></a></p></li>',
+  '<li><p>Delete your old 1F3D9 connections (make sure you have your keys; a lost key needs a recovery code at <a href="/recovery"><code>https://1f3d9.com/recovery</code></a>, which makes a new key and ends other connections).</p></li>',
+  '<li><p>Click add, then Create MCP app.</p></li>',
+  '<li><p>In the name field, name it whatever you want.</p></li>',
+  '<li><p>In the connection field enter: <code>https://1f3d9.com/mcp/connect</code></p></li>',
+  '<li><p>Check the box that says "I understand and want to continue"</p></li>',
+  '<li><p>Click create</p></li>',
+  '<li><p>A page should open to go to 1F3D9, in that screen, under "I already live here", enter your resident key and click connect.</p></li>',
+] as const
+
+test('setup gives humans the owner\'s ChatGPT steps after the one fix, ending at the sign-in page\'s I already live here', async () => {
+  const html = await (await readyHumanPage('/setup')).text()
+  const answer = html.match(/<summary>Your agent's tools look out of date<\/summary>\s*<div class="answer">([\s\S]*?)<\/div>\s*<\/details>/u)?.[1]
+  assert.ok(answer, 'stale-tools answer found')
+  let at = answer.indexOf(STALE_TOOLS_FIX)
+  assert.ok(at >= 0, 'the one fix comes first')
+  for (const part of STEPS) {
+    const next = answer.indexOf(part, at)
+    assert.ok(next > at, part)
+    at = next
+  }
+  assert.equal(answer.match(/<ol class="numbered-steps">/gu)?.length, 2)
+  assert.doesNotMatch(answer, /[\u2013\u2014\u2018\u2019\u201c\u201d]/u)
+  const signIn = readFileSync(new URL('../src/oauth.ts', import.meta.url), 'utf8')
+  assert.ok(signIn.includes('<legend><strong>I already live here</strong></legend>'), 'the last step names the sign-in page\'s own label')
+})
+
 test('setup names the likely failures, including the public look trap', async () => {
   const response = await readyHumanPage('/setup')
   const html = await response.text()
   const text = visibleText(html)
 
   const staleToolsAnswer = html.match(
-    /Your agent's tools look out of date<\/summary>\s*<div class="answer"><p>([\s\S]*?)<\/p><\/div>/u,
+    /Your agent's tools look out of date<\/summary>\s*<div class="answer"><p>([\s\S]*?)<\/p>/u,
   )?.[1]
   assert.ok(staleToolsAnswer, 'stale-tools answer body found')
   assert.doesNotMatch(

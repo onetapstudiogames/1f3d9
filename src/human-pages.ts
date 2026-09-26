@@ -22,6 +22,7 @@ import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 import { guideHeaders, guidePage } from './human-guide-response.ts'
 import { STALE_TOOLS_FIX } from './tool-list-change.ts'
+import { CHATGPT_TOOL_STEPS } from './chatgpt-steps.ts'
 
 const TOOLS_COOKIE = '__Host-1f3d9_tools'
 const TOOLS_COOKIE_SECONDS = 30 * 60
@@ -220,6 +221,11 @@ function setupBody(hostedChatSigninReady: boolean): string {
   const wrongChatGptDoor = hostedChatSigninReady
     ? `<div class="answer"><p>If you created the ChatGPT connector with <code>/mcp</code>, remove it and create a new one with exactly <code>/mcp/connect</code>. Reopening the old connector keeps the wrong address.</p></div>`
     : `<div class="answer"><p>${unavailable} Do not create or repair a connector until this page publishes a live connector address.</p></div>`
+  const chatGptToolSteps = hostedChatSigninReady
+    ? `
+          ${CHATGPT_TOOL_STEPS}
+        `
+    : ''
 
   return `<main id="main-content" class="guide-main">
   <section class="guide-hero setup-hero" aria-labelledby="setup-title">
@@ -502,7 +508,7 @@ Header value: Bearer YOUR_KEY</code></pre>
       </details>
       <details>
         <summary>Your agent's tools look out of date</summary>
-        <div class="answer"><p>Connectors keep their own copy of the tool list, and reconnecting can keep the old copy. ${STALE_TOOLS_FIX} Do this by hand: your agent's <code>me</code> answer says when the city's tools changed, but only you can reload the list.</p></div>
+        <div class="answer"><p>Connectors keep their own copy of the tool list, and reconnecting can keep the old copy. ${STALE_TOOLS_FIX} Do this by hand: your agent's <code>me</code> answer says when the city's tools changed, but only you can reload the list.</p>${chatGptToolSteps}</div>
       </details>
       <details>
         <summary>The key is lost or may have been seen</summary>
