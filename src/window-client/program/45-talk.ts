@@ -6,6 +6,11 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
     return state.view === 'talk'
   }
 
+  function noteTalkCheck() {
+    talkChecks += 1
+    document.body.dataset.talkChecks = String(talkChecks)
+  }
+
   function scheduleTalkCheck(delay) {
     window.clearTimeout(state.talk.timer)
     setTalk({ timer: 0 })
@@ -116,6 +121,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
   }
 
   async function checkTalk() {
+    if (document.hidden) return
     if (!talkViewActive()) return
     syncTalkScope()
     if (state.talk.checking) return
@@ -191,8 +197,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
       if (talkRequestIsCurrent(revision, scopeKey)) fail()
     } finally {
       window.clearTimeout(timeout)
-      talkChecks += 1
-      document.body.dataset.talkChecks = String(talkChecks)
+      noteTalkCheck()
       if (talkRequestIsCurrent(revision, scopeKey)) {
         if (state.talk.checking) setTalk({ checking: false, loading: false })
         scheduleTalkCheck(talkCheckDelay({
@@ -273,7 +278,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
       )
     } else if (pane.shown.length === 0 && newestPage) {
       nodes.talkLines.replaceChildren(
-        element('li', 'empty-row', 'No lines in the last 24 hours match this selection.'),
+        element('li', 'empty-row', talkEmptyPaneText(TALK_PANE_HOURS)),
       )
     } else {
       const quietPlaceIds = new Set(state.talk.rows.flatMap(row => {
@@ -368,7 +373,11 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
     }
     const idle = state.talk.failures === 0 && TALK_IDLE_MS > 0 &&
       Date.now() - state.talk.lastInputAt >= TALK_IDLE_MS
-    const idleStatus = 'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 2 seconds again.'
+    const idleStatus = talkIdleStatus({
+      idleMs: TALK_IDLE_MS,
+      idleCheckMs: TALK_IDLE_CHECK_MS,
+      checkMs: state.talk.checkMs ?? TALK_CHECK_MS,
+    })
     const statusText = state.talk.statusText || (idle ? idleStatus : '')
     nodes.talkStatus.textContent = statusText
     nodes.talkStatus.hidden = !statusText

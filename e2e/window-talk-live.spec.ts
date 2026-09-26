@@ -15,6 +15,15 @@ test.beforeEach(async ({ page }) => {
   await page.clock.pauseAt(new Date(fixedTime.getTime() + 1))
 })
 
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title === 'Talk opened while hidden makes no reads until shown') {
+    await page.addInitScript(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    })
+  }
+})
+
 registerPublicWindowSetup()
 
 function publicLine(id: number, body: string) {
@@ -40,6 +49,26 @@ async function expectNoNewTalkRequests(page: import('@playwright/test').Page, re
     return [requests.talkNow.length, requests.lines.length]
   }, { timeout: 1_500 }).toEqual(counts)
 }
+
+test('Talk opened while hidden makes no reads until shown', async ({ page }) => {
+  const requests = await routeTalk(page, { lines: linesPage([]) })
+  expect(await page.evaluate(() => document.hidden)).toBe(true)
+  await page.locator('#talk-tab').click()
+  await expect(page.locator('#talk-panel')).toBeVisible()
+
+  await page.clock.runFor(4_000)
+  expect(requests.talkNow).toHaveLength(0)
+  expect(requests.lines).toHaveLength(0)
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await page.clock.runFor(0)
+  await expect.poll(() => requests.talkNow.length).toBe(1)
+  await expect.poll(() => requests.lines.length).toBe(1)
+})
 
 test('a new line appears on the next check', async ({ page }) => {
   const requests = await routeTalk(page, {
@@ -156,8 +185,11 @@ test("the city's served interval sets the next check, never faster than 2 second
   await stepTalk(page, 1_000, requests, { talkNow: 3, checks: 3 })
 })
 
-test('a tab nobody uses for 30 minutes checks every 30 seconds, and a key press brings back 2 seconds', async ({ page }) => {
-  const requests = await routeTalk(page, { now: talkNow(), lines: linesPage([]) })
+test('a tab nobody uses for 30 minutes checks every 30 seconds, and a key press brings back the served interval', async ({ page }) => {
+  const requests = await routeTalk(page, {
+    now: () => talkNow({ checkIntervalMs: 4_000 }),
+    lines: linesPage([]),
+  })
   await openTalk(page, requests)
   await expect.poll(() => requests.lines.length).toBe(1)
   await expect(page.locator('#talk-lines')).toContainText('No public line matches this selection.')
@@ -166,13 +198,13 @@ test('a tab nobody uses for 30 minutes checks every 30 seconds, and a key press 
   await expect.poll(() => requests.talkNow.length).toBe(2)
   await expect.poll(() => page.evaluate(() => document.body.dataset.talkChecks)).toBe('2')
   await expect(page.locator('#talk-status')).toHaveText(
-    'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 2 seconds again.',
+    'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 seconds again.',
   )
 
   await stepTalk(page, 30_000, requests, { talkNow: 3, checks: 3 })
   await page.keyboard.press('x')
   await expect(page.locator('#talk-status')).toBeHidden()
-  await page.clock.runFor(1_000)
+  await page.clock.runFor(3_000)
   await expectNoNewTalkRequests(page, requests)
   await stepTalk(page, 1_000, requests, { talkNow: 4, checks: 4 })
 })

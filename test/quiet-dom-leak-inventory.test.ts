@@ -146,10 +146,8 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
   ['populateFilters',
     'The resident filter lists every directory handle with no location text; quiet withholds only ' +
     'where a resident currently stands, never their existence in the citywide directory.'],
-  ['checkTalk',
-    'Writes only a running count of Talk checks to document.body.dataset.talkChecks for the browser ' +
-    'tests; the value is a number, never a handle, place, or line, and the Talk transcript itself is ' +
-    'rendered by renderTalk from a lines read that already leaves quiet rooms out.'],
+  ['noteTalkCheck',
+    'Writes only the numeric Talk check count for tests; in the browser, renderTalk hides quiet rows with isQuietPlace because the lines read includes quiet rows.'],
   ['occupantChip',
     'Only ever invoked by occupantLine with residents already filtered by isQuietPlace; occupantChip ' +
     'itself never resolves a place.'],

@@ -58,6 +58,8 @@ import {
   talkCheckDelay,
   talkCheckMs,
   talkLinesPath,
+  talkEmptyPaneText,
+  talkIdleStatus,
   talkPane,
   talkRenderRows,
 } from '../talk.ts'
@@ -96,6 +98,8 @@ const NORMALIZE_TALK_NOW_JS = normalizeTalkNow.toString()
 const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
+const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
+const TALK_IDLE_STATUS_JS = talkIdleStatus.toString()
 const TALK_PANE_JS = talkPane.toString()
 const TALK_RENDER_ROWS_JS = talkRenderRows.toString()
 
@@ -131,6 +135,8 @@ export const PART_01_PRELUDE = `(() => {
   const talkCheckDelay = ${TALK_CHECK_DELAY_JS}
   const talkCheckMs = ${TALK_CHECK_MS_JS}
   const talkLinesPath = ${TALK_LINES_PATH_JS}
+  const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
+  const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
   const talkPane = ${TALK_PANE_JS}
   const talkRenderRows = ${TALK_RENDER_ROWS_JS}
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/

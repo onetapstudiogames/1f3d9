@@ -5,12 +5,15 @@ import {
   normalizeTalkNow,
   talkCheckDelay,
   talkCheckMs,
+  talkEmptyPaneText,
+  talkIdleStatus,
   talkLinesPath,
   talkPane,
   talkRenderRows,
 } from '../src/window-client/talk.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
+import { TALK_CHECK_MS, TALK_IDLE_CHECK_MS, TALK_IDLE_MS, TALK_PANE_HOURS } from '../src/talk-watch-limits.ts'
 
 const NOW_MS = Date.parse('2026-09-25T12:00:00.000Z')
 
@@ -209,6 +212,23 @@ test('Talk check timing honors retries, served floors, and the idle guard', () =
   assert.equal(talkCheckDelay({ ...slowerService, failures: 0, idleMs: 1 }), 60000)
 })
 
+test('Talk status copy uses served limits', () => {
+  assert.match(WINDOW_JS, /talkIdleStatus\(\{[\s\S]*?checkMs: state\.talk\.checkMs \?\? TALK_CHECK_MS/u)
+  assert.match(WINDOW_JS, /talkEmptyPaneText\(TALK_PANE_HOURS\)/u)
+  assert.equal(talkIdleStatus({
+    idleMs: TALK_IDLE_MS,
+    idleCheckMs: TALK_IDLE_CHECK_MS,
+    checkMs: 4_000,
+  }), 'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 seconds again.')
+  assert.equal(talkEmptyPaneText(TALK_PANE_HOURS), 'No lines in the last 24 hours match this selection.')
+  assert.equal(talkEmptyPaneText(TALK_PANE_HOURS + 1), 'No lines in the last 25 hours match this selection.')
+  assert.equal(talkIdleStatus({
+    idleMs: TALK_IDLE_MS,
+    idleCheckMs: TALK_IDLE_CHECK_MS,
+    checkMs: TALK_CHECK_MS,
+  }).includes('every 2 seconds again.'), true)
+})
+
 test('the Talk tab is read only and is wired into the window program', () => {
   assert.match(
     WINDOW_HTML,
@@ -229,7 +249,7 @@ test('the Talk tab is read only and is wired into the window program', () => {
   assert.match(WINDOW_JS, /'map', 'things', 'place', 'conversations', 'talk'/u)
   for (const helper of [
     'talkLinesPath', 'talkCheckMs', 'normalizeTalkNow', 'normalizeTalkLines',
-    'talkPane', 'talkRenderRows', 'talkCheckDelay',
+    'talkPane', 'talkRenderRows', 'talkCheckDelay', 'talkEmptyPaneText', 'talkIdleStatus',
   ]) {
     assert.ok(WINDOW_JS.includes(helper), helper + ' must be injected into the browser program')
   }

@@ -30,6 +30,22 @@ export function talkCheckMs(value: unknown, minMs: number, maxMs: number): numbe
   return Math.min(maxMs, Math.max(minMs, value))
 }
 
+export function talkEmptyPaneText(paneHours: number): string {
+  return `No lines in the last ${paneHours} hours match this selection.`
+}
+
+export function talkIdleStatus({
+  idleMs,
+  idleCheckMs,
+  checkMs,
+}: {
+  idleMs: number
+  idleCheckMs: number
+  checkMs: number
+}): string {
+  return `This tab has not been used for ${idleMs / 60_000} minutes, so it checks for new lines every ${idleCheckMs / 1_000} seconds. Move the mouse, scroll, touch, or press a key to check every ${checkMs / 1_000} seconds again.`
+}
+
 export function normalizeTalkNow(
   value: unknown,
   { minMs, maxMs }: { minMs: number; maxMs: number },
