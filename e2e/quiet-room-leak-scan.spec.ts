@@ -253,6 +253,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/talk/now', route => route.fulfill({
     json: {
       line_marker: '30',
+      place_marker: '0',
       check_interval_ms: 2000,
       listening: [{
         place_id: QUIET_PLACE_ID,

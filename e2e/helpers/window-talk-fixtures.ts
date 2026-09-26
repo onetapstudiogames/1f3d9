@@ -44,15 +44,18 @@ type TalkRouteSource = TalkRouteValue | ((url: URL, index: number) => TalkRouteV
 
 export function talkNow({
   lineMarker = '100',
+  placeMarker = '0',
   checkIntervalMs = 2000,
   listening = [],
 }: {
   lineMarker?: string
+  placeMarker?: string
   checkIntervalMs?: number
   listening?: readonly Readonly<Record<string, unknown>>[]
 } = {}) {
   return {
     line_marker: lineMarker,
+    place_marker: placeMarker,
     check_interval_ms: checkIntervalMs,
     listening,
     listening_page: {

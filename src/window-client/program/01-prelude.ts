@@ -60,6 +60,7 @@ import {
   normalizeTalkNow,
   talkCheckDelay,
   talkCheckMs,
+  talkCityViewIsBehind,
   talkLinesPath,
   talkEmptyPaneText,
   talkIdleStatus,
@@ -100,6 +101,7 @@ const NORMALIZE_TALK_LINES_JS = normalizeTalkLines.toString()
 const NORMALIZE_TALK_NOW_JS = normalizeTalkNow.toString()
 const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
+const TALK_CITY_VIEW_IS_BEHIND_JS = talkCityViewIsBehind.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
 const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
@@ -141,6 +143,7 @@ export const PART_01_PRELUDE = `(() => {
   const talkCheckDelay = ${TALK_CHECK_DELAY_JS}
   const talkCheckMs = ${TALK_CHECK_MS_JS}
   const talkLinesPath = ${TALK_LINES_PATH_JS}
+  const talkCityViewIsBehind = ${TALK_CITY_VIEW_IS_BEHIND_JS}
   const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
