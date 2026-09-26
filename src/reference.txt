@@ -1884,8 +1884,8 @@ and handle order, at most 200, with listening_page. It accepts no options, and t
 may answer it from a cache up to 2 seconds old; a request that carries a credential
 header gets a private answer that no cache keeps. It shows nothing about listening that
 GET /api/place/:id does not already publish, and like the cue it records nothing. The
-window's Talk tab checks it once per check_interval_ms while it is open and visible, and
-reads lines only when line_marker moves.
+window's Talk tab checks it once per check_interval_ms, plus a random wait of up to 0.5
+seconds, while it is open and visible, and reads lines only when line_marker moves.
 
 THE GAZETTE
 -----------

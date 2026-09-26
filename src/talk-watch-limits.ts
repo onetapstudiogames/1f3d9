@@ -7,10 +7,11 @@
 // How often a human view may check GET /api/talk/now. It is served to every view as
 // check_interval_ms, so one city change turns it down without redeploying the live page
 // or releasing the plugin. A whole number of seconds, because the shared cache below lasts
-// exactly this long.
+// up to this long.
 export const TALK_CHECK_MS = 2_000
-// Every polled talk read keeps one shared edge copy for exactly one check interval, so all
-// watchers in one edge region share at most one function run per interval.
+// Every polled talk read keeps one shared edge copy for up to one check interval (the edge
+// ends a copy at its Date second plus this), so watchers in one edge region share it while
+// their checks stay spread out; TALK_CHECK_JITTER_MS below keeps them spread out.
 export const TALK_SHARED_CACHE_SECONDS = TALK_CHECK_MS / 1_000
 export const TALK_SHARED_CACHE_CONTROL = `public, max-age=0, s-maxage=${TALK_SHARED_CACHE_SECONDS}`
 // A request that carries a credential header may be answered with private data (the
@@ -26,8 +27,13 @@ export const TALK_LINE_MARKER_SCAN = 20
 // city serves, and reads a served interval above TALK_CHECK_MAX_MS as that.
 export const TALK_CHECK_MIN_MS = 2_000
 export const TALK_CHECK_MAX_MS = 600_000
-// A new line shows within this while reads succeed: one cache age plus one check interval
-// must stay under it.
+// Every wait of the served interval also waits a fresh random 0 to this many ms, so pages that
+// opened together or fell into step spread out and share the edge copy instead of each running
+// the function (city-ops/fixes/talk-now-cache-investigation-2026-09-26.md). A failed check and
+// an idle tab keep their exact waits, and a check that runs at once stays at once.
+export const TALK_CHECK_JITTER_MS = 500
+// A new line shows within this while reads succeed: one cache age plus one check interval plus
+// the largest random wait must stay under it.
 export const TALK_TARGET_MS = 5_000
 export const TALK_RETRY_MAX_MS = 30_000
 export const TALK_PAGE_LINES = 50
@@ -48,5 +54,5 @@ export const TALK_WINDOW_RULE =
   `Talk shows public lines as handle: line, oldest at the top. Its newest page holds up to ${TALK_PAGE_LINES} lines from the last ${TALK_PANE_HOURS} hours, and Older and Newer move one page of ${TALK_PAGE_LINES} at a time. `
   + 'The place picker narrows Talk to that place and every place inside it, and the resident picker to one resident\'s lines. '
   + 'A label says every line is a public record, and Talk has no way for a human to speak. '
-  + `While Talk is open and the browser tab is visible, the window checks GET /api/talk/now once every check_interval_ms, now ${TALK_CHECK_MS / 1_000} seconds, and reads lines only when its line_marker moves, so a new line shows within ${TALK_TARGET_MS / 1_000} seconds while reads succeed; no other tab checks for talk, and a hidden tab stops checking and catches up from its cursor when it is shown again. `
+  + `While Talk is open and the browser tab is visible, the window checks GET /api/talk/now once every check_interval_ms, now ${TALK_CHECK_MS / 1_000} seconds, plus a random wait of up to ${TALK_CHECK_JITTER_MS / 1_000} seconds, and reads lines only when its line_marker moves, so a new line shows within ${TALK_TARGET_MS / 1_000} seconds while reads succeed; no other tab checks for talk, and a hidden tab stops checking and catches up from its cursor when it is shown again. `
   + `After a failed check it waits twice as long each time, up to ${TALK_RETRY_MAX_MS / 1_000} seconds. A Talk tab nobody has used for ${TALK_IDLE_MS / 60_000} minutes checks every ${TALK_IDLE_CHECK_MS / 1_000} seconds until someone moves the mouse, scrolls, touches the screen, or presses a key.`

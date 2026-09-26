@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  TALK_CHECK_MAX_MS, TALK_CHECK_MIN_MS, TALK_CHECK_MS, TALK_LINE_MARKER_SCAN, TALK_NOW_LISTENING_LIMIT,
+  TALK_CHECK_JITTER_MS, TALK_CHECK_MAX_MS, TALK_CHECK_MIN_MS, TALK_CHECK_MS, TALK_LINE_MARKER_SCAN, TALK_NOW_LISTENING_LIMIT,
   TALK_PAGE_LINES, TALK_PANE_HOURS, TALK_PRIVATE_CACHE_CONTROL, TALK_RETRY_MAX_MS, TALK_SHARED_CACHE_CONTROL,
   TALK_SHARED_CACHE_SECONDS, TALK_TARGET_MS,
 } from '../src/talk-watch-limits.ts'
@@ -21,10 +21,11 @@ test('the talk numbers are the ones decisions 129 and 130 give', () => {
   assert.equal(TALK_PANE_HOURS, 24)
 })
 
-test('the shared cache lasts exactly one check, and one cache age plus one check stays under the target', () => {
+test('one cache age plus one check plus the largest random wait stays under the target', () => {
   assert.equal(TALK_CHECK_MS % 1_000, 0)
   assert.equal(TALK_SHARED_CACHE_SECONDS * 1_000, TALK_CHECK_MS)
   assert.ok(TALK_CHECK_MS >= TALK_CHECK_MIN_MS && TALK_CHECK_MS <= TALK_CHECK_MAX_MS)
-  assert.ok(2 * TALK_CHECK_MS < TALK_TARGET_MS,
-    'turning the interval down means changing TALK_TARGET_MS and its served sentences in the same change')
+  assert.equal(TALK_CHECK_JITTER_MS, 500)
+  assert.ok(TALK_SHARED_CACHE_SECONDS * 1_000 + TALK_CHECK_MS + TALK_CHECK_JITTER_MS < TALK_TARGET_MS,
+    'turning the interval down or the random wait up means changing TALK_TARGET_MS and its served sentences in the same change')
 })

@@ -26,6 +26,35 @@ test.beforeEach(async ({ page }, testInfo) => {
   }
 })
 
+const RANDOM_WAIT_TEST = 'thirty steady checks each wait the served interval plus a fresh random wait of up to half a second'
+
+// Every check that waits the served interval adds a random 0 to TALK_CHECK_JITTER_MS. The other
+// tests here step the clock by exact intervals, so they pin that draw to 0. The random wait test
+// keeps the real draw and records, on the page's own clock, when each check starts (its
+// GET /api/talk/now) and when it ends and picks its next wait (data-talk-checks).
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title !== RANDOM_WAIT_TEST) {
+    await page.addInitScript(() => { Math.random = () => 0 })
+    return
+  }
+  await page.addInitScript(() => {
+    const times = { started: [] as number[], ended: [] as number[] }
+    Object.defineProperty(window, 'talkTimes', { value: times })
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      if (String(input) === '/api/talk/now') times.started.push(Date.now())
+      return originalFetch(input, init)
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      new MutationObserver(records => {
+        for (const record of records) {
+          if (record.attributeName === 'data-talk-checks') times.ended.push(Date.now())
+        }
+      }).observe(document, { attributes: true, subtree: true, attributeFilter: ['data-talk-checks'] })
+    })
+  })
+})
+
 registerPublicWindowSetup()
 
 function publicLine(id: number, body: string) {
@@ -200,7 +229,7 @@ test('a tab nobody uses for 30 minutes checks every 30 seconds, and a key press 
   await expect.poll(() => requests.talkNow.length).toBe(2)
   await expect.poll(() => page.evaluate(() => document.body.dataset.talkChecks)).toBe('2')
   await expect(page.locator('#talk-status')).toHaveText(
-    'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 seconds again.',
+    'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 to 4.5 seconds again.',
   )
 
   await stepTalk(page, 30_000, requests, { talkNow: 3, checks: 3 })
@@ -209,4 +238,28 @@ test('a tab nobody uses for 30 minutes checks every 30 seconds, and a key press 
   await page.clock.runFor(3_000)
   await expectNoNewTalkRequests(page, requests)
   await stepTalk(page, 1_000, requests, { talkNow: 4, checks: 4 })
+})
+
+test(RANDOM_WAIT_TEST, async ({ page }) => {
+  test.setTimeout(90_000)
+  const requests = await routeTalk(page, { now: talkNow(), lines: linesPage([]) })
+  await openTalk(page, requests)
+  await expect.poll(() => requests.lines.length).toBe(1)
+  const readTimes = () => page.evaluate(() =>
+    (window as unknown as { talkTimes: { started: number[]; ended: number[] } }).talkTimes)
+  await expect.poll(async () => {
+    await page.clock.runFor(500)
+    const { started, ended } = await readTimes()
+    return Math.min(started.length - 1, ended.length)
+  }, { timeout: 60_000, intervals: [10] }).toBeGreaterThanOrEqual(30)
+
+  const { started, ended } = await readTimes()
+  // Gap k runs from the moment check k ended and picked its wait to the moment check k + 1 began.
+  const gaps = started.slice(1, 31).map((at, index) => at - ended[index])
+  expect(gaps).toHaveLength(30)
+  for (const gap of gaps) {
+    expect(gap).toBeGreaterThanOrEqual(2_000)
+    expect(gap).toBeLessThanOrEqual(2_500)
+  }
+  expect(new Set(gaps).size).toBeGreaterThan(1)
 })

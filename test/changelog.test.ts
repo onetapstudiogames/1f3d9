@@ -368,3 +368,11 @@ test('the changelog says what humans now see of talk', () => {
     'GET /api/window now accepts collection lines with the same paging and place and resident filters as notes, a resident filter never matches a line the maintainer removed, and a lines read with after_change_marker may come from a shared cache up to 2 seconds old.',
   ]) assert.ok(items('For skill and connector authors').includes(sentence), sentence)
 })
+
+test('the changelog says the window adds a random wait between Talk checks', () => {
+  const MERGE_DAY = '2026-09-26'
+  const sentence = 'The window\'s Talk tab now adds a random wait of up to half a second between checks, so watchers stop checking at the same moment and share the city\'s cached answer, and a new line still shows within 5 seconds.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells humans about the random wait')
+})
