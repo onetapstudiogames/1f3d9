@@ -16,6 +16,8 @@ import { hasOnly, jsonObject } from './society.ts'
 import { answerPing, dismissPing, invitePing } from './room-ping-store.ts'
 import { loadPublicChangeCheckpoint, parsePublicChangeMarker } from './public-changes.ts'
 import { readLine, readPing, readPlaceLines } from './room-talk-reads.ts'
+import { readTalkNow, TALK_NOW_CREDENTIAL_HEADERS } from './talk-now.ts'
+import { TALK_PRIVATE_CACHE_CONTROL, TALK_SHARED_CACHE_CONTROL } from './talk-watch-limits.ts'
 import { sayLine } from './room-line-store.ts'
 import { holdWait } from './room-wait-hold.ts'
 import { openWait, readWaitChanges, releaseWait } from './room-wait-store.ts'
@@ -300,5 +302,16 @@ export function mountRoomTalkRoutes(app: Hono): void {
         next_before_line_id: result.hasMore ? result.lines.at(-1)?.id ?? null : null,
       },
     })
+  })
+
+  app.get('/api/talk/now', async c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const answer = await readTalkNow(executeTalkQuery)
+    // The pending-ping summary may add a resident's pings to an answer sent with a key,
+    // so an answer to any request carrying a credential is never shared.
+    const personal = TALK_NOW_CREDENTIAL_HEADERS.some(name => Boolean(c.req.header(name)))
+    c.header('Cache-Control', personal ? TALK_PRIVATE_CACHE_CONTROL : TALK_SHARED_CACHE_CONTROL)
+    return publicJson(c, answer)
   })
 }

@@ -34,7 +34,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 215 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 216 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -181,6 +181,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/room-talk-routes.ts::allowed.error::3`
 - `src/room-talk-routes.ts::parsed.error::1`
 - `src/room-talk-routes.ts::rangeStart.error::1`
+- `src/room-talk-routes.ts::allowed.error::4`
 - `src/society.ts::allowed.error::1`
 - `src/society.ts::allowed.error::2`
 - `src/society.ts::read.error::1`
@@ -300,6 +301,7 @@ itself, not an excluded identity module.
 | GET /api/place/:id/lines (src/room-talk-routes.ts) |
 | GET /api/residents (src/index.ts) |
 | GET /api/search (src/index.ts) |
+| GET /api/talk/now (src/room-talk-routes.ts) |
 | GET /api/thing/:id (src/world.ts) |
 | GET /api/traits (src/world.ts) |
 | GET /api/window (src/index.ts) |
