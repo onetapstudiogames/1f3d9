@@ -24,10 +24,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   schema `public`; it drops the grant when recreating the schema. Until then,
   export-role tests must re-grant it inside their transaction, as
   `test/integration/room-talk-migration-postgres.test.ts` does.
-- [ ] Same-room talk PR 3: add Window Talk and Conversations, the live page, and the
-  follow view. Add talk kinds to the window's server reads and browser program, the
-  replay file, and front-door activity with quiet-room and moderation hiding. Make the
-  window's change check refetch its snapshot on every talk change.
+- [ ] After seven complete UTC days with the window's Talk tab live, compare the 1f3d9
+  edge requests and function invocations in the weekly cost tripwire report with the
+  60,000-a-day baseline in `config/cost-tripwire.json` and record whether talk checks
+  moved them (decision #130); change the baseline only as `docs/runbooks/COSTS.md` says.
 - [ ] After the first format-v3 snapshot publishes, decide in a reviewed migration
   whether to revoke the export role's v2 grant.
 - Report only: the reference's list of excluded private snapshot classes has never
