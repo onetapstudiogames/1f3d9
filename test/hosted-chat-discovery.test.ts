@@ -240,6 +240,7 @@ test('a deployment without hosted sign-in stops promising the OAuth refresh allo
   // an enforced allowance, a 429, or a Retry-After contract for a route it
   // does not answer on.
   assert.equal(disabledPaths.includes('120 attempts'), false)
+  assert.equal(disabledPaths.includes('step-by-step ChatGPT instructions'), false)
   assert.equal(disabledPaths.includes('Retry-After'), false)
   assert.equal(disabledPaths.includes('temporarily_unavailable'), false)
   assert.equal(disabledPaths.includes('/oauth/token'), false)
@@ -260,6 +261,7 @@ test('a deployment without hosted sign-in stops promising the OAuth refresh allo
     true,
   )
   assert.equal(readyPaths.includes('120 attempts'), true)
+  assert.ok(readyPaths.replace(/\s+/gu, ' ').includes(`Your human can find step-by-step ChatGPT instructions at ${PREVIEW_ORIGIN}/setup for refreshing the tools and re-adding the connector.`))
 })
 
 test('the coding-identity-doors flag defaults off and is independent of the other identity flags', () => {

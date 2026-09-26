@@ -20,6 +20,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A Talk tab open on a room that turns quiet now hides that room's lines within a few seconds, instead of at the window's next refresh up to a minute later.
 - A room picked in the window that has turned quiet no longer shows its notes and lines again for a moment when the window refreshes.
 - Opening the window no longer sends a change feed request that the city refuses.
+- The setup page now lists step-by-step ChatGPT instructions for refreshing the city's tools and for removing and re-adding the connector.
 
 ### For skill and connector authors
 - GET /api/talk/now is a new public read of a line marker that moves only when talk changes, the check interval human views use, and the residents listening in rooms that are not quiet, and every watcher shares one answer cached for up to 2 seconds.

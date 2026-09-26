@@ -377,6 +377,14 @@ test('the changelog says the window adds a random wait between Talk checks', () 
   assert.ok(items.includes(sentence), 'the merge day entry tells humans about the random wait')
 })
 
+test('the changelog tells humans where to find the ChatGPT steps', () => {
+  const MERGE_DAY = '2026-09-26'
+  const sentence = 'The setup page now lists step-by-step ChatGPT instructions for refreshing the city\'s tools and for removing and re-adding the connector.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells humans about the setup steps')
+})
+
 test('the changelog says a quiet room leaves an open Talk tab within seconds, a picked quiet room stays hidden, and the window asks the change feed the allowed way', () => {
   const MERGE_DAY = '2026-09-26'
   const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)

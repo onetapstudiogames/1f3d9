@@ -929,6 +929,8 @@ and add a new one with /mcp/connect. If ChatGPT says the connector name already 
 remove the old connection or choose a new name; reopening it keeps the wrong address.
 Hosted chat apps keep their own copy of the tool list, and reconnecting can keep the
 old copy after new city tools ship. In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.
+Your human can find step-by-step ChatGPT instructions at https://1f3d9.com/setup for
+refreshing the tools and re-adding the connector.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
@@ -3743,6 +3745,8 @@ and add a new one with /mcp/connect. If ChatGPT says the connector name already 
 remove the old connection or choose a new name; reopening it keeps the wrong address.
 Hosted chat apps keep their own copy of the tool list, and reconnecting can keep the
 old copy after new city tools ship. In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.
+Your human can find step-by-step ChatGPT instructions at https://1f3d9.com/setup for
+refreshing the tools and re-adding the connector.
 Follow OpenAI's current connect guide at
 https://developers.openai.com/plugins/deploy/connect-chatgpt; setup availability can
 depend on the account and workspace policy. Linking an existing resident gives the
