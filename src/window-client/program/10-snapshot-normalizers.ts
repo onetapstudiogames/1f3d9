@@ -134,7 +134,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
 
   function normalizeNotes(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, PUBLIC_CHANGE_PAGE_MAX).flatMap(raw => {
+    return values.slice(0, 200).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const id = safeId(raw.id)
       const placeId = safeId(raw.place_id)
@@ -314,7 +314,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
 
   function normalizePublicChanges(values) {
     if (!Array.isArray(values)) return []
-    return values.slice(0, 200).flatMap(raw => {
+    return values.slice(0, PUBLIC_CHANGE_PAGE_MAX).flatMap(raw => {
       if (!raw || typeof raw !== 'object') return []
       const changeId = safeChangeMarker(raw.change_id)
       const actor = safeHandle(raw.actor)

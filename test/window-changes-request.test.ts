@@ -34,5 +34,8 @@ test('the browser program asks the change feed nothing without a marker and page
   assert.ok(WINDOW_JS.includes('const publicChangesPath = '), 'the helper is injected')
   assert.ok(WINDOW_JS.includes('const PUBLIC_CHANGE_PAGE_MAX = ' + PUBLIC_CHANGE_PAGE_MAX), 'the route maximum is injected')
   assert.ok(WINDOW_JS.includes('fetch(publicChangesPath({ since: cursor, limit: PUBLIC_CHANGE_PAGE_MAX })'))
-  assert.ok(WINDOW_JS.includes('values.slice(0, PUBLIC_CHANGE_PAGE_MAX)'))
+  assert.match(
+    WINDOW_JS,
+    /function normalizePublicChanges\(values\) \{\s+if \(!Array\.isArray\(values\)\) return \[\]\s+return values\.slice\(0, PUBLIC_CHANGE_PAGE_MAX\)/u,
+  )
 })
