@@ -1,5 +1,7 @@
 import { WORLD_ROOT_NAME } from '../../world-root.ts'
 import { BASIC_ACTIONS } from '../../physics.ts'
+import { PUBLIC_CHANGE_PAGE_MAX } from '../../public-changes.ts'
+import { publicChangesPath } from '../changes.ts'
 import {
   PUBLIC_EVENT_DETAIL_ID_FIELDS,
   HUMAN_VIEW_EVENT_LABELS,
@@ -99,6 +101,7 @@ const NORMALIZE_TALK_NOW_JS = normalizeTalkNow.toString()
 const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
+const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
 const TALK_IDLE_STATUS_JS = talkIdleStatus.toString()
 const TALK_PANE_JS = talkPane.toString()
@@ -111,6 +114,7 @@ export const PART_01_PRELUDE = `(() => {
   const BASE_REFRESH_MS = 60000
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
+  const PUBLIC_CHANGE_PAGE_MAX = ${PUBLIC_CHANGE_PAGE_MAX}
   const TALK_CHECK_MS = ${TALK_CHECK_MS}
   const TALK_CHECK_MIN_MS = ${TALK_CHECK_MIN_MS}
   const TALK_CHECK_MAX_MS = ${TALK_CHECK_MAX_MS}
@@ -137,6 +141,7 @@ export const PART_01_PRELUDE = `(() => {
   const talkCheckDelay = ${TALK_CHECK_DELAY_JS}
   const talkCheckMs = ${TALK_CHECK_MS_JS}
   const talkLinesPath = ${TALK_LINES_PATH_JS}
+  const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
   const talkPane = ${TALK_PANE_JS}

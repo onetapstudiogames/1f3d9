@@ -15,6 +15,14 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
   }
 
   async function checkPublicChanges() {
+    // The change feed refuses limit without since, so a window with no marker yet asks it
+    // nothing: refreshCity then reads the outline without a marker and takes its marker,
+    // as it did when this read was refused.
+    if (!state.changeMarker) {
+      return Object.freeze({
+        status: 'unavailable', marker: null, changes: Object.freeze([]),
+      })
+    }
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
@@ -25,10 +33,7 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       let unchanged = true
       const seenCursors = new Set()
       while (true) {
-        const url = new URL('/api/changes', window.location.origin)
-        if (cursor) url.searchParams.set('since', cursor)
-        url.searchParams.set('limit', '200')
-        const response = await fetch(url.pathname + url.search, {
+        const response = await fetch(publicChangesPath({ since: cursor, limit: PUBLIC_CHANGE_PAGE_MAX }), {
           credentials: 'omit',
           headers: { Accept: 'application/json' },
           mode: 'same-origin',
@@ -46,11 +51,6 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
         }
         marker = nextMarker
         unchanged = unchanged && payload.unchanged === true
-        if (!startingMarker) {
-          return Object.freeze({
-            status: 'unchanged', marker, changes: Object.freeze([]),
-          })
-        }
         const incoming = normalizePublicChanges(payload.changes)
         if (incoming.some(change =>
           (cursor && BigInt(change.change_id) <= BigInt(cursor)) ||
