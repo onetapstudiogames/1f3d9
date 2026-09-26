@@ -36,7 +36,8 @@ import {
   parseWindowViewerOpenKeys,
 } from '../viewer-state.ts'
 import { createNoteDecodingHelpers } from '../note-decoding.ts'
-import { WALK_TO_READ_WINDOW_LINE } from '../../walk-to-read.ts'
+import { WALK_TO_READ_WINDOW_LABEL, WALK_TO_READ_WINDOW_LINE } from '../../walk-to-read.ts'
+import { MODERATED_WINDOW_LABEL } from '../../moderation.ts'
 import {
   WINDOW_HISTORY_FILL_ROWS,
   WINDOW_HISTORY_KEEP_ROWS,
@@ -69,6 +70,8 @@ const WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON = JSON.stringify(WINDOW_VIEWER_OPEN_ST
 const PARSE_WINDOW_VIEWER_OPEN_KEYS_JS = parseWindowViewerOpenKeys.toString()
 const CREATE_NOTE_DECODING_HELPERS_JS = createNoteDecodingHelpers.toString()
 const WALK_TO_READ_WINDOW_LINE_JSON = JSON.stringify(WALK_TO_READ_WINDOW_LINE)
+const WALK_TO_READ_WINDOW_LABEL_JSON = JSON.stringify(WALK_TO_READ_WINDOW_LABEL)
+const MODERATED_WINDOW_LABEL_JSON = JSON.stringify(MODERATED_WINDOW_LABEL)
 
 
 export const PART_01_PRELUDE = `(() => {
@@ -92,6 +95,8 @@ export const PART_01_PRELUDE = `(() => {
   const MODERATED_TEXT = '[removed by maintainer]'
   // Decision #102: the window stands nowhere, so it never shows a walk-to-read body.
   const WALK_TO_READ_WINDOW_LINE = ${WALK_TO_READ_WINDOW_LINE_JSON}
+  const WALK_TO_READ_WINDOW_LABEL = ${WALK_TO_READ_WINDOW_LABEL_JSON}
+  const MODERATED_WINDOW_LABEL = ${MODERATED_WINDOW_LABEL_JSON}
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
   const VIEWS = Object.freeze([
     'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',

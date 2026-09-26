@@ -94,7 +94,10 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   function noteCard(note, place) {
     if (isQuietPlace(place)) {
       const card = element('article', 'note-card note-card-quiet')
-      card.append(quietRoomNotice(place))
+      card.append(
+        element('p', 'quiet-room-context', 'A note in ' + quietRoomName(place, note.place_id) + '.'),
+        quietRoomNotice(place),
+      )
       return viewerRecordNode(card, 'note', note, viewerPlacePresentation(place))
     }
     const placePresentation = viewerPlacePresentation(place)
@@ -122,9 +125,12 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       place: placePresentation,
       author: viewerResidentPresentation(residentReference(state.snapshot, note.author)),
     })
+    if (note.moderated) {
+      card.append(meta, element('p', 'removed-label', MODERATED_WINDOW_LABEL))
+      return viewerRecordNode(card, 'note', note, presentation)
+    }
     if (note.walk_to_read) {
       card.append(meta, walkToReadNoteBlock(note))
-      if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
       return viewerRecordNode(card, 'note', note, presentation)
     }
     const bodyBlock = renderExpandableBody(
@@ -133,7 +139,6 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     )
     addNoteReadingTools(bodyBlock, note)
     card.append(meta, bodyBlock)
-    if (note.moderated) card.append(element('span', 'moderated-mark', 'Removed text retained as a tombstone'))
     return viewerRecordNode(card, 'note', note, presentation)
   }
 
@@ -141,6 +146,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   // first line and says the rest is read in person. There is nothing to expand.
   function walkToReadNoteBlock(note) {
     const block = element('div', 'walk-to-read-block')
+    block.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
     if (note.first_line) block.append(element('p', 'note-body note-first-line', note.first_line))
     block.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return block

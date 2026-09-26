@@ -109,7 +109,7 @@ test('the window client honours quiet with the exact sentence in every content t
   assert.match(WINDOW_JS, /prefers to keep this room private\./u)
   assert.match(
     WINDOW_JS,
-    /public record stays public: notes and things here remain readable at their own address/u,
+    /public record stays public: notes, things, and lines here remain readable at their own address/u,
   )
   assert.match(WINDOW_JS, /function quietRoomNotice\(place\)/u)
   assert.match(WINDOW_JS, /function renderQuietRoom\(target, place\)/u)

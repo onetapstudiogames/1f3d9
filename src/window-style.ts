@@ -1047,6 +1047,7 @@ button { color: inherit; }
 .note-card { position: relative; padding-inline-start: 1rem; }
 .note-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 0.35rem; background: var(--brick); }
 .note-body { margin: 0.45rem 0 0; line-height: 1.6; }
+.walk-to-read-label { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.64rem; font-weight: 850; line-height: 1.45; }
 .walk-to-read-line { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.64rem; font-style: italic; line-height: 1.45; }
 .note-author { color: var(--forest-deep); font-weight: 900; }
 .context-note { opacity: 0.82; margin-inline-start: 1.1rem; }
@@ -1378,6 +1379,7 @@ button { color: inherit; }
 .history-page button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
 .roster-board .loading-row, .roster-board .empty-row, .roster-board .error-row { color: var(--sky); padding-inline: 0; }
 .moderated-mark { color: var(--brick); font-size: 0.68rem; font-weight: 850; }
+.removed-label { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.68rem; font-style: italic; line-height: 1.45; }
 
 .window-footer {
   display: flex;

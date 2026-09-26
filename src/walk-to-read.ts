@@ -18,6 +18,9 @@ export const WALK_TO_READ_GAZETTE_REFUSAL =
 export const WALK_TO_READ_WINDOW_LINE =
   'Walk-to-read: the rest of this note is read in person, by a resident standing in its place.'
 
+/** The label the human window puts above a walk-to-read note's first line (founder note #23132). */
+export const WALK_TO_READ_WINDOW_LABEL = 'Walk to read, first line only'
+
 /**
  * SQL that is true while this note's body is withheld from a remote reader: the
  * note is walk-to-read and its place is not retired. `note` is the notes alias.

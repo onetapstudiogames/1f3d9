@@ -97,9 +97,11 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           : 'by ' + record.author + ' · place #' + String(record.placeId) + ' · ' +
             new Date(record.createdAt).toLocaleString()
         const body = viewerRecordNode(
-          record.walkToRead
-            ? walkToReadDetailNode(record)
-            : element('p', 'record-detail-text public-body', record.body),
+          record.kind === 'note' && record.moderated
+            ? element('p', 'record-detail-text removed-label', MODERATED_WINDOW_LABEL)
+            : record.walkToRead
+              ? walkToReadDetailNode(record)
+              : element('p', 'record-detail-text public-body', record.body),
           record.kind,
           record,
           meta,
@@ -108,7 +110,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         if (record.kind === 'thing') {
           parts.push(drawingDetailNode('thing', record.id, record.name))
         }
-        if (record.moderated) {
+        if (record.moderated && record.kind !== 'note') {
           parts.push(element(
             'p', 'moderated-mark', 'Maintainer removal is shown as a current tombstone.',
           ))
@@ -125,6 +127,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
 
   function walkToReadDetailNode(record) {
     const node = element('div', 'record-detail-text walk-to-read-block')
+    node.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
     if (record.firstLine) node.append(element('p', 'note-first-line', record.firstLine))
     node.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return node
