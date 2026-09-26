@@ -68,6 +68,11 @@ import {
   talkRenderRows,
 } from '../talk.ts'
 import { staleFocusedPlaceStaysQuiet } from '../quiet.ts'
+import {
+  FOCUSED_READ_OVERTAKEN_LIMIT,
+  focusedReadOvertaken,
+  overtakenReadIsDue,
+} from '../focused-read.ts'
 // Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
@@ -104,6 +109,8 @@ const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
 const TALK_CITY_VIEW_IS_BEHIND_JS = talkCityViewIsBehind.toString()
 const STALE_FOCUSED_PLACE_STAYS_QUIET_JS = staleFocusedPlaceStaysQuiet.toString()
+const FOCUSED_READ_OVERTAKEN_JS = focusedReadOvertaken.toString()
+const OVERTAKEN_READ_IS_DUE_JS = overtakenReadIsDue.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
 const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
@@ -118,6 +125,7 @@ export const PART_01_PRELUDE = `(() => {
   const BASE_REFRESH_MS = 60000
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
+  const FOCUSED_READ_OVERTAKEN_LIMIT = ${FOCUSED_READ_OVERTAKEN_LIMIT}
   const PUBLIC_CHANGE_PAGE_MAX = ${PUBLIC_CHANGE_PAGE_MAX}
   const TALK_CHECK_MS = ${TALK_CHECK_MS}
   const TALK_CHECK_MIN_MS = ${TALK_CHECK_MIN_MS}
@@ -147,6 +155,8 @@ export const PART_01_PRELUDE = `(() => {
   const talkLinesPath = ${TALK_LINES_PATH_JS}
   const talkCityViewIsBehind = ${TALK_CITY_VIEW_IS_BEHIND_JS}
   const staleFocusedPlaceStaysQuiet = ${STALE_FOCUSED_PLACE_STAYS_QUIET_JS}
+  const focusedReadOvertaken = ${FOCUSED_READ_OVERTAKEN_JS}
+  const overtakenReadIsDue = ${OVERTAKEN_READ_IS_DUE_JS}
   const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
