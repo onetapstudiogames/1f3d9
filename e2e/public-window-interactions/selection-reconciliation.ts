@@ -227,7 +227,7 @@ export function registerPublicWindowSelectionReconciliation() {
     )
   })
 
-  test('a focused place reply overtaken by a newer snapshot fails with retry instead of fake loading', async ({ page }) => {
+  test('a focused place reply overtaken by a newer snapshot is read again at the newer marker without Retry', async ({ page }) => {
     let releaseOlderPlace!: () => void
     const heldOlderPlace = new Promise<void>(resolve => { releaseOlderPlace = resolve })
     let focusedAttempts = 0
@@ -266,32 +266,60 @@ export function registerPublicWindowSelectionReconciliation() {
       return url.pathname === '/api/window' &&
         url.searchParams.get('after_change_marker') === '21' && response.status() === 200
     })
+    // The refresh at 21 also reloads the complete directory, and that reply reads the
+    // focused place again by itself. Let it land first, so only the read that
+    // loadFocusedPlace starts from its own finally can bring the room back.
+    await expect(page.locator('#directory-status')).toContainText('Complete city directory:')
+    const directoryReload = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/window' && url.searchParams.get('view') === 'directory'
+    })
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     await newerSnapshot
+    await directoryReload
+    await expect(page.locator('#directory-status')).toContainText('Complete city directory:')
 
     const olderFocusResponse = page.waitForResponse(response => {
       const url = new URL(response.url())
       return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
         url.searchParams.get('after_change_marker') === '20'
     })
-    releaseOlderPlace()
-    await olderFocusResponse
-
-    const retry = page.getByRole('button', { name: 'Retry loading this place' })
-    await expect(retry).toBeVisible()
-    await expect(page.locator('#place-panel')).not.toContainText('Loading public place…')
-
     const recovered = page.waitForResponse(response => {
       const url = new URL(response.url())
       return url.pathname === '/api/map' && url.searchParams.get('parent_id') === '77' &&
         url.searchParams.get('after_change_marker') === '21' && response.status() === 200
     })
-    await retry.click()
+    releaseOlderPlace()
+    await olderFocusResponse
+    await expect.poll(() => focusedAttempts).toBe(2)
     await recovered
     await expect(page.locator('#place-map').getByRole('button', {
       name: 'renamed_annex', exact: true,
     })).toBeVisible()
-    await expect(retry).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Retry loading this place' })).toHaveCount(0)
+    expect(focusedAttempts).toBe(2)
+  })
+
+  test('a focused place read the city overtook shows Retry, not loading, when the refresh does not catch up', async ({ page }) => {
+    // The reply says the city is at 21, but the refresh it starts still finds nothing newer
+    // than 20, as when a refresh already running read the change feed first. The window
+    // must not keep saying it is loading while nothing is in flight.
+    let focusedAttempts = 0
+    await page.route('**/api/map**', route => {
+      const url = new URL(route.request().url())
+      if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+      focusedAttempts += 1
+      return route.fulfill({ json: { ...FOCUSED_PLACE, change_marker: '21' } })
+    })
+    const unchangedFeed = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/api/changes' && url.searchParams.get('since') === '20'
+    })
+    await page.locator('#place-filter').selectOption('77')
+    await unchangedFeed
+    await expect(page.getByRole('button', { name: 'Retry loading this place' })).toBeVisible()
+    await expect(page.locator('#place-panel')).not.toContainText('Loading public place')
+    expect(focusedAttempts).toBe(1)
   })
 
   test('a focused resident reply overtaken by a newer snapshot fails with retry instead of fake loading', async ({ page }) => {

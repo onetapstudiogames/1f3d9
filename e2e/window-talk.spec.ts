@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { installClipboardRecorder } from './helpers/public-window-clipboard.ts'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
+import { FOCUSED_PLACE, SNAPSHOT } from './helpers/public-window-snapshot-fixtures.ts'
 import {
   HOUR_MS,
   MINUTE_MS,
@@ -223,4 +224,57 @@ test('a listening resident in the head never reaches the page', async ({ page })
     'No public line matches this selection.',
   )
   await expect(page.locator('#talk-panel')).not.toContainText('quiet-listener')
+})
+
+test('a room opened in Talk while the city moves loads by itself, with no could-not-be-loaded card', async ({ page }) => {
+  // The live city (repro.md): the first outline is an edge copy at marker 20, and the room
+  // read, which no cache keeps, answers with the live marker 21.
+  const CARD = 'Public place #77 could not be loaded.'
+  const mapMarkers: string[] = []
+  const markedOutlines: string[] = []
+  await routeTalk(page, { now: talkNow(), lines: linesPage([]) })
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    if (!since) return route.fallback()
+    const moved = since === '20'
+    return route.fulfill({ json: {
+      change_marker: '21',
+      changes: moved
+        ? [{ change_id: '21', kind: 'note', actor: 'leafwalker', detail: { note_id: 1, place_id: 11 }, created_at: '2026-09-25T11:59:30.000Z' }]
+        : [],
+      returned_items: moved ? 1 : 0,
+      unchanged: !moved,
+      has_more: false,
+      next_since: '21',
+    } })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    if (url.searchParams.get('collection') || url.searchParams.get('view') !== 'outline' || !marker) {
+      return route.fallback()
+    }
+    markedOutlines.push(marker)
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    mapMarkers.push(url.searchParams.get('after_change_marker') ?? '')
+    return route.fulfill({ json: { ...FOCUSED_PLACE, change_marker: '21' } })
+  })
+  await page.addInitScript(card => {
+    new MutationObserver(() => {
+      if (document.body?.textContent?.includes(card)) {
+        document.documentElement.dataset.placeCardSeen = 'yes'
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true })
+  }, CARD)
+
+  await page.goto('/window/talk?place=77')
+  await expect.poll(() => markedOutlines.length).toBeGreaterThan(0)
+  await expect.poll(() => mapMarkers).toEqual(['20', '21'])
+  await expect(page.locator('#talk-lines')).toContainText('No public line matches this selection.')
+  await expect(page.getByText(CARD)).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.dataset.placeCardSeen ?? 'no')).toBe('no')
 })

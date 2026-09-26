@@ -5,6 +5,10 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
     const selectionAtStart = activeSelectionKey()
     const requestMarker = state.changeMarker
     const requestAuthoredRevision = authoredRevision
+    // The marker the reply carried, so the catch can tell a read the city overtook from a
+    // read that failed.
+    let replyMarker = null
+    let overtakenWaiting = false
     state = {
       ...state,
       focusedPlaces: {
@@ -36,6 +40,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       })
       if (response.status === 404) {
         const payload = await response.json().catch(() => null)
+        replyMarker = safeChangeMarker(payload?.change_marker)
         requireCurrentReadMarker(payload?.change_marker, requestMarker)
         if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
           throw new Error('focused place reply was overtaken by a newer public snapshot')
@@ -58,6 +63,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       if (!response.ok) throw new Error('focused place unavailable')
       const payload = await response.json()
       const responseMarker = safeChangeMarker(payload?.change_marker)
+      replyMarker = responseMarker
       requireCurrentReadMarker(responseMarker, requestMarker)
       const [normalized] = normalizePlaces([payload?.place], 0, new Set())
       if (!normalized || normalized.id !== placeId) throw new Error('wrong focused place')
@@ -81,6 +87,13 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         },
       }
     } catch {
+      // A read the city overtook is not a failure: the place keeps saying it is loading and
+      // is read again once the city view covers a newer marker, up to
+      // FOCUSED_READ_OVERTAKEN_LIMIT times in a row. Any other failure shows its Retry.
+      const overtakenReads = focusedReadOvertaken({
+        requestMarker, replyMarker, viewMarker: state.changeMarker,
+      }) ? (current?.overtakenReads || 0) + 1 : 0
+      overtakenWaiting = overtakenReads > 0 && overtakenReads <= FOCUSED_READ_OVERTAKEN_LIMIT
       const retainedCovers = Boolean(current?.place) &&
         (!state.changeMarker || markerCovers(current?.marker, state.changeMarker))
       state = {
@@ -89,10 +102,12 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
           ...state.focusedPlaces,
           [String(placeId)]: Object.freeze({
             loading: false,
-            error: !retainedCovers,
+            error: !overtakenWaiting && !retainedCovers,
             notFound: false,
             marker: current?.marker || null,
             place: current?.place || null,
+            overtakenAt: overtakenWaiting ? requestMarker : null,
+            overtakenReads: overtakenWaiting ? overtakenReads : 0,
           }),
         },
       }
@@ -102,6 +117,10 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         if (state.snapshot) populateFilters(state.snapshot)
         renderAll()
       }
+      // If the city view already moved past the overtaken read, this reads the place again
+      // now. If not, the city refresh now running does it when it lands, and
+      // settleOvertakenFocusedPlaces shows the Retry if that refresh does not catch up.
+      if (overtakenWaiting) void ensureFocusedSelection()
     }
   }
 
@@ -230,8 +249,9 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
     if (explicitPlaceId &&
         !state.snapshot.flatPlaces.some(place => place.id === explicitPlaceId)) {
       const entry = state.focusedPlaces[String(explicitPlaceId)]
-      if (!entry || (forcePlace && Boolean(entry.place))) {
-        await loadFocusedPlace(explicitPlaceId, forcePlace)
+      const overtakenDue = overtakenReadIsDue({ entry, viewMarker: state.changeMarker })
+      if (!entry || overtakenDue || (forcePlace && Boolean(entry.place))) {
+        await loadFocusedPlace(explicitPlaceId, forcePlace || overtakenDue)
       }
       return
     }
@@ -242,11 +262,38 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       if (currentPlaceId &&
           !state.snapshot.flatPlaces.some(place => place.id === currentPlaceId)) {
         const entry = state.focusedPlaces[String(currentPlaceId)]
-        if (!entry || (forcePlace && Boolean(entry.place))) {
-          await loadFocusedPlace(currentPlaceId, forcePlace)
+        const overtakenDue = overtakenReadIsDue({ entry, viewMarker: state.changeMarker })
+        if (!entry || overtakenDue || (forcePlace && Boolean(entry.place))) {
+          await loadFocusedPlace(currentPlaceId, forcePlace || overtakenDue)
         }
       }
     }
+  }
+
+  // Runs when a city refresh ends. A place read the city overtook is read again once the
+  // city view covers a newer marker (ensureFocusedSelection). If the refresh ended without
+  // catching up, the read shows its failure with Retry instead of saying it is loading
+  // while nothing is in flight.
+  function settleOvertakenFocusedPlaces() {
+    const stranded = Object.entries(state.focusedPlaces).filter(([, entry]) =>
+      Boolean(entry?.overtakenAt) && !entry.loading &&
+      !overtakenReadIsDue({ entry, viewMarker: state.changeMarker }))
+    if (stranded.length === 0) return
+    state = {
+      ...state,
+      focusedPlaces: {
+        ...state.focusedPlaces,
+        ...Object.fromEntries(stranded.map(([key, entry]) => [key, Object.freeze({
+          ...entry,
+          error: !(Boolean(entry.place) &&
+            (!state.changeMarker || markerCovers(entry.marker, state.changeMarker))),
+          overtakenAt: null,
+          overtakenReads: 0,
+        })])),
+      },
+    }
+    if (state.snapshot) populateFilters(state.snapshot)
+    renderAll()
   }
 
 `

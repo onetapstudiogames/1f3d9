@@ -46,3 +46,19 @@ test('the browser program carries both rules and the limit', () => {
   assert.ok(WINDOW_JS.includes('const overtakenReadIsDue = '), 'the due rule is injected')
   assert.match(WINDOW_JS, /const FOCUSED_READ_OVERTAKEN_LIMIT = 3\n/u)
 })
+
+test('the browser program reads an overtaken place again and never leaves it loading with nothing in flight', () => {
+  assert.match(WINDOW_JS, /focusedReadOvertaken\(\{\s*requestMarker, replyMarker, viewMarker: state\.changeMarker,\s*\}\)/u)
+  assert.match(WINDOW_JS, /overtakenReads > 0 && overtakenReads <= FOCUSED_READ_OVERTAKEN_LIMIT/u)
+  assert.match(WINDOW_JS, /error: !overtakenWaiting && !retainedCovers,/u)
+  assert.match(WINDOW_JS, /if \(overtakenWaiting\) void ensureFocusedSelection\(\)/u)
+  assert.equal(
+    WINDOW_JS.match(/if \(!entry \|\| overtakenDue \|\| \(forcePlace && Boolean\(entry\.place\)\)\) \{/gu)?.length,
+    2,
+    'both focused place paths read a due overtaken place again',
+  )
+  assert.doesNotMatch(WINDOW_JS, /if \(!entry \|\| \(forcePlace && Boolean\(entry\.place\)\)\)/u)
+  assert.match(WINDOW_JS, /refreshing: false \}\s+settleOvertakenFocusedPlaces\(\)/u)
+  // Residents keep their own rule: every forced refresh reads a focused resident again.
+  assert.match(WINDOW_JS, /if \(!entry \|\| forceResident\) \{/u)
+})
