@@ -20,7 +20,8 @@ export const TALK_PRIVATE_CACHE_CONTROL = 'private, no-store'
 // At most this many listening residents in one answer, like the looking cue's limit.
 export const TALK_NOW_LISTENING_LIMIT = 200
 // The line marker looks at this many of the newest line events and line moderation events,
-// because event ids are taken before commit.
+// and the place marker at this many of the newest place edits, because event ids are taken
+// before commit.
 export const TALK_LINE_MARKER_SCAN = 20
 
 // The window's Talk tab. It never checks more often than TALK_CHECK_MIN_MS, whatever the

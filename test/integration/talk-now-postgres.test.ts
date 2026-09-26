@@ -74,11 +74,13 @@ test('GET /api/talk/now reads the line marker and listening from real PostgreSQL
       const { response, body } = await readNow()
       assert.equal(response.status, 200, JSON.stringify(body))
       assert.equal(response.headers.get('Cache-Control'), 'public, max-age=0, s-maxage=2')
-      assert.deepEqual(Object.keys(body).sort(), ['check_interval_ms', 'line_marker', 'listening', 'listening_page'])
+      assert.deepEqual(Object.keys(body).sort(), ['check_interval_ms', 'line_marker', 'listening', 'listening_page', 'place_marker'])
       assert.match(String(body.line_marker), /^\d+$/u)
+      assert.match(String(body.place_marker), /^\d+$/u)
       const changes = await call(app, null, 'GET', '/api/changes')
       assert.equal(changes.status, 200, JSON.stringify(changes.json))
       assert.ok(BigInt(String(body.line_marker)) <= BigInt(String(changes.json.change_marker)))
+      assert.ok(BigInt(String(body.place_marker)) <= BigInt(String(changes.json.change_marker)))
       assert.equal(body.check_interval_ms, 2000)
       assert.deepEqual(body.listening, [])
       assert.deepEqual(body.listening_page, { total_items: 0, returned_items: 0, has_more: false })
@@ -138,7 +140,8 @@ test('GET /api/talk/now reads the line marker and listening from real PostgreSQL
 
     await t.test('a change that is not about a line moves the change marker and not the line marker', async () => {
       await reset()
-      const beforeLine = String((await readNow()).body.line_marker)
+      const beforeNow = (await readNow()).body
+      const beforeLine = String(beforeNow.line_marker)
       const beforeChanges = await call(app, null, 'GET', '/api/changes')
       assert.equal(beforeChanges.status, 200, JSON.stringify(beforeChanges.json))
       const pingId = await sendPing()
@@ -147,6 +150,25 @@ test('GET /api/talk/now reads the line marker and listening from real PostgreSQL
       assert.equal(afterChanges.status, 200, JSON.stringify(afterChanges.json))
       assert.ok(BigInt(String(afterChanges.json.change_marker)) > BigInt(String(beforeChanges.json.change_marker)))
       assert.equal(String((await readNow()).body.line_marker), beforeLine)
+      assert.equal(String((await readNow()).body.place_marker), String(beforeNow.place_marker))
+    })
+
+    await t.test('a quiet edit moves the place marker and not the line marker, and the change feed covers it', async () => {
+      await reset()
+      await sayLine('a line before quiet')
+      const before = (await readNow()).body
+      const quiet = await call(app, FOUNDER.secret, 'PATCH', '/api/place/' + rooms.eastRoomId, { quiet: true })
+      assert.equal(quiet.status, 200, JSON.stringify(quiet.json))
+      const after = (await readNow()).body
+      assert.ok(BigInt(String(after.place_marker)) > BigInt(String(before.place_marker)))
+      assert.equal(String(after.line_marker), String(before.line_marker))
+      const changes = await call(app, null, 'GET', '/api/changes?since=' + String(before.place_marker) + '&limit=200')
+      assert.equal(changes.status, 200, JSON.stringify(changes.json))
+      assert.ok((changes.json.changes as Json[]).some(change =>
+        String(change.change_id) === String(after.place_marker) && change.kind === 'place_edited'))
+      const loud = await call(app, FOUNDER.secret, 'PATCH', '/api/place/' + rooms.eastRoomId, { quiet: false })
+      assert.equal(loud.status, 200, JSON.stringify(loud.json))
+      assert.ok(BigInt(String((await readNow()).body.place_marker)) > BigInt(String(after.place_marker)))
     })
 
     await t.test('a quiet room is left out, a room inside a quiet place stays, and the place read still lists them', async () => {

@@ -23,6 +23,7 @@ type ListeningResident = Readonly<{
 
 export type TalkNow = Readonly<{
   line_marker: string
+  place_marker: string
   check_interval_ms: number
   listening: readonly ListeningResident[]
   listening_page: Readonly<{
@@ -40,7 +41,10 @@ type TalkNowRow = Readonly<{
   total?: number | string
 }>
 
-export function talkNowAnswer(lineMarker: string, rows: readonly Record<string, unknown>[]): TalkNow {
+export function talkNowAnswer(
+  markers: Readonly<{ lineMarker: string; placeMarker: string }>,
+  rows: readonly Record<string, unknown>[],
+): TalkNow {
   const listening = rows.map(row => {
     const listeningRow = row as TalkNowRow
     return {
@@ -52,7 +56,8 @@ export function talkNowAnswer(lineMarker: string, rows: readonly Record<string, 
   })
   const totalItems = Number((rows[0] as TalkNowRow | undefined)?.total ?? 0)
   return {
-    line_marker: lineMarker,
+    line_marker: markers.lineMarker,
+    place_marker: markers.placeMarker,
     check_interval_ms: TALK_CHECK_MS,
     listening,
     listening_page: {
@@ -63,25 +68,32 @@ export function talkNowAnswer(lineMarker: string, rows: readonly Record<string, 
   }
 }
 
-// Everything here is already public on GET /api/place/:id (listening_residents) and in the public change log; this read gathers it for human views, leaves rooms with their own quiet mark and retired rooms out of the listening list, as the window resolves quiet at each room's own mark, and records nothing (decisions 82, 122, 130). line_marker is a change id that is already committed, so it is safe as an after_change_marker.
+// Everything here is already public on GET /api/place/:id (listening_residents) and in the public change log; this read gathers it for human views, leaves rooms with their own quiet mark and retired rooms out of the listening list, as the window resolves quiet at each room's own mark, and records nothing (decisions 82, 122, 130). place_marker is the change id of the newest place edit, already public in the change log; a quiet edit is a place edit, so human views use it to refresh their city view (decision 129). line_marker is a change id that is already committed, so it is safe as an after_change_marker.
 export async function readTalkNow(
   execute: PublicQueryExecutor,
   limits: Readonly<{ listeningLimit: number }> = { listeningLimit: TALK_NOW_LISTENING_LIMIT },
 ): Promise<TalkNow> {
-  const markerRows = await execute(`/* public:talk-now-line-marker */
-    SELECT coalesce(max(change.change_id), 0)::text AS line_marker
-    FROM (
-      (SELECT event.id FROM events event
-        WHERE event.kind = 'line_said'
-        ORDER BY event.id DESC LIMIT $1::integer)
-      UNION ALL
-      (SELECT event.id FROM events event
-        WHERE event.kind = 'moderation' AND event.detail->>'target_type' = 'line'
-        ORDER BY event.id DESC LIMIT $1::integer)
-    ) recent
-    JOIN public_change_log change ON change.event_id = recent.id
+  const markerRows = await execute(`/* public:talk-now-markers */
+    SELECT
+      (SELECT coalesce(max(change.change_id), 0)::text
+        FROM (
+          (SELECT event.id FROM events event
+            WHERE event.kind = 'line_said'
+            ORDER BY event.id DESC LIMIT $1::integer)
+          UNION ALL
+          (SELECT event.id FROM events event
+            WHERE event.kind = 'moderation' AND event.detail->>'target_type' = 'line'
+            ORDER BY event.id DESC LIMIT $1::integer)
+        ) recent
+        JOIN public_change_log change ON change.event_id = recent.id) AS line_marker,
+      (SELECT coalesce(max(change.change_id), 0)::text
+        FROM (SELECT event.id FROM events event
+          WHERE event.kind = 'place_edited'
+          ORDER BY event.id DESC LIMIT $1::integer) recent
+        JOIN public_change_log change ON change.event_id = recent.id) AS place_marker
   `, [TALK_LINE_MARKER_SCAN])
   const lineMarker = String(markerRows[0]?.line_marker ?? '0')
+  const placeMarker = String(markerRows[0]?.place_marker ?? '0')
   const rows = await execute(`/* public:talk-now-listening */
     SELECT lease.place_id, lease.resident_id, resident.handle, lease.expires_at AS listening_until,
       count(*) OVER () AS total
@@ -95,5 +107,5 @@ export async function readTalkNow(
     ORDER BY lease.place_id, resident.handle
     LIMIT $1::integer
   `, [limits.listeningLimit])
-  return talkNowAnswer(lineMarker, rows)
+  return talkNowAnswer({ lineMarker, placeMarker }, rows)
 }
