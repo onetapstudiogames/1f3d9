@@ -1771,6 +1771,12 @@ its own loading, failure, empty, or completed fetched state and is never divided
 total. A history or forward-refresh page is accepted only at the exact marker of the
 neighboring snapshot totals. A newer returned marker leaves completed rows intact, exposes
 retry, and requests a matching snapshot refresh before those rows may render.
+A focused place record read that the city overtook is not shown as a failure: when its reply
+carries a newer marker than it asked at, or the window's own refresh moves the view while it
+is in flight, the place keeps saying it is loading and is read again once the view covers a
+newer marker, up to `FOCUSED_READ_OVERTAKEN_LIMIT` times in a row. If a refresh ends without
+catching up, or one more read in a row is overtaken, the failure and its Retry show as before
+(`src/window-client/focused-read.ts`, and `settleOvertakenFocusedPlaces` in the window program).
 
 Every initial, paging, focused, and refresh read has four explicit states. An in-flight read says it is loading; a
 failed read names the failure and offers the matching retry; a completed empty read plainly
