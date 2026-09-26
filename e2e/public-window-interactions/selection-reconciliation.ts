@@ -318,7 +318,7 @@ export function registerPublicWindowSelectionReconciliation() {
     await page.locator('#place-filter').selectOption('77')
     await unchangedFeed
     await expect(page.getByRole('button', { name: 'Retry loading this place' })).toBeVisible()
-    await expect(page.locator('#place-panel')).not.toContainText('Loading public place')
+    await expect(page.locator('#place-map')).not.toContainText('Loading public place')
     expect(focusedAttempts).toBe(1)
   })
 
