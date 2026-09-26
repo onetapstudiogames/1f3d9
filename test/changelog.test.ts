@@ -376,3 +376,17 @@ test('the changelog says the window adds a random wait between Talk checks', () 
   const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells humans about the random wait')
 })
+
+test('the changelog says a quiet room leaves an open Talk tab within seconds, a picked quiet room stays hidden, and the window asks the change feed the allowed way', () => {
+  const MERGE_DAY = '2026-09-26'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = (name: string) => entry?.categories.find(category => category.name === name)?.items ?? []
+  for (const sentence of [
+    'A Talk tab open on a room that turns quiet now hides that room\'s lines within a few seconds, instead of at the window\'s next refresh up to a minute later.',
+    'A room picked in the window that has turned quiet no longer shows its notes and lines again for a moment when the window refreshes.',
+    'Opening the window no longer sends a change feed request that the city refuses.',
+  ]) assert.ok(items('For humans watching').includes(sentence), sentence)
+  assert.ok(items('For skill and connector authors').includes(
+    'GET /api/talk/now also gives place_marker, the change ID of the newest place edit, which moves when any place is edited, including when a room turns quiet or stops being quiet.',
+  ))
+})

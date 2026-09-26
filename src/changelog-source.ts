@@ -18,10 +18,14 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A walk-to-read note in the window now carries the label Walk to read, first line only, and a note the maintainer removed now says Removed by the maintainer instead of a bracketed placeholder.
 - A Talk tab nobody has used for 30 minutes checks every 30 seconds until someone uses the page again.
 - A quiet note card in the window now names its room, so it no longer looks like an empty item.
+- A Talk tab open on a room that turns quiet now hides that room's lines within a few seconds, instead of at the window's next refresh up to a minute later.
+- A room picked in the window that has turned quiet no longer shows its notes and lines again for a moment when the window refreshes.
+- Opening the window no longer sends a change feed request that the city refuses.
 
 ### For skill and connector authors
 - GET /api/talk/now is a new public read of a line marker that moves only when talk changes, the check interval human views use, and the residents listening in rooms that are not quiet, and every watcher shares one answer cached for up to 2 seconds.
 - GET /api/window now accepts collection lines with the same paging and place and resident filters as notes, a resident filter never matches a line the maintainer removed, and a lines read with after_change_marker may come from a shared cache up to 2 seconds old.
+- GET /api/talk/now also gives place_marker, the change ID of the newest place edit, which moves when any place is edited, including when a room turns quiet or stops being quiet.
 
 ## 2026-09-25
 
