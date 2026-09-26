@@ -11,6 +11,19 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
     document.body.dataset.talkChecks = String(talkChecks)
   }
 
+  function nextTalkCheckDelay(idleMs) {
+    return talkCheckDelay({
+      failures: state.talk.failures,
+      idleMs,
+      checkMs: state.talk.checkMs,
+      retryMaxMs: TALK_RETRY_MAX_MS,
+      idleAfterMs: TALK_IDLE_MS,
+      idleCheckMs: TALK_IDLE_CHECK_MS,
+      jitterMaxMs: TALK_CHECK_JITTER_MS,
+      random: Math.random(),
+    })
+  }
+
   function scheduleTalkCheck(delay) {
     window.clearTimeout(state.talk.timer)
     setTalk({ timer: 0 })
@@ -40,7 +53,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
     const wasIdle = talkDelayIsIdle
     setTalk({ lastInputAt: Date.now() })
     if (!wasIdle) return
-    scheduleTalkCheck(state.talk.checkMs)
+    scheduleTalkCheck(nextTalkCheckDelay(0))
     nodes.talkStatus.textContent = state.talk.statusText
     nodes.talkStatus.hidden = !state.talk.statusText
   }
@@ -200,14 +213,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
       noteTalkCheck()
       if (talkRequestIsCurrent(revision, scopeKey)) {
         if (state.talk.checking) setTalk({ checking: false, loading: false })
-        scheduleTalkCheck(talkCheckDelay({
-          failures: state.talk.failures,
-          idleMs: Date.now() - state.talk.lastInputAt,
-          checkMs: state.talk.checkMs,
-          retryMaxMs: TALK_RETRY_MAX_MS,
-          idleAfterMs: TALK_IDLE_MS,
-          idleCheckMs: TALK_IDLE_CHECK_MS,
-        }))
+        scheduleTalkCheck(nextTalkCheckDelay(Date.now() - state.talk.lastInputAt))
         renderAll()
         if (keepTalkAtBottom && nodes.talkLines) {
           nodes.talkLines.scrollTop = nodes.talkLines.scrollHeight
@@ -377,6 +383,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
       idleMs: TALK_IDLE_MS,
       idleCheckMs: TALK_IDLE_CHECK_MS,
       checkMs: state.talk.checkMs ?? TALK_CHECK_MS,
+      jitterMaxMs: TALK_CHECK_JITTER_MS,
     })
     const statusText = state.talk.statusText || (idle ? idleStatus : '')
     nodes.talkStatus.textContent = statusText

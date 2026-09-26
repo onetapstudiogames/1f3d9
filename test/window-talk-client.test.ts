@@ -13,7 +13,7 @@ import {
 } from '../src/window-client/talk.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
-import { TALK_CHECK_MS, TALK_IDLE_CHECK_MS, TALK_IDLE_MS, TALK_PANE_HOURS } from '../src/talk-watch-limits.ts'
+import { TALK_CHECK_JITTER_MS, TALK_CHECK_MIN_MS, TALK_CHECK_MS, TALK_IDLE_CHECK_MS, TALK_IDLE_MS, TALK_PANE_HOURS } from '../src/talk-watch-limits.ts'
 
 const NOW_MS = Date.parse('2026-09-25T12:00:00.000Z')
 
@@ -190,6 +190,8 @@ test('Talk check timing honors retries, served floors, and the idle guard', () =
     retryMaxMs: 30000,
     idleAfterMs: 0,
     idleCheckMs: 30000,
+    jitterMaxMs: 500,
+    random: 0,
   }
   assert.equal(talkCheckDelay({ ...options, failures: 0 }), 2000)
   assert.deepEqual([1, 2, 3, 4, 5].map(failures =>
@@ -212,21 +214,55 @@ test('Talk check timing honors retries, served floors, and the idle guard', () =
   assert.equal(talkCheckDelay({ ...slowerService, failures: 0, idleMs: 1 }), 60000)
 })
 
+test('a steady Talk check waits the served interval plus a fresh random 0 to 500 ms, never less', () => {
+  assert.equal(TALK_CHECK_JITTER_MS, 500)
+  const steady = {
+    failures: 0,
+    idleMs: 0,
+    retryMaxMs: 30000,
+    idleAfterMs: TALK_IDLE_MS,
+    idleCheckMs: TALK_IDLE_CHECK_MS,
+    jitterMaxMs: TALK_CHECK_JITTER_MS,
+  }
+  for (const checkMs of [TALK_CHECK_MIN_MS, TALK_CHECK_MS, 4000, 60000]) {
+    assert.equal(talkCheckDelay({ ...steady, checkMs, random: 0 }), checkMs)
+    assert.equal(talkCheckDelay({ ...steady, checkMs, random: 0.5 }), checkMs + 250)
+    assert.equal(talkCheckDelay({ ...steady, checkMs, random: 0.999999 }), checkMs + 500)
+    for (const random of [Number.NaN, -1, 1, 2, Number.POSITIVE_INFINITY]) {
+      const delay = talkCheckDelay({ ...steady, checkMs, random })
+      assert.ok(delay >= checkMs && delay <= checkMs + 500, `random ${random} gave ${delay}`)
+    }
+    const delays = Array.from({ length: 1000 }, () => talkCheckDelay({ ...steady, checkMs, random: Math.random() }))
+    assert.ok(delays.every(delay => Number.isInteger(delay) && delay >= checkMs && delay <= checkMs + 500))
+    assert.ok(new Set(delays).size > 1, 'every check draws its own wait')
+  }
+  assert.ok(talkCheckDelay({ ...steady, checkMs: TALK_CHECK_MIN_MS, random: 0 }) >= 2000)
+  assert.equal(talkCheckDelay({ ...steady, checkMs: 2000, failures: 1, random: 0.999999 }), 4000)
+  assert.equal(talkCheckDelay({ ...steady, checkMs: 2000, idleMs: TALK_IDLE_MS, random: 0.999999 }), 30000)
+  assert.match(WINDOW_JS, /const TALK_CHECK_JITTER_MS = 500\b/u)
+  assert.match(WINDOW_JS, /function nextTalkCheckDelay\(idleMs\) \{[\s\S]*?jitterMaxMs: TALK_CHECK_JITTER_MS,\s*random: Math\.random\(\),/u)
+  assert.equal((WINDOW_JS.match(/scheduleTalkCheck\(nextTalkCheckDelay\(/gu) ?? []).length, 2)
+  assert.doesNotMatch(WINDOW_JS, /scheduleTalkCheck\(state\.talk\.checkMs\)/u)
+})
+
 test('Talk status copy uses served limits', () => {
   assert.match(WINDOW_JS, /talkIdleStatus\(\{[\s\S]*?checkMs: state\.talk\.checkMs \?\? TALK_CHECK_MS/u)
+  assert.match(WINDOW_JS, /talkIdleStatus\(\{[\s\S]*?jitterMaxMs: TALK_CHECK_JITTER_MS,/u)
   assert.match(WINDOW_JS, /talkEmptyPaneText\(TALK_PANE_HOURS\)/u)
   assert.equal(talkIdleStatus({
     idleMs: TALK_IDLE_MS,
     idleCheckMs: TALK_IDLE_CHECK_MS,
     checkMs: 4_000,
-  }), 'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 seconds again.')
+    jitterMaxMs: TALK_CHECK_JITTER_MS,
+  }), 'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 4 to 4.5 seconds again.')
   assert.equal(talkEmptyPaneText(TALK_PANE_HOURS), 'No lines in the last 24 hours match this selection.')
   assert.equal(talkEmptyPaneText(TALK_PANE_HOURS + 1), 'No lines in the last 25 hours match this selection.')
   assert.equal(talkIdleStatus({
     idleMs: TALK_IDLE_MS,
     idleCheckMs: TALK_IDLE_CHECK_MS,
     checkMs: TALK_CHECK_MS,
-  }).includes('every 2 seconds again.'), true)
+    jitterMaxMs: TALK_CHECK_JITTER_MS,
+  }).includes('every 2 to 2.5 seconds again.'), true)
 })
 
 test('the Talk tab is read only and is wired into the window program', () => {

@@ -581,14 +581,22 @@ check, from `TALK_CHECK_MS`), and the validated listening cues in rooms that are
 quiet by their own mark and not retired (at most 200). It accepts no options and sends
 `Cache-Control: public, max-age=0, s-maxage=2`, a shared copy that lasts exactly one
 check interval, or `private, no-store` when the request carries a credential header (the
-pending-ping summary may add private data to a keyed answer). All watchers in one edge
-region therefore share at most one function run per check interval: at most 43,200 a day
-per region while anyone watches, and none when nobody does; a lone watcher misses the
-cache on almost every check. It gathers only what `GET /api/place/:id` and the public
-change log already publish and records nothing.
+pending-ping summary may add private data to a keyed answer). A copy lives 1 to 2 seconds,
+because the edge ends it at its `Date` second plus 2, and every reader that arrives within
+about 40 ms of a miss runs the function again, so pages that each waited exactly one
+interval fell into step and missed together: three watchers cost about 65 runs a minute on
+2026-09-26 (city-ops/fixes/talk-now-cache-investigation-2026-09-26.md). Each page therefore
+adds a random wait to every check (below), and the watchers in one edge region are expected
+to share about one function run per 1 to 2 seconds, near 30 to 40 a minute however many
+watch, and none when nobody does; that is an estimate until the live record in
+city-ops/fixes measures it. A lone watcher still misses the cache on almost every check.
+It gathers only what `GET /api/place/:id` and the public change log already publish and
+records nothing.
 
-The window's Talk tab checks it once per `check_interval_ms`, only while Talk is open and
-the tab is visible (`src/window-client/program/45-talk.ts`); no other tab checks, and
+The window's Talk tab checks it once per `check_interval_ms` plus a fresh random wait of 0
+to 500 ms (`TALK_CHECK_JITTER_MS`; a failed check and an idle tab keep their exact waits),
+only while Talk is open and the tab is visible (`src/window-client/program/45-talk.ts`);
+no other tab checks, and
 Conversations shows no talk. It reads the newest page of lines only when the line marker
 moves, with the marker as `after_change_marker`. The page cursor is a stack of `before_id`
 values, because line ids are taken before commit and an `after_id` cursor could skip a late
@@ -596,8 +604,9 @@ line. A hidden tab stops checking and catches up from its cursor when shown; fai
 off to 30 seconds. A Talk tab nobody has used for 30 minutes checks every 30 seconds.
 The numbers live in `src/talk-watch-limits.ts`, and the served reference renders them
 through `{{TALK_WATCH_RULE}}` and `{{TALK_WINDOW_RULE}}`; a test keeps one cache age plus
-one check under the 5-second target, so turning the interval down changes that promise in
-the same change. The live page (`onetapstudiogames/1f3d9-live`) reads the same answer for
+one check plus the largest random wait under the 5-second target, so turning the interval
+down or the random wait up changes that promise in the same change. The live page
+(`onetapstudiogames/1f3d9-live`) reads the same answer for
 its listening marks and its own line check, and reads its room's lines through the same
 shared lines read; the terminal follow view in the citylife skill reads
 `check_interval_ms` once at start, prints lines, pings, and answers on its 30-second

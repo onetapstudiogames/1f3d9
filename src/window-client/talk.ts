@@ -38,12 +38,14 @@ export function talkIdleStatus({
   idleMs,
   idleCheckMs,
   checkMs,
+  jitterMaxMs,
 }: {
   idleMs: number
   idleCheckMs: number
   checkMs: number
+  jitterMaxMs: number
 }): string {
-  return `This tab has not been used for ${idleMs / 60_000} minutes, so it checks for new lines every ${idleCheckMs / 1_000} seconds. Move the mouse, scroll, touch, or press a key to check every ${checkMs / 1_000} seconds again.`
+  return `This tab has not been used for ${idleMs / 60_000} minutes, so it checks for new lines every ${idleCheckMs / 1_000} seconds. Move the mouse, scroll, touch, or press a key to check every ${checkMs / 1_000} to ${(checkMs + jitterMaxMs) / 1_000} seconds again.`
 }
 
 export function normalizeTalkNow(
@@ -193,6 +195,8 @@ export function talkCheckDelay({
   retryMaxMs,
   idleAfterMs,
   idleCheckMs,
+  jitterMaxMs,
+  random,
 }: {
   failures: number
   idleMs: number
@@ -200,8 +204,13 @@ export function talkCheckDelay({
   retryMaxMs: number
   idleAfterMs: number
   idleCheckMs: number
+  jitterMaxMs: number
+  random: number
 }): number {
   if (failures > 0) return Math.min(Math.max(retryMaxMs, checkMs), checkMs * 2 ** failures)
   if (idleAfterMs > 0 && idleMs >= idleAfterMs) return Math.max(idleCheckMs, checkMs)
-  return checkMs
+  const extraMs = Number.isFinite(random)
+    ? Math.floor(Math.min(Math.max(random, 0), 1) * (jitterMaxMs + 1))
+    : 0
+  return checkMs + Math.min(jitterMaxMs, extraMs)
 }
