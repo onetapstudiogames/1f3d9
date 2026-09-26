@@ -16,6 +16,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { WINDOW_CSS } from '../src/window-style.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
+import { MINUTE_MS, talkLineTime } from './helpers/window-talk-fixtures.ts'
 
 // Sentinels are deliberately not real words, so an accidental substring
 // match inside ordinary window chrome (labels, CSS class names, help text)
@@ -195,7 +196,7 @@ function collectionEnvelope(collectionName: string) {
         place_id: QUIET_PLACE_ID,
         author: RESIDENT_SENTINEL,
         body: 'A quiet-room line contains ' + LINE_SENTINEL,
-        created_at: '2026-08-20T12:02:00.000Z',
+        created_at: talkLineTime(MINUTE_MS),
       }],
       has_more: false,
       next_before_id: null,

@@ -1,5 +1,16 @@
 import { expect, type Page } from '@playwright/test'
 
+export const MINUTE_MS = 60_000
+export const HOUR_MS = 60 * MINUTE_MS
+
+// Talk's newest page shows only lines from the last TALK_PANE_HOURS hours of the page's
+// own clock, so a fixed date in a fixture drops out of it a day later. Build every line
+// time from the clock the page reads: the real clock (the default) when the test installs
+// none, or the fixed time the test installs with page.clock.
+export function talkLineTime(ageMs: number, nowMs: number = Date.now()): string {
+  return new Date(nowMs - ageMs).toISOString()
+}
+
 export type TalkRequests = string[] & Readonly<{
   talkNow: string[]
   lines: string[]
