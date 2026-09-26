@@ -127,7 +127,10 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
     if (!placeId) return null
     const entry = state.focusedPlaces[String(placeId)]
     const place = entry?.place || null
-    if (place && state.changeMarker && !markerCovers(entry?.marker, state.changeMarker)) return null
+    // A stale read gives way, except the picked place's read that said quiet, which holds
+    // until the refresh's own read of that place replaces it (decision 129 fails closed).
+    if (place && state.changeMarker && !markerCovers(entry?.marker, state.changeMarker) &&
+        !staleFocusedPlaceStaysQuiet({ placeId, pickedPlaceId: state.placeId, place })) return null
     const reference = directoryPlace(placeId)
     return place
       ? Object.freeze({ ...place, path: focusedPlacePath(reference, place) })

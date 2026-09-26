@@ -109,7 +109,7 @@ async function routeDeepRoom(
     const since = url.searchParams.get('since')
     const marker = since ? String(BigInt(since) + 1n) : '20'
     const change = since
-      ? [{ change_id: marker, kind: 'place_edited', actor: 'mapkeeper', detail: { place_id: 77 }, created_at: '2026-09-25T11:59:30.000Z' }]
+      ? [{ change_id: marker, kind: 'place_edited', actor: 'mapkeeper', detail: { place_id: since === '21' ? 11 : 77 }, created_at: '2026-09-25T11:59:30.000Z' }]
       : []
     await route.fulfill({ json: {
       change_marker: marker,
@@ -332,6 +332,52 @@ test('a deep room picked in Talk that turns quiet hides its lines after one chec
   }).length).toBe(1)
   await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
   await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+  expect(requests.lines).toHaveLength(1)
+})
+
+test('a picked quiet room stays hidden while its own read is pending after a later refresh', async ({ page }) => {
+  const requests = await routeTalk(page, {
+    now: (_url, index) => talkNow({ placeMarker: ['20', '21', '22'][index] ?? '23' }),
+    lines: linesPage([{ ...publicLine(102, 'DeepQuietLineRw4m8'), place_id: 77 }]),
+  })
+  const deepRoom = await routeDeepRoom(page, {
+    quietAt: marker => marker === '21' || marker === '22',
+    holdMapAt: '22',
+  })
+  await page.evaluate(() => { window.location.hash = '#view=talk&place=77' })
+  await expect(page.locator('#talk-panel')).toBeVisible()
+  await expect.poll(() => requests.talkNow.length).toBe(1)
+  await expect(page.locator('#talk-lines')).toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 3, checks: 3 })
+  await expect.poll(() => deepRoom.maps.filter(value => {
+    const url = new URL(value)
+    return url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '22'
+  }).length).toBe(1)
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+  await new Promise(resolve => setTimeout(resolve, 500))
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  const heldMapResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/map' &&
+      url.searchParams.get('parent_id') === '77' &&
+      url.searchParams.get('after_change_marker') === '22'
+  })
+  deepRoom.release()
+  await heldMapResponse
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText('DeepQuietLineRw4m8')
+
+  await stepTalk(page, 2_000, requests, { talkNow: 4, checks: 4 })
+  await expect(page.locator('#talk-lines')).toContainText('DeepQuietLineRw4m8')
   expect(requests.lines).toHaveLength(1)
 })
 

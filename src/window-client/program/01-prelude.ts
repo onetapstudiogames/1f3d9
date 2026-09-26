@@ -67,6 +67,7 @@ import {
   talkPane,
   talkRenderRows,
 } from '../talk.ts'
+import { staleFocusedPlaceStaysQuiet } from '../quiet.ts'
 // Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
@@ -102,6 +103,7 @@ const NORMALIZE_TALK_NOW_JS = normalizeTalkNow.toString()
 const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
 const TALK_CITY_VIEW_IS_BEHIND_JS = talkCityViewIsBehind.toString()
+const STALE_FOCUSED_PLACE_STAYS_QUIET_JS = staleFocusedPlaceStaysQuiet.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
 const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
@@ -144,6 +146,7 @@ export const PART_01_PRELUDE = `(() => {
   const talkCheckMs = ${TALK_CHECK_MS_JS}
   const talkLinesPath = ${TALK_LINES_PATH_JS}
   const talkCityViewIsBehind = ${TALK_CITY_VIEW_IS_BEHIND_JS}
+  const staleFocusedPlaceStaysQuiet = ${STALE_FOCUSED_PLACE_STAYS_QUIET_JS}
   const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
