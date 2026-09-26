@@ -579,7 +579,7 @@ shares: a line marker (the change id of the newest line said or line moderation 
 so it moves only when talk changes), `check_interval_ms` (how often human views may
 check, from `TALK_CHECK_MS`), and the validated listening cues in rooms that are not
 quiet by their own mark and not retired (at most 200). It accepts no options and sends
-`Cache-Control: public, max-age=0, s-maxage=2`, a shared copy that lasts exactly one
+`Cache-Control: public, max-age=0, s-maxage=2`, a shared copy that lasts up to one
 check interval, or `private, no-store` when the request carries a credential header (the
 pending-ping summary may add private data to a keyed answer). A copy lives 1 to 2 seconds,
 because the edge ends it at its `Date` second plus 2, and every reader that arrives within

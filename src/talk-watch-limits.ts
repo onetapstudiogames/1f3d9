@@ -7,7 +7,7 @@
 // How often a human view may check GET /api/talk/now. It is served to every view as
 // check_interval_ms, so one city change turns it down without redeploying the live page
 // or releasing the plugin. A whole number of seconds, because the shared cache below lasts
-// exactly this long.
+// up to this long.
 export const TALK_CHECK_MS = 2_000
 // Every polled talk read keeps one shared edge copy for up to one check interval (the edge
 // ends a copy at its Date second plus this), so watchers in one edge region share it while
