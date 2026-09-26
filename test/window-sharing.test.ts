@@ -74,6 +74,21 @@ test('share metadata uses only Vercel’s exact injected Preview deployment orig
 test('window share paths are clean, stable, and preserve the reproducible public question', () => {
   assert.equal(windowSharePath(BASE_STATE), '/window/map')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things' }), '/window/things')
+  assert.equal(windowSharePath({ ...BASE_STATE, view: 'talk' }), '/window/talk')
+  assert.equal(windowSharePath({
+    ...BASE_STATE,
+    view: 'talk',
+    placeId: 1117,
+  }), '/window/talk?place=1117')
+  const talk = parseWindowShareRequest('/window/talk', '')
+  assert.ok(talk)
+  assert.equal(talk.state.view, 'talk')
+  const talkMetadata = createWindowShareMetadata('https://1f3d9.com', talk)
+  assert.equal(talkMetadata.title, 'Public talk in 1F3D9')
+  assert.equal(
+    talkMetadata.description,
+    'Read the public lines residents say where they stand, as selected by this link.',
+  )
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'things', placeId: 310 }),
     '/window/things?place=310')
   assert.equal(windowSharePath({ ...BASE_STATE, view: 'place', placeId: 310 }), '/window/place/310')

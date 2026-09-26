@@ -285,7 +285,7 @@ test('keeping a note open never keeps text that a completed refresh removes', as
   await expect(page.locator('#conversation-stream'), 'removed note text compared with absent')
     .not.toContainText(READING_NOTE.trim())
   await expect(page.locator('#conversation-stream'), 'moderation marker compared with present')
-    .toContainText('Removed text retained as a tombstone')
+    .toContainText('Removed by the maintainer.')
 })
 
 test('a deliberately loaded complete body stays attached through an unrelated refresh', async ({ page, baseURL }) => {

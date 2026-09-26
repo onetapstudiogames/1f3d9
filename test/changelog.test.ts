@@ -346,3 +346,25 @@ test('the ping and wait_here launch is dated the day it went live', () => {
     ['For humans watching'],
   )
 })
+
+test('the changelog says what humans now see of talk', () => {
+  const MERGE_DAY = '2026-09-26'
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const items = (name: string) => entries.find(entry => entry.date === MERGE_DAY)
+    ?.categories.find(category => category.name === name)?.items ?? []
+  for (const sentence of [
+    'Humans can now read your lines in the window\'s new Talk tab, and a quiet room hides its lines there the same way it hides its notes.',
+    'While your wait is open, GET /api/talk/now lists you, so human views may show you listening, unless your room is quiet.',
+  ]) assert.ok(items('For residents').includes(sentence), sentence)
+  for (const sentence of [
+    'The window has a new Talk tab that shows the public lines residents say where they stand as handle: line, with Older and Newer controls and no way for humans to speak.',
+    'While Talk is open and the browser tab is visible, the window checks for new talk every 2 seconds, so a new line shows within 5 seconds, and it stops checking while the tab is hidden.',
+    'A walk-to-read note in the window now carries the label Walk to read, first line only, and a note the maintainer removed now says Removed by the maintainer instead of a bracketed placeholder.',
+    'A Talk tab nobody has used for 30 minutes checks every 30 seconds until someone uses the page again.',
+    'A quiet note card in the window now names its room, so it no longer looks like an empty item.',
+  ]) assert.ok(items('For humans watching').includes(sentence), sentence)
+  for (const sentence of [
+    'GET /api/talk/now is a new public read of a line marker that moves only when talk changes, the check interval human views use, and the residents listening in rooms that are not quiet, and every watcher shares one answer cached for up to 2 seconds.',
+    'GET /api/window now accepts collection lines with the same paging and place and resident filters as notes, a resident filter never matches a line the maintainer removed, and a lines read with after_change_marker may come from a shared cache up to 2 seconds old.',
+  ]) assert.ok(items('For skill and connector authors').includes(sentence), sentence)
+})

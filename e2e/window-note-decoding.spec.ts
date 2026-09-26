@@ -255,8 +255,8 @@ test('moderation clears decoded text and the prior original', async ({ page, bas
 
   await fixture.refresh({ moderated: true })
   const moderated = page.locator(noteSelector('place'))
-  await expect(moderated.locator('.note-body.public-body'),
-    'moderated note compared with its current tombstone').toHaveText('[removed by maintainer]')
+  await expect(moderated.locator('.removed-label'),
+    'moderated note compared with the removed label').toHaveText('Removed by the maintainer.')
   await expect(moderated, 'moderated note compared without prior encoded original').not.toContainText(original)
   await expect(moderated.locator('.note-decoded'),
     'decoded regions after moderation compared with none').toHaveCount(0)

@@ -36,12 +36,34 @@ import {
   parseWindowViewerOpenKeys,
 } from '../viewer-state.ts'
 import { createNoteDecodingHelpers } from '../note-decoding.ts'
-import { WALK_TO_READ_WINDOW_LINE } from '../../walk-to-read.ts'
+import { WALK_TO_READ_WINDOW_LABEL, WALK_TO_READ_WINDOW_LINE } from '../../walk-to-read.ts'
+import { MODERATED_WINDOW_LABEL } from '../../moderation.ts'
+import {
+  TALK_CHECK_MS,
+  TALK_CHECK_MIN_MS,
+  TALK_CHECK_MAX_MS,
+  TALK_RETRY_MAX_MS,
+  TALK_IDLE_MS,
+  TALK_IDLE_CHECK_MS,
+  TALK_PAGE_LINES,
+  TALK_PANE_HOURS,
+} from '../../talk-watch-limits.ts'
 import {
   WINDOW_HISTORY_FILL_ROWS,
   WINDOW_HISTORY_KEEP_ROWS,
 } from '../../window-history-limits.ts'
-// Same-room talk stays out of the human window, its browser program, the replay file, and the front door's recent activity until those views hide quiet rooms and removed talk (same-room talk PR 3).
+import {
+  normalizeTalkLines,
+  normalizeTalkNow,
+  talkCheckDelay,
+  talkCheckMs,
+  talkLinesPath,
+  talkEmptyPaneText,
+  talkIdleStatus,
+  talkPane,
+  talkRenderRows,
+} from '../talk.ts'
+// Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
 const PUBLIC_SYSTEM_EVENT_ACTORS_JSON = JSON.stringify(Object.values(PUBLIC_SYSTEM_EVENT_ACTORS))
@@ -69,6 +91,17 @@ const WINDOW_VIEWER_OPEN_STORAGE_KEY_JSON = JSON.stringify(WINDOW_VIEWER_OPEN_ST
 const PARSE_WINDOW_VIEWER_OPEN_KEYS_JS = parseWindowViewerOpenKeys.toString()
 const CREATE_NOTE_DECODING_HELPERS_JS = createNoteDecodingHelpers.toString()
 const WALK_TO_READ_WINDOW_LINE_JSON = JSON.stringify(WALK_TO_READ_WINDOW_LINE)
+const WALK_TO_READ_WINDOW_LABEL_JSON = JSON.stringify(WALK_TO_READ_WINDOW_LABEL)
+const MODERATED_WINDOW_LABEL_JSON = JSON.stringify(MODERATED_WINDOW_LABEL)
+const NORMALIZE_TALK_LINES_JS = normalizeTalkLines.toString()
+const NORMALIZE_TALK_NOW_JS = normalizeTalkNow.toString()
+const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
+const TALK_CHECK_MS_JS = talkCheckMs.toString()
+const TALK_LINES_PATH_JS = talkLinesPath.toString()
+const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
+const TALK_IDLE_STATUS_JS = talkIdleStatus.toString()
+const TALK_PANE_JS = talkPane.toString()
+const TALK_RENDER_ROWS_JS = talkRenderRows.toString()
 
 
 export const PART_01_PRELUDE = `(() => {
@@ -77,6 +110,15 @@ export const PART_01_PRELUDE = `(() => {
   const BASE_REFRESH_MS = 60000
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
+  const TALK_CHECK_MS = ${TALK_CHECK_MS}
+  const TALK_CHECK_MIN_MS = ${TALK_CHECK_MIN_MS}
+  const TALK_CHECK_MAX_MS = ${TALK_CHECK_MAX_MS}
+  const TALK_RETRY_MAX_MS = ${TALK_RETRY_MAX_MS}
+  const TALK_IDLE_MS = ${TALK_IDLE_MS}
+  const TALK_IDLE_CHECK_MS = ${TALK_IDLE_CHECK_MS}
+  const TALK_PAGE_LINES = ${TALK_PAGE_LINES}
+  const TALK_PANE_HOURS = ${TALK_PANE_HOURS}
+  const TALK_PANE_MS = TALK_PANE_HOURS * 60 * 60 * 1000
   const MAX_FORWARD_RECONCILE_PAGES = 8
   // Both window history bounds come from src/window-history-limits.ts, the one
   // place that states them, so the served notice and this program cannot drift.
@@ -88,13 +130,24 @@ export const PART_01_PRELUDE = `(() => {
   const GAZETTE_FIRST_PRINT_AT = '2026-08-31T16:00:00.000Z'
   const GAZETTE_FIRST_PRINT_EMPTY_STATE = 'No Gazette issues have printed yet. The first print is scheduled for Monday, 31 August 2026 at 16:00 UTC.'
   const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{2,31}$/
+  const normalizeTalkLines = ${NORMALIZE_TALK_LINES_JS}
+  const normalizeTalkNow = ${NORMALIZE_TALK_NOW_JS}
+  const talkCheckDelay = ${TALK_CHECK_DELAY_JS}
+  const talkCheckMs = ${TALK_CHECK_MS_JS}
+  const talkLinesPath = ${TALK_LINES_PATH_JS}
+  const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
+  const talkIdleStatus = ${TALK_IDLE_STATUS_JS}
+  const talkPane = ${TALK_PANE_JS}
+  const talkRenderRows = ${TALK_RENDER_ROWS_JS}
   const SAFE_WORLD_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
   const MODERATED_TEXT = '[removed by maintainer]'
   // Decision #102: the window stands nowhere, so it never shows a walk-to-read body.
   const WALK_TO_READ_WINDOW_LINE = ${WALK_TO_READ_WINDOW_LINE_JSON}
+  const WALK_TO_READ_WINDOW_LABEL = ${WALK_TO_READ_WINDOW_LABEL_JSON}
+  const MODERATED_WINDOW_LABEL = ${MODERATED_WINDOW_LABEL_JSON}
   const WORLD_ROOT_NAME = ${WORLD_ROOT_NAME_JSON}
   const VIEWS = Object.freeze([
-    'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const SAFE_EVENT_KINDS = new Map(Object.entries(${PUBLIC_EVENT_LABELS_JSON}))
   const SAFE_EVENT_DETAIL_IDS = Object.freeze(${PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON})

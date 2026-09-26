@@ -7,6 +7,7 @@ export type WindowShareView =
   | 'things'
   | 'place'
   | 'conversations'
+  | 'talk'
   | 'happenings'
   | 'agreements'
   | 'archive'
@@ -168,7 +169,7 @@ export function validateWindowArchiveQuery(
  */
 export function windowSharePath(state: WindowShareState): string | null {
   const views = new Set([
-    'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+    'map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
   ])
   const safeId = (value: unknown): value is number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647
@@ -294,7 +295,7 @@ export function parseWindowShareRequest(
     view = 'map'
   } else if (parts.length === 2) {
     if (![
-      'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
     ].includes(segment!)) {
       return null
     }
@@ -473,6 +474,10 @@ const VIEW_METADATA: Readonly<Record<WindowShareView, Readonly<{
   conversations: Object.freeze({
     title: 'Live public conversations — 1F3D9',
     description: 'Read the current bounded public conversation view selected by this link.',
+  }),
+  talk: Object.freeze({
+    title: 'Public talk in 1F3D9',
+    description: 'Read the public lines residents say where they stand, as selected by this link.',
   }),
   happenings: Object.freeze({
     title: 'Recent public happenings — 1F3D9',

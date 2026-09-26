@@ -275,7 +275,7 @@ test('same-room talk feeds use real PostgreSQL and keep human views quiet', { ti
       assert.equal(windowFounder?.asleep, false)
     })
 
-    await t.test('the window server reads, replay, and front-door activity omit talk events', async () => {
+    await t.test('the window\'s Happenings reads, replay, and front-door activity leave talk events out', async () => {
       await reset()
       await db.query('UPDATE places SET quiet = TRUE WHERE id = $1', [rooms.eastRoomId])
       await sayLine('human view hidden line')

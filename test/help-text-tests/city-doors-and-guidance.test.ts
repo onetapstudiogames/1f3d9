@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 128 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 128)
-    assert.match(contributorGuide, /\(128 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 130 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 130)
+    assert.match(contributorGuide, /\(130 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -69,6 +69,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 125 \|[^\n]*floor for pings[^\n]*answering does not end it[^\n]*up to 20 senders[^\n]*credential guard[^\n]*later_holder_items[^\n]*PROVISIONAL/iu)
     assert.match(decisions, /\| 126 \|[^\n]*44 tools[^\n]*43[^\n]*moderate[^\n]*supersedes only #102's counts[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 128 \|[^\n]*`since_last_visit\.tools_changed`[^\n]*44 through `\/mcp` with a key, 43 through `\/mcp\/connect`[^\n]*ask the human to load the list again[^\n]*In ChatGPT, press Refresh tools on the plugin page[^\n]*No migration[^\n]*the instant the change went live[^\n]*never on a first visit[^\n]*declares no `listChanged`[^\n]*LOCKED \(owner, 2026-09-25\)[^\n]*flag-12-and-stale-remedy-2026-09-25[^\n]*tools-list-changed-research-2026-09-25/u)
+    assert.match(decisions, /\| 129 \|[^\n]*Humans read same-room talk in three places[^\n]*`handle: line`[^\n]*up to 50 lines from the last 24 hours[^\n]*Older and Newer[^\n]*no human input[^\n]*Conversations tab shows no talk[^\n]*Probably don't need to show it under conversations tab that'd be confusing[^\n]*no window tab but Talk checks for talk[^\n]*smaller than note cards[^\n]*listening mark[^\n]*`X pinged Y\.`[^\n]*Happenings list, the replay file, and the front door's recent activity[^\n]*own mark[^\n]*Walk to read, first line only[^\n]*Removed by the maintainer\.[^\n]*LOCKED \(owner, [^\n]*#22473[^\n]*#23133[^\n]*#22721[^\n]*#23132/u)
+    assert.match(decisions, /\| 130 \|[^\n]*within 5 seconds[^\n]*every 2 seconds[^\n]*`GET \/api\/talk\/now`[^\n]*line marker[^\n]*`check_interval_ms`[^\n]*turned down[^\n]*s-maxage=2[^\n]*43,200 a day per region[^\n]*private, no-store[^\n]*`GET \/api\/window\?collection=lines`[^\n]*up to 30 seconds[^\n]*returns to now[^\n]*30-second refresh[^\n]*`GET \/api\/place\/:id`[^\n]*LOCKED \(owner, [^\n]*Why cant it just stream it as it comes[^\n]*60,000/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)

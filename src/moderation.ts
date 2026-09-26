@@ -18,6 +18,8 @@ export const MODERATION_TARGET_TYPES = Object.freeze([
 export const MODERATION_ACTIONS = Object.freeze(['remove', 'restore'] as const)
 export const MODERATION_REASON_MAX_BYTES = 4_000
 export const MODERATED_TEXT = '[removed by maintainer]'
+/** What the human window prints in place of a note or line founder moderation removed (founder note #23132). */
+export const MODERATED_WINDOW_LABEL = 'Removed by the maintainer.'
 
 export type ModerationTargetType = typeof MODERATION_TARGET_TYPES[number]
 type RecordModerationTargetType = Exclude<ModerationTargetType, TalkTargetType>

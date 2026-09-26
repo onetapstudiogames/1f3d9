@@ -163,6 +163,12 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
     target.replaceChildren(element('p', className, message))
   }
 
+  // Decision #75 lets a quiet place show its name; a quiet card names its room so it never
+  // looks like an empty item (owner, Q7; gleam #22721).
+  function quietRoomName(place, placeId) {
+    return (place && place.name) || ('place #' + String(placeId))
+  }
+
   // Decision #75: a quiet place still shows its name, owner, and counts, but
   // every window tab that would otherwise render its residents, things, or
   // notes prints this one honest line instead. Expanding it (hover or the
@@ -179,7 +185,7 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
     notice.append(summary, element(
       'p',
       'quiet-room-expansion',
-      'The public record stays public: notes and things here remain readable at their own address.',
+      'The public record stays public: notes, things, and lines here remain readable at their own address.',
     ))
     return notice
   }

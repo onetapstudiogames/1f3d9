@@ -68,6 +68,8 @@ import {
 } from './public-records.ts'
 import { configuredPublicDomain } from './public-reference-facts.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
+import { LINE_BODY_MAX_BYTES } from './room-talk-contract.ts'
+import { TALK_SHARED_CACHE_CONTROL } from './talk-watch-limits.ts'
 import {
   createWindowShareMetadata,
   parseWindowShareRequest,
@@ -271,6 +273,11 @@ interface PublicAgreement {
   moderated: boolean
   truncated?: true
 }
+
+export type PublicWindowLine = Readonly<
+  { id: number; place_id: number; author: string; body: string; created_at: string }
+  | { id: number; moderated: true }
+>
 
 const MODERATED_PLACE_NAME = MODERATED_TEXT
 
@@ -555,6 +562,24 @@ export function publicWindowNotes(values: unknown[]): PublicNote[] {
   }).slice(0, PUBLIC_PAGE_MAX)
 }
 
+// A removed line keeps only its id (decision 123); a visible line must be whole.
+// safePublicText trims and NFC-normalizes for display. This presentation never changes the stored line (#119).
+export function publicWindowLines(values: unknown[]): PublicWindowLine[] {
+  return values.flatMap((value): PublicWindowLine[] => {
+    if (!value || typeof value !== 'object') return []
+    const row = value as Record<string, unknown>
+    const id = positiveInteger(row.id)
+    if (!id) return []
+    if (row.moderated === true) return [{ id, moderated: true as const }]
+    const placeId = positiveInteger(row.place_id)
+    const author = typeof row.author === 'string' && HANDLE_RE.test(row.author) ? row.author : null
+    const createdAt = safeDate(row.created_at)
+    const body = safePublicText(row.body, LINE_BODY_MAX_BYTES)
+    if (!placeId || !author || !createdAt || !body || body.truncated || !body.text) return []
+    return [{ id, place_id: placeId, author, body: body.text, created_at: createdAt }]
+  }).slice(0, PUBLIC_PAGE_MAX)
+}
+
 export function publicWindowThings(values: unknown[]): PublicThing[] {
   return values.flatMap(value => {
     if (!value || typeof value !== 'object') return []
@@ -807,7 +832,7 @@ const WINDOW_HISTORY_KEYS = new Set([
   'collection', 'before_id', 'after_id', 'limit', 'place_id', 'within_place_id', 'resident',
   'context', 'presentation', 'find',
 ])
-const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements'])
+const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements', 'lines'])
 
 // How many same-place neighbors ride along with each of a followed
 // resident's notes when the caller asks for conversational context.
@@ -822,7 +847,7 @@ export const NOTE_CONTEXT_PAGE_MAX = Math.floor(
 )
 
 export interface WindowHistoryQuery {
-  readonly collection: 'notes' | 'things' | 'agreements'
+  readonly collection: 'notes' | 'things' | 'agreements' | 'lines'
   readonly beforeId: number | null
   // The older, exclusive end of a bounded range read. With beforeId it asks for
   // the records strictly between the two, under the same filters and page size.
@@ -1022,6 +1047,29 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
       ]),
     })
   }
+  if (options.collection === 'lines') {
+    // A resident filter never matches a line founder moderation removed, as the
+    // GET /api/events actor filter never matches a removed talk event (decision 123).
+    return Object.freeze({
+      text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT line.id, line.place_id, author.handle AS author, line.body, line.created_at
+        FROM room_lines line JOIN residents author ON author.id = line.resident_id
+        WHERE ($1::integer IS NULL OR line.id < $1::integer)
+          AND ($5::integer IS NULL OR line.id > $5::integer)
+          AND ${placePredicate('line.place_id')}
+          AND ($3::text IS NULL OR (author.handle = $3::text AND coalesce((
+            SELECT moderation.action
+            FROM moderation_actions moderation
+            WHERE moderation.target_type = 'line' AND moderation.target_id = line.id
+            ORDER BY moderation.created_at DESC, moderation.id DESC
+            LIMIT 1
+          ), 'restore') <> 'remove'))
+        ORDER BY line.id DESC
+        LIMIT $4::integer`,
+      values: Object.freeze([
+        options.beforeId, options.placeId, options.resident, fetchLimit, options.afterId ?? null,
+      ]),
+    })
+  }
   if (options.collection === 'things') {
     if (options.presentation === 'headings') {
       const findId = options.find && /^#[1-9]\d{0,9}$/u.test(options.find)
@@ -1167,7 +1215,7 @@ export async function loadWindowCollectionRows(
 }
 
 interface WindowCollectionPage {
-  readonly items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement)[]
+  readonly items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement | PublicWindowLine)[]
   readonly hasMore: boolean
   readonly nextBeforeId: number | null
 }
@@ -1199,10 +1247,13 @@ export async function readWindowCollectionPage(
     rows as readonly (Record<string, unknown> & { id: number })[],
     options.limit,
   )
-  let items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement)[]
+  let items: readonly (PublicNote | PublicThing | PublicThingHeading | PublicAgreement | PublicWindowLine)[]
   if (options.collection === 'notes') {
     const moderated = await moderatePublicRows('note', rawPage.items.map(row => publicNoteRow(row)))
     items = publicWindowNotes([...moderated])
+  } else if (options.collection === 'lines') {
+    const moderated = await moderatePublicRows('line', [...rawPage.items])
+    items = publicWindowLines([...moderated])
   } else if (options.collection === 'things') {
     const rawThings = [...rawPage.items]
     if (options.presentation === 'headings') {
@@ -1711,11 +1762,14 @@ export async function windowSnapshot(c: Context) {
       }
       throw error
     }
+    // Every watcher that saw the same line marker asks for this same address, and a copy
+    // made for that marker already covers it, so a marked lines read shares one edge copy
+    // for one check interval (decision 130). Every other marked read stays no-store.
     c.header(
       'Cache-Control',
       minimumMarker === null
         ? 'public, max-age=15, s-maxage=60, stale-while-revalidate=300'
-        : 'no-store',
+        : request.collection === 'lines' ? TALK_SHARED_CACHE_CONTROL : 'no-store',
     )
     return c.json({
       [request.collection]: page.items,

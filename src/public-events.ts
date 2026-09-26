@@ -51,7 +51,7 @@ export const PUBLIC_EVENT_KINDS = Object.freeze(Object.keys(PUBLIC_EVENT_LABELS)
 
 const TALK_EVENT_KIND_SET = new Set(Object.keys(TALK_EVENT_TARGETS))
 
-// Same-room talk stays out of the human window, its browser program, the replay file, and the front door's recent activity until those views hide quiet rooms and removed talk (same-room talk PR 3).
+// Same-room talk events stay out of the window's Happenings, its browser program, the replay file, and the front door's recent activity (decision #129). Humans read lines in the window's Talk tab, which hides quiet rooms and removed lines.
 export const HUMAN_VIEW_EVENT_KINDS = Object.freeze(
   PUBLIC_EVENT_KINDS.filter(kind => !TALK_EVENT_KIND_SET.has(kind)),
 )

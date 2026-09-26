@@ -15,8 +15,11 @@ const ROOT_PLACE_ID = 501
 const ROOM_ID = 502
 const WALK_NOTE_ID = 9301
 const ORDINARY_NOTE_ID = 9302
+const REMOVED_NOTE_ID = 9303
+const REMOVED_WALK_NOTE_ID = 9304
 const FIRST_LINE = 'Field note, east wall'
 const ORDINARY_BODY = 'An ordinary note anyone can read from anywhere.'
+const REMOVED_PLACEHOLDER = '[removed by maintainer]'
 
 const WALK_NOTE = Object.freeze({
   id: WALK_NOTE_ID,
@@ -39,6 +42,28 @@ const ORDINARY_NOTE = Object.freeze({
   moderated: false,
 })
 
+const REMOVED_NOTE = Object.freeze({
+  id: REMOVED_NOTE_ID,
+  place_id: ROOM_ID,
+  author: 'serein-walks',
+  body: REMOVED_PLACEHOLDER,
+  created_at: '2026-09-22T12:03:00.000Z',
+  moderated: true,
+})
+
+const REMOVED_WALK_NOTE = Object.freeze({
+  id: REMOVED_WALK_NOTE_ID,
+  place_id: ROOM_ID,
+  author: 'serein-walks',
+  body: REMOVED_PLACEHOLDER,
+  created_at: '2026-09-22T12:04:00.000Z',
+  moderated: true,
+  walk_to_read: true,
+  first_line: 'This removed first line must not be shown.',
+  body_text_bytes: 44,
+  read_in_person: walkToReadInPerson(REMOVED_WALK_NOTE_ID, ROOM_ID),
+})
+
 const ROOM = Object.freeze({
   id: ROOM_ID,
   parent_id: ROOT_PLACE_ID,
@@ -48,7 +73,7 @@ const ROOM = Object.freeze({
   front_matter: [],
   places: 0,
   things: 0,
-  notes: 2,
+  notes: 4,
   quiet: false,
   children: [],
 })
@@ -77,16 +102,16 @@ const SNAPSHOT = Object.freeze({
     has_drawing: false,
     joined_at: '2026-08-14T12:00:00.000Z',
   }],
-  notes: [WALK_NOTE, ORDINARY_NOTE],
+  notes: [WALK_NOTE, ORDINARY_NOTE, REMOVED_NOTE, REMOVED_WALK_NOTE],
   things: [],
   agreements: [],
   events: [],
   live_survey: [
     { id: ROOT_PLACE_ID, parent_id: null, things: 0, notes: 0 },
-    { id: ROOM_ID, parent_id: ROOT_PLACE_ID, things: 0, notes: 2 },
+    { id: ROOM_ID, parent_id: ROOT_PLACE_ID, things: 0, notes: 4 },
   ],
-  totals: { places: 2, residents: 1, conversations: 2, things: 0, agreements: 0, events: 0 },
-  shown: { places: 2, residents: 1, conversations: 2, things: 0, agreements: 0, events: 0 },
+  totals: { places: 2, residents: 1, conversations: 4, things: 0, agreements: 0, events: 0 },
+  shown: { places: 2, residents: 1, conversations: 4, things: 0, agreements: 0, events: 0 },
   limits: { places: 10, residents: 25, conversations: 10, things: 10, agreements: 10, events: 10 },
   pages: {
     places: { has_more: false, next_before_subplace_id: null },
@@ -110,7 +135,7 @@ const DIRECTORY = Object.freeze({
 
 function collectionEnvelope(collectionName: string) {
   if (collectionName === 'notes') {
-    return { notes: [WALK_NOTE, ORDINARY_NOTE], has_more: false, next_before_id: null, change_marker: '40' }
+    return { notes: [WALK_NOTE, ORDINARY_NOTE, REMOVED_NOTE, REMOVED_WALK_NOTE], has_more: false, next_before_id: null, change_marker: '40' }
   }
   return { [collectionName]: [], has_more: false, next_before_id: null, change_marker: '40' }
 }
@@ -135,6 +160,8 @@ test.beforeEach(async ({ page }) => {
     const id = Number(new URL(route.request().url()).pathname.split('/')[3])
     if (id === WALK_NOTE_ID) return route.fulfill({ json: { note: WALK_NOTE } })
     if (id === ORDINARY_NOTE_ID) return route.fulfill({ json: { note: ORDINARY_NOTE } })
+    if (id === REMOVED_NOTE_ID) return route.fulfill({ json: { note: REMOVED_NOTE } })
+    if (id === REMOVED_WALK_NOTE_ID) return route.fulfill({ json: { note: REMOVED_WALK_NOTE } })
     return route.fulfill({ status: 404, json: { error: 'no such note in this fixture' } })
   })
   await page.route('**/api/events**', route => route.fulfill({
@@ -166,7 +193,14 @@ test('a walk-to-read note shows its first line and the in-person line in Convers
 
   const walkCard = page.locator('.note-card', { has: page.locator(`a[href="/window/note/${WALK_NOTE_ID}"]`) })
   await expect(walkCard).toHaveCount(1)
+  await expect(walkCard.locator('.walk-to-read-label')).toHaveText('Walk to read, first line only')
   await expect(walkCard.locator('.note-first-line')).toHaveText(FIRST_LINE)
+  expect(await walkCard.locator('.walk-to-read-block').evaluate(block => {
+    const label = block.querySelector('.walk-to-read-label')
+    const firstLine = block.querySelector('.note-first-line')
+    return Boolean(label && firstLine &&
+      (label.compareDocumentPosition(firstLine) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+  })).toBe(true)
   await expect(walkCard.locator('.walk-to-read-line')).toHaveText(WALK_TO_READ_WINDOW_LINE)
   await expect(walkCard.getByRole('button', { name: /show more|decode|show less/iu })).toHaveCount(0)
   await expect(walkCard).toContainText('serein-walks')
@@ -180,7 +214,14 @@ test('a walk-to-read note shows its first line and the in-person line in Convers
   const detail = page.locator('#record-detail')
   await expect(detail).toBeVisible()
   await expect(detail).toContainText(`Public note #${WALK_NOTE_ID}`)
+  await expect(detail.locator('.walk-to-read-label')).toHaveText('Walk to read, first line only')
   await expect(detail.locator('.note-first-line')).toHaveText(FIRST_LINE)
+  expect(await detail.locator('.walk-to-read-block').evaluate(block => {
+    const label = block.querySelector('.walk-to-read-label')
+    const firstLine = block.querySelector('.note-first-line')
+    return Boolean(label && firstLine &&
+      (label.compareDocumentPosition(firstLine) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
+  })).toBe(true)
   await expect(detail.locator('.walk-to-read-line')).toHaveText(WALK_TO_READ_WINDOW_LINE)
   await expectNoAgentInstruction(page, 'note detail')
 
@@ -237,6 +278,7 @@ test('the Archive shows a walk-to-read result with its first line and the in-per
   const results = page.locator('#archive-results')
   const walkCard = results.locator('.archive-card', { has: page.locator(`a[href="/window/note/${WALK_NOTE_ID}"]`) })
   await expect(walkCard).toHaveCount(1)
+  await expect(walkCard.locator('.walk-to-read-label')).toHaveText('Walk to read, first line only')
   await expect(walkCard.locator('.note-first-line')).toHaveText(FIRST_LINE)
   await expect(walkCard.locator('.walk-to-read-line')).toHaveText(WALK_TO_READ_WINDOW_LINE)
   const ordinaryCard = results.locator('.archive-card', { has: page.locator(`a[href="/window/note/${ORDINARY_NOTE_ID}"]`) })
@@ -246,4 +288,26 @@ test('the Archive shows a walk-to-read result with its first line and the in-per
   await expectNoAgentInstruction(page, 'Archive')
   expect(searches[0]?.searchParams.get('q')).toBe('east wall')
   expect(requestedPaths.filter(path => path.endsWith('/here'))).toEqual([])
+})
+
+test('a removed note shows the removed label instead of its placeholder', async ({ page }) => {
+  await page.evaluate(() => { window.location.hash = '#view=conversations' })
+  await expect(page.locator('#conversation-stream')).toBeVisible()
+
+  const removedCard = page.locator('.note-card', {
+    has: page.locator(`a[href="/window/note/${REMOVED_NOTE_ID}"]`),
+  })
+  await expect(removedCard).toContainText('Removed by the maintainer.')
+  await expect(removedCard).not.toContainText(REMOVED_PLACEHOLDER)
+  await expect(removedCard.locator('.note-author')).toHaveText('serein-walks')
+  await expect(removedCard.locator('time')).toHaveAttribute('datetime', REMOVED_NOTE.created_at)
+
+  const removedWalkCard = page.locator('.note-card', {
+    has: page.locator(`a[href="/window/note/${REMOVED_WALK_NOTE_ID}"]`),
+  })
+  await expect(removedWalkCard.locator('.removed-label')).toHaveText('Removed by the maintainer.')
+  await expect(removedWalkCard).not.toContainText(REMOVED_PLACEHOLDER)
+  await expect(removedWalkCard).not.toContainText('This removed first line must not be shown.')
+  await expect(removedWalkCard.locator('.walk-to-read-label, .note-first-line, .walk-to-read-line'))
+    .toHaveCount(0)
 })

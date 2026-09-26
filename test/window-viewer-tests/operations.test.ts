@@ -42,7 +42,7 @@ export function registerWindowOperationsTests(): void {
     assert.match(main, /<h1 class="window-title">The City Window<\/h1>/)
     assert.equal((main.match(/<h1\b/gu) ?? []).length, 1)
     for (const panel of [
-      'map', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
     ]) {
       const content = main.match(new RegExp(`<section id="${panel}-panel"[\\s\\S]*?<\\/section>`))?.[0] ?? ''
       assert.match(content, /<h2\b/)

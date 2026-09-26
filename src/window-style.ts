@@ -182,6 +182,8 @@ button { color: inherit; }
 }
 .city-sign > .free-credit-line { background: #1c5a45; font-weight: 700; }
 @media (max-width: 400px) {
+  /* At 320 wide the sign's name does not fit beside the code; let it drop a line instead of widening the page. */
+  .city-mark { flex-wrap: wrap; row-gap: 0.35rem; }
   .window-guide-links { gap: 8px; padding: 10px 12px; font-size: 12px; }
   .window-guide-links a.window-strip-button { padding: 6px 10px; }
   .city-sign > .city-boundary-line, .city-sign > .free-credit-line {
@@ -1040,6 +1042,139 @@ button { color: inherit; }
   box-shadow: inset 0 -3px 0 var(--forest-deep), 0 0 0 3px var(--focus-dark);
 }
 .conversation-stream { padding: clamp(0.8rem, 2.5vw, 1.4rem); }
+/* Talk is a ledger on paper, not a chat app: one ruled row per line, the
+   speaker in note-card forest ink, the line in body ink, the time and room
+   small and muted. Phones read each row as flowing text; wide screens line the
+   rows up in columns. Nothing here moves. */
+#talk-panel {
+  --talk-gutter: clamp(0.8rem, 2.5vw, 1.4rem);
+  --talk-row-inline: 0.85rem;
+  --talk-speaker-column: 10.5rem;
+  --talk-meta-column: 14rem;
+  padding-block-end: 1.4rem;
+}
+.talk-record-label {
+  margin: 0;
+  padding: 0.75rem var(--talk-gutter);
+  color: var(--forest-deep);
+  background: var(--paper-light);
+  border-bottom: 3px solid var(--line);
+  font: 850 0.66rem/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.talk-cursor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 1rem var(--talk-gutter) 0;
+}
+.talk-cursor[hidden] { display: none; }
+#talk-newer { padding-block-start: 0.85rem; }
+.talk-older-page {
+  flex: 0 1 auto;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.talk-cursor-button {
+  min-height: 2.75rem;
+  padding: 0.65rem 0.85rem;
+  color: var(--paper-light);
+  background: var(--forest);
+  border: 2px solid var(--line);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+.talk-cursor-button:hover { background: var(--ink); }
+.talk-cursor-button:active { background: var(--forest-deep); box-shadow: inset 0 3px 0 rgba(0, 0, 0, 0.32); }
+.talk-cursor-button:disabled { cursor: wait; opacity: 0.72; }
+.talk-cursor-button:disabled:hover { background: var(--forest); }
+.talk-cursor-button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
+.talk-lines {
+  max-height: clamp(16rem, calc(100vh - 12rem), 40rem);
+  max-height: clamp(16rem, calc(100svh - 12rem), 40rem);
+  margin: 1rem var(--talk-gutter) 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+  box-shadow: 4px 4px 0 rgba(32, 56, 47, 0.13);
+  list-style: none;
+}
+.talk-lines > li {
+  min-width: 0;
+  padding: 0.45rem var(--talk-row-inline) 0.5rem;
+  border-bottom: 1px solid var(--paper-line);
+  overflow-wrap: anywhere;
+}
+.talk-lines > li:last-child { border-bottom: 0; }
+.talk-lines > .error-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
+.talk-line { display: flow-root; font-size: 0.92rem; line-height: 1.5; }
+.talk-line > .talk-speaker,
+.talk-line > .resident-reference,
+.talk-line > .talk-separator { float: left; }
+.talk-line > .talk-speaker,
+.talk-line > .resident-reference { max-width: 100%; }
+.talk-line .entity-portrait { flex-basis: 1.35rem; width: 1.35rem; height: 1.35rem; }
+.talk-speaker, .talk-separator { color: var(--forest-deep); font-weight: 900; }
+.talk-separator { margin-inline-end: 0.35em; }
+.talk-body {
+  display: block;
+  color: var(--ink);
+  unicode-bidi: plaintext;
+  overflow-wrap: anywhere;
+}
+/* A zero-width break before the line lets a first word that does not fit
+   beside the speaker move down whole instead of splitting mid-word. */
+.talk-body::before { content: "\\200b"; }
+.talk-meta {
+  display: block;
+  clear: left;
+  margin-block-start: 0.1rem;
+  color: var(--muted);
+  font: 0.64rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.talk-line-removed { color: var(--muted); font-size: 0.84rem; font-style: italic; }
+.talk-lines > .talk-line-quiet { padding-block: 0.55rem 0.6rem; }
+.quiet-room-context { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.68rem; line-height: 1.45; }
+.talk-status {
+  margin: 0.85rem var(--talk-gutter) 0;
+  color: var(--muted);
+  font: 0.68rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (hover: hover) {
+  .talk-line:hover { background: rgba(23, 77, 60, 0.05); }
+}
+@media (min-width: 60rem) {
+  .talk-line {
+    display: grid;
+    grid-template-columns:
+      minmax(0, var(--talk-speaker-column)) auto minmax(0, 1fr) minmax(0, var(--talk-meta-column));
+    align-items: start;
+  }
+  .talk-line > .talk-speaker,
+  .talk-line > .resident-reference,
+  .talk-line > .talk-separator { float: none; }
+  .talk-line > .talk-speaker,
+  .talk-line > .resident-reference { justify-self: end; text-align: end; }
+  .talk-body::before { content: none; }
+  .talk-meta { margin: 0; padding: 0.3rem 0 0 1.25rem; text-align: end; }
+  .talk-line.talk-line-removed,
+  .talk-line.talk-line-quiet {
+    display: block;
+    padding-inline-start: calc(var(--talk-row-inline) + var(--talk-speaker-column) + 0.62rem);
+  }
+}
+@media (max-width: 40rem) {
+  .talk-cursor-button { flex: 1 1 auto; }
+}
 .conversation-group { display: grid; grid-template-columns: minmax(11rem, 0.3fr) minmax(0, 1fr); gap: 1rem; padding: 1.15rem 0; border-bottom: 3px solid var(--line); }
 .conversation-group:first-child { padding-block-start: 0; }
 .conversation-group h3 { margin: 0; color: var(--forest-deep); font-size: 1.55rem; }
@@ -1047,6 +1182,7 @@ button { color: inherit; }
 .note-card { position: relative; padding-inline-start: 1rem; }
 .note-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 0.35rem; background: var(--brick); }
 .note-body { margin: 0.45rem 0 0; line-height: 1.6; }
+.walk-to-read-label { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.64rem; font-weight: 850; line-height: 1.45; }
 .walk-to-read-line { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.64rem; font-style: italic; line-height: 1.45; }
 .note-author { color: var(--forest-deep); font-weight: 900; }
 .context-note { opacity: 0.82; margin-inline-start: 1.1rem; }
@@ -1378,6 +1514,7 @@ button { color: inherit; }
 .history-page button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
 .roster-board .loading-row, .roster-board .empty-row, .roster-board .error-row { color: var(--sky); padding-inline: 0; }
 .moderated-mark { color: var(--brick); font-size: 0.68rem; font-weight: 850; }
+.removed-label { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.68rem; font-style: italic; line-height: 1.45; }
 
 .window-footer {
   display: flex;
@@ -1494,6 +1631,6 @@ button { color: inherit; }
 @media (forced-colors: active) {
   .city-sign, .view-console, .window-frame, .place-card, .person-card, .thing-card,
   .note-card, .agreement-card, .gazette-entry, .gazette-issue-summary,
-  .drawing-grid { border-color: CanvasText; box-shadow: none; }
+  .drawing-grid, .talk-lines { border-color: CanvasText; box-shadow: none; }
 }
 `
