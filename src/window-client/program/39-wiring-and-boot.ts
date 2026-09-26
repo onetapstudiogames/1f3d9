@@ -159,10 +159,18 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   window.addEventListener('hashchange', syncStateFromLocation)
   window.addEventListener('popstate', syncStateFromLocation)
   window.addEventListener('resize', scheduleBodyDisclosureSync)
+  for (const eventName of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart', 'scroll']) {
+    window.addEventListener(eventName, noteTalkInput, { passive: true })
+  }
   document.addEventListener('visibilitychange', () => {
     window.clearTimeout(state.pollTimer)
-    if (document.hidden) state = { ...state, pollTimer: 0 }
-    else void refreshCity()
+    if (document.hidden) {
+      state = { ...state, pollTimer: 0 }
+      scheduleTalkCheck(0)
+    } else {
+      syncTalkTimer()
+      void refreshCity()
+    }
   })
 
   const initialLocationState = readLocationState()

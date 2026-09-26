@@ -1,4 +1,44 @@
 export const PART_45_TALK = `  let talkRequestRevision = 0
+  let talkChecks = 0
+  let talkDelayIsIdle = false
+
+  function talkViewActive() {
+    return state.view === 'talk'
+  }
+
+  function scheduleTalkCheck(delay) {
+    window.clearTimeout(state.talk.timer)
+    setTalk({ timer: 0 })
+    talkDelayIsIdle = false
+    if (document.hidden || !talkViewActive()) return
+    const idleMs = Date.now() - state.talk.lastInputAt
+    talkDelayIsIdle = state.talk.failures === 0 &&
+      TALK_IDLE_MS > 0 && idleMs >= TALK_IDLE_MS &&
+      delay === Math.max(TALK_IDLE_CHECK_MS, state.talk.checkMs)
+    const timer = window.setTimeout(() => {
+      setTalk({ timer: 0 })
+      talkDelayIsIdle = false
+      void checkTalk()
+    }, delay)
+    setTalk({ timer })
+  }
+
+  function syncTalkTimer() {
+    if (!talkViewActive() || document.hidden) {
+      if (!talkViewActive() || state.talk.timer) scheduleTalkCheck(0)
+      return
+    }
+    if (!state.talk.timer && !state.talk.checking) void checkTalk()
+  }
+
+  function noteTalkInput() {
+    const wasIdle = talkDelayIsIdle
+    setTalk({ lastInputAt: Date.now() })
+    if (!wasIdle) return
+    scheduleTalkCheck(state.talk.checkMs)
+    nodes.talkStatus.textContent = state.talk.statusText
+    nodes.talkStatus.hidden = !state.talk.statusText
+  }
 
   async function fetchTalkNow(signal) {
     try {
@@ -49,6 +89,26 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
     return String(state.placeId) + ':' + String(state.resident)
   }
 
+  function syncTalkScope() {
+    const scopeKey = currentTalkScopeKey()
+    if (state.talk.scopeKey === scopeKey) return
+    talkRequestRevision += 1
+    setTalk({
+      stack: [null],
+      rows: [],
+      hasMore: false,
+      lineMarker: null,
+      head: null,
+      loading: false,
+      error: false,
+      needsRead: true,
+      scopeKey,
+      checking: false,
+      failures: 0,
+      statusText: '',
+    })
+  }
+
   function talkRequestIsCurrent(revision, scopeKey) {
     return revision === talkRequestRevision &&
       scopeKey === state.talk.scopeKey &&
@@ -56,9 +116,12 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
   }
 
   async function checkTalk() {
-    if (state.talk.checking || state.view !== 'talk') return
+    if (!talkViewActive()) return
+    syncTalkScope()
+    if (state.talk.checking) return
     const scopeKey = currentTalkScopeKey()
     const revision = ++talkRequestRevision
+    let keepTalkAtBottom = false
     setTalk({
       checking: true,
       loading: state.talk.rows.length === 0,
@@ -106,6 +169,13 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
         fail()
         return
       }
+      const addsRows = page.rows.some(row =>
+        !state.talk.rows.some(current => current.id === row.id))
+      if (newestPage && addsRows && nodes.talkLines) {
+        const distanceToBottom = nodes.talkLines.scrollHeight - nodes.talkLines.scrollTop -
+          nodes.talkLines.clientHeight
+        keepTalkAtBottom = distanceToBottom <= 24
+      }
       setTalk({
         rows: page.rows,
         hasMore: page.hasMore,
@@ -121,9 +191,22 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
       if (talkRequestIsCurrent(revision, scopeKey)) fail()
     } finally {
       window.clearTimeout(timeout)
+      talkChecks += 1
+      document.body.dataset.talkChecks = String(talkChecks)
       if (talkRequestIsCurrent(revision, scopeKey)) {
         if (state.talk.checking) setTalk({ checking: false, loading: false })
+        scheduleTalkCheck(talkCheckDelay({
+          failures: state.talk.failures,
+          idleMs: Date.now() - state.talk.lastInputAt,
+          checkMs: state.talk.checkMs,
+          retryMaxMs: TALK_RETRY_MAX_MS,
+          idleAfterMs: TALK_IDLE_MS,
+          idleCheckMs: TALK_IDLE_CHECK_MS,
+        }))
         renderAll()
+        if (keepTalkAtBottom && nodes.talkLines) {
+          nodes.talkLines.scrollTop = nodes.talkLines.scrollHeight
+        }
       }
     }
   }
@@ -138,24 +221,7 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
 
   function renderTalk(snapshot) {
     if (!nodes.talkLines) return
-    const scopeKey = currentTalkScopeKey()
-    if (state.talk.scopeKey !== scopeKey) {
-      talkRequestRevision += 1
-      setTalk({
-        stack: [null],
-        rows: [],
-        hasMore: false,
-        lineMarker: null,
-        head: null,
-        loading: false,
-        error: false,
-        needsRead: true,
-        scopeKey,
-        checking: false,
-        failures: 0,
-        statusText: '',
-      })
-    }
+    syncTalkScope()
 
     const issue = snapshot ? selectionIssue(snapshot, false) : null
     const selectedPlace = state.placeId
@@ -300,8 +366,12 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
         )
       }
     }
-    nodes.talkStatus.textContent = state.talk.statusText
-    nodes.talkStatus.hidden = !state.talk.statusText
+    const idle = state.talk.failures === 0 && TALK_IDLE_MS > 0 &&
+      Date.now() - state.talk.lastInputAt >= TALK_IDLE_MS
+    const idleStatus = 'This tab has not been used for 30 minutes, so it checks for new lines every 30 seconds. Move the mouse, scroll, touch, or press a key to check every 2 seconds again.'
+    const statusText = state.talk.statusText || (idle ? idleStatus : '')
+    nodes.talkStatus.textContent = statusText
+    nodes.talkStatus.hidden = !statusText
     if (!issue && state.view === 'talk' && state.talk.needsRead && !state.talk.checking) {
       void checkTalk()
     }

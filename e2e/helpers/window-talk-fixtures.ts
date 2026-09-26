@@ -1,4 +1,21 @@
-import { type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
+
+export type TalkRequests = string[] & Readonly<{
+  talkNow: string[]
+  lines: string[]
+}>
+
+export async function stepTalk(
+  page: Page,
+  ms: number,
+  requests: TalkRequests,
+  expected: Readonly<{ talkNow: number; checks: number }>,
+) {
+  await page.clock.runFor(ms)
+  await expect.poll(() => requests.talkNow.length).toBe(expected.talkNow)
+  await expect.poll(() => page.evaluate(() => document.body.dataset.talkChecks))
+    .toBe(String(expected.checks))
+}
 
 export type TalkRouteReply = Readonly<{
   status: number
@@ -66,12 +83,16 @@ export async function routeTalk(
     lines?: TalkRouteSource
   } = {},
 ): Promise<string[]> {
-  const requests: string[] = []
+  const requests = Object.assign([] as string[], {
+    talkNow: [] as string[],
+    lines: [] as string[],
+  }) as TalkRequests
   let nowIndex = 0
   let linesIndex = 0
   await page.route('**/api/talk/now', async route => {
     const url = new URL(route.request().url())
     requests.push(url.toString())
+    requests.talkNow.push(url.toString())
     const source = typeof now === 'function' ? now(url, nowIndex++) : now
     const reply = routeReply(source)
     await route.fulfill({ status: reply.status, json: reply.body })
@@ -79,6 +100,7 @@ export async function routeTalk(
   await page.route('**/api/window?*collection=lines*', async route => {
     const url = new URL(route.request().url())
     requests.push(url.toString())
+    requests.lines.push(url.toString())
     const source = typeof lines === 'function' ? lines(url, linesIndex++) : lines
     const reply = routeReply(source)
     await route.fulfill({ status: reply.status, json: reply.body })

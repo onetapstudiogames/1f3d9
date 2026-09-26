@@ -63,6 +63,7 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       ? active.dataset.focusFallbackId || null
       : null
     renderView()
+    syncTalkTimer()
     renderDirectoryStatus()
     writeLocation(false)
     renderDetail()
