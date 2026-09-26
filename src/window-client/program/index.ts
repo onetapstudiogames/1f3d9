@@ -29,6 +29,7 @@ import { PART_36_FOCUSED_PLACE_AND_RESIDENT } from './36-focused-place-and-resid
 import { PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION } from './37-snapshot-fetch-and-cache-invalidation.ts'
 import { PART_38_REFRESH_CITY } from './38-refresh-city.ts'
 import { PART_44_VIEWER_READING_STATE } from './44-viewer-reading-state.ts'
+import { PART_45_TALK } from './45-talk.ts'
 import { PART_39_WIRING_AND_BOOT } from './39-wiring-and-boot.ts'
 
 export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
@@ -60,5 +61,6 @@ export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
   PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION,
   PART_38_REFRESH_CITY,
   PART_44_VIEWER_READING_STATE,
+  PART_45_TALK,
   PART_39_WIRING_AND_BOOT,
 ])

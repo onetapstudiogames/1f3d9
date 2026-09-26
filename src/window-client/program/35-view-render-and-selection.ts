@@ -68,7 +68,10 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     renderDetail()
     if (state.view === 'archive') renderArchive()
     if (state.view === 'gazette') renderGazette()
-    if (!snapshot) return
+    if (!snapshot) {
+      if (state.view === 'talk') renderTalk(snapshot)
+      return
+    }
     renderCounts(snapshot)
     renderScope(snapshot)
     if (state.view === 'map') {
@@ -80,6 +83,8 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       renderPlace(snapshot)
     } else if (state.view === 'conversations') {
       renderConversations(snapshot)
+    } else if (state.view === 'talk') {
+      renderTalk(snapshot)
     } else if (state.view === 'happenings') {
       renderActivity(snapshot)
     } else if (state.view === 'agreements') {

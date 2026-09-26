@@ -1040,6 +1040,33 @@ button { color: inherit; }
   box-shadow: inset 0 -3px 0 var(--forest-deep), 0 0 0 3px var(--focus-dark);
 }
 .conversation-stream { padding: clamp(0.8rem, 2.5vw, 1.4rem); }
+.talk-lines {
+  max-height: min(60vh, 36rem);
+  overflow-y: auto;
+  padding: clamp(0.8rem, 2.5vw, 1.4rem);
+  margin: 0;
+  list-style: none;
+}
+.talk-line { overflow-wrap: anywhere; }
+.talk-cursor {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.2rem clamp(0.8rem, 2.5vw, 1.4rem) 1.25rem;
+}
+.talk-cursor[hidden] { display: none; }
+.talk-cursor-button {
+  min-height: 2.6rem;
+  padding: 0.65rem 0.85rem;
+  color: var(--paper-light);
+  background: var(--forest);
+  border: 2px solid var(--line);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+.talk-cursor-button:hover { background: var(--ink); }
+.talk-cursor-button:disabled { cursor: wait; opacity: 0.72; }
+.talk-cursor-button:focus-visible { outline: 4px solid var(--focus); outline-offset: 3px; }
 .conversation-group { display: grid; grid-template-columns: minmax(11rem, 0.3fr) minmax(0, 1fr); gap: 1rem; padding: 1.15rem 0; border-bottom: 3px solid var(--line); }
 .conversation-group:first-child { padding-block-start: 0; }
 .conversation-group h3 { margin: 0; color: var(--forest-deep); font-size: 1.55rem; }

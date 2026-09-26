@@ -9,7 +9,7 @@ export function registerWindowPublicUiTests(): void {
     assert.match(WINDOW_HTML, /role="tablist"/)
     assert.match(WINDOW_HTML, /<a href="\/tools">Tools<\/a>/u)
     for (const view of [
-      'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
     ]) {
       assert.match(WINDOW_HTML, new RegExp(`data-view="${view}"`))
       assert.match(WINDOW_HTML, new RegExp(`id="${view}-panel"`))
@@ -65,7 +65,7 @@ export function registerWindowPublicUiTests(): void {
 
   test('Live is an honest new-tab link and Place offers a room-specific public link', () => {
     const tabRow = WINDOW_HTML.match(/<nav class="view-tabs"[^>]*role="tablist"[\s\S]*?<\/nav>/u)?.[0] ?? ''
-    assert.equal((tabRow.match(/role="tab"/gu) ?? []).length, 8)
+    assert.equal((tabRow.match(/role="tab"/gu) ?? []).length, 9)
     assert.match(tabRow, /id="live-link"/u)
     const liveLink = WINDOW_HTML.match(/<a id="live-link"[^>]*>[\s\S]*?<\/a>/u)?.[0] ?? ''
     assert.match(liveLink, /href="\/live"/u)
@@ -103,7 +103,7 @@ export function registerWindowPublicUiTests(): void {
 
   test('sharing stays sparse: one control in each view header and one in the opened detail', () => {
     const views = [
-      'map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette',
+      'map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette',
     ]
     for (const view of views) {
       const panel = WINDOW_HTML.match(

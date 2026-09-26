@@ -23,7 +23,10 @@ import { WINDOW_HTML } from '../src/window-page.ts'
 const RESIDENT_SENTINEL = 'sentinel-res-zq9k7'
 const THING_SENTINEL = 'SentinelThingZq9k7'
 const NOTE_SENTINEL = 'SentinelNoteBodyZq9k7'
-const SENTINELS = Object.freeze([RESIDENT_SENTINEL, THING_SENTINEL, NOTE_SENTINEL])
+const LINE_SENTINEL = 'SentinelLineZq9k7'
+const SENTINELS = Object.freeze([
+  RESIDENT_SENTINEL, THING_SENTINEL, NOTE_SENTINEL, LINE_SENTINEL,
+])
 
 const CONTROL_RESIDENT = 'lantern-keeper'
 
@@ -185,6 +188,20 @@ function collectionEnvelope(collectionName: string) {
   if (collectionName === 'notes') {
     return { notes: [SENTINEL_NOTE], has_more: false, next_before_id: null, change_marker: '30' }
   }
+  if (collectionName === 'lines') {
+    return {
+      lines: [{
+        id: 9301,
+        place_id: QUIET_PLACE_ID,
+        author: RESIDENT_SENTINEL,
+        body: 'A quiet-room line contains ' + LINE_SENTINEL,
+        created_at: '2026-08-20T12:02:00.000Z',
+      }],
+      has_more: false,
+      next_before_id: null,
+      change_marker: '30',
+    }
+  }
   if (collectionName === 'residents') {
     return { residents: SNAPSHOT.residents, has_more: false, next_before_id: null, change_marker: '30' }
   }
@@ -231,6 +248,19 @@ test.beforeEach(async ({ page }) => {
   })
   await page.route('**/api/events**', route => route.fulfill({
     json: { events: [], has_more: false, next_before_id: null, change_marker: '30' },
+  }))
+  await page.route('**/api/talk/now', route => route.fulfill({
+    json: {
+      line_marker: '30',
+      check_interval_ms: 2000,
+      listening: [{
+        place_id: QUIET_PLACE_ID,
+        resident_id: 9001,
+        handle: RESIDENT_SENTINEL,
+        listening_until: '2026-08-20T12:03:00.000Z',
+      }],
+      listening_page: { total_items: 1, returned_items: 1, has_more: false },
+    },
   }))
 
   const htmlWithoutAutomaticClient = WINDOW_HTML.replace(
@@ -364,6 +394,22 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   await expect(page.locator('#conversation-stream')).toBeVisible()
   await assertNoLeak(page, 'Conversations tab, default load')
 
+  await page.getByRole('tab', { name: 'Talk', exact: true }).click()
+  await expect(page.locator('#talk-panel')).toBeVisible()
+  await assertNoLeak(page, 'Talk tab, all places')
+  await page.evaluate(placeId => {
+    window.location.hash = '#view=talk&place=' + String(placeId)
+  }, QUIET_PLACE_ID)
+  await expect(page.locator('#talk-panel .quiet-room-notice')).toHaveCount(1)
+  await assertNoLeak(page, 'Talk tab, quiet place chosen')
+  await page.evaluate(({ placeId, resident }) => {
+    window.location.hash = '#view=talk&place=' + String(placeId) + '&resident=' + resident
+  }, { placeId: QUIET_PLACE_ID, resident: RESIDENT_SENTINEL })
+  await assertNoLeak(page, 'Talk tab, quiet place and sentinel resident chosen')
+
+  await page.evaluate(() => { window.location.hash = '#view=map' })
+  await expect(page.locator('#map-panel')).toBeVisible()
+
   for (const view of ['Happenings', 'Agreements', 'Archive', 'Gazette']) {
     await page.getByRole('tab', { name: view, exact: true }).click()
     await expect(page.locator('#' + view.toLowerCase() + '-panel')).toBeVisible()
@@ -395,7 +441,7 @@ test('no view, search, focus, deep link, or share action ever renders the quiet 
   // chosen filters (view/place/resident/search), never ambient room content
   // — click each one while the quiet grandchild and the sentinel resident
   // filter are in scope and confirm the resulting status text stays clean.
-  for (const view of ['map', 'things', 'place', 'conversations', 'happenings', 'agreements', 'archive', 'gazette']) {
+  for (const view of ['map', 'things', 'place', 'conversations', 'talk', 'happenings', 'agreements', 'archive', 'gazette']) {
     await page.evaluate(({ view: nextView, place, resident }) => {
       window.location.hash = '#view=' + nextView + '&place=' + String(place) + '&resident=' + resident
     }, { view, place: QUIET_PLACE_ID, resident: RESIDENT_SENTINEL })

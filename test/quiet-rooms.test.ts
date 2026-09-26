@@ -215,6 +215,9 @@ test('every path that lists a resident, thing, or note resolves quiet through is
   for (const path of paths) {
     assert.match(WINDOW_JS, path.pattern, path.name + ' must resolve quiet through isQuietPlace')
   }
+  const talkBody = WINDOW_JS.split('function renderTalk(snapshot) {')[1]?.split('\n  function ')[0] ?? ''
+  assert.ok(talkBody.length > 0, 'renderTalk exists')
+  assert.match(talkBody, /isQuietPlace\(/u, 'renderTalk resolves quiet at its own rows')
   // The rule the table enforces: no bespoke `place.quiet` check outside the
   // handful of pre-existing "is the exact selected/focused place itself
   // quiet" gates this file already locks above. Every new per-row check

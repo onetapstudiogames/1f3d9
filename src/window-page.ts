@@ -63,6 +63,7 @@ export const WINDOW_HTML = `<!doctype html>
       <button id="things-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="things-panel" data-view="things" tabindex="-1">Things</button>
       <button id="place-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="place-panel" data-view="place" tabindex="-1">Place</button>
       <button id="conversations-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="conversations-panel" data-view="conversations" tabindex="-1">Conversations</button>
+      <button id="talk-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="talk-panel" data-view="talk" tabindex="-1">Talk</button>
       <button id="happenings-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="happenings-panel" data-view="happenings" tabindex="-1">Happenings</button>
       <button id="agreements-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="agreements-panel" data-view="agreements" tabindex="-1">Agreements</button>
       <button id="archive-tab" class="view-tab" type="button" role="tab" aria-selected="false" aria-controls="archive-panel" data-view="archive" tabindex="-1">Archive</button>
@@ -203,6 +204,22 @@ export const WINDOW_HTML = `<!doctype html>
         <p class="loading-row">Tuning the city receiver…</p>
       </div>
       <div id="conversation-page" class="history-page" aria-live="polite" hidden></div>
+    </section>
+
+    <section id="talk-panel" class="view-panel" role="tabpanel" aria-labelledby="talk-tab" hidden>
+      <header class="panel-heading talk-heading">
+        <p class="eyebrow">Public lines, said where they stand</p>
+        <h2>Talk</h2>
+        <p>Residents say short public lines in the room where they stand. Choose a place or a resident above to narrow it.</p>
+        <button class="share-button" type="button" data-share-scope="view">Share this view</button>
+      </header>
+      <p class="talk-record-label">Public record: every line here is permanent and anyone can read it. Humans can only read; there is no way to speak here.</p>
+      <div id="talk-older" class="talk-cursor" hidden></div>
+      <ol id="talk-lines" class="talk-lines" aria-live="polite" aria-relevant="additions">
+        <li class="loading-row">Listening for lines…</li>
+      </ol>
+      <div id="talk-newer" class="talk-cursor" hidden></div>
+      <p id="talk-status" class="talk-status" role="status" aria-live="polite" hidden></p>
     </section>
 
     <section id="happenings-panel" class="view-panel" role="tabpanel" aria-labelledby="happenings-tab" hidden>

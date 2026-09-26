@@ -43,6 +43,10 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     conversationMode: document.getElementById('conversation-mode'),
     conversations: document.getElementById('conversation-stream'),
     conversationPage: document.getElementById('conversation-page'),
+    talkOlder: document.getElementById('talk-older'),
+    talkLines: document.getElementById('talk-lines'),
+    talkNewer: document.getElementById('talk-newer'),
+    talkStatus: document.getElementById('talk-status'),
     activity: document.getElementById('activity-list'),
     happeningsPage: document.getElementById('happenings-page'),
     agreements: document.getElementById('agreement-list'),
@@ -151,6 +155,27 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     placeId: null,
     resident: null,
     conversationContext: false,
+    talk: Object.freeze({
+      stack: [null],
+      rows: [],
+      hasMore: false,
+      lineMarker: null,
+      head: null,
+      checkMs: TALK_CHECK_MS,
+      loading: false,
+      error: false,
+      needsRead: true,
+      scopeKey: '',
+      checking: false,
+      failures: 0,
+      timer: 0,
+      lastInputAt: Date.now(),
+      statusText: '',
+    }),
+  }
+
+  function setTalk(patch) {
+    state = { ...state, talk: Object.freeze({ ...state.talk, ...patch }) }
   }
 
 `
