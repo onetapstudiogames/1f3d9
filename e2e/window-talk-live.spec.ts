@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
 import {
+  MINUTE_MS,
   linesPage,
   routeTalk,
   stepTalk,
+  talkLineTime,
   talkNow,
   type TalkRequests,
 } from './helpers/window-talk-fixtures.ts'
@@ -32,7 +34,7 @@ function publicLine(id: number, body: string) {
     place_id: 11,
     author: 'leafwalker',
     body,
-    created_at: '2026-09-25T11:59:00.000Z',
+    created_at: talkLineTime(MINUTE_MS, fixedTime.getTime()),
   }
 }
 

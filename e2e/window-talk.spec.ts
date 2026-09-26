@@ -1,7 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { installClipboardRecorder } from './helpers/public-window-clipboard.ts'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
-import { linesPage, routeTalk, talkNow } from './helpers/window-talk-fixtures.ts'
+import {
+  HOUR_MS,
+  MINUTE_MS,
+  linesPage,
+  routeTalk,
+  talkLineTime,
+  talkNow,
+} from './helpers/window-talk-fixtures.ts'
 
 registerPublicWindowSetup()
 
@@ -10,7 +17,7 @@ function publicLine(
   placeId = 11,
   author = 'leafwalker',
   body = 'A public line.',
-  createdAt = '2026-09-25T11:59:00.000Z',
+  createdAt = talkLineTime(MINUTE_MS),
 ) {
   return {
     id,
@@ -148,7 +155,7 @@ test('only lines from the last 24 hours show on the newest page', async ({ page 
     11,
     'leafwalker',
     'A line from yesterday.',
-    '2026-09-24T11:00:00.000Z',
+    talkLineTime(25 * HOUR_MS, fixedTime.getTime()),
   )
   await routeTalk(page, {
     now: talkNow(),
