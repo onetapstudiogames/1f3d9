@@ -36,6 +36,7 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
       PING_DISMISS_FIELDS_REFUSAL,
       PING_ID_REFUSAL,
       PING_NOT_HERE_REFUSAL,
+      PING_INVITE_NO_HANDLE_REFUSAL,
       PING_READ_ID_REFUSAL,
       PING_INVITE_FIELDS_REFUSAL,
       PLACE_LINES_ID_REFUSAL,
@@ -335,6 +336,33 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
         assert.equal(replay.status, 403)
         assertRefusalSentence(first.json.error, PING_NOT_HERE_REFUSAL.error)
         assertRefusalSentence(replay.json.error, PING_NOT_HERE_REFUSAL.error)
+      }
+      assert.equal(await count('pings'), beforePings)
+      assert.equal(await count('events'), beforeEvents)
+    })
+
+    await t.test('an invite with no to_handle is asked for it; handle text keeps the not-here sentence', async () => {
+      await reset()
+      await standIn(NEIGHBOUR.id, rooms.westRoomId)
+      const beforePings = await count('pings')
+      const beforeEvents = await count('events')
+      for (const body of [
+        { request_id: nextRequestId() },
+        { to_handle: null, request_id: nextRequestId() },
+        { to_handle: '', request_id: nextRequestId() },
+        { to_handle: 7, request_id: nextRequestId() },
+      ]) {
+        const first = await call(app, FOUNDER.secret, 'POST', '/api/ping', body)
+        const replay = await call(app, FOUNDER.secret, 'POST', '/api/ping', body)
+        assert.equal(first.status, 400, JSON.stringify(body))
+        assert.equal(replay.status, 400, JSON.stringify(body))
+        assertRefusalSentence(first.json.error, PING_INVITE_NO_HANDLE_REFUSAL.error)
+        assertRefusalSentence(replay.json.error, PING_INVITE_NO_HANDLE_REFUSAL.error)
+      }
+      for (const handle of ['Not A Handle!', 'zzz-nobody-here-at-all', NEIGHBOUR.handle]) {
+        const refused = await call(app, FOUNDER.secret, 'POST', '/api/ping', { to_handle: handle, request_id: nextRequestId() })
+        assert.equal(refused.status, 403, handle)
+        assertRefusalSentence(refused.json.error, PING_NOT_HERE_REFUSAL.error)
       }
       assert.equal(await count('pings'), beforePings)
       assert.equal(await count('events'), beforeEvents)

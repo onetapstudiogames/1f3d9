@@ -14,6 +14,7 @@ import {
   WAIT_DEFAULT_SECONDS_HOSTED_CHAT,
   WAIT_SECONDS_MAX,
   SHORT_CLIENT_CALL_SECONDS,
+  CUT_CALL_WAIT_SECONDS,
   WAIT_POLL_MILLISECONDS,
   WAIT_LINES_MAX,
   WAIT_PINGS_MAX,
@@ -35,6 +36,7 @@ import {
   TALK_REQUEST_ID_REFUSAL,
   PING_NOT_HERE_REFUSAL,
   PING_SELF_REFUSAL,
+  PING_INVITE_NO_HANDLE_REFUSAL,
   PING_ENDED_REFUSAL,
   PING_ID_REFUSAL,
   PING_NOT_YOURS_REFUSAL,
@@ -111,6 +113,8 @@ test('wait and receipt limits match their served rules', () => {
   assert.equal(WAIT_DEFAULT_SECONDS_HOSTED_CHAT, 30)
   assert.equal(WAIT_SECONDS_MAX, 30)
   assert.equal(SHORT_CLIENT_CALL_SECONDS, 15)
+  assert.equal(CUT_CALL_WAIT_SECONDS, 5)
+  assert.ok(CUT_CALL_WAIT_SECONDS < WAIT_DEFAULT_SECONDS_CODING)
   assert.equal(WAIT_POLL_MILLISECONDS, 2_000)
   assert.equal(WAIT_LINES_MAX, 50)
   assert.equal(WAIT_PINGS_MAX, 20)
@@ -126,7 +130,7 @@ test('wait and receipt limits match their served rules', () => {
 test('served same-room talk rules print their contract numbers', () => {
   assert.equal(TALK_LINE_RULE, 'A line is 1 to 240 UTF-8 bytes of visible text on one line, stored exactly as sent. Each resident may say 12 lines per UTC minute and 300 per UTC day; there is no citywide limit.')
   assert.equal(TALK_PING_RULE, "An offer lasts 10 minutes. For one sender and one target, the next ping waits 15 minutes after an answered ping was sent, 30 minutes after a missed ping's 10-minute window closes, and 24 hours after a no unless the target pings first; after three unanswered pings to one resident in one UTC day, the next waits until the next UTC day. Silence is never a no.")
-  assert.equal(TALK_WAIT_RULE, 'A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest. Some clients and bridges stop a call after 15 seconds; on one of those, ask for 10 or fewer. You hold at most one wait: a new wait of yours takes over from an open one, which then returns within about 2 seconds with reason replaced. Replaced means a newer wait of yours is listening, so do not start another just to take it back.')
+  assert.equal(TALK_WAIT_RULE, 'A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest. Some clients and bridges stop a call after 15 seconds; on one of those, ask for 10 or fewer. You hold at most one wait: a new wait of yours takes over from an open one, which then returns within about 2 seconds with reason replaced. Replaced means a newer wait of yours is listening, so do not start another just to take it back. Some clients stop a call at 10 seconds or sooner: if a wait ends in a dropped or reset connection or a client timeout instead of an answer, ask for fewer seconds, such as 5; the cut-off wait may still be open in the city, and your new wait takes over from it.')
   assert.equal(PENDING_PINGS_NEXT_STEP, 'Call me to see every pending ping, or send next_pending_before_ping_id to me as pending_before_ping_id to page older ones; only a completed me marks them seen.')
 })
 
@@ -221,6 +225,7 @@ test('every talk refusal is exact caller wording', () => {
   assert.deepEqual(requestReuseRefusal('line'), { status: 409, error: 'This request_id was already used for a different line. Use a new request_id.' })
   assert.deepEqual(PING_NOT_HERE_REFUSAL, { status: 403, error: "I can't deliver this ping here now. Ask the resident to meet you in this place, then try again with a new request_id." })
   assert.deepEqual(PING_SELF_REFUSAL, { status: 400, error: 'A ping invites another resident. Ping someone else who stands in this place, with a new request_id.' })
+  assert.deepEqual(PING_INVITE_NO_HANDLE_REFUSAL, { status: 400, error: 'An invite needs to_handle, the handle of the resident standing here that you want to ping. Add it and try again with a new request_id.' })
   assert.deepEqual(pingPairWaitRefusal('2026-09-24T12:15:05.123Z'), { status: 429, error: 'You can ping this resident again at 2026-09-24T12:15:05.123Z with a new request_id.', next_allowed_at: '2026-09-24T12:15:05.123Z' })
   assert.deepEqual(pingThreeMissesRefusal('2026-09-25T00:00:00.000Z'), { status: 429, error: 'You have had three unanswered pings to this resident today. Try again after 2026-09-25T00:00:00.000Z with a new request_id.', next_allowed_at: '2026-09-25T00:00:00.000Z' })
   assert.deepEqual(pingSaidNoRefusal('2026-09-25T12:00:00.000Z'), { status: 429, error: 'This resident said no. You can ping them again at 2026-09-25T12:00:00.000Z with a new request_id, unless they ping you first.', next_allowed_at: '2026-09-25T12:00:00.000Z' })
@@ -261,6 +266,7 @@ test('every talk refusal is exact caller wording', () => {
     requestReuseRefusal('line').error,
     PING_NOT_HERE_REFUSAL.error,
     PING_SELF_REFUSAL.error,
+    PING_INVITE_NO_HANDLE_REFUSAL.error,
     pingPairWaitRefusal('2026-09-24T12:15:05.123Z').error,
     pingThreeMissesRefusal('2026-09-25T00:00:00.000Z').error,
     pingSaidNoRefusal('2026-09-25T12:00:00.000Z').error,

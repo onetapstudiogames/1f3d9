@@ -183,6 +183,8 @@ type AttemptTimes = Readonly<{
   recoveryDeadlineAt: string
 }>
 
+type RealAttemptTimes = AttemptTimes & Readonly<{ windowOpenedAt: string }>
+
 function attemptTimes(lateFinality: boolean): AttemptTimes {
   const now = Date.now()
   const startTime = new Date(now - 30 * 60_000).toISOString()
@@ -200,15 +202,17 @@ function attemptTimes(lateFinality: boolean): AttemptTimes {
   return { startTime, endTime, blockTime, finalizedAt, recoveryStartedAt, recoveryDeadlineAt }
 }
 
-async function realLateAttemptTimes(database: Pool): Promise<AttemptTimes> {
+async function realLateAttemptTimes(database: Pool): Promise<RealAttemptTimes> {
   const result = await database.query<{
+    window_opened_at: Date
     start_time: Date
     end_time: Date
     block_time: Date
     recovery_deadline_at: Date
   }>(`
     WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at)
-    SELECT at AS start_time,
+    SELECT at AS window_opened_at,
+      at AS start_time,
       at + interval '2 seconds' AS end_time,
       at + interval '1 second' AS block_time,
       at + interval '2 hours' AS recovery_deadline_at
@@ -216,6 +220,7 @@ async function realLateAttemptTimes(database: Pool): Promise<AttemptTimes> {
   `)
   const row = result.rows[0]!
   return {
+    windowOpenedAt: row.window_opened_at.toISOString(),
     startTime: row.start_time.toISOString(),
     endTime: row.end_time.toISOString(),
     blockTime: row.block_time.toISOString(),
@@ -225,8 +230,9 @@ async function realLateAttemptTimes(database: Pool): Promise<AttemptTimes> {
   }
 }
 
-async function realDueAttemptTimes(database: Pool): Promise<AttemptTimes> {
+async function realDueAttemptTimes(database: Pool): Promise<RealAttemptTimes> {
   const result = await database.query<{
+    window_opened_at: Date
     start_time: Date
     end_time: Date
     block_time: Date
@@ -236,7 +242,8 @@ async function realDueAttemptTimes(database: Pool): Promise<AttemptTimes> {
   }>(`
     WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at),
     boundary AS MATERIALIZED (SELECT at, at + interval '2 seconds' AS deadline FROM observed)
-    SELECT at - interval '30 minutes' AS start_time,
+    SELECT at AS window_opened_at,
+      at - interval '30 minutes' AS start_time,
       at - interval '20 minutes' AS end_time,
       at - interval '25 minutes' AS block_time,
       at - interval '24 minutes' AS finalized_at,
@@ -250,6 +257,7 @@ async function realDueAttemptTimes(database: Pool): Promise<AttemptTimes> {
     2 * 60 * 60_000,
   )
   return {
+    windowOpenedAt: row.window_opened_at.toISOString(),
     startTime: row.start_time.toISOString(),
     endTime: row.end_time.toISOString(),
     blockTime: row.block_time.toISOString(),
@@ -259,8 +267,25 @@ async function realDueAttemptTimes(database: Pool): Promise<AttemptTimes> {
   }
 }
 
-async function waitPastDatabaseTime(database: Pool, boundary: string): Promise<string> {
-  const wallClockStartedAt = Date.now()
+async function waitPastDatabaseTime(
+  database: Pool,
+  boundary: string,
+  windowOpenedAt: string,
+): Promise<string> {
+  // windowOpenedAt is PostgreSQL's clock_timestamp() from the statement that set the boundary.
+  // The proof of a real window crossed is on database time only, so slow steps cannot fail it.
+  assert.ok(
+    Date.parse(boundary) - Date.parse(windowOpenedAt) >= 1_500,
+    'the test must cross a real PostgreSQL operation window, not backdate fixtures',
+  )
+  const opened = await database.query<{ since_opened_ms: number }>(`
+    SELECT (extract(epoch FROM clock_timestamp() - $1::timestamptz) * 1000)::float8 AS since_opened_ms
+  `, [windowOpenedAt])
+  const sinceOpened = opened.rows[0]!.since_opened_ms
+  assert.ok(
+    sinceOpened >= 0 && sinceOpened < 60_000,
+    'the window must open on the database clock in this run, not in a fixture',
+  )
   for (;;) {
     // The driver truncates timestamps to milliseconds, so an observation
     // microseconds past the boundary would compare equal to it after
@@ -271,13 +296,7 @@ async function waitPastDatabaseTime(database: Pool, boundary: string): Promise<s
         clock_timestamp() > $1::timestamptz + interval '1 millisecond' AS passed
     `, [boundary])
     const row = result.rows[0]!
-    if (row.passed) {
-      assert.ok(
-        Date.now() - wallClockStartedAt >= 1_500,
-        'the test must cross a real PostgreSQL operation window, not backdate fixtures',
-      )
-      return row.observed_at.toISOString()
-    }
+    if (row.passed) return row.observed_at.toISOString()
     await delay(25)
   }
 }
@@ -486,6 +505,24 @@ test('x402 credit purchases are atomic and recovery-safe in real PostgreSQL', {
     assert.deepEqual(replayFacts.attempt, firstFacts.attempt)
   })
 
+  await t.test('the window helper proves a real database window on database time, even after slow steps', async () => {
+    const opened = await realLateAttemptTimes(postgres.database)
+    // Slow steps before the wait, as under machine load.
+    await delay(1_000)
+    const observedAt = await waitPastDatabaseTime(postgres.database, opened.endTime, opened.windowOpenedAt)
+    assert.ok(observedAt > opened.endTime, 'the observation is a database reading past the window')
+    const backdated = await realLateAttemptTimes(postgres.database)
+    await assert.rejects(
+      waitPastDatabaseTime(postgres.database, backdated.startTime, backdated.windowOpenedAt),
+      /not backdate fixtures|in this run, not in a fixture/u,
+    )
+    const fixed = attemptTimes(true)
+    await assert.rejects(
+      waitPastDatabaseTime(postgres.database, fixed.endTime, fixed.startTime),
+      /not backdate fixtures|in this run, not in a fixture/u,
+    )
+  })
+
   await t.test('a payment finalized after its authorization window still buys credit inside recovery', async () => {
     await reset(postgres.database)
     const attemptId = `pay_${'72'.repeat(32)}`
@@ -500,7 +537,11 @@ test('x402 credit purchases are atomic and recovery-safe in real PostgreSQL', {
       times: windowTimes,
       includeFinality: false,
     })
-    const finalizedAt = await waitPastDatabaseTime(postgres.database, windowTimes.endTime)
+    const finalizedAt = await waitPastDatabaseTime(
+      postgres.database,
+      windowTimes.endTime,
+      windowTimes.windowOpenedAt,
+    )
     const times = Object.freeze({ ...windowTimes, finalizedAt })
     const database = paymentDatabase(postgres.database)
     const stored = await getPaymentAttemptRecord(database, { publicId: attemptId, actorId: 7 })
@@ -586,6 +627,7 @@ test('x402 credit purchases are atomic and recovery-safe in real PostgreSQL', {
       const observedAt = await waitPastDatabaseTime(
         postgres.database,
         times.recoveryDeadlineAt,
+        times.windowOpenedAt,
       )
       assert.ok(observedAt > times.recoveryDeadlineAt)
       const app = new Hono()

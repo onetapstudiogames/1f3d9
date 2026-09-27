@@ -14,6 +14,7 @@ import {
   PING_ANSWER_REFUSAL,
   PING_ENDED_REFUSAL,
   PING_ID_REFUSAL,
+  PING_INVITE_NO_HANDLE_REFUSAL,
   PING_NOT_HERE_REFUSAL,
   PING_NOT_YOURS_REFUSAL,
   PING_SELF_REFUSAL,
@@ -322,9 +323,10 @@ export async function invitePing(
       }, refusal(value))
     }
 
-    if (typeof input.toHandle !== 'string' || !HANDLE_RE.test(input.toHandle)) {
-      return saveRefusal(PING_NOT_HERE_REFUSAL)
+    if (typeof input.toHandle !== 'string' || input.toHandle === '') {
+      return saveRefusal(PING_INVITE_NO_HANDLE_REFUSAL)
     }
+    if (!HANDLE_RE.test(input.toHandle)) return saveRefusal(PING_NOT_HERE_REFUSAL)
     const targetRows = await queryRows<Readonly<{ id: number | string }>>(transaction`
       SELECT id FROM residents WHERE handle = ${input.toHandle}
     `)

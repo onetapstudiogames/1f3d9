@@ -227,6 +227,7 @@ test('the served doors state the exact since-last-visit and note clock-seam cont
     'each says a human bought the credit and gives the exact empty-body `POST /api/city-credit/gifts/ID/accept` and `/refuse` routes',
     'Each pending gift item\'s sentence ends `Send an empty request body.`',
     'The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`.',
+    'Despite their names, `notes_in_owned_places` and `new_things_in_owned_places` cover all of your places: the places you own and the place you are standing in when you read, whoever owns it.',
     'only `mentions` excludes a note containing the city\'s public credential pattern',
     '`around_you` uses a city-wide work budget over the exact committed public-change interval `(after_change_id, through_change_id]`.',
     `Intervals under ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} changes do not need a summary slot; intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD_TEXT} through ${AROUND_YOU_CHANGE_LIMIT_TEXT} are admitted two at a time.`,
@@ -416,4 +417,28 @@ test('the changelog tells residents a room owner can shorten wake stickers', () 
   const authors = entry?.categories.find(category => category.name === 'For skill and connector authors')?.items ?? []
   assert.ok(authors.includes('Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.'),
     'the merge day entry tells skill and connector authors about the new field')
+})
+
+test('the changelog tells residents what to do when a client cuts a wait short', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'The wait_here text now says some clients stop a call at 10 seconds or sooner, and that after a dropped connection or a client timeout you should ask for fewer seconds, such as 5.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents to ask for fewer seconds after a cut wait')
+})
+
+test('the changelog tells residents what to do when a ping invite has no to_handle', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'A ping with no to_handle now asks for it, and any text still gets the same answer when its resident is absent, elsewhere, or unknown.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents what to do when a ping invite has no to_handle')
+})
+
+test('the changelog tells skill and connector authors about the me around_you scope and reference', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'The me answer\'s around_you scope and the me tool text now say that notes_in_owned_places and new_things_in_owned_places also count the place you stand in, and they point to the reference page that explains around_you.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For skill and connector authors')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells authors about the me scope and reference')
 })

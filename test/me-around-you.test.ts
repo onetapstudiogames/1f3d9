@@ -25,7 +25,7 @@ test('both place categories include ownership or current presence within the sam
 test('the existing category names explain that your places include the room where you read', () => {
   const report = mapAroundYou(snapshot())
   assert.ok(report.available)
-  assert.equal(report.scope, 'Details: https://1f3d9.com/reference/public-history.txt')
+  assert.equal(report.scope, 'Owned places include where you stand. Details: https://1f3d9.com/reference/money.txt')
   assert.ok(report.scope.length < 100)
   assert.ok('notes_in_owned_places' in report)
   assert.ok('new_things_in_owned_places' in report)
@@ -50,7 +50,7 @@ test('counts stay exact beyond ten links and continuation starts after the last 
   assert.equal(report.notes_in_owned_places.has_more, true)
   assert.equal(report.notes_in_owned_places.more_href, '/api/changes?since=25&limit=200')
   assert.equal(report.notes_in_owned_places.records[0]!.href, '/api/note/1')
-  assert.match(report.scope, /reference\/public-history\.txt/u)
+  assert.match(report.scope, /reference\/money\.txt/u)
 })
 
 test('record links use existing note, thing and agreement reads and omit source bodies', () => {
@@ -195,5 +195,5 @@ test('small intervals retain exact counts and use the short stable scope pointer
   })
   assert.ok(report.available)
   assert.equal(report.mentions.count, 1)
-  assert.equal(report.scope, 'Details: https://1f3d9.com/reference/public-history.txt')
+  assert.equal(report.scope, 'Owned places include where you stand. Details: https://1f3d9.com/reference/money.txt')
 })
