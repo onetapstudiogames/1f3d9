@@ -415,11 +415,23 @@ Place view), Things, Conversations, and Talk, still shows that place's name, own
 counts, then replaces its contents with one honest sentence: `<owner> prefers to keep
 this room private.` Hover or expansion states that the records stay public at their own
 addresses, because the city keeps public books. The window resolves quiet at each room's
-own mark. For the picked place, a read that said quiet stays in force after a newer change
-marker makes it stale, until the refresh's own read of that place at the new marker
-replaces it (`staleFocusedPlaceStaysQuiet` in `src/window-client/quiet.ts`), so a refresh
-never shows a quiet picked room's contents again from an older names directory; if that
-read fails, the room stays hidden until a later read succeeds. The live page and the
+own mark. A city refresh that moves the window's change marker first reads, at the new
+marker, each room outside the view's loaded places that a place edit since the last marker
+names (`placesToReadAtRefresh` in `src/window-client/quiet.ts`, at most 10 a refresh),
+because the names directory it would otherwise use is an edge copy that can lag a minute
+or more. The rest, any failed read, and an edit of the picked place or a followed
+resident's current place, which have their own read on every such refresh, wait for a
+later refresh that moves the marker. When the outline comes back at a newer marker than
+the change list reached, the refresh reads the changes in between once more; when it
+still cannot know every change up to the new marker, it also reads every room whose own
+read said quiet. A room's own read that said quiet, picked or not, stays in force after a
+newer change marker makes it stale, until the window reads that room again
+(`staleFocusedPlaceStaysQuiet`), so a refresh never shows a quiet room's contents again
+from an older names directory; a room the view already holds fresh (the outline and any
+loaded branch) takes that fresh mark. A stale read that said open still gives way to the
+directory, so a room that just opened can hide again at the next unrelated change until
+the directory's copy catches up. Picking a room whose held read is stale reads it again
+at once. The live page and the
 terminal follow view also hide a quiet room's residents, things, notes, lines, listening
 cues, and ping activity, and those of every place inside it, and `GET /api/talk/now`
 leaves rooms with their own quiet mark and retired rooms out of its listening list
@@ -607,15 +619,17 @@ no other tab checks, and Conversations shows no talk. It reads the newest page o
 only when the line marker moves, with the marker as `after_change_marker`. When
 `place_marker` is newer than the change marker its city view covers, and that view's own
 refresh is neither running nor failing, the Talk check runs that refresh at once instead
-of waiting for the next minute, so a room picked in Talk that turns quiet hides its lines
+of waiting for the next minute, so any room shown in Talk that turns quiet hides its lines
 within a few seconds while reads succeed (`talkCityViewIsBehind` in
 `src/window-client/talk.ts`). The refresh is not a lines read, and a failing refresh keeps
 its own backoff. A Talk tab nobody has used for 30 minutes checks every 30 seconds, so
-there it can take up to about 30 seconds more. A row in a room the window knows only from
-the names directory (Talk with no place picked, or a room inside the picked place) still
-waits for the directory, which the edge may keep for a minute, and Conversations keeps
-its one-minute refresh. The page cursor is a stack of `before_id` values, because line ids
-are taken before commit and an `after_id` cursor could skip a late line. A hidden tab
+there it can take up to about 30 seconds more. That refresh also reads each edited room
+outside the outline on its own (Quiet rooms, above), so a row in a room the window
+otherwise knows only from the names directory (Talk with no place picked, or a room inside
+the picked place) hides as soon as a picked room does. Conversations makes no check of its
+own and hides such a room at its one-minute refresh. The page cursor is a stack of
+`before_id` values, because line ids are taken before commit and an `after_id` cursor
+could skip a late line. A hidden tab
 stops checking and catches up from its cursor when shown; failures back off to 30 seconds.
 The numbers live in `src/talk-watch-limits.ts`, and the served reference renders them
 through `{{TALK_WATCH_RULE}}` and `{{TALK_WINDOW_RULE}}`; a test keeps one cache age plus

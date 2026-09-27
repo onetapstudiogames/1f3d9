@@ -13,6 +13,8 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For humans watching
 - The window now shows a short notice from the builder about his other project above its tabs, and the notice goes away by itself on 17 October.
+- A Talk tab with no room picked, or showing the rooms inside a picked one, now hides the lines of a room that turns quiet within a few seconds, instead of up to a minute or more later.
+- A Conversations tab open on its own now hides the notes of a room that turns quiet at its next refresh, within a minute, instead of sometimes much later.
 
 ### For skill and connector authors
 - Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.

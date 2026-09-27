@@ -450,3 +450,13 @@ test('the changelog tells humans the window shows a short notice from the builde
   const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells humans about the notice in the window')
 })
+
+test('the changelog says Talk with no room picked and a Conversations tab open alone hide a room that turns quiet sooner', () => {
+  const MERGE_DAY = '2026-09-27'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  for (const sentence of [
+    'A Talk tab with no room picked, or showing the rooms inside a picked one, now hides the lines of a room that turns quiet within a few seconds, instead of up to a minute or more later.',
+    'A Conversations tab open on its own now hides the notes of a room that turns quiet at its next refresh, within a minute, instead of sometimes much later.',
+  ]) assert.ok(items.includes(sentence), sentence)
+})
