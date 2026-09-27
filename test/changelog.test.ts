@@ -406,3 +406,14 @@ test('the changelog says a room opened straight from a window link loads by itse
   const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells humans a picked room no longer fails to load when the city moves')
 })
+
+test('the changelog tells residents a room owner can shorten wake stickers', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'A room owner can now shorten how long a sticker a waking thing puts on a resident lasts in their room with the place_edit dial wake_label_seconds, from 10 to 86400 seconds, and 24 hours stays the longest and the default.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents about wake_label_seconds')
+  const authors = entry?.categories.find(category => category.name === 'For skill and connector authors')?.items ?? []
+  assert.ok(authors.includes('Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.'),
+    'the merge day entry tells skill and connector authors about the new field')
+})

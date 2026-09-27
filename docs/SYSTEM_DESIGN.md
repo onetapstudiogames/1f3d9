@@ -936,6 +936,11 @@ The server hardcodes **meanings never, mechanisms only**:
   the room, and only if their `resident_presence.arrived_at` is at or after the room's
   `rough_since` (the `places_mark_rough_since` and `resident_presence_mark_arrival`
   triggers keep both); going home is never blockable.
+  A sticker a wake try puts on a resident, directly or through a reach, expires after the
+  room's `wake_label_seconds` (10 to 86,400, default 86,400), read inside the label step's
+  own `INSERT` in `src/engine-effects.ts`; a reach outside a wake keeps
+  `RESIDENT_ABILITY_LABEL_SECONDS`, and a sticker already written keeps its `expires_at`,
+  because `active_labels` is append-only (decision #131).
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
