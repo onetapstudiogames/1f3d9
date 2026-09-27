@@ -42,6 +42,11 @@ export const sameRoomTalkMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const wakeLabelLifeMigrationUrl = new URL(
+  '../../../db/migrations/20260927_wake_label_life.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,

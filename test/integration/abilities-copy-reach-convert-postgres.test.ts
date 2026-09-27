@@ -24,6 +24,12 @@ const migrationDdl = await readFile(
   new URL('../../db/migrations/20260922_abilities_copy_reach_convert.sql', import.meta.url),
   'utf8',
 )
+// A later change adds wake_label_seconds to places; production ran it after this one, so
+// the upgraded database takes it too before it is compared with a fresh db/schema.sql.
+const laterPlacesDdl = await readFile(
+  new URL('../../db/migrations/20260927_wake_label_life.sql', import.meta.url),
+  'utf8',
+)
 // db/schema.sql ends with this change's statements; everything before them is the
 // database exactly as production holds it once abilities-wake-chance-write has run.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
@@ -173,6 +179,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         VALUES ($1, $2, $1, 'owner_daily_things', 20, 1)
       `, [thingId, worldId]), /check constraint/, "a copy never counts toward its owner's daily things")
 
+      await db.query(laterPlacesDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })

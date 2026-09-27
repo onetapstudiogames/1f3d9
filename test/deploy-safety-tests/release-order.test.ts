@@ -244,4 +244,11 @@ export function registerReleaseOrderTests(): void {
       /CONFIRM_ME_PUBLIC_CHECKPOINT_MIGRATION=APPLIED_TO_PREVIEW_AND_PRODUCTION/u,
     )
   })
+
+  test('release preparation applies the wake label life column to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Wake label life prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:wake-label-life/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:wake-label-life/u)
+    assert.match(deploymentRunbook, /wake_label_seconds[\s\S]*Never chain the migration with the merge\./u)
+  })
 }
