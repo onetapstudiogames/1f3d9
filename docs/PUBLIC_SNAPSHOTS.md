@@ -183,7 +183,7 @@ contract and links back to this document at the manifest's exact source commit:
       "buyer", "cap", "client_class", "commitment", "current_revision", "day",
       "error", "family_id", "fee_tx_hash", "forfeited", "from", "from_id",
       "from_kind_id", "frontier", "gazette_submission_room_opened",
-      "gazette_withdrawals_opened", "ingredient_ids",
+      "gazette_withdrawals_opened", "hinge_to", "ingredient_ids",
       "json_door_human_approval_declared", "key", "law_trait_id", "limit",
       "market_checkout_id", "market_draft_id", "market_listing_id",
       "mechanical", "model", "moderated", "moderation", "more", "name", "op",

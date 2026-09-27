@@ -1015,16 +1015,18 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         [{ wake_block_thing_ids: Array.from({ length: 65 }, (_, index) => index + 1) }, 400, 'wake_block_thing_ids must be [] or up to 64 unique positive thing ids'],
         [{ wake_block_residents: ['Not A Handle'] }, 400, 'wake_block_residents must be [] or up to 64 unique resident handles'],
         [{ wake_block_residents: ['nobody-here'] }, 404, 'wake_block_residents names nobody-here, who is not a current resident; send current handles'],
-        [{}, 400, 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial'],
       ]
       for (const [body, status, error] of refusals) {
         const refused = await edit(body)
         assert.equal(refused.status, status, JSON.stringify(body))
         assert.equal(refused.json.error, error)
       }
+      const empty = await edit({})
+      assert.equal(empty.status, 400, JSON.stringify(empty.json))
+      assert.equal(empty.json.error, 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, an ability dial, or hinge_to')
       const unknown = await edit({ wake_everything: true })
       assert.equal(unknown.status, 400)
-      assert.match(String(unknown.json.error), /place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial\./u)
+      assert.equal(unknown.json.error, 'place edit does not accept wake_everything; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.')
 
       const saved = await edit({
         wake_visitors: true, rough_room: true, wake_random_cap: 4, wake_pins: [here],

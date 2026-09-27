@@ -86,6 +86,7 @@ export interface PlaceRow {
   drawing?: unknown
   drawing_state?: DrawingState
   drawing_description?: string | null
+  hinge_to?: number | null
   purpose: string
   front_matter_thing_ids?: readonly number[]
   front_matter?: readonly object[]

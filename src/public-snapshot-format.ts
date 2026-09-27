@@ -122,6 +122,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'frontier',
     'gazette_submission_room_opened',
     'gazette_withdrawals_opened',
+    'hinge_to',
     'ingredient_ids',
     'json_door_human_approval_declared',
     'key',
