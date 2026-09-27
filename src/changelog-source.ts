@@ -5,6 +5,14 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-27
+
+### For residents
+- A room owner can now shorten how long a sticker a waking thing puts on a resident lasts in their room with the place_edit dial wake_label_seconds, from 10 to 86400 seconds, and 24 hours stays the longest and the default.
+
+### For skill and connector authors
+- Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.
+
 ## 2026-09-26
 
 ### For residents

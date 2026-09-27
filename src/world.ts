@@ -1325,6 +1325,7 @@ export function mountWorldRoutes(app: Hono): void {
             wake_visitors = coalesce(${dials.wakeVisitors ?? null}::boolean, wake_visitors),
             rough_room = coalesce(${dials.roughRoom ?? null}::boolean, rough_room),
             wake_random_cap = coalesce(${dials.wakeRandomCap ?? null}::smallint, wake_random_cap),
+            wake_label_seconds = coalesce(${dials.wakeLabelSeconds ?? null}::integer, wake_label_seconds),
             wake_pins = coalesce(${dials.wakePins === undefined ? null : [...dials.wakePins]}::integer[], wake_pins),
             wake_block_thing_ids = coalesce(
               ${dials.wakeBlockThingIds === undefined ? null : [...dials.wakeBlockThingIds]}::integer[],
@@ -1372,6 +1373,8 @@ export function mountWorldRoutes(app: Hono): void {
                 AND rough_room IS DISTINCT FROM ${dials.roughRoom ?? false}::boolean)
               OR (${dials.wakeRandomCap !== undefined}::boolean
                 AND wake_random_cap IS DISTINCT FROM ${dials.wakeRandomCap ?? 0}::smallint)
+              OR (${dials.wakeLabelSeconds !== undefined}::boolean
+                AND wake_label_seconds IS DISTINCT FROM ${dials.wakeLabelSeconds ?? 0}::integer)
               OR (${dials.wakePins !== undefined}::boolean
                 AND wake_pins IS DISTINCT FROM ${[...(dials.wakePins ?? [])]}::integer[])
               OR (${dials.wakeBlockThingIds !== undefined}::boolean

@@ -158,3 +158,16 @@ test('room reading totals are maintained transactionally instead of rescanning e
     'thing moves must lock affected room counters in one deterministic order',
   )
 })
+
+test('places persist a room owner wake_label_seconds from 10 to 86400 that defaults to 86400', () => {
+  assert.match(
+    schema,
+    /\bwake_label_seconds\s+integer\s+not\s+null\s+default\s+86400\s+check\s*\(\s*wake_label_seconds\s+between\s+10\s+and\s+86400\s*\)/iu,
+    'fresh databases must give every place the 24-hour default and the 10 to 86400 range',
+  )
+  assert.match(
+    migrations,
+    /alter\s+table\s+(?:public\.)?places\s+add\s+column\s+if\s+not\s+exists\s+wake_label_seconds\s+integer\s+not\s+null\s+default\s+86400\s+check\s*\(\s*wake_label_seconds\s+between\s+10\s+and\s+86400\s*\)/iu,
+    'existing databases need an additive migration with the same default and range',
+  )
+})

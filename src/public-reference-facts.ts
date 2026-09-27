@@ -59,6 +59,7 @@ import {
   MAX_WAKE_EFFECTS_PER_SETTLE,
   MAX_WAKE_TRIES_PER_THING_PER_SETTLE,
   WAKE_BLOCKS_MAX,
+  WAKE_LABEL_SECONDS_MIN,
   WAKE_PINS_MAX,
   WAKE_RANDOM_CAP_DEFAULT,
   WAKE_RANDOM_CAP_MAX,
@@ -284,6 +285,9 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       wake_block_thing_ids: Object.freeze({ max: WAKE_BLOCKS_MAX }),
       wake_block_residents: Object.freeze({ max: WAKE_BLOCKS_MAX }),
       wake_random_cap: Object.freeze({ min: 0, default: WAKE_RANDOM_CAP_DEFAULT, max: WAKE_RANDOM_CAP_MAX }),
+      wake_label_seconds: Object.freeze({
+        min: WAKE_LABEL_SECONDS_MIN, default: RESIDENT_ABILITY_LABEL_SECONDS, max: RESIDENT_ABILITY_LABEL_SECONDS,
+      }),
     }),
     thing_switches: Object.freeze({
       open_to_reach: Object.freeze({ default: false, after_owner_change: false }),

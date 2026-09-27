@@ -94,7 +94,11 @@ export const COPY_COPIES_DEFAULT = 1
 export const COPY_COPIES_MAX = 10_000
 export const REACH_MAX_DEFAULT = 16
 export const REACH_MAX_CEILING = 64
-/** A sticker a wake try puts on a resident expires after a day, like the longest block. */
+/**
+ * The longest and the default life of a sticker a wake try or a reach puts on a resident, a day,
+ * like the longest block; a room owner may shorten a wake's stickers with wake_label_seconds
+ * (decision #131).
+ */
 export const RESIDENT_ABILITY_LABEL_SECONDS = MAX_BLOCK_SECONDS
 
 export type BasicAction = typeof BASIC_ACTIONS[number]

@@ -1,15 +1,18 @@
 /**
  * The room owner's ability dials: growth caps and arriving copies (decision
- * #112), wake dials, and the rough-room mark (decisions #105 and #109), set only
- * with place_edit on a place its owner holds.
+ * #112), wake dials, the rough-room mark (decisions #105 and #109), and how long
+ * a sticker a wake try puts on a resident lasts (decision #131), set only with
+ * place_edit on a place its owner holds.
  */
 import { HANDLE_RE } from './core-primitives.ts'
 import {
   GROWTH_CAP_MAX,
   WAKE_BLOCKS_MAX,
+  WAKE_LABEL_SECONDS_MIN,
   WAKE_PINS_MAX,
   WAKE_RANDOM_CAP_MAX,
 } from './engine-limits.ts'
+import { RESIDENT_ABILITY_LABEL_SECONDS } from './physics.ts'
 
 export const PLACE_DIAL_FIELDS = Object.freeze([
   'growth_cap_per_day',
@@ -20,6 +23,7 @@ export const PLACE_DIAL_FIELDS = Object.freeze([
   'wake_block_thing_ids',
   'wake_block_residents',
   'wake_random_cap',
+  'wake_label_seconds',
   'rough_room',
 ] as const)
 
@@ -33,6 +37,7 @@ export interface PlaceDialEdit {
   readonly wakeBlockThingIds?: readonly number[]
   readonly wakeBlockResidents?: readonly string[]
   readonly wakeRandomCap?: number
+  readonly wakeLabelSeconds?: number
 }
 
 type DialParse = Readonly<{ ok: true; dials: PlaceDialEdit }> | Readonly<{ ok: false; error: string }>
@@ -79,6 +84,11 @@ export function parsePlaceDials(body: Readonly<Record<string, unknown>>): DialPa
       return Object.freeze({ ok: false, error: `wake_random_cap must be a whole number from 0 to ${WAKE_RANDOM_CAP_MAX}` })
     }
     dials.wakeRandomCap = cap as number
+  }
+  if (body.wake_label_seconds !== undefined) {
+    const seconds = wholeNumber(body.wake_label_seconds, WAKE_LABEL_SECONDS_MIN, RESIDENT_ABILITY_LABEL_SECONDS)
+    if (seconds === null) return Object.freeze({ ok: false, error: `wake_label_seconds must be a whole number from ${WAKE_LABEL_SECONDS_MIN} to ${RESIDENT_ABILITY_LABEL_SECONDS}` })
+    dials.wakeLabelSeconds = seconds
   }
   if (body.wake_pins !== undefined) {
     const pins = uniqueIds(body.wake_pins, WAKE_PINS_MAX)

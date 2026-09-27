@@ -11605,6 +11605,11 @@ BEGIN
 END
 $abilities_widen_vocabularies$;
 
+-- A room owner may shorten how long a sticker a wake try puts on a resident lasts in
+-- that room (decision #131); 24 hours stays the longest and the default.
+ALTER TABLE places ADD COLUMN IF NOT EXISTS wake_label_seconds INTEGER NOT NULL DEFAULT 86400
+  CHECK (wake_label_seconds BETWEEN 10 AND 86400);
+
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder
 -- moderation and flags that may name a line or a ping, and the format-v3 public

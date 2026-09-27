@@ -471,6 +471,36 @@ SELECT class_name, v2.records AS v2_records, v3.records AS v3_records
 FROM v2 FULL JOIN v3 USING (class_name) ORDER BY class_name;
 ```
 
+### Wake label life prerequisite
+
+Before merging the change that lets a room owner shorten wake stickers (decision #131),
+apply `npm run migrate:preview:wake-label-life` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify `places.wake_label_seconds` is an `integer`, `NOT NULL`,
+with default `86400` and one check that keeps it from 10 to 86400, and that every existing
+place reads 86400, so no sticker changes on the day the column lands. Take the required
+Production snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-wake-label-life-20260927`,
+apply `npm run migrate:production:wake-label-life` from a fresh clone of the reviewed head,
+and record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'places'
+  AND column_name = 'wake_label_seconds';
+SELECT pg_get_constraintdef(oid) AS range_check
+FROM pg_constraint
+WHERE conrelid = 'places'::regclass AND contype = 'c'
+  AND pg_get_constraintdef(oid) LIKE '%wake_label_seconds%';
+SELECT count(*) FILTER (WHERE wake_label_seconds <> 86400) AS shortened,
+  count(*) AS places
+FROM places;
+```
+
+The column is additive with a constant default, so the old application keeps working
+against it and the rollback is to merge the previous application, never to drop it.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

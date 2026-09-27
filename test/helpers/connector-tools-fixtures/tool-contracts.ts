@@ -128,6 +128,12 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
           maximum: 32,
           description: 'non-pinned tries picked per settle; default 8; 0 means only pins wake',
         },
+        wake_label_seconds: {
+          type: 'integer',
+          minimum: 10,
+          maximum: 86400,
+          description: 'the seconds a sticker a thing waking here puts on a resident lasts; default 86400 (24 hours), the longest; changing it changes only stickers put on afterward',
+        },
         ...drawingWriteProperties,
       },
       required: ['place_id'],

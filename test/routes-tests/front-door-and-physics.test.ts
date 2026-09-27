@@ -95,6 +95,7 @@ export function registerFrontDoorAndPhysicsTests(): void {
       act_actions: string[]
       other_basic_actions: Record<string, string>
       effect_bricks: string[]
+      place_dials: Record<string, unknown>
       limits: {
         max_block_seconds: number
         max_generation: number
@@ -115,6 +116,7 @@ export function registerFrontDoorAndPhysicsTests(): void {
     assert.equal(body.limits.max_pending_effects_per_place, 512)
     assert.equal(body.limits.max_pending_effects_per_actor, 1_024)
     assert.equal(body.limits.max_due_effects_per_observation, 512)
+    assert.deepEqual(body.place_dials.wake_label_seconds, { min: 10, default: 86_400, max: 86_400 })
   })
 
   test('a place owner replaces local laws while a visitor cannot legislate there', async () => {
