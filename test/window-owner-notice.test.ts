@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { OWNER_NOTICE, ownerNoticeFor } from '../src/window-client/owner-notice.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
+import { WINDOW_HTML } from '../src/window-page.ts'
+import { WINDOW_CSS } from '../src/window-style.ts'
 
 // The owner's two texts, byte for byte (2026-09-27). This test keeps its own copy on purpose.
 const WAITLIST = "Just a temporary little notice: my other project, The Story of the Internet, opens in Alpha this Saturday at 8am Central! I've been working on it for awhile! There's a waitlist up now if you want in early: https://ofstory.net :)"
@@ -64,4 +67,46 @@ test('the browser program carries the rule and the notice as injected constants'
   )
   assert.equal(WINDOW_JS.split(WAITLIST).length, 2, 'the waitlist text appears once in the program')
   assert.equal(WINDOW_JS.split(LAUNCHED).length, 2, 'the launch text appears once in the program')
+})
+
+function read(path: string): string {
+  return readFileSync(new URL('../' + path, import.meta.url), 'utf8')
+}
+
+test('the page holds one empty hidden notice right above the tab bar, and the page itself carries no owner text', () => {
+  const betweenSignAndTabs = WINDOW_HTML.split('</header>')[1]?.split('<section class="view-console"')[0] ?? ''
+  assert.match(
+    betweenSignAndTabs,
+    /<div id="owner-notice" class="owner-notice" role="note" aria-label="Notice from the builder" hidden>\n\s*<p id="owner-notice-text" class="owner-notice-text"><\/p>\n\s*<button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide<\/button>\n\s*<\/div>/u,
+  )
+  assert.equal(WINDOW_HTML.match(/id="owner-notice"/gu)?.length, 1)
+  assert.doesNotMatch(WINDOW_HTML, /ofstory|Story of the Internet/iu)
+  assert.match(WINDOW_CSS, /\.owner-notice \{[^}]*background-image: linear-gradient\(100deg, var\(--signal\) 0%, var\(--paper-light\) 100%\);/u)
+  assert.match(WINDOW_CSS, /\.owner-notice \{[^}]*border-inline-start: 0\.6rem solid var\(--brick\);/u)
+})
+
+test('the program renders the notice at start and after every city refresh, with one plain link and no storage', () => {
+  assert.match(WINDOW_JS, /\n  function renderOwnerNotice\(\) \{\n/u)
+  assert.match(WINDOW_JS, /ownerNoticeFor\(Date\.now\(\), OWNER_NOTICE\)/u)
+  assert.match(WINDOW_JS, /settleOvertakenFocusedPlaces\(\)\n\s+scheduleRefresh\(nextDelay\)\n\s+renderOwnerNotice\(\)\n\s+\}/u)
+  assert.match(WINDOW_JS, /\n  renderOwnerNotice\(\)\n\n  for \(const tab of tabs\) \{/u)
+  assert.match(WINDOW_JS, /link\.href = OWNER_NOTICE\.url\n\s+link\.target = '_blank'\n\s+link\.rel = 'noopener'/u)
+  assert.doesNotMatch(WINDOW_JS, /sessionStorage|document\.cookie/u)
+})
+
+test('no surface an agent reads carries the notice', () => {
+  for (const path of [
+    'src/frontdoor.txt',
+    'src/reference.txt',
+    'src/llms.txt',
+    'src/door.ts',
+    'docs/published/FRONTDOOR.md',
+    'src/mcp.ts',
+    'src/city-help.ts',
+    'src/city-facts.ts',
+    'CHANGELOG.md',
+    'src/changelog-source.ts',
+  ]) {
+    assert.doesNotMatch(read(path), /ofstory|Story of the Internet/iu, path)
+  }
 })

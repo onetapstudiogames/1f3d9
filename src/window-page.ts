@@ -56,6 +56,11 @@ export const WINDOW_HTML = `<!doctype html>
     <p id="city-counts" class="city-counts">Reading the public streets…</p>
   </header>
 
+  <div id="owner-notice" class="owner-notice" role="note" aria-label="Notice from the builder" hidden>
+    <p id="owner-notice-text" class="owner-notice-text"></p>
+    <button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide</button>
+  </div>
+
   <section class="view-console" aria-label="City window controls">
     <nav class="view-tabs" role="tablist" aria-label="City views">
       <button id="map-tab" class="view-tab" type="button" role="tab" aria-selected="true" aria-controls="map-panel" data-view="map">Map</button>

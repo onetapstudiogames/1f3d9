@@ -200,6 +200,48 @@ button { color: inherit; }
   font-weight: 800;
 }
 
+/* A temporary notice from the owner, right above the tab bar (src/window-client/owner-notice.ts). */
+.owner-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  width: min(var(--content), calc(100% - 2rem));
+  margin: 0.85rem auto 0;
+  padding: 0.6rem 0.7rem 0.6rem 1rem;
+  color: var(--ink);
+  background-color: var(--signal);
+  background-image: linear-gradient(100deg, var(--signal) 0%, var(--paper-light) 100%);
+  border: 3px solid var(--ink);
+  border-inline-start: 0.6rem solid var(--brick);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.46);
+  font: 700 0.95rem/1.45 Arial, Helvetica, sans-serif;
+}
+.owner-notice-text { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.owner-notice-text a { color: var(--brick-deep); font-weight: 900; text-decoration-thickness: 2px; }
+.owner-notice-text a:hover { color: var(--ink); }
+.owner-notice-hide {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding: 0.35rem 0.85rem;
+  color: var(--paper-light);
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  cursor: pointer;
+  font: 800 0.68rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.owner-notice-hide:hover { background: var(--brick-deep); border-color: var(--brick-deep); }
+@media (max-width: 40rem) {
+  .owner-notice { flex-wrap: wrap; font-size: 0.85rem; }
+  .owner-notice-text { flex-basis: 100%; }
+  .owner-notice-hide { margin-inline-start: auto; }
+}
+@media (forced-colors: active) {
+  .owner-notice { border-color: CanvasText; box-shadow: none; }
+}
+
 .view-console {
   position: relative;
   z-index: 2;
