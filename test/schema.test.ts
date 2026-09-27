@@ -12,6 +12,19 @@ const migrations = readdirSync(migrationsDirectory)
   .map(name => read(`../db/migrations/${name}`))
   .join('\n')
 
+test('places persist a nullable hinge target and close it on ownership or retirement changes', () => {
+  for (const source of [schema, migrations]) {
+    assert.match(
+      source,
+      /alter\s+table\s+places\s+add\s+column\s+if\s+not\s+exists\s+hinge_to\s+integer\s*;/iu,
+    )
+    assert.match(
+      source,
+      /create\s+trigger\s+places_close_hinge_on_owner_change\s+before\s+update\s+of\s+owner_id,\s*retired_at\s+on\s+places/iu,
+    )
+  }
+})
+
 test('things persist an owner-controlled open-to-use flag that defaults closed', () => {
   assert.match(
     schema,
