@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { installClipboardRecorder } from './helpers/public-window-clipboard.ts'
 import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
+import { FOCUSED_PLACE, SNAPSHOT } from './helpers/public-window-snapshot-fixtures.ts'
 import {
   HOUR_MS,
   MINUTE_MS,
@@ -223,4 +224,113 @@ test('a listening resident in the head never reaches the page', async ({ page })
     'No public line matches this selection.',
   )
   await expect(page.locator('#talk-panel')).not.toContainText('quiet-listener')
+})
+
+test('a room opened in Talk while the city moves loads by itself, with no could-not-be-loaded card', async ({ page }) => {
+  // The live city (repro.md): the first outline is an edge copy at marker 20, and the room
+  // read, which no cache keeps, answers with the live marker 21.
+  const CARD = 'Public place #77 could not be loaded.'
+  const mapMarkers: string[] = []
+  const markedOutlines: string[] = []
+  await routeTalk(page, { now: talkNow(), lines: linesPage([]) })
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    if (!since) return route.fallback()
+    const moved = since === '20'
+    return route.fulfill({ json: {
+      change_marker: '21',
+      changes: moved
+        ? [{ change_id: '21', kind: 'note', actor: 'leafwalker', detail: { note_id: 1, place_id: 11 }, created_at: '2026-09-25T11:59:30.000Z' }]
+        : [],
+      returned_items: moved ? 1 : 0,
+      unchanged: !moved,
+      has_more: false,
+      next_since: '21',
+    } })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    if (url.searchParams.get('collection') || url.searchParams.get('view') !== 'outline' || !marker) {
+      return route.fallback()
+    }
+    markedOutlines.push(marker)
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: '21' } })
+  })
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    mapMarkers.push(url.searchParams.get('after_change_marker') ?? '')
+    return route.fulfill({ json: { ...FOCUSED_PLACE, change_marker: '21' } })
+  })
+  await page.addInitScript(card => {
+    new MutationObserver(() => {
+      if (document.body?.textContent?.includes(card)) {
+        document.documentElement.dataset.placeCardSeen = 'yes'
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true })
+  }, CARD)
+
+  await page.goto('/window/talk?place=77')
+  await expect.poll(() => markedOutlines.length).toBeGreaterThan(0)
+  await expect.poll(() => mapMarkers).toEqual(['20', '21'])
+  await expect(page.locator('#talk-lines')).toContainText('No public line matches this selection.')
+  await expect(page.getByText(CARD)).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.dataset.placeCardSeen ?? 'no')).toBe('no')
+})
+
+test('a city that always overtakes gives four reads then the card, Retry four more, and Retry succeeds once markers agree', async ({ page }) => {
+  const CARD = 'Public place #77 could not be loaded.'
+  const RETRY = 'Retry loading this place'
+  await routeTalk(page, { now: talkNow(), lines: linesPage([]) })
+  const control = { moving: true }
+  await page.route('**/api/changes**', route => {
+    const since = new URL(route.request().url()).searchParams.get('since')
+    if (!since) return route.fallback()
+    const marker = control.moving ? String(BigInt(since) + 1n) : since
+    const moved = marker !== since
+    return route.fulfill({ json: {
+      change_marker: marker,
+      changes: moved
+        ? [{ change_id: marker, kind: 'note', actor: 'leafwalker', detail: { note_id: 11, place_id: 11 }, created_at: '2026-09-25T11:59:30.000Z' }]
+        : [],
+      returned_items: moved ? 1 : 0,
+      unchanged: !moved,
+      has_more: false,
+      next_since: marker,
+    } })
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    const marker = url.searchParams.get('after_change_marker')
+    if (url.searchParams.get('collection') || url.searchParams.get('view') !== 'outline' || !marker) {
+      return route.fallback()
+    }
+    return route.fulfill({ json: { ...SNAPSHOT, change_marker: marker } })
+  })
+  const reads: string[] = []
+  await page.route('**/api/map**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('parent_id') !== '77') return route.fallback()
+    const asked = url.searchParams.get('after_change_marker') ?? ''
+    reads.push(asked)
+    return route.fulfill({ json: {
+      ...FOCUSED_PLACE,
+      change_marker: control.moving ? String(BigInt(asked) + 1n) : asked,
+    } })
+  })
+  await page.goto('/window/talk?place=77')
+  await expect(page.getByText(CARD)).toBeVisible({ timeout: 15_000 })
+  const firstRun = [...reads]
+  expect(firstRun).toEqual(['20', '21', '22', '23'])
+  await page.getByRole('button', { name: RETRY }).click()
+  await expect.poll(() => reads.length, { timeout: 15_000 }).toBe(8)
+  await expect(page.getByText(CARD)).toBeVisible({ timeout: 15_000 })
+  expect(reads).toEqual(['20', '21', '22', '23', '24', '25', '26', '27'])
+  control.moving = false
+  await page.getByRole('button', { name: RETRY }).click()
+  await expect(page.locator('#talk-lines')).toContainText('No public line matches this selection.')
+  await expect(page.getByText(CARD)).toHaveCount(0)
+  expect(reads.slice(0, 8)).toEqual(['20', '21', '22', '23', '24', '25', '26', '27'])
+  expect(reads.length).toBe(9)
 })

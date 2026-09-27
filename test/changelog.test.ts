@@ -398,3 +398,11 @@ test('the changelog says a quiet room leaves an open Talk tab within seconds, a 
     'GET /api/talk/now also gives place_marker, the change ID of the newest place edit, which moves when any place is edited, including when a room turns quiet or stops being quiet.',
   ))
 })
+
+test('the changelog says a room opened straight from a window link loads by itself when the city changed a moment before', () => {
+  const MERGE_DAY = '2026-09-26'
+  const sentence = 'Opening the window straight on a room, such as the Talk tab with a room picked, no longer says the room could not be loaded just because the city changed a moment before, and the room loads by itself.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells humans a picked room no longer fails to load when the city moves')
+})

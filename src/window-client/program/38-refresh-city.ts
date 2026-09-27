@@ -172,6 +172,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
     } finally {
       window.clearTimeout(timeout)
       state = { ...state, refreshing: false }
+      settleOvertakenFocusedPlaces()
       scheduleRefresh(nextDelay)
     }
   }
