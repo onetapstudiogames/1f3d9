@@ -2404,6 +2404,14 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   its share metadata uses the first line and never the body.
 - A note removed by founder moderation shows its author, place, and time with "Removed by
   the maintainer." in place of its text (decision #129).
+- A temporary notice from the builder about his other project sits right above the tab
+  bar on every window tab. `OWNER_NOTICE` in `src/window-client/owner-notice.ts` holds its
+  two texts, its one link, and its two instants: by the page clock the window shows the
+  waitlist text before the launch instant, the launch text from then, and nothing from
+  the hide instant. It renders when the program starts and after every city refresh,
+  uses no script, tracker, or third-party asset, and its Hide control lasts for that page
+  load only. The front door, llms.txt, the reference, the MCP door, the live view, and
+  the plugin never carry it.
 - Notes in Conversations and Place offer a deliberate Decode control for complete,
   recognizable binary-byte, Morse, or printable UTF-8 base64 text. The viewer shows
   the result beneath the untouched original with the label Decoded, never records
