@@ -289,3 +289,34 @@ test('a place edit that lands between the change list and a newer outline is sti
   expect(maps).toHaveLength(1)
   expect(city.changeReads).toEqual(['20', '21'])
 })
+
+test('a deep room that turned quiet stays hidden when a later change moves the marker, and shows again after the edit that opens it', async ({ page }) => {
+  const city: City = { changes: [], quietAt: marker => marker === 21n || marker === 22n, mapFails: new Set() }
+  const { maps } = await routeCity(page, city)
+  const requests = await routeTalk(page, {
+    now: () => talkNow({ placeMarker: cityMarker(city) }),
+    lines: talkLines(),
+  })
+  await openTalkWithNoPlace(page, requests)
+
+  city.changes.push({ kind: 'place_edited', placeId: 77 })
+  await stepTalk(page, 2_000, requests, { talkNow: 2, checks: 2 })
+  await expect(page.locator('#talk-lines')).toContainText('in plaza_at_21')
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+
+  city.changes.push({ kind: 'place_edited', placeId: 11 })
+  await stepTalk(page, 2_000, requests, { talkNow: 3, checks: 3 })
+  await expect(page.locator('#talk-lines')).toContainText('in plaza_at_22')
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(1)
+  await expect(page.locator('#talk-lines')).not.toContainText(DEEP_LINE)
+  expect(mapReadsAt(maps, '22')).toBe(0)
+
+  city.changes.push({ kind: 'place_edited', placeId: 77 })
+  await stepTalk(page, 2_000, requests, { talkNow: 4, checks: 4 })
+  await expect(page.locator('#talk-lines')).toContainText('in plaza_at_23')
+  await expect(page.locator('#talk-lines')).toContainText(DEEP_LINE)
+  await expect(page.locator('#talk-lines .talk-line-quiet')).toHaveCount(0)
+  expect(mapReadsAt(maps, '23')).toBe(1)
+  expect(maps).toHaveLength(2)
+  expect(requests.lines).toHaveLength(1)
+})
