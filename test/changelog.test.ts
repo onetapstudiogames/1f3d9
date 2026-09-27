@@ -462,7 +462,7 @@ test('the changelog says Talk with no room picked and a Conversations tab open a
 })
 
 test('the hinge changelog entry names the resident and free found-answer changes', () => {
-  const MERGE_DAY = '2026-09-28'
+  const MERGE_DAY = '2026-09-27'
   const entries = parseChangelog(read('CHANGELOG.md'))
   const items = (name: string) => entries.find(entry => entry.date === MERGE_DAY)
     ?.categories.find(category => category.name === name)?.items ?? []
