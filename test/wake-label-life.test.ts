@@ -4,6 +4,7 @@ import test from 'node:test'
 import { WAKE_LABEL_SECONDS_MIN } from '../src/engine-limits.ts'
 import { RESIDENT_ABILITY_LABEL_SECONDS } from '../src/physics.ts'
 import { PLACE_DIAL_FIELDS, parsePlaceDials } from '../src/place-abilities.ts'
+import { PUBLIC_SNAPSHOT_CLASS_REGISTRY } from '../src/public-snapshot-format.ts'
 
 test('wake_label_seconds is a place dial from 10 to 86400 seconds, and 24 hours stays the longest', () => {
   assert.equal(WAKE_LABEL_SECONDS_MIN, 10, 'the floor is 10 seconds, the same as the shortest wake clock')
@@ -17,4 +18,10 @@ test('wake_label_seconds is a place dial from 10 to 86400 seconds, and 24 hours 
   }
   assert.deepEqual(parsePlaceDials({ wake_random_cap: 4 }), { ok: true, dials: { wakeRandomCap: 4 } },
     'a body without the dial leaves it as it was')
+})
+
+test('the dated public snapshots name wake_label_seconds among the ability columns they do not carry yet', () => {
+  const abilityRuntime = PUBLIC_SNAPSHOT_CLASS_REGISTRY.find(entry => entry.class_name === 'ability_runtime')
+  assert.equal(abilityRuntime?.disposition, 'not_exported')
+  assert.equal(abilityRuntime?.database_sources.includes('places.wake_label_seconds'), true)
 })

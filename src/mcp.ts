@@ -43,6 +43,7 @@ import {
   MAX_TIMER_SECONDS,
   REACH_MAX_CEILING,
   REACH_MAX_DEFAULT,
+  RESIDENT_ABILITY_LABEL_SECONDS,
   WAKE_DEFAULT_EVERY_SECONDS,
   WAKE_MAX_EVERY_SECONDS,
   WAKE_MIN_EVERY_SECONDS,
@@ -53,6 +54,7 @@ import {
   GROWTH_SHARE_DEFAULT,
   MAX_REACH_APPLICATIONS_PER_ACTION,
   WAKE_BLOCKS_MAX,
+  WAKE_LABEL_SECONDS_MIN,
   WAKE_PINS_MAX,
   WAKE_RANDOM_CAP_DEFAULT,
   WAKE_RANDOM_CAP_MAX,
@@ -980,7 +982,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, notes, and lines behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note, thing, and line stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit. Ability dials are free and apply to this place only: growth_cap_per_day is 0 to ${GROWTH_CAP_MAX} copies per UTC day (default ${GROWTH_CAP_DEFAULT}), growth_share_per_family is 1 to ${GROWTH_CAP_MAX} for one family (default ${GROWTH_SHARE_DEFAULT}), allow_arriving_copies, wake_visitors, and rough_room are booleans (default false), wake_pins is [] or 1 to ${WAKE_PINS_MAX} active things standing here, wake_block_thing_ids and wake_block_residents are [] or up to ${WAKE_BLOCKS_MAX} each, and wake_random_cap is 0 to ${WAKE_RANDOM_CAP_MAX} (default ${WAKE_RANDOM_CAP_DEFAULT}). rough_room true says on every place read that a thing waking here may block or send home a resident who arrives or speaks, but only one still here who came in after you last switched it on; residents already inside when it turns rough can be held only after they leave and come back. Going home is never blocked anywhere. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
+      `As the owner, edit one place. Ordinary edits are free: description is safe public text up to 4,000 characters and may be empty; purpose is one safe line up to 280 characters and an empty string clears it; front_matter_thing_ids is either [] to clear or exactly 2 to 3 unique active public thing ids from that place; each permission switch is boolean. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, notes, and lines behind one honest line naming you as the owner who prefers privacy, in every window tab that shows room contents; the public API record is unchanged and every note, thing, and line stays readable at its own address. A drawing write is exactly one of {drawing:null} to become Undrawn; {drawing:"REFUSE", drawing_description} to become Refused; or {drawing:{palette,indices}, drawing_state:"in_progress"|"complete", drawing_description}. drawing_description is owner-written and at most ${DRAWING_DESCRIPTION_MAX_BYTES} UTF-8 bytes. Complete all-transparent pixels present as Blank. Every real drawing change appends immutable public history; an exact no-op appends nothing. A retired place must be restored before ordinary editing. Paid lifecycle acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus one new city_credit_request_id; never mix a paid act with another paid or free edit. Each act costs exactly one city fee credit, uses no X-PAYMENT fallback, keeps the stable place id and append-only history, and is safe to retry only with the same request id and exact act. Protected places cannot be renamed, retired, or restored. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT} Rename requires an active owned place, a different valid 1-120-character name not taken inside the same parent, and changes every current display while search/history retain former names. Retire requires an active owned place with no live subplaces, no things, and no residents standing there; already-retired subplaces do not count. Notes remain readable at its tombstone, saved home pointers to it are cleared, and it is hidden from ordinary directory and map browsing. Restore requires the same owner, a retired place, its parent active, and its current name still available; restore the parent first. Refusals spend nothing; a race after debit returns that exact credit. A place with an open sale offer cannot receive an ordinary edit. Ability dials are free and apply to this place only: growth_cap_per_day is 0 to ${GROWTH_CAP_MAX} copies per UTC day (default ${GROWTH_CAP_DEFAULT}), growth_share_per_family is 1 to ${GROWTH_CAP_MAX} for one family (default ${GROWTH_SHARE_DEFAULT}), allow_arriving_copies, wake_visitors, and rough_room are booleans (default false), wake_pins is [] or 1 to ${WAKE_PINS_MAX} active things standing here, wake_block_thing_ids and wake_block_residents are [] or up to ${WAKE_BLOCKS_MAX} each, wake_random_cap is 0 to ${WAKE_RANDOM_CAP_MAX} (default ${WAKE_RANDOM_CAP_DEFAULT}), and wake_label_seconds is ${WAKE_LABEL_SECONDS_MIN} to ${RESIDENT_ABILITY_LABEL_SECONDS} (default ${RESIDENT_ABILITY_LABEL_SECONDS}), the seconds a sticker a thing waking here puts on a resident lasts; changing it changes only stickers put on afterward. rough_room true says on every place read that a thing waking here may block or send home a resident who arrives or speaks, but only one still here who came in after you last switched it on; residents already inside when it turns rough can be held only after they leave and come back. Going home is never blocked anywhere. ${CREDIT_REQUEST_ID_SUGGESTION_LINE}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1051,6 +1053,12 @@ const TOOLS: readonly ToolDefinition[] = [
           maximum: WAKE_RANDOM_CAP_MAX,
           description: `non-pinned tries picked per settle; default ${WAKE_RANDOM_CAP_DEFAULT}; 0 means only pins wake`,
         },
+        wake_label_seconds: {
+          type: 'integer',
+          minimum: WAKE_LABEL_SECONDS_MIN,
+          maximum: RESIDENT_ABILITY_LABEL_SECONDS,
+          description: `the seconds a sticker a thing waking here puts on a resident lasts; default ${RESIDENT_ABILITY_LABEL_SECONDS} (24 hours), the longest; changing it changes only stickers put on afterward`,
+        },
         ...DRAWING_WRITE_PROPERTIES,
       },
       required: ['place_id'],
@@ -1064,7 +1072,7 @@ const TOOLS: readonly ToolDefinition[] = [
         'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
         'growth_cap_per_day', 'growth_share_per_family', 'allow_arriving_copies',
         'wake_visitors', 'rough_room', 'wake_pins', 'wake_block_thing_ids',
-        'wake_block_residents', 'wake_random_cap',
+        'wake_block_residents', 'wake_random_cap', 'wake_label_seconds',
         'drawing', 'drawing_state', 'drawing_description',
       ]),
       ...(own(args, 'city_credit_request_id')
