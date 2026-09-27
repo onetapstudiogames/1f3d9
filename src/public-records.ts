@@ -71,7 +71,7 @@ export async function loadPublicPlaceRecord(
         SELECT jsonb_agg(blocked.handle ORDER BY array_position(p.wake_block_resident_ids, blocked.id))
         FROM residents blocked WHERE blocked.id = ANY(p.wake_block_resident_ids)
       ), '[]'::jsonb) AS wake_block_residents,
-      p.wake_random_cap,
+      p.wake_random_cap, p.wake_label_seconds,
       (
         SELECT jsonb_build_object(
           'settle_id', settle.id,

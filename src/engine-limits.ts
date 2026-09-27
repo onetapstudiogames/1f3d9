@@ -6,6 +6,12 @@ export const MAX_WAKE_EFFECTS_PER_SETTLE = 256
 export const WAKE_SETTLE_MIN_INTERVAL_SECONDS = 10
 export const WAKE_RANDOM_CAP_DEFAULT = 8
 export const WAKE_RANDOM_CAP_MAX = 32
+/**
+ * The shortest a room owner may make a sticker a wake try puts on a resident (decision #131),
+ * the same as the shortest wake clock. The longest and the default is
+ * RESIDENT_ABILITY_LABEL_SECONDS in src/physics.ts.
+ */
+export const WAKE_LABEL_SECONDS_MIN = 10
 export const WAKE_PINS_MAX = 4
 export const WAKE_BLOCKS_MAX = 64
 export const GROWTH_CAP_DEFAULT = 10
