@@ -474,11 +474,14 @@ async function executeEffectWithOutcome(
       `)
       if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
     }
-    // A sticker a waking thing or a reach puts on a resident expires after a day.
+    // A sticker a waking thing or a reach puts on a resident expires after a day. One a wake
+    // try puts on, directly or through a reach, expires after its room's wake_label_seconds
+    // instead, read as the sticker is put on, never more than a day (decision #131).
     const expiresInSeconds = (context.fromWake === true || context.reachMember !== undefined)
       && target.type === 'resident'
       ? RESIDENT_ABILITY_LABEL_SECONDS
       : null
+    const wakeRoomId = context.fromWake === true ? context.placeId : null
     await queryRows(db`
       INSERT INTO active_labels (
         target_type, target_id, label, actor_id,
@@ -487,7 +490,9 @@ async function executeEffectWithOutcome(
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
         ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId},
         CASE WHEN ${expiresInSeconds}::int IS NULL THEN NULL
-          ELSE now() + make_interval(secs => ${expiresInSeconds}::int) END
+          ELSE now() + make_interval(secs => LEAST(${expiresInSeconds}::int, coalesce((
+            SELECT room.wake_label_seconds FROM places room WHERE room.id = ${wakeRoomId}::int
+          ), ${expiresInSeconds}::int))) END
       ) RETURNING id
     `)
     return effectExecutionOutcome(1, false, destroyedThingIds)
