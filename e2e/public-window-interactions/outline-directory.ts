@@ -269,7 +269,7 @@ export function registerPublicWindowOutlineDirectory() {
     expect(dropdownLayout.results.left).toBeGreaterThanOrEqual(dropdownLayout.search!.left)
     expect(dropdownLayout.results.right).toBeLessThanOrEqual(dropdownLayout.search!.right)
     expect(dropdownLayout.results.top).toBeGreaterThanOrEqual(dropdownLayout.search!.bottom)
-    await quietResult.scrollIntoViewIfNeeded()
+    await results.evaluate(node => node.scrollIntoView({ block: 'center', behavior: 'instant' }))
     expect(await results.evaluate(node => {
       const content = document.querySelector<HTMLElement>('.view-filters')
       if (!content) return false

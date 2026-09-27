@@ -174,6 +174,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       state = { ...state, refreshing: false }
       settleOvertakenFocusedPlaces()
       scheduleRefresh(nextDelay)
+      renderOwnerNotice()
     }
   }
 

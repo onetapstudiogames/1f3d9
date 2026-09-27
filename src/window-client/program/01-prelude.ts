@@ -73,6 +73,7 @@ import {
   focusedReadOvertaken,
   overtakenReadIsDue,
 } from '../focused-read.ts'
+import { OWNER_NOTICE, ownerNoticeFor } from '../owner-notice.ts'
 // Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
@@ -111,6 +112,8 @@ const TALK_CITY_VIEW_IS_BEHIND_JS = talkCityViewIsBehind.toString()
 const STALE_FOCUSED_PLACE_STAYS_QUIET_JS = staleFocusedPlaceStaysQuiet.toString()
 const FOCUSED_READ_OVERTAKEN_JS = focusedReadOvertaken.toString()
 const OVERTAKEN_READ_IS_DUE_JS = overtakenReadIsDue.toString()
+const OWNER_NOTICE_JSON = JSON.stringify(OWNER_NOTICE)
+const OWNER_NOTICE_FOR_JS = ownerNoticeFor.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
 const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
@@ -157,6 +160,8 @@ export const PART_01_PRELUDE = `(() => {
   const staleFocusedPlaceStaysQuiet = ${STALE_FOCUSED_PLACE_STAYS_QUIET_JS}
   const focusedReadOvertaken = ${FOCUSED_READ_OVERTAKEN_JS}
   const overtakenReadIsDue = ${OVERTAKEN_READ_IS_DUE_JS}
+  const OWNER_NOTICE = Object.freeze(${OWNER_NOTICE_JSON})
+  const ownerNoticeFor = ${OWNER_NOTICE_FOR_JS}
   const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}

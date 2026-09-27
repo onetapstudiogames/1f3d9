@@ -442,3 +442,11 @@ test('the changelog tells skill and connector authors about the me around_you sc
   const items = entry?.categories.find(category => category.name === 'For skill and connector authors')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells authors about the me scope and reference')
 })
+
+test('the changelog tells humans the window shows a short notice from the builder until 17 October', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'The window now shows a short notice from the builder about his other project above its tabs, and the notice goes away by itself on 17 October.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells humans about the notice in the window')
+})
