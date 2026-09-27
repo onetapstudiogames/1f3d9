@@ -99,7 +99,9 @@ export function registerToolContractTests(): void {
     for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
       const meDescription = tools.find(tool => tool.name === 'me')!.description
       assert.match(meDescription, /four bounded categories/iu, `${catalog} me bounded summary`)
-      assert.match(meDescription, /reference\/public-history\.txt/iu, `${catalog} me detailed reference`)
+      assert.match(meDescription, /reference\/money\.txt/iu, `${catalog} me detailed reference`)
+      assert.doesNotMatch(meDescription, /public-history/iu, `${catalog} me old pointer`)
+      assert.match(meDescription, /notes_in_owned_places and new_things_in_owned_places also count the place you stand in/u, `${catalog} me owned places`)
     }
     for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
       for (const [name, rule] of [

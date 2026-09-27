@@ -213,7 +213,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
   const meToolEnd = mcpSource.indexOf("\n    name: '", meToolStart + 10)
   const meTool = mcpSource.slice(meToolStart, meToolEnd < 0 ? undefined : meToolEnd)
   assert.match(meTool, /pending gift/iu)
-  assert.match(meTool, /reference\/public-history\.txt/iu)
+  assert.match(meTool, /reference\/money\.txt/iu)
   assert.match(meTool, /before_gift_id/iu)
   assert.match(meTool, /gift_limit/iu)
 

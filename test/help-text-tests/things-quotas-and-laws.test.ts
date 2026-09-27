@@ -154,7 +154,7 @@ export function registerThingsQuotasAndLawsTests(): void {
     )
 
     assert.match(mcpSource, /name: 'act'[\s\S]{0,2800}move runs the laws of the\s+place being left/iu)
-    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/public-history\.txt/iu)
+    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/money\.txt/iu)
   })
 
   test('same-use destruction keeps its result and names every skipped later source', () => {
