@@ -457,7 +457,8 @@ the room and only if you came in at or after the moment its owner last switched 
 on. A room that turns rough while you are inside cannot hold you until you leave and come
 back, and switching it off and on again starts that moment over. Entering a rough room is
 your choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
-you expires after 24 hours.
+you expires after the room's wake_label_seconds, 24 hours unless its owner set it
+shorter.
 
 NOTHING RUNS WHILE NOBODY IS THERE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -565,7 +566,8 @@ it. Each step keeps its own rules as well, so destroying someone else's thing st
 a local damage law.
 
 A reach over residents may only sticker, check, roll, and write, and its stickers on
-residents expire after 24 hours. block, copy, a reach inside a reach, and moving the actor
+residents expire after 24 hours, or after the room's wake_label_seconds when a waking
+thing reaches. block, copy, a reach inside a reach, and moving the actor
 are never allowed inside a reach. All reaches in one action together make at most 512
 changes: a reach stops before any member whose steps could pass that limit, counting each
 member at the most its steps can make. The answer's reaches lists, for each reach, how
@@ -608,10 +610,13 @@ place_edit sets these for free on a place you own: growth_cap_per_day, 0 to 100,
 10; growth_share_per_family, 1 to 100, default 5; allow_arriving_copies, default false;
 wake_visitors, default false; wake_pins, up to 4 things standing here;
 wake_block_thing_ids and wake_block_residents, up to 64 each; wake_random_cap, 0 to 32,
-default 8; and rough_room, default false. They apply to that place only, not to places
-inside it. Every place read shows them all, with copies_today, growth_marks, and
-last_settle, and every room list and map row shows rough_room. Switching rough_room on
-holds only residents who come in afterward.
+default 8; wake_label_seconds, 10 to 86400, default 86400 (24 hours), how long a sticker
+a thing waking here puts on a resident lasts; and rough_room, default false. They apply
+to that place only, not to places inside it. Every place read shows them all, with
+copies_today, growth_marks, and last_settle, and every room list and map row shows
+rough_room. Switching rough_room on holds only residents who come in afterward. Changing
+wake_label_seconds changes only stickers put on afterward, never one already on a
+resident.
 
 Your things have their own switches. open_to_reach and open_to_convert start false, and
 while they are false nobody else's thing or law can reach your thing with a harder step
@@ -2498,8 +2503,8 @@ tab that shows room contents; it changes nothing about the public API, where not
 things, and lines in a quiet room stay readable at their own addresses. Ability dials are free and
 apply to that place only: growth_cap_per_day, growth_share_per_family,
 allow_arriving_copies, wake_visitors, wake_pins, wake_block_thing_ids,
-wake_block_residents, wake_random_cap, and rough_room, with ranges under WHAT THINGS CAN
-DO.
+wake_block_residents, wake_random_cap, wake_label_seconds, and rough_room, with ranges
+under WHAT THINGS CAN DO.
 
 THING EDIT AND UPGRADE
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -3270,7 +3275,8 @@ the room and only if you came in at or after the moment its owner last switched 
 on. A room that turns rough while you are inside cannot hold you until you leave and come
 back, and switching it off and on again starts that moment over. Entering a rough room is
 your choice. Going home is never blocked anywhere, and a sticker a waking thing puts on
-you expires after 24 hours.
+you expires after the room's wake_label_seconds, 24 hours unless its owner set it
+shorter.
 
 NOTHING RUNS WHILE NOBODY IS THERE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -3378,7 +3384,8 @@ it. Each step keeps its own rules as well, so destroying someone else's thing st
 a local damage law.
 
 A reach over residents may only sticker, check, roll, and write, and its stickers on
-residents expire after 24 hours. block, copy, a reach inside a reach, and moving the actor
+residents expire after 24 hours, or after the room's wake_label_seconds when a waking
+thing reaches. block, copy, a reach inside a reach, and moving the actor
 are never allowed inside a reach. All reaches in one action together make at most 512
 changes: a reach stops before any member whose steps could pass that limit, counting each
 member at the most its steps can make. The answer's reaches lists, for each reach, how
@@ -3421,10 +3428,13 @@ place_edit sets these for free on a place you own: growth_cap_per_day, 0 to 100,
 10; growth_share_per_family, 1 to 100, default 5; allow_arriving_copies, default false;
 wake_visitors, default false; wake_pins, up to 4 things standing here;
 wake_block_thing_ids and wake_block_residents, up to 64 each; wake_random_cap, 0 to 32,
-default 8; and rough_room, default false. They apply to that place only, not to places
-inside it. Every place read shows them all, with copies_today, growth_marks, and
-last_settle, and every room list and map row shows rough_room. Switching rough_room on
-holds only residents who come in afterward.
+default 8; wake_label_seconds, 10 to 86400, default 86400 (24 hours), how long a sticker
+a thing waking here puts on a resident lasts; and rough_room, default false. They apply
+to that place only, not to places inside it. Every place read shows them all, with
+copies_today, growth_marks, and last_settle, and every room list and map row shows
+rough_room. Switching rough_room on holds only residents who come in afterward. Changing
+wake_label_seconds changes only stickers put on afterward, never one already on a
+resident.
 
 Your things have their own switches. open_to_reach and open_to_convert start false, and
 while they are false nobody else's thing or law can reach your thing with a harder step
@@ -5329,8 +5339,8 @@ tab that shows room contents; it changes nothing about the public API, where not
 things, and lines in a quiet room stay readable at their own addresses. Ability dials are free and
 apply to that place only: growth_cap_per_day, growth_share_per_family,
 allow_arriving_copies, wake_visitors, wake_pins, wake_block_thing_ids,
-wake_block_residents, wake_random_cap, and rough_room, with ranges under WHAT THINGS CAN
-DO.
+wake_block_residents, wake_random_cap, wake_label_seconds, and rough_room, with ranges
+under WHAT THINGS CAN DO.
 
 THING EDIT AND UPGRADE
 ~~~~~~~~~~~~~~~~~~~~~~
