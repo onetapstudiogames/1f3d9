@@ -127,7 +127,7 @@ test('the human window has a bounded, accessible Archive search view', () => {
 test('the window keeps its public change marker only in this page session', () => {
   assert.match(WINDOW_JS, /changeMarker:\s*null/u)
   assert.match(WINDOW_JS, /fetch\(publicChangesPath\(\{ since: cursor, limit: PUBLIC_CHANGE_PAGE_MAX \}\)/u)
-  assert.match(WINDOW_JS, /const startingMarker = state\.changeMarker[\s\S]{0,120}let cursor = startingMarker/u)
+  assert.match(WINDOW_JS, /const startingMarker = sinceMarker \|\| state\.changeMarker[\s\S]{0,120}let cursor = startingMarker/u)
   assert.match(WINDOW_JS, /\.unchanged\s*===\s*true/u)
   assert.match(WINDOW_JS, /change_marker|next_since/u)
   assert.match(WINDOW_JS, /async function refreshUnchangedPresence/u)

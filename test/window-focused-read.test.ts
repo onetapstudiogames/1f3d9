@@ -53,9 +53,9 @@ test('the browser program reads an overtaken place again and never leaves it loa
   assert.match(WINDOW_JS, /error: !overtakenWaiting && !retainedCovers,/u)
   assert.match(WINDOW_JS, /if \(overtakenWaiting\) void ensureFocusedSelection\(\)/u)
   assert.equal(
-    WINDOW_JS.match(/if \(!entry \|\| overtakenDue \|\| \(forcePlace && Boolean\(entry\.place\)\)\) \{/gu)?.length,
+    WINDOW_JS.match(/if \(!entry \|\| overtakenDue \|\| staleDue \|\| \(forcePlace && Boolean\(entry\.place\)\)\) \{/gu)?.length,
     2,
-    'both focused place paths read a due overtaken place again',
+    'both focused place paths read a due overtaken place, or a stale held read, again',
   )
   assert.doesNotMatch(WINDOW_JS, /if \(!entry \|\| \(forcePlace && Boolean\(entry\.place\)\)\)/u)
   assert.match(WINDOW_JS, /refreshing: false \}\s+settleOvertakenFocusedPlaces\(\)/u)

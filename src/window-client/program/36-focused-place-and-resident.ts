@@ -227,6 +227,14 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
     }
   }
 
+  // A held read of a place that no longer covers the city view's marker, with no read in
+  // flight, no overtaken read waiting, and no failure showing its Retry, is read again when
+  // the place is picked or a followed resident stands in it.
+  function heldPlaceReadIsStale(entry) {
+    return Boolean(entry?.place) && !entry.loading && !entry.error && !entry.overtakenAt &&
+      Boolean(state.changeMarker) && !markerCovers(entry.marker, state.changeMarker)
+  }
+
   async function ensureFocusedSelection(options) {
     const forcePlace = options?.forcePlace === true
     const forceResident = options?.forceResident === true
@@ -250,8 +258,9 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         !state.snapshot.flatPlaces.some(place => place.id === explicitPlaceId)) {
       const entry = state.focusedPlaces[String(explicitPlaceId)]
       const overtakenDue = overtakenReadIsDue({ entry, viewMarker: state.changeMarker })
-      if (!entry || overtakenDue || (forcePlace && Boolean(entry.place))) {
-        await loadFocusedPlace(explicitPlaceId, forcePlace || overtakenDue)
+      const staleDue = heldPlaceReadIsStale(entry)
+      if (!entry || overtakenDue || staleDue || (forcePlace && Boolean(entry.place))) {
+        await loadFocusedPlace(explicitPlaceId, forcePlace || overtakenDue || staleDue)
       }
       return
     }
@@ -263,11 +272,91 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
           !state.snapshot.flatPlaces.some(place => place.id === currentPlaceId)) {
         const entry = state.focusedPlaces[String(currentPlaceId)]
         const overtakenDue = overtakenReadIsDue({ entry, viewMarker: state.changeMarker })
-        if (!entry || overtakenDue || (forcePlace && Boolean(entry.place))) {
-          await loadFocusedPlace(currentPlaceId, forcePlace || overtakenDue)
+        const staleDue = heldPlaceReadIsStale(entry)
+        if (!entry || overtakenDue || staleDue || (forcePlace && Boolean(entry.place))) {
+          await loadFocusedPlace(currentPlaceId, forcePlace || overtakenDue || staleDue)
         }
       }
     }
+  }
+
+  // Rooms whose own read at a refresh failed, did not fit, or was put off because the room
+  // was selected, read at the next refresh that moves the change marker
+  // (placesToReadAtRefresh). refreshCity sets it only when it stores its new view.
+  let editedPlaceRetryIds = Object.freeze([])
+
+  // Decision 129: reads one edited room at the refresh marker for readEditedPlaces. A reply
+  // at a newer marker is kept, because it is at least as fresh as the view. Answers the entry
+  // to hold, null for a room the city no longer shows, or undefined when the read failed.
+  async function readEditedPlace(placeId, marker, signal) {
+    try {
+      const url = new URL('/api/map', window.location.origin)
+      url.searchParams.set('view', 'outline')
+      url.searchParams.set('parent_id', String(placeId))
+      url.searchParams.set('after_change_marker', marker)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'omit',
+        headers: { Accept: 'application/json' },
+        mode: 'same-origin',
+        redirect: 'error',
+        referrerPolicy: 'no-referrer',
+        signal,
+      })
+      if (response.status === 404) return null
+      if (!response.ok) return undefined
+      const payload = await response.json()
+      const replyMarker = safeChangeMarker(payload?.change_marker)
+      if (!replyMarker || !markerCovers(replyMarker, marker)) return undefined
+      const [normalized] = normalizePlaces([payload?.place], 0, new Set())
+      if (!normalized || normalized.id !== placeId) return undefined
+      return Object.freeze({
+        loading: false,
+        error: false,
+        notFound: false,
+        marker: replyMarker,
+        place: Object.freeze({
+          ...normalized,
+          children: [],
+          path: focusedPlacePath(directoryPlace(placeId), normalized),
+        }),
+      })
+    } catch {
+      return undefined
+    }
+  }
+
+  // Decision 129: a place edit may have made a room quiet or open again, and a room outside
+  // the loaded places otherwise takes its quiet mark from the names directory, an edge copy
+  // that can lag a minute or more. A refresh that moves the marker reads each such room on
+  // its own, one at a time, before it draws the new view. The outline can come back at a
+  // newer marker than the change list reached, so the changes in between are read once more
+  // first. Answers the entries to merge into state.focusedPlaces and the next retry list.
+  async function readEditedPlaces(changeState, snapshot, marker, signal) {
+    const known = changeState.status === 'unavailable' ? null : changeState
+    const gap = known && !markerCovers(known.marker, marker)
+      ? await checkPublicChanges(known.marker)
+      : null
+    const gapKnown = gap !== null && gap.status !== 'unavailable'
+    const followed = state.placeId ? null : selectedResident(snapshot)
+    const { now, later } = placesToReadAtRefresh({
+      changes: known ? [...known.changes, ...(gapKnown ? gap.changes : [])] : [],
+      complete: Boolean(known) && (gap === null || (gapKnown && markerCovers(gap.marker, marker))),
+      heldQuietIds: Object.entries(state.focusedPlaces)
+        .filter(([, entry]) => entry?.place?.quiet === true)
+        .map(([key]) => Number(key)),
+      retryIds: editedPlaceRetryIds,
+      loadedIds: snapshot.flatPlaces.map(place => place.id),
+      selectedIds: [state.placeId, followed?.current_place_id].filter(placeId => Boolean(placeId)),
+      limit: EDITED_PLACE_READS_PER_REFRESH,
+    })
+    const entries = {}
+    const failed = []
+    for (const placeId of now) {
+      const entry = await readEditedPlace(placeId, marker, signal)
+      if (entry === undefined) failed.push(placeId)
+      else if (entry) entries[String(placeId)] = entry
+    }
+    return Object.freeze({ entries, retryIds: Object.freeze([...failed, ...later]) })
   }
 
   // Runs when a city refresh ends. A place read the city overtook is read again once the

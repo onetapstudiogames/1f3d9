@@ -28,7 +28,7 @@ test('the browser program asks the change feed nothing without a marker and page
   assert.doesNotMatch(WINDOW_JS, /new URL\('\/api\/changes'/u)
   assert.match(
     WINDOW_JS,
-    /async function checkPublicChanges\(\) \{\s+(?:\/\/[^\n]*\n\s+)*if \(!state\.changeMarker\) \{\s+return Object\.freeze\(\{\s+status: 'unavailable', marker: null, changes: Object\.freeze\(\[\]\),\s+\}\)\s+\}\s+const controller = new AbortController\(\)/u,
+    /async function checkPublicChanges\(sinceMarker\) \{\s+(?:\/\/[^\n]*\n\s+)*if \(!\(sinceMarker \|\| state\.changeMarker\)\) \{\s+return Object\.freeze\(\{\s+status: 'unavailable', marker: null, changes: Object\.freeze\(\[\]\),\s+\}\)\s+\}\s+const controller = new AbortController\(\)/u,
     'no marker means no changes request',
   )
   assert.ok(WINDOW_JS.includes('const publicChangesPath = '), 'the helper is injected')
