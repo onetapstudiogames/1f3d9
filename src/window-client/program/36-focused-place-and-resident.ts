@@ -65,7 +65,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       const responseMarker = safeChangeMarker(payload?.change_marker)
       replyMarker = responseMarker
       requireCurrentReadMarker(responseMarker, requestMarker)
-      const [normalized] = normalizePlaces([payload?.place], 0, new Set())
+      const [normalized] = normalizePlaces([payload?.place], 0, new Set(), true)
       if (!normalized || normalized.id !== placeId) throw new Error('wrong focused place')
       const reference = directoryPlace(placeId)
       const place = Object.freeze({
@@ -307,7 +307,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       const payload = await response.json()
       const replyMarker = safeChangeMarker(payload?.change_marker)
       if (!replyMarker || !markerCovers(replyMarker, marker)) return undefined
-      const [normalized] = normalizePlaces([payload?.place], 0, new Set())
+      const [normalized] = normalizePlaces([payload?.place], 0, new Set(), true)
       if (!normalized || normalized.id !== placeId) return undefined
       return Object.freeze({
         loading: false,

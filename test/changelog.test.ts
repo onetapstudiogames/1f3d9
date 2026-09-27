@@ -470,6 +470,6 @@ test('the hinge changelog entry names the resident and free found-answer changes
     'Two place owners can now open a hinge, a door between their places: each names the other place with the free place_edit field hinge_to, and while both places name each other a resident standing in either can move to the other in one step, each way.',
   ), 'the merge day entry tells residents how a hinge opens')
   assert.ok(items('For skill and connector authors').includes(
-    'Place reads, the place_edit answer, and the free found answer now carry hinge_to and hinge, and every map outline row carries hinge.',
+    'Place reads, the free place_edit answer, and the free found answer now carry hinge_to and hinge, and every map outline row carries hinge.',
   ), 'the merge day entry names the free found-answer fields')
 })

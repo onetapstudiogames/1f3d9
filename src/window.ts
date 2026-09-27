@@ -180,7 +180,7 @@ interface PublicPlace {
   notes: number
   moderated: boolean
   quiet: boolean
-  hinge: PublicHinge | null
+  hinge?: PublicHinge | null
   children: PublicPlace[]
 }
 
@@ -469,7 +469,7 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     notes: count(row.notes),
     moderated,
     quiet: row.quiet === true,
-    hinge: publicHinge(row.hinge),
+    ...(row.hinge !== undefined ? { hinge: publicHinge(row.hinge) } : {}),
   }
 }
 
