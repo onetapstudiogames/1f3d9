@@ -14,11 +14,12 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     return response.json()
   }
 
-  async function checkPublicChanges() {
+  async function checkPublicChanges(sinceMarker) {
     // The change feed refuses limit without since, so a window with no marker yet asks it
     // nothing: refreshCity then reads the outline without a marker and takes its marker,
-    // as it did when this read was refused.
-    if (!state.changeMarker) {
+    // as it did when this read was refused. A refresh whose outline came back at a newer
+    // marker than this read reached reads the changes in between with sinceMarker.
+    if (!(sinceMarker || state.changeMarker)) {
       return Object.freeze({
         status: 'unavailable', marker: null, changes: Object.freeze([]),
       })
@@ -26,7 +27,7 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
-      const startingMarker = state.changeMarker
+      const startingMarker = sinceMarker || state.changeMarker
       let cursor = startingMarker
       let marker = startingMarker
       let changes = []

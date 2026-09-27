@@ -67,7 +67,11 @@ import {
   talkPane,
   talkRenderRows,
 } from '../talk.ts'
-import { staleFocusedPlaceStaysQuiet } from '../quiet.ts'
+import {
+  EDITED_PLACE_READS_PER_REFRESH,
+  placesToReadAtRefresh,
+  staleFocusedPlaceStaysQuiet,
+} from '../quiet.ts'
 import {
   FOCUSED_READ_OVERTAKEN_LIMIT,
   focusedReadOvertaken,
@@ -110,6 +114,7 @@ const TALK_CHECK_DELAY_JS = talkCheckDelay.toString()
 const TALK_CHECK_MS_JS = talkCheckMs.toString()
 const TALK_CITY_VIEW_IS_BEHIND_JS = talkCityViewIsBehind.toString()
 const STALE_FOCUSED_PLACE_STAYS_QUIET_JS = staleFocusedPlaceStaysQuiet.toString()
+const PLACES_TO_READ_AT_REFRESH_JS = placesToReadAtRefresh.toString()
 const FOCUSED_READ_OVERTAKEN_JS = focusedReadOvertaken.toString()
 const OVERTAKEN_READ_IS_DUE_JS = overtakenReadIsDue.toString()
 const OWNER_NOTICE_JSON = JSON.stringify(OWNER_NOTICE)
@@ -129,6 +134,7 @@ export const PART_01_PRELUDE = `(() => {
   const MAX_REFRESH_MS = 300000
   const REQUEST_TIMEOUT_MS = 10000
   const FOCUSED_READ_OVERTAKEN_LIMIT = ${FOCUSED_READ_OVERTAKEN_LIMIT}
+  const EDITED_PLACE_READS_PER_REFRESH = ${EDITED_PLACE_READS_PER_REFRESH}
   const PUBLIC_CHANGE_PAGE_MAX = ${PUBLIC_CHANGE_PAGE_MAX}
   const TALK_CHECK_MS = ${TALK_CHECK_MS}
   const TALK_CHECK_MIN_MS = ${TALK_CHECK_MIN_MS}
@@ -158,6 +164,7 @@ export const PART_01_PRELUDE = `(() => {
   const talkLinesPath = ${TALK_LINES_PATH_JS}
   const talkCityViewIsBehind = ${TALK_CITY_VIEW_IS_BEHIND_JS}
   const staleFocusedPlaceStaysQuiet = ${STALE_FOCUSED_PLACE_STAYS_QUIET_JS}
+  const placesToReadAtRefresh = ${PLACES_TO_READ_AT_REFRESH_JS}
   const focusedReadOvertaken = ${FOCUSED_READ_OVERTAKEN_JS}
   const overtakenReadIsDue = ${OVERTAKEN_READ_IS_DUE_JS}
   const OWNER_NOTICE = Object.freeze(${OWNER_NOTICE_JSON})

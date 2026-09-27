@@ -103,10 +103,17 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       } else {
         histories = mergeUnchangedSnapshotHistories(snapshot)
       }
+      // Decision 129: read each room a place edit named at this marker before drawing, so
+      // the view resolves a room that turned quiet at the room's own mark, not the names
+      // directory's older copy.
+      const editedPlaces = hadSnapshot && replaceAuthored
+        ? await readEditedPlaces(changeState, snapshot, refreshMarker, controller.signal)
+        : null
       if (navigationRevision !== navigationRevisionAtStart) {
         await finishWatchingPublicStreets()
         return
       }
+      if (editedPlaces) editedPlaceRetryIds = editedPlaces.retryIds
       const archive = replaceAuthored
         ? {
             ...state.archive,
@@ -141,6 +148,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         details: replaceAuthored ? {} : state.details,
         detailDrawings: replaceAuthored ? {} : state.detailDrawings,
         detailDrawingHistories: replaceAuthored ? {} : state.detailDrawingHistories,
+        focusedPlaces: editedPlaces ? { ...state.focusedPlaces, ...editedPlaces.entries } : state.focusedPlaces,
         changeMarker: freshSnapshot.changeMarker || requiredMarker,
         hasSnapshot: true,
         failures: 0,

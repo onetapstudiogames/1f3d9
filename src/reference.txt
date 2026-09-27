@@ -1897,8 +1897,8 @@ GET /api/place/:id does not already publish, and like the cue it records nothing
 window's Talk tab checks it once per check_interval_ms, plus a random wait of up to 0.5
 seconds, while it is open and visible, and reads lines only when line_marker moves.
 When place_marker is newer than the city view the window shows, the window refreshes
-that view at once, so a room picked in Talk that turns quiet hides its lines within a
-few seconds while reads succeed.
+that view at once and reads each edited room on its own, so any room shown in Talk
+that turns quiet hides its lines within a few seconds while reads succeed.
 
 THE GAZETTE
 -----------
