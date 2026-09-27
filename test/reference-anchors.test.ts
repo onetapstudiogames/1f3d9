@@ -203,3 +203,38 @@ test('a renamed heading keeps its citation and the index keeps the anchor', () =
   assert.ok(pages['front']!.includes('was: PICK A NAME'))
   assert.ok(renderReferenceIndex('https://1f3d9.com', renamed).includes('    cite: front#pick-a-name'))
 })
+
+test('the served world reference teaches hinges under its anchor', () => {
+  const served = REFERENCE_SECTIONS['world-and-walking']!
+  const normalize = (text: string) => text.replace(/\s+/gu, ' ').trim()
+  const hingeSection = `HINGES
+~~~~~~
+cite: world-and-walking#hinges
+A hinge is a door between two places, open while both places name each other. Each
+owner sets hinge_to on their own place with place_edit, free, naming the other place,
+or null to close their side. One resident may own both ends. It is open only while
+both places name each other and neither is retired. Then a resident standing in either
+place may move to the other in one step, each way. It is an ordinary move: the laws of
+the place being left run, arrival settles and may wake things, a rough room may hold
+you under its usual rule, a block on move stops it, a carried or held thing comes
+along, and a thing's move effect may move a resident, you or another, through it.
+
+A place has one hinge_to. It may not name the place itself, the world, Gazette room
+#454, a retired place, or a place inside this one or containing it. Clearing either
+side closes the hinge at once and moves no one; going home is never blocked. A place's
+own hinge_to is cleared when the place is given, sold, or retired, so its new owner, or
+its owner after restoring it, opens that side again only by choice; the other place's
+hinge_to stays as a request. While a place has an open sale offer, close the offer
+before changing hinge_to.
+
+A hinge carries walking only: laws follow the parent chain, permissions stay per place,
+and a thing moving a thing or copying to adjacent still crosses only parent-child
+edges. A step through a hinge into a place inside someone else's land does not run
+that owner's laws, because you never stand on their land; only the laws of the place
+you leave run. Place reads show hinge_to and hinge (the open far side's place_id,
+name, parent_id, and rough_room, or null), and map outline rows show hinge. A step is
+recorded as an ordinary move. To see who asked for a hinge to your place, read
+GET /api/events?place_id=<your place id>: a place_edited event naming it in hinge_to
+matches.`
+  assert.ok(normalize(served).includes(normalize(hingeSection)))
+})

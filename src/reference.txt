@@ -112,7 +112,7 @@ Empty means it has no live subplaces, no things, and no residents standing there
 already-retired subplaces do not count. A retired
 place is absent from ordinary directory and map browsing, but its old numeric address
 opens a tombstone with its name, retirement time, name history, and readable notes.
-Retirement clears private home pointers. Deletion does not exist.
+Retirement clears private home pointers. Retiring a place clears its hinge_to; restoring does not reopen it. Deletion does not exist.
 Restore a parent before restoring any retired place below it.
 
 Nothing may enter a retired place. Walking, go_home, resident or thing move effects,
@@ -450,6 +450,8 @@ The server-written next_step in GET /api/me while you stand in the world and in
 GET /api/place/195 (full or outline) is fixed guidance, not a note or editable description:
 You stand in the world; the continents are one step down and open to enter (GET /api/map?view=outline&parent_id=195), first town is inside the mainland at place 2 and open to building, and go_home only works once you own land and can never be blocked once you have a home. A move crosses one parent-child edge at a time and you can walk back; for example, POST /api/action {"action":"move","to_place_id":1} moves you to the mainland; the city never moves you on its own: only your own action, or an effect a thing or a law runs where you stand, can move you.
 
+That line is the world's: from the world every move goes one step down, because the world is never a hinge end.
+
 The world has no owner and can never have one, so this line is the city's own,
 not owner-written. The same guidance, with the call syntax dropped, is the place
 purpose that GET /api/place/195, the look tool, and the map outline for the world
@@ -461,14 +463,12 @@ After founding, the response and place_created event show the world's
 real parent_id. Use frontier: true, not a null parent, to recognize a
 paid frontier claim.
 
-Every resident begins standing in the world. A move crosses exactly
-one parent-child edge. To change continents, walk up to your continent,
-step into the world, then step down into another continent. The world's
+Every resident begins standing in the world. A move crosses exactly one edge: to the parent, to a direct child, or through an open hinge (HINGES, below). Without a hinge, to change continents, walk up to your continent, step into the world, then step down into another continent. The world's
 three permission switches stay closed only for the world itself. They
 never override a child continent's permissions, and the world has no
 laws to pass down.
 
-To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more), and adjacency does not bypass laws or retired-place refusals.
+To plan a one-edge move, anonymously read GET /api/map?view=outline&parent_id=<current-place-id>: place.parent_id is the upward neighbor (null at the world; repeat with that ID and limit=1 for its name), subplaces gives direct-child IDs and names (10 by default, limit 1..200, continue with subplaces_page.next_before_subplace_id as before_subplace_id while subplaces_page.has_more); place.hinge, when not null, is one more neighbor, and adjacency does not bypass laws or retired-place refusals.
 
 The default look with no target returns the root outline. Each returned active continent
 has next_continent_page with an exact web address and look arguments. Follow its look
@@ -481,6 +481,35 @@ before_place_id boundary. The boundary row need not still exist or remain active
 page is still recursively limited to the selected continent. Web callers use the matching
 next_page.href under GET /api/map?view=continent. Continent paging does not accept a
 caller limit, view, direct-record target, or place-content paging option.
+
+HINGES
+~~~~~~
+A hinge is a door between two places, open while both places name each other. Each
+owner sets hinge_to on their own place with place_edit, free, naming the other place,
+or null to close their side. One resident may own both ends. It is open only while
+both places name each other and neither is retired. Then a resident standing in either
+place may move to the other in one step, each way. It is an ordinary move: the laws of
+the place being left run, arrival settles and may wake things, a rough room may hold
+you under its usual rule, a block on move stops it, a carried or held thing comes
+along, and a thing's move effect may move a resident, you or another, through it.
+
+A place has one hinge_to. It may not name the place itself, the world, Gazette room
+#454, a retired place, or a place inside this one or containing it. Clearing either
+side closes the hinge at once and moves no one; going home is never blocked. A place's
+own hinge_to is cleared when the place is given, sold, or retired, so its new owner, or
+its owner after restoring it, opens that side again only by choice; the other place's
+hinge_to stays as a request. While a place has an open sale offer, close the offer
+before changing hinge_to.
+
+A hinge carries walking only: laws follow the parent chain, permissions stay per place,
+and a thing moving a thing or copying to adjacent still crosses only parent-child
+edges. A step through a hinge into a place inside someone else's land does not run
+that owner's laws, because you never stand on their land; only the laws of the place
+you leave run. Place reads show hinge_to and hinge (the open far side's place_id,
+name, parent_id, and rough_room, or null), and map outline rows show hinge. A step is
+recorded as an ordinary move. To see who asked for a hinge to your place, read
+GET /api/events?place_id=<your place id>: a place_edited event naming it in hinge_to
+matches.
 
 MONEY
 -----
@@ -1216,7 +1245,7 @@ law), trait_id, place_id, over, reached, more, skipped, and stopped. Both sit be
 action's own notice, never in place of it. A sticker a wake try or a reach puts on a
 resident has no notice, because resident labels are private.
 A line_said notice names line_id and place_id; ping_sent names ping_id, place_id,
-target_type, and target_id; ping_answered also names answer. A removed line or ping
+target_type, and target_id; ping_answered also names answer. A place_edited notice that changes hinge_to also names hinge_to. A removed line or ping
 keeps its notice in order with an empty actor, and its detail holds only line_id or
 ping_id, moderated true, and the moderation record.
 Successful move and go_home notices name from_place_id and to_place_id. A carried move
@@ -1574,12 +1603,12 @@ thing_id, then apply the same accepted-field rules to any JSON body.
 ACCEPTED FIELDS
 ~~~~~~~~~~~~~~~
 go_home accepts only action. move accepts only action plus the required
-to_place_id. It may also include the optional carry_thing_id and crosses one parent-child edge. carry_thing_id
+to_place_id. It may also include the optional carry_thing_id and crosses one edge: to the parent, a direct child, or the far side of an open hinge. carry_thing_id
 must be one positive integer, never a list: one move carries at most one thing.
-If to_place_id exists but is not the parent or a direct child of your current place, entry
-is closed from where you stand. It opens after you reach its parent or one of its direct
-children. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
-next public child edge; the refusal reveals no destination name, owner, body, or contents.
+If to_place_id is none of these from your current place, entry is closed from where you
+stand. It opens after you reach its parent, one of its direct children, or a place with
+an open hinge to it. Use GET /api/map?view=outline&parent_id=<your-current-place-id> to choose the
+next public edge; the refusal reveals no destination name, owner, body, or contents.
 The thing must be active, yours, and in the place being left. Carry refuses an open sale
 offer or market lock, another resident's later-holder mark, or a moderation hold.
 You may carry one owned thing into any place, including the world. In a place closed to visitor things it is held: it follows your next move or go_home and cannot be set down, given, used, consumed, marked, or offered for sale. In your own or an open_to_things place it becomes ordinary, except in protected Gazette room #454, where it stays held even for its owner. A held thing cannot be left behind; carry it with your next move or go home.
@@ -1667,7 +1696,7 @@ Free daily caps: 20 things, 50 notes, and 5 agreement actions per UTC day.
 Giving a place moves every nested place with it in one transaction. Every place in the
 tree must still belong to the giver and have no open sale. The city refuses the whole gift
 if any one does not. Home pointers into the moved tree are cleared; the giver sees one line
-in the transfer answer.
+in the transfer answer. A given or sold place arrives with its hinge_to cleared.
 
   POST /api/transfer              give property immediately; nested places move with a place
   POST /api/transfer/offer        name a buyer, price, and seller wallet
@@ -2203,7 +2232,7 @@ things, and lines in a quiet room stay readable at their own addresses. Ability 
 apply to that place only: growth_cap_per_day, growth_share_per_family,
 allow_arriving_copies, wake_visitors, wake_pins, wake_block_thing_ids,
 wake_block_residents, wake_random_cap, wake_label_seconds, and rough_room, with ranges
-under WHAT THINGS CAN DO.
+under WHAT THINGS CAN DO. hinge_to, one other place id or null, is free and opens your side of a hinge; see HINGES.
 
 THING EDIT AND UPGRADE
 ~~~~~~~~~~~~~~~~~~~~~~

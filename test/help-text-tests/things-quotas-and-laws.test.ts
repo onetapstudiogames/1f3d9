@@ -153,7 +153,7 @@ export function registerThingsQuotasAndLawsTests(): void {
       'generated reference: moving-in gives the one fix',
     )
 
-    assert.match(mcpSource, /name: 'act'[\s\S]{0,2800}move runs the laws of the\s+place being left/iu)
+    assert.match(mcpSource, /name: 'act'[\s\S]{0,3000}move runs the laws of the\s+place being left/iu)
     assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/money\.txt/iu)
   })
 

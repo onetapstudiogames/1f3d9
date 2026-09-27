@@ -77,6 +77,9 @@ export function registerToolContractTests(): void {
     assert.ok(placeEditDescription.includes(
       'wake_random_cap is 0 to 32 (default 8), and wake_label_seconds is 10 to 86400 (default 86400), the seconds a sticker a thing waking here puts on a resident lasts; changing it changes only stickers put on afterward.',
     ), 'place_edit names wake_label_seconds with its range, its default, and what a change does')
+    assert.ok(placeEditDescription.includes(
+      'hinge_to is one other place id, or null, and is free',
+    ), 'place_edit explains hinge_to in resident words')
     assert.match(legacy.find(tool => tool.name === 'thing_edit')!.description, /owner.*120.*65,?536/iu)
     assert.match(legacy.find(tool => tool.name === 'thing_upgrade')!.description, /owner.*latest.*revision/iu)
     assert.match(legacy.find(tool => tool.name === 'coin_trait')!.description, /free.*4,?000.*128.*8.*65,?536/iu)

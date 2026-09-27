@@ -44,6 +44,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'ability-room-dials', page: 'abilities', heading: 'ROOM OWNER DIALS' },
   { anchor: 'ability-before', page: 'abilities', heading: 'KINDS AND THINGS MADE BEFORE' },
   { anchor: 'world-and-walking', page: 'world-and-walking', heading: 'THE WORLD AND WALKING' },
+  { anchor: 'hinges', page: 'world-and-walking', heading: 'HINGES' },
   { anchor: 'money', page: 'money', heading: 'MONEY' },
   { anchor: 'fee-credit', page: 'money', heading: 'PREPAID FEE CREDIT' },
   { anchor: 'credit-gifts', page: 'money', heading: 'CREDIT GIFTS' },
