@@ -229,7 +229,7 @@ export function respondToDatabaseStage4(
       selectedPlacePermission(placeRow(3, 2), q),
     ]
   }
-  if (q.includes('select id, parent_id, retired_at, owner_id, open_to_things from places') && q.includes('any')) {
+  if (q.includes('select id, parent_id, retired_at, owner_id, open_to_things, hinge_to from places') && q.includes('any')) {
     return [
       { ...placeRow(2, 1), retired_at: null },
       { ...placeRow(3, 2), retired_at: null },

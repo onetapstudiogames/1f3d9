@@ -104,7 +104,7 @@ export function registerLawsPresenceMovementTests(): void {
     await assert.rejects(moveResident(7, 9, denied.db), (error: unknown) => (
       error instanceof EngineError
       && error.status === 403
-      && error.message === 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
+      && error.message === 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
     ))
     assert.equal(denied.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 
@@ -121,6 +121,35 @@ export function registerLawsPresenceMovementTests(): void {
     assert.equal((await moveResident(7, 9, allowed.db)).currentPlaceId, 9)
     const destinationRead = allowed.calls.find(call => /FROM places/.test(call.text))
     assert.match(destinationRead?.text ?? '', /FOR SHARE/iu)
+  })
+
+  test('a move crosses an open hinge and not a one-sided one', async () => {
+    const movement = (currentHinge: number | null, destinationHinge: number | null) => fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      if (/FROM places/.test(text)) return [
+        { id: 2, parent_id: 1, retired_at: null, hinge_to: currentHinge },
+        { id: 9, parent_id: 5, retired_at: null, hinge_to: destinationHinge },
+      ]
+      if (/UPDATE resident_presence/.test(text)) return [{
+        resident_id: 7, current_place_id: 9, home_place_id: 3, updated_at: 'now',
+      }]
+      return []
+    })
+
+    const open = movement(9, 2)
+    assert.equal((await moveResident(7, 9, open.db)).currentPlaceId, 9)
+    const lockedPlaces = open.calls.find(call => /FROM places/.test(call.text))
+    assert.match(lockedPlaces?.text ?? '', /FOR SHARE/iu)
+
+    for (const [currentHinge, destinationHinge] of [[9, null], [null, 2]] as const) {
+      const oneSided = movement(currentHinge, destinationHinge)
+      await assert.rejects(moveResident(7, 9, oneSided.db), (error: unknown) => (
+        error instanceof EngineError
+        && error.status === 403
+        && error.message === 'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
+      ))
+      assert.equal(oneSided.calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
+    }
   })
 
   test('ordinary movement refuses a retired destination in caller words before moving', async () => {
