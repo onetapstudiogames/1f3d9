@@ -322,6 +322,24 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       if (description.record.rough_room === true) {
         nodes.placeDescription?.append(element('p', 'place-rough-room', ROUGH_ROOM_LINE))
       }
+      // Decision #132: an open hinge is one more step from here.
+      if (description.record.hinge) {
+        const hinge = description.record.hinge
+        const hingeLine = element('p', 'place-hinge')
+        const hingeLink = element(
+          'button',
+          'place-hinge-link resident-follow-inline',
+          hinge.name + ' (place ' + String(hinge.placeId) + ')',
+        )
+        hingeLink.type = 'button'
+        hingeLink.addEventListener('click', () => choosePlace(hinge.placeId, true))
+        hingeLine.append(
+          document.createTextNode('Hinge: one step to '),
+          hingeLink,
+          document.createTextNode(', a door open while both places name each other.'),
+        )
+        nodes.placeDescription?.append(hingeLine)
+      }
     }
     if (nodes.placePurpose) {
       nodes.placePurpose.replaceChildren(element(

@@ -85,7 +85,10 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         ? MODERATED_TEXT
         : safeExactText(raw.description, null, 8000, true)
       return description !== null && Array.from(description).length <= 4000
-        ? Object.freeze({ kind, id, description, rough_room: raw.rough_room === true })
+        ? Object.freeze({
+          kind, id, description, rough_room: raw.rough_room === true,
+          hinge: normalizeHinge(raw.hinge),
+        })
         : null
     }
     const placeId = safeId(raw.place_id)

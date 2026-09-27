@@ -10,6 +10,13 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
     return time
   }
 
+  function normalizeHinge(raw) {
+    if (!raw || typeof raw !== 'object') return null
+    const placeId = safeId(raw.place_id)
+    const name = safeText(raw.name, '', 120, false)
+    return placeId && name ? Object.freeze({ placeId, name }) : null
+  }
+
   function normalizePlaces(values, depth, seen) {
     if (!Array.isArray(values) || depth >= 32) return []
     return values.flatMap(rawPlace => {
@@ -58,6 +65,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
         notes: safeCount(rawPlace.notes),
         moderated,
         quiet: rawPlace.quiet === true,
+        hinge: normalizeHinge(rawPlace.hinge),
         children: normalizePlaces(rawPlace.children, depth + 1, nextSeen),
       }]
     })

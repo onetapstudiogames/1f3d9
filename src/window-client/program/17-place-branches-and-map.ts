@@ -173,6 +173,16 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
           (occupants.length === 1 ? ' resident shown inside · ' : ' residents shown inside · ') +
           String(place.things) + ' things · ' + String(place.notes) + ' notes'),
       )
+      if (place.hinge) {
+        const hingeLink = element(
+          'button',
+          'place-hinge-link resident-follow-inline',
+          'hinge to ' + place.hinge.name,
+        )
+        hingeLink.type = 'button'
+        hingeLink.addEventListener('click', () => choosePlace(place.hinge.placeId, true))
+        card.append(hingeLink)
+      }
       if (place.status === 'retired' && place.retiredAt) {
         card.append(element(
           'p',

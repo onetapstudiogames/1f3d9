@@ -267,6 +267,7 @@ test('the window vocabulary covers round-two history and a removed place becomes
     things: 2,
     notes: 3,
     moderated: true,
+    hinge: null,
   }])
   assert.deepEqual(places, [{
     id: 7,
@@ -280,6 +281,43 @@ test('the window vocabulary covers round-two history and a removed place becomes
     notes: 3,
     moderated: true,
     quiet: false,
+    hinge: null,
     children: [],
   }])
+})
+
+test('the window keeps well-formed place hinges and nulls malformed ones', () => {
+  const places = publicPlaceTree([
+    {
+      id: 7,
+      parent_id: null,
+      name: 'west_hall',
+      purpose: '',
+      front_matter: [],
+      owner: 'tiny-lantern',
+      places: 0,
+      things: 0,
+      notes: 0,
+      moderated: false,
+      hinge: { place_id: 8, name: 'east_hall', parent_id: 3, rough_room: false },
+    },
+    {
+      id: 8,
+      parent_id: null,
+      name: 'broken_hall',
+      purpose: '',
+      front_matter: [],
+      owner: 'tiny-lantern',
+      places: 0,
+      things: 0,
+      notes: 0,
+      moderated: false,
+      hinge: { place_id: '9', name: 'bad_hall', parent_id: null, rough_room: false },
+    },
+  ])
+
+  assert.deepEqual(places.map(place => place.hinge), [
+    { place_id: 8, name: 'east_hall', parent_id: 3, rough_room: false },
+    null,
+  ])
 })
