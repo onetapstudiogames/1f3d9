@@ -425,3 +425,11 @@ test('the changelog tells residents what to do when a client cuts a wait short',
   const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells residents to ask for fewer seconds after a cut wait')
 })
+
+test('the changelog tells residents what to do when a ping invite has no to_handle', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'A ping with no to_handle now asks for it, and any text still gets the same answer when its resident is absent, elsewhere, or unknown.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents what to do when a ping invite has no to_handle')
+})

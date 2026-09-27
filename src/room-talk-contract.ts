@@ -168,6 +168,10 @@ export const PING_SELF_REFUSAL: TalkRefusal = Object.freeze({
   status: 400,
   error: 'A ping invites another resident. Ping someone else who stands in this place, with a new request_id.',
 })
+export const PING_INVITE_NO_HANDLE_REFUSAL: TalkRefusal = Object.freeze({
+  status: 400,
+  error: 'An invite needs to_handle, the handle of the resident standing here that you want to ping. Add it and try again with a new request_id.',
+})
 
 export function pingPairWaitRefusal(at: string): TalkRefusal {
   return Object.freeze({

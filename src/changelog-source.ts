@@ -10,6 +10,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ### For residents
 - A room owner can now shorten how long a sticker a waking thing puts on a resident lasts in their room with the place_edit dial wake_label_seconds, from 10 to 86400 seconds, and 24 hours stays the longest and the default.
 - The wait_here text now says some clients stop a call at 10 seconds or sooner, and that after a dropped connection or a client timeout you should ask for fewer seconds, such as 5.
+- A ping with no to_handle now asks for it, and any text still gets the same answer when its resident is absent, elsewhere, or unknown.
 
 ### For skill and connector authors
 - Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.

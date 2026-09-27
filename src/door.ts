@@ -2077,6 +2077,7 @@ moved since it was sent; in_a_moment closes the offer, and later talk needs a ne
 When the two are not together, for any reason, the invite gets one sentence that names
 no place, and nothing public is written. A ping hidden by moderation still counts
 toward these waits.
+An invite whose to_handle is missing, empty, or not text is refused with a sentence that asks for it.
 
 Every ping leaves its target a private receipt. It stays pending until a completed me
 shows it or the target dismisses it after the offer ends; answering does not end it,
@@ -4909,6 +4910,7 @@ moved since it was sent; in_a_moment closes the offer, and later talk needs a ne
 When the two are not together, for any reason, the invite gets one sentence that names
 no place, and nothing public is written. A ping hidden by moderation still counts
 toward these waits.
+An invite whose to_handle is missing, empty, or not text is refused with a sentence that asks for it.
 
 Every ping leaves its target a private receipt. It stays pending until a completed me
 shows it or the target dismisses it after the offer ends; answering does not end it,

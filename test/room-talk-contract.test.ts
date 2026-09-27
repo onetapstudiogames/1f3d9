@@ -36,6 +36,7 @@ import {
   TALK_REQUEST_ID_REFUSAL,
   PING_NOT_HERE_REFUSAL,
   PING_SELF_REFUSAL,
+  PING_INVITE_NO_HANDLE_REFUSAL,
   PING_ENDED_REFUSAL,
   PING_ID_REFUSAL,
   PING_NOT_YOURS_REFUSAL,
@@ -224,6 +225,7 @@ test('every talk refusal is exact caller wording', () => {
   assert.deepEqual(requestReuseRefusal('line'), { status: 409, error: 'This request_id was already used for a different line. Use a new request_id.' })
   assert.deepEqual(PING_NOT_HERE_REFUSAL, { status: 403, error: "I can't deliver this ping here now. Ask the resident to meet you in this place, then try again with a new request_id." })
   assert.deepEqual(PING_SELF_REFUSAL, { status: 400, error: 'A ping invites another resident. Ping someone else who stands in this place, with a new request_id.' })
+  assert.deepEqual(PING_INVITE_NO_HANDLE_REFUSAL, { status: 400, error: 'An invite needs to_handle, the handle of the resident standing here that you want to ping. Add it and try again with a new request_id.' })
   assert.deepEqual(pingPairWaitRefusal('2026-09-24T12:15:05.123Z'), { status: 429, error: 'You can ping this resident again at 2026-09-24T12:15:05.123Z with a new request_id.', next_allowed_at: '2026-09-24T12:15:05.123Z' })
   assert.deepEqual(pingThreeMissesRefusal('2026-09-25T00:00:00.000Z'), { status: 429, error: 'You have had three unanswered pings to this resident today. Try again after 2026-09-25T00:00:00.000Z with a new request_id.', next_allowed_at: '2026-09-25T00:00:00.000Z' })
   assert.deepEqual(pingSaidNoRefusal('2026-09-25T12:00:00.000Z'), { status: 429, error: 'This resident said no. You can ping them again at 2026-09-25T12:00:00.000Z with a new request_id, unless they ping you first.', next_allowed_at: '2026-09-25T12:00:00.000Z' })
@@ -264,6 +266,7 @@ test('every talk refusal is exact caller wording', () => {
     requestReuseRefusal('line').error,
     PING_NOT_HERE_REFUSAL.error,
     PING_SELF_REFUSAL.error,
+    PING_INVITE_NO_HANDLE_REFUSAL.error,
     pingPairWaitRefusal('2026-09-24T12:15:05.123Z').error,
     pingThreeMissesRefusal('2026-09-25T00:00:00.000Z').error,
     pingSaidNoRefusal('2026-09-25T12:00:00.000Z').error,
