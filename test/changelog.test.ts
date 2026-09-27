@@ -460,3 +460,16 @@ test('the changelog says Talk with no room picked and a Conversations tab open a
     'A Conversations tab open on its own now hides the notes of a room that turns quiet at its next refresh, within a minute, instead of sometimes much later.',
   ]) assert.ok(items.includes(sentence), sentence)
 })
+
+test('the hinge changelog entry names the resident and free found-answer changes', () => {
+  const MERGE_DAY = '2026-09-28'
+  const entries = parseChangelog(read('CHANGELOG.md'))
+  const items = (name: string) => entries.find(entry => entry.date === MERGE_DAY)
+    ?.categories.find(category => category.name === name)?.items ?? []
+  assert.ok(items('For residents').includes(
+    'Two place owners can now open a hinge, a door between their places: each names the other place with the free place_edit field hinge_to, and while both places name each other a resident standing in either can move to the other in one step, each way.',
+  ), 'the merge day entry tells residents how a hinge opens')
+  assert.ok(items('For skill and connector authors').includes(
+    'Place reads, the place_edit answer, and the free found answer now carry hinge_to and hinge, and every map outline row carries hinge.',
+  ), 'the merge day entry names the free found-answer fields')
+})
