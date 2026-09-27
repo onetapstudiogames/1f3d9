@@ -1,5 +1,6 @@
 import { sql } from './db.ts'
 import { moderatePlaceDetails, moderatePublicRows } from './moderation-store.ts'
+import { publicHingeSql } from './place-hinges.ts'
 import type { PlaceRow, ThingRow } from './world-support.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
@@ -72,6 +73,7 @@ export async function loadPublicPlaceRecord(
         FROM residents blocked WHERE blocked.id = ANY(p.wake_block_resident_ids)
       ), '[]'::jsonb) AS wake_block_residents,
       p.wake_random_cap, p.wake_label_seconds,
+      p.hinge_to, ${publicHingeSql('p')} AS hinge,
       (
         SELECT jsonb_build_object(
           'settle_id', settle.id,

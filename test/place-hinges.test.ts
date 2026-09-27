@@ -11,6 +11,7 @@ import {
   publicHinge,
 } from '../src/place-hinges.ts'
 import { PLACE_DIAL_FIELDS } from '../src/place-abilities.ts'
+import { PUBLIC_SNAPSHOT_CLASS_REGISTRY } from '../src/public-snapshot-format.ts'
 
 const worldSource = await readFile(new URL('../src/world.ts', import.meta.url), 'utf8')
 
@@ -53,6 +54,18 @@ test('publicHinge accepts only the public far-side shape', () => {
   ]) {
     assert.equal(publicHinge(value), null)
   }
+})
+
+test('place hinges are recorded as not exported in the snapshot registry', () => {
+  assert.deepEqual(
+    PUBLIC_SNAPSHOT_CLASS_REGISTRY.find(entry => entry.class_name === 'place_hinges'),
+    {
+      class_name: 'place_hinges',
+      disposition: 'not_exported',
+      reason: 'each place hinge_to is a live public place setting not carried by format v3 yet (decision #132); a hinge step is exported as an ordinary move event',
+      database_sources: ['places.hinge_to'],
+    },
+  )
 })
 
 test('hinge_to is an accepted place_edit field and is not an ability dial', () => {

@@ -167,6 +167,88 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
 
     const { default: app } = await import('../../src/index.ts') as { default: CityApp }
 
+    await t.test('place reads and the map outline show the open hinge', async () => {
+      const rooms = await resetCity([FOUNDER, NEIGHBOR, WALKER])
+      const db = connectedDatabase()
+      await openHinge(rooms.eastRoomId, rooms.westRoomId)
+
+      const eastOutline = await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=outline`)
+      assert.equal(eastOutline.status, 200, JSON.stringify(eastOutline.json))
+      let eastPlace = eastOutline.json.place as Json
+      assert.equal(eastPlace.hinge_to, rooms.westRoomId)
+      assert.deepEqual(eastPlace.hinge, {
+        place_id: rooms.westRoomId,
+        name: 'West Room',
+        parent_id: rooms.continentId,
+        rough_room: false,
+      })
+
+      const eastFull = await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=full`)
+      assert.equal(eastFull.status, 200, JSON.stringify(eastFull.json))
+      eastPlace = eastFull.json.place as Json
+      assert.equal(eastPlace.hinge_to, rooms.westRoomId)
+      assert.deepEqual(eastPlace.hinge, {
+        place_id: rooms.westRoomId,
+        name: 'West Room',
+        parent_id: rooms.continentId,
+        rough_room: false,
+      })
+
+      await db.query('UPDATE places SET rough_room = TRUE WHERE id = $1', [rooms.westRoomId])
+      const roughEast = await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=outline`)
+      assert.equal((roughEast.json.place as Json).hinge && ((roughEast.json.place as Json).hinge as Json).rough_room, true)
+
+      await db.query('UPDATE places SET hinge_to = NULL WHERE id = $1', [rooms.westRoomId])
+      const oneSided = await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=outline`)
+      assert.equal((oneSided.json.place as Json).hinge_to, rooms.westRoomId)
+      assert.equal((oneSided.json.place as Json).hinge, null)
+      await openHinge(rooms.eastRoomId, rooms.westRoomId)
+
+      const mapOutline = await call(app, null, 'GET', `/api/map?view=outline&parent_id=${rooms.continentId}`)
+      assert.equal(mapOutline.status, 200, JSON.stringify(mapOutline.json))
+      assert.equal((mapOutline.json.place as Json).hinge, null)
+      const subplaces = mapOutline.json.subplaces as Json[]
+      const eastOutlinePlace = subplaces.find(place => place.id === rooms.eastRoomId)
+      const westOutlinePlace = subplaces.find(place => place.id === rooms.westRoomId)
+      assert.ok(eastOutlinePlace)
+      assert.ok(westOutlinePlace)
+      assert.deepEqual(eastOutlinePlace.hinge, {
+        place_id: rooms.westRoomId,
+        name: 'West Room',
+        parent_id: rooms.continentId,
+        rough_room: true,
+      })
+      assert.deepEqual(westOutlinePlace.hinge, {
+        place_id: rooms.eastRoomId,
+        name: 'East Room',
+        parent_id: rooms.continentId,
+        rough_room: false,
+      })
+
+      const continentPage = await call(app, null, 'GET', `/api/map?view=continent&continent_id=${rooms.continentId}`)
+      assert.equal(continentPage.status, 200, JSON.stringify(continentPage.json))
+      const rowKeys = ['id', 'name', 'parent_id', 'rough_room']
+      assert.deepEqual(Object.keys(continentPage.json.continent as Json).sort(), [...rowKeys].sort())
+      for (const place of continentPage.json.places as Json[]) {
+        assert.deepEqual(Object.keys(place).sort(), [...rowKeys].sort())
+      }
+
+      const fullMap = await call(app, null, 'GET', '/api/map?view=full')
+      assert.equal(fullMap.status, 200, JSON.stringify(fullMap.json))
+      assert.equal(JSON.stringify(fullMap.json).includes('hinge_to'), false)
+
+      await db.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('place', $1, 'remove', 1, 'removed by maintainer')
+      `, [rooms.westRoomId])
+      const moderatedRead = await call(app, null, 'GET', `/api/place/${rooms.eastRoomId}?view=outline`)
+      assert.equal(((moderatedRead.json.place as Json).hinge as Json).name, '[removed by maintainer]')
+      const moderatedOutline = await call(app, null, 'GET', `/api/map?view=outline&parent_id=${rooms.continentId}`)
+      const moderatedEast = (moderatedOutline.json.subplaces as Json[])
+        .find(place => place.id === rooms.eastRoomId)
+      assert.equal(((moderatedEast?.hinge as Json).name), '[removed by maintainer]')
+    })
+
     await t.test('place_edit opens and clears a hinge, and each side shows at once whether it opened', async () => {
       const rooms = await resetCity([FOUNDER, NEIGHBOR, WALKER])
       const edit = (placeId: number, body: Json) => call(app, FOUNDER.secret, 'PATCH', `/api/place/${placeId}`, body)

@@ -131,6 +131,7 @@ of four dispositions.
 | Class | Why it is omitted |
 |---|---|
 | `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns on things and places are live public records not carried by format v3 yet (decisions #104 to #115); the `chance_rolled`, `room_settled`, `room_reached`, and `copy_skipped` event kinds stay out of `events` with them. A converted thing appears in a snapshot as its birth kind, while its `thing_edited` event with mode `converted` and a copy's `thing_created` event with mode `copy` are exported like other events; a copy's event keeps its `generation` under the existing allowlist and omits its `family_id`. |
+| `place_hinges` | Each place's `hinge_to` is a live public setting not carried by format v3 yet (decision #132). Until the next format, a snapshot shows a hinge step as a move between two places that are not parent and child. |
 | `action_runtime` | Action, block, timer, pending-effect, and resolution rows are represented by public events and current public records. |
 | `historical_property_transfers` | Format v3 rebuilds transfer history from current public property and public events. |
 | `reading_counters` | Byte and item totals are derived from exported records. |

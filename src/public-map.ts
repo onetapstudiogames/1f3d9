@@ -1,6 +1,7 @@
 import { sql } from './db.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import { moderatePublicRows } from './moderation-store.ts'
+import { publicHinge, publicHingeSql, type PublicHinge } from './place-hinges.ts'
 import { PUBLIC_PAGE_DEFAULT, finalizePublicPage } from './public-pagination.ts'
 import { loadPublicPlaceFrontMatter, type PublicFrontMatterHeading } from './room-orientation.ts'
 import { isWorldRootRow, WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
@@ -55,6 +56,7 @@ export interface PublicMapOutlinePlace extends Readonly<Record<string, unknown>>
   readonly open_to_notes: boolean
   readonly quiet: boolean
   readonly rough_room: boolean
+  readonly hinge: PublicHinge | null
   readonly created_at: string
   readonly places: number
   readonly things: number
@@ -218,6 +220,7 @@ function outlinePlace(row: Readonly<Record<string, unknown>>): PublicMapOutlineP
     open_to_notes: row.open_to_notes,
     quiet: row.quiet,
     rough_room: row.rough_room,
+    hinge: publicHinge(row.hinge),
     created_at: publicTimestamp(row.created_at),
     places: safeCount(row.places, 'subplace count'),
     things: safeCount(row.things, 'thing count'),
@@ -241,6 +244,7 @@ export async function readPublicMapOutline(
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
+         ${publicHingeSql('p')} AS hinge,
          totals.subplace_items AS places,
          totals.thing_items AS things,
          totals.note_items AS notes,
@@ -280,6 +284,7 @@ export async function readPublicMapOutline(
          octet_length(p.description)::integer AS description_text_bytes,
          p.owner_id, owner.handle AS owner,
          p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
+         ${publicHingeSql('p')} AS hinge,
          child_totals.subplace_items AS places,
          child_totals.thing_items AS things,
          child_totals.note_items AS notes
