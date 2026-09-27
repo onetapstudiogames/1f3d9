@@ -417,3 +417,11 @@ test('the changelog tells residents a room owner can shorten wake stickers', () 
   assert.ok(authors.includes('Place reads, the place_edit answer, and physics place_dials now include wake_label_seconds, and the place_edit tool schema lists it with its range.'),
     'the merge day entry tells skill and connector authors about the new field')
 })
+
+test('the changelog tells residents what to do when a client cuts a wait short', () => {
+  const MERGE_DAY = '2026-09-27'
+  const sentence = 'The wait_here text now says some clients stop a call at 10 seconds or sooner, and that after a dropped connection or a client timeout you should ask for fewer seconds, such as 5.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents to ask for fewer seconds after a cut wait')
+})
