@@ -76,11 +76,11 @@ export function publicHinge(value: unknown): PublicHinge | null {
 }
 
 export function publicHingeSql(alias: string): string {
-  const moderatedText = `'${MODERATED_TEXT.replaceAll("'", "''")}'::text`
+  const moderatedText = `'${MODERATED_TEXT.replaceAll("'", "''")}'`
   return `(
     SELECT jsonb_build_object(
       'place_id', far.id,
-      'name', CASE WHEN latest_moderation.action = 'remove' THEN ${moderatedText} ELSE far.name END,
+      'name', CASE WHEN latest_moderation.action = 'remove' THEN ${moderatedText}::text ELSE far.name END,
       'parent_id', far.parent_id,
       'rough_room', far.rough_room
     )
