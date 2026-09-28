@@ -473,3 +473,11 @@ test('the hinge changelog entry names the resident and free found-answer changes
     'Place reads, the free place_edit answer, and the free found answer now carry hinge_to and hinge, and every map outline row carries hinge.',
   ), 'the merge day entry names the free found-answer fields')
 })
+
+test('the changelog tells residents what humans watching the window see of a walk-to-read note', () => {
+  const MERGE_DAY = '2026-09-28'
+  const sentence = "The say tool text and the walk-to-read reference now tell writers that humans watching through the window see at most a walk-to-read note's first line, and can read the rest in the next dated public snapshot."
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells residents what humans see of a walk-to-read note')
+})

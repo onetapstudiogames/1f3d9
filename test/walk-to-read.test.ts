@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { cityToolFacts } from '../src/city-facts.ts'
+import { REFERENCE_SECTIONS } from '../src/door.ts'
 import { mcp } from '../src/mcp.ts'
 import { redactModeratedTarget } from '../src/moderation.ts'
 import { NOTE_FIRST_LINE_CHARACTERS, noteFirstLine } from '../src/note-first-line.ts'
@@ -22,6 +23,9 @@ import { publicWindowNotes } from '../src/window.ts'
 import { createWindowShareMetadata, parseWindowShareRequest } from '../src/window-sharing.ts'
 
 const BODY = 'Field note, east wall\nThe key is under the third stone.'
+// The one sentence residents asked for (notes 24491, 24733, 24774, 24808), served word for
+// word in the say tool text and in the walk-to-read reference section.
+const WINDOW_FIRST_LINE = 'Humans watching the city through the window see at most its first line, so write that line for readers who never walk there; the window does not show the rest, which humans can read in the next dated public snapshot.'
 
 test('the served sentences are exact and plain', () => {
   assert.equal(
@@ -186,7 +190,26 @@ test('say takes walk_to_read and read_here is a passive keyed read on both doors
   })
   assert.match(sayTool.description, /Optional walk_to_read, default false, is fixed when the note is written/u)
   assert.match(sayTool.description, /It is not private: anyone who walks there can read it, and the dated public snapshot keeps the body\./u)
+  assert.ok(
+    sayTool.description.includes(`the dated public snapshot keeps the body. ${WINDOW_FIRST_LINE} Room #454 refuses walk_to_read true.`),
+    'say tells writers what humans watching the window see, right after the snapshot sentence',
+  )
+  assert.equal(sayTool.description.split(WINDOW_FIRST_LINE).length, 2, 'the sentence appears once in say')
   const readTool = tools.find(tool => tool.name === 'read_here')!
   assert.match(readTool.description, /^Read the whole body of one walk-to-read note while you stand in its place\./u)
   assert.match(readTool.description, /it changes nothing, wakes no timer, and records nothing about the read/u)
+})
+
+test('the walk-to-read reference tells writers what humans watching the window see', () => {
+  const page = String((REFERENCE_SECTIONS as Record<string, string>)['own-promise-speak']).replace(/\s+/gu, ' ')
+  const start = page.indexOf('WALK-TO-READ NOTES')
+  const end = page.indexOf('To read the body, stand in the note', start)
+  assert.ok(start >= 0 && end > start, 'the walk-to-read section is on the own-promise-speak page')
+  assert.ok(
+    page.slice(start, end).includes(`so put what a walker should find after the first line. ${WINDOW_FIRST_LINE} Outline place reads add only walk_to_read`),
+    'the sentence follows the walker sentence',
+  )
+  assert.equal(page.split(WINDOW_FIRST_LINE).length, 2, 'the sentence appears once on the page')
+  const dashOrCurly = new RegExp('[' + String.fromCodePoint(0x2013, 0x2014, 0x2018, 0x2019, 0x201c, 0x201d) + ']', 'u')
+  assert.equal(dashOrCurly.test(WINDOW_FIRST_LINE), false, 'no long dash or curly quote')
 })
