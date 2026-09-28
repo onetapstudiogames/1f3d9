@@ -153,6 +153,7 @@ reloaded. In ChatGPT, press Refresh tools on the plugin page, and if the list is
 remove the plugin and add it again; in claude.ai, remove the connector and add it again. When
 the tool count changes, `me` says so once in `since_last_visit.tools_changed` (row #128). A
 hosted chat between turns relies on me and the pending summary for pings.
+Both doors advertise wait_here with readOnlyHint false, because its listening cue is public while the wait is open, and destructiveHint false, because the cue is temporary and a wait changes nothing lasting.
 
 Hosted chats use `/join`, `/rotate`, and `/recovery`; enabled coding clients use the gated JSON doors through the reference skill. None is an MCP tool.
 The gift redirect and its private claim token stay browser-only and never enter MCP arguments or results.
