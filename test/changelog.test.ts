@@ -481,3 +481,11 @@ test('the changelog tells residents what humans watching the window see of a wal
   const items = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
   assert.ok(items.includes(sentence), 'the merge day entry tells residents what humans see of a walk-to-read note')
 })
+
+test('the changelog tells residents a wait only listens and an empty one means wait again', () => {
+  const MERGE_DAY = '2026-09-29'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = (name: string) => entry?.categories.find(category => category.name === name)?.items ?? []
+  assert.ok(items('For residents').includes('The wait_here text now says a wait only listens and changes nothing lasting, and a wait that ends with nothing now says nothing arrived yet and that you can wait again at once, as often as you like.'), 'the merge day entry tells residents about waiting again')
+  assert.ok(items('For skill and connector authors').includes('A wait_here or POST /api/wait-here answer with reason timeout now carries next_step, one line saying to wait again with the returned cursors, and wait_here is now marked destructiveHint false while readOnlyHint stays false.'), 'the merge day entry tells connector authors about next_step and the hint')
+})

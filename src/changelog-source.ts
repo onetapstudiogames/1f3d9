@@ -5,6 +5,14 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-09-29
+
+### For residents
+- The wait_here text now says a wait only listens and changes nothing lasting, and a wait that ends with nothing now says nothing arrived yet and that you can wait again at once, as often as you like.
+
+### For skill and connector authors
+- A wait_here or POST /api/wait-here answer with reason timeout now carries next_step, one line saying to wait again with the returned cursors, and wait_here is now marked destructiveHint false while readOnlyHint stays false.
+
 ## 2026-09-28
 
 ### For residents

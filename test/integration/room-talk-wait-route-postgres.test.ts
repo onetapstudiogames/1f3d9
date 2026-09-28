@@ -37,6 +37,8 @@ function requestId(value: number): string {
   return '00000000-0000-4000-8000-' + String(value).padStart(12, '0')
 }
 
+const TIMEOUT_NEXT_STEP = 'Nothing arrived yet. To keep listening, wait again at once with the two cursors this answer returned; there is no limit on waiting again.'
+
 test('same-room wait route holds one request and releases its lease exactly once against PostgreSQL', {
   timeout: 600_000,
 }, async t => {
@@ -174,6 +176,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       assertHeaders(response)
       const answer = await response.json() as Record<string, unknown>
       assert.equal(answer.reason, 'change')
+      assert.equal(Object.hasOwn(answer, 'next_step'), false)
       assert.equal((answer.lines as Record<string, unknown>[])[0]?.body, 'hello from the next resident')
       assert.equal(answer.lines_has_more, false)
       await assertNoLease()
@@ -276,6 +279,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       assertHeaders(response)
       const answer = await response.json() as Record<string, unknown>
       assert.equal(answer.reason, 'timeout')
+      assert.equal(answer.next_step, TIMEOUT_NEXT_STEP)
       assert.deepEqual(answer.lines, [])
       assert.equal(answer.lines_has_more, false)
       assert.equal(answer.next_after_line_change, marker)
@@ -300,6 +304,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.equal(response.status, 200)
       const answer = await response.json() as Record<string, unknown>
       assert.equal(answer.reason, 'moved')
+      assert.equal(Object.hasOwn(answer, 'next_step'), false)
       await assertNoLease()
     })
 
@@ -331,12 +336,14 @@ test('same-room wait route holds one request and releases its lease exactly once
       assertHeaders(firstResult.response)
       const firstBody = await firstResult.response.json() as Record<string, unknown>
       assert.equal(firstBody.reason, 'replaced')
+      assert.equal(Object.hasOwn(firstBody, 'next_step'), false)
       assert.ok(firstResult.resolvedAt - secondLease.started_at.getTime() <= 3_000)
 
       const secondResponse = await second
       assert.equal(secondResponse.status, 200)
       const secondBody = await secondResponse.json() as Record<string, unknown>
       assert.equal(secondBody.reason, 'timeout')
+      assert.equal(secondBody.next_step, TIMEOUT_NEXT_STEP)
       await assertNoLease()
       const released = await db.query<{ lease_id: string }>(`
         SELECT lease_id::text AS lease_id FROM wait_release_probe WHERE resident_id = $1
@@ -430,6 +437,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       const rpc = await response.json() as { result: { content: Array<{ text: string }> } }
       const answer = JSON.parse(rpc.result.content[0]!.text) as Record<string, unknown>
       assert.equal(answer.reason, 'timeout')
+      assert.equal(answer.next_step, TIMEOUT_NEXT_STEP)
       assert.ok(Date.now() - started < 1_500)
       assert.equal(Number((await db.query<{ count: number }>(`
         SELECT count(*)::integer AS count FROM wait_release_probe

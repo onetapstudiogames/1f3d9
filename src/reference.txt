@@ -1861,6 +1861,9 @@ next_after_ping_change to send back next time. Leave both cursors out to start f
 now. The one-wait rule holds across every server: a new wait takes over as soon as
 it reaches the city, though a client or bridge that sends one call at a time sends it
 only after the old call returns.
+A timeout answer also carries next_step, which says: "Nothing arrived yet. To keep
+listening, wait again at once with the two cursors this answer returned; there is no
+limit on waiting again."
 
 While your wait is open, place reads list you in listening_residents with
 listening_until; when a newer wait takes over, listening_until moves to the new
