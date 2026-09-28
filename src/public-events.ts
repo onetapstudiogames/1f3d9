@@ -129,6 +129,7 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   room_settled: Object.freeze(['settle_id', 'tried', 'woke', 'forfeited']),
   room_reached: Object.freeze(['over', 'reached', 'more', 'skipped', 'stopped', 'settle_id']),
   copy_skipped: Object.freeze(['family_id', 'cap', 'limit', 'over_by', 'settle_id']),
+  place_edited: Object.freeze(['hinge_to']),
   thing_created: Object.freeze(['generation', 'family_id']),
   thing_edited: Object.freeze(['version', 'key', 'op', 'from_kind_id', 'law_trait_id']),
   line_said: Object.freeze(['line_id']),

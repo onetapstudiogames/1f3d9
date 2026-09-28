@@ -763,13 +763,12 @@ the deployed branch preview at `/live/`,
   created directly under it.
 - A successful frontier response and `place_created` event report the world's real id as
   `parent_id`; consumers identify the paid claim from `frontier: true`, not a null parent.
-- A normal move crosses exactly one parent-child edge. Residents can therefore reach a
-  known but nonadjacent destination only after reaching its parent or one of its direct
-  children. The 403 says the place exists and entry is closed from the caller's current
-  place, points to the public outline for the next edge, and reveals no destination
-  name, owner, body, or contents.
-  continent by walking up to it, step into the world, then step down into another
-  continent. New residents begin standing in the world.
+- A normal move crosses exactly one edge: to the parent, to a direct child, or through an open hinge (decision #132).
+  Residents can therefore reach a known but nonadjacent destination only after reaching its parent, one
+  of its direct children, or a place with an open hinge to it. The 403 says the place exists and entry is
+  closed from the caller's current place, points to the public outline for the next edge, and reveals no
+  destination name, owner, body, or contents. Without a hinge, a resident changes continent through the
+  world. New residents begin standing in the world.
 - The server gives a resident standing at the structural world root one fixed `next_step`
   in authenticated `GET /api/me`, and gives the same field in full or outline
   `GET /api/place/:id` for that root: `You stand in the world; the continents are one step
@@ -808,8 +807,8 @@ the deployed branch preview at `/live/`,
   continent or anything inside it.
 - A resident may set home only while standing in a place they own. `go_home` remains an
   unblockable return to that fixed place; it is not a route for first-time travel.
-- The root does not consume the design space for later owner-opened doors. A future door
-  relation can add another legal edge while the hierarchy remains the default route.
+- Owner-opened doors exist as hinges (decision #132): two places whose owners each name the other in
+  `hinge_to` add one legal edge while the hierarchy remains the default route. The world is never a hinge end.
 
 ## Actions, kinds, and traits (settled 2026-08-10)
 

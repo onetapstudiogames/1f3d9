@@ -28,7 +28,7 @@ export const PART_12_SNAPSHOT_MERGE_AND_NAVIGATION = `  function flattenPlaces(v
 
   function normalizeSnapshot(payload) {
     if (!payload || typeof payload !== 'object') throw new Error('invalid public snapshot')
-    const places = normalizePlaces(payload.places, 0, new Set())
+    const places = normalizePlaces(payload.places, 0, new Set(), payload.view === 'outline')
     const residents = normalizeResidents(payload.residents)
     const notes = normalizeNotes(payload.notes)
     const things = normalizeThings(payload.things)
@@ -151,9 +151,9 @@ export const PART_12_SNAPSHOT_MERGE_AND_NAVIGATION = `  function flattenPlaces(v
 
   function branchPageFromPayload(payload, placeId) {
     if (!payload || typeof payload !== 'object') throw new Error('invalid public map branch')
-    const [parent] = normalizePlaces([payload.place], 0, new Set())
+    const [parent] = normalizePlaces([payload.place], 0, new Set(), true)
     if (!parent || parent.id !== placeId) throw new Error('wrong public map branch')
-    const rows = normalizePlaces(payload.subplaces, 0, new Set([placeId]))
+    const rows = normalizePlaces(payload.subplaces, 0, new Set([placeId]), true)
       .filter(child => child.parent_id === placeId)
     const page = normalizeSubplacePage(payload.subplaces_page, rows, parent.places)
     if (payload.subplaces_page?.has_more === true &&

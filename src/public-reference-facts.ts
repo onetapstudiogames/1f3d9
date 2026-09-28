@@ -288,6 +288,7 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       wake_label_seconds: Object.freeze({
         min: WAKE_LABEL_SECONDS_MIN, default: RESIDENT_ABILITY_LABEL_SECONDS, max: RESIDENT_ABILITY_LABEL_SECONDS,
       }),
+      hinge_to: Object.freeze({ default: null, after_owner_change: null, after_retirement: null }),
     }),
     thing_switches: Object.freeze({
       open_to_reach: Object.freeze({ default: false, after_owner_change: false }),

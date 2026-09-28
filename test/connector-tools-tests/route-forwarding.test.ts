@@ -78,6 +78,14 @@ export function registerRouteForwardingTests(): void {
       },
     },
     {
+      name: 'place_edit',
+      args: { place_id: 12, hinge_to: null },
+      expected: {
+        method: 'PATCH', path: '/api/place/12',
+        body: { hinge_to: null },
+      },
+    },
+    {
       name: 'thing_edit',
       args: {
         thing_id: 41, name: 'signal lamp', body: '光る 🏮', open_to_use: true,

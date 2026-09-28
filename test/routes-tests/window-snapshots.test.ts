@@ -70,6 +70,35 @@ export function registerWindowSnapshotsTests(): void {
     }
   })
 
+  test('full place rows omit unselected hinges and outline rows keep an open hinge', async () => {
+    // Imported here, not at the top: a top-level import of window.ts loads chain.ts
+    // before routes.test.ts installs the fake BASE_RPC_URL and freezes the real one.
+    const { publicPlaceTree } = await import('../../src/window.ts')
+    const [fullWorld] = publicPlaceTree([{
+      id: 1, parent_id: null, name: 'the world', purpose: '', front_matter: [],
+      owner: null, places: 1, things: 0, notes: 0, moderated: false, quiet: false,
+    }])
+    assert.equal(Object.hasOwn(fullWorld ?? {}, 'hinge'), false)
+
+    const [world] = publicPlaceTree([
+      {
+        id: 1, parent_id: null, name: 'the world', purpose: '', front_matter: [],
+        owner: null, places: 1, things: 0, notes: 0, moderated: false, quiet: false,
+      },
+      {
+        id: 2, parent_id: 1, name: 'East room', purpose: '', front_matter: [],
+        owner: 'founder', places: 0, things: 0, notes: 0, moderated: false, quiet: false,
+        hinge: { place_id: 3, name: 'West room', parent_id: 1, rough_room: false },
+      },
+    ])
+    assert.deepEqual(world?.children[0]?.hinge, {
+      place_id: 3,
+      name: 'West room',
+      parent_id: 1,
+      rough_room: false,
+    })
+  })
+
   test('the outline window bounds its map and presence pages without changing recent histories', async () => {
     const originalNow = Date.now
     try {

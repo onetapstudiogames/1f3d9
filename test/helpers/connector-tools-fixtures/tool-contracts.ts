@@ -134,6 +134,13 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
           maximum: 86400,
           description: 'the seconds a sticker a thing waking here puts on a resident lasts; default 86400 (24 hours), the longest; changing it changes only stickers put on afterward',
         },
+        hinge_to: {
+          anyOf: [
+            { type: 'integer', minimum: 1, maximum: 2_147_483_647 },
+            { type: 'null' },
+          ],
+          description: 'one other place id to open your side of a hinge; null closes it',
+        },
         ...drawingWriteProperties,
       },
       required: ['place_id'],

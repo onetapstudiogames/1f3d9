@@ -47,6 +47,11 @@ export const wakeLabelLifeMigrationUrl = new URL(
   import.meta.url,
 )
 
+export const placeHingesMigrationUrl = new URL(
+  '../../../db/migrations/20260928_place_hinges.sql',
+  import.meta.url,
+)
+
 export const paymentAttemptsMigrationUrl = new URL(
   '../../../db/migrations/20260816_payment_attempts.sql',
   import.meta.url,

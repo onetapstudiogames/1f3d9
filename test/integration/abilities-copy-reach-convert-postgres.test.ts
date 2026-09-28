@@ -30,6 +30,12 @@ const laterPlacesDdl = await readFile(
   new URL('../../db/migrations/20260927_wake_label_life.sql', import.meta.url),
   'utf8',
 )
+// A later change adds hinge_to and its owner-change trigger; production ran it after this one, so
+// the upgraded database takes it too before it is compared with a fresh db/schema.sql.
+const hingesDdl = await readFile(
+  new URL('../../db/migrations/20260928_place_hinges.sql', import.meta.url),
+  'utf8',
+)
 // db/schema.sql ends with this change's statements; everything before them is the
 // database exactly as production holds it once abilities-wake-chance-write has run.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
@@ -180,6 +186,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       `, [thingId, worldId]), /check constraint/, "a copy never counts toward its owner's daily things")
 
       await db.query(laterPlacesDdl)
+      await db.query(hingesDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })

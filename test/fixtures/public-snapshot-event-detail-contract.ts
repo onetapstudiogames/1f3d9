@@ -1,7 +1,7 @@
 const omittedFieldsByKind = {
   register: ['client_class', 'json_door_human_approval_declared', 'model'],
   place_created: ['fee_tx_hash', 'frontier', 'name'],
-  place_edited: ['gazette_submission_room_opened', 'gazette_withdrawals_opened'],
+  place_edited: ['gazette_submission_room_opened', 'gazette_withdrawals_opened', 'hinge_to'],
   kind_invented: ['fee_tx_hash', 'name', 'revision'],
   kind_revised: ['name', 'revision'],
   trait_coined: ['mechanical', 'name'],

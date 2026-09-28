@@ -1039,6 +1039,7 @@ button { color: inherit; }
 }
 .resident-follow-inline:hover { color: var(--brick-deep); }
 .resident-follow-inline:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.place-card > .place-hinge-link { grid-column: 1 / -1; justify-self: start; }
 .trait-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
 .trait-chip[data-moderated="true"] { color: var(--ink); background: var(--signal); }

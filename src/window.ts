@@ -31,6 +31,7 @@ import { WINDOW_HTML } from './window-page.ts'
 import { WINDOW_CSS } from './window-style.ts'
 import { WORLD_ROOT_NAME, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { isBasicAction } from './physics.ts'
+import { publicHinge, type PublicHinge } from './place-hinges.ts'
 import {
   PUBLIC_CREDENTIAL_PATTERN_SOURCE,
   PUBLIC_CREDENTIAL_REDACTION,
@@ -179,6 +180,7 @@ interface PublicPlace {
   notes: number
   moderated: boolean
   quiet: boolean
+  hinge?: PublicHinge | null
   children: PublicPlace[]
 }
 
@@ -467,6 +469,7 @@ function publicPlaceRow(value: unknown): Omit<PublicPlace, 'children'> | null {
     notes: count(row.notes),
     moderated,
     quiet: row.quiet === true,
+    ...(row.hinge !== undefined ? { hinge: publicHinge(row.hinge) } : {}),
   }
 }
 

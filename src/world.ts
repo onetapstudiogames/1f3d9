@@ -55,6 +55,17 @@ import { readLookingResidentsAtPlace } from './resident-looking.ts'
 import { RESIDENT_LOOKING_READ_LIMIT } from './resident-looking-limits.ts'
 import { readLineHeadings } from './room-talk-reads.ts'
 import { readListening } from './room-wait-store.ts'
+import { GAZETTE_ROOM_ID } from './gazette.ts'
+import {
+  HINGE_TO_GAZETTE_REFUSAL,
+  HINGE_TO_WORLD_REFUSAL,
+  hingeTargetMissingRefusal,
+  hingeTargetNestedRefusal,
+  hingeTargetRetiredRefusal,
+  loadPublicPlaceHinges,
+  parseHingeTo,
+  type PublicHinge,
+} from './place-hinges.ts'
 import {
   isWorldRootRow,
   WORLD_ARRIVAL_LINE,
@@ -268,12 +279,14 @@ async function optionalDrawingBody(request: Request): Promise<BoundedJsonResult>
 function publicPlaceWriteRow(
   row: PlaceRow,
   blockedResidents: readonly string[],
+  hinge: PublicHinge | null = null,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
     ...Object.fromEntries(Object.entries(row).filter(([field]) => (
       field !== 'front_matter_thing_ids' && field !== 'wake_block_resident_ids'
     ))),
     wake_block_residents: blockedResidents,
+    hinge,
   })
 }
 
@@ -1167,18 +1180,20 @@ export function mountWorldRoutes(app: Hono): void {
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
       'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
-      'drawing', 'drawing_state', 'drawing_description',
+      'drawing', 'drawing_state', 'drawing_description', 'hinge_to',
       ...PLACE_DIAL_FIELDS,
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
       return err(c, 400, rejected.length > 0
-        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, or an ability dial. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
-        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, or an ability dial')
+        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
+        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, an ability dial, or hinge_to')
     }
     const placeDials = parsePlaceDials(body)
     if (!placeDials.ok) return err(c, 400, placeDials.error)
     const dials = placeDials.dials
+    const hingeTo = parseHingeTo(body.hinge_to, id)
+    if (!hingeTo.ok) return err(c, 400, hingeTo.error)
 
     const description = body.description === undefined
       ? undefined
@@ -1218,6 +1233,31 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.retired_at != null) return err(c, 409, 'place is retired; restore it before editing')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'place cannot be edited while it has an open sale offer; close that offer before editing the place')
+    }
+    if (hingeTo.value !== null) {
+      if (hingeTo.value === GAZETTE_ROOM_ID) return err(c, 409, HINGE_TO_GAZETTE_REFUSAL)
+      const hingeTargets = await sql`
+        WITH RECURSIVE current_ancestors(id, parent_id) AS (
+          SELECT current.id, current.parent_id FROM places current WHERE current.id = ${id}
+          UNION ALL
+          SELECT parent.id, parent.parent_id
+          FROM places parent JOIN current_ancestors ancestor ON parent.id = ancestor.parent_id
+        ), target_ancestors(id, parent_id) AS (
+          SELECT target.id, target.parent_id FROM places target WHERE target.id = ${hingeTo.value}
+          UNION ALL
+          SELECT parent.id, parent.parent_id
+          FROM places parent JOIN target_ancestors ancestor ON parent.id = ancestor.parent_id
+        )
+        SELECT target.id, target.place_kind, target.retired_at,
+          EXISTS (SELECT 1 FROM current_ancestors WHERE current_ancestors.id = target.id)
+            OR EXISTS (SELECT 1 FROM target_ancestors WHERE target_ancestors.id = ${id}) AS nested
+        FROM places target WHERE target.id = ${hingeTo.value}
+      ` as Array<{ id: number; place_kind: string; retired_at: string | null; nested: boolean }>
+      const hingeTarget = hingeTargets[0]
+      if (!hingeTarget) return err(c, 404, hingeTargetMissingRefusal(hingeTo.value))
+      if (hingeTarget.place_kind === 'world') return err(c, 409, HINGE_TO_WORLD_REFUSAL)
+      if (hingeTarget.retired_at != null) return err(c, 409, hingeTargetRetiredRefusal(hingeTo.value))
+      if (hingeTarget.nested) return err(c, 409, hingeTargetNestedRefusal(hingeTo.value))
     }
     if (dials.wakePins !== undefined && dials.wakePins.length > 0) {
       const standing = await sql`
@@ -1343,7 +1383,9 @@ export function mountWorldRoutes(app: Hono): void {
               ELSE drawing_state END,
             drawing_description = CASE WHEN ${requestedDrawing.supplied}::boolean
               THEN ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text
-              ELSE drawing_description END
+              ELSE drawing_description END,
+            hinge_to = CASE WHEN ${hingeTo.supplied}::boolean
+              THEN ${hingeTo.value}::integer ELSE hinge_to END
           WHERE id IN (SELECT id FROM editable)
             AND (
               (${description !== undefined}::boolean
@@ -1390,6 +1432,7 @@ export function mountWorldRoutes(app: Hono): void {
               OR (${requestedDrawing.supplied}::boolean
                 AND drawing_description IS DISTINCT FROM
                   ${requestedDrawing.supplied ? requestedDrawing.value.description : null}::text)
+              OR (${hingeTo.supplied}::boolean AND hinge_to IS DISTINCT FROM ${hingeTo.value}::integer)
             )
           RETURNING *
         ), new_drawing_revision AS (
@@ -1420,8 +1463,10 @@ export function mountWorldRoutes(app: Hono): void {
           RETURNING id
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
-          SELECT 'place_edited', ${resident.handle}, jsonb_build_object('place_id', id)
-          FROM changed
+          SELECT 'place_edited', ${resident.handle}, CASE WHEN (changed.hinge_to IS DISTINCT FROM editable.hinge_to)
+            THEN jsonb_build_object('place_id', changed.id, 'hinge_to', changed.hinge_to)
+            ELSE jsonb_build_object('place_id', changed.id) END
+          FROM changed JOIN editable ON editable.id = changed.id
         ), cleared_marks AS (
           -- A changed growth dial clears the open family marks here: the caps that bit have moved.
           UPDATE family_growth_marks mark
@@ -1454,9 +1499,10 @@ export function mountWorldRoutes(app: Hono): void {
     }
     if (!rows[0]) return err(c, 409, 'place changed or received an open sale offer; retry')
     const frontMatter = await loadPublicPlaceFrontMatter(executePublicQuery, [id])
+    const hinge = (await loadPublicPlaceHinges(executePublicQuery, [id])).get(id) ?? null
     const storedBlocks = (rows[0] as unknown as { wake_block_resident_ids?: readonly number[] }).wake_block_resident_ids ?? []
     return c.json({
-      place: publicPlaceWriteRow(rows[0], await residentHandlesInOrder(storedBlocks.map(Number))),
+      place: publicPlaceWriteRow(rows[0], await residentHandlesInOrder(storedBlocks.map(Number)), hinge),
       front_matter: frontMatter.get(id) ?? Object.freeze([]),
     })
   })

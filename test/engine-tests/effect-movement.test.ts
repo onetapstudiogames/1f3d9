@@ -203,7 +203,7 @@ export function registerEffectMovementTests(): void {
         position: 0,
       }]
       if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
-      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
         { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false },
         { id: 9, parent_id: 8, retired_at: null, owner_id: 8, open_to_things: false },
       ]
@@ -222,9 +222,98 @@ export function registerEffectMovementTests(): void {
     assert.equal(result.httpStatus, 403)
     assert.equal(
       result.error,
-      'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time',
+      'place_id 9 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time',
     )
     assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
+  })
+
+  test('a resident move effect crosses an open hinge', async () => {
+    const { db, calls } = fakeSql(({ text, values }) => {
+      if (/SELECT current_place_id FROM resident_presence/.test(text) && Number(values[0]) === 8) {
+        return [{ current_place_id: 2 }]
+      }
+      if (/FROM resident_presence/.test(text) && Number(values[0]) === 8) {
+        return [{ resident_id: 8, current_place_id: 2, home_place_id: 4, updated_at: 'now' }]
+      }
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 120 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/WITH RECURSIVE ancestry/.test(text)) return [{
+        trait_id: 14,
+        name: 'mutual-ferry',
+        recipe: { use: [{ effect: 'move', target: 'target', to: 'destination' }] },
+        source_place_id: 2,
+        position: 0,
+      }]
+      if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
+        { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false, hinge_to: 9 },
+        { id: 9, parent_id: 8, retired_at: null, owner_id: 8, open_to_things: false, hinge_to: 2 },
+      ]
+      if (/UPDATE resident_presence/.test(text)) return [{
+        resident_id: 8, current_place_id: 9, home_place_id: 4, updated_at: 'now',
+      }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 220 }]
+      return []
+    })
+
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action: 'use',
+      placeId: 2,
+      target: { type: 'resident', id: 8 },
+      destinationPlaceId: 9,
+    }, db)
+
+    assert.equal(result.status, 'applied')
+    assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), true)
+  })
+
+  test('a thing move effect stays on parent-child edges across an open hinge', async () => {
+    const { db, calls } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 121 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/SELECT thing\.id/.test(text)) {
+        return [{ id: 41, owner_id: 7, place_id: 2, withdrawn_at: null, active_offer_id: null }]
+      }
+      if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
+        trait_id: 15,
+        recipe: { use: [{ effect: 'move', target: 'source', to: 'destination' }] },
+      }]
+      if (/SELECT EXISTS/.test(text) && /FROM things/.test(text)) return [{ exists: true }]
+      if (/FROM places place WHERE place\.id = ANY/.test(text)) return [
+        {
+          id: 2, parent_id: 1, owner_id: 7, open_to_things: false,
+          place_permits_things: true, hinge_to: 9,
+        },
+        {
+          id: 9, parent_id: 8, owner_id: 7, open_to_things: false,
+          place_permits_things: true, hinge_to: 2,
+        },
+      ]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 221 }]
+      return []
+    })
+
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'tiny-lantern',
+      action: 'use',
+      placeId: 2,
+      sourceThingId: 41,
+      destinationPlaceId: 9,
+    }, db)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 403)
+    assert.equal(result.error, 'thing move must cross one parent-child edge')
+    assert.equal(calls.some(call => /UPDATE things moving SET place_id/.test(call.text)), false)
   })
 
 }

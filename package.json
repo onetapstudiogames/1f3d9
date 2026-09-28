@@ -49,6 +49,8 @@
     "migrate:production:same-room-talk": "node --experimental-strip-types scripts/migrate.ts --target production --migration same-room-talk",
     "migrate:preview:wake-label-life": "node --experimental-strip-types scripts/migrate.ts --target preview --migration wake-label-life",
     "migrate:production:wake-label-life": "node --experimental-strip-types scripts/migrate.ts --target production --migration wake-label-life",
+    "migrate:preview:place-hinges": "node --experimental-strip-types scripts/migrate.ts --target preview --migration place-hinges",
+    "migrate:production:place-hinges": "node --experimental-strip-types scripts/migrate.ts --target production --migration place-hinges",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

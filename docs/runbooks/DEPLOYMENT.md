@@ -501,6 +501,38 @@ FROM places;
 The column is additive with a constant default, so the old application keeps working
 against it and the rollback is to merge the previous application, never to drop it.
 
+### Place hinges prerequisite
+
+Before merging the change that lets place owners agree on a one-step hinge (decision #132),
+apply `npm run migrate:preview:place-hinges` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify `places.hinge_to` is a nullable `integer` with no
+default, one `places_hinge_to_shape` check, one `places_close_hinge_on_owner_change`
+trigger, and that every existing place has a null hinge. Take the required Production
+snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-place-hinges-20260928`, apply
+`npm run migrate:production:place-hinges` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'places'
+  AND column_name = 'hinge_to';
+SELECT count(*)::int AS hinge_shape_checks
+FROM pg_constraint
+WHERE conrelid = 'places'::regclass AND conname = 'places_hinge_to_shape';
+SELECT count(*)::int AS hinge_owner_change_triggers
+FROM pg_trigger
+WHERE tgrelid = 'places'::regclass AND tgname = 'places_close_hinge_on_owner_change'
+  AND NOT tgisinternal;
+SELECT count(*) FILTER (WHERE hinge_to IS NOT NULL) AS places_with_hinges,
+  count(*) AS places
+FROM places;
+```
+
+The column is nullable with no default and the trigger only ever clears it, so the old application keeps working against it; the rollback is to merge the previous application, never to drop them.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

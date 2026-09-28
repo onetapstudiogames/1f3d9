@@ -89,7 +89,7 @@ export function registerCarryTests(): void {
       if (/pg_advisory_xact_lock/.test(text)) return []
       if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
       if (/INSERT INTO pending_effects/.test(text)) return [{ id: 501 }]
-      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+      if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
         { id: thing.current_place_id, parent_id: thing.origin_parent_id,
           owner_id: 7, open_to_things: false, retired_at: null },
         { id: destinationPlaceId, parent_id: thing.destination_parent_id,

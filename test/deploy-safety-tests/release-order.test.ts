@@ -251,4 +251,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:wake-label-life/u)
     assert.match(deploymentRunbook, /wake_label_seconds[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the place hinge column to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Place hinges prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:place-hinges/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:place-hinges/u)
+    assert.match(deploymentRunbook, /hinge_to[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

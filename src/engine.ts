@@ -642,8 +642,8 @@ export async function moveResident(
     throw new EngineError(409, 'resident has no current place; reconnect with the current resident key and retry, then contact the city operator')
   }
   const requested = [current.currentPlaceId, destinationId]
-  const places = await queryRows<{ id?: unknown; parent_id?: unknown; retired_at?: unknown; owner_id?: unknown; open_to_things?: unknown }>(db`
-    SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places
+  const places = await queryRows<{ id?: unknown; parent_id?: unknown; retired_at?: unknown; owner_id?: unknown; open_to_things?: unknown; hinge_to?: unknown }>(db`
+    SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places
     WHERE id = ANY (${requested}::int[])
     FOR SHARE
   `)
@@ -667,10 +667,12 @@ export async function moveResident(
   const oldPlace = places.find(row => integer(row.id) === current.currentPlaceId)
   const destinationParent = nullableRowId(destination.parent_id, 'destination parent id')
   const oldParent = oldPlace ? nullableRowId(oldPlace.parent_id, 'current parent id') : null
-  if (destinationParent !== current.currentPlaceId && oldParent !== destinationId) {
+  const hinged = oldPlace != null && nullableRowId(oldPlace.hinge_to, 'current hinge place id') === destinationId
+    && nullableRowId(destination.hinge_to, 'destination hinge place id') === current.currentPlaceId
+  if (destinationParent !== current.currentPlaceId && oldParent !== destinationId && !hinged) {
     throw new EngineError(
       403,
-      `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time`,
+      `place_id ${destinationId} exists, but entry is closed from your current place_id ${current.currentPlaceId}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
     )
   }
   const held = await heldThingForResident(actorId, db)

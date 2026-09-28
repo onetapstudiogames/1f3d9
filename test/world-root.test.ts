@@ -306,7 +306,7 @@ test('a resident can walk from one continent to another only through their world
       home_place_id: 2,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
       { id: 1, parent_id: null, retired_at: null, owner_id: null, open_to_things: false },
       { id: 2, parent_id: 1, retired_at: null, owner_id: 7, open_to_things: false },
       { id: 3, parent_id: 1, retired_at: null, owner_id: 8, open_to_things: false },
@@ -326,7 +326,7 @@ test('a resident can walk from one continent to another only through their world
   await assert.rejects(moveResident(7, 3, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'place_id 3 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
+    && error.message === 'place_id 3 exists, but entry is closed from your current place_id 2; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
   ))
   assert.equal((await moveResident(7, 1, db)).currentPlaceId, 1)
   assert.equal((await moveResident(7, 3, db)).currentPlaceId, 3)
@@ -346,7 +346,7 @@ test('a null-location resident is seeded at world and cannot use first move to s
       home_place_id: null,
       updated_at: fixtureTime,
     }]
-    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things FROM places/.test(text)) return [
+    if (/SELECT id, parent_id, retired_at, owner_id, open_to_things, hinge_to FROM places/.test(text)) return [
       { id: 1, parent_id: null, retired_at: null, owner_id: null, open_to_things: false },
       { id: 4, parent_id: 2, retired_at: null, owner_id: 8, open_to_things: false },
     ]
@@ -362,7 +362,7 @@ test('a null-location resident is seeded at world and cannot use first move to s
   await assert.rejects(moveResident(7, 4, db), (error: unknown) => (
     error instanceof EngineError
     && error.status === 403
-    && error.message === 'place_id 4 exists, but entry is closed from your current place_id 1; entry opens when you stand in its parent or one of its direct children, so use the public map outline to move one parent-child edge at a time'
+    && error.message === 'place_id 4 exists, but entry is closed from your current place_id 1; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time'
   ))
   assert.equal(calls.some(call => /UPDATE resident_presence/.test(call.text)), false)
 })

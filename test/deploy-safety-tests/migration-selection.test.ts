@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolveMigrationRun, splitSqlStatements } from '../../scripts/migrate.ts'
 import { packageJson } from '../helpers/deploy-safety-fixtures/release-documents.ts'
-import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, abilitiesCopyReachConvertMigrationUrl, sameRoomTalkMigrationUrl, wakeLabelLifeMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
+import { fullSchema, oauthMigration, agreementAccessionMigration, openToUseMigrationUrl, sharedUseMayDestroyMigrationUrl, noteWalkToReadMigrationUrl, abilitiesWakeChanceWriteMigrationUrl, abilitiesCopyReachConvertMigrationUrl, sameRoomTalkMigrationUrl, wakeLabelLifeMigrationUrl, placeHingesMigrationUrl, paymentAttemptsMigrationUrl, paymentResponseReplayMigrationUrl, paymentResponseBodyRolloutMigrationUrl, paymentResponseBodyValidationMigrationUrl, identityRecoveryMigrationUrl, identityRotationMigrationUrl, initialRecoveryCodesMigrationUrl, resumableRegistrationMigrationUrl } from '../helpers/deploy-safety-fixtures/migration-sources.ts'
 
 export function registerMigrationSelectionTests(): void {
   test('migration target must be named explicitly', () => {
@@ -422,6 +422,55 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(production.executionMode, 'transactional')
   })
 
+  test('place-hinges is additive and safe to repeat', () => {
+    const migration = readFileSync(placeHingesMigrationUrl, 'utf8')
+    const uncommented = migration.replace(/^\s*--.*$/gm, '')
+    const statements = splitSqlStatements(migration)
+
+    assert.equal(statements.length, 5)
+    assert.doesNotMatch(uncommented, /^\s*(?:UPDATE|DELETE|TRUNCATE)\b/im)
+    assert.doesNotMatch(uncommented, /^\s*DROP\s+(?!TRIGGER\b)/im)
+    assert.match(uncommented, /DROP\s+TRIGGER\s+IF\s+EXISTS\s+places_close_hinge_on_owner_change/iu)
+    assert.match(
+      uncommented,
+      /ALTER\s+TABLE\s+places\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+hinge_to\s+INTEGER\s*;/iu,
+    )
+    assert.match(
+      uncommented,
+      /CREATE\s+TRIGGER\s+places_close_hinge_on_owner_change\s+BEFORE\s+UPDATE\s+OF\s+owner_id\s*,\s*retired_at\s+ON\s+places/iu,
+    )
+  })
+
+  test('place-hinges is selected as one separate preview or production migration', () => {
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'place-hinges'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, 'db/migrations/20260928_place_hinges.sql')
+    assert.equal(preview.executionMode, 'transactional')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'place-hinges'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'place-hinges-release',
+      },
+    )
+    assert.equal(production.migrationFile, 'db/migrations/20260928_place_hinges.sql')
+    assert.equal(production.executionMode, 'transactional')
+  })
+
   test('the reviewed hosted-chat migration is additive and OAuth-only', () => {
     const uncommented = oauthMigration.replace(/^\s*--.*$/gm, '')
     assert.doesNotMatch(uncommented, /^\s*(?:DROP|ALTER|UPDATE|DELETE|TRUNCATE)\b/im)
@@ -510,6 +559,7 @@ export function registerMigrationSelectionTests(): void {
       [readFileSync(abilitiesCopyReachConvertMigrationUrl, 'utf8'), 'abilities-copy-reach-convert'],
       [readFileSync(sameRoomTalkMigrationUrl, 'utf8'), 'same-room-talk'],
       [readFileSync(wakeLabelLifeMigrationUrl, 'utf8'), 'wake-label-life'],
+      [readFileSync(placeHingesMigrationUrl, 'utf8'), 'place-hinges'],
       [readFileSync(paymentAttemptsMigrationUrl, 'utf8'), 'payment-attempts'],
       [readFileSync(paymentResponseReplayMigrationUrl, 'utf8'), 'payment-response-replay'],
       [readFileSync(paymentResponseBodyRolloutMigrationUrl, 'utf8'), 'payment-response-body-rollout'],
@@ -590,6 +640,8 @@ export function registerMigrationSelectionTests(): void {
     assert.equal(packageJson.scripts['migrate:production:same-room-talk'], 'node --experimental-strip-types scripts/migrate.ts --target production --migration same-room-talk')
     assert.equal(packageJson.scripts['migrate:preview:wake-label-life'], 'node --experimental-strip-types scripts/migrate.ts --target preview --migration wake-label-life')
     assert.equal(packageJson.scripts['migrate:production:wake-label-life'], 'node --experimental-strip-types scripts/migrate.ts --target production --migration wake-label-life')
+    assert.equal(packageJson.scripts['migrate:preview:place-hinges'], 'node --experimental-strip-types scripts/migrate.ts --target preview --migration place-hinges')
+    assert.equal(packageJson.scripts['migrate:production:place-hinges'], 'node --experimental-strip-types scripts/migrate.ts --target production --migration place-hinges')
     assert.match(packageJson.scripts['migrate:preview:payment-attempts'] ?? '', /--target preview --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:production:payment-attempts'] ?? '', /--target production --migration payment-attempts$/)
     assert.match(packageJson.scripts['migrate:preview:payment-response-replay'] ?? '', /--target preview --migration payment-response-replay$/)
