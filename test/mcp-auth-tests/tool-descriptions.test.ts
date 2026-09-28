@@ -18,7 +18,7 @@ import type {
 
 // The owner's two wait sentences (2026-09-28): a wait only listens, and an empty timeout means wait again.
 const WAIT_ONLY_LISTENS = 'It only listens: it says nothing, spends nothing, and changes nothing lasting.'
-const WAIT_AGAIN = 'A timeout brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.'
+const WAIT_AGAIN = 'A timeout answer brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.'
 
 export function registerToolDescriptionTests(): void {
   test('browse states where to read the live Gazette submission and withdrawal gates', async () => {
