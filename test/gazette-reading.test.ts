@@ -39,6 +39,7 @@ type CompleteIssue = Readonly<{
 type ReadingDependencies = Readonly<{
   readIssue(issueNumber: number): Promise<CompleteIssue | null>
   readIssueFacts(issueNumber: number): Promise<IssueFacts | null>
+  readPlaceNames?(ids: readonly number[]): Promise<ReadonlyMap<number, string>>
   origin: string
   robots: 'index, follow' | 'noindex, nofollow, noarchive'
 }>
@@ -69,13 +70,13 @@ const issue = Object.freeze({
   scheduled_for: '2026-10-12T16:00:00.000Z',
   printed_at: '2026-10-12T16:00:12.193Z',
   header: [
-    'THE GAZETTE — ISSUE 7',
+    'THE GAZETTE, ISSUE 7',
     'Automatic weekly print for Monday, 12 October 2026 at 16:00 UTC.',
     'Source: ordinary notes submitted in the Gazette submission room, place #454.',
     'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
     'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
-    'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
+    'No AI editor, ranking, approval, or selection is used for entries. Moderation may hide public body display but never changes issue membership.',
   ].join('\n'),
   entry_count: 5,
 } satisfies Issue)
@@ -211,9 +212,10 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   assert.match(csp, new RegExp(`script-src 'sha256-${scriptHash.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'u'))
   assert.doesNotMatch(shareScript, /entry-body|resident|author|innerHTML|fetch\s*\(/iu)
   assert.match(html, />The Gazette<\/h1>/u)
+  assert.match(html, /no entry chosen or reordered/u)
   assert.match(visibleText(html), /PLATE 07 · 1F3D9 \/ ROOM 454/u)
   assert.match(html, /Issue N(?:o|º|&ordm;)\.?\s*7/iu)
-  assert.match(html, /No AI editor, ranking, approval, or selection is used\./u)
+  assert.match(html, /No AI editor, ranking, approval, or selection is used for entries\./u)
   assert.match(html, /5 entries[\s\S]*3 residents/u)
   assert.match(html, /In this issue/u)
   assert.match(html, /href="#entry-01"[\s\S]*href="#entry-02"[\s\S]*href="#entry-03"/u)
@@ -239,6 +241,41 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   assert.match(response.headers.get('content-security-policy') ?? '', /object-src 'self'/u)
   assert.match(html, /white-space:\s*pre-wrap/u)
   assert.match(html, /@media\s+print/u)
+})
+
+test('the Happenings column follows entries and links current place names safely', async () => {
+  const happeningsIssue = Object.freeze({
+    ...issue,
+    header: `${issue.header}\nHAPPENINGS\nWritten by the Gazette printer from the public record of the week ending at this print. Fixed published rules pick these few items; no person or AI chooses them, and this column is not a submission.\nFirst lines said: place #1202, place #1203.`,
+  })
+  const app = createApp({
+    readIssue: async () => ({ issue: happeningsIssue, entries }),
+    readPlaceNames: async ids => {
+      assert.deepEqual(ids, [1202, 1203])
+      return new Map([[1202, 'Hall <script>alert(1)</script> & friends']])
+    },
+  })
+  const response = await app.request('/gazette/7')
+  const html = await response.text()
+
+  assert.equal(response.status, 200)
+  const lastEntry = html.lastIndexOf('</article>')
+  const happenings = html.indexOf('<h2 class="section-label">Happenings</h2>')
+  const foot = html.indexOf('<div class="foot"></div>')
+  assert.ok(lastEntry >= 0 && lastEntry < happenings && happenings < foot)
+  assert.match(html, /the Gazette printer, from the public record/u)
+  assert.match(html, /Written by the Gazette printer from the public record of the week ending at this print\./u)
+  assert.match(html, /href="\/window\/place\/1202">Hall &lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; friends<\/a>/u)
+  assert.match(html, /href="\/window\/place\/1203">place #1203<\/a>/u)
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/u)
+})
+
+test('issues without Happenings keep no column', async () => {
+  const response = await createApp().request('/gazette/7')
+  const html = await response.text()
+
+  assert.equal(response.status, 200)
+  assert.doesNotMatch(html, /class="happenings"|>Happenings</u)
 })
 
 test('entry bodies keep source order, whitespace, binary disclosure, and script precedence', async () => {

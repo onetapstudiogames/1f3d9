@@ -4,6 +4,7 @@ import type { Context, Hono } from 'hono'
 import { encodePng } from './drawing-thumbnail.ts'
 
 import { gazetteWithdrawalNotice } from './gazette.ts'
+import { parseGazetteHappenings } from './gazette-happenings.ts'
 
 export type GazetteReadingRobots = 'index, follow' | 'noindex, nofollow, noarchive'
 
@@ -44,6 +45,7 @@ export interface GazetteReadingDependencies {
     entries: readonly GazetteReadingEntry[]
   }> | null>
   readIssueFacts(issueNumber: number): Promise<GazetteReadingIssueFacts | null>
+  readPlaceNames?(ids: readonly number[]): Promise<ReadonlyMap<number, string>>
   readonly origin: string
   readonly robots: GazetteReadingRobots
 }
@@ -52,6 +54,7 @@ type ScriptCode = 'ja' | 'ko' | 'zh' | 'ar' | 'he' | 'ru' | 'hi' | 'th'
 
 const ISSUE_ID_MAX = 2_147_483_647
 const BINARY_BYTE = /\b[01]{8}\b/gu
+const GAZETTE_HAPPENINGS_INTRO = 'Written by the Gazette printer from the public record of the week ending at this print. Fixed published rules pick these few items; no person or AI chooses them, and this column is not a submission.'
 const GAZETTE_SHARE_SCRIPT = `(() => {
   const button = document.querySelector('[data-gazette-share]')
   const status = document.querySelector('[data-gazette-share-status]')
@@ -291,7 +294,7 @@ function promiseFromHeader(header: string): string {
   const lines = header.split('\n').filter(line => (
     line.startsWith('Entries follow oldest first') ||
     line.startsWith('Printing consumes a submission') ||
-    line.startsWith('No AI editor, ranking, approval, or selection is used.')
+    line.startsWith('No AI editor, ranking, approval, or selection is used')
   ))
   return lines.join(' ')
 }
@@ -344,12 +347,51 @@ function renderContents(entries: readonly GazetteReadingEntry[]): string {
   }).join('\n')
 }
 
-function issueDocument(
+function renderGazetteHappenings(
+  header: string,
+  placeNames: ReadonlyMap<number, string>,
+): string {
+  const lines = header.split('\n')
+  const headingIndex = lines.indexOf('HAPPENINGS')
+  if (headingIndex < 0) return ''
+  const storedLines = lines.slice(headingIndex + 1)
+  const itemLines = storedLines[0] === GAZETTE_HAPPENINGS_INTRO
+    ? storedLines.slice(1)
+    : storedLines
+  const renderedLines = itemLines.map(line => {
+    const content = escapeHtml(line).replace(/place #(\d+)/gu, (reference, idText: string) => {
+      const placeId = Number(idText)
+      const placeName = placeNames.get(placeId) ?? reference
+      return `<a href="/window/place/${placeId}">${escapeHtml(placeName)}</a>`
+    })
+    return `<p class="happenings-line">${content}</p>`
+  }).join('\n')
+  return `<h2 class="section-label">Happenings</h2>
+      <p class="happenings-byline">the Gazette printer, from the public record</p>
+      <p class="happenings-intro">${escapeHtml(GAZETTE_HAPPENINGS_INTRO)}</p>
+      ${renderedLines}`
+}
+
+async function issueDocument(
   result: Readonly<{ issue: GazetteReadingIssue; entries: readonly GazetteReadingEntry[] }>,
   origin: string,
   robots: GazetteReadingRobots,
-): string {
+  readPlaceNames?: (ids: readonly number[]) => Promise<ReadonlyMap<number, string>>,
+): Promise<string> {
   const { issue, entries } = result
+  const happenings = parseGazetteHappenings(issue.header)
+  const placeIds = happenings === null
+    ? []
+    : [...new Set(happenings.flatMap(item => item.place_id === undefined ? [] : [item.place_id]))]
+  let placeNames: ReadonlyMap<number, string> = new Map()
+  if (readPlaceNames && placeIds.length) {
+    try {
+      placeNames = await readPlaceNames(placeIds)
+    } catch (error) {
+      console.error('gazette_place_names_failure', error instanceof Error ? error.name : typeof error)
+    }
+  }
+  const happeningsColumn = happenings === null ? '' : renderGazetteHappenings(issue.header, placeNames)
   const issueNumber = issue.issue_number
   const plateNumber = String(issueNumber).padStart(2, '0')
   const residentCount = new Set(entries.map(entry => entry.author)).size
@@ -412,7 +454,7 @@ function issueDocument(
         <div class="runline machine">
           automatic weekly print · ${escapeHtml(scheduledLine(issue.scheduled_for).toLowerCase())}<br>
           struck at <strong>${escapeHtml(machineDate(issue.printed_at).slice(11))}</strong><br>
-          <strong>${escapeHtml(plural(issue.entry_count, 'entry'))}</strong> · <strong>${escapeHtml(plural(residentCount, 'resident'))}</strong> · nothing chosen, nothing reordered
+          <strong>${escapeHtml(plural(issue.entry_count, 'entry'))}</strong> · <strong>${escapeHtml(plural(residentCount, 'resident'))}</strong> · no entry chosen or reordered
         </div>
         <div class="promise machine"><span class="accent">from the masthead, verbatim:</span> “${escapeHtml(promise)}”</div>
       </header>
@@ -422,6 +464,7 @@ ${renderContents(entries)}
       </nav>
       <h2 class="section-label">The issue</h2>
 ${entries.map(renderEntry).join('\n')}
+      ${happeningsColumn}
       <div class="foot"></div>
       <footer class="colophon machine">
         set in bodoni moda, source serif 4 and courier prime · machine facts in the typewriter face, residents’ words in the serif<br>
@@ -543,7 +586,7 @@ function issueCard(facts: GazetteReadingIssueFacts): Uint8Array<ArrayBuffer> {
   fillRect(pixels, 126, 338, CARD_WIDTH - 252, 1, CARD_PAPER)
   drawText(pixels, longDate(facts.scheduled_for).toUpperCase(), CARD_WIDTH / 2, 370, 4, CARD_SKY)
   drawText(pixels, `${plural(facts.entry_count, 'entry')} / ${plural(facts.resident_count, 'resident')}`, CARD_WIDTH / 2, 442, 5, CARD_PAPER)
-  drawText(pixels, 'NOTHING CHOSEN / NOTHING REORDERED', CARD_WIDTH / 2, 516, 3, CARD_SIGNAL)
+  drawText(pixels, 'NO ENTRY CHOSEN OR REORDERED', CARD_WIDTH / 2, 516, 3, CARD_SIGNAL)
   return encodePng(pixels, CARD_WIDTH, CARD_HEIGHT, 3)
 }
 
@@ -582,7 +625,12 @@ export function mountGazetteReadingRoutes(
     // Issue bodies reflect current moderation. Never let an intermediary retain a
     // body after the public display has been removed.
     responseHeaders(c, dependencies.robots, 'no-store')
-    return c.html(issueDocument(result, dependencies.origin, dependencies.robots))
+    return c.html(await issueDocument(
+      result,
+      dependencies.origin,
+      dependencies.robots,
+      dependencies.readPlaceNames,
+    ))
   })
 
   app.get('/gazette/:issue_number/card.png', async c => {

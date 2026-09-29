@@ -351,6 +351,48 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       ' Use the Read issue link above to see the full issue.'
   }
 
+  function gazetteHappeningsLine(line) {
+    const paragraph = element('p', 'gazette-happenings-line')
+    const pattern = /place #([1-9][0-9]*)/g
+    let cursor = 0
+    let match = pattern.exec(line)
+    while (match) {
+      if (match.index > cursor) {
+        paragraph.append(element('span', '', line.slice(cursor, match.index)))
+      }
+      const placeId = safeId(match[1])
+      if (placeId) {
+        const place = directoryPlace(placeId)
+        const button = element(
+          'button',
+          'gazette-happenings-place resident-follow-inline',
+          place ? place.name : 'place #' + String(placeId),
+        )
+        button.addEventListener('click', () => choosePlace(placeId, true))
+        paragraph.append(button)
+      } else {
+        paragraph.append(element('span', '', match[0]))
+      }
+      cursor = pattern.lastIndex
+      match = pattern.exec(line)
+    }
+    if (cursor < line.length) {
+      paragraph.append(element('span', '', line.slice(cursor)))
+    }
+    return paragraph
+  }
+
+  function renderGazetteHappenings(lines) {
+    const intro = 'Written by the Gazette printer from the public record of the week ending at this print. Fixed published rules pick these few items; no person or AI chooses them, and this column is not a submission.'
+    const storedLines = lines[0] === intro ? lines.slice(1) : lines
+    const section = element('section', 'gazette-happenings')
+    section.append(element('h4', '', 'Happenings'))
+    section.append(element('p', 'gazette-happenings-byline', 'the Gazette printer, from the public record'))
+    section.append(element('p', 'gazette-happenings-intro', intro))
+    section.append(...storedLines.map(gazetteHappeningsLine))
+    return section
+  }
+
   function renderGazetteIssue(gazette) {
     if (!nodes.gazetteIssue) return
     nodes.gazetteIssue.setAttribute('aria-busy', String(gazette.detailLoading))
@@ -389,7 +431,12 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       'gazette-print-time',
       'Weekly print for ' + gazetteDateLabel(gazette.issue.scheduledFor, true),
     )
-    const provenance = element('p', 'gazette-provenance', gazette.issue.header)
+    const headerLines = gazette.issue.header.split('\\n')
+    const happeningsIndex = headerLines.indexOf('HAPPENINGS')
+    const provenanceText = happeningsIndex < 0
+      ? gazette.issue.header
+      : headerLines.slice(0, happeningsIndex).join('\\n')
+    const provenance = element('p', 'gazette-provenance', provenanceText)
     // Round 5 review finding 1 (issue #71): detailBudgetCut can be set
     // whether or not entries already loaded (a Load more request that
     // admits nothing still carries it), so its notice is composed
@@ -408,8 +455,11 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
           gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut, gazette.entries.length > 0),
         )
       : null
+    const happeningsSection = happeningsIndex >= 0 && !gazette.hasMoreEntries
+      ? renderGazetteHappenings(headerLines.slice(happeningsIndex + 1))
+      : null
     nodes.gazetteIssue.replaceChildren(
-      ...[heading, printTime, provenance, entriesNode, emptyIssueNotice, budgetCutNotice].filter(Boolean),
+      ...[heading, printTime, provenance, entriesNode, emptyIssueNotice, budgetCutNotice, happeningsSection].filter(Boolean),
     )
     renderGazetteEntriesPage(gazette)
   }

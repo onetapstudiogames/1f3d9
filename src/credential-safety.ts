@@ -2,6 +2,7 @@ export const PUBLIC_CREDENTIAL_PATTERN_SOURCE =
   '1f3d9_(?:sk|at|rt|ac|rc|pc)_[0-9a-f]{8,}'
 
 export const CREDENTIAL_LIKE_INPUT_RE = new RegExp(PUBLIC_CREDENTIAL_PATTERN_SOURCE, 'i')
+export const PRIVATE_CLAIM_TOKEN_RE = /gift_claim_[0-9a-f]{64}/iu
 const EXACT_RESIDENT_CREDENTIAL_RE =
   /1f3d9_(?:sk_[0-9a-f]{48}|(?:at|rt|ac|rc|pc)_[0-9a-f]{64})/ig
 
@@ -69,6 +70,10 @@ export function extractResidentCredentials(value: unknown): readonly ResidentCre
 
 export function containsPublicCredential(value: unknown): boolean {
   return typeof value === 'string' && CREDENTIAL_LIKE_INPUT_RE.test(value)
+}
+
+export function residentTextSafeForBroadcast(value: string): boolean {
+  return !CREDENTIAL_LIKE_INPUT_RE.test(value) && !PRIVATE_CLAIM_TOKEN_RE.test(value)
 }
 
 export const containsCredentialLikeInput = containsPublicCredential

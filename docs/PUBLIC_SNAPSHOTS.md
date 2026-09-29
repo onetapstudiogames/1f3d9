@@ -102,7 +102,7 @@ of four dispositions.
 | `moderation` | Append-only public moderation actions and reasons. |
 | `treasury_fees` | Public city-fee books. |
 | `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
-| `gazette_issues` | Permanent issues: the issue number appears as both generic `id` and explicit `issue_number`, followed by schedule, print time, exact system header, entry count, and print-event reference. |
+| `gazette_issues` | Permanent issues: the issue number appears as both generic `id` and explicit `issue_number`, followed by schedule, print time, exact system header (from decision #133 on it ends with the Happenings column, place and note IDs and fixed city words only), entry count, and print-event reference. |
 | `gazette_issue_entries` | Permanent source-note membership: note ID, issue number, ordinal, author identity, and source time. A withdrawn entry additionally carries `withdrawn: true`, its `withdrawal_note_id`, and `withdrawn_at`; an ordinary entry's payload remains unchanged. Bodies remain in `notes`; moderation and withdrawal never remove public membership. |
 | `gazette_withdrawals` | Body-free author withdrawal ledger: target note ID, withdrawal-command note ID, author identity, and the command's database-owned time. The original submission and command bodies remain only in `notes`. |
 | `official` | Versioned canonical domain, network, money, source, and no-token facts from the exporter. |

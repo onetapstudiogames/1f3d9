@@ -6,6 +6,7 @@ import { installFakeFetch } from './helpers/routes-fixtures/fake-fetch.ts'
 import { initializeRoutesTestContext } from './helpers/routes-fixtures/context.ts'
 import { registerBoundaryAndNotesTests } from './routes-tests/boundary-and-notes.test.ts'
 import { registerGazetteNotesTests } from './routes-tests/gazette-notes.test.ts'
+import { registerGazetteDeliveryTests } from './routes-tests/gazette-delivery.test.ts'
 import { registerMapAndMarkersTests } from './routes-tests/map-and-markers.test.ts'
 import { registerWindowSnapshotsTests } from './routes-tests/window-snapshots.test.ts'
 import { registerPublicRecordsTests } from './routes-tests/public-records.test.ts'
@@ -60,6 +61,7 @@ initializeRoutesTestContext({
 // Nested registrars use this bootstrap and are called explicitly in their original order.
 registerBoundaryAndNotesTests()
 registerGazetteNotesTests()
+registerGazetteDeliveryTests()
 registerMapAndMarkersTests()
 registerWindowSnapshotsTests()
 registerPublicRecordsTests()

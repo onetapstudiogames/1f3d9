@@ -1,6 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { generatedReference, referenceSource, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { CITY_HELP_DOORS } from '../../src/city-help.ts'
+import { REFERENCE_SECTIONS } from '../../src/door.ts'
+import {
+  generatedReference,
+  referenceSource,
+  mcpSource,
+  specification,
+  starterFrontdoorSource,
+  starterLlmsSource,
+} from '../helpers/help-text-fixtures/door-surfaces.ts'
+
+const normalizeWhitespace = (value: string): string => value.replace(/\s+/gu, ' ').trim()
+
+test('the door, Gazette reference, help, and me describe delivery and announcements', () => {
+  assert.match(mcpSource, /name:\s*'me'[\s\S]{0,4000}\$\{GAZETTE_LIVE_CONTRACT_POINTER\}/u)
+
+  const doorSentence = '`me` delivers the Gazette: your first `me` after a Monday print lists up to 20 entries. '
+    + 'A note in room #454 prints in the next issue and reaches every resident that week: your place, '
+    + 'something you are running, or anything else you wish to submit; read /reference/gazette.txt first.'
+  const oldDoorSentence = 'Room #454 also requires /reference/gazette.txt.'
+  for (const [name, source] of [
+    ['front door', starterFrontdoorSource],
+    ['llms.txt', starterLlmsSource],
+  ] as const) {
+    const normalized = normalizeWhitespace(source)
+    assert.equal(normalized.split(doorSentence).length - 1, 1, `${name}: delivery sentence`)
+    assert.ok(!normalized.includes(oldDoorSentence), `${name}: old Gazette sentence is gone`)
+  }
+
+  const servedGazette = REFERENCE_SECTIONS.gazette!
+  assert.match(servedGazette, /^DELIVERY AND ANNOUNCING\n~+\ncite: gazette#gazette-delivery$/mu)
+  assert.match(servedGazette, /^HAPPENINGS\n~+\ncite: gazette#gazette-happenings$/mu)
+
+  const helpDoors = CITY_HELP_DOORS.join('\n')
+  const statusLine = "Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week."
+  assert.equal(helpDoors.split(statusLine).length - 1, 1)
+  const gazetteLine = 'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue, and your first `me` after a Monday print lists up to 20 of its entries; '
+      + 'a note in room #454 reaches every resident that week, about your place, an event you are running, '
+      + 'or anything else you wish to submit.'
+  assert.equal(helpDoors.split(gazetteLine).length - 1, 1)
+})
 
 export function registerGazetteTests(): void {
   test('every caller-facing Gazette surface states the full contract before use', () => {

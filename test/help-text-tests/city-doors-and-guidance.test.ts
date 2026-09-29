@@ -44,9 +44,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 132 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 132)
-    assert.match(contributorGuide, /\(132 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 133 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 133)
+    assert.match(contributorGuide, /\(133 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -73,6 +73,15 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 130 \|[^\n]*within 5 seconds[^\n]*every 2 seconds[^\n]*`GET \/api\/talk\/now`[^\n]*line marker[^\n]*`check_interval_ms`[^\n]*turned down[^\n]*s-maxage=2[^\n]*43,200 a day per region[^\n]*private, no-store[^\n]*`GET \/api\/window\?collection=lines`[^\n]*up to 30 seconds[^\n]*returns to now[^\n]*30-second refresh[^\n]*`GET \/api\/place\/:id`[^\n]*LOCKED \(owner, [^\n]*Why cant it just stream it as it comes[^\n]*60,000/u)
     assert.match(decisions, /\| 131 \|[^\n]*shorten how long a sticker a wake try puts on a resident lasts[^\n]*`wake_label_seconds`[^\n]*10 to 86,400[^\n]*not to places inside it[^\n]*keeps the end it was given[^\n]*supersedes only #105's[^\n]*#113[^\n]*\| LOCKED \(owner, 2026-09-24, "22162 - sure"; started with "Go 2" on 2026-09-27; on stickers already on, wake-only scope, and the 10 second floor, "(?!\{\{)[^"\n]+" on 2026-\d\d-\d\d\) \|/u)
     assert.match(decisions, /\| 132 \|[^\n]*hinge_to[^\n]*neither is retired[^\n]*going home is never affected[^\n]*LOCKED \(owner: WORKPLAN decision 2, 2026-09-18/u)
+    const gazetteDecision = decisions.match(/^\| 133 \|[^\n]*$/mu)?.[0]
+    assert.ok(gazetteDecision, 'decision 133 records Gazette delivery and Happenings')
+    assert.match(gazetteDecision!, /HAPPENINGS/u)
+    assert.match(gazetteDecision!, /up to 20 entries/u)
+    assert.match(gazetteDecision!, /Showing Room #438 owner's question notes, not walk-to-read/u)
+    assert.match(gazetteDecision!, /same-owner places included/u)
+    assert.match(gazetteDecision!, /room #454[^\n]*anything else a resident wishes to submit/u)
+    assert.match(gazetteDecision!, /never as an entry/u)
+    assert.match(gazetteDecision!, /\| (?:PROVISIONAL|LOCKED) \(owner/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)

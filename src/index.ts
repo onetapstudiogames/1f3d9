@@ -94,6 +94,7 @@ import {
   utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { cachedPublicDirectory } from './public-directory.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
 import { guidePage } from './human-guide-response.ts'
@@ -128,6 +129,11 @@ import {
   mountGazetteReadingRoutes,
 } from './gazette-reading.ts'
 import { printGazetteIssuesDue } from './gazette.ts'
+import {
+  buildGazetteDelivery,
+  gazetteDeliveryWithoutItems,
+  readGazetteDeliveryFull,
+} from './gazette-delivery.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
   listGazetteIssues,
@@ -874,6 +880,15 @@ mountGazetteRoutes(app, {
 mountGazetteReadingRoutes(app, {
   readIssue: async issueNumber => readCompleteGazetteIssue(runtimeDatabase, issueNumber),
   readIssueFacts: async issueNumber => readGazetteIssueFacts(runtimeDatabase, issueNumber),
+  readPlaceNames: async ids => {
+    const requestedIds = new Set(ids)
+    const directory = await cachedPublicDirectory()
+    const names = new Map<number, string>()
+    for (const place of directory.places) {
+      if (requestedIds.has(place.id)) names.set(place.id, place.name)
+    }
+    return names
+  },
   origin: DOMAIN,
   robots: GAZETTE_ROBOTS_POLICY,
 })
@@ -1215,6 +1230,24 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const attention = cityCreditAttentionLines(creditAttention)
+  const gazettePointer = creditAttention.gazette
+  let gazette: ReturnType<typeof buildGazetteDelivery> | null = null
+  if (gazettePointer !== null && gazettePointer !== undefined) {
+    const now = new Date()
+    let full: Awaited<ReturnType<typeof readGazetteDeliveryFull>> | 'failed' = null
+    if (gazettePointer.newIssue) {
+      try {
+        full = await readGazetteDeliveryFull(executePrivateStoreQuery, gazettePointer.issueNumber)
+      } catch (error) {
+        console.error('gazette_delivery_failure', error instanceof Error ? error.name : typeof error)
+        full = 'failed'
+      }
+    }
+    gazette = buildGazetteDelivery(gazettePointer, now, full)
+    if (safeguardToolResponse(JSON.stringify(gazette)).withheld) {
+      gazette = gazetteDeliveryWithoutItems(gazettePointer, now)
+    }
+  }
   const toolsChanged = toolsChangedLine(
     creditAttention.last_visit_at,
     isHostedConnectorRequest(c.req.raw) ? 'hosted_chat' : 'coding',
@@ -1248,6 +1281,7 @@ app.get('/api/me', async c => {
       around_you: creditAttention.around_you,
       last_visit_at: creditAttention.last_visit_at,
     },
+    ...(gazette === null ? {} : { gazette }),
     front_door_tool: 'front_door',
     front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,

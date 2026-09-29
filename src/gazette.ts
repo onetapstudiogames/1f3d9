@@ -1,9 +1,11 @@
 import { EngineError, withEngineTransaction, type TaggedSql } from './engine.ts'
+import { composeGazetteHappenings } from './gazette-happenings.ts'
 import { PUBLIC_SYSTEM_EVENT_ACTORS } from './public-events.ts'
+import { GAZETTE_FIRST_PRINT_AT } from './gazette-schedule.ts'
 
 export const GAZETTE_ROOM_ID = 454
 export const GAZETTE_SUBMISSIONS_PER_CYCLE = 3
-export const GAZETTE_FIRST_PRINT_AT = '2026-08-31T16:00:00.000Z'
+export { GAZETTE_FIRST_PRINT_AT } from './gazette-schedule.ts'
 export const GAZETTE_LOCK_NAMESPACE = 0x1f3d9005
 export const GAZETTE_WITHDRAWAL_COMMAND = 'WITHDRAW #<your-note-id>'
 export const GAZETTE_WITHDRAWALS_CLOSED_ERROR =
@@ -105,13 +107,13 @@ export function gazetteIssueHeader(issueNumber: number, scheduledFor: string): s
     throw new RangeError('Gazette issue number does not match its print slot')
   }
   return [
-    `THE GAZETTE — ISSUE ${issueNumber}`,
+    `THE GAZETTE, ISSUE ${issueNumber}`,
     `Automatic weekly print for Monday, ${printDate(scheduledFor)}.`,
     'Source: ordinary notes submitted in the Gazette submission room, place #454.',
     'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
     'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
-    'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
+    'No AI editor, ranking, approval, or selection is used for entries. Moderation may hide public body display but never changes issue membership.',
   ].join('\n')
 }
 
@@ -143,7 +145,7 @@ export async function printGazetteIssuesDue(
   database: TaggedSql,
   through?: string | Date,
 ): Promise<readonly GazettePrintedIssue[]> {
-  return withEngineTransaction(database, async transaction => {
+  return withEngineTransaction(database, async (transaction, atomic) => {
     if (!transaction.query) {
       throw new EngineError(500, 'Gazette printer is unavailable because its database adapter cannot run transaction queries; configure transaction query support before printing')
     }
@@ -176,9 +178,24 @@ export async function printGazetteIssuesDue(
       ? postgresInstant(latestRows[0].scheduled_for, 'latest print slot')
       : null
     const slots = gazettePrintSlotsDue(latestScheduledFor, throughInstant)
+    const happeningsBlocks: string[] = []
+    for (const slot of slots) {
+      const baseHeader = gazetteIssueHeader(slot.issueNumber, slot.scheduledFor)
+      const endsAtMilliseconds = instantMilliseconds(slot.scheduledFor)
+      happeningsBlocks.push(await composeGazetteHappenings(
+        transaction,
+        atomic,
+        Object.freeze({
+          startsAt: new Date(endsAtMilliseconds - WEEK_MILLISECONDS).toISOString(),
+          endsAt: slot.scheduledFor,
+        }),
+        baseHeader,
+        GAZETTE_ROOM_ID,
+      ))
+    }
     const printed: GazettePrintedIssue[] = []
 
-    for (const slot of slots) {
+    for (const [slotIndex, slot] of slots.entries()) {
       const sourceRows = await transaction.query(`
         SELECT note.id
         FROM notes note
@@ -197,7 +214,7 @@ export async function printGazetteIssuesDue(
         ORDER BY note.created_at, note.id
       `, [GAZETTE_ROOM_ID, slot.scheduledFor]) as ReadonlyArray<{ id: unknown }>
       const noteIds = sourceRows.map(row => positiveDatabaseInteger(row.id, 'source note ID'))
-      const header = gazetteIssueHeader(slot.issueNumber, slot.scheduledFor)
+      const header = `${gazetteIssueHeader(slot.issueNumber, slot.scheduledFor)}\n${happeningsBlocks[slotIndex]}`
       const eventRows = await transaction.query(`
         INSERT INTO events (at, kind, actor, detail)
         VALUES (
