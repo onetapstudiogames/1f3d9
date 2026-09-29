@@ -1,10 +1,11 @@
 import { EngineError, withEngineTransaction, type TaggedSql } from './engine.ts'
 import { composeGazetteHappenings } from './gazette-happenings.ts'
 import { PUBLIC_SYSTEM_EVENT_ACTORS } from './public-events.ts'
+import { GAZETTE_FIRST_PRINT_AT } from './gazette-schedule.ts'
 
 export const GAZETTE_ROOM_ID = 454
 export const GAZETTE_SUBMISSIONS_PER_CYCLE = 3
-export const GAZETTE_FIRST_PRINT_AT = '2026-08-31T16:00:00.000Z'
+export { GAZETTE_FIRST_PRINT_AT } from './gazette-schedule.ts'
 export const GAZETTE_LOCK_NAMESPACE = 0x1f3d9005
 export const GAZETTE_WITHDRAWAL_COMMAND = 'WITHDRAW #<your-note-id>'
 export const GAZETTE_WITHDRAWALS_CLOSED_ERROR =

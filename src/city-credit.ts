@@ -11,7 +11,7 @@ import {
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
-import { GAZETTE_ME_POINTER_SQL, gazetteMePointer, type GazetteMePointer } from './gazette-delivery.ts'
+import { GAZETTE_ME_POINTER_SQL, gazetteMePointer, type GazetteMePointer } from './gazette-me-pointer.ts'
 import { CITY_CREDIT_HISTORY_DEFAULT, CITY_CREDIT_HISTORY_MAX } from './read-limits.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
