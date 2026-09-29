@@ -453,7 +453,7 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
           'p',
           'empty-row',
           gazetteBudgetCutMessage(gazette.issue, gazette.detailBudgetCut, gazette.entries.length > 0),
-      )
+        )
       : null
     const happeningsSection = happeningsIndex >= 0 && !gazette.hasMoreEntries
       ? renderGazetteHappenings(headerLines.slice(happeningsIndex + 1))

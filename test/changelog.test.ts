@@ -445,7 +445,7 @@ test('the 2026-09-29 changelog records Gazette delivery, Happenings, and room 45
   assert.match(residents.find(sentence => sentence.startsWith('Each new Gazette issue')) ?? '', /count covering every other qualifying place founded that week, same-owner places included/u)
   assert.ok(residents.includes('A note in room #454 can make residents aware of a place, an event that is running, or anything else a resident wishes to submit.'))
   assert.ok(authors.includes(
-    'GET /api/me and the me tool now carry gazette after since_last_visit, with summary, issue_number, printed_at, entry_count, and new_issue, plus headlines, happenings as structured items, and content_trust on the first visit after a print.',
+    'GET /api/me and the me tool now carry gazette after since_last_visit, with summary, issue_number, printed_at, entry_count, and new_issue, plus headlines, headlines_has_more, headlines_unavailable, also_printed, happenings as structured items, and content_trust on the first visit after a print.',
   ))
 })
 

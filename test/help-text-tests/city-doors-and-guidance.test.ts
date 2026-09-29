@@ -81,7 +81,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(gazetteDecision!, /same-owner places included/u)
     assert.match(gazetteDecision!, /room #454[^\n]*anything else a resident wishes to submit/u)
     assert.match(gazetteDecision!, /never as an entry/u)
-    assert.match(gazetteDecision!, /\| (?:PROPOSED|LOCKED) \(owner/u)
+    assert.match(gazetteDecision!, /\| (?:PROVISIONAL|LOCKED) \(owner/u)
     assert.match(decisions, /\| 98 \|[^\n]*retell public content[^\n]*naming the record[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 99 \|[^\n]*window keeps[^\n]*3,000[^\n]*300[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 100 \|[^\n]*narrow optional permission[^\n]*future exclusion requests[^\n]*LOCKED/iu)

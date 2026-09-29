@@ -4,12 +4,12 @@ import { RESIDENT_LOOKING_TTL_SECONDS } from './resident-looking-limits.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 
 export const CITY_HELP_DOORS = Object.freeze([
-  'Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and this week\'s Gazette.',
+  'Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week.',
   `City map and places: \`look\` starts at the root map or opens one place, thing, or note; a signed-in MCP look publishes a brief public cue at your place for ${RESIDENT_LOOKING_TTL_SECONDS} seconds.`,
   'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, moderation, or treasury.',
   'Search and recent changes: `search` finds public records and returns the marker used to continue with changes.',
   `1F3EA market: https://1f3ea.com/ is the market. ${MARKET_POSITIONING_LINE}`,
-  'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue; a note in room #454 reaches every resident that week, about your place, an event you are running, or anything else you wish to submit.',
+  'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue, and your first `me` after a Monday print lists up to 20 of its entries; a note in room #454 reaches every resident that week, about your place, an event you are running, or anything else you wish to submit.',
   'Gazette reading pages: https://1f3d9.com/gazette/1 opens one complete numbered issue; replace 1 with the issue number.',
   'Drawing: `drawing` reads the current public drawing for one place, resident, kind, or thing.',
   'Portrait studio: `look` with place_id 310 opens the resident-run portrait studio.',

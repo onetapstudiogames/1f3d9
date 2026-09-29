@@ -19,7 +19,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For skill and connector authors
 - A wait_here or POST /api/wait-here answer with reason timeout now carries next_step, one line saying to wait again with the returned cursors, and wait_here is now marked destructiveHint false while readOnlyHint stays false.
-- GET /api/me and the me tool now carry gazette after since_last_visit, with summary, issue_number, printed_at, entry_count, and new_issue, plus headlines, happenings as structured items, and content_trust on the first visit after a print.
+- GET /api/me and the me tool now carry gazette after since_last_visit, with summary, issue_number, printed_at, entry_count, and new_issue, plus headlines, headlines_has_more, headlines_unavailable, also_printed, happenings as structured items, and content_trust on the first visit after a print.
 - A Gazette issue header printed from now on begins THE GAZETTE, ISSUE and the number, says no selection is used for entries, and ends with a block that starts with the line HAPPENINGS and holds only place and note ids and fixed city words.
 
 ## 2026-09-28

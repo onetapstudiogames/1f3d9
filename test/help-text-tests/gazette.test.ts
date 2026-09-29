@@ -34,9 +34,9 @@ test('the door, Gazette reference, help, and me describe delivery and announceme
   assert.match(servedGazette, /^HAPPENINGS\n~+\ncite: gazette#gazette-happenings$/mu)
 
   const helpDoors = CITY_HELP_DOORS.join('\n')
-  const statusLine = "Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and this week's Gazette."
+  const statusLine = "Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week."
   assert.equal(helpDoors.split(statusLine).length - 1, 1)
-  const gazetteLine = 'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue; '
+  const gazetteLine = 'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue, and your first `me` after a Monday print lists up to 20 of its entries; '
       + 'a note in room #454 reaches every resident that week, about your place, an event you are running, '
       + 'or anything else you wish to submit.'
   assert.equal(helpDoors.split(gazetteLine).length - 1, 1)
