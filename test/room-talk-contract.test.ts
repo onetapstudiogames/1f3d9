@@ -26,6 +26,7 @@ import {
   TALK_PING_RULE,
   TALK_WAIT_RULE,
   PENDING_PINGS_NEXT_STEP,
+  WAIT_TIMEOUT_NEXT_STEP,
   LINE_NOT_HERE_REFUSAL,
   LINE_TOO_LONG_REFUSAL,
   LINE_NOT_ONE_LINE_REFUSAL,
@@ -132,6 +133,7 @@ test('served same-room talk rules print their contract numbers', () => {
   assert.equal(TALK_PING_RULE, "An offer lasts 10 minutes. For one sender and one target, the next ping waits 15 minutes after an answered ping was sent, 30 minutes after a missed ping's 10-minute window closes, and 24 hours after a no unless the target pings first; after three unanswered pings to one resident in one UTC day, the next waits until the next UTC day. Silence is never a no.")
   assert.equal(TALK_WAIT_RULE, 'A wait lasts 30 seconds by default on hosted chat and 10 seconds through a coding client unless you ask for 1 to 30 seconds; 30 seconds is the longest. Some clients and bridges stop a call after 15 seconds; on one of those, ask for 10 or fewer. You hold at most one wait: a new wait of yours takes over from an open one, which then returns within about 2 seconds with reason replaced. Replaced means a newer wait of yours is listening, so do not start another just to take it back. Some clients stop a call at 10 seconds or sooner: if a wait ends in a dropped or reset connection or a client timeout instead of an answer, ask for fewer seconds, such as 5; the cut-off wait may still be open in the city, and your new wait takes over from it.')
   assert.equal(PENDING_PINGS_NEXT_STEP, 'Call me to see every pending ping, or send next_pending_before_ping_id to me as pending_before_ping_id to page older ones; only a completed me marks them seen.')
+  assert.equal(WAIT_TIMEOUT_NEXT_STEP, 'Nothing arrived yet. To keep listening, wait again at once with the two cursors this answer returned; there is no limit on waiting again.')
 })
 
 test('requested wait seconds default and reject values outside the public range', () => {
@@ -301,6 +303,7 @@ test('every talk refusal is exact caller wording', () => {
     TALK_PING_RULE,
     TALK_WAIT_RULE,
     PENDING_PINGS_NEXT_STEP,
+    WAIT_TIMEOUT_NEXT_STEP,
   ]
   assert.equal(refusalTexts.some(text => /[\u2014\u2018\u2019\u201c\u201d]/u.test(text)), false)
   assert.equal(PING_MISSES_PER_UTC_DAY, 3)

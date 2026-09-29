@@ -34,6 +34,7 @@ import {
   WAIT_CURSOR_REFUSAL,
   WAIT_FIELDS_REFUSAL,
   WAIT_SECONDS_REFUSAL,
+  WAIT_TIMEOUT_NEXT_STEP,
   lineNotFoundRefusal,
   pingReadNotFoundRefusal,
   placeLinesNotFoundRefusal,
@@ -238,9 +239,11 @@ export function mountRoomTalkRoutes(app: Hono): void {
       ...entry,
       ping: publicPings[index]!,
     }))
+    const reason = held.reason === 'closed' ? 'timeout' : held.reason
     return c.json({
       place_id: lease.place_id,
-      reason: held.reason === 'closed' ? 'timeout' : held.reason,
+      reason,
+      ...(reason === 'timeout' ? { next_step: WAIT_TIMEOUT_NEXT_STEP } : {}),
       lines,
       lines_has_more: held.read.linesHasMore,
       next_after_line_change: held.read.next.line,

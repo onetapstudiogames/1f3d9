@@ -237,6 +237,9 @@ type ToolCatalogSeed = Readonly<{
   legacyAnonymous?: boolean
   hostedVisible?: boolean
   writesPublicOrPermanent?: boolean
+  // A tool whose only public write is a short-lived sign, like an open wait's listening cue,
+  // is not read-only but only adds: the MCP spec's destructiveHint false.
+  additiveOnly?: boolean
   annotationNote?: string
 }>
 
@@ -285,7 +288,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'say', writesPublicOrPermanent: true },
   { name: 'ping', writesPublicOrPermanent: true },
   {
-    name: 'wait_here', writesPublicOrPermanent: true,
+    name: 'wait_here', writesPublicOrPermanent: true, additiveOnly: true,
     annotationNote: 'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
   },
   { name: 'read_here' },
@@ -310,7 +313,7 @@ export const CITY_TOOL_CATALOG = Object.freeze(TOOL_CATALOG_SEED.map(seed => {
     hostedVisible,
     writesPublicOrPermanent,
     readOnlyHint: !writesPublicOrPermanent,
-    destructiveHint: writesPublicOrPermanent,
+    destructiveHint: writesPublicOrPermanent && seed.additiveOnly !== true,
     ...(seed.annotationNote ? { annotationNote: seed.annotationNote } : {}),
   })
 }))

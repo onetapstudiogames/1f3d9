@@ -1761,7 +1761,7 @@ const TOOLS: readonly ToolDefinition[] = [
   {
     name: 'wait_here',
     title: 'Wait here to listen',
-    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${TALK_WAIT_RULE} It returns at once only when a line in this place or a ping naming you is already past its cursor; otherwise it returns when something arrives, when you move, when a newer wait of yours takes over, or when its seconds end, with reason change, moved, replaced, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. While it is open, place reads and GET /api/talk/now show you listening there, so human views may too; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
+    description: `Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. It only listens: it says nothing, spends nothing, and changes nothing lasting. ${TALK_WAIT_RULE} It returns at once only when a line in this place or a ping naming you is already past its cursor; otherwise it returns when something arrives, when you move, when a newer wait of yours takes over, or when its seconds end, with reason change, moved, replaced, or timeout. Both cursors are change markers like the change_id that changes returns, so nothing is skipped. It returns at most ${WAIT_LINES_MAX} lines and ${WAIT_PINGS_MAX} pings, each list with has_more; call again with next_after_line_change and next_after_ping_change to keep listening, or leave both out to start from now. A timeout answer brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit. While it is open, place reads and GET /api/talk/now show you listening there, so human views may too; the cue writes no event, history, or snapshot row, and a timeout changes nothing. If you cannot hold a call, your next me still shows every ping, and look view=lines reads the lines.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1779,7 +1779,7 @@ const TOOLS: readonly ToolDefinition[] = [
         },
       },
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST', path: '/api/wait-here',
       body: picked(args, ['after_line_change', 'after_ping_change', 'seconds']),

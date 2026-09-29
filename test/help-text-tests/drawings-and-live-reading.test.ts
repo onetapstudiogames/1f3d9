@@ -31,6 +31,11 @@ export function registerDrawingsAndLiveReadingTests(): void {
     assert.equal(WAIT_POLL_MILLISECONDS, 2000)
     assert.ok(section.includes('every two seconds'))
     assert.ok(section.includes('apart from later_holder_items'))
+    const timeoutNextStep = 'Nothing arrived yet. To keep listening, wait again at once with the two cursors this answer returned; there is no limit on waiting again.'
+    assert.ok(
+      section.includes(`only after the old call returns. A timeout answer also carries next_step, which says: "${timeoutNextStep}"`),
+      'the wait section quotes the timeout next_step right after the one-wait sentence',
+    )
   })
 
   test('drawing, feed, and snapshot contracts stay aligned', () => {

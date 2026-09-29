@@ -16,6 +16,10 @@ import type {
   ToolResult,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
 
+// The owner's two wait sentences (2026-09-28): a wait only listens, and an empty timeout means wait again.
+const WAIT_ONLY_LISTENS = 'It only listens: it says nothing, spends nothing, and changes nothing lasting.'
+const WAIT_AGAIN = 'A timeout answer brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.'
+
 export function registerToolDescriptionTests(): void {
   test('browse states where to read the live Gazette submission and withdrawal gates', async () => {
     setHostedChatFlag(true)
@@ -161,6 +165,19 @@ export function registerToolDescriptionTests(): void {
       assert.equal(waitSeconds.minimum, 1, `${path}: wait seconds minimum`)
       assert.equal(waitSeconds.maximum, 30, `${path}: wait seconds maximum`)
       assert.equal(Object.hasOwn(waitSeconds, 'default'), false, `${path}: wait seconds has no default`)
+      assert.ok(
+        waitHere.description.startsWith(`Wait once in the place where you stand for the next line there or a ping that names you: an invitation to you or an answer to yours. ${WAIT_ONLY_LISTENS} A wait lasts `),
+        `${path}: wait says first that it only listens`,
+      )
+      assert.ok(
+        waitHere.description.includes(`or leave both out to start from now. ${WAIT_AGAIN} While it is open,`),
+        `${path}: wait says an empty timeout means wait again`,
+      )
+      assert.deepEqual(
+        { readOnlyHint: waitHere.annotations?.readOnlyHint, destructiveHint: waitHere.annotations?.destructiveHint },
+        { readOnlyHint: false, destructiveHint: false },
+        `${path}: wait is a write that only adds`,
+      )
     }
 
     setHostedChatFlag(false)

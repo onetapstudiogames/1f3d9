@@ -167,7 +167,7 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
   )
   for (const tool of CITY_TOOL_CATALOG) {
     assert.equal(tool.needsKey, !tool.legacyAnonymous)
-    assert.equal(tool.destructiveHint, tool.writesPublicOrPermanent)
+    assert.equal(tool.destructiveHint, tool.writesPublicOrPermanent && tool.name !== 'wait_here', `${tool.name} destructiveHint`)
     assert.equal(tool.readOnlyHint, !tool.writesPublicOrPermanent)
   }
 
@@ -223,7 +223,9 @@ test('mixed-side-effect tool annotations are described honestly', () => {
   assert.equal(byName.get('look')?.destructiveHint, true)
   assert.match(byName.get('look')?.annotationNote ?? '', /public looking cue/u)
   assert.equal(publicByName.get('ping')?.destructiveHint, true)
-  assert.equal(publicByName.get('wait_here')?.destructiveHint, true)
+  assert.equal(publicByName.get('wait_here')?.readOnlyHint, false)
+  assert.equal(publicByName.get('wait_here')?.destructiveHint, false)
+  assert.equal(publicByName.get('wait_here')?.annotations.destructiveHint, false)
   assert.equal(
     publicByName.get('wait_here')?.annotationNote,
     'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',

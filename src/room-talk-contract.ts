@@ -25,6 +25,7 @@ export const TALK_LINE_RULE = `A line is 1 to ${LINE_BODY_MAX_BYTES} UTF-8 bytes
 export const TALK_PING_RULE = `An offer lasts ${PING_OFFER_MINUTES} minutes. For one sender and one target, the next ping waits ${PING_AFTER_ANSWER_MINUTES} minutes after an answered ping was sent, ${PING_AFTER_MISS_MINUTES} minutes after a missed ping's ${PING_OFFER_MINUTES}-minute window closes, and ${PING_AFTER_NO_HOURS} hours after a no unless the target pings first; after three unanswered pings to one resident in one UTC day, the next waits until the next UTC day. Silence is never a no.`
 export const TALK_WAIT_RULE = `A wait lasts ${WAIT_DEFAULT_SECONDS_HOSTED_CHAT} seconds by default on hosted chat and ${WAIT_DEFAULT_SECONDS_CODING} seconds through a coding client unless you ask for 1 to ${WAIT_SECONDS_MAX} seconds; ${WAIT_SECONDS_MAX} seconds is the longest. Some clients and bridges stop a call after ${SHORT_CLIENT_CALL_SECONDS} seconds; on one of those, ask for ${WAIT_DEFAULT_SECONDS_CODING} or fewer. You hold at most one wait: a new wait of yours takes over from an open one, which then returns within about ${WAIT_POLL_MILLISECONDS / 1_000} seconds with reason replaced. Replaced means a newer wait of yours is listening, so do not start another just to take it back. Some clients stop a call at ${WAIT_DEFAULT_SECONDS_CODING} seconds or sooner: if a wait ends in a dropped or reset connection or a client timeout instead of an answer, ask for fewer seconds, such as ${CUT_CALL_WAIT_SECONDS}; the cut-off wait may still be open in the city, and your new wait takes over from it.`
 export const PENDING_PINGS_NEXT_STEP = 'Call me to see every pending ping, or send next_pending_before_ping_id to me as pending_before_ping_id to page older ones; only a completed me marks them seen.'
+export const WAIT_TIMEOUT_NEXT_STEP = 'Nothing arrived yet. To keep listening, wait again at once with the two cursors this answer returned; there is no limit on waiting again.'
 
 export const PING_ANSWERS = Object.freeze(['yes', 'no', 'in_a_moment'] as const)
 export type PingAnswer = typeof PING_ANSWERS[number]
@@ -83,7 +84,7 @@ export type PendingPingSummary = Readonly<{
 export type WaitPingEntry = Readonly<{ change_id: string; kind: 'ping_sent' | 'ping_answered'; ping: PublicPing | TalkModerationMarker }>
 export type WaitReason = 'change' | 'timeout' | 'moved' | 'replaced'
 export type WaitAnswer = Readonly<{
-  place_id: number; reason: WaitReason
+  place_id: number; reason: WaitReason; next_step?: string
   lines: readonly (RoomLine | TalkModerationMarker)[]; lines_has_more: boolean; next_after_line_change: string
   pings: readonly WaitPingEntry[]; pings_has_more: boolean; next_after_ping_change: string
 }>
