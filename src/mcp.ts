@@ -24,6 +24,7 @@ import {
 import { REFERENCE_SECTION_SLUGS } from './door.ts'
 import {
   containsCredentialLikeInput,
+  PRIVATE_CLAIM_TOKEN_RE,
   sanitizePublicReadText,
 } from './credential-safety.ts'
 import {
@@ -121,7 +122,7 @@ const HANDLE_PATTERN = HANDLE_RE.source
 const EVENT_KIND_PATTERN = '^[a-z][a-z0-9_]{0,63}$'
 const PAYMENT_ATTEMPT_ID_PATTERN = '^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$'
 const PAYMENT_ATTEMPT_ID = new RegExp(PAYMENT_ATTEMPT_ID_PATTERN, 'u')
-const PRIVATE_CLAIM_TOKEN = /gift_claim_[0-9a-f]{64}/iu
+const PRIVATE_CLAIM_TOKEN = PRIVATE_CLAIM_TOKEN_RE
 const PRIVATE_CLAIM_TOKEN_WITHHELD =
   'The city withheld a response that contained a private gift claim token.'
 const JSON_UNICODE_ESCAPE = /\\u[0-9a-f]{4}/iu

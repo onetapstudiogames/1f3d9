@@ -85,6 +85,7 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
 
 const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
 const { default: cityApp } = await import('../../src/index.ts')
+const { safeguardToolResponse } = await import('../../src/mcp.ts')
 const { GAZETTE_FIRST_PRINT_AT, gazetteCycleFor, printGazetteIssuesDue } = await import('../../src/gazette.ts')
 
 function runDocker(args: readonly string[]): string {
@@ -230,12 +231,13 @@ test('Gazette me delivery tracks the pinned PostgreSQL public change window', as
   ) + 1
   assert.ok(currentIssueNumber >= 4, 'the current print slot must leave room for catch-up issues')
 
-  const printThrough = async (issueNumber: number) => {
-    const scheduledFor = new Date(
+  const scheduledFor = (issueNumber: number) => new Date(
       Date.parse(GAZETTE_FIRST_PRINT_AT) + (issueNumber - 1) * WEEK_MILLISECONDS,
     )
-    return printGazetteIssuesDue(sql as Parameters<typeof printGazetteIssuesDue>[0], scheduledFor)
-  }
+  const printThrough = async (issueNumber: number) => printGazetteIssuesDue(
+    sql as Parameters<typeof printGazetteIssuesDue>[0],
+    scheduledFor(issueNumber),
+  )
 
   const firstRead = await readMe(RESIDENT_SECRETS[7])
   assert.equal(Object.hasOwn(firstRead, 'gazette'), false)
@@ -272,18 +274,76 @@ test('Gazette me delivery tracks the pinned PostgreSQL public change window', as
   assert.equal(nextGazette.issue_number, currentIssueNumber - 2)
   assert.equal(nextGazette.new_issue, true)
 
+  const claimToken = `GIFT_CLAIM_${'A'.repeat(64)}`
+  const credentialLike = '1f3d9_sk_abcdef12'
+  const issueWeekStart = Date.parse(scheduledFor(currentIssueNumber - 1).toISOString())
+  const issueWeekFixtureTime = new Date(issueWeekStart + 5 * 60_000).toISOString()
+  await database.query(`
+    INSERT INTO places (
+      id, parent_id, place_kind, name, description, purpose, owner_id, created_at
+    ) VALUES
+      (900701, 2, 'place', $1, 'Integration-only place with an unsafe name.', '', 9, $2::timestamptz),
+      (900702, 2, 'place', 'Plain Gazette Place', 'Integration-only place with a plain name.', '', 7, $2::timestamptz)
+  `, [claimToken, issueWeekFixtureTime])
+  await database.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
+  let issueNotes: Array<{ id: number; body: string }> = []
+  try {
+    issueNotes = (await database.query<{ id: number; body: string }>(`
+      INSERT INTO notes (place_id, author_id, body, created_at)
+      SELECT 454, 9,
+        CASE sequence.number
+          WHEN 1 THEN E'A multi-line headline.\\nThis line is not delivered.'
+          WHEN 2 THEN $1::text
+          WHEN 3 THEN $2::text
+          WHEN 4 THEN 'later removed headline'
+          ELSE 'headline ' || sequence.number::text
+        END,
+        $3::timestamptz + (sequence.number - 1) * interval '1 minute'
+      FROM generate_series(1, 21) AS sequence(number)
+      RETURNING id, body
+    `, [claimToken, credentialLike, issueWeekFixtureTime])).rows
+  } finally {
+    await database.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_submission_limit')
+  }
+
   await printThrough(currentIssueNumber)
+  const removedNote = issueNotes.find(note => note.body === 'later removed headline')
+  assert.ok(removedNote)
+  await database.query(`
+    INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason, created_at)
+    VALUES ('note', $1, 'remove', 1, 'Gazette delivery integration fixture', now())
+  `, [removedNote.id])
   const currentRead = await readMe(RESIDENT_SECRETS[7])
   const currentGazette = currentRead.gazette as {
     issue_number: number
     new_issue: boolean
     also_printed: number[]
     summary: string
+    headlines: Array<{
+      ordinal: number
+      note_id: number
+      first_line: string | null
+      first_line_withheld?: boolean
+    }>
+    headlines_has_more: boolean
+    happenings: Array<{ section: string; place_id?: number; name?: string | null }>
   }
   assert.equal(currentGazette.issue_number, currentIssueNumber)
   assert.equal(currentGazette.new_issue, true)
   assert.deepEqual(currentGazette.also_printed, [currentIssueNumber - 1])
   assert.doesNotMatch(currentGazette.summary, /is being printed now/u)
+  assert.equal(currentGazette.headlines.length, 20)
+  assert.equal(currentGazette.headlines_has_more, true)
+  assert.equal(currentGazette.headlines[0]?.first_line, 'A multi-line headline.')
+  assert.equal(currentGazette.headlines[1]?.first_line, null)
+  assert.equal(currentGazette.headlines[1]?.first_line_withheld, true)
+  assert.equal(currentGazette.headlines[2]?.first_line, null)
+  assert.equal(currentGazette.headlines[2]?.first_line_withheld, true)
+  assert.equal(currentGazette.headlines[3]?.first_line, '[removed by maintainer]')
+  assert.equal(currentGazette.headlines[3]?.first_line_withheld, undefined)
+  assert.equal(currentGazette.happenings.find(item => item.place_id === 900701)?.name, null)
+  assert.equal(currentGazette.happenings.find(item => item.place_id === 900702)?.name, 'Plain Gazette Place')
+  assert.equal(safeguardToolResponse(JSON.stringify(currentRead)).withheld, false)
 
   const finalLaterRead = await readMe(RESIDENT_SECRETS[7])
   const finalLaterGazette = finalLaterRead.gazette as { new_issue: boolean; summary: string }

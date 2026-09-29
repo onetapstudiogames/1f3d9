@@ -326,7 +326,12 @@ export function respondToDatabaseStage1(
           after_change_id: window.after_change_id,
           through_change_id: window.through_change_id,
           gazette: window.gazette,
-        }]
+      }]
+  }
+  if (q.includes('/* gazette:me-delivery-full */')) {
+    const result = fixtureState.current.gazetteFull
+    if (result instanceof Error) throw result
+    return result ?? []
   }
   if (q.includes('/* city-credit:admit-me-summary */')) return [{ slot: 0 }]
   if (/\/\* city-credit:(?:save-me-summary|me-summary-timeout|me-summary-parallel|release-me-summary|rollback-me-summary) \*\//u.test(q)) return []

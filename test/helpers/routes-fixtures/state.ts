@@ -218,6 +218,7 @@ interface FakeState {
     through_change_id: string
     gazette: unknown
   }> | null
+  gazetteFull: Record<string, unknown>[] | Error | null
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
@@ -329,6 +330,7 @@ const initialState = (): FakeState => ({
   attentionPendingGiftsCount: 0,
   attentionLastVisitAt: null,
   gazetteWindow: null,
+  gazetteFull: null,
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,

@@ -2,10 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readCityCreditAttention } from '../src/city-credit.ts'
 import {
+  GAZETTE_CONTENT_TRUST,
+  GAZETTE_DELIVERY_HEADLINE_LIMIT,
   buildGazetteDelivery,
+  gazetteDeliveryWithoutItems,
   gazetteMePointer,
   gazetteSummary,
 } from '../src/gazette-delivery.ts'
+import {
+  CREDENTIAL_LIKE_INPUT_RE,
+  PRIVATE_CLAIM_TOKEN_RE,
+  residentTextSafeForBroadcast,
+} from '../src/credential-safety.ts'
 import { MarkerDatabase } from './helpers/city-credit-fixtures/ledger-database.ts'
 
 const ISSUE_SIX = Object.freeze({
@@ -129,11 +137,21 @@ test('Gazette summary covers each form, count wording, catch-up issues, and a la
 })
 
 test('built Gazette delivery keeps its public field order and omits empty catch-up issues', () => {
-  const result = buildGazetteDelivery(ISSUE_SIX, new Date('2026-10-07T10:00:00.000Z'))
+  const result = buildGazetteDelivery(ISSUE_SIX, new Date('2026-10-07T10:00:00.000Z'), {
+    header: 'THE GAZETTE, ISSUE 6',
+    entries: [{ ordinal: 1, note_id: 21, author: 'tiny-lantern', first_line: 'hello' }],
+    place_names: {},
+  })
   assert.deepEqual(Object.keys(result), [
     'summary', 'issue_number', 'printed_at', 'entry_count', 'new_issue',
+    'headlines', 'headlines_has_more', 'content_trust',
   ])
   assert.equal(result.new_issue, true)
+  assert.deepEqual(result.headlines, [
+    { ordinal: 1, note_id: 21, author: 'tiny-lantern', first_line: 'hello' },
+  ])
+  assert.equal(result.headlines_has_more, false)
+  assert.equal(result.content_trust, GAZETTE_CONTENT_TRUST)
   assert.equal('also_printed' in result, false)
   assert.deepEqual(buildGazetteDelivery({ ...ISSUE_SIX, newIssue: false, alsoPrinted: [5] }, new Date('2026-10-07T10:00:00.000Z')), {
     summary: gazetteSummary({ ...ISSUE_SIX, newIssue: false, alsoPrinted: [5] }, new Date('2026-10-07T10:00:00.000Z'), 'later'),
@@ -143,6 +161,74 @@ test('built Gazette delivery keeps its public field order and omits empty catch-
     new_issue: false,
     also_printed: [5],
   })
+})
+
+test('broadcast guard refuses credentials and private claim tokens in first lines and names', () => {
+  const lowerClaim = `gift_claim_${'a'.repeat(64)}`
+  const upperClaim = `GIFT_CLAIM_${'A'.repeat(64)}`
+  const credential = '1F3D9_SK_abcdef12'
+  assert.equal(PRIVATE_CLAIM_TOKEN_RE.test(lowerClaim), true)
+  assert.equal(PRIVATE_CLAIM_TOKEN_RE.test(upperClaim), true)
+  assert.equal(CREDENTIAL_LIKE_INPUT_RE.test(credential), true)
+  assert.equal(residentTextSafeForBroadcast(lowerClaim), false)
+  assert.equal(residentTextSafeForBroadcast(upperClaim), false)
+  assert.equal(residentTextSafeForBroadcast(credential), false)
+  assert.equal(residentTextSafeForBroadcast('a plain public line'), true)
+
+  const gazette = buildGazetteDelivery(ISSUE_SIX, new Date('2026-10-07T10:00:00.000Z'), {
+    header: [
+      'THE GAZETTE, ISSUE 6',
+      'HAPPENINGS',
+      'Places founded: place #701, place #702.',
+    ].join('\n'),
+    entries: [{ ordinal: 1, note_id: 88, author: 'tiny-lantern', first_line: lowerClaim }],
+    place_names: { '701': upperClaim, '702': 'Plain Park' },
+  })
+  assert.deepEqual(gazette.headlines, [{
+    ordinal: 1,
+    note_id: 88,
+    author: 'tiny-lantern',
+    first_line: null,
+    first_line_withheld: true,
+  }])
+  assert.deepEqual(gazette.happenings, [
+    { section: 'places_founded', place_id: 701, name: null },
+    { section: 'places_founded', place_id: 702, name: 'Plain Park' },
+  ])
+})
+
+test('Gazette delivery limits headlines, omits a missing Happenings column, and has an unavailable form', () => {
+  const now = new Date('2026-10-07T10:00:00.000Z')
+  assert.equal(GAZETTE_DELIVERY_HEADLINE_LIMIT, 20)
+  const manyEntries = Array.from({ length: 21 }, (_, index) => ({
+    ordinal: index + 1,
+    note_id: index + 100,
+    author: 'tiny-lantern',
+    first_line: `headline ${index + 1}`,
+  }))
+  const full = {
+    header: 'THE GAZETTE, ISSUE 6',
+    entries: manyEntries,
+    place_names: {},
+  }
+  const complete = buildGazetteDelivery(ISSUE_SIX, now, full)
+  assert.equal(complete.headlines?.length, 20)
+  assert.equal(complete.headlines_has_more, true)
+  assert.equal('happenings' in complete, false)
+
+  const unavailable = gazetteDeliveryWithoutItems(ISSUE_SIX, now)
+  assert.deepEqual(buildGazetteDelivery(ISSUE_SIX, now, null), unavailable)
+  assert.equal(unavailable.headlines_unavailable, true)
+  assert.equal('headlines' in unavailable, false)
+  assert.equal('happenings' in unavailable, false)
+  assert.match(unavailable.summary, /headlines could not be read on this visit/u)
+
+  const oldHeader = buildGazetteDelivery(ISSUE_SIX, now, {
+    header: 'THE GAZETTE, ISSUE 5',
+    entries: [],
+    place_names: {},
+  })
+  assert.equal('happenings' in oldHeader, false)
 })
 
 test('me attention reads the Gazette pointer from the pinned window without another statement', async () => {
