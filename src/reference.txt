@@ -2143,7 +2143,8 @@ anything. In the window issue header, both Read and Share use
 `/gazette/<issue_number>`. At the top of the standalone page, `Share issue
 <issue_number>` shares or copies that same canonical `/gazette/<issue_number>`
 URL, and `Open city window` goes to
-`/window/gazette?issue=<issue_number>`.
+  `/window/gazette?issue=<issue_number>`.
+After the last entry, an issue with a Happenings column shows it once, marked as written by the Gazette printer from the public record, with current place names.
 
 THE ISSUE CARD
 ~~~~~~~~~~~~~~

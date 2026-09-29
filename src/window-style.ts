@@ -1477,6 +1477,21 @@ button { color: inherit; }
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
+.gazette-happenings {
+  min-width: 0;
+  margin-block-start: 1rem;
+  padding: clamp(0.8rem, 2.5vw, 1.15rem);
+  background: var(--paper-light);
+  border: 2px solid var(--line);
+}
+.gazette-happenings h4 {
+  margin: 0 0 0.65rem;
+  color: var(--forest-deep);
+}
+.gazette-happenings p {
+  margin: 0.55rem 0;
+  overflow-wrap: anywhere;
+}
 .gazette-entry {
   min-width: 0;
   padding: clamp(0.8rem, 2.5vw, 1.15rem);

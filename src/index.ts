@@ -94,6 +94,7 @@ import {
   utf8TextBytes,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { cachedPublicDirectory } from './public-directory.ts'
 import { mountLegalRoutes } from './legal.ts'
 import { mountHumanPages } from './human-pages.ts'
 import { guidePage } from './human-guide-response.ts'
@@ -879,6 +880,15 @@ mountGazetteRoutes(app, {
 mountGazetteReadingRoutes(app, {
   readIssue: async issueNumber => readCompleteGazetteIssue(runtimeDatabase, issueNumber),
   readIssueFacts: async issueNumber => readGazetteIssueFacts(runtimeDatabase, issueNumber),
+  readPlaceNames: async ids => {
+    const requestedIds = new Set(ids)
+    const directory = await cachedPublicDirectory()
+    const names = new Map<number, string>()
+    for (const place of directory.places) {
+      if (requestedIds.has(place.id)) names.set(place.id, place.name)
+    }
+    return names
+  },
   origin: DOMAIN,
   robots: GAZETTE_ROBOTS_POLICY,
 })
