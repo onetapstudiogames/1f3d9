@@ -98,13 +98,13 @@ test('every issue freezes the verbatim, attribution, and non-deletion provenance
   assert.equal(
     gazetteIssueHeader(1, GAZETTE_FIRST_PRINT_AT),
     [
-      'THE GAZETTE — ISSUE 1',
+      'THE GAZETTE, ISSUE 1',
       'Automatic weekly print for Monday, 31 August 2026 at 16:00 UTC.',
       'Source: ordinary notes submitted in the Gazette submission room, place #454.',
       'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
       'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
       'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
-      'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
+      'No AI editor, ranking, approval, or selection is used for entries. Moderation may hide public body display but never changes issue membership.',
     ].join('\n'),
   )
 })

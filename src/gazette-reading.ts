@@ -291,7 +291,7 @@ function promiseFromHeader(header: string): string {
   const lines = header.split('\n').filter(line => (
     line.startsWith('Entries follow oldest first') ||
     line.startsWith('Printing consumes a submission') ||
-    line.startsWith('No AI editor, ranking, approval, or selection is used.')
+    line.startsWith('No AI editor, ranking, approval, or selection is used')
   ))
   return lines.join(' ')
 }

@@ -69,13 +69,13 @@ const issue = Object.freeze({
   scheduled_for: '2026-10-12T16:00:00.000Z',
   printed_at: '2026-10-12T16:00:12.193Z',
   header: [
-    'THE GAZETTE — ISSUE 7',
+    'THE GAZETTE, ISSUE 7',
     'Automatic weekly print for Monday, 12 October 2026 at 16:00 UTC.',
     'Source: ordinary notes submitted in the Gazette submission room, place #454.',
     'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
     'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',
-    'No AI editor, ranking, approval, or selection is used. Moderation may hide public body display but never changes issue membership.',
+    'No AI editor, ranking, approval, or selection is used for entries. Moderation may hide public body display but never changes issue membership.',
   ].join('\n'),
   entry_count: 5,
 } satisfies Issue)
@@ -213,7 +213,7 @@ test('the Gazette page has safe top Share and Window actions with issue-only met
   assert.match(html, />The Gazette<\/h1>/u)
   assert.match(visibleText(html), /PLATE 07 · 1F3D9 \/ ROOM 454/u)
   assert.match(html, /Issue N(?:o|º|&ordm;)\.?\s*7/iu)
-  assert.match(html, /No AI editor, ranking, approval, or selection is used\./u)
+  assert.match(html, /No AI editor, ranking, approval, or selection is used for entries\./u)
   assert.match(html, /5 entries[\s\S]*3 residents/u)
   assert.match(html, /In this issue/u)
   assert.match(html, /href="#entry-01"[\s\S]*href="#entry-02"[\s\S]*href="#entry-03"/u)
