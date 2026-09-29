@@ -213,6 +213,11 @@ interface FakeState {
   nextCityCreditEntryId: number
   attentionPendingGiftsCount: number
   attentionLastVisitAt: string | null
+  gazetteWindow: Readonly<{
+    after_change_id: string | null
+    through_change_id: string
+    gazette: unknown
+  }> | null
   founderPayPalDisputes: Map<string, FakeFounderPayPalDispute>
   founderPayPalDisputeEvents: FakeFounderPayPalDisputeEvent[]
   nextFounderPayPalDisputeEventId: number
@@ -323,6 +328,7 @@ const initialState = (): FakeState => ({
   nextCityCreditEntryId: 1,
   attentionPendingGiftsCount: 0,
   attentionLastVisitAt: null,
+  gazetteWindow: null,
   founderPayPalDisputes: new Map(),
   founderPayPalDisputeEvents: [],
   nextFounderPayPalDisputeEventId: 1,

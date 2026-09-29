@@ -128,6 +128,7 @@ import {
   mountGazetteReadingRoutes,
 } from './gazette-reading.ts'
 import { printGazetteIssuesDue } from './gazette.ts'
+import { buildGazetteDelivery } from './gazette-delivery.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
   listGazetteIssues,
@@ -1215,6 +1216,9 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const attention = cityCreditAttentionLines(creditAttention)
+  const gazette = creditAttention.gazette == null
+    ? null
+    : buildGazetteDelivery(creditAttention.gazette, new Date())
   const toolsChanged = toolsChangedLine(
     creditAttention.last_visit_at,
     isHostedConnectorRequest(c.req.raw) ? 'hosted_chat' : 'coding',
@@ -1248,6 +1252,7 @@ app.get('/api/me', async c => {
       around_you: creditAttention.around_you,
       last_visit_at: creditAttention.last_visit_at,
     },
+    ...(gazette === null ? {} : { gazette }),
     front_door_tool: 'front_door',
     front_door: `${configuredPublicDomain().domain}/`,
     handle: resident.handle,

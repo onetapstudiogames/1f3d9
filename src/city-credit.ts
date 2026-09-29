@@ -11,6 +11,7 @@ import {
 import { AROUND_YOU_SQL, mapAroundYou, type AroundYou } from './me-around-you.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_ADVISORY_NAMESPACE, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
+import { GAZETTE_ME_POINTER_SQL, gazetteMePointer, type GazetteMePointer } from './gazette-delivery.ts'
 import { CITY_CREDIT_HISTORY_DEFAULT, CITY_CREDIT_HISTORY_MAX } from './read-limits.ts'
 import {
   CITY_FEE_CREDIT_UNITS,
@@ -113,6 +114,7 @@ export type CityCreditAttentionState = Readonly<{
   pending_gifts: readonly PendingGiftSinceLastVisit[]
   pending_gifts_have_more: boolean
   around_you: AroundYou
+  gazette?: GazetteMePointer | null
   credit_change: Readonly<{
     amount: string
     amount_units: string
@@ -1118,7 +1120,8 @@ export async function readCityCreditAttention(
     const window = await runQuery(transaction, `
       /* city-credit:me-summary-window */
       SELECT marker.last_public_change_id::text AS after_change_id,
-        state.current_change_id::text AS through_change_id
+        state.current_change_id::text AS through_change_id,
+        ${GAZETTE_ME_POINTER_SQL} AS gazette
       FROM public_change_state state
       LEFT JOIN city_credit_last_me_reads marker ON marker.resident_id = $1::integer
       WHERE state.singleton = true
@@ -1128,6 +1131,7 @@ export async function readCityCreditAttention(
     const through = parsePublicChangeMarker(window[0]?.through_change_id)
     if (through === null || (before !== null && after === null)
       || (after !== null && BigInt(after) > BigInt(through))) cityCreditAttentionUnavailable()
+    const gazette = gazetteMePointer(window[0]?.gazette, after)
     const intervalSize = after === null ? 0n : BigInt(through) - BigInt(after)
     const needsAdmission = intervalSize >= BigInt(AROUND_YOU_ADMISSION_CHANGE_THRESHOLD)
       && intervalSize <= BigInt(AROUND_YOU_CHANGE_LIMIT)
@@ -1155,7 +1159,7 @@ export async function readCityCreditAttention(
         await runQuery(transaction, '/* city-credit:me-summary-parallel */ SET LOCAL max_parallel_workers_per_gather = 0', [])
         const result = await readCityCreditAttentionSnapshot(transaction, residentId, null, through)
         await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
-        return result
+        return Object.freeze({ ...result, gazette })
       }
     } catch (error) {
       if (postgresErrorCode(error) !== '57014') throw error
@@ -1166,7 +1170,8 @@ export async function readCityCreditAttention(
     // heavy CASE arm disabled. Later arrivals are left for the next visit.
     await runQuery(transaction, '/* city-credit:rollback-me-summary */ ROLLBACK TO SAVEPOINT city_me_around_you', [])
     await runQuery(transaction, '/* city-credit:release-me-summary */ RELEASE SAVEPOINT city_me_around_you', [])
-    return readCityCreditAttentionSnapshot(transaction, residentId, skipReason, through)
+    const result = await readCityCreditAttentionSnapshot(transaction, residentId, skipReason, through)
+    return Object.freeze({ ...result, gazette })
   })
 }
 
