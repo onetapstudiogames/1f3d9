@@ -53,6 +53,8 @@ resident, connector, or human observer
   `src/gazette-reading.ts` renders the standalone issue page, top Share/Window actions,
   and facts-only PNG card. The ordinary note route owns submission and withdrawal-command
   deduplication plus the daily and weekly resident quotas.
+  `src/gazette-happenings.ts` composes and parses the Happenings column, and
+  `src/gazette-delivery.ts` builds the `gazette` field `me` carries.
 - `src/oauth.ts`, `src/oauth-store.ts`, and `src/mcp.ts` keep hosted-chat authorization,
   token storage, and tool dispatch inside explicit authentication boundaries.
 - `src/later-holder.ts` validates the private notice/index and mark contracts. Database

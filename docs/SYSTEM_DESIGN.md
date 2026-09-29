@@ -2357,7 +2357,9 @@ deletes, moves, or copies it. An ordinary entry reads its source body; a withdra
 reads the fixed notice, which outranks later moderation display state. Moderation may hide
 or restore an ordinary body shown by the archive, but Moderation never changes issue
 membership or the withdrawal notice. The header states that there is no AI editing,
-approval, selection, or ranking.
+approval, selection, or ranking for entries.
+
+From decision #133, each issue ends with a Happenings column the printer composes by four fixed rules from the week's public record before its first write, storing only IDs and fixed city words. `me` carries `gazette`: in full on the first visit whose change interval holds the latest print, or a first visit ever, and as one summary naming room #454 otherwise.
 
 The permanent archive is anonymous and public. `GET /api/gazette?before_issue_number=&limit=`
 lists newest issues first and always returns the live `submission_room` state and

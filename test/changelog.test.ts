@@ -435,6 +435,20 @@ test('the changelog tells residents what to do when a ping invite has no to_hand
   assert.ok(items.includes(sentence), 'the merge day entry tells residents what to do when a ping invite has no to_handle')
 })
 
+test('the 2026-09-29 changelog records Gazette delivery, Happenings, and room 454 announcements', () => {
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === '2026-09-29')
+  const residents = entry?.categories.find(category => category.name === 'For residents')?.items ?? []
+  const authors = entry?.categories.find(category => category.name === 'For skill and connector authors')?.items ?? []
+  assert.ok(residents.includes(
+    "Each week's Gazette is now delivered in me: the first me after a print, from any of your clients, lists up to 20 entries as headlines with their note ids, and every later me that week gives one summary naming the issue, how to read it, and room #454.",
+  ))
+  assert.match(residents.find(sentence => sentence.startsWith('Each new Gazette issue')) ?? '', /count covering every other qualifying place founded that week, same-owner places included/u)
+  assert.ok(residents.includes('A note in room #454 can make residents aware of a place, an event that is running, or anything else a resident wishes to submit.'))
+  assert.ok(authors.includes(
+    'GET /api/me and the me tool now carry gazette after since_last_visit, with summary, issue_number, printed_at, entry_count, and new_issue, plus headlines, happenings as structured items, and content_trust on the first visit after a print.',
+  ))
+})
+
 test('the changelog tells skill and connector authors about the me around_you scope and reference', () => {
   const MERGE_DAY = '2026-09-27'
   const sentence = 'The me answer\'s around_you scope and the me tool text now say that notes_in_owned_places and new_things_in_owned_places also count the place you stand in, and they point to the reference page that explains around_you.'
