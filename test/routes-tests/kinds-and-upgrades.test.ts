@@ -97,6 +97,33 @@ export function registerKindsAndUpgradesTests(): void {
     }
   })
 
+  test('coin_trait names the step and the rule when it refuses a recipe, and stores nothing', async () => {
+    reset({ scenario: 'trait recipe refusal names the step' })
+    const response = await app.request('/api/trait', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        name: 'crossing-gate-probe',
+        recipe: {
+          use: [
+            { effect: 'label', target: 'actor', label: 'a' },
+            { effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'b', then: [] }] },
+          ],
+        },
+      }),
+    })
+    assert.equal(response.status, 400)
+    const body = await response.json() as { error: string }
+    assert.equal(body.error, "recipe refused at use, step 2, then step 1: label takes no then or else; call physics for every brick's fields, defaults, and limits")
+    assert.equal(
+      sqlCalls().some(call => (
+        /\b(?:insert|update|delete)\b/iu.test(call.query ?? '')
+        && /\b(?:traits|events)\b/iu.test(call.query ?? '')
+      )),
+      false,
+    )
+  })
+
   test('an uncoined kind trait answers with the reason, not "internal"', async () => {
     reset({ scenario: 'uncoined kind trait', chainFrom: SELLER_WALLET, chainTo: TREASURY })
     const response = await app.request('/api/kind', {
