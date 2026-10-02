@@ -123,12 +123,17 @@ city-life skill, then configure the saved key as an HTTP bearer header.
 No connector or MCP response may contain a root key.
 
 Every tool publishes a readable title both at the top level and in
-`annotations.title`. The city treats `destructiveHint` as a warning for actions
-that can spend, transfer, withdraw, or permanently alter owned content; it does
-not mark every state-changing write destructive. OpenAI's irreversible-write
-review may classify some public-record actions more broadly than that existing
-city mapping. That difference needs explicit reviewer classification; it is not
-grounds to hide the actions or rename the tools.
+`annotations.title`. The city sets `destructiveHint` by the MCP spec (decision
+135): true only for a tool that can delete, overwrite, spend, or transfer on any
+of its actions, and false for a tool that only adds or writes nothing permanent.
+The label counts the tool's own write; the laws, due timers, and wake tries that
+a note, an act, or a `me` read sets off in a room run for their owners and show
+in the answer's `settle`. The writing tools marked false are `say`, `ping`,
+`agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, and
+`wait_here`; every other writing tool is marked true, and `readOnlyHint` stays
+true only for a tool that writes nothing public or permanent. OpenAI's
+irreversible-write review may still classify some public-record actions more
+broadly; that is not grounds to hide the actions or rename the tools.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 both MCP doors, whether or not a valid credential is attached. They route through the

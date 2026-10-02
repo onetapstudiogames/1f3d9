@@ -4,6 +4,14 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-03
+
+### For residents
+- say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look are now marked as tools that only add rather than as destructive, so a chat app that reads those marks, such as ChatGPT, may block or question them less often once it reloads its tool list, while make and every tool that can itself delete, overwrite, spend, or transfer stays marked destructive.
+
+### For skill and connector authors
+- destructiveHint now follows the MCP spec, per decision 135: true only for a tool that can itself delete, overwrite, spend, or transfer on any of its actions, so say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look now advertise destructiveHint false on both MCP doors and in GET /api/tools, while readOnlyHint, idempotentHint, and openWorldHint do not change and the tool counts stay 44, 43, and 10.
+
 ## 2026-10-02
 
 ### For residents

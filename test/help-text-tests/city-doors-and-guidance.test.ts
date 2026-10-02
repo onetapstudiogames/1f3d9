@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { CITY_TOOL_CATALOG } from '../../src/city-facts.ts'
 import { ABOUT_HTML, generatedReference, architecture, communityToolTemplate, contributorGuide, decisions, drawingDesign, referenceSource, hostedSignin, invariants, read, readme, specification, workingStandard } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerCityDoorsAndGuidanceTests(): void {
@@ -44,10 +45,11 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 134 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 134)
-    assert.match(contributorGuide, /\(134 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 135 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 135)
+    assert.match(contributorGuide, /\(135 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
+    assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
     assert.ok(normalizedReference.includes('If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.'))
     assert.ok(normalizedReference.includes('The owner of a place founded before 2 September 2026, when renaming arrived, may also ask there for one credit to rename it, once per place.'))
@@ -165,6 +167,20 @@ export function registerCityDoorsAndGuidanceTests(): void {
     )
     assert.match(decisions, /\| 50 \|[^\n]*legacy `\/mcp` advertises 40 tools[^\n]*hosted `\/mcp\/connect` advertises 39/iu)
     assert.match(contributorGuide, /rule learned only by rejection,\s+silent mutation, silent replay, or silent omission is a defect/iu)
+  })
+
+  test('the hosted sign-in and design docs state the destructiveHint rule and list the same tools as the catalog', () => {
+    const normalizedHostedSignin = hostedSignin.replace(/\s+/gu, ' ')
+    assert.ok(normalizedHostedSignin.includes('The city sets `destructiveHint` by the MCP spec (decision 135): true only for a tool that can delete, overwrite, spend, or transfer on any of its actions, and false for a tool that only adds or writes nothing permanent.'))
+    assert.ok(normalizedHostedSignin.includes("The label counts the tool's own write; the laws, due timers, and wake tries that a note, an act, or a `me` read sets off in a room run for their owners and show in the answer's `settle`."))
+    assert.ok(normalizedHostedSignin.includes('The writing tools marked false are `say`, `ping`, `agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, and `wait_here`;'))
+    assert.doesNotMatch(normalizedHostedSignin, /does not mark every state-changing write destructive/iu)
+    const normalizedSpecification = specification.replace(/\s+/gu, ' ')
+    assert.ok(normalizedSpecification.includes('because the cue only adds, it also advertises `destructiveHint: false` (decision 135).'))
+    assert.deepEqual(
+      CITY_TOOL_CATALOG.filter(tool => !tool.readOnlyHint && !tool.destructiveHint).map(tool => tool.name).sort(),
+      ['agree', 'coin_trait', 'flag', 'look', 'open_agreement_accession', 'ping', 'say', 'sign', 'wait_here'],
+    )
   })
 
   test('repository and public copy state the current city boundary truth', () => {

@@ -2092,7 +2092,8 @@ Opening or reconnecting may paint current status, but no consumer reconstructs a
 or replays expired bursts. Repeated observations of the same `started_at` combine. Quiet
 room presentation rules still apply in the human window; the underlying public APIs remain
 public. Because this presentation side effect is possible, MCP advertises `look` with
-`readOnlyHint: false`; its non-destructive and no-timer guarantees remain true.
+`readOnlyHint: false`; because the cue only adds, it also advertises `destructiveHint: false`
+(decision 135). Its non-destructive and no-timer guarantees remain true.
 
 A direct place response includes at most 200 current `looking_residents` and a
 `looking_residents_page` object with exact `total_items`, `returned_items`, and `has_more`.

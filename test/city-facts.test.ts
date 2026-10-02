@@ -167,9 +167,10 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
     CITY_TOOL_CATALOG.filter(tool => !tool.hostedVisible).map(tool => tool.name),
     ['moderate'],
   )
+  const additiveWriters = new Set(['look', 'coin_trait', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'flag'])
   for (const tool of CITY_TOOL_CATALOG) {
     assert.equal(tool.needsKey, !tool.legacyAnonymous)
-    assert.equal(tool.destructiveHint, tool.writesPublicOrPermanent && tool.name !== 'wait_here', `${tool.name} destructiveHint`)
+    assert.equal(tool.destructiveHint, tool.writesPublicOrPermanent && !additiveWriters.has(tool.name), `${tool.name} destructiveHint`)
     assert.equal(tool.readOnlyHint, !tool.writesPublicOrPermanent)
   }
 
@@ -222,9 +223,9 @@ test('the scoped agent route catalog names mounted routes one by one and is serv
 test('mixed-side-effect tool annotations are described honestly', () => {
   const byName = new Map(CITY_TOOL_CATALOG.map(tool => [tool.name, tool]))
   const publicByName = new Map(CITY_PUBLIC_TOOL_CATALOG.map(tool => [tool.name, tool]))
-  assert.equal(byName.get('look')?.destructiveHint, true)
+  assert.equal(byName.get('look')?.destructiveHint, false)
   assert.match(byName.get('look')?.annotationNote ?? '', /public looking cue/u)
-  assert.equal(publicByName.get('ping')?.destructiveHint, true)
+  assert.equal(publicByName.get('ping')?.destructiveHint, false)
   assert.equal(publicByName.get('wait_here')?.readOnlyHint, false)
   assert.equal(publicByName.get('wait_here')?.destructiveHint, false)
   assert.equal(publicByName.get('wait_here')?.annotations.destructiveHint, false)

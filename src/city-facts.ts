@@ -243,8 +243,10 @@ type ToolCatalogSeed = Readonly<{
   legacyAnonymous?: boolean
   hostedVisible?: boolean
   writesPublicOrPermanent?: boolean
-  // A tool whose only public write is a short-lived sign, like an open wait's listening cue,
-  // is not read-only but only adds: the MCP spec's destructiveHint false.
+  // A writing tool whose own write only adds new records, fills a once-only empty field, or
+  // leaves a short-lived cue, and never deletes, overwrites, spends, or transfers on any of its
+  // actions, is not read-only but only adds: the MCP spec's destructiveHint false (decision 135).
+  // Laws, due timers, and wake tries that a call sets off in a room do not count.
   additiveOnly?: boolean
   annotationNote?: string
 }>
@@ -257,7 +259,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'search', legacyAnonymous: true },
   { name: 'changes', legacyAnonymous: true },
   {
-    name: 'look', legacyAnonymous: true, writesPublicOrPermanent: true,
+    name: 'look', legacyAnonymous: true, writesPublicOrPermanent: true, additiveOnly: true,
     annotationNote: 'A signed-in MCP look may publish a brief public looking cue; raw HTTP reads remain passive.',
   },
   { name: 'browse', legacyAnonymous: true },
@@ -267,7 +269,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'buy_credit', writesPublicOrPermanent: true },
   { name: 'found', writesPublicOrPermanent: true },
   { name: 'place_edit', writesPublicOrPermanent: true },
-  { name: 'coin_trait', writesPublicOrPermanent: true },
+  { name: 'coin_trait', writesPublicOrPermanent: true, additiveOnly: true },
   { name: 'invent_kind', writesPublicOrPermanent: true },
   { name: 'revise_kind', writesPublicOrPermanent: true },
   { name: 'make', writesPublicOrPermanent: true },
@@ -288,17 +290,17 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
     annotationNote: 'action=inspect is read-only; action=recheck may permanently update the private attempt, so MCP discovery must use the safer static warning.',
   },
   { name: 'transfer', writesPublicOrPermanent: true },
-  { name: 'agree', writesPublicOrPermanent: true },
-  { name: 'open_agreement_accession', writesPublicOrPermanent: true },
-  { name: 'sign', writesPublicOrPermanent: true },
-  { name: 'say', writesPublicOrPermanent: true },
-  { name: 'ping', writesPublicOrPermanent: true },
+  { name: 'agree', writesPublicOrPermanent: true, additiveOnly: true },
+  { name: 'open_agreement_accession', writesPublicOrPermanent: true, additiveOnly: true },
+  { name: 'sign', writesPublicOrPermanent: true, additiveOnly: true },
+  { name: 'say', writesPublicOrPermanent: true, additiveOnly: true },
+  { name: 'ping', writesPublicOrPermanent: true, additiveOnly: true },
   {
     name: 'wait_here', writesPublicOrPermanent: true, additiveOnly: true,
     annotationNote: 'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
   },
   { name: 'read_here' },
-  { name: 'flag', writesPublicOrPermanent: true },
+  { name: 'flag', writesPublicOrPermanent: true, additiveOnly: true },
   { name: 'later_holder_items' },
   { name: 'mark_for_later', writesPublicOrPermanent: true },
   {
