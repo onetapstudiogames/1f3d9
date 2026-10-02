@@ -231,7 +231,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         use: [{ effect: 'chance', percent: 100, then: [] }],
       })
       assert.equal(outOfRange.status, 400)
-      assert.equal(outOfRange.json.error, "recipe refused at use, step 1: chance takes percent (1 to 99), then, and an optional else; call physics for every brick's fields, defaults, and limits")
+      assert.equal(outOfRange.json.error, "recipe refused at use, step 1: chance takes percent (1 to 99), then, and an optional else; call physics for the fields of every brick, defaults, and limits")
 
       const counter = await coin(app, MAKER.secret, 'counter', { use: [{ effect: 'write', key: 'visits', op: 'add' }] })
       assert.equal(counter.status, 201, JSON.stringify(counter.json))

@@ -200,7 +200,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
 
       const tooDeep = await coin(app, GROWER.secret, 'too-deep', { use: [{ effect: 'copy', generations: 9 }] })
       assert.equal(tooDeep.status, 400)
-      assert.equal(tooDeep.json.error, "recipe refused at use, step 1: copy takes optional generations (1 to 8), copies (1 to 10000 or unlimited), to (here or adjacent), and inherit (a list of body and state); call physics for every brick's fields, defaults, and limits")
+      assert.equal(tooDeep.json.error, "recipe refused at use, step 1: copy takes optional generations (1 to 8), copies (1 to 10000 or unlimited), to (here or adjacent), and inherit (a list of body and state); call physics for the fields of every brick, defaults, and limits")
       const blockInside = await coin(app, GROWER.secret, 'hold-all', {
         use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'block', target: 'target', action: 'talk', seconds: 60 }] }],
       })

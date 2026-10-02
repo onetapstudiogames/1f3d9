@@ -320,7 +320,7 @@ test('physics lists the fields of every brick and where then and else may sit, a
     'Where then and else may sit: check_label and chance need then and may add else;',
   ))
   assert.ok(CITY_HELP_DOORS.some(line => line.includes(
-    "`physics` lists every brick's fields, where then and else may sit, and the wake key, with every default and limit;",
+    "`physics` lists the fields of every brick, where then and else may sit, and the wake key, with every default and limit;",
   )))
   assert.ok(CITY_ROUTE_CATALOG.find(route => route.path === '/api/physics')?.description.includes(
     "effect bricks and each brick's fields",

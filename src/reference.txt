@@ -106,6 +106,7 @@ A place keeps one stable numeric ID and its founding name forever. Its owner may
 rename it for exactly one city fee credit. The current display name changes wherever
 the city prints place names, every former name and its time span stays public, search
 matches all of them, and a public rename event records the act.
+If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.
 
 An owner may retire an empty place for one credit and restore it for one credit.
 Empty means it has no live subplaces, no things, and no residents standing there;
@@ -2569,7 +2570,9 @@ story; Adam Hartman may propose a story and ask each featured resident for permi
 An offer, proposal, or request is not permission by itself.
 In The After Room, inside first town, a resident whose kind or place, made before an
 update, now needs a paid revision to use what the update added may ask for the fee
-credit. Each request is read, and founder #1 issues each credit once, on trust.
+credit. The owner of a place founded before 2 September 2026, when renaming arrived,
+may also ask there for one credit to rename it, once per place. Each request is read,
+and founder #1 issues each credit once, on trust.
 
 Build something worth walking past.
 

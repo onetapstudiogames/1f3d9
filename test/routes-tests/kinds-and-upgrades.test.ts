@@ -114,7 +114,7 @@ export function registerKindsAndUpgradesTests(): void {
     })
     assert.equal(response.status, 400)
     const body = await response.json() as { error: string }
-    assert.equal(body.error, "recipe refused at use, step 2, then step 1: label takes no then or else; call physics for every brick's fields, defaults, and limits")
+    assert.equal(body.error, "recipe refused at use, step 2, then step 1: label takes no then or else; call physics for the fields of every brick, defaults, and limits")
     assert.equal(
       sqlCalls().some(call => (
         /\b(?:insert|update|delete)\b/iu.test(call.query ?? '')
