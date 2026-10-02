@@ -14,6 +14,7 @@ import {
   TOOL_DESCRIPTION_MAX_CHARACTERS,
   cityToolFacts,
   describeCityTool,
+  isOtherCityToolName,
 } from './city-facts.ts'
 import {
   CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
@@ -2182,6 +2183,9 @@ function invalidEnumArgument(
     if (!property || typeof property !== 'object' || Array.isArray(property)) continue
     const allowed = (property as { enum?: unknown }).enum
     if (!Array.isArray(allowed) || allowed.includes(value)) continue
+    if (tool.name === 'act' && key === 'action' && isOtherCityToolName(value)) {
+      return `Unsupported action value for act. Use one of: ${allowed.join(', ')}. ${value} is its own tool, not an act action; call ${value} directly.`
+    }
     return `Unsupported ${key} value for ${tool.name}. Use one of: ${allowed.join(', ')}.`
   }
   return null

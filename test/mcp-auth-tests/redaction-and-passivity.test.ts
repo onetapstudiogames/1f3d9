@@ -245,6 +245,13 @@ export function registerRedactionAndPassivityTests(): void {
       assert.equal(act.result.isError, true, path)
       assert.match(act.result.content[0]?.text ?? '', /move, use, give, consume, go_home/, path)
 
+      const readHere = await rpc(gateway, 'tools/call', {
+        name: 'act',
+        arguments: { action: 'read_here' },
+      }, authorization, path) as { result: ToolResult }
+      assert.equal(readHere.result.isError, true, path)
+      assert.equal((JSON.parse(readHere.result.content[0]?.text ?? '{}') as { error?: string }).error, 'Unsupported action value for act. Use one of: move, use, give, consume, go_home. read_here is its own tool, not an act action; call read_here directly.', path)
+
       assert.deepEqual(calls, [], `${path}: no city route may run for an invalid enum value`)
 
       // The advertised default remains: omitting action routes to the immediate give.

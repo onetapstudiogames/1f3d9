@@ -154,6 +154,12 @@ export const OTHER_BASIC_ACTION_TOOLS = Object.freeze({
   make: 'make',
 } as const)
 
+/** A hosted city tool name, other than act and home, that a caller may send to act by mistake. */
+export function isOtherCityToolName(value: unknown): value is string {
+  return typeof value === 'string' && value !== 'act' && value !== 'home'
+    && CITY_TOOL_CATALOG.some(tool => tool.name === value && tool.hostedVisible)
+}
+
 type CityRouteFact = Readonly<{ method: 'GET' | 'POST'; path: string; description: string }>
 export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: '/api/help', description: 'starter door list' },
