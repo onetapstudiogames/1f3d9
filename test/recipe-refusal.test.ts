@@ -93,7 +93,7 @@ test('recipe refusals name the first failing location and rule', () => {
   expectRefusal(
     { use: nestedChances(8) },
     'use, step 1' + ', then step 1'.repeat(7) + ', then',
-    'steps nest at most 8 levels deep',
+    'steps nest at most 8 levels deep, so a step on level 8 takes no then or else',
   )
   expectRefusal(
     { use: Array.from({ length: 129 }, () => ({ effect: 'label', target: 'actor', label: 'a' })) },

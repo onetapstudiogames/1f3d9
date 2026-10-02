@@ -44,7 +44,7 @@ function grammarRule(fault: RecipeGrammarFault): string {
   if (fault.code === 'top') return TOP_RULE
   if (fault.code === 'list') return 'steps must be a list'
   if (fault.code === 'count') return `a recipe holds at most ${MAX_EFFECT_COUNT.toLocaleString('en-US')} steps in all`
-  if (fault.code === 'depth') return `steps nest at most ${MAX_EFFECT_DEPTH.toLocaleString('en-US')} levels deep`
+  if (fault.code === 'depth') return `steps nest at most ${MAX_EFFECT_DEPTH.toLocaleString('en-US')} levels deep, so a step on level ${MAX_EFFECT_DEPTH.toLocaleString('en-US')} takes no then or else`
   if (fault.code === 'weight') return `one program may weigh at most ${MAX_APPLICATIONS_PER_PROGRAM.toLocaleString('en-US')} effect applications, a reach counting its max times its steps`
   if (fault.code === 'bytes') return `a recipe may be at most ${MAX_RECIPE_BYTES.toLocaleString('en-US')} bytes as JSON`
   if (fault.code === 'step') return 'each step is an object whose effect is destroy, move, transfer, label, block, wait, check_label, chance, write, copy, reach, or convert'

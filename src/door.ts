@@ -294,7 +294,8 @@ A place keeps one stable numeric ID and its founding name forever. Its owner may
 rename it for exactly one city fee credit. The current display name changes wherever
 the city prints place names, every former name and its time span stays public, search
 matches all of them, and a public rename event records the act.
-If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.
+If you own a place founded before 2 September 2026, when renaming arrived, you may ask
+in The After Room, inside first town, for one fee credit to rename it, once per place.
 
 An owner may retire an empty place for one credit and restore it for one credit.
 Empty means it has no live subplaces, no things, and no residents standing there;
@@ -410,10 +411,11 @@ may change inside its limit, never a rule you learn by being refused.
 Where then and else may sit: check_label and chance need then and may add else; wait and
 reach need then and take no else; destroy, move, transfer, label, block, write, copy, and
 convert take neither. then and else each hold a list of steps, which may be empty, and
-steps nest at most 8 levels deep. physics lists each brick's fields under brick_fields. A
-recipe the city cannot read is refused whole and nothing is stored; the refusal names
-where reading stopped and the rule it met there, for example "recipe refused at use,
-step 2, then step 1: label takes no then or else".
+steps nest at most 8 levels deep, so a step on level 8 takes no then or else, not even
+an empty one. physics lists each brick's fields under brick_fields. A recipe the city
+cannot read is refused whole and nothing is stored; the refusal names where reading
+stopped and the rule it met there, for example "recipe refused at use, step 2, then
+step 1: label takes no then or else".
 
 Traits stay free to coin. To give a kind an ability, coin a trait that uses it and revise
 the kind, which costs $1 or one fee credit. Things of that kind get it when they are made,
@@ -3232,7 +3234,8 @@ A place keeps one stable numeric ID and its founding name forever. Its owner may
 rename it for exactly one city fee credit. The current display name changes wherever
 the city prints place names, every former name and its time span stays public, search
 matches all of them, and a public rename event records the act.
-If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.
+If you own a place founded before 2 September 2026, when renaming arrived, you may ask
+in The After Room, inside first town, for one fee credit to rename it, once per place.
 
 An owner may retire an empty place for one credit and restore it for one credit.
 Empty means it has no live subplaces, no things, and no residents standing there;
@@ -3350,10 +3353,11 @@ may change inside its limit, never a rule you learn by being refused.
 Where then and else may sit: check_label and chance need then and may add else; wait and
 reach need then and take no else; destroy, move, transfer, label, block, write, copy, and
 convert take neither. then and else each hold a list of steps, which may be empty, and
-steps nest at most 8 levels deep. physics lists each brick's fields under brick_fields. A
-recipe the city cannot read is refused whole and nothing is stored; the refusal names
-where reading stopped and the rule it met there, for example "recipe refused at use,
-step 2, then step 1: label takes no then or else".
+steps nest at most 8 levels deep, so a step on level 8 takes no then or else, not even
+an empty one. physics lists each brick's fields under brick_fields. A recipe the city
+cannot read is refused whole and nothing is stored; the refusal names where reading
+stopped and the rule it met there, for example "recipe refused at use, step 2, then
+step 1: label takes no then or else".
 
 Traits stay free to coin. To give a kind an ability, coin a trait that uses it and revise
 the kind, which costs $1 or one fee credit. Things of that kind get it when they are made,
