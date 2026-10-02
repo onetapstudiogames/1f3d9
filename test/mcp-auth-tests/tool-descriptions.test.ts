@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import { mcp } from '../../src/mcp.ts'
 import { PUBLIC_EVENT_KINDS } from '../../src/public-events.ts'
@@ -19,6 +20,17 @@ import type {
 // The owner's two wait sentences (2026-09-28): a wait only listens, and an empty timeout means wait again.
 const WAIT_ONLY_LISTENS = 'It only listens: it says nothing, spends nothing, and changes nothing lasting.'
 const WAIT_AGAIN = 'A timeout answer brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.'
+// Decision 135: destructiveHint is true only for a tool whose own write can delete, overwrite, spend, or transfer.
+const EXPECTED_DESTRUCTIVE_HINTS: Readonly<Record<string, boolean>> = Object.freeze({
+  front_door: false, help: false, official_facts: false, physics: false, search: false, changes: false,
+  look: false, browse: false, drawing: false, drawing_history: false, credit_preflight: false,
+  buy_credit: true, found: true, place_edit: true, coin_trait: false, invent_kind: true, revise_kind: true,
+  make: true, thing_edit: true, thing_upgrade: true, draw_self: true, act: true, laws: true, home: true,
+  withdraw: true, list_world: true, claim_world: true, cancel_world: true, reconcile_world: true,
+  credit_gift: true, payment_attempt: true, transfer: true, agree: false, open_agreement_accession: false,
+  sign: false, say: false, ping: false, wait_here: false, read_here: false, flag: false,
+  later_holder_items: false, mark_for_later: true, me: true, moderate: true,
+})
 
 export function registerToolDescriptionTests(): void {
   test('browse states where to read the live Gazette submission and withdrawal gates', async () => {
@@ -276,6 +288,31 @@ export function registerToolDescriptionTests(): void {
 
       const reconcile = toolByName(tools, 'reconcile_world')
       assert.match(reconcile.description, /valid finalized payment[\s\S]*ownership transfer/iu, `${path}: transfer effect`)
+    }
+  })
+
+  test('both MCP doors mark destructive exactly the tools that can delete, overwrite, spend, or transfer', async () => {
+    assert.equal(Object.keys(EXPECTED_DESTRUCTIVE_HINTS).length, 44)
+    for (const [hosted, path, authorization] of [
+      [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+      [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+    ] as const) {
+      setHostedChatFlag(hosted)
+      const { gateway } = createHarness()
+      const tools = await listTools(gateway, path, authorization)
+      const expected = Object.fromEntries(
+        Object.entries(EXPECTED_DESTRUCTIVE_HINTS).filter(([name]) => !hosted || name !== 'moderate'),
+      )
+      assert.deepEqual(
+        Object.fromEntries(tools.map(tool => [tool.name, tool.annotations?.destructiveHint])),
+        expected,
+        path,
+      )
+    }
+    const source = readFileSync(new URL('../../src/mcp.ts', import.meta.url), 'utf8')
+    for (const [name, destructive] of Object.entries(EXPECTED_DESTRUCTIVE_HINTS)) {
+      const written = new RegExp(String.raw`\n    name: '${name}',[\s\S]*?destructiveHint: (true|false)`, 'u').exec(source)?.[1]
+      assert.equal(written, String(destructive), `src/mcp.ts ${name} hard-coded destructiveHint`)
     }
   })
 }

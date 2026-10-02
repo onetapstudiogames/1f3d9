@@ -1386,7 +1386,7 @@ const TOOLS: readonly ToolDefinition[] = [
       properties: { place_id: { type: 'integer', minimum: 1 } },
       required: ['place_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({ method: 'POST', path: '/api/me/home', body: { place_id: args.place_id } }),
   },
   {
@@ -1423,7 +1423,7 @@ const TOOLS: readonly ToolDefinition[] = [
       },
       required: ['thing_id', 'market_draft_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({
       method: 'POST',
       path: '/api/world/listing',
@@ -1744,7 +1744,7 @@ const TOOLS: readonly ToolDefinition[] = [
         },
       ],
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     route: args => args.action === 'invite'
       ? {
           method: 'POST', path: '/api/ping',
