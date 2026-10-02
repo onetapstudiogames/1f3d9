@@ -21,6 +21,8 @@ import {
   mountCityToolCatalogRoute,
 } from '../src/city-facts.ts'
 import { HANDLE_MAX_CHARACTERS, HANDLE_MIN_CHARACTERS } from '../src/core-primitives.ts'
+import { EFFECT_BRICKS, parseTraitRecipe } from '../src/physics.ts'
+import * as physicsModule from '../src/physics.ts'
 import { THING_BODY_MAX_BYTES } from '../src/world-limits.ts'
 import { FRONTDOOR, LLMS, REFERENCE, REFERENCE_INDEX, REFERENCE_SECTIONS } from '../src/door.ts'
 import {
@@ -243,6 +245,86 @@ test('physics separates act inputs from say and make tools', () => {
   }
   assert.deepEqual(physics.act_actions, ['move', 'use', 'give', 'consume', 'go_home'])
   assert.deepEqual(physics.other_basic_actions, { talk: 'say', make: 'make' })
+})
+
+test('physics lists the fields of every brick and where then and else may sit, and the parser agrees', () => {
+  type BrickFields = {
+    required: readonly string[]
+    optional: readonly string[]
+    then: 'not allowed' | 'required'
+    else: 'not allowed' | 'optional'
+    [key: string]: unknown
+  }
+  const physics = publicPhysicsFacts() as {
+    effect_bricks: readonly string[]
+    brick_fields: Readonly<Record<string, BrickFields>>
+    wake: { then: string }
+  }
+  assert.deepEqual(Object.keys(physics.brick_fields), [...physics.effect_bricks])
+  for (const brick of ['destroy', 'move', 'transfer', 'label', 'block', 'write', 'copy', 'convert']) {
+    assert.deepEqual([physics.brick_fields[brick]!.then, physics.brick_fields[brick]!.else], ['not allowed', 'not allowed'], brick)
+  }
+  for (const brick of ['wait', 'reach']) {
+    assert.deepEqual([physics.brick_fields[brick]!.then, physics.brick_fields[brick]!.else], ['required', 'not allowed'], brick)
+  }
+  for (const brick of ['check_label', 'chance']) {
+    assert.deepEqual([physics.brick_fields[brick]!.then, physics.brick_fields[brick]!.else], ['required', 'optional'], brick)
+  }
+  assert.equal(physics.wake.then, 'required')
+  assert.deepEqual(physics.brick_fields.label!.target, ['actor', 'source', 'target', 'place'])
+  assert.deepEqual(physics.brick_fields.move!.to, ['destination', 'home'])
+  assert.deepEqual(physics.brick_fields.block!.action, ['talk', 'move', 'use', 'give', 'consume', 'make'])
+
+  const steps = [
+    { effect: 'destroy', target: 'source' },
+    { effect: 'move', target: 'actor', to: 'home' },
+    { effect: 'transfer', target: 'source', to: 'actor' },
+    { effect: 'label', target: 'actor', label: 'seen' },
+    { effect: 'block', target: 'actor', action: 'talk', seconds: 60 },
+    { effect: 'wait', seconds: 60, then: [] },
+    { effect: 'check_label', target: 'actor', label: 'seen', then: [] },
+    { effect: 'chance', percent: 50, then: [] },
+    { effect: 'write', key: 'visits', op: 'add' },
+    { effect: 'copy' },
+    { effect: 'reach', then: [] },
+    { effect: 'convert', target: 'target' },
+  ] as const
+  const recipe = (step: unknown) => parseTraitRecipe({ use: [step] })
+  for (const step of steps) {
+    const fields = physics.brick_fields[step.effect]!
+    assert.ok(recipe(step), step.effect)
+    for (const required of fields.required) {
+      const missingField = Object.fromEntries(Object.entries(step).filter(([key]) => key !== required))
+      assert.equal(recipe(missingField), null, `${step.effect} missing ${required}`)
+    }
+    if (fields.then === 'not allowed') {
+      assert.equal(recipe({ ...step, then: [] }), null, `${step.effect} rejects then`)
+    }
+    if (fields.else === 'not allowed') {
+      assert.equal(recipe({ ...step, else: [] }), null, `${step.effect} rejects else`)
+    } else {
+      assert.ok(recipe({ ...step, else: [] }), `${step.effect} accepts else`)
+    }
+  }
+
+  const branchRules = Reflect.get(physicsModule, 'BRICK_BRANCHES') as Readonly<Record<string, string>>
+  assert.deepEqual(
+    [...EFFECT_BRICKS].filter(brick => branchRules[brick] !== 'none').sort(),
+    ['chance', 'check_label', 'reach', 'wait'],
+  )
+  assert.deepEqual(
+    [...EFFECT_BRICKS].filter(brick => branchRules[brick] === 'then and else').sort(),
+    ['chance', 'check_label'],
+  )
+  assert.ok(REFERENCE.replace(/\s+/gu, ' ').includes(
+    'Where then and else may sit: check_label and chance need then and may add else;',
+  ))
+  assert.ok(CITY_HELP_DOORS.some(line => line.includes(
+    "`physics` lists every brick's fields, where then and else may sit, and the wake key, with every default and limit;",
+  )))
+  assert.ok(CITY_ROUTE_CATALOG.find(route => route.path === '/api/physics')?.description.includes(
+    "effect bricks and each brick's fields",
+  ))
 })
 
 test('all MCP descriptions fit the published character budget', async () => {

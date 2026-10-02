@@ -65,6 +65,11 @@ export const SYMBOLIC_TARGETS = Object.freeze([
 
 export const MOVE_DESTINATIONS = Object.freeze(['destination', 'home'] as const)
 export const TRANSFER_RECIPIENTS = Object.freeze(['recipient', 'actor'] as const)
+export const DESTROY_TARGETS = Object.freeze(['source', 'target'] as const)
+export const MOVE_TARGETS = Object.freeze(['actor', 'source', 'target'] as const)
+export const TRANSFER_TARGETS = Object.freeze(['source', 'target'] as const)
+export const BLOCK_TARGETS = Object.freeze(['actor', 'target'] as const)
+export const WORLD_NAME_RULE = 'a world name: 1 to 64 characters from a to z, 0 to 9, _ and -, starting with a letter or digit; capitals are lowered'
 
 export const MAX_RECIPE_BYTES = 65_536
 export const MAX_EFFECT_COUNT = 128
@@ -104,6 +109,11 @@ export const RESIDENT_ABILITY_LABEL_SECONDS = MAX_BLOCK_SECONDS
 export type BasicAction = typeof BASIC_ACTIONS[number]
 export type BlockableAction = typeof BLOCKABLE_ACTIONS[number]
 export type EffectBrick = typeof EFFECT_BRICKS[number]
+/** Where then and else may sit on each brick; parseEffect enforces the same rule brick by brick. */
+export const BRICK_BRANCHES: Readonly<Record<EffectBrick, 'none' | 'then' | 'then and else'>> = Object.freeze({
+  destroy: 'none', move: 'none', transfer: 'none', label: 'none', block: 'none', wait: 'then',
+  check_label: 'then and else', chance: 'then and else', write: 'none', copy: 'none', reach: 'then', convert: 'none',
+})
 export type SymbolicTarget = typeof SYMBOLIC_TARGETS[number]
 export type MoveDestination = typeof MOVE_DESTINATIONS[number]
 export type TransferRecipient = typeof TRANSFER_RECIPIENTS[number]
@@ -464,20 +474,20 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 
   if (discriminator === 'destroy') {
     if (!hasExactKeys(value, ['effect', 'target'])) return null
-    const target = canonicalToken(value.target, new Set(['source', 'target']))
+    const target = canonicalToken(value.target, new Set(DESTROY_TARGETS))
     return target ? Object.freeze({ effect: 'destroy', target }) as DestroyEffect : null
   }
 
   if (discriminator === 'move') {
     if (!hasExactKeys(value, ['effect', 'target', 'to'])) return null
-    const target = canonicalToken(value.target, new Set(['actor', 'source', 'target']))
+    const target = canonicalToken(value.target, new Set(MOVE_TARGETS))
     const to = canonicalToken(value.to, MOVE_DESTINATION_SET) as MoveDestination | null
     return target && to ? Object.freeze({ effect: 'move', target, to }) as MoveEffect : null
   }
 
   if (discriminator === 'transfer') {
     if (!hasExactKeys(value, ['effect', 'target', 'to'])) return null
-    const target = canonicalToken(value.target, new Set(['source', 'target']))
+    const target = canonicalToken(value.target, new Set(TRANSFER_TARGETS))
     const to = canonicalToken(value.to, TRANSFER_RECIPIENT_SET) as TransferRecipient | null
     return target && to ? Object.freeze({ effect: 'transfer', target, to }) as TransferEffect : null
   }
@@ -491,7 +501,7 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 
   if (discriminator === 'block') {
     if (!hasExactKeys(value, ['effect', 'target', 'action', 'seconds'])) return null
-    const target = canonicalToken(value.target, new Set(['actor', 'target']))
+    const target = canonicalToken(value.target, new Set(BLOCK_TARGETS))
     const action = canonicalToken(value.action, BLOCKABLE_ACTION_SET) as BlockableAction | null
     const seconds = boundedInteger(value.seconds, 1, MAX_BLOCK_SECONDS)
     return target && action && seconds !== null
