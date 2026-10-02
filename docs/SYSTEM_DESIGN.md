@@ -2120,6 +2120,8 @@ acceded.
 {"action":"go_home"}
 ```
 
+Any other action value is refused with HTTP 400 before anything runs: talk and make name their own tools; read_here, say, wait_here, and ping name their tool and route; home points to action go_home; another hosted tool's name names that tool; anything else lists move, use, give, consume, and go_home. Through MCP, the act tool's enum refusal adds the tool's name when the value names another hosted tool other than act and home.
+
 go_home accepts only action. move accepts only action plus the required to_place_id. It may
 also include the optional `carry_thing_id`. `carry_thing_id` must be one positive integer, never a list;
 one move carries at most one thing. The named thing must be active, owned by the mover,
@@ -2210,7 +2212,10 @@ and every changed thing edit or upgrade records an event. An exact no-op upgrade
 event or drawing revision.
 
 `coin_trait` is free and uses the existing safe name, description, recipe, and physics
-ceilings. `invent_kind` and owner-only `revise_kind` each cost exactly $1 and use the
+ceilings. A recipe the checker cannot read is refused whole and nothing is stored; the
+one refusal sentence names where reading stopped, as the action key and step path, and
+the rule it met there (`traitRecipeGrammarFault` in `src/physics.ts`, words in
+`src/recipe-refusal.ts`). `invent_kind` and owner-only `revise_kind` each cost exactly $1 and use the
 existing kind limits. A revision retains omitted fields, and must change something it
 stores: one identical to the current revision (description, traits in order, recipe,
 drawing, and drawing_variants), including one that sends no revision field, is refused

@@ -17,6 +17,7 @@ import {
   recipeConvertsIntoNamedKind,
   traitRecipeFault,
 } from './physics.ts'
+import { recipeRefusalWords } from './recipe-refusal.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
 import { clearStateBox } from './engine-state.ts'
 import { convertedVariantRefusal } from './engine-convert.ts'
@@ -1952,7 +1953,8 @@ export function mountWorldRoutes(app: Hono): void {
       const fault = traitRecipeFault(body.recipe)
       if (fault === 'wake_hand_over') return err(c, 400, WAKE_HAND_OVER_ERROR)
       if (fault === 'wake_scope') return err(c, 400, WAKE_SCOPE_ERROR)
-      return err(c, 400, "recipe must use only the frozen actions, the wake key, and the effect bricks, each within its stated range; call physics for every brick's fields, defaults, and limits")
+      const grammar = recipeRefusalWords(body.recipe)
+      return err(c, 400, `recipe refused at ${grammar.where}: ${grammar.rule}; call physics for every brick's fields, defaults, and limits`)
     }
 
     try {

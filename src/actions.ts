@@ -19,6 +19,7 @@ import { isBasicAction, type BasicAction } from './physics.ts'
 import { settleRoom, type SettleSummary } from './engine-settle.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
+import { isOtherCityToolName } from './city-facts.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -158,7 +159,17 @@ async function runResidentAction(
   body: JsonObject,
 ): Promise<Response> {
   const action = body.action
-  if (!isBasicAction(action)) return err(c, 400, 'action is not in the frozen basic-action list')
+  if (!isBasicAction(action)) {
+    if (action === 'read_here') return err(c, 400, 'read_here is its own tool, not an act action: call read_here with note_id while you stand in the note\'s place, or GET /api/note/<note_id>/here if your client can open URLs')
+    if (action === 'say') return err(c, 400, 'say is its own tool, not an act action: call say, or POST /api/note if your client can open URLs')
+    if (action === 'wait_here') return err(c, 400, 'wait_here is its own tool, not an act action: call wait_here, or POST /api/wait-here if your client can open URLs')
+    if (action === 'ping') return err(c, 400, 'ping is its own tool, not an act action: call ping, or POST /api/ping if your client can open URLs')
+    if (action === 'home') return err(c, 400, 'home is its own tool that sets your home; to go home, send action go_home')
+    if (isOtherCityToolName(action)) {
+      return err(c, 400, `${action} is its own tool, not an act action: call ${action}; act takes only move, use, give, consume, or go_home`)
+    }
+    return err(c, 400, 'action must be move, use, give, consume, or go_home; talk uses the say tool and make uses the make tool')
+  }
   if (action === 'talk' || action === 'make') {
     return err(c, 400, action === 'talk'
       ? 'talk uses the say tool, or POST /api/note if your client can open URLs'

@@ -65,6 +65,11 @@ export const SYMBOLIC_TARGETS = Object.freeze([
 
 export const MOVE_DESTINATIONS = Object.freeze(['destination', 'home'] as const)
 export const TRANSFER_RECIPIENTS = Object.freeze(['recipient', 'actor'] as const)
+export const DESTROY_TARGETS = Object.freeze(['source', 'target'] as const)
+export const MOVE_TARGETS = Object.freeze(['actor', 'source', 'target'] as const)
+export const TRANSFER_TARGETS = Object.freeze(['source', 'target'] as const)
+export const BLOCK_TARGETS = Object.freeze(['actor', 'target'] as const)
+export const WORLD_NAME_RULE = 'a world name: 1 to 64 characters from a to z, 0 to 9, _ and -, starting with a letter or digit; capitals are lowered'
 
 export const MAX_RECIPE_BYTES = 65_536
 export const MAX_EFFECT_COUNT = 128
@@ -104,6 +109,11 @@ export const RESIDENT_ABILITY_LABEL_SECONDS = MAX_BLOCK_SECONDS
 export type BasicAction = typeof BASIC_ACTIONS[number]
 export type BlockableAction = typeof BLOCKABLE_ACTIONS[number]
 export type EffectBrick = typeof EFFECT_BRICKS[number]
+/** Where then and else may sit on each brick; parseEffect enforces the same rule brick by brick. */
+export const BRICK_BRANCHES: Readonly<Record<EffectBrick, 'none' | 'then' | 'then and else'>> = Object.freeze({
+  destroy: 'none', move: 'none', transfer: 'none', label: 'none', block: 'none', wait: 'then',
+  check_label: 'then and else', chance: 'then and else', write: 'none', copy: 'none', reach: 'then', convert: 'none',
+})
 export type SymbolicTarget = typeof SYMBOLIC_TARGETS[number]
 export type MoveDestination = typeof MOVE_DESTINATIONS[number]
 export type TransferRecipient = typeof TRANSFER_RECIPIENTS[number]
@@ -235,6 +245,12 @@ export type TraitRecipe = Readonly<Partial<Record<BasicAction, readonly Effect[]
  */
 export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope'
 
+/** Where a refused recipe stopped reading: the action key and step path, and the rule it met. */
+export type RecipeGrammarFault = Readonly<
+  | { where: string; code: 'top' | 'list' | 'count' | 'depth' | 'weight' | 'bytes' | 'step' | 'reach_steps' | 'wake' }
+  | { where: string; code: 'shape'; brick: EffectBrick; hasThen: boolean; hasElse: boolean }
+>
+
 export interface KindIngredient {
   readonly kind: string
   readonly quantity: number
@@ -264,7 +280,16 @@ const REACH_HARD_STEP_SET: ReadonlySet<string> = new Set(REACH_HARD_STEPS)
 const REACH_NEVER_INSIDE_SET: ReadonlySet<string> = new Set(REACH_NEVER_INSIDE)
 
 type UnknownRecord = Record<PropertyKey, unknown>
-type ParseState = { count: number }
+type ParseState = { count: number; fault: RecipeGrammarFault | null }
+
+function refuse(
+  state: ParseState,
+  where: string,
+  code: Exclude<RecipeGrammarFault['code'], 'shape'>,
+): null {
+  if (state.fault === null) state.fault = Object.freeze({ where, code }) as RecipeGrammarFault
+  return null
+}
 
 function isRecord(value: unknown): value is UnknownRecord {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
@@ -405,7 +430,7 @@ function reachStepsAllowed(over: ReachOver, then: readonly Effect[]): boolean {
   return over === 'things' || !someEffect(then, effect => !REACH_SOFT_STEP_SET.has(effect.effect))
 }
 
-function parseReach(value: UnknownRecord, depth: number, state: ParseState): ReachEffect | null {
+function parseReach(value: UnknownRecord, depth: number, state: ParseState, where: string): ReachEffect | null {
   if (!hasExactKeys(value, ['effect', 'then'], ['over', 'max', 'kind'])) return null
   const over = Object.hasOwn(value, 'over')
     ? canonicalToken(value.over, REACH_OVER_SET) as ReachOver | null
@@ -416,8 +441,9 @@ function parseReach(value: UnknownRecord, depth: number, state: ParseState): Rea
   const kind = Object.hasOwn(value, 'kind') ? canonicalName(value.kind) : undefined
   if (over === null || max === null || kind === null) return null
   if (kind !== undefined && over !== 'things') return null
-  const then = parseEffectList(value.then, depth + 1, state)
-  if (!then || !reachStepsAllowed(over, then)) return null
+  const then = parseEffectList(value.then, depth + 1, state, `${where}, then`)
+  if (!then) return null
+  if (!reachStepsAllowed(over, then)) return refuse(state, where, 'reach_steps')
   return kind === undefined
     ? Object.freeze({ effect: 'reach', over, max, then })
     : Object.freeze({ effect: 'reach', over, max, kind, then })
@@ -437,25 +463,45 @@ function parseEffectList(
   value: unknown,
   depth: number,
   state: ParseState,
+  where: string,
 ): readonly Effect[] | null {
-  if (
-    !Array.isArray(value)
-    || value.length > MAX_EFFECT_COUNT - state.count
-    || !isDenseArray(value)
-    || depth > MAX_EFFECT_DEPTH
-  ) return null
+  if (!isDenseArray(value)) return refuse(state, where, 'list')
+  if (depth > MAX_EFFECT_DEPTH) return refuse(state, where, 'depth')
+  if (value.length > MAX_EFFECT_COUNT - state.count) return refuse(state, where, 'count')
   const effects: Effect[] = []
+  let index = 0
   for (const candidate of value) {
+    index += 1
+    const stepWhere = where.endsWith(', then') || where.endsWith(', else')
+      ? `${where} step ${index}`
+      : `${where}, step ${index}`
     state.count += 1
-    if (state.count > MAX_EFFECT_COUNT) return null
-    const effect = parseEffect(candidate, depth, state)
-    if (!effect) return null
+    if (state.count > MAX_EFFECT_COUNT) return refuse(state, stepWhere, 'count')
+    const effect = parseEffect(candidate, depth, state, stepWhere)
+    if (!effect) {
+      if (state.fault !== null) return null
+      const effectDescriptor = isRecord(candidate)
+        ? Object.getOwnPropertyDescriptor(candidate, 'effect')
+        : undefined
+      const brick = effectDescriptor && Object.hasOwn(effectDescriptor, 'value')
+        ? canonicalToken(effectDescriptor.value, EFFECT_BRICK_SET) as EffectBrick | null
+        : null
+      if (!isRecord(candidate) || brick === null) return refuse(state, stepWhere, 'step')
+      state.fault = Object.freeze({
+        where: stepWhere,
+        code: 'shape',
+        brick,
+        hasThen: Object.hasOwn(candidate, 'then'),
+        hasElse: Object.hasOwn(candidate, 'else'),
+      })
+      return null
+    }
     effects.push(effect)
   }
   return Object.freeze(effects)
 }
 
-function parseEffect(value: unknown, depth: number, state: ParseState): Effect | null {
+function parseEffect(value: unknown, depth: number, state: ParseState, where: string): Effect | null {
   if (!isRecord(value)) return null
   const effectDescriptor = Object.getOwnPropertyDescriptor(value, 'effect')
   if (!effectDescriptor || !Object.hasOwn(effectDescriptor, 'value')) return null
@@ -464,20 +510,20 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 
   if (discriminator === 'destroy') {
     if (!hasExactKeys(value, ['effect', 'target'])) return null
-    const target = canonicalToken(value.target, new Set(['source', 'target']))
+    const target = canonicalToken(value.target, new Set(DESTROY_TARGETS))
     return target ? Object.freeze({ effect: 'destroy', target }) as DestroyEffect : null
   }
 
   if (discriminator === 'move') {
     if (!hasExactKeys(value, ['effect', 'target', 'to'])) return null
-    const target = canonicalToken(value.target, new Set(['actor', 'source', 'target']))
+    const target = canonicalToken(value.target, new Set(MOVE_TARGETS))
     const to = canonicalToken(value.to, MOVE_DESTINATION_SET) as MoveDestination | null
     return target && to ? Object.freeze({ effect: 'move', target, to }) as MoveEffect : null
   }
 
   if (discriminator === 'transfer') {
     if (!hasExactKeys(value, ['effect', 'target', 'to'])) return null
-    const target = canonicalToken(value.target, new Set(['source', 'target']))
+    const target = canonicalToken(value.target, new Set(TRANSFER_TARGETS))
     const to = canonicalToken(value.to, TRANSFER_RECIPIENT_SET) as TransferRecipient | null
     return target && to ? Object.freeze({ effect: 'transfer', target, to }) as TransferEffect : null
   }
@@ -491,7 +537,7 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 
   if (discriminator === 'block') {
     if (!hasExactKeys(value, ['effect', 'target', 'action', 'seconds'])) return null
-    const target = canonicalToken(value.target, new Set(['actor', 'target']))
+    const target = canonicalToken(value.target, new Set(BLOCK_TARGETS))
     const action = canonicalToken(value.action, BLOCKABLE_ACTION_SET) as BlockableAction | null
     const seconds = boundedInteger(value.seconds, 1, MAX_BLOCK_SECONDS)
     return target && action && seconds !== null
@@ -503,7 +549,7 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
     if (!hasExactKeys(value, ['effect', 'seconds', 'then'], ['repeat'])) return null
     const seconds = boundedInteger(value.seconds, MIN_TIMER_SECONDS, MAX_TIMER_SECONDS)
     if (seconds === null) return null
-    const then = parseEffectList(value.then, depth + 1, state)
+    const then = parseEffectList(value.then, depth + 1, state, `${where}, then`)
     if (!then) return null
     if (!Object.hasOwn(value, 'repeat')) {
       return Object.freeze({ effect: 'wait', seconds, then })
@@ -518,10 +564,10 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
     if (!hasExactKeys(value, ['effect', 'percent', 'then'], ['else'])) return null
     const percent = boundedInteger(value.percent, CHANCE_PERCENT_MIN, CHANCE_PERCENT_MAX)
     if (percent === null) return null
-    const then = parseEffectList(value.then, depth + 1, state)
+    const then = parseEffectList(value.then, depth + 1, state, `${where}, then`)
     if (!then) return null
     if (!Object.hasOwn(value, 'else')) return Object.freeze({ effect: 'chance', percent, then })
-    const otherwise = parseEffectList(value.else, depth + 1, state)
+    const otherwise = parseEffectList(value.else, depth + 1, state, `${where}, else`)
     return otherwise
       ? Object.freeze({ effect: 'chance', percent, then, else: otherwise })
       : null
@@ -529,19 +575,19 @@ function parseEffect(value: unknown, depth: number, state: ParseState): Effect |
 
   if (discriminator === 'write') return parseWrite(value)
   if (discriminator === 'copy') return parseCopy(value)
-  if (discriminator === 'reach') return parseReach(value, depth, state)
+  if (discriminator === 'reach') return parseReach(value, depth, state, where)
   if (discriminator === 'convert') return parseConvert(value)
 
   if (!hasExactKeys(value, ['effect', 'target', 'label', 'then'], ['else'])) return null
   const target = symbolicTarget(value.target)
   const label = canonicalName(value.label)
   if (!target || !label) return null
-  const then = parseEffectList(value.then, depth + 1, state)
+  const then = parseEffectList(value.then, depth + 1, state, `${where}, then`)
   if (!then) return null
   if (!Object.hasOwn(value, 'else')) {
     return Object.freeze({ effect: 'check_label', target, label, then })
   }
-  const otherwise = parseEffectList(value.else, depth + 1, state)
+  const otherwise = parseEffectList(value.else, depth + 1, state, `${where}, else`)
   return otherwise
     ? Object.freeze({ effect: 'check_label', target, label, then, else: otherwise })
     : null
@@ -609,23 +655,38 @@ function parseWakeEvents(value: unknown): readonly WakeEvent[] | null {
 }
 
 function parseWake(value: unknown, state: ParseState): WakeProgram | null {
-  if (!isRecord(value) || !hasExactKeys(value, ['then'], ['on', 'every_seconds'])) return null
+  if (!isRecord(value) || !hasExactKeys(value, ['then'], ['on', 'every_seconds'])) {
+    return refuse(state, 'wake', 'wake')
+  }
   const on = Object.hasOwn(value, 'on') ? parseWakeEvents(value.on) : WAKE_DEFAULT_EVENTS
   const everySeconds = Object.hasOwn(value, 'every_seconds')
     ? boundedInteger(value.every_seconds, WAKE_MIN_EVERY_SECONDS, WAKE_MAX_EVERY_SECONDS)
     : WAKE_DEFAULT_EVERY_SECONDS
-  if (!on || everySeconds === null) return null
-  const then = parseEffectList(value.then, 1, state)
+  if (!on || everySeconds === null) return refuse(state, 'wake', 'wake')
+  const then = parseEffectList(value.then, 1, state, 'wake, then')
   return then ? Object.freeze({ on, every_seconds: everySeconds, then }) : null
 }
 
-type RecipeParse = Readonly<{ recipe: TraitRecipe | null; fault: RecipeFault | null }>
+type RecipeParse = Readonly<{
+  recipe: TraitRecipe | null
+  fault: RecipeFault | null
+  grammar: RecipeGrammarFault | null
+}>
 
-const GRAMMAR_FAULT: RecipeParse = Object.freeze({ recipe: null, fault: 'grammar' })
+function grammarFault(
+  state: ParseState,
+  where: string,
+  code: Exclude<RecipeGrammarFault['code'], 'shape'>,
+): RecipeParse {
+  const grammar = state.fault ?? Object.freeze({ where, code }) as RecipeGrammarFault
+  return Object.freeze({ recipe: null, fault: 'grammar', grammar })
+}
 
-function recipeInput(value: unknown): UnknownRecord | null {
+function recipeInput(value: unknown, state: ParseState): UnknownRecord | null {
   if (Array.isArray(value)) {
-    return value.length <= MAX_EFFECT_COUNT && isDenseArray(value) ? { use: value } : null
+    if (!isDenseArray(value)) return refuse(state, 'use', 'list')
+    if (value.length > MAX_EFFECT_COUNT) return refuse(state, 'use', 'count')
+    return { use: value }
   }
   if (!isRecord(value)) return null
   const keys = Reflect.ownKeys(value)
@@ -638,28 +699,32 @@ function recipeInput(value: unknown): UnknownRecord | null {
 }
 
 function parseRecipe(value: unknown): RecipeParse {
+  const state: ParseState = { count: 0, fault: null }
   try {
-    const input = recipeInput(value)
-    if (!input) return GRAMMAR_FAULT
-    const state: ParseState = { count: 0 }
+    const input = recipeInput(value, state)
+    if (!input) return grammarFault(state, 'the top level', 'top')
     const canonical: { -readonly [Key in keyof TraitRecipe]: TraitRecipe[Key] } = {}
     for (const action of BASIC_ACTIONS) {
       if (!Object.hasOwn(input, action)) continue
-      const effects = parseEffectList(input[action], 1, state)
-      if (!effects || programWeight(effects) > MAX_APPLICATIONS_PER_PROGRAM) return GRAMMAR_FAULT
+      const effects = parseEffectList(input[action], 1, state, action)
+      if (!effects) return grammarFault(state, action, 'list')
+      if (programWeight(effects) > MAX_APPLICATIONS_PER_PROGRAM) return grammarFault(state, action, 'weight')
       canonical[action] = effects
     }
     if (Object.hasOwn(input, 'wake')) {
       const wake = parseWake(input.wake, state)
-      if (!wake || programWeight(wake.then) > MAX_APPLICATIONS_PER_PROGRAM) return GRAMMAR_FAULT
+      if (!wake) return grammarFault(state, 'wake', 'wake')
+      if (programWeight(wake.then) > MAX_APPLICATIONS_PER_PROGRAM) return grammarFault(state, 'wake', 'weight')
       const fault = wakeFault(wake.then)
-      if (fault) return Object.freeze({ recipe: null, fault })
+      if (fault) return Object.freeze({ recipe: null, fault, grammar: null })
       canonical.wake = wake
     }
     const recipe: TraitRecipe = Object.freeze(canonical)
-    return isWithinJsonBudget(recipe) ? Object.freeze({ recipe, fault: null }) : GRAMMAR_FAULT
+    return isWithinJsonBudget(recipe)
+      ? Object.freeze({ recipe, fault: null, grammar: null })
+      : grammarFault(state, 'the whole recipe', 'bytes')
   } catch {
-    return GRAMMAR_FAULT
+    return grammarFault(state, 'the top level', 'top')
   }
 }
 
@@ -671,6 +736,12 @@ export function parseTraitRecipe(value: unknown): TraitRecipe | null {
 /** Why a newly authored recipe is refused, or null when it is accepted. */
 export function traitRecipeFault(value: unknown): RecipeFault | null {
   return parseRecipe(value).fault
+}
+
+/** Where a newly authored recipe stopped reading, when its fault was grammar. */
+export function traitRecipeGrammarFault(value: unknown): RecipeGrammarFault | null {
+  const parsed = parseRecipe(value)
+  return parsed.fault === 'grammar' ? parsed.grammar : null
 }
 
 function recipeHasEffect(recipe: TraitRecipe, matches: (effect: Effect) => boolean): boolean {

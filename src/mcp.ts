@@ -14,6 +14,7 @@ import {
   TOOL_DESCRIPTION_MAX_CHARACTERS,
   cityToolFacts,
   describeCityTool,
+  isOtherCityToolName,
 } from './city-facts.ts'
 import {
   CREDIT_PURCHASE_REQUEST_ID_SHAPE_REFUSAL,
@@ -1092,7 +1093,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'coin_trait',
     title: 'Coin a trait',
     description:
-      `Coin a free public trait. name is a unique normalized ${WORLD_NAME_PATTERN} world name of at most 64 characters. description defaults to empty and is at most 4,000 safe characters. Omit recipe or send null for an inert trait. A recipe may be an array shorthand for use, or an object keyed only by ${BASIC_ACTIONS.join(', ')}. Read physics first: recipes allow at most ${MAX_EFFECT_COUNT} effects, ${MAX_EFFECT_DEPTH} nested levels, and ${MAX_RECIPE_BYTES.toLocaleString('en-US')} UTF-8 bytes; timer/block seconds are 1 to ${MAX_TIMER_SECONDS}, and wait repeat is 1 to ${MAX_EFFECT_GENERATIONS}. A recipe object may also carry one wake key, {on, every_seconds, then}, with on from arrive, talk, and clock (default arrive) and every_seconds ${WAKE_MIN_EVERY_SECONDS} to ${WAKE_MAX_EVERY_SECONDS} (default ${WAKE_DEFAULT_EVERY_SECONDS}); a wake program never hands anything over, uses target only inside a reach, and moves only to home. Blocking or sending home the resident who arrived runs only in a room its owner marked rough; elsewhere that wake try is refused when it runs. The bricks include chance (percent ${CHANCE_PERCENT_MIN} to ${CHANCE_PERCENT_MAX}), write (the thing's own state box), copy (generations 1 to ${MAX_EFFECT_GENERATIONS}, default ${COPY_GENERATIONS_DEFAULT}; copies 1 to ${COPY_COPIES_MAX} or unlimited, default ${COPY_COPIES_DEFAULT}; to here or adjacent; inherit body and state, default body), reach (over things or residents, max 1 to ${REACH_MAX_CEILING}, default ${REACH_MAX_DEFAULT}, optional kind; over residents only label, check_label, chance, and write; never block, copy, a nested reach, or moving the actor inside), and convert (target only). Copy, write, the wake key, and a convert without into_kind work only on a kind, never as a law; a convert that names into_kind works only as a law. Each action key and the wake program may weigh at most ${MAX_APPLICATIONS_PER_PROGRAM} effect applications, a reach counting its max times its steps.`,
+      `Coin a free public trait. name is a unique normalized ${WORLD_NAME_PATTERN} world name of at most 64 characters. description defaults to empty and is at most 4,000 safe characters. Omit recipe or send null for an inert trait. A recipe may be an array shorthand for use, or an object keyed only by ${BASIC_ACTIONS.join(', ')}. Read physics first: recipes allow at most ${MAX_EFFECT_COUNT} effects, ${MAX_EFFECT_DEPTH} nested levels, and ${MAX_RECIPE_BYTES.toLocaleString('en-US')} UTF-8 bytes; timer/block seconds are 1 to ${MAX_TIMER_SECONDS}, and wait repeat is 1 to ${MAX_EFFECT_GENERATIONS}. A step's then is required on check_label, chance, wait, and reach, its else is allowed only on check_label and chance, and every other brick takes neither. A recipe object may also carry one wake key, {on, every_seconds, then}, with on from arrive, talk, and clock (default arrive) and every_seconds ${WAKE_MIN_EVERY_SECONDS} to ${WAKE_MAX_EVERY_SECONDS} (default ${WAKE_DEFAULT_EVERY_SECONDS}); a wake program never hands anything over, uses target only inside a reach, and moves only to home. Blocking or sending home the resident who arrived runs only in a room its owner marked rough; elsewhere that wake try is refused when it runs. The bricks include chance (percent ${CHANCE_PERCENT_MIN} to ${CHANCE_PERCENT_MAX}), write (the thing's own state box), copy (generations 1 to ${MAX_EFFECT_GENERATIONS}, default ${COPY_GENERATIONS_DEFAULT}; copies 1 to ${COPY_COPIES_MAX} or unlimited, default ${COPY_COPIES_DEFAULT}; to here or adjacent; inherit body and state, default body), reach (over things or residents, max 1 to ${REACH_MAX_CEILING}, default ${REACH_MAX_DEFAULT}, optional kind; over residents only label, check_label, chance, and write; never block, copy, a nested reach, or moving the actor inside), and convert (target only). Copy, write, the wake key, and a convert without into_kind work only on a kind, never as a law; a convert that names into_kind works only as a law. Each action key and the wake program may weigh at most ${MAX_APPLICATIONS_PER_PROGRAM} effect applications, a reach counting its max times its steps. A refused recipe names where reading stopped and the rule it met there, and nothing is stored.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -2182,6 +2183,9 @@ function invalidEnumArgument(
     if (!property || typeof property !== 'object' || Array.isArray(property)) continue
     const allowed = (property as { enum?: unknown }).enum
     if (!Array.isArray(allowed) || allowed.includes(value)) continue
+    if (tool.name === 'act' && key === 'action' && isOtherCityToolName(value)) {
+      return `Unsupported action value for act. Use one of: ${allowed.join(', ')}. ${value} is its own tool, not an act action; call ${value} directly.`
+    }
     return `Unsupported ${key} value for ${tool.name}. Use one of: ${allowed.join(', ')}.`
   }
   return null

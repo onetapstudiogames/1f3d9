@@ -44,9 +44,14 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 133 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 133)
-    assert.match(contributorGuide, /\(133 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 134 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 134)
+    assert.match(contributorGuide, /\(134 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
+    const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
+    assert.ok(normalizedReference.includes('If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.'))
+    assert.ok(normalizedReference.includes('The owner of a place founded before 2 September 2026, when renaming arrived, may also ask there for one credit to rename it, once per place.'))
+    assert.ok(read('../src/city-help.ts').includes('the owner of a place founded before 2 September 2026 may ask there for one credit to rename it'))
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)

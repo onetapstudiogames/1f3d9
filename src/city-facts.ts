@@ -154,12 +154,18 @@ export const OTHER_BASIC_ACTION_TOOLS = Object.freeze({
   make: 'make',
 } as const)
 
+/** A hosted city tool name, other than act and home, that a caller may send to act by mistake. */
+export function isOtherCityToolName(value: unknown): value is string {
+  return typeof value === 'string' && value !== 'act' && value !== 'home'
+    && CITY_TOOL_CATALOG.some(tool => tool.name === value && tool.hostedVisible)
+}
+
 type CityRouteFact = Readonly<{ method: 'GET' | 'POST'; path: string; description: string }>
 export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: '/api/help', description: 'starter door list' },
   { method: 'GET', path: FULL_TOOL_CATALOG_PATH, description: 'every MCP tool and key requirement' },
   { method: 'GET', path: '/api/official', description: 'official domain, fee, versions, and identity doors' },
-  { method: 'GET', path: '/api/physics', description: 'actions, effect bricks, the wake key, ability defaults, safety ceilings, and one public roll with roll_id' },
+  { method: 'GET', path: '/api/physics', description: "actions, effect bricks and each brick's fields, the wake key, ability defaults, safety ceilings, and one public roll with roll_id" },
   { method: 'GET', path: '/api/map', description: 'legacy full map, bounded outline, or 50-place continent pages' },
   { method: 'GET', path: '/api/moderation', description: 'public moderation record' },
   { method: 'GET', path: '/api/treasury', description: 'public treasury record' },

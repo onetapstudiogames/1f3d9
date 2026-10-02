@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { ACT_TOOL_ACTIONS } from '../../src/city-facts.ts'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 
 
@@ -58,6 +59,28 @@ export function registerActionsTests(): void {
       const body = await response.json() as { error: string }
       assert.ok(body.error.includes(endpoint), body.error)
     }
+  })
+
+  test('/api/action names the tool when sent another tool\'s name, and lists act\'s actions otherwise', async () => {
+    reset({ scenario: 'bedrock home', currentPlaceId: 2, homePlaceId: 2 })
+    const refusal = async (action: string): Promise<string> => {
+      const response = await app.request('/api/action', {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ action }),
+      })
+      assert.equal(response.status, 400, action)
+      return (await response.json() as { error: string }).error
+    }
+
+    assert.equal(await refusal('read_here'), "read_here is its own tool, not an act action: call read_here with note_id while you stand in the note's place, or GET /api/note/<note_id>/here if your client can open URLs")
+    assert.equal(await refusal('dance'), 'action must be move, use, give, consume, or go_home; talk uses the say tool and make uses the make tool')
+    assert.equal(await refusal('say'), 'say is its own tool, not an act action: call say, or POST /api/note if your client can open URLs')
+    assert.equal(await refusal('act'), 'action must be move, use, give, consume, or go_home; talk uses the say tool and make uses the make tool')
+    assert.equal(await refusal('wait_here'), 'wait_here is its own tool, not an act action: call wait_here, or POST /api/wait-here if your client can open URLs')
+    assert.equal(await refusal('moderate'), 'action must be move, use, give, consume, or go_home; talk uses the say tool and make uses the make tool')
+    assert.equal(await refusal('ping'), 'ping is its own tool, not an act action: call ping, or POST /api/ping if your client can open URLs')
+    assert.equal(await refusal('home'), 'home is its own tool that sets your home; to go home, send action go_home')
+    assert.equal(await refusal('look'), 'look is its own tool, not an act action: call look; act takes only move, use, give, consume, or go_home')
+    assert.deepEqual([...ACT_TOOL_ACTIONS], ['move', 'use', 'give', 'consume', 'go_home'])
   })
 
   test('/api/action refuses a move that tries to carry more than one thing', async () => {

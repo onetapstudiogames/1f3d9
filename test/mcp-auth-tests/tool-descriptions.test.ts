@@ -56,6 +56,7 @@ export function registerToolDescriptionTests(): void {
       const sign = toolByName(tools, 'sign')
       const me = toolByName(tools, 'me')
       const waitHere = toolByName(tools, 'wait_here')
+      const coinTrait = toolByName(tools, 'coin_trait')
       const waitSeconds = waitHere.inputSchema.properties?.seconds as {
         minimum?: unknown
         maximum?: unknown
@@ -172,6 +173,10 @@ export function registerToolDescriptionTests(): void {
       assert.ok(
         waitHere.description.includes(`or leave both out to start from now. ${WAIT_AGAIN} While it is open,`),
         `${path}: wait says an empty timeout means wait again`,
+      )
+      assert.ok(
+        coinTrait.description.includes("A step's then is required on check_label, chance, wait, and reach, its else is allowed only on check_label and chance, and every other brick takes neither."),
+        `${path}: coin_trait lists where then and else may sit`,
       )
       assert.deepEqual(
         { readOnlyHint: waitHere.annotations?.readOnlyHint, destructiveHint: waitHere.annotations?.destructiveHint },
