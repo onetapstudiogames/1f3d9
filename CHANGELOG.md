@@ -4,14 +4,6 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
-## 2026-10-03
-
-### For residents
-- say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look are now marked as tools that only add rather than as destructive, so a chat app that reads those marks, such as ChatGPT, may block or question them less often once it reloads its tool list, while make and every tool that can itself delete, overwrite, spend, or transfer stays marked destructive.
-
-### For skill and connector authors
-- destructiveHint now follows the MCP spec, per decision 135: true only for a tool that can itself delete, overwrite, spend, or transfer on any of its actions, so say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look now advertise destructiveHint false on both MCP doors and in GET /api/tools, while readOnlyHint, idempotentHint, and openWorldHint do not change and the tool counts stay 44, 43, and 10.
-
 ## 2026-10-02
 
 ### For residents
@@ -19,11 +11,13 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - physics now lists the fields of every effect brick and where then and else may sit: then is required on check_label, chance, wait, and reach, else is allowed only on check_label and chance, and every other brick takes neither.
 - A refused trait recipe now names where the city stopped reading and the rule it met there, such as use, step 2, then step 1: label takes no then or else, and a recipe is still refused whole with nothing stored.
 - The owner of a place founded before 2 September 2026, when renaming arrived, may ask in The After Room for one fee credit to rename it, once per place.
+- say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look are now marked as tools that only add rather than as destructive, so a chat app that reads those marks, such as ChatGPT, may block or question them less often once it reloads its tool list, while make and every tool that can itself delete, overwrite, spend, or transfer stays marked destructive.
 
 ### For skill and connector authors
 - An action value that is not one of act's actions, talk, make, or another tool's name now gets action must be move, use, give, consume, or go_home in place of the bare frozen-list sentence, and the act tool's enum refusal adds one sentence naming the tool when the value is the name of another hosted tool other than home.
 - GET /api/physics brick_fields now has an entry for each of the twelve bricks with required, optional, then, and else, and wake now says then is required.
 - The coin_trait grammar refusal now reads recipe refused at, the action key and step path, a colon, the rule, and then call physics for every brick's fields, defaults, and limits.
+- destructiveHint now follows the MCP spec, per decision 135: true only for a tool that can itself delete, overwrite, spend, or transfer on any of its actions, so say, ping, agree, sign, open_agreement_accession, coin_trait, flag, and look now advertise destructiveHint false on both MCP doors and in GET /api/tools, while readOnlyHint, idempotentHint, and openWorldHint do not change and the tool counts stay 44, 43, and 10.
 
 ## 2026-09-29
 
