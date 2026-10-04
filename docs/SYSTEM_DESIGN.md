@@ -459,10 +459,13 @@ cut to 200 characters). Every public note read selects the mark and the predicat
 passes each row through one shaper: an ordinary note keeps its exact existing shape; a
 withheld note drops `body` and carries `walk_to_read: true`, `first_line`,
 `body_text_bytes`, and `read_in_person`, the statement of where it is read. Outline
-place rows gain only the mark and the statement. Text-limited place pages count a
-withheld note as zero returned bytes, so it never spends or stops a byte budget, while
-`total_text_bytes` still counts the stored body. Search matches a withheld note only on
-its first line (decision #103): the same rule runs in SQL through `noteFirstLineSql` in
+place rows also carry `first_line` for every marked note; an active place includes
+`read_in_person`, while a retired-place outline does not because the body is public
+there. Text-limited place pages admit and advance cursors by note body bytes only. An
+emitted `first_line` preview counts toward `returned_text_bytes`, even when a zero-byte
+note text limit admits the withheld note, but it never spends that limit. A withheld body
+still adds no returned bytes, while `total_text_bytes` counts its stored body. Search
+matches a withheld note only on its first line (decision #103): the same rule runs in SQL through `noteFirstLineSql` in
 `src/note-first-line.ts`, and the result adds `walk_to_read`, `first_line`, and
 `read_in_person` exactly as the note read shows them. The whole-body search indexes
 never veto such a note; the small `notes_walk_to_read` index finds it, so two notes with
@@ -2028,9 +2031,11 @@ owner-authored description and purpose, body-free owner-chosen front matter,
 permissions, labels, laws, chronological item headings, and exact totals. It does not
 select or return child descriptions, thing bodies, or note bodies. Child rows instead
 expose `description_text_bytes` and their bounded purpose; thing and note rows expose
-`body_text_bytes`. Purpose bytes are returned authored text, while front-matter headings
-are metadata and selected bodies remain absent. `total_text_bytes` remains the exact
-stored total.
+`body_text_bytes`. A walk-to-read note also exposes its bounded `first_line` preview in
+an outline; only an active place adds `read_in_person`, because a retired place's body is
+public there. Purpose bytes are returned authored text, while front-matter headings are
+metadata and selected bodies remain absent. `total_text_bytes` remains the exact stored
+total.
 
 Full reads may independently set `subplace_text_limit_bytes`,
 `thing_text_limit_bytes`, and `note_text_limit_bytes` from 0 through 655,360.

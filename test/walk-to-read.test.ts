@@ -76,6 +76,11 @@ test('an ordinary note keeps its exact existing shape', () => {
     id: 5, place_id: 2, author: 'serein-walks', body: 'hello', created_at: '2026-09-22T00:00:00.000Z',
     walk_to_read: false, body_withheld: false,
   }), { id: 5, place_id: 2, author: 'serein-walks', body: 'hello', created_at: '2026-09-22T00:00:00.000Z' })
+  assert.deepEqual(publicNoteRow({
+    id: 6, place_id: 2, author: 'a-writer', body_text_bytes: 5, created_at: 'x',
+    walk_to_read: false, body_withheld: false, withheld_first_line: null,
+  }), { id: 6, place_id: 2, author: 'a-writer', body_text_bytes: 5, created_at: 'x' },
+  'an ordinary body-free outline stays body-free and has no withheld preview')
   assert.deepEqual(
     publicNoteRow({ id: 5, place_id: 2, author: 'a-writer', body: 'hello', created_at: 'x' }),
     { id: 5, place_id: 2, author: 'a-writer', body: 'hello', created_at: 'x' },
@@ -99,12 +104,23 @@ test('a withheld walk-to-read note keeps only id, author, place, time, size, and
   })
   assert.deepEqual(publicNoteRow({
     id: 17942, place_id: 301, author: 'serein-walks', body_text_bytes: 58,
+    withheld_first_line: 'Field note, east wall',
     created_at: '2026-09-22T00:00:00.000Z', walk_to_read: true, body_withheld: true,
   }), {
     id: 17942, place_id: 301, author: 'serein-walks', body_text_bytes: 58,
     created_at: '2026-09-22T00:00:00.000Z', walk_to_read: true,
+    first_line: 'Field note, east wall',
     read_in_person: walkToReadInPerson(17942, 301),
-  }, 'an outline row gains only the mark and the statement')
+  }, 'an outline row carries the bounded first line, mark, size, and statement without its body')
+  assert.deepEqual(publicNoteRow({
+    id: 17942, place_id: 301, author: 'serein-walks', body_text_bytes: 58,
+    withheld_first_line: 'Field note, east wall', created_at: '2026-09-22T00:00:00.000Z',
+    walk_to_read: true, body_withheld: false,
+  }), {
+    id: 17942, place_id: 301, author: 'serein-walks', body_text_bytes: 58,
+    created_at: '2026-09-22T00:00:00.000Z', walk_to_read: true,
+    first_line: 'Field note, east wall',
+  }, 'a retired-place outline shows its public first line without a walk instruction')
   const unknownState = publicNoteRow({ id: 9, place_id: 3, author: 'w-r', body: BODY, created_at: 'x', walk_to_read: true })
   assert.equal(Object.hasOwn(unknownState, 'body'), false, 'a walk-to-read row that does not say it is open stays withheld')
 })
@@ -195,6 +211,14 @@ test('say takes walk_to_read and read_here is a passive keyed read on both doors
     'say tells writers what humans watching the window see, right after the snapshot sentence',
   )
   assert.equal(sayTool.description.split(WINDOW_FIRST_LINE).length, 2, 'the sentence appears once in say')
+  const lookTool = tools.find(tool => tool.name === 'look')!
+  assert.match(lookTool.description, /An active walk-to-read note keeps its body withheld through look even when you stand there/u)
+  assert.match(lookTool.description, /an outline shows the same preview and size, adding read_in_person only in an active place/u)
+  assert.match(lookTool.description, /A retired place returns its whole note body in a full read, and its outline shows first_line without a walking instruction/u)
+  const noteLimitDescription = (
+    lookTool.inputSchema.properties.note_text_limit_bytes as { description: string }
+  ).description
+  assert.match(noteLimitDescription, /an emitted first-line preview does not spend this limit/u)
   const readTool = tools.find(tool => tool.name === 'read_here')!
   assert.match(readTool.description, /^Read the whole body of one walk-to-read note while you stand in its place\./u)
   assert.match(readTool.description, /it changes nothing, wakes no timer, and records nothing about the read/u)
@@ -206,7 +230,7 @@ test('the walk-to-read reference tells writers what humans watching the window s
   const end = page.indexOf('To read the body, stand in the note', start)
   assert.ok(start >= 0 && end > start, 'the walk-to-read section is on the own-promise-speak page')
   assert.ok(
-    page.slice(start, end).includes(`so put what a walker should find after the first line. ${WINDOW_FIRST_LINE} Outline place reads add only walk_to_read`),
+    page.slice(start, end).includes(`so put what a walker should find after the first line. ${WINDOW_FIRST_LINE} Outline place reads add first_line to every walk-to-read note even though the body is omitted. An active place also carries read_in_person; a retired-place outline has no walking instruction because its body is public there. The emitted first-line preview's UTF-8 bytes count in returned_text_bytes. It does not spend note_text_limit_bytes or change note text-limit admission and cursors, which count body bytes only. A withheld body counts toward no returned_text_bytes and is left out of a reading_cost first read, while total_text_bytes and the room's stored total still count the full body.`),
     'the sentence follows the walker sentence',
   )
   assert.equal(page.split(WINDOW_FIRST_LINE).length, 2, 'the sentence appears once on the page')

@@ -260,7 +260,10 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.equal(fullWalk.first_line, FIRST_LINE)
       assert.equal(fullWalk.read_in_person, expected.read_in_person)
       assert.equal(Object.hasOwn(fullWalk, 'body'), false)
-      assert.equal(full.notes_page.returned_text_bytes, Buffer.byteLength(ORDINARY_BODY, 'utf8'))
+      assert.equal(
+        full.notes_page.returned_text_bytes,
+        Buffer.byteLength(ORDINARY_BODY, 'utf8') + Buffer.byteLength(FIRST_LINE, 'utf8'),
+      )
       assert.equal(
         full.notes_page.total_text_bytes,
         Buffer.byteLength(ORDINARY_BODY, 'utf8') + Buffer.byteLength(WALK_BODY, 'utf8'),
@@ -271,15 +274,66 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
         'text-limited place read',
       )) as { notes: Array<Record<string, unknown>>; notes_page: Record<string, unknown> }
       assert.equal(budgeted.notes.find(note => note.id === seeded.walkNoteId)?.first_line, FIRST_LINE)
-      assert.equal(budgeted.notes_page.returned_text_bytes, Buffer.byteLength(ORDINARY_BODY, 'utf8'))
+      assert.equal(
+        budgeted.notes_page.returned_text_bytes,
+        Buffer.byteLength(ORDINARY_BODY, 'utf8') + Buffer.byteLength(FIRST_LINE, 'utf8'),
+      )
 
       const outline = JSON.parse(await withoutSentinel(
         await app.request(`http://city.test/api/place/${seeded.eastRoomId}`), 'outline place read',
-      )) as { notes: Array<Record<string, unknown>> }
+      )) as { notes: Array<Record<string, unknown>>; notes_page: Record<string, unknown> }
       const outlineWalk = outline.notes.find(note => note.id === seeded.walkNoteId)!
       assert.equal(outlineWalk.walk_to_read, true)
       assert.equal(outlineWalk.read_in_person, expected.read_in_person)
       assert.equal(outlineWalk.body_text_bytes, Buffer.byteLength(WALK_BODY, 'utf8'))
+      assert.equal(outlineWalk.first_line, FIRST_LINE)
+      assert.equal(Object.hasOwn(outlineWalk, 'body'), false)
+      const outlineOrdinary = outline.notes.find(note => note.id === seeded.ordinaryNoteId)!
+      assert.equal(Object.hasOwn(outlineOrdinary, 'body'), false)
+      assert.equal(Object.hasOwn(outlineOrdinary, 'first_line'), false)
+      assert.equal(Object.hasOwn(outlineOrdinary, 'read_in_person'), false)
+      assert.equal(outline.notes_page.returned_text_bytes, Buffer.byteLength(FIRST_LINE, 'utf8'))
+
+      const longLine = '🏙'.repeat(205)
+      const unicodeBody = longLine + '\r\nThe second line holds ' + SENTINEL
+      const unicode = await json<{ note: { id: number } }>(
+        await say(app, WRITER.secret, {
+          place_id: seeded.eastRoomId,
+          body: unicodeBody,
+          walk_to_read: true,
+        }),
+        201,
+        'Unicode walk-to-read note',
+      )
+      const unicodeOutline = JSON.parse(await withoutSentinel(
+        await app.request(
+          'http://city.test/api/place/' + seeded.eastRoomId +
+            '?view=outline&before_note_id=' + (unicode.note.id + 1) + '&note_limit=1',
+        ),
+        'Unicode outline place read',
+      )) as { notes: Array<Record<string, unknown>>; notes_page: Record<string, unknown> }
+      assert.equal(unicodeOutline.notes[0]?.id, unicode.note.id)
+      assert.equal(unicodeOutline.notes[0]?.first_line, '🏙'.repeat(200))
+      assert.equal(Array.from(String(unicodeOutline.notes[0]?.first_line)).length, 200)
+      assert.equal(unicodeOutline.notes[0]?.body_text_bytes, Buffer.byteLength(unicodeBody, 'utf8'))
+      assert.equal(Object.hasOwn(unicodeOutline.notes[0]!, 'body'), false)
+      assert.equal(unicodeOutline.notes_page.returned_text_bytes, Buffer.byteLength('🏙'.repeat(200), 'utf8'))
+
+      const zeroBudget = JSON.parse(await withoutSentinel(
+        await app.request(
+          'http://city.test/api/place/' + seeded.eastRoomId +
+            '?view=full&note_text_limit_bytes=0&before_note_id=' + (unicode.note.id + 1) + '&note_limit=1',
+        ),
+        'zero-budget full place read',
+      )) as {
+        notes: Array<Record<string, unknown>>
+        notes_page: Record<string, unknown>
+      }
+      assert.equal(zeroBudget.notes[0]?.id, unicode.note.id)
+      assert.equal(zeroBudget.notes[0]?.first_line, '🏙'.repeat(200))
+      assert.equal(zeroBudget.notes_page.returned_text_bytes, Buffer.byteLength('🏙'.repeat(200), 'utf8'))
+      assert.equal(zeroBudget.notes_page.text_limit_bytes, 0)
+      assert.equal(zeroBudget.notes_page.next_before_note_id, unicode.note.id)
 
       for (const path of [
         '/api/window?collection=notes',
@@ -609,6 +663,21 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
         await app.request(`http://city.test/api/place/${seeded.eastRoomId}?view=full`), 200, 'tombstone',
       )
       assert.equal(tombstone.notes.find(note => note.id === seeded.walkNoteId)?.body, WALK_BODY)
+      const retiredOutline = await json<{
+        notes: Array<Record<string, unknown>>
+        notes_page: Record<string, unknown>
+      }>(
+        await app.request('http://city.test/api/place/' + seeded.eastRoomId + '?view=outline'),
+        200,
+        'retired outline',
+      )
+      const retiredOutlineWalk = retiredOutline.notes.find(note => note.id === seeded.walkNoteId)!
+      assert.equal(retiredOutlineWalk.walk_to_read, true)
+      assert.equal(retiredOutlineWalk.body_text_bytes, Buffer.byteLength(WALK_BODY, 'utf8'))
+      assert.equal(retiredOutlineWalk.first_line, FIRST_LINE)
+      assert.equal(Object.hasOwn(retiredOutlineWalk, 'body'), false)
+      assert.equal(Object.hasOwn(retiredOutlineWalk, 'read_in_person'), false)
+      assert.equal(retiredOutline.notes_page.returned_text_bytes, Buffer.byteLength(FIRST_LINE, 'utf8'))
       const found = await json<{ results: Array<{ id: number }> }>(
         await app.request(`http://city.test/api/search?q=${SENTINEL}&type=note`), 200, 'retired search',
       )

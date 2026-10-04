@@ -1,6 +1,7 @@
 export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
 import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
+import { noteFirstLineSql } from './note-first-line.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
 import { talkEventRemovedSql } from './talk-event-targets.ts'
@@ -525,7 +526,10 @@ async function loadBudgetedPublicPlaceCollectionRows(
        SELECT n.id, n.place_id, author.handle AS author, n.body, n.created_at,
          n.walk_to_read, ${noteBodyWithheldSql('n')} AS body_withheld,
          CASE WHEN ${noteBodyWithheldSql('n')} THEN 0
-           ELSE octet_length(n.body) END::integer AS __text_bytes
+           ELSE octet_length(n.body) END::integer AS __text_bytes,
+         CASE WHEN ${noteBodyWithheldSql('n')}
+           THEN octet_length(${noteFirstLineSql('n.body')})
+           ELSE 0 END::integer AS __preview_text_bytes
        FROM notes n
        JOIN residents author ON author.id = n.author_id
        WHERE n.place_id = $1::integer
@@ -554,7 +558,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
           ORDER BY page.id DESC
         ), '[]'::jsonb) FROM thing_page page) AS things,
        (SELECT coalesce(jsonb_agg(
-          to_jsonb(page) - '__text_bytes' - '__ordinal' - '__cumulative_text_bytes'
+          to_jsonb(page) - '__text_bytes' - '__preview_text_bytes' - '__ordinal' - '__cumulative_text_bytes'
           ORDER BY page.id DESC
         ), '[]'::jsonb) FROM note_page page) AS notes,
        totals.subplace_items, totals.subplace_text_bytes,
@@ -594,7 +598,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
         WHERE __ordinal < $5::integer AND $9::bigint IS NOT NULL
           AND __cumulative_text_bytes > $9::bigint
         ORDER BY __ordinal LIMIT 1) AS thing_next_item_text_bytes,
-       (SELECT coalesce(sum(__text_bytes), 0)::bigint FROM note_page) AS note_returned_text_bytes,
+       (SELECT coalesce(sum(__text_bytes + __preview_text_bytes), 0)::bigint FROM note_page) AS note_returned_text_bytes,
        (SELECT count(*) FROM note_candidates) > (SELECT count(*) FROM note_page) AS note_has_more,
        CASE WHEN (SELECT count(*) FROM note_candidates) > (SELECT count(*) FROM note_page)
          THEN (SELECT id FROM note_page ORDER BY __ordinal DESC LIMIT 1) END AS note_next_cursor,
@@ -671,7 +675,9 @@ export async function loadPublicPlaceCollectionRows(
     : 'octet_length(t.body)::integer AS body_text_bytes,'
   const noteTextProjection = includeCollectionText
     ? 'n.body,'
-    : 'octet_length(n.body)::integer AS body_text_bytes,'
+    : 'octet_length(n.body)::integer AS body_text_bytes, '
+      + 'CASE WHEN n.walk_to_read THEN ' + noteFirstLineSql('n.body')
+      + ' END AS withheld_first_line,'
   const rows = await query(
     `/* public:place-collections */
      WITH subplace_page AS MATERIALIZED (
