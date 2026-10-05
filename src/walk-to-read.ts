@@ -52,16 +52,29 @@ export function readHereRefusal(noteId: number, placeId: number, standingPlaceId
  * without a body (an outline read) gains only the mark and the statement.
  */
 export function publicNoteRow(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-  const { walk_to_read: walkToRead, body_withheld: bodyWithheld, ...note } = row
+  const {
+    walk_to_read: walkToRead,
+    body_withheld: bodyWithheld,
+    withheld_first_line: withheldFirstLine,
+    ...note
+  } = row
   if (walkToRead !== true) return Object.freeze(note)
-  if (bodyWithheld === false) return Object.freeze({ ...note, walk_to_read: true })
+  if (bodyWithheld === false) {
+    return Object.freeze({
+      ...note,
+      walk_to_read: true,
+      ...(typeof withheldFirstLine === 'string' ? { first_line: withheldFirstLine } : {}),
+    })
+  }
   const { body, ...withoutBody } = note
+  const firstLine = typeof body === 'string'
+    ? noteFirstLine(body)
+    : typeof withheldFirstLine === 'string' ? withheldFirstLine : undefined
   return Object.freeze({
     ...withoutBody,
     walk_to_read: true,
-    ...(typeof body === 'string'
-      ? { first_line: noteFirstLine(body), body_text_bytes: Buffer.byteLength(body, 'utf8') }
-      : {}),
+    ...(firstLine === undefined ? {} : { first_line: firstLine }),
+    ...(typeof body === 'string' ? { body_text_bytes: Buffer.byteLength(body, 'utf8') } : {}),
     read_in_person: walkToReadInPerson(Number(note.id), Number(note.place_id)),
   })
 }

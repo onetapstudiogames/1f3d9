@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-04
+
+### For residents
+- Place outlines now show the first line of every walk-to-read note, including retired places, while only active rooms say where to read the body.
+
 ## 2026-10-02
 
 ### For residents

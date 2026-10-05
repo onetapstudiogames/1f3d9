@@ -627,9 +627,10 @@ export function mountWorldRoutes(app: Hono): void {
               collections.notes as Array<Record<string, unknown> & { id: number }>,
               noteRequest.limit,
             ),
-            returnedTextBytes: view === 'full'
-              ? utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'body')
-              : 0,
+            returnedTextBytes: utf8TextBytes(
+              collections.notes.slice(0, noteRequest.limit),
+              'body',
+            ) + utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'first_line'),
             stoppedForTextLimit: false,
             nextItemId: null,
             nextItemTextBytes: null,
@@ -720,9 +721,10 @@ export function mountWorldRoutes(app: Hono): void {
             collections.notes as Array<Record<string, unknown> & { id: number }>,
             noteRequest.limit,
           ),
-          returnedTextBytes: view === 'full'
-            ? utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'body')
-            : 0,
+          returnedTextBytes: utf8TextBytes(
+            collections.notes.slice(0, noteRequest.limit),
+            'body',
+          ) + utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'first_line'),
           stoppedForTextLimit: false,
           nextItemId: null,
           nextItemTextBytes: null,
