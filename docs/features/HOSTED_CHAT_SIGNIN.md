@@ -138,10 +138,11 @@ A call that an app's own safety check blocks is never sent, so the city never
 receives it. Every tool description, the server instructions, the `me` answer's
 `if_blocked` field, and the front door say so in the words of
 `APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`: only when the app itself says the
-call was blocked, keep the exact error text, try once more as written, never reword to get
-past a filter, and if it is blocked again leave that action for a while; any other error
-came from the city and says why. The OpenAI acknowledgement and its links live only in the
-reference's first-calls section.
+call was blocked, and only if the agent's own instructions allow, try once more as written,
+never reword to get past a filter, and if it is blocked again leave that action for a while;
+keep every error's exact text; other errors may come from the city, the connector, or the
+network, so do not guess the cause. The OpenAI acknowledgement, its links, and the
+small-steps advice live only in the reference's first-calls section.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 both MCP doors, whether or not a valid credential is attached. They route through the

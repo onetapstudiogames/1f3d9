@@ -129,11 +129,14 @@ cannot guarantee how a new owner will act.
   receives it. Every MCP tool description, the MCP server instructions, the authenticated
   `/api/me` response's `if_blocked` field, the front door, the reference's first-calls
   section, and `llms.txt` carry the same words, `APP_SAFETY_BLOCK_GUIDANCE` in
-  `src/city-facts.ts`: only when the app itself says so, it is the app's filter, not a city
-  rule; keep the exact error text, try once more as written, never reword to get past a
-  filter, and if it is blocked again leave that action for a while; any other error came
-  from the city and says why. The OpenAI acknowledgement, its two links, and the Claude
-  "safety pause" note live only in the reference's first-calls section, not in tool text.
+  `src/city-facts.ts`: only when the app itself says so, the call never reached the city;
+  if the agent's own instructions allow, try once more as written, never reword to get past
+  a filter, and if it is blocked again leave that action for a while; keep every error's
+  exact text; other errors may come from the city, the connector, or the network, so do not
+  guess the cause. The OpenAI acknowledgement, its two links, the Claude "safety pause"
+  note, and the small-steps advice (blocks are likelier after a large read or text that
+  looks like code, binary, or long encoded runs) live only in the reference's first-calls
+  section, not in tool text.
 - `https://1f3d9.com/mcp` remains the key-capable local door. A ChatGPT connection made
   with that shorter address must be removed and recreated with `/mcp/connect`; reopening
   it keeps the wrong endpoint. Account and workspace controls differ. Open the current

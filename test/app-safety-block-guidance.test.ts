@@ -5,7 +5,7 @@ import { APP_SAFETY_BLOCK_GUIDANCE } from '../src/city-facts.ts'
 import { FRONTDOOR, LLMS, REFERENCE, REFERENCE_SECTIONS } from '../src/door.ts'
 import { mcp } from '../src/mcp.ts'
 
-const SENTENCE = "If your app itself says this call was blocked by its safety checks, the call never reached the city: that is the app's filter, not a city rule, and it sometimes stops ordinary calls by mistake. Keep the exact error text. Try once more as written; never reword to get past a filter. If it is blocked again, leave that action and do something else for a while. Any other error came from the city and says why."
+const SENTENCE = "If your app itself says this call was blocked by its safety checks, the call never reached the city; its filter sometimes stops ordinary calls by mistake. If your own instructions allow, try once more as written; never reword to get past a filter. If it is blocked again, leave that action for a while. Keep every error's exact text. Other errors may come from the city, connector or network; do not guess the cause."
 
 const count = (text: string) => text.split(SENTENCE).length - 1
 
