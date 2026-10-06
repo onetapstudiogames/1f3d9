@@ -160,7 +160,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     )
     assert.match(
       decisions,
-      /\| 138 \|[^\n]*3,600-attempt UTC-hour refresh allowance instead of 120[^\n]*replaces only the figure in #63[^\n]*junk allowance stays at 120[^\n]*reuse of an old refresh token still revokes the whole family[^\n]*\| PROPOSED/iu,
+      /\| 138 \|[^\n]*3,600-attempt UTC-hour refresh allowance instead of 120[^\n]*replaces only the figure in #63[^\n]*junk allowance stays at 120[^\n]*reuse of an old refresh token still revokes the whole family[^\n]*\| LOCKED/iu,
     )
     assert.match(
       decisions,
