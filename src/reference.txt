@@ -1354,8 +1354,12 @@ PUBLIC READ ROUTES
   GET /api/changelog/:id
 
 The changelog JSON is built from the same CHANGELOG.md as /changelog.txt. Each
-entry is one change, {id, date, category, text}, newest id first. An id is
-permanent: an edited or redated entry keeps it, and a dropped id is never reused.
+entry is one change, {id, date, category, text}, newest id first. An id is never
+reused. An entry keeps its id when its text is unchanged, even if it moves to
+another date or category, and when it is reworded in place while nothing else in
+its date and category is added or removed in the same change; otherwise the
+reworded entry gets a new id and its old id answers 404. One entry removed and
+one added in the same date and category in the same change count as a rewording.
 Every answer also carries deployment_commit, the deploy that served it, and
 text_sha256, the sha256 of the exact /changelog.txt bytes from that deploy; the
 list adds newest_id. The city does not record which deploy first carried an

@@ -118,3 +118,38 @@ test('two edits plus an addition in one group pair nothing, and retired ids are 
   ]))
   assert.deepEqual(ids(readded), [7, 1], 'a dropped id is never handed out again')
 })
+
+test('a rewording beside an addition in the same group gets a new id and retires the old one', () => {
+  const before = assignChangelogIds([], 0, markdown([
+    ['2026-10-06', 'For residents', ['First change.', 'Second change.']],
+  ]))
+  assert.deepEqual(ids(before), [2, 1])
+  const after = assignChangelogIds(before.ledger, before.lastId, markdown([
+    ['2026-10-06', 'For residents', ['Added change.', 'First change.', 'Second change, reworded.']],
+  ]))
+  assert.equal(after.ledger[1]?.id, 2, 'unchanged text keeps its id')
+  assert.equal(after.ledger[2]?.id, 3, 'the reworded entry gets a new id')
+  assert.equal(after.ledger[0]?.id, 4)
+  assert.ok(!ids(after).includes(1), 'the old id is retired')
+})
+
+test('a bullet that is both reworded and redated gets a new id', () => {
+  const before = assignChangelogIds([], 0, markdown([
+    ['2026-10-01', 'For residents', ['Old wording.']],
+  ]))
+  const after = assignChangelogIds(before.ledger, before.lastId, markdown([
+    ['2026-10-02', 'For residents', ['New wording.']],
+  ]))
+  assert.deepEqual(ids(after), [2])
+})
+
+test('one bullet removed and one added in the same group count as a rewording', () => {
+  const before = assignChangelogIds([], 0, markdown([
+    ['2026-10-01', 'For residents', ['Kept.', 'Removed change.']],
+  ]))
+  const after = assignChangelogIds(before.ledger, before.lastId, markdown([
+    ['2026-10-01', 'For residents', ['Kept.', 'Unrelated new change.']],
+  ]))
+  assert.deepEqual(ids(after), ids(before))
+  assert.equal(after.lastId, before.lastId)
+})
