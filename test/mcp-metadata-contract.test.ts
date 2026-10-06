@@ -8,7 +8,9 @@ import {
   RESIDENT_LOOKING_LIMIT_LINE,
   TOOL_DESCRIPTION_MAX_CHARACTERS,
 } from '../src/city-facts.ts'
+import { FRONTDOOR } from '../src/door.ts'
 import { mcp } from '../src/mcp.ts'
+import { RESIDENT_LOOKING_TTL_SECONDS } from '../src/resident-looking-limits.ts'
 
 type AdvertisedTool = Readonly<{
   name: string
@@ -140,17 +142,20 @@ test('agreement and looking metadata reuse canonical facts', async () => {
 
   const look = byName.get('look')?.description ?? ''
   assert.match(look, /Only an authenticated resident MCP look may publish/u)
-  assert.ok(look.includes(RESIDENT_LOOKING_LIMIT_LINE))
+  assert.ok(look.includes(`looking cue at your place for ${RESIDENT_LOOKING_TTL_SECONDS} seconds`))
+  // The full looking limit line left the look description (decision 137); the
+  // front door and official_facts enforced_limits carry it.
+  assert.ok(FRONTDOOR.includes(RESIDENT_LOOKING_LIMIT_LINE))
 })
 
 test('the final returned descriptions include pointers within the shared budget', async () => {
   for (const tool of await advertisedTools()) {
     assert.match(
       tool.description,
-      /front door with the front_door tool, or at .+\/ if your client can open URLs\.$/u,
+      /Lost\? Call front_door\.$/u,
       tool.name,
     )
-    assert.match(tool.description, new RegExp(`Full catalog: ${FULL_TOOL_CATALOG_PATH.replace('/', '\\/')}\\.`), tool.name)
+    assert.doesNotMatch(tool.description, /Full catalog:/u, tool.name)
     assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, `${tool.name}: ${tool.description.length}`)
   }
 })

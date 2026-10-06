@@ -19,7 +19,16 @@ import {
   CREDIT_REQUEST_ID_SHAPE_REFUSAL,
 } from '../../src/city-fee-facts.ts'
 import { callToolResult } from '../helpers/connector-tools-fixtures/transport-harness.ts'
-import { TALK_LINE_RULE, TALK_PING_RULE, TALK_WAIT_RULE } from '../../src/room-talk-contract.ts'
+import {
+  CUT_CALL_WAIT_SECONDS,
+  TALK_LINE_RULE,
+  TALK_PING_RULE,
+  TALK_WAIT_RULE,
+  WAIT_DEFAULT_SECONDS_CODING,
+  WAIT_DEFAULT_SECONDS_HOSTED_CHAT,
+  WAIT_SECONDS_MAX,
+} from '../../src/room-talk-contract.ts'
+import { REFERENCE_SECTIONS } from '../../src/door.ts'
 
 export function registerToolContractTests(): void {
   test('both MCP catalogs advertise the exact connector tool contracts', async () => {
@@ -74,9 +83,28 @@ export function registerToolContractTests(): void {
     assert.match(placeEditDescription, /owner.*4,?000/iu)
     assert.match(placeEditDescription, /280.*(?:clear|empty)/iu)
     assert.match(placeEditDescription, /(?:exactly )?2.*3/iu)
-    assert.ok(placeEditDescription.includes(
-      'wake_random_cap is 0 to 32 (default 8), and wake_label_seconds is 10 to 86400 (default 86400), the seconds a sticker a thing waking here puts on a resident lasts; changing it changes only stickers put on afterward.',
-    ), 'place_edit names wake_label_seconds with its range, its default, and what a change does')
+    // Decision 137: the dial ranges live in the input schema and the reference
+    // abilities section, and the description points there.
+    assert.match(placeEditDescription, /each field states its range and default/u)
+    const wakeLabelSeconds = (legacy.find(tool => tool.name === 'place_edit')!.inputSchema.properties as Record<string, {
+      minimum?: number
+      maximum?: number
+      description?: string
+    }>).wake_label_seconds!
+    assert.deepEqual(
+      [wakeLabelSeconds.minimum, wakeLabelSeconds.maximum],
+      [10, 86400],
+      'place_edit schema names wake_label_seconds with its range',
+    )
+    assert.match(
+      wakeLabelSeconds.description ?? '',
+      /the seconds a sticker a thing waking here puts on a resident lasts; default 86400[\s\S]*changing it changes only stickers put on afterward/u,
+      'place_edit schema names the wake_label_seconds default and what a change does',
+    )
+    assert.ok(
+      (REFERENCE_SECTIONS as Record<string, string>).abilities?.includes('wake_random_cap, 0 to 32,\ndefault 8; wake_label_seconds, 10 to 86400, default 86400'),
+      'the reference abilities section lists the room dials',
+    )
     assert.ok(placeEditDescription.includes(
       'hinge_to is one other place id, or null, and is free',
     ), 'place_edit explains hinge_to in resident words')
@@ -108,11 +136,21 @@ export function registerToolContractTests(): void {
     }
     for (const [catalog, tools] of [['legacy', legacy], ['hosted', hosted]] as const) {
       for (const [name, rule] of [
-        ['say', TALK_LINE_RULE], ['ping', TALK_PING_RULE], ['wait_here', TALK_WAIT_RULE],
+        ['say', TALK_LINE_RULE], ['ping', TALK_PING_RULE],
       ] as const) {
         assert.ok(tools.find(tool => tool.name === name)!.description.includes(rule), `${catalog} ${name} rule sentence`)
       }
       const waitDescription = tools.find(tool => tool.name === 'wait_here')!.description
+      assert.ok(
+        waitDescription.includes(`A wait lasts ${WAIT_DEFAULT_SECONDS_HOSTED_CHAT} seconds by default on hosted chat and ${WAIT_DEFAULT_SECONDS_CODING} seconds through a coding client unless you ask for 1 to ${WAIT_SECONDS_MAX} seconds.`),
+        `${catalog} wait_here defaults`,
+      )
+      assert.match(waitDescription, new RegExp(`such as ${CUT_CALL_WAIT_SECONDS}\\.`, 'u'), `${catalog} wait_here cut-call advice`)
+      assert.match(waitDescription, /front_door section same-room-talk/u, `${catalog} wait_here names where the whole rule lives`)
+      assert.ok(
+        (REFERENCE_SECTIONS as Record<string, string>)['same-room-talk']?.includes(TALK_WAIT_RULE),
+        'the whole wait rule lives in the reference same-room-talk section',
+      )
       assert.doesNotMatch(waitDescription, /a second is refused/iu, `${catalog} wait rule does not refuse a second wait`)
       assert.match(waitDescription, /reason change, moved, replaced, or timeout/iu, `${catalog} wait reasons`)
     }

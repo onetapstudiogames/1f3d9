@@ -118,9 +118,11 @@ cannot guarantee how a new owner will act.
   the existing-resident path, and use the saved key; do not register again. An OAuth
   refusal with `client_not_approved` points to `/setup#oauth-refused`, `/join`, and the
   bearer-key `/mcp` alternative for clients that can send that header.
-- Every MCP tool description or error and authenticated `/api/me` response carries a
-  connector-first `front_door` tool pointer plus `https://1f3d9.com/` as a fallback only
-  when the client can open URLs. Browser refusal pages are already first-party web pages,
+- Every MCP tool description ends with the short pointer "Lost? Call front_door.", so it
+  stays inside its 1,950-character budget (decision #137). The MCP server instructions,
+  every MCP error, and the authenticated `/api/me` response carry the connector-first
+  `front_door` tool pointer plus `https://1f3d9.com/` as a fallback only when the client
+  can open URLs. Browser refusal pages are already first-party web pages,
   so they keep their ordinary link to the plain-text front door.
   Linking an existing resident never generates, rotates, or replaces recovery codes.
 - A chat app's own safety filter can stop a call before it is sent, so the city never
