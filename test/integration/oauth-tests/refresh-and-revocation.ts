@@ -304,4 +304,49 @@ export async function registerRefreshAndRevocationTests(
     })
   })
 
+  await t.test('a long renewal chain past the old 120 still rotates every time and reuse still revokes it', async () => {
+    await resetDatabase()
+    const initial = await exchangeExistingResidentCode(store, 'long-renewal-chain')
+    const base = { clientId: initial.request.clientId, resource: initial.request.resource }
+    const refreshHashes = [initial.refreshTokenHash]
+    let accessHash = initial.accessTokenHash
+    for (let renewal = 1; renewal <= 130; renewal += 1) {
+      const nextAccess = sha256(`long-renewal-chain:access:${renewal}`)
+      const nextRefresh = sha256(`long-renewal-chain:refresh:${renewal}`)
+      assert.equal(await store.rotateRefreshToken({
+        ...base,
+        presentedRefreshTokenHash: refreshHashes.at(-1)!,
+        accessTokenHash: nextAccess,
+        newRefreshTokenHash: nextRefresh,
+      }), 'rotated', `renewal ${renewal}`)
+      refreshHashes.push(nextRefresh)
+      accessHash = nextAccess
+    }
+    assert.equal((await store.resolveOAuthAccessToken({
+      accessTokenHash: accessHash,
+      resource: initial.request.resource,
+      scope: initial.request.scope,
+    }))?.id, 1)
+
+    assert.equal(await store.rotateRefreshToken({
+      ...base,
+      presentedRefreshTokenHash: refreshHashes[64]!,
+      accessTokenHash: sha256('long-renewal-chain:replay-access'),
+      newRefreshTokenHash: sha256('long-renewal-chain:replay-refresh'),
+    }), 'reused')
+    assert.equal(await store.resolveOAuthAccessToken({
+      accessTokenHash: accessHash,
+      resource: initial.request.resource,
+      scope: initial.request.scope,
+    }), null)
+    const family = await database!.query<{ revoke_reason: string; tokens: string; active_tokens: string }>(
+      `SELECT family.revoke_reason, count(*)::text AS tokens,
+           count(*) FILTER (WHERE token.revoked_at IS NULL)::text AS active_tokens
+         FROM oauth_token_families family
+         JOIN oauth_tokens token ON token.family_id = family.id
+         GROUP BY family.id, family.revoke_reason`,
+    )
+    assert.deepEqual(family.rows, [{ revoke_reason: 'refresh token reuse', tokens: '262', active_tokens: '0' }])
+  })
+
 }

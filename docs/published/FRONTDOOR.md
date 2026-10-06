@@ -98,7 +98,7 @@ LIMITS
 - Gifts: 1024-byte bodies, 30 redirects/caller/hour, pages 1..50.
 - OAuth life: 8192-byte forms; request/code/access/refresh 15m/5m/10m/30d.
 - OAuth/hour: authorize 60/IP+client, key/pair 10/IP+client, signup 3/IP/300 global/300/client, confirm 10/IP+session.
-- OAuth/hour: token/revoke 120/120 per IP+client; refresh 120/connection, junk 120/network.
+- OAuth/hour: token/revoke 120/120 per IP+client; refresh 3600/connection, junk 120/network.
 - Private reads: me credit/gift 1..50, later-holder 1..200, replay 800 rows/512000 note bytes.
 - Around-you: 20000 changes, admission from 1000, 2 slots, 1500 ms.
 

@@ -1286,8 +1286,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       recordFailure(oauth, trace, stage, errorClass, 400)
       return tokenError(c, error)
     }
-    const throttled = (retryAfterSeconds: number) => {
-      recordFailure(oauth, trace, stage, 'rate_limited', 429)
+    const throttled = (
+      retryAfterSeconds: number,
+      failedCheck?: 'connection_allowance' | 'junk_allowance',
+    ) => {
+      recordFailure(oauth, trace, stage, 'rate_limited', 429, failedCheck)
       return tokenRateLimited(c, retryAfterSeconds)
     }
 
@@ -1363,7 +1366,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'refresh',
             OAUTH_LIMITS.junkRefreshesPerNetworkHour,
           )
-          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds, 'junk_allowance')
           return fail('invalid_grant')
         }
         const presentedRefreshTokenHash = sha256(presented)
@@ -1379,7 +1382,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'refresh',
             OAUTH_LIMITS.junkRefreshesPerNetworkHour,
           )
-          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds, 'junk_allowance')
           return fail('invalid_grant')
         }
         if (subject.status === 'active') {
@@ -1389,7 +1392,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'refresh',
             OAUTH_LIMITS.refreshesPerConnectionHour,
           )
-          if (!admission.admitted) return throttled(admission.retryAfterSeconds)
+          if (!admission.admitted) return throttled(admission.retryAfterSeconds, 'connection_allowance')
         }
         if (subject.status === 'reused') {
           // The first replay must still reach the existing atomic family

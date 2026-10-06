@@ -6,6 +6,7 @@ import {
   residentByOAuthAccessToken,
   type OAuthDiagnosticRecord,
 } from '../../src/oauth.ts'
+import { OAUTH_LIMITS } from '../../src/oauth-limits.ts'
 import { EXISTING_KEY, MemoryOAuthStore, rateLimitResult } from './memory-oauth-store.ts'
 import {
   CALLBACK,
@@ -23,6 +24,19 @@ import {
   initialPair,
   readTokenPair,
 } from './fixture.ts'
+
+function refreshWith(app: Hono, refreshToken: string): Promise<Response> {
+  return Promise.resolve(app.request('/oauth/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: CLIENT_ID,
+      resource: RESOURCE,
+      refresh_token: refreshToken,
+    }),
+  }))
+}
 
 export function registerConnectorTokenTests(): void {
   test('current ChatGPT callback-specific CIMD completes PKCE exchange and refresh', async () => {
@@ -149,7 +163,9 @@ export function registerConnectorTokenTests(): void {
   })
 
   test('junk refresh requests cannot spend a real connector connection allowance', async () => {
-    const { app, memory } = fixture()
+    const memory = new MemoryOAuthStore()
+    const diagnostics: OAuthDiagnosticRecord[] = []
+    const app = appFor(memory, record => diagnostics.push(record))
     const pair = await initialPair(app)
     const usedByBucket = new Map<string, number>()
     const rotateRefreshToken = memory.api.rotateRefreshToken
@@ -196,6 +212,11 @@ export function registerConnectorTokenTests(): void {
     assert.equal(throttledJunk.status, 429)
     assert.equal(throttledJunk.headers.get('retry-after'), '17')
     assert.equal(rotationCalls, 0, 'junk must stop before refresh rotation work')
+    const throttledRecords = diagnostics.filter(record => record.status === 429)
+    assert.equal(throttledRecords.length, 1)
+    assert.equal(throttledRecords[0]!.stage, 'token_refresh')
+    assert.equal(throttledRecords[0]!.error_class, 'rate_limited')
+    assert.equal(throttledRecords[0]!.failed_check, 'junk_allowance')
 
     const real = await app.request('/oauth/token', {
       method: 'POST',
@@ -212,7 +233,9 @@ export function registerConnectorTokenTests(): void {
   })
 
   test('a throttled refresh says to wait and retry instead of calling the grant invalid', async () => {
-    const { app, memory } = fixture()
+    const memory = new MemoryOAuthStore()
+    const diagnostics: OAuthDiagnosticRecord[] = []
+    const app = appFor(memory, record => diagnostics.push(record))
     const pair = await initialPair(app)
     memory.api.consumeOAuthRateLimit = async input => rateLimitResult(input.attemptKind !== 'refresh')
 
@@ -250,6 +273,13 @@ export function registerConnectorTokenTests(): void {
     assertPrivate(junk)
     assert.equal(junk.headers.get('retry-after'), '17')
     assert.deepEqual(await junk.json(), expected)
+    assert.deepEqual(
+      diagnostics.map(record => [record.stage, record.error_class, record.status, record.failed_check]),
+      [
+        ['token_refresh', 'rate_limited', 429, 'connection_allowance'],
+        ['token_refresh', 'rate_limited', 429, 'junk_allowance'],
+      ],
+    )
   })
 
   test('two overlapping refreshes leave the successful connector grant alive', async () => {
@@ -345,4 +375,93 @@ export function registerConnectorTokenTests(): void {
     assert.equal(rotationCalls, 1, 'post-revocation replay must stop before rotation')
   })
 
+  test('a connection that renews before every call keeps working past 120 renewals in one UTC hour', async () => {
+    const { app, memory } = fixture()
+    let pair = await initialPair(app)
+    const usedByBucket = new Map<string, number>()
+    memory.api.consumeOAuthRateLimit = async input => {
+      const used = usedByBucket.get(input.bucketHash) ?? 0
+      if (used >= input.maximum) return rateLimitResult(false)
+      usedByBucket.set(input.bucketHash, used + 1)
+      return rateLimitResult(true)
+    }
+
+    for (let renewal = 1; renewal <= 600; renewal += 1) {
+      const response = await refreshWith(app, pair.refresh_token)
+      assert.equal(response.status, 200, `renewal ${renewal} must succeed, got ${response.status}`)
+      const next = await readTokenPair(response)
+      assert.notEqual(next.refresh_token, pair.refresh_token)
+      assert.notEqual(next.access_token, pair.access_token)
+      pair = next
+    }
+    assert.equal(
+      (await residentByOAuthAccessToken(pair.access_token, environment, memory.api))?.id,
+      49,
+    )
+  })
+
+  test('the per-connection allowance still stops a runaway connection at the new number', async () => {
+    const memory = new MemoryOAuthStore()
+    const diagnostics: OAuthDiagnosticRecord[] = []
+    const app = appFor(memory, record => diagnostics.push(record))
+    const pair = await initialPair(app)
+    const usedByBucket = new Map<string, number>()
+    const refreshMaximums: number[] = []
+    let connectionBucket = ''
+    memory.api.consumeOAuthRateLimit = async input => {
+      if (input.attemptKind === 'refresh') {
+        refreshMaximums.push(input.maximum)
+        connectionBucket = input.bucketHash
+      }
+      const used = usedByBucket.get(input.bucketHash) ?? 0
+      if (used >= input.maximum) return rateLimitResult(false)
+      usedByBucket.set(input.bucketHash, used + 1)
+      return rateLimitResult(true)
+    }
+    const rotateRefreshToken = memory.api.rotateRefreshToken
+    let rotationCalls = 0
+    memory.api.rotateRefreshToken = async input => {
+      rotationCalls += 1
+      return rotateRefreshToken(input)
+    }
+
+    const first = await readTokenPair(await refreshWith(app, pair.refresh_token))
+    assert.deepEqual(refreshMaximums, [3_600])
+    assert.equal(OAUTH_LIMITS.refreshesPerConnectionHour, 3_600)
+    assert.equal(rotationCalls, 1)
+
+    usedByBucket.set(connectionBucket, 3_600)
+    const refused = await refreshWith(app, first.refresh_token)
+    assert.equal(refused.status, 429)
+    assertPrivate(refused)
+    assert.equal(refused.headers.get('retry-after'), '17')
+    assert.deepEqual(await refused.json(), {
+      error: 'temporarily_unavailable',
+      error_description: 'Too many refresh attempts. Wait 17 seconds and retry.',
+    })
+    assert.equal(rotationCalls, 1, 'a full connection allowance must stop before rotation')
+    assert.deepEqual(refreshMaximums, [3_600, 3_600])
+    assert.deepEqual(
+      diagnostics.map(record => [record.stage, record.error_class, record.status, record.failed_check]),
+      [['token_refresh', 'rate_limited', 429, 'connection_allowance']],
+    )
+    assert.equal(
+      (await residentByOAuthAccessToken(first.access_token, environment, memory.api))?.id,
+      49,
+      'a refused renewal must not revoke the connection',
+    )
+  })
+
+  test('every hourly OAuth allowance fits the oauth_rate_limits counter cap', () => {
+    // db/migrations/20260813_hosted_chat_signin.sql: used SMALLINT CHECK (used BETWEEN 1 AND 10000).
+    // A larger allowance would make the counter upsert fail and turn a throttle into a storage error.
+    const hourly = Object.entries(OAUTH_LIMITS).filter(([name]) => name.endsWith('Hour'))
+    assert.ok(hourly.length >= 10)
+    for (const [name, value] of hourly) {
+      assert.ok(Number.isInteger(value) && value >= 1 && value <= 10_000, `${name} is ${value}`)
+    }
+    assert.equal(OAUTH_LIMITS.junkRefreshesPerNetworkHour, 120)
+    assert.equal(OAUTH_LIMITS.tokenExchangesPerIpClientHour, 120)
+    assert.equal(OAUTH_LIMITS.revocationsPerIpClientHour, 120)
+  })
 }

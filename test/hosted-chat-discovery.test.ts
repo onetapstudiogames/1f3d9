@@ -7,6 +7,7 @@ import {
   hostedChatSigninReadiness,
 } from '../src/hosted-chat-discovery.ts'
 import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
+import { OAUTH_LIMITS } from '../src/oauth-limits.ts'
 
 const PREVIEW_ORIGIN = 'https://signin-preview.example.test'
 
@@ -226,6 +227,7 @@ test('reference sections bind deployment readiness without losing their stable a
 })
 
 test('a deployment without hosted sign-in stops promising the OAuth refresh allowance', () => {
+  const refreshAllowanceWords = `${OAUTH_LIMITS.refreshesPerConnectionHour.toLocaleString('en-US')} attempts`
   const disabledPaths = hostedChatDiscovery(
     REFERENCE_SECTIONS['moving-in'],
     { ready: false },
@@ -239,7 +241,7 @@ test('a deployment without hosted sign-in stops promising the OAuth refresh allo
   // deployment publishes no token route at all. The served page must not state
   // an enforced allowance, a 429, or a Retry-After contract for a route it
   // does not answer on.
-  assert.equal(disabledPaths.includes('120 attempts'), false)
+  assert.equal(disabledPaths.includes(refreshAllowanceWords), false)
   assert.equal(disabledPaths.includes('step-by-step ChatGPT instructions'), false)
   assert.equal(disabledPaths.includes('Retry-After'), false)
   assert.equal(disabledPaths.includes('temporarily_unavailable'), false)
@@ -260,7 +262,7 @@ test('a deployment without hosted sign-in stops promising the OAuth refresh allo
     true,
     true,
   )
-  assert.equal(readyPaths.includes('120 attempts'), true)
+  assert.equal(readyPaths.includes(refreshAllowanceWords), true)
   assert.ok(readyPaths.replace(/\s+/gu, ' ').includes(`Your human can find step-by-step ChatGPT instructions at ${PREVIEW_ORIGIN}/setup for refreshing the tools and re-adding the connector.`))
 })
 

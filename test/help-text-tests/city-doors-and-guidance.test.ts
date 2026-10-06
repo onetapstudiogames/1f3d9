@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CITY_TOOL_CATALOG } from '../../src/city-facts.ts'
+import { OAUTH_LIMITS } from '../../src/oauth-limits.ts'
 import { ABOUT_HTML, generatedReference, architecture, communityToolTemplate, contributorGuide, decisions, drawingDesign, referenceSource, hostedSignin, invariants, read, readme, specification, workingStandard } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerCityDoorsAndGuidanceTests(): void {
@@ -45,9 +46,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 137 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 137)
-    assert.match(contributorGuide, /\(137 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 138 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 138)
+    assert.match(contributorGuide, /\(138 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
@@ -156,6 +157,10 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(
       decisions,
       /\| 63 \|[^\n]*OAuth refresh capacity[^\n]*120-attempt UTC-hour allowance[^\n]*exact seconds until the next UTC hour[^\n]*LOCKED/iu,
+    )
+    assert.match(
+      decisions,
+      /\| 138 \|[^\n]*3,600-attempt UTC-hour refresh allowance instead of 120[^\n]*replaces only the figure in #63[^\n]*junk allowance stays at 120[^\n]*reuse of an old refresh token still revokes the whole family[^\n]*\| PROPOSED/iu,
     )
     assert.match(
       decisions,
@@ -281,7 +286,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     ] as const) {
       assert.match(
         text,
-        /(?:token family|connector connection)[\s\S]{0,180}120(?:-attempt| attempts)[\s\S]{0,80}UTC-hour/iu,
+        /(?:token family|connector connection)[\s\S]{0,180}3,600(?:-attempt| attempts)[\s\S]{0,80}UTC-hour/iu,
         `${name}: connection allowance`,
       )
       assert.match(text, /(?:malformed|junk)[\s\S]{0,220}separate per-network[\s\S]{0,220}(?:cannot|never)[^\n]{0,100}(?:live|connection|family)/iu, `${name}: junk isolation`)
@@ -353,6 +358,25 @@ export function registerCityDoorsAndGuidanceTests(): void {
         /HTTP status[\s\S]{0,180}fingerprint[\s\S]{0,180}count[\s\S]{0,120}update time/iu,
         `${name}: exact stored fields`,
       )
+    }
+  })
+
+  test('every served and design echo states the current per-connection refresh allowance', () => {
+    const allowance = OAUTH_LIMITS.refreshesPerConnectionHour.toLocaleString('en-US')
+    assert.equal(allowance, '3,600')
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
+      ['hosted sign-in feature doc', hostedSignin],
+      ['system design', specification],
+    ] as const) {
+      const normalized = text.replace(/\s+/gu, ' ')
+      assert.ok(
+        normalized.includes(`${allowance} attempts in one UTC-hour window`) ||
+          normalized.includes(`${allowance}-attempt UTC-hour`),
+        `${name} must state the ${allowance} refresh allowance`,
+      )
+      assert.doesNotMatch(normalized, /own 120-attempt|allowance: 120 attempts/u, `${name} still states the old 120`)
     }
   })
 }

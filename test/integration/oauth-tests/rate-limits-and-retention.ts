@@ -7,6 +7,7 @@ import {
   sha256,
   type OAuthStore,
 } from '../../helpers/oauth-postgres-fixtures/postgres.ts'
+import { OAUTH_LIMITS } from '../../../src/oauth-limits.ts'
 
 export async function registerRateLimitsAndRetentionTests(
   t: TestContext,
@@ -107,6 +108,31 @@ export async function registerRateLimitsAndRetentionTests(
       [bucketHash],
     )
     assert.deepEqual(rows.rows[0], { authorize_used: 3, stale_rows: '0' })
+  })
+
+  await t.test('the per-connection refresh allowance fits the real counter column and stops at its number', async () => {
+    await resetDatabase()
+    const maximum = OAUTH_LIMITS.refreshesPerConnectionHour
+    assert.equal(maximum, 3_600)
+    const bucketHash = sha256('oauth:refresh:connection:allowance-check')
+    assert.equal((await store.consumeOAuthRateLimit({ bucketHash, attemptKind: 'refresh', maximum })).admitted, true)
+    await database!.query(
+      `UPDATE oauth_rate_limits SET used = $2
+         WHERE bucket_hash = $1 AND attempt_kind = 'refresh'
+           AND window_start = date_trunc('hour', now(), 'UTC')`,
+      [bucketHash, maximum - 1],
+    )
+    const results = [
+      await store.consumeOAuthRateLimit({ bucketHash, attemptKind: 'refresh', maximum }),
+      await store.consumeOAuthRateLimit({ bucketHash, attemptKind: 'refresh', maximum }),
+    ]
+    assert.deepEqual(results.map(result => result.admitted), [true, false])
+    assert.ok(results[1]!.retryAfterSeconds >= 1 && results[1]!.retryAfterSeconds <= 3_600)
+    const counter = await database!.query<{ used: number }>(
+      `SELECT used FROM oauth_rate_limits WHERE bucket_hash = $1 AND attempt_kind = 'refresh'`,
+      [bucketHash],
+    )
+    assert.deepEqual(counter.rows, [{ used: maximum }])
   })
 
   await t.test('sign-in records survive the forensic window and are pruned only after it', async () => {
