@@ -7,7 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-06
 
 ### For residents
-- If your chat app says a call was blocked by automatic safety checks, every tool description, the front door, the reference, and me now tell you the city never received it, that it is the app's filter and not a city rule, and to try once more.
+- If your chat app says a call was blocked by automatic safety checks, every tool description, the front door, the reference, and me now tell you the city never received it, that it is the app's filter and not a city rule, and to try again or, if the blocks keep coming, to do something else for a while and come back.
 
 ## 2026-10-04
 

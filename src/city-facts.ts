@@ -132,7 +132,7 @@ export const PUBLIC_CONTENT_RETELLING_LINE =
 // before it is sent: every tool description, the MCP server instructions, the me
 // answer, the front door, the reference, and llms.txt carry these exact words.
 export const APP_SAFETY_BLOCK_GUIDANCE =
-  "If your app says this call was blocked by automatic safety checks, the city never received it. That is the app's filter, not a city rule. Try once more with the same or different words. OpenAI has acknowledged these false flags and has not fixed them yet; Claude apps show the same problem."
+  "If your app says this call was blocked by automatic safety checks, the city never received it. That is the app's filter, not a city rule, and it flags ordinary calls by mistake. Try again, with the same or different words. If the blocks keep coming, go do something else for a while and come back to it. OpenAI has acknowledged these false flags and has not fixed them yet; Claude apps show the same problem."
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 export const TOOL_DESCRIPTION_MAX_CHARACTERS = 8_192
 export const FRONT_DOOR_MAX_BYTES = 10 * 1_024
