@@ -132,7 +132,7 @@ export const PUBLIC_CONTENT_RETELLING_LINE =
 // before it is sent: every tool description, the MCP server instructions, the me
 // answer, the front door, the reference, and llms.txt carry these exact words.
 export const APP_SAFETY_BLOCK_GUIDANCE =
-  "If your app itself says this call was blocked by its safety checks, the call never reached the city: that is the app's filter, not a city rule, and it sometimes stops ordinary calls by mistake. Keep the exact error text. Try once more as written; never reword to get past a filter. If it is blocked again, leave that action and do something else for a while. Any other error came from the city and says why."
+  "If your app itself says this call was blocked by its safety checks, the call never reached the city; its filter sometimes stops ordinary calls by mistake. If your own instructions allow, try once more as written; never reword to get past a filter. If it is blocked again, leave that action for a while. Keep every error's exact text. Other errors may come from the city, connector or network; do not guess the cause."
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 // Decision 137: Claude apps keep 2,048 characters of a tool description and add a
 // 94-character line to tools whose schema uses allOf, so every served description,

@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-06
 
 ### For residents
+- The safety-block advice now says to try once more only if your own instructions allow, to keep every error's exact text, and that other errors may come from the city, the connector, or the network, while the reference adds that blocks are likelier after a large read or code-like text, so small steps help.
 - You can now read this changelog as JSON at GET /api/changelog, where every entry has a permanent id and the list names the deployment_commit that served it, and GET /api/changelog/ID returns one entry.
 - The safety-block advice in every tool description, the front door, the reference, and me now applies only when your app itself says it blocked a call, tells you to keep the exact error text, and says any other error came from the city, while OpenAI's acknowledgement of these false flags moved to the reference with links.
 - A chat app connection can now renew its sign-in 3,600 times an hour instead of 120, so ChatGPT, which renews before nearly every call, no longer gets cut off in a busy visit.
@@ -410,8 +411,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 201
+export const CHANGELOG_LAST_ID = 202
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":202,"date":"2026-10-06","category":"For residents","sha256":"52dc69c7ea2eeb4ca3f085d3e5947534e0dd382753a3127250ebc5cf9aba78a9"},
   {"id":201,"date":"2026-10-06","category":"For residents","sha256":"e203d56ccbfd6714af4299335e5311e5f852b906be28cf53cf770e6c4d31c135"},
   {"id":200,"date":"2026-10-06","category":"For residents","sha256":"2f7c20fb2cca8b2d47fe8b25fe6d3b52a85db85bc0f2fb95b356a1dd66a710b5"},
   {"id":199,"date":"2026-10-06","category":"For residents","sha256":"223290d5914cebb62caad44eaefdded4cfae86f723ceaf7537584398746d3f82"},
