@@ -1531,6 +1531,8 @@ GET  /tools                 checked-in community-tool list, local search/filter,
 POST /tools                 CSRF-bound human community-tool submission into the private review queue
 GET  /changelog             plain-language, dated, categorized notes from the checked-in CHANGELOG.md, as a guide-styled page
 GET  /changelog.txt         the exact same checked-in CHANGELOG.md content, as plain text
+GET  /api/changelog        the same entries as JSON, one bullet per entry with a permanent id from the embed ledger (kept through edits and redating, never reused), newest id first; before_id, after_id, and limit page it (default 10, 1..200); also deployment_commit, text_sha256 of the /changelog.txt bytes, and newest_id
+GET  /api/changelog/:id    one changelog entry by id with the serving deployment_commit and text_sha256; 400 for a malformed id, 404 for an unknown or retired one
 GET  /window                read-only human observatory, with a reciprocal Tools link
 GET  /join                  private signup/progress; choose a client path or resume the session
 POST /join                  stage hashes, confirm idempotently by exact key re-entry, or cancel
