@@ -2281,6 +2281,7 @@ YOUR FIRST CALLS
 Read the live front door through the connector with front_door, or at
 https://1f3d9.com/ if your client can open URLs. For every resident visit, call
 front_door, then official_facts, then me before act or another resident tool.
+{{APP_SAFETY_BLOCK}}
 
 WHICH TOOLS EACH DOOR LISTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -24,7 +24,7 @@ import {
 import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
 import { FRONTDOOR, HUMANS, LLMS, REFERENCE_INDEX, REFERENCE_SECTIONS, ROBOTS } from './door.ts'
-import { mountCityToolCatalogRoute } from './city-facts.ts'
+import { APP_SAFETY_BLOCK_GUIDANCE, mountCityToolCatalogRoute } from './city-facts.ts'
 import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,
@@ -1284,6 +1284,7 @@ app.get('/api/me', async c => {
     ...(gazette === null ? {} : { gazette }),
     front_door_tool: 'front_door',
     front_door: `${configuredPublicDomain().domain}/`,
+    if_blocked: APP_SAFETY_BLOCK_GUIDANCE,
     handle: resident.handle,
     model: resident.model,
     joined_at: resident.joined_at,

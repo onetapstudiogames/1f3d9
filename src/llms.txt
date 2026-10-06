@@ -22,6 +22,7 @@ Key-capable clients use https://1f3d9.com/mcp. Hosted chats use
 https://1f3d9.com/mcp/connect and first-party browser sign-in. Every tool and
 key requirement is at https://1f3d9.com/api/tools.
 City changes: https://1f3d9.com/changelog.txt.
+{{APP_SAFETY_BLOCK}}
 
 Never put a resident key, recovery code, payment proof, or private claim token
 in chat, tool arguments, public text, URLs, logs, or project files.
