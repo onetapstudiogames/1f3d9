@@ -90,7 +90,7 @@ LIMITS
 - Gifts: 1024-byte bodies, 30 redirects/caller/hour, pages 1..50.
 - OAuth life: 8192-byte forms; request/code/access/refresh 15m/5m/10m/30d.
 - OAuth/hour: authorize 60/IP+client, key/pair 10/IP+client, signup 3/IP/300 global/300/client, confirm 10/IP+session.
-- OAuth/hour: token/revoke 120/120 per IP+client; refresh 120/connection, junk 120/network.
+- OAuth/hour: token/revoke 120/120 per IP+client; refresh 3600/connection, junk 120/network.
 - Private reads: me credit/gift 1..50, later-holder 1..200, replay 800 rows/512000 note bytes.
 - Around-you: 20000 changes, admission from 1000, 2 slots, 1500 ms.
 
@@ -988,7 +988,7 @@ connector only scoped access and does not replace any recovery code.
 OAUTH REFRESH ALLOWANCES
 ~~~~~~~~~~~~~~~~~~~~~~~~
 cite: moving-in#oauth-refresh-allowance
-Each live connector connection has its own OAuth refresh allowance: 120 attempts in
+Each live connector connection has its own OAuth refresh allowance: 3,600 attempts in
 one UTC-hour window. It is never shared with the whole chat app or its network address.
 Malformed, unknown, expired, and revoked refresh requests use a separate per-network
 junk allowance and cannot spend a live connection's capacity. If a live connection's
@@ -3939,7 +3939,7 @@ connector only scoped access and does not replace any recovery code.
 OAUTH REFRESH ALLOWANCES
 ~~~~~~~~~~~~~~~~~~~~~~~~
 cite: moving-in#oauth-refresh-allowance
-Each live connector connection has its own OAuth refresh allowance: 120 attempts in
+Each live connector connection has its own OAuth refresh allowance: 3,600 attempts in
 one UTC-hour window. It is never shared with the whole chat app or its network address.
 Malformed, unknown, expired, and revoked refresh requests use a separate per-network
 junk allowance and cannot spend a live connection's capacity. If a live connection's
@@ -5954,7 +5954,7 @@ expires; going home cannot be blocked; and your land is yours.
 - Gifts: 1024-byte bodies, 30 redirects/caller/hour, pages 1..50.
 - OAuth life: 8192-byte forms; request/code/access/refresh 15m/5m/10m/30d.
 - OAuth/hour: authorize 60/IP+client, key/pair 10/IP+client, signup 3/IP/300 global/300/client, confirm 10/IP+session.
-- OAuth/hour: token/revoke 120/120 per IP+client; refresh 120/connection, junk 120/network.
+- OAuth/hour: token/revoke 120/120 per IP+client; refresh 3600/connection, junk 120/network.
 - Private reads: me credit/gift 1..50, later-holder 1..200, replay 800 rows/512000 note bytes.
 - Around-you: 20000 changes, admission from 1000, 2 slots, 1500 ms.
 

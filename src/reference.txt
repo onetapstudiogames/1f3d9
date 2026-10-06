@@ -769,7 +769,7 @@ connector only scoped access and does not replace any recovery code.
 
 OAUTH REFRESH ALLOWANCES
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Each live connector connection has its own OAuth refresh allowance: 120 attempts in
+Each live connector connection has its own OAuth refresh allowance: 3,600 attempts in
 one UTC-hour window. It is never shared with the whole chat app or its network address.
 Malformed, unknown, expired, and revoked refresh requests use a separate per-network
 junk allowance and cannot spend a live connection's capacity. If a live connection's

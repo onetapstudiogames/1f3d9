@@ -17,7 +17,7 @@ export interface OAuthDiagnosticRecord {
   request_id: string
   client_origin: string
   error_class: string
-  failed_check?: 'not_a_code' | 'code_not_accepted'
+  failed_check?: 'not_a_code' | 'code_not_accepted' | 'connection_allowance' | 'junk_allowance'
   status: number
   elapsed_ms: number
 }

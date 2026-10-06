@@ -11,7 +11,7 @@ export const OAUTH_LIMITS = Object.freeze({
   signupStartsPerClientHour: 300,
   signupConfirmsPerIpSessionHour: 10,
   tokenExchangesPerIpClientHour: 120,
-  refreshesPerConnectionHour: 120,
+  refreshesPerConnectionHour: 3_600,
   junkRefreshesPerNetworkHour: 120,
   revocationsPerIpClientHour: 120,
 } as const)

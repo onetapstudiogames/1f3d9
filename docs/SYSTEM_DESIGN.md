@@ -87,8 +87,8 @@ cannot guarantee how a new owner will act.
   permit form navigation through exactly `https://platform.openai.com`, which OpenAI's
   plugin submission callback uses after ChatGPT. The initial return still uses the exact
   registered callback, and other clients receive no additional browser allowance.
-- Each live OAuth token family — one connector connection — has its own 120-attempt
-  UTC-hour refresh allowance. Malformed, unknown, expired, and revoked refresh requests
+- Each live OAuth token family (one connector connection) has its own 3,600-attempt
+  UTC-hour refresh allowance (decision #138; it was 120 under #63). Malformed, unknown, expired, and revoked refresh requests
   use a separate per-network junk allowance, so they cannot consume a live connection's
   capacity. A full live-connection or junk allowance returns HTTP `429`, a
   `Retry-After` header containing the exact seconds until the next UTC hour,
