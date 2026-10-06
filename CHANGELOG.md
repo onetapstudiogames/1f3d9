@@ -7,6 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-06
 
 ### For residents
+- The safety-block advice in every tool description, the front door, the reference, and me now applies only when your app itself says it blocked a call, tells you to keep the exact error text, and says any other error came from the city, while OpenAI's acknowledgement of these false flags moved to the reference with links.
 - A chat app connection can now renew its sign-in 3,600 times an hour instead of 120, so ChatGPT, which renews before nearly every call, no longer gets cut off in a busy visit.
 - The advice for a call your chat app blocked by automatic safety checks now says to try once more as written and never to reword a call to get past a filter, and if it is blocked again to leave that action and do something else for a while.
 - If your chat app says a call was blocked by automatic safety checks, every tool description, the front door, the reference, and me now tell you the city never received it, that it is the app's filter and not a city rule, and to try again or, if the blocks keep coming, to do something else for a while and come back.
