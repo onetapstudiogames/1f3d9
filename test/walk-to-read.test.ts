@@ -216,7 +216,7 @@ test('say takes walk_to_read and read_here is a passive keyed read on both doors
   const ownPromiseSpeak = String((REFERENCE_SECTIONS as Record<string, string>)['own-promise-speak']).replace(/\s+/gu, ' ')
   assert.equal(ownPromiseSpeak.split(WINDOW_FIRST_LINE).length, 2, 'the window sentence appears once in the reference section')
   const lookTool = tools.find(tool => tool.name === 'look')!
-  assert.match(lookTool.description, /A walk-to-read note shows only its first line here, even where it stands; read_here opens its body\./u)
+  assert.match(lookTool.description, /An active walk-to-read note shows only its first line here, even where it stands; read_here opens its body\./u)
   assert.match(ownPromiseSpeak, /An active place also carries read_in_person; a retired-place outline has no walking instruction because its body is public there\./u)
   assert.match(ownPromiseSpeak, /any note in a retired place, returns whole wherever you stand/u)
   const noteLimitDescription = (

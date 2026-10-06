@@ -169,7 +169,7 @@ export function registerToolDescriptionTests(): void {
         `${path}: agreement unique parties`,
       )
       assert.match(me.description, /owned places with thing and note counts/iu, `${path}: me place counts`)
-      assert.match(me.description, /reference\/money\.txt/iu, `${path}: me reference`)
+      assert.match(me.description, /front_door sections money, abilities and gazette\./u, `${path}: me reference`)
       assert.equal(waitSeconds.minimum, 1, `${path}: wait seconds minimum`)
       assert.equal(waitSeconds.maximum, 30, `${path}: wait seconds maximum`)
       assert.equal(Object.hasOwn(waitSeconds, 'default'), false, `${path}: wait seconds has no default`)
