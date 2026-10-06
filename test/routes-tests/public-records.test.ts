@@ -179,7 +179,12 @@ export function registerPublicRecordsTests(): void {
     const { labels: _labels, laws: _laws, ...placeRecord } = placeBody.place
     assert.deepEqual(placeRecord, place)
     assert.deepEqual(thingBody.thing, thing)
-    assert.deepEqual(noteBody.note, note)
+    // The route puts the exact body size first and the body last; the record is the loader's.
+    const { body_text_bytes: noteBytes, ...noteRecord } = noteBody.note
+    assert.deepEqual(noteRecord, note)
+    assert.equal(noteBytes, Buffer.byteLength('[removed by maintainer]', 'utf8'))
+    assert.equal(Object.keys(noteBody.note)[0], 'body_text_bytes')
+    assert.equal(Object.keys(noteBody.note).at(-1), 'body')
     assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
 
     reset({ scenario: 'public details', thingWithdrawn: true })
@@ -251,5 +256,110 @@ export function registerPublicRecordsTests(): void {
       body: JSON.stringify({ place_id: 2, body: 'hello from the square' }),
     })
     assert.equal(note.status, 201)
+  })
+
+  // Issue #396: hosted chat apps cut long tool replies at about 2 KB without
+  // saying so, so one note can be read in whole-character byte pieces.
+  test('one note reads in pieces that join into exactly the full read', async () => {
+    const longBody = Array.from(
+      { length: 90 },
+      (_, index) => `line ${index}: café 漢字 🏮 "quoted"\n`,
+    ).join('')
+    reset({ scenario: 'public details', noteBody: longBody })
+    const total = Buffer.byteLength(longBody, 'utf8')
+    assert.ok(total > 3_000)
+
+    const fullResponse = await app.request('/api/note/51')
+    assert.equal(fullResponse.status, 200)
+    const fullText = await fullResponse.text()
+    assert.ok(fullText.startsWith(`{"note":{"body_text_bytes":${total},`), fullText.slice(0, 60))
+    const full = JSON.parse(fullText) as { note: Record<string, unknown> & { body: string } }
+    assert.equal(full.note.body, longBody)
+
+    for (const limit of [100, 333, 1_200, 1_400, 16_000]) {
+      const pieces: string[] = []
+      let start: number | null = 0
+      while (start !== null) {
+        const response = await app.request(`/api/note/51?body_start_byte=${start}&body_limit_bytes=${limit}`)
+        assert.equal(response.status, 200)
+        const piece = (await response.json() as { note: Record<string, unknown> & { body: string } }).note
+        assert.equal(piece.body_text_bytes, total)
+        assert.equal(piece.body_piece_start_byte, start)
+        assert.ok(Buffer.byteLength(piece.body, 'utf8') <= limit)
+        assert.equal(piece.id, 51)
+        assert.equal(piece.author, 'tiny-lantern')
+        pieces.push(piece.body)
+        start = piece.next_body_start_byte as number | null
+        assert.equal(piece.has_more_body, start !== null)
+      }
+      assert.equal(Buffer.from(pieces.join(''), 'utf8').equals(Buffer.from(full.note.body, 'utf8')), true)
+    }
+
+    const onlyStart = await app.request('/api/note/51?body_start_byte=0')
+    assert.equal(onlyStart.status, 200)
+    const firstPiece = (await onlyStart.json() as { note: Record<string, unknown> }).note
+    assert.equal(firstPiece.body_piece_start_byte, 0)
+    assert.ok(Number(firstPiece.body_piece_end_byte) <= 1_200)
+    assert.equal(firstPiece.has_more_body, true)
+
+    const refusals: ReadonlyArray<readonly [string, string]> = [
+      ['body_start_byte=-1', 'body_start_byte must be a whole number from 0 to 16000'],
+      ['body_start_byte=1.5', 'body_start_byte must be a whole number from 0 to 16000'],
+      ['body_start_byte=16001', 'body_start_byte must be a whole number from 0 to 16000'],
+      ['body_limit_bytes=99', 'body_limit_bytes must be a whole number from 100 to 16000'],
+      ['body_limit_bytes=abc', 'body_limit_bytes must be a whole number from 100 to 16000'],
+      ['body_limit_bytes=200&body_limit_bytes=300', 'body_limit_bytes must appear at most once'],
+      [
+        `body_start_byte=${total + 1}`,
+        `body_start_byte ${total + 1} is past the end of note_id 51, whose body is ${total} bytes; send a body_start_byte from 0 to ${total}`,
+      ],
+    ]
+    for (const [query, error] of refusals) {
+      const response = await app.request(`/api/note/51?${query}`)
+      assert.equal(response.status, 400, query)
+      assert.equal((await response.json() as { error: string }).error, error, query)
+    }
+    const unknown = await app.request('/api/note/51?body_start_byte=0&q=pretend-search')
+    assert.equal(unknown.status, 400)
+    assert.match((await unknown.json() as { error: string }).error, /^unsupported query option: q;/u)
+    assert.equal(sqlCalls().some(call => /insert|update|delete/i.test(call.query ?? '')), false)
+  })
+
+  test('a removed note reads in pieces of its removal text', async () => {
+    reset({ scenario: 'public details', noteRemoved: true })
+    const response = await app.request('/api/note/51?body_limit_bytes=100')
+    assert.equal(response.status, 200)
+    const piece = (await response.json() as { note: Record<string, unknown> }).note
+    assert.equal(piece.body, '[removed by maintainer]')
+    assert.equal(piece.body_text_bytes, Buffer.byteLength('[removed by maintainer]', 'utf8'))
+    assert.equal(piece.has_more_body, false)
+    assert.equal(piece.next_body_start_byte, null)
+  })
+
+  test('MCP look reads one note in pieces with the size first', async () => {
+    const longBody = `${'a'.repeat(1_500)}漢${'b'.repeat(1_500)}`
+    reset({ scenario: 'public details', noteBody: longBody })
+    const total = Buffer.byteLength(longBody, 'utf8')
+    const pieces: string[] = []
+    let start: number | null = 0
+    while (start !== null) {
+      const response = await app.request('/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 9, method: 'tools/call',
+          params: { name: 'look', arguments: { note_id: 51, body_start_byte: start, body_limit_bytes: 1_400 } },
+        }),
+      })
+      const result = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
+      assert.equal(result.result.isError, false, result.result.content[0]?.text)
+      const text = result.result.content[0]!.text
+      assert.ok(text.startsWith(`{"note":{"body_text_bytes":${total},`), text.slice(0, 60))
+      const piece = (JSON.parse(text) as { note: Record<string, unknown> & { body: string } }).note
+      pieces.push(piece.body)
+      start = piece.next_body_start_byte as number | null
+    }
+    assert.equal(pieces.length, 3)
+    assert.equal(pieces.join(''), longBody)
   })
 }

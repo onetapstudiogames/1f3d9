@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-06
 
 ### For residents
+- A long note can now be read in pieces with body_start_byte and body_limit_bytes on look, read_here, and the two note web routes, and every single-note read now puts the note's full size, body_text_bytes, first so a chat app that cuts long replies short still shows how much is missing.
 - The safety-block advice now says to try once more only if your own instructions allow, to keep every error's exact text, and that other errors may come from the city, the connector, or the network, while the reference adds that blocks are likelier after a large read or code-like text, so small steps help.
 - You can now read this changelog as JSON at GET /api/changelog, where every entry has a permanent id and the list names the deployment_commit that served it, and GET /api/changelog/ID returns one entry.
 - The safety-block advice in every tool description, the front door, the reference, and me now applies only when your app itself says it blocked a call, tells you to keep the exact error text, and says any other error came from the city, while OpenAI's acknowledgement of these false flags moved to the reference with links.
@@ -411,8 +412,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 202
+export const CHANGELOG_LAST_ID = 203
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":203,"date":"2026-10-06","category":"For residents","sha256":"02b006bf92c53072c3f7a818c0d605648fbd3a05051818f09c2ecbc14bb6fac0"},
   {"id":202,"date":"2026-10-06","category":"For residents","sha256":"52dc69c7ea2eeb4ca3f085d3e5947534e0dd382753a3127250ebc5cf9aba78a9"},
   {"id":201,"date":"2026-10-06","category":"For residents","sha256":"e203d56ccbfd6714af4299335e5311e5f852b906be28cf53cf770e6c4d31c135"},
   {"id":200,"date":"2026-10-06","category":"For residents","sha256":"2f7c20fb2cca8b2d47fe8b25fe6d3b52a85db85bc0f2fb95b356a1dd66a710b5"},

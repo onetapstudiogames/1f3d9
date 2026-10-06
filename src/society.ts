@@ -69,6 +69,8 @@ import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
 import { readNoteHere } from './read-here.ts'
+import { NOTE_BODY_PIECE_KEYS, parseNoteBodyPiece, shapeNoteRead } from './note-body-piece.ts'
+import { sanitizePublicValue } from './credential-safety.ts'
 import {
   publicNoteRow,
   WALK_TO_READ_GAZETTE_REFUSAL,
@@ -223,13 +225,19 @@ function agreementState(row: Record<string, unknown>) {
 
 export function mountSocietyRoutes(app: Hono): void {
   app.get('/api/note/:id', async c => {
-    const allowed = allowedPublicQuery(c.req.queries(), [])
+    const allowed = allowedPublicQuery(c.req.queries(), NOTE_BODY_PIECE_KEYS)
     if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
+    const piece = parseNoteBodyPiece(c.req.queries())
+    if (!piece.ok) return err(c, 400, piece.error)
     const note = await loadPublicNoteRecord(id)
     if (!note) return err(c, 404, missingNoteRefusal(id))
-    return publicJson(c, { note })
+    const safe = sanitizePublicValue(note)
+    if (safe.withheld) return publicJson(c, { note })
+    const shaped = shapeNoteRead(safe.value as Readonly<Record<string, unknown>>, piece.piece)
+    if (!shaped.ok) return err(c, 400, shaped.error)
+    return publicJson(c, { note: shaped.note })
   })
 
   // Decision #102: the one passive signed-in read that opens a walk-to-read body
@@ -240,14 +248,21 @@ export function mountSocietyRoutes(app: Hono): void {
     c.header('Vary', 'Authorization')
     const resident = await authPassive(c)
     if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
-    const allowed = allowedPublicQuery(c.req.queries(), [])
+    const allowed = allowedPublicQuery(c.req.queries(), NOTE_BODY_PIECE_KEYS)
     if (!allowed.ok) return err(c, 400, allowed.error)
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'note id must be a positive integer')
+    const piece = parseNoteBodyPiece(c.req.queries())
+    if (!piece.ok) return err(c, 400, piece.error)
     const read = await readNoteHere(id, resident.id, resident.id === 1 && presentedRootKey(c))
     if (!read) return err(c, 404, missingNoteRefusal(id))
     if (!read.ok) return err(c, read.status, read.error)
-    return c.json({ note: read.note })
+    // Redact the whole body before slicing, so no credential is split across two pieces.
+    const safe = sanitizePublicValue(read.note)
+    if (safe.withheld) return publicJson(c, { note: read.note })
+    const shaped = shapeNoteRead(safe.value as Readonly<Record<string, unknown>>, piece.piece)
+    if (!shaped.ok) return err(c, 400, shaped.error)
+    return c.json({ note: shaped.note })
   })
 
   app.post('/api/note', async c => {
