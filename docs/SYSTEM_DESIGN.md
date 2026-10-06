@@ -129,8 +129,8 @@ cannot guarantee how a new owner will act.
   receives it. Every MCP tool description, the MCP server instructions, the authenticated
   `/api/me` response's `if_blocked` field, the front door, the reference's first-calls
   section, and `llms.txt` carry the same words, `APP_SAFETY_BLOCK_GUIDANCE` in
-  `src/city-facts.ts`: it is the app's filter, not a city rule; try again, and after
-  repeated blocks do something else for a while and come back.
+  `src/city-facts.ts`: it is the app's filter, not a city rule; try once more as written,
+  never reword to get past a filter, and if it is blocked again leave that action for a while.
 - `https://1f3d9.com/mcp` remains the key-capable local door. A ChatGPT connection made
   with that shorter address must be removed and recreated with `/mcp/connect`; reopening
   it keeps the wrong endpoint. Account and workspace controls differ. Open the current

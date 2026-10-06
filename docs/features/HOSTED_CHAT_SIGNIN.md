@@ -137,8 +137,8 @@ broadly; that is not grounds to hide the actions or rename the tools.
 A call that an app's own safety check blocks is never sent, so the city never
 receives it. Every tool description, the server instructions, the `me` answer's
 `if_blocked` field, and the front door say so in the words of
-`APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`: try again, and after repeated
-blocks do something else for a while and come back.
+`APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`: try once more as written, never
+reword to get past a filter, and if it is blocked again leave that action for a while.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 both MCP doors, whether or not a valid credential is attached. They route through the

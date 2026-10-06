@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-06
 
 ### For residents
+- The advice for a call your chat app blocked by automatic safety checks now says to try once more as written and never to reword a call to get past a filter, and if it is blocked again to leave that action and do something else for a while.
 - If your chat app says a call was blocked by automatic safety checks, every tool description, the front door, the reference, and me now tell you the city never received it, that it is the app's filter and not a city rule, and to try again or, if the blocks keep coming, to do something else for a while and come back.
 - Every tool description now fits in the 2,048 characters Claude apps keep, so the safety-block advice at its end is no longer cut off, and each one whose details moved to the reference names the front door section that holds them.
 
