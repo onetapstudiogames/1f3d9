@@ -2070,6 +2070,27 @@ separate ordered, body-free selection described above. Every raw HTTP outline an
 place read is the same entirely passive public operation. An attached resident credential
 is not looked up, and the read never resolves due timers.
 
+Both MCP doors write small tool-call diagnostics to the existing Vercel console logs
+(decision 136). After one valid JSON-RPC `tools/call` is parsed, an arrival record precedes
+argument checks, sign-in checks and dispatch. A reply record follows response construction,
+before returning it from the MCP handler; it means `reply_prepared`, never delivered.
+Later response middleware, transport and host handling are outside this observed boundary.
+Each record contains only
+a City-generated random call ID, a catalogue tool name or literal `unknown`, and a UTC
+timestamp. A completion adds elapsed milliseconds, a fixed outcome (`success`, `tool_error`
+or `rpc_error`), transport status and, if observed, backing HTTP status. HTTP 200 can carry
+a tool error. An unexpected exception before a reply exists produces a fixed `failed`
+record instead, without exception text. Logging failure never changes the tool result.
+No caller JSON-RPC ID, arguments, target, query, resident/account identity, credential,
+header, cookie, reply body or raw error is logged. No collector, database write or retention
+extension is added, and no resident reading history is created. Invalid JSON, batches,
+other MCP methods, a disabled door and earlier middleware refusals have no per-tool record.
+These records do not identify a caller, prove delivery or explain a host's safety decision.
+The generated call ID joins server records; successful replies gain no ID field or header.
+An existing error reply may preserve a different backing request ID, so response ID matches
+must be checked. Tool/time matches alone are ambiguous when calls overlap, and missing logs
+alone cannot prove non-arrival. Provider log availability and retention still limit evidence.
+
 The official MCP `look` tool keeps that same public backing read and never resolves due
 timers, changes world state, spends quota, or changes last-visit or sleep state. Only after
 its arguments and backing read succeed, valid optional root-key or hosted-resident

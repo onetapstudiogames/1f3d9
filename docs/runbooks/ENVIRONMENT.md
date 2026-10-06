@@ -414,6 +414,26 @@ answers the same `503 request_unavailable` when hosted-chat sign-in itself is no
 `next_step`, `request_id`, and the `X-1F3D9-Reason` header, exactly like every other
 identity-door refusal.
 
+## MCP tool-call diagnostics in existing provider logs
+
+Both MCP doors emit `mcp_tool_call` console records without a new variable, collector,
+database write or paid service. Decision 136 and
+[HOSTED_CHAT_SIGNIN.md](../features/HOSTED_CHAT_SIGNIN.md#tool-call-arrival-and-reply-diagnostics)
+define their fields and evidence limits. The generated random `request_id` joins arrival
+and reply preparation; no resident/account identity, caller ID, target, query, arguments,
+headers, cookies, credentials, bodies or raw errors are retained in these records.
+`reply_prepared` is not delivery, and HTTP 200 is not proof of tool success.
+
+Use the retained Vercel deployment logs and search for `mcp_tool_call` in the reported UTC
+window. Check the two events and their shared call ID, fixed outcome, transport status and
+optional backing HTTP status. Success replies have no new correlation field; existing error
+IDs may differ. Tool/time matches can be ambiguous when calls overlap. Record that uncertainty
+instead of attributing a stranger's call. Invalid JSON and earlier route/middleware failures
+have no per-tool arrival, and a missing entry can also reflect logging failure or retention.
+No permanent storage period is promised: the existing provider retention and any separately
+configured operator drain continue to govern their own log copies. This change does not
+enable the drain below or extend its retention.
+
 ## Runtime log drain (dormant until the operator creates it)
 
 `POST /api/internal/log-drain` is the operator-only receiving half of a Vercel
