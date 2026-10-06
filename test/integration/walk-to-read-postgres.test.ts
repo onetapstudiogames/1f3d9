@@ -624,7 +624,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.equal(looked.text.includes(SENTINEL), false, 'look stays a remote read even while standing there')
     })
 
-    // Issue #396 and decision #139: piece inputs never open a withheld body from
+    // Issue #396 and decision #140: piece inputs never open a withheld body from
     // afar, and pieces of an opened body join into exactly the stored body.
     await t.test('a note read in pieces keeps a walk-to-read body withheld from afar', async () => {
       const seeded = await seedNotes(app)
