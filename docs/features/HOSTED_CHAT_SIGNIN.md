@@ -204,6 +204,36 @@ stage, safe client origin, error class, status, and bounded elapsed time. It nev
 or logs a resident key, authorization code, access or refresh token, raw form, state,
 PKCE value, callback path, or sensitive query value.
 
+### Tool-call arrival and reply diagnostics
+
+Both `/mcp` and `/mcp/connect` emit `mcp_tool_call` console records in existing Vercel
+logs (decision 136). `mcp_tool_arrived` means the City parsed one valid JSON-RPC
+`tools/call`, before argument checks, sign-in checks and dispatch. It is not edge arrival.
+`mcp_tool_reply_prepared` means the MCP handler constructed a response before returning it,
+not that later response middleware, transport or the host finished handling it, or that the
+host received or displayed it. An unexpected exception before a reply exists emits
+`mcp_tool_failed`; an ordinary refusal still has a prepared reply.
+
+The closed fields are `event`, City-generated random `request_id`, catalogue `tool` (or
+literal `unknown`) and UTC `timestamp`. Completion adds `elapsed_ms`, fixed `outcome`
+(`success`, `tool_error`, `rpc_error`, or `unexpected_failure` for failed), and a prepared
+reply's `transport_status`; optional `http_status` is the observed backing HTTP status.
+A tool error can travel in HTTP 200, including a reply withheld by the credential safeguard
+after backing HTTP 200. Logs never contain arguments, targets, queries, caller JSON-RPC
+IDs, resident/account IDs, credentials, headers, cookies, reply bodies or raw errors.
+Logging is best effort and cannot change the result. There is no new collector, database
+record or extension of provider retention, and no resident reading history.
+
+Join the two server records by their generated `request_id`. Success replies gain no new
+field or header. An existing error reply may expose this ID or preserve another backing
+request ID, so check a claimed response match. A known tool and time window alone cannot
+identify one owner's attempt among overlapping calls. Invalid JSON, batches, other methods,
+a disabled connector and earlier middleware rejection do not emit per-tool arrival. Missing
+records alone cannot prove the call never arrived: logging failure and provider retention
+also limit the evidence. A prepared reply does not explain a host safety block or prove
+where a later transport or host failure occurred. Preserve the exact host result and time
+alongside the server records, without retrying a blocked call to force a different outcome.
+
 ### OpenAI plugin domain verification
 
 `GET /.well-known/openai-apps-challenge` returns the public verification token
