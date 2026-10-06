@@ -28,6 +28,7 @@ import { registerLaterHolderTests } from './routes-tests/later-holder.test.ts'
 import { registerPublicReadContractsTests } from './routes-tests/public-read-contracts.test.ts'
 import { registerPublicPaginationTests } from './routes-tests/public-pagination.test.ts'
 import { registerOfficialAndFlagsTests } from './routes-tests/official-and-flags.test.ts'
+import { registerChangelogJsonTests } from './routes-tests/changelog-json.test.ts'
 import { registerMcpTests } from './routes-tests/mcp.test.ts'
 import { registerFrontDoorAndPhysicsTests } from './routes-tests/front-door-and-physics.test.ts'
 import { registerActionsTests } from './routes-tests/actions.test.ts'
@@ -83,6 +84,7 @@ registerLaterHolderTests()
 registerPublicReadContractsTests()
 registerPublicPaginationTests()
 registerOfficialAndFlagsTests()
+registerChangelogJsonTests()
 registerMcpTests()
 registerFrontDoorAndPhysicsTests()
 registerActionsTests()

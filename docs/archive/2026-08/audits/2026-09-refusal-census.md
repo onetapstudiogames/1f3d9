@@ -21,7 +21,7 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1502 resolved source refusal producers**: **1086 caller-visible** and **416 internal-only**.
+There are **1504 resolved source refusal producers**: **1088 caller-visible** and **416 internal-only**.
 
 The 40 caller-visible rows produced by src/room-talk-contract.ts are same-room talk refusals (decisions #119 to #127). src/room-talk-routes.ts serves them over HTTP, GET /api/me serves the pending-page refusal, and the say, look, ping, and wait_here tools forward them.
 
@@ -34,7 +34,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 217 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 221 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -45,6 +45,10 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/chain.ts::method::2`
 - `src/chain.ts::method::3`
 - `src/chain.ts::method::4`
+- `src/changelog.ts::allowed.error::1`
+- `src/changelog.ts::page.error::1`
+- `src/changelog.ts::afterId.error::1`
+- `src/changelog.ts::allowed.error::2`
 - `src/city-credit-purchase.ts::allowed.error::1`
 - `src/city-credit-purchase.ts::error.message::1`
 - `src/city-facts.ts::allowed.error::1`
@@ -273,6 +277,8 @@ itself, not an excluded identity module.
 | GET / (src/index.ts) |
 | GET /about (src/human-pages.ts) |
 | GET /api/agreements (src/society.ts) |
+| GET /api/changelog (src/changelog.ts) |
+| GET /api/changelog/:id (src/changelog.ts) |
 | GET /api/changes (src/index.ts) |
 | GET /api/city-credit/gifts/residents/:number (src/prepaid-credit-routes.ts) |
 | GET /api/city-credit/preflight (src/index.ts) |
@@ -502,6 +508,8 @@ machine-readable so review proves provenance instead of trusting stale hand-coun
 {"key":"src/agreement-action.ts::only the original author may open this agreement to later signers::1","disposition":"included","status":"403","finalText":"only the original author may open this agreement to later signers","cause":"Yes","next":"Yes","causeEvidence":"only the original author may","nextEvidence":"open this agreement to later signers","producer":"src/agreement-action.ts","adapter":"failure helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes-tests/agreements.test.ts","exclusionReason":"","expressionKey":"only the original author may open this agreement to later signers"}
 {"key":"src/agreement-action.ts::${boundedPart(record, 'record')} was not found; ${boundedPart(next, 'next step')}::3","disposition":"included","status":"404","finalText":"${boundedPart(record, 'record')} was not found; ${boundedPart(next, 'next step')}","producer":"src/agreement-action.ts","adapter":"failure helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","exclusionReason":"","expressionKey":"${boundedPart(record, 'record')} was not found; ${boundedPart(next, 'next step')}","cause":"Yes","next":"Yes","causeEvidence":"${boundedPart(record, 'record')} was not found","nextEvidence":"${boundedPart(next, 'next step')}","testProof":"structural:test/refusal-census-audit.test.ts resolves and exact-set checks this source refusal"}
 {"key":"src/agreement-action.ts::this agreement is closed to later signers; its original author can call open_agreement_accession with agreement_id ${input.agreementId}, or use POST /api/agreement/${input.agreementId}/open-accession if your client can open URLs, before this signer retries::1","disposition":"included","status":"403","finalText":"this agreement is closed to later signers; its original author can call open_agreement_accession with agreement_id ${input.agreementId}, or use POST /api/agreement/${input.agreementId}/open-accession if your client can open URLs, before this signer retries","cause":"Yes","next":"Yes","causeEvidence":"this agreement is closed to later signers","nextEvidence":"its original author can call open_agreement_accession with agreement_id ${input.agreementId}, or use POST /api/agreement/${input.agreementId}/open-accession if your client can open URLs, before this signer retries","producer":"src/agreement-action.ts","adapter":"failure helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"structural:test/refusal-census-audit.test.ts exact-set checks this source refusal and verifies every API address has a tool path or URL hedge","exclusionReason":"","expressionKey":"this agreement is closed to later signers; its original author can call open_agreement_accession with agreement_id ${input.agreementId}, or use POST /api/agreement/${input.agreementId}/open-accession if your client can open URLs, before this signer retries"}
+{"key":"src/changelog.ts::changelog entry id must be a positive integer::1","disposition":"included","status":"400","finalText":"changelog entry id must be a positive integer","cause":"Yes","next":"Yes","causeEvidence":"changelog entry id","nextEvidence":"must be a positive integer","producer":"src/changelog.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes-tests/changelog-json.test.ts","exclusionReason":"","expressionKey":"changelog entry id must be a positive integer"}
+{"key":"src/changelog.ts::changelog entry ${id} was not found; list current entry ids with GET /api/changelog if your client can open URLs::1","disposition":"included","status":"404","finalText":"changelog entry ${id} was not found; list current entry ids with GET /api/changelog if your client can open URLs","cause":"Yes","next":"Yes","causeEvidence":"changelog entry ${id} was not found","nextEvidence":"list current entry ids with GET /api/changelog if your client can open URLs","producer":"src/changelog.ts","adapter":"err helper adapter","finalBoundary":"HTTP JSON; MCP forwarded tool result","testProof":"assertion:test/routes-tests/changelog-json.test.ts","exclusionReason":"","expressionKey":"changelog entry ${id} was not found; list current entry ids with GET /api/changelog if your client can open URLs"}
 {"key":"src/city-credit-purchase.ts::credit buyer id is invalid::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"credit buyer id is invalid","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/city-credit-purchase.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"credit buyer id is invalid"}
 {"key":"src/city-credit-purchase.ts::${label} was rejected because it must be a non-negative whole-number string; retry with decimal digits only::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"${label} was rejected because it must be a non-negative whole-number string; retry with decimal digits only","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/city-credit-purchase.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"${label} was rejected because it must be a non-negative whole-number string; retry with decimal digits only"}
 {"key":"src/city-credit-purchase.ts::${label} was rejected because it must be a positive whole-number string; retry with decimal digits greater than zero::1","disposition":"excluded","status":"expression:typed adapter status","finalText":"${label} was rejected because it must be a positive whole-number string; retry with decimal digits greater than zero","cause":"n/a","next":"n/a","causeEvidence":"","nextEvidence":"","producer":"src/city-credit-purchase.ts","adapter":"generic HTTP error adapter","finalBoundary":"HTTP onError -> 500 JSON","testProof":"structural:internal exclusion and final generic boundary mapping","exclusionReason":"Internal parser, storage, or invariant throw; if uncaught, onError replaces it with the generic 500 refusal.","expressionKey":"${label} was rejected because it must be a positive whole-number string; retry with decimal digits greater than zero"}

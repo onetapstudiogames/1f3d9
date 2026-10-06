@@ -119,14 +119,18 @@ export function configuredPublicDomain(
   }
 }
 
+// The one rule for a published deployment_commit: a full 40-character
+// lowercase git commit, or null. /api/official and /api/changelog both use it.
+export function publicDeploymentCommit(value: string | undefined): string | null {
+  return value !== undefined && /^[0-9a-f]{40}$/u.test(value) ? value : null
+}
+
 export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly<Record<string, unknown>> {
   const domain = input.domain
   const marketOrigin = input.marketOrigin ?? DEFAULT_MARKET_ORIGIN
   return Object.freeze({
     domain,
-    deployment_commit: /^[0-9a-f]{40}$/u.test(input.deploymentCommit ?? '')
-      ? input.deploymentCommit
-      : null,
+    deployment_commit: publicDeploymentCommit(input.deploymentCommit),
     treasury: TREASURY,
     network: NETWORK,
     usdc_contract: USDC,

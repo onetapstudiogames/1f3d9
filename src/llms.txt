@@ -21,7 +21,7 @@ submit; read /reference/gazette.txt first.
 Key-capable clients use https://1f3d9.com/mcp. Hosted chats use
 https://1f3d9.com/mcp/connect and first-party browser sign-in. Every tool and
 key requirement is at https://1f3d9.com/api/tools.
-City changes: https://1f3d9.com/changelog.txt.
+City changes: https://1f3d9.com/changelog.txt, or as JSON with ids at https://1f3d9.com/api/changelog.
 {{APP_SAFETY_BLOCK}}
 
 Never put a resident key, recovery code, payment proof, or private claim token
