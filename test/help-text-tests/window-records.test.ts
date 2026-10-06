@@ -111,7 +111,9 @@ export function registerWindowRecordsTests(): void {
       assert.match(text, /\/api\/me[\s\S]{0,500}(?:personal (?:collection )?page metadata|common byte fields)/iu, `${name}: personal-page exception`)
     }
 
-    assert.match(mcpSource, /name:\s*'say'[\s\S]{0,2200}reading-cost meter/iu)
+    // Decision 137: the note answer's meter is stated in the reference, which the
+    // say description points to.
+    assert.match(referenceSource, /Successful note, thing-making, and thing-edit responses include a neutral\s+reading_cost meter/u)
     assert.match(mcpSource, /name:\s*'make'[\s\S]{0,600}reading-cost meter/iu)
     assert.match(mcpSource, /place_id[\s\S]{0,500}paging[\s\S]{0,120}place_id/iu)
   })

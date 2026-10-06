@@ -11,6 +11,9 @@ export const OAUTH_ACCESS_TOKEN = `1f3d9_at_${'cd'.repeat(32)}`
 export const RESOURCE_METADATA = `${PUBLIC_ORIGIN}/.well-known/oauth-protected-resource/mcp/connect`
 export const FRONT_DOOR_POINTER =
   'Lost? Read the city front door with the front_door tool, or at https://1f3d9.com/ if your client can open URLs.'
+// Tool descriptions carry the short pointer (decision 137); the server instructions,
+// error data, and me keep the long one above.
+export const TOOL_FRONT_DOOR_POINTER = 'Lost? Call front_door.'
 
 process.env.PUBLIC_ORIGIN = PUBLIC_ORIGIN
 

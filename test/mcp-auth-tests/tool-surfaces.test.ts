@@ -5,7 +5,7 @@ import { mcp } from '../../src/mcp.ts'
 import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
-  FRONT_DOOR_POINTER,
+  TOOL_FRONT_DOOR_POINTER,
   setHostedChatFlag,
   createHarness,
   listTools,
@@ -43,8 +43,9 @@ export function registerToolSurfaceTests(): void {
       assert.match(say.description, /room #454.*browse with view=gazette/iu, path)
       assert.match(say.description, /follow.*submission_room.*withdrawal_contract/iu, path)
       assert.doesNotMatch(say.description, /complete refusals are the following six/iu, path)
-      assert.match(say.description, /neutral UTF-8 reading-cost meter/iu, path)
-      assert.ok(say.description.endsWith(FRONT_DOOR_POINTER), path)
+      // Decision 137: the reading-cost meter is stated in the reference, which say points to.
+      assert.match(say.description, /front_door sections own-promise-speak and same-room-talk/u, path)
+      assert.ok(say.description.endsWith(TOOL_FRONT_DOOR_POINTER), path)
       assert.deepEqual(say.inputSchema.properties?.body, {
         type: 'string',
         minLength: 1,

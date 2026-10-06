@@ -206,15 +206,19 @@ test('say takes walk_to_read and read_here is a passive keyed read on both doors
   })
   assert.match(sayTool.description, /Optional walk_to_read, default false, is fixed when the note is written/u)
   assert.match(sayTool.description, /It is not private: anyone who walks there can read it, and the dated public snapshot keeps the body\./u)
+  // Decision 137: what the window shows, and how look shows a walk-to-read note in
+  // outline and retired places, live in the reference section say and look point to.
   assert.ok(
-    sayTool.description.includes(`the dated public snapshot keeps the body. ${WINDOW_FIRST_LINE} Room #454 refuses walk_to_read true.`),
-    'say tells writers what humans watching the window see, right after the snapshot sentence',
+    sayTool.description.includes('the dated public snapshot keeps the body. Room #454 refuses walk_to_read true.'),
+    'say keeps the snapshot sentence beside the Room #454 refusal',
   )
-  assert.equal(sayTool.description.split(WINDOW_FIRST_LINE).length, 2, 'the sentence appears once in say')
+  assert.match(sayTool.description, /front_door sections own-promise-speak and same-room-talk/u)
+  const ownPromiseSpeak = String((REFERENCE_SECTIONS as Record<string, string>)['own-promise-speak']).replace(/\s+/gu, ' ')
+  assert.equal(ownPromiseSpeak.split(WINDOW_FIRST_LINE).length, 2, 'the window sentence appears once in the reference section')
   const lookTool = tools.find(tool => tool.name === 'look')!
-  assert.match(lookTool.description, /An active walk-to-read note keeps its body withheld through look even when you stand there/u)
-  assert.match(lookTool.description, /an outline shows the same preview and size, adding read_in_person only in an active place/u)
-  assert.match(lookTool.description, /A retired place returns its whole note body in a full read, and its outline shows first_line without a walking instruction/u)
+  assert.match(lookTool.description, /An active walk-to-read note shows only its first line here, even where it stands; read_here opens its body\./u)
+  assert.match(ownPromiseSpeak, /An active place also carries read_in_person; a retired-place outline has no walking instruction because its body is public there\./u)
+  assert.match(ownPromiseSpeak, /any note in a retired place, returns whole wherever you stand/u)
   const noteLimitDescription = (
     lookTool.inputSchema.properties.note_text_limit_bytes as { description: string }
   ).description

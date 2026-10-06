@@ -8,6 +8,7 @@ import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
   FRONT_DOOR_POINTER,
+  TOOL_FRONT_DOOR_POINTER,
   EXISTING_TOOL_NAMES,
   PUBLIC_ANONYMOUS_TOOL_NAMES,
   setHostedChatFlag,
@@ -313,7 +314,7 @@ export function registerCatalogTests(): void {
 
       for (const tool of await listTools(gateway, path, authorization)) {
         assert.equal(
-          tool.description.split(FRONT_DOOR_POINTER).length - 1,
+          tool.description.split(TOOL_FRONT_DOOR_POINTER).length - 1,
           1,
           `${path}: ${tool.name}`,
         )

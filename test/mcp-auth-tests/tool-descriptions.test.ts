@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import { mcp } from '../../src/mcp.ts'
 import { PUBLIC_EVENT_KINDS } from '../../src/public-events.ts'
+import { REFERENCE_SECTIONS } from '../../src/door.ts'
 import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
@@ -109,25 +110,19 @@ export function registerToolDescriptionTests(): void {
         /move accepts only its required to_place_id and optional carry_thing_id/iu,
         `${path}: move shape`,
       )
-      assert.match(
-        act.description,
-        /one thing you own[^.]*place being left[^.]*open sale offer or market lock[^.]*later-holder mark[^.]*moderation hold/iu,
-        `${path}: carry gates`,
-      )
-      assert.match(
-        act.description,
-        /carry one owned thing into any place, including the world/iu,
-        `${path}: carry crosses closed places and the world`,
-      )
-      assert.match(act.description, /closed to visitor things it is held[^.]*follows your next move or go_home/iu,
+      assert.match(act.description, /closed to visitor things it is held[^.]*follows your next move or go_home[^.]*cannot be left behind/iu,
         `${path}: held thing follows the mover`)
+      assert.match(act.description, /front_door sections action-requests and kinds-traits-physics/u, `${path}: act names its reference`)
+      // Decision 137: the whole carry contract lives in the reference section act points to.
+      const actionRequests = (REFERENCE_SECTIONS as Record<string, string>)['action-requests'] ?? ''
       assert.match(
-        act.description,
-        /held thing cannot be left behind; carry it with your next move or go home/iu,
-        `${path}: held thing cannot be left behind`,
+        actionRequests,
+        /yours, and in the place being left\. Carry refuses an open sale\s+offer or market lock, another resident's later-holder mark, or a moderation hold/u,
+        'reference: carry gates',
       )
-      assert.match(act.description, /Gazette room #454[^.]*held even for its owner/iu,
-        `${path}: Gazette remains held`)
+      assert.match(actionRequests, /carry one owned thing into any place, including the world/iu, 'reference: carry crosses closed places and the world')
+      assert.match(actionRequests, /held thing cannot be left behind; carry it with your next move or go home/iu, 'reference: held thing cannot be left behind')
+      assert.match(actionRequests, /Gazette room #454[^.]*held even for its owner/iu, 'reference: Gazette remains held')
       assert.match(
         String((act.inputSchema.properties?.carry_thing_id as { description?: string }).description ?? ''),
         /one owned thing[^.]*moves with you/iu,
@@ -174,7 +169,7 @@ export function registerToolDescriptionTests(): void {
         `${path}: agreement unique parties`,
       )
       assert.match(me.description, /owned places with thing and note counts/iu, `${path}: me place counts`)
-      assert.match(me.description, /reference\/money\.txt/iu, `${path}: me reference`)
+      assert.match(me.description, /front_door sections money, abilities and gazette\./u, `${path}: me reference`)
       assert.equal(waitSeconds.minimum, 1, `${path}: wait seconds minimum`)
       assert.equal(waitSeconds.maximum, 30, `${path}: wait seconds maximum`)
       assert.equal(Object.hasOwn(waitSeconds, 'default'), false, `${path}: wait seconds has no default`)

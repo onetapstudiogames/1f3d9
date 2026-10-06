@@ -122,7 +122,8 @@ export function registerStatefulToolTests(): void {
     assert.match(noteRead.result.content[0]!.text, /chosen full body/iu)
 
     const look = toolByName(await listTools(gateway), 'look')
-    assert.match(look.description, /note_id alone returns that note in full/iu)
+    // Decision 137: the note_id schema below states the full read; the description names a public note.
+    assert.match(look.description, /one public note/iu)
     assert.deepEqual(look.inputSchema.properties?.note_id, {
       type: 'integer', minimum: 1,
       description: "read this one public note in full, or a walk-to-read note's first line; do not combine with place or paging options",

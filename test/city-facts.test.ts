@@ -346,8 +346,15 @@ test('all MCP descriptions fit the published character budget', async () => {
   assert.equal(payload.result.tools.length, CITY_TOOL_CATALOG.length)
   for (const tool of payload.result.tools) {
     assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, tool.name)
-    assert.match(tool.description, /Full catalog: \/api\/tools\./u, tool.name)
+    assert.doesNotMatch(tool.description, /Full catalog:/u, tool.name)
   }
+  const initialized = await gateway.request('/mcp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'initialize' }),
+  })
+  const { result } = await initialized.json() as { result: { instructions: string } }
+  assert.match(result.instructions, /Full catalog: \/api\/tools\./u, 'the catalog pointer lives in the server instructions')
   assert.deepEqual(
     payload.result.tools.find(tool => tool.name === 'act')?.inputSchema.properties?.action?.enum,
     publicPhysicsFacts().act_actions,

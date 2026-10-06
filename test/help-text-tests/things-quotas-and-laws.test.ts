@@ -87,10 +87,12 @@ export function registerThingsQuotasAndLawsTests(): void {
       false,
       'no tool copy narrows a shared destroy to the thing own recipe',
     )
+    // Decision 137: act points to the reference section action-requests, which
+    // carries the destroy switch; the act description stays inside its budget.
     assert.match(
-      mcpSource,
-      /shared_use_may_destroy, which every live public thing read states/iu,
-      'act: the switch is read back from a live public thing read',
+      referenceSource,
+      /every live public thing read also says\s+whether shared_use_may_destroy is true/iu,
+      'reference: the switch is read back from a live public thing read',
     )
   })
 
@@ -154,7 +156,7 @@ export function registerThingsQuotasAndLawsTests(): void {
     )
 
     assert.match(mcpSource, /name: 'act'[\s\S]{0,3000}move runs the laws of the\s+place being left/iu)
-    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}reference\/money\.txt/iu)
+    assert.match(mcpSource, /name: 'me'[\s\S]{0,2500}front_door sections money, abilities and gazette\./u)
   })
 
   test('same-use destruction keeps its result and names every skipped later source', () => {
@@ -162,7 +164,6 @@ export function registerThingsQuotasAndLawsTests(): void {
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
       ['specification', specification],
-      ['act tool', mcpSource],
     ] as const) {
       assert.match(
         text,
