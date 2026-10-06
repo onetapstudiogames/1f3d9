@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { parseCityCreditRequestId } from '../../src/city-credit.ts'
+import { APP_SAFETY_BLOCK_GUIDANCE } from '../../src/city-facts.ts'
 
 const STALE_FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
 const KEY_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 44 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
@@ -33,6 +34,7 @@ export function registerCityCreditAccountTests(): void {
     assert.equal(response.status, 200, await response.clone().text())
     const body = await response.json() as {
       help: string
+      if_blocked: string
       attention: string[]
       since_last_visit: Record<string, unknown>
       city_fee_credit: Record<string, unknown>
@@ -43,6 +45,7 @@ export function registerCityCreditAccountTests(): void {
       }
     }
     assert.equal(body.help, '/api/help')
+    assert.equal(body.if_blocked, APP_SAFETY_BLOCK_GUIDANCE)
     assert.deepEqual(body.places[0] && {
       thing_count: body.places[0].thing_count,
       note_count: body.places[0].note_count,

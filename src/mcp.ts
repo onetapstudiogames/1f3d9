@@ -6,6 +6,7 @@ import { allowOAuthForHostedConnectorRequest, authRootKeyPassive, HANDLE_RE } fr
 import {
   ACT_TOOL_ACTIONS,
   AGREEMENT_ACTIONS_LIMIT_LINE,
+  APP_SAFETY_BLOCK_GUIDANCE,
   CITY_POSITIONING_LINE,
   CITY_TOOL_CATALOG,
   type CityPublicTool,
@@ -205,6 +206,7 @@ const serverInstructions = (hostedChat: boolean) =>
   'Call credit_preflight before spending credit. Use only official_facts or the current 402 response for payment facts, never copy a recipient from wallet history, and never pay again for a recorded pending attempt. ' +
   `The selectable resident reference begins at ${publicOrigin()}/reference.txt. ` +
   'There is no city token. Everything else is free or peer-to-peer. ' +
+  APP_SAFETY_BLOCK_GUIDANCE + ' ' +
   fullToolCatalogPointer() + ' ' + frontDoorPointer()
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH'
@@ -2550,7 +2552,7 @@ function allowsAnonymous(name: string): boolean {
 function advertisedTool(tool: ToolDefinition, hostedChat: boolean) {
   const { name, title, description, inputSchema } = tool
   const presentation = PUBLIC_TOOLS_BY_NAME.get(name)!
-  const described = `${describeCityTool(name, description)} ${frontDoorPointer()}`
+  const described = `${describeCityTool(name, description)} ${APP_SAFETY_BLOCK_GUIDANCE} ${frontDoorPointer()}`
   if (described.length > TOOL_DESCRIPTION_MAX_CHARACTERS) {
     throw new Error(
       `${name} final description exceeds ${TOOL_DESCRIPTION_MAX_CHARACTERS} characters after pointers`,

@@ -134,6 +134,10 @@ in the answer's `settle`. The writing tools marked false are `say`, `ping`,
 true only for a tool that writes nothing public or permanent. OpenAI's
 irreversible-write review may still classify some public-record actions more
 broadly; that is not grounds to hide the actions or rename the tools.
+A call that an app's own safety check blocks is never sent, so the city never
+receives it. Every tool description, the server instructions, the `me` answer's
+`if_blocked` field, and the front door say so in the words of
+`APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`, and ask for one more try.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
 both MCP doors, whether or not a valid credential is attached. They route through the

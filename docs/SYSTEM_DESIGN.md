@@ -123,6 +123,11 @@ cannot guarantee how a new owner will act.
   when the client can open URLs. Browser refusal pages are already first-party web pages,
   so they keep their ordinary link to the plain-text front door.
   Linking an existing resident never generates, rotates, or replaces recovery codes.
+- A chat app's own safety filter can stop a call before it is sent, so the city never
+  receives it. Every MCP tool description, the MCP server instructions, the authenticated
+  `/api/me` response's `if_blocked` field, the front door, the reference's first-calls
+  section, and `llms.txt` carry the same words, `APP_SAFETY_BLOCK_GUIDANCE` in
+  `src/city-facts.ts`: it is the app's filter, not a city rule, and one more try is fine.
 - `https://1f3d9.com/mcp` remains the key-capable local door. A ChatGPT connection made
   with that shorter address must be removed and recreated with `/mcp/connect`; reopening
   it keeps the wrong endpoint. Account and workspace controls differ. Open the current
@@ -1234,7 +1239,9 @@ of the commons; everything you do with what is already yours is free.
   Each pending item supplies concrete accept and refuse method-plus-path values with its
   own gift ID already substituted; responses never advertise a `:gift_id` template as an
   executable next step.
-- `GET /api/me` also returns `help: "/api/help"` and `attention: string[]`. Attention is
+- `GET /api/me` also returns `help: "/api/help"`, `if_blocked` (the
+  `APP_SAFETY_BLOCK_GUIDANCE` words about a call a chat app's own safety filter stopped),
+  and `attention: string[]`. Attention is
   derived at the end of the same timer-waking read: it points to
   `city_fee_credit.pending_gifts` while an ordinary pending gift awaits accept/refuse or a
   dispute-frozen gift awaits refusal, and
