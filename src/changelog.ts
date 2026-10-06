@@ -1,6 +1,15 @@
+import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
-import { CHANGELOG_MARKDOWN } from './changelog-source.ts'
+import { CHANGELOG_ENTRY_LEDGER, CHANGELOG_MARKDOWN } from './changelog-source.ts'
+import { err } from './core.ts'
 import { guideDocument } from './human-guide-document.ts'
+import { positiveId } from './input.ts'
+import {
+  allowedPublicQuery,
+  parsePublicPage,
+  parsePublicRangeStart,
+} from './public-pagination.ts'
+import { publicDeploymentCommit } from './public-reference-facts.ts'
 
 /**
  * The plain-language changelog at the repository root (CHANGELOG.md) is the
@@ -74,6 +83,40 @@ export function countChangelogUpdatesSince(
 
 export const CHANGELOG_ENTRIES = parseChangelog(CHANGELOG_TEXT)
 
+/**
+ * One changelog record for GET /api/changelog: one bullet, which is one
+ * change, with the permanent id the embed ledger gave it. CHANGELOG.md stays
+ * the home of every sentence; the ledger in changelog-source.ts holds only
+ * identity, and test/changelog-ids.test.ts keeps the two the same length and
+ * in the same order.
+ */
+export interface ChangelogRecord {
+  readonly id: number
+  readonly date: string
+  readonly category: string
+  readonly text: string
+}
+
+function changelogRecords(): readonly ChangelogRecord[] {
+  const bullets = CHANGELOG_ENTRIES.flatMap(entry => entry.categories.flatMap(category => (
+    category.items.map(text => ({ date: entry.date, category: category.name, text }))
+  )))
+  return bullets
+    .flatMap((bullet, index) => {
+      const row = CHANGELOG_ENTRY_LEDGER[index]
+      return row === undefined ? [] : [Object.freeze({ id: row.id, ...bullet })]
+    })
+    .sort((left, right) => right.id - left.id)
+}
+
+/** Newest id first. */
+export const CHANGELOG_RECORDS = changelogRecords()
+const CHANGELOG_RECORDS_BY_ID = new Map(CHANGELOG_RECORDS.map(record => [record.id, record]))
+const CHANGELOG_NEWEST_ID = CHANGELOG_RECORDS[0]?.id ?? 0
+
+/** Equals the sha256 of the exact GET /changelog.txt bytes. */
+export const CHANGELOG_TEXT_SHA256 = createHash('sha256').update(CHANGELOG_TEXT, 'utf8').digest('hex')
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/gu, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -141,8 +184,10 @@ const CHANGELOG_CSP = [
   "manifest-src 'none'",
 ].join('; ')
 
+const CHANGELOG_CACHE_CONTROL = 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400'
+
 function changelogHeaders(c: Context): void {
-  c.header('Cache-Control', 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400')
+  c.header('Cache-Control', CHANGELOG_CACHE_CONTROL)
   c.header('Content-Security-Policy', CHANGELOG_CSP)
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('Referrer-Policy', 'no-referrer')
@@ -150,6 +195,21 @@ function changelogHeaders(c: Context): void {
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Resource-Policy', 'same-origin')
   c.header('X-Robots-Tag', 'index, follow')
+}
+
+function changelogJsonHeaders(c: Context): void {
+  c.header('Cache-Control', CHANGELOG_CACHE_CONTROL)
+  c.header('X-Content-Type-Options', 'nosniff')
+}
+
+// Both JSON reads are built by the deploy that serves them, so
+// deployment_commit, newest_id, and text_sha256 always name the same deploy.
+// The city does not record which deploy first served an entry.
+function changelogDeployFacts(): { deployment_commit: string | null; text_sha256: string } {
+  return {
+    deployment_commit: publicDeploymentCommit(process.env.VERCEL_GIT_COMMIT_SHA),
+    text_sha256: CHANGELOG_TEXT_SHA256,
+  }
 }
 
 export function mountChangelogRoutes(app: Hono): void {
@@ -160,5 +220,41 @@ export function mountChangelogRoutes(app: Hono): void {
   app.get('/changelog.txt', c => {
     changelogHeaders(c)
     return c.text(CHANGELOG_TEXT)
+  })
+  app.get('/api/changelog', c => {
+    const queries = c.req.queries()
+    const allowed = allowedPublicQuery(queries, ['before_id', 'after_id', 'limit'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const page = parsePublicPage(queries, 'before_id', 'limit')
+    if (!page.ok) return err(c, 400, page.error)
+    const afterId = parsePublicRangeStart(queries, 'after_id', page.cursor)
+    if (!afterId.ok) return err(c, 400, afterId.error)
+    const matching = CHANGELOG_RECORDS.filter(record => (
+      (page.cursor === null || record.id < page.cursor)
+      && (afterId.value === null || record.id > afterId.value)
+    ))
+    const entries = matching.slice(0, page.limit)
+    const hasMore = matching.length > page.limit
+    changelogJsonHeaders(c)
+    return c.json({
+      ...changelogDeployFacts(),
+      newest_id: CHANGELOG_NEWEST_ID,
+      entries,
+      has_more: hasMore,
+      next_before_id: hasMore ? entries.at(-1)?.id ?? null : null,
+    })
+  })
+  app.get('/api/changelog/:id', c => {
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const raw = c.req.param('id')
+    const id = /^[1-9][0-9]{0,9}$/u.test(raw) ? positiveId(raw) : null
+    if (id === null) return err(c, 400, 'changelog entry id must be a positive integer')
+    const entry = CHANGELOG_RECORDS_BY_ID.get(id)
+    if (entry === undefined) {
+      return err(c, 404, `changelog entry ${id} was not found; list current entry ids with GET /api/changelog if your client can open URLs`)
+    }
+    changelogJsonHeaders(c)
+    return c.json({ ...changelogDeployFacts(), entry })
   })
 }
