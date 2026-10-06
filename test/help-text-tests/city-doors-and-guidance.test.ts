@@ -45,9 +45,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 135 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 135)
-    assert.match(contributorGuide, /\(135 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 136 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 136)
+    assert.match(contributorGuide, /\(136 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
