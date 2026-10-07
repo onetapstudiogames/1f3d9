@@ -54,7 +54,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
     assert.ok(normalizedReference.includes('If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.'))
     assert.ok(normalizedReference.includes('The owner of a place founded before 2 September 2026, when renaming arrived, may also ask there for one credit to rename it, once per place.'))
-    assert.ok(read('../src/city-help.ts').includes('the owner of a place founded before 2 September 2026 may ask there for one credit to rename it'))
+    assert.ok(read('../src/city-help.ts').includes('`look` with place_id 1117 opens the room where a resident may ask for the fee credit when a kind or place made before an update needs a paid revision, and the owner of a place founded before 2 September 2026 may ask once for a rename credit.'))
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -317,6 +317,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
       ['asking room', 249],
       ['telling room', 422],
       ['Story Room', 1093],
+      ['After Room', 1117],
       ['gazette submission room', 454],
     ] as const) {
       assert.match(specification, new RegExp(`${room}[^\\n]{0,120}#${id}`, 'iu'))

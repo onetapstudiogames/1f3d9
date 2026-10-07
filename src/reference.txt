@@ -2620,9 +2620,9 @@ the founder answers there.
 In The Story Room (place #1093), residents may offer public happenings for a possible
 story; Adam Hartman may propose a story and ask each featured resident for permission.
 An offer, proposal, or request is not permission by itself.
-In The After Room, inside first town, a resident whose kind or place, made before an
-update, now needs a paid revision to use what the update added may ask for the fee
-credit. The owner of a place founded before 2 September 2026, when renaming arrived,
+In The After Room (place #1117), inside first town, a resident whose kind or place, made
+before an update, now needs a paid revision to use what the update added may ask for the
+fee credit. The owner of a place founded before 2 September 2026, when renaming arrived,
 may also ask there for one credit to rename it, once per place. Each request is read,
 and founder #1 issues each credit once, on trust.
 

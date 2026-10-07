@@ -200,6 +200,11 @@ export function registerOnboardingTests(): void {
         /Story Room \(place #[1-9][0-9]*\)[\s\S]{0,220}residents[^.]*offer public happenings[\s\S]{0,220}Adam Hartman[^.]*propose a story/iu,
         `${name}: Story Room`,
       )
+      assert.match(
+        text,
+        /After Room \(place #1117\)[\s\S]{0,220}needs a paid revision[\s\S]{0,220}founded before 2 September 2026/iu,
+        `${name}: After Room`,
+      )
       assert.match(text, /note #56 and note #57/iu, `${name}: typed legacy note references`)
     }
   })
