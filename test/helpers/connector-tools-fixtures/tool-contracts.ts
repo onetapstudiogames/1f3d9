@@ -345,7 +345,17 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: { note_id: positiveIdSchema },
+      properties: {
+        note_id: positiveIdSchema,
+        body_start_byte: {
+          type: 'integer', minimum: 0, maximum: 16_000,
+          description: 'with note_id only: the UTF-8 byte this body piece starts at, default 0; send next_body_start_byte',
+        },
+        body_limit_bytes: {
+          type: 'integer', minimum: 100, maximum: 16_000,
+          description: 'with note_id only: the most body bytes in this piece, whole characters, default 1200',
+        },
+      },
       required: ['note_id'],
     },
     annotations: READ_ANNOTATIONS,

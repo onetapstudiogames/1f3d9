@@ -624,6 +624,76 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.equal(looked.text.includes(SENTINEL), false, 'look stays a remote read even while standing there')
     })
 
+    // Issue #396 and decision #140: piece inputs never open a withheld body from
+    // afar, and pieces of an opened body join into exactly the stored body.
+    await t.test('a note read in pieces keeps a walk-to-read body withheld from afar', async () => {
+      const seeded = await seedNotes(app)
+      const walkBytes = Buffer.byteLength(WALK_BODY, 'utf8')
+      const remote = JSON.parse(await withoutSentinel(
+        await app.request(`http://city.test/api/note/${seeded.walkNoteId}?body_start_byte=60&body_limit_bytes=100`),
+        'GET /api/note/:id piece',
+      )) as { note: Record<string, unknown> }
+      assert.equal(Object.keys(remote.note)[0], 'body_text_bytes')
+      assert.equal(remote.note.body_text_bytes, walkBytes)
+      for (const field of ['body', 'body_piece_start_byte', 'body_piece_end_byte', 'has_more_body', 'next_body_start_byte']) {
+        assert.equal(Object.hasOwn(remote.note, field), false, field)
+      }
+      assert.equal(remote.note.first_line, FIRST_LINE)
+      assert.equal(remote.note.read_in_person, readInPerson(seeded.walkNoteId, seeded.eastRoomId))
+
+      const looked = await mcpCall(app, WALKER.secret, 'look', {
+        note_id: seeded.walkNoteId, body_start_byte: 60, body_limit_bytes: 100,
+      })
+      assert.equal(looked.isError, false)
+      assert.equal(looked.text.includes(SENTINEL), false, 'look with piece inputs stays withheld')
+      assert.equal(looked.text.includes('has_more_body'), false)
+
+      const eventsBefore = (await connectedDatabase().query('SELECT count(*)::integer AS events FROM events')).rows
+      const away = await app.request(
+        `http://city.test/api/note/${seeded.walkNoteId}/here?body_start_byte=0&body_limit_bytes=100`,
+        { headers: { authorization: `Bearer ${WALKER.secret}` } },
+      )
+      const awayError = await json<{ error: string }>(away, 403, 'read_here piece from the wrong place')
+      assert.equal(
+        firstLine(awayError.error),
+        `note_id ${seeded.walkNoteId} is walk-to-read, so its body opens only to a resident standing in place_id ${seeded.eastRoomId}, and you are standing in place_id ${seeded.westRoomId}; walk to place_id ${seeded.eastRoomId}, then call read_here with note_id ${seeded.walkNoteId} again, or use GET /api/note/${seeded.walkNoteId}/here if your client can open URLs`,
+      )
+      assert.deepEqual((await connectedDatabase().query('SELECT count(*)::integer AS events FROM events')).rows, eventsBefore)
+
+      const longBody = `${WALK_BODY}\n${'Stones of the east wall, café 漢字. '.repeat(12)}`
+      const longWalk = await json<{ note: Record<string, unknown> }>(
+        await say(app, WRITER.secret, { place_id: seeded.eastRoomId, body: longBody, walk_to_read: true }),
+        201,
+        'long walk-to-read write',
+      )
+      const longBytes = Buffer.byteLength(longBody, 'utf8')
+      await standIn(WALKER.id, seeded.eastRoomId)
+      const pieces: string[] = []
+      let start: number | null = 0
+      while (start !== null) {
+        const piece = await mcpCall(app, WALKER.secret, 'read_here', {
+          note_id: Number(longWalk.note.id), body_start_byte: start, body_limit_bytes: 100,
+        })
+        assert.equal(piece.isError, false, piece.text)
+        assert.ok(piece.text.startsWith(`{"note":{"body_text_bytes":${longBytes},`), piece.text.slice(0, 60))
+        const note = (JSON.parse(piece.text) as { note: Record<string, unknown> & { body: string } }).note
+        assert.ok(Buffer.byteLength(note.body, 'utf8') <= 100)
+        pieces.push(note.body)
+        start = note.next_body_start_byte as number | null
+      }
+      assert.ok(pieces.length > 5)
+      assert.equal(pieces.join(''), longBody)
+
+      const stored = (await connectedDatabase().query(
+        'SELECT body FROM notes WHERE id = $1', [seeded.ordinaryNoteId],
+      )).rows[0] as { body: string }
+      const ordinaryFull = await json<{ note: Record<string, unknown> }>(
+        await app.request(`http://city.test/api/note/${seeded.ordinaryNoteId}`), 200, 'ordinary full read',
+      )
+      assert.equal(ordinaryFull.note.body, stored.body)
+      assert.equal(ordinaryFull.note.body_text_bytes, Buffer.byteLength(stored.body, 'utf8'))
+    })
+
     await t.test('the founder keeps moderation reach: a full read anywhere and removal everywhere', async () => {
       const seeded = await seedNotes(app)
       const founderRead = await json<{ note: Record<string, unknown> }>(

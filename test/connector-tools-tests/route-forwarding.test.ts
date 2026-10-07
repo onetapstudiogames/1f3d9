@@ -304,7 +304,54 @@ export function registerRouteForwardingTests(): void {
       args: { note_id: 17942 },
       expected: { method: 'GET', path: '/api/note/17942/here' },
     },
+    {
+      name: 'read_here',
+      args: { note_id: 17942, body_start_byte: 0 },
+      expected: { method: 'GET', path: '/api/note/17942/here', query: { body_start_byte: '0' } },
+    },
+    {
+      name: 'look',
+      args: { note_id: 24504 },
+      expected: { method: 'GET', path: '/api/note/24504' },
+    },
+    {
+      name: 'look',
+      args: { note_id: 24504, body_start_byte: 1200, body_limit_bytes: 1400 },
+      expected: {
+        method: 'GET', path: '/api/note/24504',
+        query: { body_start_byte: '1200', body_limit_bytes: '1400' },
+      },
+    },
   ] as const
+
+  test('look refuses a note body piece without note_id alone', async () => {
+    const choose = 'Choose thing_id alone, note_id alone or with body_start_byte and body_limit_bytes, line_id alone, or place_id with its place options.'
+    const cases: ReadonlyArray<Record<string, unknown>> = [
+      { body_start_byte: 0 },
+      { body_limit_bytes: 1400 },
+      { thing_id: 41, body_start_byte: 0 },
+      { line_id: 918, body_limit_bytes: 1400 },
+      { place_id: 12, body_start_byte: 0 },
+      { note_id: 24504, place_id: 12, body_start_byte: 0 },
+    ]
+    for (const args of cases) {
+      const { app, calls } = connectorHarness()
+      const result = await callToolResult(app, '/mcp', 'look', args, { authorization: AUTHORIZATION })
+      assert.equal(result.isError, true, JSON.stringify(args))
+      assert.equal((JSON.parse(result.content[0]?.text ?? '') as { error: string }).error, choose)
+      assert.equal(calls.length, 0)
+    }
+    const { app, calls } = connectorHarness()
+    const result = await callToolResult(app, '/mcp', 'look', {
+      scope: 'continent', continent_id: 160, body_start_byte: 0,
+    }, { authorization: AUTHORIZATION })
+    assert.equal(result.isError, true)
+    assert.equal(
+      (JSON.parse(result.content[0]?.text ?? '') as { error: string }).error,
+      'Look scope=continent does not accept body_start_byte; use only scope, continent_id, and optional before_place_id.',
+    )
+    assert.equal(calls.length, 0)
+  })
 
   test('look refuses line_id beside place_id with the caller sentence', async () => {
     const { app, calls } = connectorHarness()
@@ -315,7 +362,7 @@ export function registerRouteForwardingTests(): void {
     const text = result.content[0]?.text ?? ''
     assert.equal(
       (JSON.parse(text) as { error: string }).error,
-      'Choose thing_id alone, note_id alone, line_id alone, or place_id with its place options.',
+      'Choose thing_id alone, note_id alone or with body_start_byte and body_limit_bytes, line_id alone, or place_id with its place options.',
     )
     assert.equal(calls.length, 0)
   })

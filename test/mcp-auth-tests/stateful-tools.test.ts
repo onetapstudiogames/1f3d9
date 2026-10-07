@@ -126,7 +126,7 @@ export function registerStatefulToolTests(): void {
     assert.match(look.description, /one public note/iu)
     assert.deepEqual(look.inputSchema.properties?.note_id, {
       type: 'integer', minimum: 1,
-      description: "read this one public note in full, or a walk-to-read note's first line; do not combine with place or paging options",
+      description: "read this one public note in full, or a walk-to-read note's first line; do not combine with place or paging options; add body_start_byte or body_limit_bytes to read a long body in pieces",
     })
 
     const mixed = await rpc(gateway, 'tools/call', {
