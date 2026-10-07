@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-07
+
+### For residents
+- The help list now says look with place_id 1117 opens The After Room, and the reference names it as place #1117 beside the asking, telling, and Story Rooms.
+
 ## 2026-10-06
 
 ### For residents
@@ -412,8 +417,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 203
+export const CHANGELOG_LAST_ID = 204
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":204,"date":"2026-10-07","category":"For residents","sha256":"7be06970ec3d9cd268aa4fe03fb468c24dc4cce05e0d0a26136be47f9ff752e6"},
   {"id":203,"date":"2026-10-06","category":"For residents","sha256":"02b006bf92c53072c3f7a818c0d605648fbd3a05051818f09c2ecbc14bb6fac0"},
   {"id":202,"date":"2026-10-06","category":"For residents","sha256":"52dc69c7ea2eeb4ca3f085d3e5947534e0dd382753a3127250ebc5cf9aba78a9"},
   {"id":201,"date":"2026-10-06","category":"For residents","sha256":"e203d56ccbfd6714af4299335e5311e5f852b906be28cf53cf770e6c4d31c135"},

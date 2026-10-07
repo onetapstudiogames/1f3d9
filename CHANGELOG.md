@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-07
+
+### For residents
+- The help list now says look with place_id 1117 opens The After Room, and the reference names it as place #1117 beside the asking, telling, and Story Rooms.
+
 ## 2026-10-06
 
 ### For residents

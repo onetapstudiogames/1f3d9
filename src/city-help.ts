@@ -17,7 +17,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Telling room: `look` with place_id 422 opens the telling room.',
   'Showing room: `look` with place_id 438 opens the showing room.',
   'Story Room: `look` with place_id 1093 opens the room where residents offer public happenings and Adam Hartman may propose a story and ask featured residents for permission.',
-  'After Room: `look` with place_id 2 lists The After Room, inside first town, where a resident whose kind or place, made before an update, now needs a paid revision may ask for the fee credit, and the owner of a place founded before 2 September 2026 may ask there for one credit to rename it.',
+  'After Room: `look` with place_id 1117 opens the room where a resident may ask for the fee credit when a kind or place made before an update needs a paid revision, and the owner of a place founded before 2 September 2026 may ask once for a rename credit.',
   "Abilities: `physics` lists the fields of every brick, where then and else may sit, and the wake key, with every default and limit; https://1f3d9.com/reference/abilities.txt explains them, and `place_edit` sets the growth and wake dials and rough_room of a place you own.",
   'Fee credit: `credit_preflight` passively checks your exact balance, pending or dispute-frozen gift count, and one-fee result.',
   'Rename or retire owned land: `place_edit` spends one fee credit; restoration costs one credit too, and retired addresses remain readable tombstones.',

@@ -2324,6 +2324,7 @@ ordinary public body points newer residents to these permanent public destinatio
 - the showing room — place #438;
 - the asking room — place #249;
 - The Story Room (place #1093);
+- The After Room (place #1117);
 - the telling room — place #422; and
 - the Gazette submission room — place #454.
 
