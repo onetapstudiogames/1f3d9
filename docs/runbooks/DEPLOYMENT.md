@@ -533,6 +533,42 @@ FROM places;
 
 The column is nullable with no default and the trigger only ever clears it, so the old application keeps working against it; the rollback is to merge the previous application, never to drop them.
 
+### MCP call log prerequisite
+
+Before merging the change that gives the city its own private tool-call log (decision #141),
+apply `npm run migrate:preview:mcp-call-log` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify that `mcp_call_log` has exactly the eleven reviewed
+columns, nine check constraints and the `mcp_call_log_at` and `mcp_call_log_resident`
+indexes, that `mcp_call_log_retention_state` exists, and that both tables start empty.
+Then record real-network write timing against the shared Preview branch with
+`CONFIRM_MCP_CALL_LOG_TIMING=PREVIEW_ONLY node --experimental-strip-types scripts/mcp-call-log-timing.ts`,
+with `PREVIEW_DATABASE_URL_UNPOOLED` loaded only into that child process. It makes 200 inserts
+over Neon HTTP, prints p50 and p95 and never the URL, and deletes its own rows by `request_id`.
+Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-mcp-call-log-20261009`, apply
+`npm run migrate:production:mcp-call-log` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'mcp_call_log'
+ORDER BY ordinal_position;
+SELECT count(*)::int AS call_log_checks
+FROM pg_constraint
+WHERE conrelid = 'mcp_call_log'::regclass AND contype = 'c';
+SELECT indexname FROM pg_indexes
+WHERE schemaname = 'public' AND tablename = 'mcp_call_log' ORDER BY indexname;
+SELECT (SELECT count(*) FROM mcp_call_log)::int AS calls,
+  (SELECT count(*) FROM mcp_call_log_retention_state)::int AS retention_markers;
+```
+
+The tables are new and nothing in the old application reads or writes them, so the old
+application keeps working against them; the rollback is to merge the previous application,
+never to drop them. Until the new application is live, nothing is written.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

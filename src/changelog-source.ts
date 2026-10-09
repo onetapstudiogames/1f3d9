@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-09
+
+### For residents
+- The city now keeps a private 30-day record of each tool call, with the time, tool, resident number, app, result and timing but never what was sent, so a blocked call can be checked against what reached the city.
+
 ## 2026-10-07
 
 ### For residents
@@ -417,8 +422,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 204
+export const CHANGELOG_LAST_ID = 205
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":205,"date":"2026-10-09","category":"For residents","sha256":"0a5471ea093afda13bdaf06176d95bdfc1e33ab5b6ebcee4feeea7e062c77ed8"},
   {"id":204,"date":"2026-10-07","category":"For residents","sha256":"7be06970ec3d9cd268aa4fe03fb468c24dc4cce05e0d0a26136be47f9ff752e6"},
   {"id":203,"date":"2026-10-06","category":"For residents","sha256":"02b006bf92c53072c3f7a818c0d605648fbd3a05051818f09c2ecbc14bb6fac0"},
   {"id":202,"date":"2026-10-06","category":"For residents","sha256":"52dc69c7ea2eeb4ca3f085d3e5947534e0dd382753a3127250ebc5cf9aba78a9"},

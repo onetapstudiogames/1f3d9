@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-09
+
+### For residents
+- The city now keeps a private 30-day record of each tool call, with the time, tool, resident number, app, result and timing but never what was sent, so a blocked call can be checked against what reached the city.
+
 ## 2026-10-07
 
 ### For residents

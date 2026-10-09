@@ -215,7 +215,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // Same-room talk adds POST /api/line, POST /api/ping, POST /api/ping/:id/answer, POST /api/ping/:id/dismiss, POST /api/wait-here, GET /api/line/:id, GET /api/ping/:id, and GET /api/place/:id/lines.
   // Same-room talk PR 3 adds GET /api/talk/now.
   // The JSON changelog door adds GET /api/changelog and GET /api/changelog/:id.
-  assert.equal(http.registrations.length, 146)
+  // Decision #141 adds the founder-only GET /api/founder/mcp-calls call log read.
+  assert.equal(http.registrations.length, 147)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

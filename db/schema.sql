@@ -625,6 +625,63 @@ CREATE TABLE IF NOT EXISTS runtime_log_retention_state (
             )
 );
 
+-- The city's own private tool-call log (decision #141): closed fields only, one row
+-- per MCP tools/call, purged after 30 days by the hourly claim below.
+CREATE TABLE IF NOT EXISTS mcp_call_log (
+  id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  at            TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  door          TEXT NOT NULL
+                CONSTRAINT mcp_call_log_door_known
+                CHECK (door IN ('mcp', 'connect')),
+  tool          TEXT NOT NULL
+                CONSTRAINT mcp_call_log_tool_shape
+                CHECK (tool ~ '^[a-z_]{1,64}$'),
+  resident_id   INTEGER
+                CONSTRAINT mcp_call_log_resident_id_positive
+                CHECK (resident_id IS NULL OR resident_id > 0),
+  client_family TEXT NOT NULL
+                CONSTRAINT mcp_call_log_client_family_known
+                CHECK (client_family IN ('chatgpt', 'codex', 'claude_ai', 'claude_code', 'other')),
+  request_id    UUID NOT NULL,
+  outcome       TEXT NOT NULL
+                CONSTRAINT mcp_call_log_outcome_known
+                CHECK (outcome IN ('ok', 'refused', 'error')),
+  refusal_class TEXT
+                CONSTRAINT mcp_call_log_refusal_class_known
+                CHECK (refusal_class IS NULL OR refusal_class IN (
+                  'bad_input', 'not_found', 'auth_required', 'forbidden',
+                  'payment_required', 'conflict', 'rate_limited', 'city_fault',
+                  'unreachable', 'rpc_error'
+                )),
+  http_status   SMALLINT
+                CONSTRAINT mcp_call_log_http_status_valid
+                CHECK (http_status IS NULL OR http_status BETWEEN 100 AND 599),
+  latency_ms    INTEGER NOT NULL
+                CONSTRAINT mcp_call_log_latency_ms_valid
+                CHECK (latency_ms BETWEEN 0 AND 600000),
+  CONSTRAINT mcp_call_log_ok_has_no_refusal_class
+    CHECK (outcome <> 'ok' OR refusal_class IS NULL)
+);
+
+CREATE TABLE IF NOT EXISTS mcp_call_log_retention_state (
+  singleton BOOLEAN PRIMARY KEY DEFAULT TRUE
+            CONSTRAINT mcp_call_log_retention_state_singleton_true
+            CHECK (singleton),
+  last_hour TIMESTAMPTZ NOT NULL
+            CONSTRAINT mcp_call_log_retention_state_last_hour_aligned
+            CHECK (
+              last_hour = (
+                date_trunc('hour', last_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+              )
+            )
+);
+
+CREATE INDEX IF NOT EXISTS mcp_call_log_at
+  ON mcp_call_log (at);
+CREATE INDEX IF NOT EXISTS mcp_call_log_resident
+  ON mcp_call_log (resident_id, id DESC)
+  WHERE resident_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS places (
   id                SERIAL PRIMARY KEY,
   parent_id         INTEGER REFERENCES places(id) ON DELETE RESTRICT,

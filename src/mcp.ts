@@ -1,8 +1,21 @@
 import { randomUUID } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { traceMcpToolCall } from './mcp-diagnostics.ts'
+import {
+  classifyClient,
+  outcomeForRefusalClass,
+  refusalClassFromEnvelope,
+  writeMcpCallBriefly,
+  type McpCallLogRow,
+  type McpCallLogWriter,
+} from './mcp-call-log.ts'
 import { errorClassForStatus, type ErrorClass } from './error-class.ts'
-import { allowOAuthForHostedConnectorRequest, authRootKeyPassive, HANDLE_RE } from './core.ts'
+import {
+  allowOAuthForHostedConnectorRequest,
+  authenticatedResidentId,
+  authRootKeyPassive,
+  HANDLE_RE,
+} from './core.ts'
 import {
   ACT_TOOL_ACTIONS,
   AGREEMENT_ACTIONS_LIMIT_LINE,
@@ -238,11 +251,14 @@ export interface McpOptions {
   forwardUnauthorizedStatus?: boolean
   /** Test seam for passive legacy catalog authentication. */
   authenticateLegacyCatalog?: (context: Context) => Promise<boolean>
+  /** The city's private tool-call log (decision #141); absent means no row is written. */
+  callLog?: McpCallLogWriter
 }
 
-async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<void> {
+/** Returns the looking request so the call log can read the resident it authenticated. */
+async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<Request | null> {
   const authorization = c.req.header('authorization')
-  if (!authorization) return
+  if (!authorization) return null
   const request = hostedBackingRequest('/api/internal/mcp-looking', {
     method: 'POST', headers: { authorization },
   })
@@ -250,6 +266,7 @@ async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<void>
     Promise.resolve(app.request(request)).then(() => undefined),
     new Promise<void>(resolve => setTimeout(resolve, 250)),
   ])
+  return request
 }
 
 const own = (value: Record<string, unknown>, key: string) =>
@@ -2600,6 +2617,16 @@ function hostedBackingRequest(path: string, init: RequestInit): Request {
   return request
 }
 
+/**
+ * The same Request Hono's app.request(path, init) builds, kept by the caller so the
+ * call log can read the resident the backing route authenticated without a second query.
+ */
+function legacyBackingRequest(path: string, init: RequestInit): Request {
+  return new Request(`http://localhost${path}`, init)
+}
+
+type LoggedCallOutcome = Pick<McpCallLogRow, 'outcome' | 'refusalClass' | 'latencyMs'>
+
 export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const connectorRequestId = randomUUID()
   const hostedChat = options.hostedChat === true && hostedChatSigninEnabled()
@@ -2688,241 +2715,273 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       ? params.name.slice(HOSTED_TOOL_NAMESPACE.length)
       : params.name
     : ''
-  const trace = traceMcpToolCall(
-    connectorRequestId,
-    TOOL_DEFINITIONS_BY_NAME.get(diagnosticName)?.name ?? 'unknown',
-  )
+  const loggedTool = TOOL_DEFINITIONS_BY_NAME.get(diagnosticName)?.name ?? 'unknown'
+  const trace = traceMcpToolCall(connectorRequestId, loggedTool)
   let backingHttpStatus: number | undefined
+  let residentId: number | null = null
+  let loggedOutcome: LoggedCallOutcome | undefined
   const reply = (
     text: string,
     isError: boolean,
     replyOptions: { oauthChallenge?: string; forwardUnauthorizedStatus?: boolean } = {},
   ) => {
     const response = toolResult(c, id, text, isError, replyOptions)
-    trace.replyPrepared(isError ? 'tool_error' : 'success', response.status, backingHttpStatus)
+    const latencyMs = trace.replyPrepared(isError ? 'tool_error' : 'success', response.status, backingHttpStatus)
+    const refusalClass = isError ? refusalClassFromEnvelope(text) : null
+    loggedOutcome = {
+      outcome: !isError ? 'ok' : refusalClass ? outcomeForRefusalClass(refusalClass) : 'error',
+      refusalClass,
+      latencyMs,
+    }
     return response
   }
+  // Closed fields only: never arguments, text, headers beyond the client family, or addresses.
+  const logCall = async (outcome: LoggedCallOutcome): Promise<void> => {
+    if (!options.callLog) return
+    await writeMcpCallBriefly(options.callLog, {
+      door: options.hostedChat === true ? 'connect' : 'mcp',
+      tool: loggedTool,
+      residentId,
+      clientFamily: classifyClient(c.req.header('user-agent')),
+      requestId: connectorRequestId,
+      ...outcome,
+      httpStatus: backingHttpStatus ?? null,
+    })
+  }
 
+  let toolResponse: Response
   try {
-    const requestedName = String(params?.name ?? '')
-    const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
-      ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)
-      : requestedName
-    if (
-      name === 'later_holder_items'
-      || name === 'mark_for_later'
-      || name === 'me'
-      || name === 'credit_gift'
-      || name === 'payment_attempt'
-      || name === 'buy_credit'
-      || name === 'drawing'
-      || name === 'drawing_history'
-      || name === 'ping'
-      || name === 'wait_here'
-      || name === 'read_here'
-    ) {
-      c.header('Cache-Control', 'no-store')
-      c.header('Pragma', 'no-cache')
-      c.header('Vary', 'Authorization')
-    }
-    const rawArguments = params?.arguments
-    const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
-      ? rawArguments as Record<string, unknown>
-      : {}
-    if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
-      c.header('Cache-Control', 'no-store')
-      c.header('Pragma', 'no-cache')
-      c.header('Vary', 'Authorization')
-    }
-    const tool = TOOLS.find(candidate => candidate.name === name)
-    if (!tool) {
-      const response = rpcError(
-        c,
-        id,
-        -32602,
-        connectorRequestId,
-        `no such tool: ${name}; call tools/list and use one advertised tool name`,
-      )
-      trace.replyPrepared('rpc_error', response.status)
-      return response
-    }
-    const secretKind = secretArgumentKind(args)
-    if (secretKind) {
-      const guidance = secretKind === 'gift_claim_token'
-        ? 'Private gift claim tokens belong only in the browser gift redirect. Never put one in MCP arguments or the Authorization header.'
-        : 'Do not put secrets in tool arguments. Configure resident authentication in the HTTP Authorization header instead.'
-      return reply(
-        classifiedErrorText(
-          guidance,
-          'bad_input',
-          undefined,
-          undefined,
-          connectorRequestId,
-        ),
-        true,
-      )
-    }
-    const unknown = unknownArguments(tool, args)
-    if (unknown.length > 0) {
-      return reply(
-        classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400, undefined, connectorRequestId),
-        true,
-      )
-    }
-    const enumRejection = invalidEnumArgument(tool, args)
-    if (enumRejection) return reply(classifiedErrorText(enumRejection, 'bad_input', 400, undefined, connectorRequestId), true)
-    const talkArgumentRefusal = name === 'say' && own(args, 'request_id') && args.mode !== 'line'
-      ? SAY_REQUEST_ID_MODE_REFUSAL
-      : name === 'look' && args.view === 'lines' && !own(args, 'place_id')
-        ? LOOK_LINES_PLACE_ID_REFUSAL
-        : name === 'ping' && !own(args, 'action')
-          ? PING_ACTION_REFUSAL
-          : null
-    if (talkArgumentRefusal) {
-      const { status, ...refusalBody } = talkArgumentRefusal
-      return reply(
-        classifiedErrorRecord(
-          refusalBody,
-          'bad_input',
-          status,
-          undefined,
-          connectorRequestId,
-        ),
-        true,
-      )
-    }
-    const publicReadRejection = invalidPublicReadArgument(name, args)
-    if (publicReadRejection) {
-      return reply(classifiedErrorText(publicReadRejection, 'bad_input', 400, undefined, connectorRequestId), true)
-    }
-    if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
-      return reply(
-        classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input', undefined, undefined, connectorRequestId),
-        true,
-      )
-    }
-    if (!c.req.header('authorization') && !allowsAnonymous(name)) {
-      const authOptions = hostedChat
-        ? {
-            oauthChallenge: defaultOAuthChallenge(),
-            forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
-          }
+    toolResponse = await (async (): Promise<Response> => {
+      const requestedName = String(params?.name ?? '')
+      const name = hostedChat && requestedName.startsWith(HOSTED_TOOL_NAMESPACE)
+        ? requestedName.slice(HOSTED_TOOL_NAMESPACE.length)
+        : requestedName
+      if (
+        name === 'later_holder_items'
+        || name === 'mark_for_later'
+        || name === 'me'
+        || name === 'credit_gift'
+        || name === 'payment_attempt'
+        || name === 'buy_credit'
+        || name === 'drawing'
+        || name === 'drawing_history'
+        || name === 'ping'
+        || name === 'wait_here'
+        || name === 'read_here'
+      ) {
+        c.header('Cache-Control', 'no-store')
+        c.header('Pragma', 'no-cache')
+        c.header('Vary', 'Authorization')
+      }
+      const rawArguments = params?.arguments
+      const args = rawArguments && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
+        ? rawArguments as Record<string, unknown>
         : {}
-      return reply(
-        classifiedErrorText(
-          hostedChat ? hostedDoorAuthMessage() : publicMcpDoorAuthMessage(),
-          'auth_required',
-          undefined,
-          undefined,
-          connectorRequestId,
-        ),
-        true,
-        authOptions,
-      )
-    }
-
-    if (
-      !hostedChat &&
-      /^Bearer\s+1f3d9_at_[0-9a-f]{64}$/iu.test(c.req.header('authorization') ?? '')
-    ) {
-      return reply(
-        classifiedErrorText(wrongHostedDoorMessage(), 'auth_required', undefined, undefined, connectorRequestId),
-        true,
-      )
-    }
-
-    if (hostedChat && name === 'moderate') {
-      return reply(
-        classifiedErrorText(
-          'Moderation is unavailable through hosted chat; it requires founder resident #1\'s root key on the key-capable /mcp door.',
-          'forbidden',
-          undefined,
-          undefined,
-          connectorRequestId,
-        ),
-        true,
-      )
-    }
-
-    const route = tool.route(args)
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-1f3d9-tool-call': '1',
-    }
-    const authorization = c.req.header('authorization')
-    if (authorization) headers.authorization = authorization
-    const payment = c.req.header('x-payment')
-    if (payment) headers['x-payment'] = payment
-    for (const [name, value] of Object.entries(route.headers ?? {})) headers[name] = value
-    for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
-      const value = c.req.header(headerName)
-      if (value) headers[headerName] = value
-    }
-
-    const init: RequestInit = { method: route.method, headers }
-    if (route.method !== 'GET') {
-      init.body = new TextEncoder().encode(JSON.stringify(route.body ?? {}))
-    }
-
-    try {
-      const response = hostedChat
-        ? await app.request(hostedBackingRequest(route.path, init), undefined, c.env)
-        : await app.request(route.path, init, c.env)
-      backingHttpStatus = response.status
-      const rawText = await response.text()
-      // Every legacy and hosted tool response is a public/transcript surface,
-      // so all of them share the same credential backstop. Registration is a
-      // browser-only flow and must never come back through an MCP tool.
-      const safeguarded = safeguardToolResponse(rawText)
-      if (name === 'look' && response.ok && !safeguarded.withheld) {
-        try {
-          await brieflyRecordSuccessfulLook(c, app)
-        } catch {
-          // Looking attribution is deliberately best effort. The public read won.
-        }
+      if (['found', 'place_edit', 'invent_kind', 'revise_kind'].includes(name) && own(args, 'city_credit_request_id')) {
+        c.header('Cache-Control', 'no-store')
+        c.header('Pragma', 'no-cache')
+        c.header('Vary', 'Authorization')
       }
-      if (hostedChat && response.status === 401) {
-        const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
-        return reply(
-          classifiedErrorText(hostedSignInErrorText(safeguarded.text), 'auth_required', 401, undefined, connectorRequestId),
-          true,
-          {
-            oauthChallenge,
-            forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
-          },
+      const tool = TOOLS.find(candidate => candidate.name === name)
+      if (!tool) {
+        const response = rpcError(
+          c,
+          id,
+          -32602,
+          connectorRequestId,
+          `no such tool: ${name}; call tools/list and use one advertised tool name`,
         )
+        loggedOutcome = {
+          outcome: 'refused',
+          refusalClass: 'rpc_error',
+          latencyMs: trace.replyPrepared('rpc_error', response.status),
+        }
+        return response
       }
-      if (response.status >= 400) {
-        const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
+      const secretKind = secretArgumentKind(args)
+      if (secretKind) {
+        const guidance = secretKind === 'gift_claim_token'
+          ? 'Private gift claim tokens belong only in the browser gift redirect. Never put one in MCP arguments or the Authorization header.'
+          : 'Do not put secrets in tool arguments. Configure resident authentication in the HTTP Authorization header instead.'
         return reply(
           classifiedErrorText(
-            safeguarded.text,
-            errorClassForStatus(response.status),
-            response.status,
-            retryAfterSeconds,
+            guidance,
+            'bad_input',
+            undefined,
+            undefined,
             connectorRequestId,
           ),
           true,
         )
       }
-      if (safeguarded.withheld) {
-        return reply(classifiedErrorText(safeguarded.text, 'city_fault', undefined, undefined, connectorRequestId), true)
+      const unknown = unknownArguments(tool, args)
+      if (unknown.length > 0) {
+        return reply(
+          classifiedErrorText(unknownArgumentMessage(tool, unknown), 'bad_input', 400, undefined, connectorRequestId),
+          true,
+        )
       }
-      return reply(safeguarded.text, false)
-    } catch {
-      return reply(
-        classifiedErrorText(
-          'the city API could not answer this tool call because its response was unreachable; retry this same tool call later',
-          'unreachable',
-          undefined,
-          undefined,
-          connectorRequestId,
-        ),
-        true,
-      )
-    }
+      const enumRejection = invalidEnumArgument(tool, args)
+      if (enumRejection) return reply(classifiedErrorText(enumRejection, 'bad_input', 400, undefined, connectorRequestId), true)
+      const talkArgumentRefusal = name === 'say' && own(args, 'request_id') && args.mode !== 'line'
+        ? SAY_REQUEST_ID_MODE_REFUSAL
+        : name === 'look' && args.view === 'lines' && !own(args, 'place_id')
+          ? LOOK_LINES_PLACE_ID_REFUSAL
+          : name === 'ping' && !own(args, 'action')
+            ? PING_ACTION_REFUSAL
+            : null
+      if (talkArgumentRefusal) {
+        const { status, ...refusalBody } = talkArgumentRefusal
+        return reply(
+          classifiedErrorRecord(
+            refusalBody,
+            'bad_input',
+            status,
+            undefined,
+            connectorRequestId,
+          ),
+          true,
+        )
+      }
+      const publicReadRejection = invalidPublicReadArgument(name, args)
+      if (publicReadRejection) {
+        return reply(classifiedErrorText(publicReadRejection, 'bad_input', 400, undefined, connectorRequestId), true)
+      }
+      if (name === 'look' && !own(args, 'place_id') && LOOK_PAGE_KEYS.some(key => own(args, key))) {
+        return reply(
+          classifiedErrorText('Look paging options require place_id; omit paging options to read the map.', 'bad_input', undefined, undefined, connectorRequestId),
+          true,
+        )
+      }
+      if (!c.req.header('authorization') && !allowsAnonymous(name)) {
+        const authOptions = hostedChat
+          ? {
+              oauthChallenge: defaultOAuthChallenge(),
+              forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
+            }
+          : {}
+        return reply(
+          classifiedErrorText(
+            hostedChat ? hostedDoorAuthMessage() : publicMcpDoorAuthMessage(),
+            'auth_required',
+            undefined,
+            undefined,
+            connectorRequestId,
+          ),
+          true,
+          authOptions,
+        )
+      }
+
+      if (
+        !hostedChat &&
+        /^Bearer\s+1f3d9_at_[0-9a-f]{64}$/iu.test(c.req.header('authorization') ?? '')
+      ) {
+        return reply(
+          classifiedErrorText(wrongHostedDoorMessage(), 'auth_required', undefined, undefined, connectorRequestId),
+          true,
+        )
+      }
+
+      if (hostedChat && name === 'moderate') {
+        return reply(
+          classifiedErrorText(
+            'Moderation is unavailable through hosted chat; it requires founder resident #1\'s root key on the key-capable /mcp door.',
+            'forbidden',
+            undefined,
+            undefined,
+            connectorRequestId,
+          ),
+          true,
+        )
+      }
+
+      const route = tool.route(args)
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        'x-1f3d9-tool-call': '1',
+      }
+      const authorization = c.req.header('authorization')
+      if (authorization) headers.authorization = authorization
+      const payment = c.req.header('x-payment')
+      if (payment) headers['x-payment'] = payment
+      for (const [name, value] of Object.entries(route.headers ?? {})) headers[name] = value
+      for (const headerName of ['x-vercel-forwarded-for', 'x-forwarded-for'] as const) {
+        const value = c.req.header(headerName)
+        if (value) headers[headerName] = value
+      }
+
+      const init: RequestInit = { method: route.method, headers }
+      if (route.method !== 'GET') {
+        init.body = new TextEncoder().encode(JSON.stringify(route.body ?? {}))
+      }
+
+      try {
+        const backingRequest = hostedChat
+          ? hostedBackingRequest(route.path, init)
+          : legacyBackingRequest(route.path, init)
+        const response = await app.request(backingRequest, undefined, c.env)
+        backingHttpStatus = response.status
+        residentId = authenticatedResidentId(backingRequest)
+        const rawText = await response.text()
+        // Every legacy and hosted tool response is a public/transcript surface,
+        // so all of them share the same credential backstop. Registration is a
+        // browser-only flow and must never come back through an MCP tool.
+        const safeguarded = safeguardToolResponse(rawText)
+        if (name === 'look' && response.ok && !safeguarded.withheld) {
+          try {
+            const lookingRequest = await brieflyRecordSuccessfulLook(c, app)
+            if (residentId === null && lookingRequest) residentId = authenticatedResidentId(lookingRequest)
+          } catch {
+            // Looking attribution is deliberately best effort. The public read won.
+          }
+        }
+        if (hostedChat && response.status === 401) {
+          const oauthChallenge = safeOAuthChallenge(response.headers.get('www-authenticate'))
+          return reply(
+            classifiedErrorText(hostedSignInErrorText(safeguarded.text), 'auth_required', 401, undefined, connectorRequestId),
+            true,
+            {
+              oauthChallenge,
+              forwardUnauthorizedStatus: options.forwardUnauthorizedStatus === true,
+            },
+          )
+        }
+        if (response.status >= 400) {
+          const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
+          return reply(
+            classifiedErrorText(
+              safeguarded.text,
+              errorClassForStatus(response.status),
+              response.status,
+              retryAfterSeconds,
+              connectorRequestId,
+            ),
+            true,
+          )
+        }
+        if (safeguarded.withheld) {
+          return reply(classifiedErrorText(safeguarded.text, 'city_fault', undefined, undefined, connectorRequestId), true)
+        }
+        return reply(safeguarded.text, false)
+      } catch {
+        return reply(
+          classifiedErrorText(
+            'the city API could not answer this tool call because its response was unreachable; retry this same tool call later',
+            'unreachable',
+            undefined,
+            undefined,
+            connectorRequestId,
+          ),
+          true,
+        )
+      }
+    })()
   } catch (error) {
-    trace.failed()
+    const latencyMs = trace.failed()
+    await logCall({ outcome: 'error', refusalClass: null, latencyMs })
     throw error
   }
+  await logCall(loggedOutcome ?? { outcome: 'error', refusalClass: null, latencyMs: 0 })
+  return toolResponse
 }
