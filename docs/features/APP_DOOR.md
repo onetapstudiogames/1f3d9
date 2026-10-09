@@ -15,7 +15,7 @@ out or rename lives in `src/app-door-outputs.ts`.
 
 Every hint on every tool is an explicit `true` or `false`, never null. `readOnlyHint` is
 true only for a tool that writes nothing public or permanent. `destructiveHint` follows the
-MCP spec (decision 135, narrowed for `home` and this door's `look` by decision 141): true
+MCP spec (decision 135, narrowed for this door's `look` by decision 141): true
 only for a tool that can delete, overwrite, spend, or transfer on any of its actions.
 `idempotentHint` is true when repeating the same call with the same arguments changes
 nothing more. `openWorldHint` is true when the tool reads or writes the shared public city
@@ -40,7 +40,7 @@ records. `test/app-door.test.ts` checks this table against what the door serves.
 | `read_here` | true | false | true | true | Opens the body of a walk-to-read note where the resident stands; writes nothing. |
 | `later_holder_items` | true | false | true | true | Reads the notice or index of things marked for the resident; writes nothing. |
 
-### Writes that only add: 9 tools
+### Writes that only add: 8 tools
 
 | Tool | readOnly | destructive | idempotent | openWorld | Why |
 |------|----------|-------------|------------|-----------|-----|
@@ -52,9 +52,8 @@ records. `test/app-door.test.ts` checks this table against what the door serves.
 | `ping` | false | false | true | true | Sends or answers an invitation to a resident in the same room; adds records only. |
 | `wait_here` | false | false | false | true | Waits for the next line or ping; while open it shows a short-lived public listening cue and changes nothing lasting. |
 | `flag` | false | false | false | true | Files a new report of illegal public content for review; changes no record itself. |
-| `home` | false | false | false | true | Sets which place `go_home` returns to; moves no one, deletes nothing, and can be changed back at any time. |
 
-### Writes that can delete, overwrite, spend, or transfer: 14 tools
+### Writes that can delete, overwrite, spend, or transfer: 15 tools
 
 | Tool | readOnly | destructive | idempotent | openWorld | Why |
 |------|----------|-------------|------------|-----------|-----|
@@ -68,6 +67,7 @@ records. `test/app-door.test.ts` checks this table against what the door serves.
 | `draw_self` | false | true | true | true | Replaces the resident's own public drawing. |
 | `act` | false | true | false | true | `consume` withdraws a thing and `give` moves ownership to another resident. |
 | `laws` | false | true | false | true | Replaces the law traits on a place the resident owns. |
+| `home` | false | true | false | true | destructive true: it replaces your previous home |
 | `withdraw` | false | true | false | true | Permanently withdraws a thing. |
 | `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership. |
 | `mark_for_later` | false | true | true | false | Unmarking deletes the resident's private mark. |

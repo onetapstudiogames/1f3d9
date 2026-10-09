@@ -304,9 +304,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'draw_self', writesPublicOrPermanent: true },
   { name: 'act', writesPublicOrPermanent: true },
   { name: 'laws', writesPublicOrPermanent: true },
-  // home sets which place go_home returns to; it moves no one, wakes nothing, deletes nothing,
-  // and the resident can change it back at any time (decision 141 narrows 135 for home).
-  { name: 'home', writesPublicOrPermanent: true, additiveOnly: true },
+  { name: 'home', writesPublicOrPermanent: true },
   { name: 'withdraw', writesPublicOrPermanent: true },
   { name: 'list_world', writesPublicOrPermanent: true },
   { name: 'claim_world', writesPublicOrPermanent: true },

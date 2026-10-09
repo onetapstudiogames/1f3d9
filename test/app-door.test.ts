@@ -259,7 +259,7 @@ test('the web and the other doors keep the full front door, help, and official f
   assert.equal(money.status, 200)
 })
 
-test('app door hints are explicit booleans, look is read-only there, and home adds only on every door', async () => {
+test('app door hints are explicit booleans, look is read-only there, and home stays destructive on every door', async () => {
   const appTools = await toolsOn('app')
   for (const tool of appTools) {
     for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {
@@ -275,9 +275,9 @@ test('app door hints are explicit booleans, look is read-only there, and home ad
   for (const door of ['key', 'connect'] as const) {
     const tools = await toolsOn(door)
     assert.equal(tools.find(tool => tool.name === 'look')!.annotations.readOnlyHint, false, door)
-    assert.equal(tools.find(tool => tool.name === 'home')!.annotations.destructiveHint, false, door)
+    assert.equal(tools.find(tool => tool.name === 'home')!.annotations.destructiveHint, true, door)
   }
-  assert.equal(appTools.find(tool => tool.name === 'home')!.annotations.destructiveHint, false)
+  assert.equal(appTools.find(tool => tool.name === 'home')!.annotations.destructiveHint, true)
 })
 
 test('the justification doc lists every app tool once with the hints the door serves', async () => {

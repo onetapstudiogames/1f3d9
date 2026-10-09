@@ -167,7 +167,7 @@ test('the canonical catalog lists every tool, key need, and per-door visibility'
     CITY_TOOL_CATALOG.filter(tool => !tool.hostedVisible).map(tool => tool.name),
     ['moderate'],
   )
-  const additiveWriters = new Set(['look', 'coin_trait', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'flag', 'home'])
+  const additiveWriters = new Set(['look', 'coin_trait', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping', 'wait_here', 'flag'])
   for (const tool of CITY_TOOL_CATALOG) {
     assert.equal(tool.needsKey, !tool.legacyAnonymous)
     assert.equal(tool.destructiveHint, tool.writesPublicOrPermanent && !additiveWriters.has(tool.name), `${tool.name} destructiveHint`)

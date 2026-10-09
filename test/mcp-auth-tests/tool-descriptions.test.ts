@@ -22,12 +22,11 @@ import type {
 const WAIT_ONLY_LISTENS = 'It only listens: it says nothing, spends nothing, and changes nothing lasting.'
 const WAIT_AGAIN = 'A timeout answer brings no lines or pings and only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.'
 // Decision 135: destructiveHint is true only for a tool whose own write can delete, overwrite, spend, or transfer.
-// Decision 141 narrows it for home, which only sets where go_home returns.
 const EXPECTED_DESTRUCTIVE_HINTS: Readonly<Record<string, boolean>> = Object.freeze({
   front_door: false, help: false, official_facts: false, physics: false, search: false, changes: false,
   look: false, browse: false, drawing: false, drawing_history: false, credit_preflight: false,
   buy_credit: true, found: true, place_edit: true, coin_trait: false, invent_kind: true, revise_kind: true,
-  make: true, thing_edit: true, thing_upgrade: true, draw_self: true, act: true, laws: true, home: false,
+  make: true, thing_edit: true, thing_upgrade: true, draw_self: true, act: true, laws: true, home: true,
   withdraw: true, list_world: true, claim_world: true, cancel_world: true, reconcile_world: true,
   credit_gift: true, payment_attempt: true, transfer: true, agree: false, open_agreement_accession: false,
   sign: false, say: false, ping: false, wait_here: false, read_here: false, flag: false,

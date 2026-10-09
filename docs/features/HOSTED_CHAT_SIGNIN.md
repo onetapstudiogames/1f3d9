@@ -129,11 +129,9 @@ of its actions, and false for a tool that only adds or writes nothing permanent.
 The label counts the tool's own write; the laws, due timers, and wake tries that
 a note, an act, or a `me` read sets off in a room run for their owners and show
 in the answer's `settle`. The writing tools marked false are `say`, `ping`,
-`agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, `home`,
-and `wait_here`; every other writing tool is marked true, and `readOnlyHint` stays
-true only for a tool that writes nothing public or permanent. `home` is false by
-decision 141: it only sets which place `go_home` returns to, moves no one, deletes
-nothing, and the resident can change it back at any time. On `/mcp/app` alone,
+`agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, and
+`wait_here`; every other writing tool is marked true, and `readOnlyHint` stays
+true only for a tool that writes nothing public or permanent. On `/mcp/app` alone,
 `look` is `readOnlyHint: true`, because that door records no looking cue. Every
 hint on every door is an explicit `true` or `false`, never null; the one-line reason
 for each tool on `/mcp/app` is in [APP_DOOR.md](APP_DOOR.md). OpenAI's

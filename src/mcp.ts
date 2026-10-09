@@ -1440,7 +1440,7 @@ const TOOLS: readonly ToolDefinition[] = [
       properties: { place_id: { type: 'integer', minimum: 1 } },
       required: ['place_id'],
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({ method: 'POST', path: '/api/me/home', body: { place_id: args.place_id } }),
   },
   {
