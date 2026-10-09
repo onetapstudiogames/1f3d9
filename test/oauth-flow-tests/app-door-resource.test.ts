@@ -19,7 +19,7 @@ import {
 
 const APP_RESOURCE = `${ORIGIN}/mcp/app`
 
-// Decision 141: /mcp/app is its own protected resource with the same sign-in and clients.
+// Decision 142: /mcp/app is its own protected resource with the same sign-in and clients.
 export function registerAppDoorResourceTests(): void {
   test('each hosted door publishes its own protected-resource metadata', async () => {
     const { app } = fixture()

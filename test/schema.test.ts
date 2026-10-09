@@ -12,6 +12,23 @@ const migrations = readdirSync(migrationsDirectory)
   .map(name => read(`../db/migrations/${name}`))
   .join('\n')
 
+test('the call log door check names exactly the three doors in the schema and the migrations', () => {
+  const threeDoors = /CONSTRAINT\s+mcp_call_log_door_known\s+CHECK\s*\(\s*door\s+IN\s*\(\s*'mcp',\s*'connect',\s*'app'\s*\)\s*\)/giu
+  // The fresh-table check and the in-place widening both name the app door (decision 142).
+  assert.equal([...schema.matchAll(threeDoors)].length, 2)
+  assert.match(schema, /ALTER\s+TABLE\s+mcp_call_log\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+mcp_call_log_door_known,\s*ADD\s+CONSTRAINT\s+mcp_call_log_door_known/iu)
+  assert.doesNotMatch(schema, /door\s+IN\s*\(\s*'mcp',\s*'connect'\s*\)/iu)
+  const widening = read('../db/migrations/20261009_mcp_call_log_app_door.sql')
+  assert.equal([...widening.matchAll(threeDoors)].length, 1)
+  assert.match(widening, /DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+mcp_call_log_door_known/iu)
+  assert.match(widening, /needs 20261009_mcp_call_log\.sql applied first/u)
+  assert.match(widening, /does not name exactly the three doors mcp, connect and app/u)
+  assert.doesNotMatch(widening, /resident_id|DROP\s+TABLE|DROP\s+COLUMN|DELETE\s+FROM|UPDATE\s+mcp_call_log/iu)
+  // The widening sorts after the table it widens, so a fresh run applies them in order.
+  const ordered = readdirSync(migrationsDirectory).filter(name => name.startsWith('20261009_mcp_call_log')).sort()
+  assert.deepEqual(ordered, ['20261009_mcp_call_log.sql', '20261009_mcp_call_log_app_door.sql'])
+})
+
 test('places persist a nullable hinge target and close it on ownership or retirement changes', () => {
   for (const source of [schema, migrations]) {
     assert.match(

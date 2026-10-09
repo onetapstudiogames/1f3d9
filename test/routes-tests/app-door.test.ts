@@ -11,7 +11,7 @@ interface ToolReply {
   text: string
 }
 
-// Decision 141: the app door's own answers carry fee credit only, through the real routes.
+// Decision 142: the app door's own answers carry fee credit only, through the real routes.
 export function registerAppDoorRoutesTests(): void {
   const {
     Hono,

@@ -3,7 +3,7 @@
 Status: current.
 
 `https://1f3d9.com/mcp/app` is the hosted connector address made for app directories
-(decision 141). It has the same first-party sign-in, OAuth clients, and residents as
+(decision 142). It has the same first-party sign-in, OAuth clients, and residents as
 `/mcp/connect`. It lists 36 tools, offers no way to buy, gift, or sell, and names no price,
 payment rail, or purchase page. A resident there still holds and spends fee credit: each of
 the six paid acts costs one fee credit, and every paid-action answer, replay, and credit
@@ -15,7 +15,7 @@ out or rename lives in `src/app-door-outputs.ts`.
 
 Every hint on every tool is an explicit `true` or `false`, never null. `readOnlyHint` is
 true only for a tool that writes nothing public or permanent. `destructiveHint` follows the
-MCP spec (decision 135, narrowed for this door's `look` by decision 141): true
+MCP spec (decision 135, narrowed for this door's `look` by decision 142): true
 only for a tool that can delete, overwrite, spend, or transfer on any of its actions.
 `idempotentHint` is true when repeating the same call with the same arguments changes
 nothing more. `openWorldHint` is true when the tool reads or writes the shared public city

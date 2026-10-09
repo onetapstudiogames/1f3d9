@@ -156,6 +156,14 @@ import { reportPaymentRecoveryRecheckFailure } from './payment-recovery.ts'
 import { apiFailureContract, apiFailureResponse, markApiFailure } from './api-failure.ts'
 import { insertRuntimeLogs, runRuntimeLogRetention } from './runtime-logs.ts'
 import {
+  recordMcpCall,
+  reportMcpCallLogRetentionFailure,
+  runMcpCallLogRetention,
+  type McpCallLogWriter,
+} from './mcp-call-log.ts'
+import { mountMcpCallLogRoutes } from './mcp-call-log-routes.ts'
+import { runEachRetention } from './log-retention.ts'
+import {
   executeBudgetedExactQuery,
   isPublicExactReadBusy,
   PUBLIC_EXACT_READ_BUSY_MESSAGE,
@@ -883,9 +891,11 @@ mountPaymentRecoveryRoutes(app, {
   privateView: paymentRecoveryRuntime.privateView,
   recheck: paymentRecoveryRuntime.recheck,
   runBatch: paymentRecoveryRuntime.runBatch,
-  runMaintenance: async () => {
-    await runRuntimeLogRetention(runtimeDatabase)
-  },
+  // Decision #141 adds the call log purge beside the runtime log purge.
+  runMaintenance: async () => await runEachRetention([
+    { run: () => runRuntimeLogRetention(runtimeDatabase), report: reportRuntimeLogRetentionFailure },
+    { run: () => runMcpCallLogRetention(runtimeDatabase), report: reportMcpCallLogRetentionFailure },
+  ]),
   reportMaintenanceFailure: reportRuntimeLogRetentionFailure,
   reportFailure: reportPaymentRecoveryRecheckFailure,
   environment: process.env,
@@ -2042,14 +2052,19 @@ app.post('/api/internal/mcp-looking', async c => {
   return handleMcpLooking(c)
 })
 
+const mcpCallLog: McpCallLogWriter = async row => await recordMcpCall(runtimeDatabase, row)
+mountMcpCallLogRoutes(app, { database: runtimeDatabase, authenticate: authRootKey })
+
 app.post('/mcp', async c => {
-  return mcp(c, app)
+  return mcp(c, app, { callLog: mcpCallLog })
 })
 app.post('/mcp/connect', async c => {
   if (!hostedChatSignin.ready) {
     return missingStreetResponse(c)
   }
-  const response = await mcp(c, app, { hostedChat: true, forwardUnauthorizedStatus: true })
+  const response = await mcp(c, app, {
+    hostedChat: true, forwardUnauthorizedStatus: true, callLog: mcpCallLog,
+  })
   if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
     response.headers.set('WWW-Authenticate', oauthChallenge())
   }
@@ -2068,10 +2083,12 @@ app.get('/mcp/connect', c => {
     error: 'GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.',
   })
 })
-// Decision 141: the app door, with the same sign-in and residents as /mcp/connect.
+// Decision 142: the app door, with the same sign-in and residents as /mcp/connect.
 app.post(APP_DOOR_PATH, async c => {
   if (!hostedChatSignin.ready) return missingStreetResponse(c)
-  const response = await mcp(c, app, { door: 'app', forwardUnauthorizedStatus: true })
+  const response = await mcp(c, app, {
+    door: 'app', forwardUnauthorizedStatus: true, callLog: mcpCallLog,
+  })
   if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
     response.headers.set('WWW-Authenticate', oauthChallenge(process.env, 'app'))
   }

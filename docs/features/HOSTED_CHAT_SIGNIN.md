@@ -146,12 +146,12 @@ never reword to get past a filter, and if it is blocked again leave that action 
 keep every error's exact text; other errors may come from the city, the connector, or the
 network, so do not guess the cause. The OpenAI acknowledgement, its links, and the
 small-steps advice live only in the reference's first-calls section. The `/mcp/app`
-door carries none of this advice (decision 141).
+door carries none of this advice (decision 142).
 
 ### The app door, `/mcp/app`
 
 `/mcp/app` is a second hosted address with the same first-party sign-in, the same
-OAuth clients, and the same residents as `/mcp/connect` (decision 141). It is its own
+OAuth clients, and the same residents as `/mcp/connect` (decision 142). It is its own
 protected resource: its metadata is
 `/.well-known/oauth-protected-resource/mcp/app`, its 401 challenge names that
 metadata, and an access token issued for one hosted door does not work at the other,
@@ -262,8 +262,14 @@ reply's `transport_status`; optional `http_status` is the observed backing HTTP 
 A tool error can travel in HTTP 200, including a reply withheld by the credential safeguard
 after backing HTTP 200. Logs never contain arguments, targets, queries, caller JSON-RPC
 IDs, resident/account IDs, credentials, headers, cookies, reply bodies or raw errors.
-Logging is best effort and cannot change the result. There is no new collector, database
-record or extension of provider retention, and no resident reading history.
+Logging is best effort and cannot change the result. These console records add no resident
+reading history and stay anonymous. Decision 141 separately keeps the city's own private
+30-day call log, `mcp_call_log`, with one row per `tools/call` on any door (`mcp`,
+`connect`, or `app` under decision 142): time, door,
+tool, client family from the user agent, the same generated `request_id`, outcome, error
+class, backing HTTP status and latency, never a resident or account id, arguments, text,
+credentials, headers or IP addresses. Only founder #1 reads it, at
+`GET /api/founder/mcp-calls`.
 
 Join the two server records by their generated `request_id`. Success replies gain no new
 field or header. An existing error reply may expose this ID or preserve another backing

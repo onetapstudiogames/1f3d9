@@ -41,7 +41,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   // that flag.
 ] as const)
 
-// The /mcp/app door (decision 141) serves the same list with no purchase, gift, market, or
+// The /mcp/app door (decision 142) serves the same list with no purchase, gift, market, or
 // treasury door, no human-window link (the window offers fee credit for sale), and a look
 // that only reads. Each key names the start of one line above; null leaves that line out.
 const APP_HELP_REWRITES: Readonly<Record<string, string | null>> = Object.freeze({

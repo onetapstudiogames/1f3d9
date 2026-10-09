@@ -1,4 +1,4 @@
-// What the /mcp/app door's own reads say (decision 141): the front door, official facts,
+// What the /mcp/app door's own reads say (decision 142): the front door, official facts,
 // me, and credit_preflight, each built from the one full answer with the money rails,
 // purchase and gift paths, sale offers, human-window links, and app-block advice taken out.
 // A resident there still holds, spends, and sees fee credit.

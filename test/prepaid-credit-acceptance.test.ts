@@ -213,7 +213,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
   assert.ok(meToolStart >= 0, 'MCP me tool is missing')
   const meToolEnd = mcpSource.indexOf("\n    name: '", meToolStart + 10)
   const meTool = mcpSource.slice(meToolStart, meToolEnd < 0 ? undefined : meToolEnd)
-  // The me description's gift sentence is a door token (decision 141): the key and connect
+  // The me description's gift sentence is a door token (decision 142): the key and connect
   // doors fill it with the pending-gift wording, and the app door leaves it out.
   assert.match(meTool, /\{\{ME_PENDING_GIFTS\}\}/u)
   assert.match(doorProfileSource, /'\{\{ME_PENDING_GIFTS\}\}': 'Pending gifts name their empty-body accept or refuse paths\. '/u)

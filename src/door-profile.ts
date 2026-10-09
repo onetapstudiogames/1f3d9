@@ -1,4 +1,4 @@
-// One home for what each MCP door shows (decision 141). /mcp is the key-capable door,
+// One home for what each MCP door shows (decision 142). /mcp is the key-capable door,
 // /mcp/connect the hosted-chat door, and /mcp/app the hosted door made for app stores:
 // the same sign-in and residents as /mcp/connect, with no purchase, gift, payment
 // recheck, or world-sale tools, no money rails in any answer, and no app-block advice.

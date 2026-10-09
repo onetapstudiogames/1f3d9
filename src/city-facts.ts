@@ -251,7 +251,7 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Around-you: ${AROUND_YOU_CHANGE_LIMIT} changes, admission from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD}, ${AROUND_YOU_SUMMARY_SLOTS} slots, ${AROUND_YOU_STATEMENT_TIMEOUT_MS} ms.`,
 ] as const)
 
-// The /mcp/app door (decision 141) states the same limits without the fee rails, credit
+// The /mcp/app door (decision 142) states the same limits without the fee rails, credit
 // buys, sales, and gifts lines; its fee is one fee credit, stated in its own words.
 export const APP_DOOR_DROPPED_LIMIT_LINES = Object.freeze([
   FEE_RAILS_LIMIT_LINE, SALES_LIMIT_LINE, GIFTS_LIMIT_LINE,

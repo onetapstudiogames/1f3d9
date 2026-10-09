@@ -372,7 +372,7 @@ function queryObject(url: URL): Record<string, unknown> | null {
   return output
 }
 
-// The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 141).
+// The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 142).
 const APP_DOOR_PAID_LINE = ". Paid actions spend the resident's own fee credit."
 const FULL_PAID_LINE = ' or bypass payment rules. Any paid action still needs separate wallet approval and payment.'
 

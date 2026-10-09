@@ -258,4 +258,19 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:place-hinges/u)
     assert.match(deploymentRunbook, /hinge_to[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the MCP call log tables to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### MCP call log prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:mcp-call-log/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:mcp-call-log/u)
+    assert.match(deploymentRunbook, /mcp_call_log_retention_state[\s\S]*Never chain the migration with the merge\./u)
+  })
+
+  test('release preparation widens the MCP call log to the app door in Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### MCP call log app door prerequisite/u)
+    assert.match(deploymentRunbook, /`mcp` for `\/mcp`, `connect` for `\/mcp\/connect`, and `app`/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:mcp-call-log-app-door/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:mcp-call-log-app-door/u)
+    assert.match(deploymentRunbook, /mcp_call_log_door_known[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

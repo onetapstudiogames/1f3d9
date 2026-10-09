@@ -17,7 +17,7 @@ interface Door {
   authorization: boolean
 }
 
-// The app door (decision 141) carries no safety sentence; every door keeps the 1,950 limit.
+// The app door (decision 142) carries no safety sentence; every door keeps the 1,950 limit.
 const DOORS: Door[] = [
   { label: 'hosted signed in', door: 'connect', hostedChat: true, authorization: true },
   { label: 'hosted anonymous', door: 'connect', hostedChat: true, authorization: false },

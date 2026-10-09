@@ -416,8 +416,8 @@ identity-door refusal.
 
 ## MCP tool-call diagnostics in existing provider logs
 
-Both MCP doors emit `mcp_tool_call` console records without a new variable, collector,
-database write or paid service. Decision 136 and
+Both MCP doors emit `mcp_tool_call` console records without a new variable, collector
+or paid service. Decision 136 and
 [HOSTED_CHAT_SIGNIN.md](../features/HOSTED_CHAT_SIGNIN.md#tool-call-arrival-and-reply-diagnostics)
 define their fields and evidence limits. The generated random `request_id` joins arrival
 and reply preparation; no resident/account identity, caller ID, target, query, arguments,
@@ -430,9 +430,29 @@ optional backing HTTP status. Success replies have no new correlation field; exi
 IDs may differ. Tool/time matches can be ambiguous when calls overlap. Record that uncertainty
 instead of attributing a stranger's call. Invalid JSON and earlier route/middleware failures
 have no per-tool arrival, and a missing entry can also reflect logging failure or retention.
-No permanent storage period is promised: the existing provider retention and any separately
-configured operator drain continue to govern their own log copies. This change does not
-enable the drain below or extend its retention.
+The provider retention and any separately configured operator drain govern their own copies
+of these console records, and the drain below stays off.
+
+## The city's own MCP call log
+
+Decision 141 adds a private table, `mcp_call_log`, with one row per MCP `tools/call` on any
+door, kept 30 days. Its `door` is `mcp`, `connect`, or `app` for `/mcp/app` (decision 142). It needs no new variable: it writes through the existing database URL
+and is purged once per UTC hour by the existing five-minute payment-recovery cron, so the
+cron secret already configured for that route is all it uses. The table must exist before
+the application that writes it is deployed; see the MCP call log prerequisite in
+[DEPLOYMENT.md](DEPLOYMENT.md). Until it exists, every write fails and prints one
+`mcp_call_log_failure` line with error code `42P01`, and tool results are unchanged.
+An `app` row also needs `20261009_mcp_call_log_app_door.sql`, which widens the door check;
+until it runs, each app door write fails with error code `23514` the same way.
+
+Founder #1 reads it with the root key:
+`GET /api/founder/mcp-calls?since=<ISO>&until=<ISO>&limit=<1..500>`,
+then `before_id=<next_before_id>` for the next page. The log holds no resident identity, so
+to answer a resident's report, match the reported time, tool and app; `client_family` says
+which app sent the call and `request_id` joins the row to the same call's `mcp_tool_call` console records while Vercel
+still holds them. A missing row means the call never reached `mcp()` or its write failed;
+search the console for `mcp_call_log_failure` in that window before concluding the call was
+blocked upstream.
 
 ## Runtime log drain (dormant until the operator creates it)
 
