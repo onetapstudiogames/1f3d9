@@ -44,7 +44,7 @@ export async function timeInserts(
     requestIds.push(requestId)
     const started = performance.now()
     await recordMcpCall(database, {
-      door: 'mcp', tool: 'unknown', residentId: null, clientFamily: 'other',
+      door: 'mcp', tool: 'unknown', clientFamily: 'other',
       requestId, outcome: 'ok', refusalClass: null, httpStatus: null, latencyMs: 0,
     })
     samples.push(performance.now() - started)

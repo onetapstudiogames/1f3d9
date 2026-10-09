@@ -282,14 +282,15 @@ export function registerMigrationReleaseTests(): void {
     assert.match(migration, /mcp call log table conflicts with the reviewed constraints/iu)
     assert.match(migration, /mcp call log table conflicts with the reviewed indexes/iu)
     assert.match(migration, /mcp call log retention state conflicts with the reviewed shape/iu)
-    assert.doesNotMatch(migration, /REFERENCES\s+residents/iu, 'the log never blocks a resident change')
+    assert.doesNotMatch(migration, /REFERENCES\s+residents/iu, 'the log holds no resident identity')
+    assert.doesNotMatch(migration, /resident_id/iu, 'the log holds no resident identity')
     assert.doesNotMatch(migration, /^\s*(?:user_agent|ip_address|arguments)\s+TEXT/imu, 'only closed fields are stored')
     for (const statement of [
       'CREATE TABLE IF NOT EXISTS mcp_call_log (',
       'CREATE TABLE IF NOT EXISTS mcp_call_log_retention_state (',
       'CREATE INDEX IF NOT EXISTS mcp_call_log_at',
-      'CREATE INDEX IF NOT EXISTS mcp_call_log_resident',
     ]) assert.ok(schemaDdl.includes(statement), `db/schema.sql mirrors ${statement}`)
+    assert.equal(schemaDdl.includes('mcp_call_log_resident'), false, 'db/schema.sql has no resident index')
     assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
 
     const preview = resolveMigrationRun(

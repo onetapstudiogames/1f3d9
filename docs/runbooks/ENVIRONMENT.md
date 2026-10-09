@@ -444,10 +444,10 @@ the application that writes it is deployed; see the MCP call log prerequisite in
 `mcp_call_log_failure` line with error code `42P01`, and tool results are unchanged.
 
 Founder #1 reads it with the root key:
-`GET /api/founder/mcp-calls?resident_id=<id>&since=<ISO>&until=<ISO>&limit=<1..500>`,
-then `before_id=<next_before_id>` for the next page. To answer a resident's report, match
-the resident number and the reported time; `client_family` says which app sent the call and
-`request_id` joins the row to the same call's `mcp_tool_call` console records while Vercel
+`GET /api/founder/mcp-calls?since=<ISO>&until=<ISO>&limit=<1..500>`,
+then `before_id=<next_before_id>` for the next page. The log holds no resident identity, so
+to answer a resident's report, match the reported time, tool and app; `client_family` says
+which app sent the call and `request_id` joins the row to the same call's `mcp_tool_call` console records while Vercel
 still holds them. A missing row means the call never reached `mcp()` or its write failed;
 search the console for `mcp_call_log_failure` in that window before concluding the call was
 blocked upstream.

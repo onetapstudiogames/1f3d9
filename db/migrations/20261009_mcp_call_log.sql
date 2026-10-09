@@ -4,10 +4,9 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
 -- The city's own private tool-call log (decision #141). One row per MCP
--- tools/call on either door. Only closed fields: never arguments, text,
--- credentials, headers or addresses. resident_id has no foreign key so the
--- log never blocks a resident change. Rows older than 30 days are purged
--- hourly by the existing five-minute maintenance cron.
+-- tools/call on either door. Only closed fields: never resident identity,
+-- arguments, text, credentials, headers or addresses. Rows older than 30 days
+-- are purged hourly by the existing five-minute maintenance cron.
 CREATE TABLE IF NOT EXISTS mcp_call_log (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   at            TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -17,9 +16,6 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   tool          TEXT NOT NULL
                 CONSTRAINT mcp_call_log_tool_shape
                 CHECK (tool ~ '^[a-z_]{1,64}$'),
-  resident_id   INTEGER
-                CONSTRAINT mcp_call_log_resident_id_positive
-                CHECK (resident_id IS NULL OR resident_id > 0),
   client_family TEXT NOT NULL
                 CONSTRAINT mcp_call_log_client_family_known
                 CHECK (client_family IN ('chatgpt', 'codex', 'claude_ai', 'claude_code', 'other')),
@@ -61,9 +57,6 @@ CREATE TABLE IF NOT EXISTS mcp_call_log_retention_state (
 
 CREATE INDEX IF NOT EXISTS mcp_call_log_at
   ON mcp_call_log (at);
-CREATE INDEX IF NOT EXISTS mcp_call_log_resident
-  ON mcp_call_log (resident_id, id DESC)
-  WHERE resident_id IS NOT NULL;
 
 DO $mcp_call_log_shape$
 DECLARE
@@ -82,15 +75,15 @@ BEGIN
     AND NOT attribute.attisdropped;
 
   IF actual_columns IS DISTINCT FROM ARRAY[
-    'id', 'at', 'door', 'tool', 'resident_id', 'client_family', 'request_id',
+    'id', 'at', 'door', 'tool', 'client_family', 'request_id',
     'outcome', 'refusal_class', 'http_status', 'latency_ms'
   ]::TEXT[]
   OR actual_types IS DISTINCT FROM ARRAY[
-    'bigint', 'timestamp with time zone', 'text', 'text', 'integer', 'text', 'uuid',
+    'bigint', 'timestamp with time zone', 'text', 'text', 'text', 'uuid',
     'text', 'text', 'smallint', 'integer'
   ]::TEXT[]
   OR actual_required IS DISTINCT FROM ARRAY[
-    TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE
+    TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE
   ]::BOOLEAN[] THEN
     RAISE EXCEPTION 'mcp call log table conflicts with the reviewed columns';
   END IF;
@@ -131,16 +124,15 @@ BEGIN
       AND convalidated
       AND conname IN (
         'mcp_call_log_door_known', 'mcp_call_log_tool_shape',
-        'mcp_call_log_resident_id_positive', 'mcp_call_log_client_family_known',
-        'mcp_call_log_outcome_known', 'mcp_call_log_refusal_class_known',
+        'mcp_call_log_client_family_known', 'mcp_call_log_outcome_known', 'mcp_call_log_refusal_class_known',
         'mcp_call_log_http_status_valid', 'mcp_call_log_latency_ms_valid',
         'mcp_call_log_ok_has_no_refusal_class'
       )
-  ) <> 9
+  ) <> 8
   OR (
     SELECT count(*) FROM pg_constraint
     WHERE conrelid = 'mcp_call_log'::regclass AND contype IN ('c', 'f', 'u', 'x')
-  ) <> 9 THEN
+  ) <> 8 THEN
     RAISE EXCEPTION 'mcp call log table conflicts with the reviewed constraints';
   END IF;
 
@@ -177,14 +169,9 @@ BEGIN
     WHERE index_shape.indrelid = 'mcp_call_log'::regclass
       AND index_shape.indisvalid
       AND index_shape.indisready
-      AND (
-        (index_relation.relname = 'mcp_call_log_at'
-          AND pg_get_indexdef(index_relation.oid, 0, FALSE) LIKE '%USING btree (at)')
-        OR (index_relation.relname = 'mcp_call_log_resident'
-          AND pg_get_indexdef(index_relation.oid, 0, FALSE)
-            LIKE '%USING btree (resident_id, id DESC) WHERE (resident_id IS NOT NULL)')
-      )
-  ) <> 2 THEN
+      AND index_relation.relname = 'mcp_call_log_at'
+      AND pg_get_indexdef(index_relation.oid, 0, FALSE) LIKE '%USING btree (at)'
+  ) <> 1 THEN
     RAISE EXCEPTION 'mcp call log table conflicts with the reviewed indexes';
   END IF;
 END

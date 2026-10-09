@@ -10,12 +10,7 @@ import {
   type McpCallLogWriter,
 } from './mcp-call-log.ts'
 import { errorClassForStatus, type ErrorClass } from './error-class.ts'
-import {
-  allowOAuthForHostedConnectorRequest,
-  authenticatedResidentId,
-  authRootKeyPassive,
-  HANDLE_RE,
-} from './core.ts'
+import { allowOAuthForHostedConnectorRequest, authRootKeyPassive, HANDLE_RE } from './core.ts'
 import {
   ACT_TOOL_ACTIONS,
   AGREEMENT_ACTIONS_LIMIT_LINE,
@@ -255,10 +250,9 @@ export interface McpOptions {
   callLog?: McpCallLogWriter
 }
 
-/** Returns the looking request so the call log can read the resident it authenticated. */
-async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<Request | null> {
+async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<void> {
   const authorization = c.req.header('authorization')
-  if (!authorization) return null
+  if (!authorization) return
   const request = hostedBackingRequest('/api/internal/mcp-looking', {
     method: 'POST', headers: { authorization },
   })
@@ -266,7 +260,6 @@ async function brieflyRecordSuccessfulLook(c: Context, app: Hono): Promise<Reque
     Promise.resolve(app.request(request)).then(() => undefined),
     new Promise<void>(resolve => setTimeout(resolve, 250)),
   ])
-  return request
 }
 
 const own = (value: Record<string, unknown>, key: string) =>
@@ -2617,14 +2610,6 @@ function hostedBackingRequest(path: string, init: RequestInit): Request {
   return request
 }
 
-/**
- * The same Request Hono's app.request(path, init) builds, kept by the caller so the
- * call log can read the resident the backing route authenticated without a second query.
- */
-function legacyBackingRequest(path: string, init: RequestInit): Request {
-  return new Request(`http://localhost${path}`, init)
-}
-
 type LoggedCallOutcome = Pick<McpCallLogRow, 'outcome' | 'refusalClass' | 'latencyMs'>
 
 export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
@@ -2718,7 +2703,6 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
   const loggedTool = TOOL_DEFINITIONS_BY_NAME.get(diagnosticName)?.name ?? 'unknown'
   const trace = traceMcpToolCall(connectorRequestId, loggedTool)
   let backingHttpStatus: number | undefined
-  let residentId: number | null = null
   let loggedOutcome: LoggedCallOutcome | undefined
   const reply = (
     text: string,
@@ -2735,13 +2719,12 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     }
     return response
   }
-  // Closed fields only: never arguments, text, headers beyond the client family, or addresses.
+  // Closed fields only: never resident identity, arguments, text, headers beyond the client family, or addresses.
   const logCall = async (outcome: LoggedCallOutcome): Promise<void> => {
     if (!options.callLog) return
     await writeMcpCallBriefly(options.callLog, {
       door: options.hostedChat === true ? 'connect' : 'mcp',
       tool: loggedTool,
-      residentId,
       clientFamily: classifyClient(c.req.header('user-agent')),
       requestId: connectorRequestId,
       ...outcome,
@@ -2917,12 +2900,10 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
       }
 
       try {
-        const backingRequest = hostedChat
-          ? hostedBackingRequest(route.path, init)
-          : legacyBackingRequest(route.path, init)
-        const response = await app.request(backingRequest, undefined, c.env)
+        const response = hostedChat
+          ? await app.request(hostedBackingRequest(route.path, init), undefined, c.env)
+          : await app.request(route.path, init, c.env)
         backingHttpStatus = response.status
-        residentId = authenticatedResidentId(backingRequest)
         const rawText = await response.text()
         // Every legacy and hosted tool response is a public/transcript surface,
         // so all of them share the same credential backstop. Registration is a
@@ -2930,8 +2911,7 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
         const safeguarded = safeguardToolResponse(rawText)
         if (name === 'look' && response.ok && !safeguarded.withheld) {
           try {
-            const lookingRequest = await brieflyRecordSuccessfulLook(c, app)
-            if (residentId === null && lookingRequest) residentId = authenticatedResidentId(lookingRequest)
+            await brieflyRecordSuccessfulLook(c, app)
           } catch {
             // Looking attribution is deliberately best effort. The public read won.
           }

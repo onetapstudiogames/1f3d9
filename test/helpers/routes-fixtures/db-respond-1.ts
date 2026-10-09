@@ -167,7 +167,7 @@ export function respondToDatabaseStage1(
   if (q.includes('/* mcp-call-log:insert */')) return []
   if (q.includes('/* founder:mcp-call-log */')) {
     return [{
-      id: '41', at: '2026-10-09T12:00:00.000Z', door: 'connect', tool: 'look', resident_id: 7,
+      id: '41', at: '2026-10-09T12:00:00.000Z', door: 'connect', tool: 'look',
       client_family: 'chatgpt', request_id: '6f1c2c0e-2b7a-4d7e-9f00-0a1b2c3d4e5f',
       outcome: 'ok', refusal_class: null, http_status: 200, latency_ms: 18,
     }]

@@ -4,8 +4,9 @@ import { postgresErrorCode } from './core-primitives.ts'
 /**
  * The city's own private tool-call log (decision #141). One row per MCP
  * `tools/call` on either door, kept 30 days and read only by founder #1.
- * Only the closed fields below ever reach a row: never arguments, note or
- * line text, credentials, headers, raw user agents or IP addresses.
+ * Only the closed fields below ever reach a row: never resident identity,
+ * arguments, note or line text, credentials, headers, raw user agents or IP
+ * addresses.
  */
 
 export const MCP_CALL_LOG_WRITE_CAP_MS = 200
@@ -16,7 +17,6 @@ export const MCP_CALL_LOG_PAGE_MAX = 500
 export const MCP_CALL_LOG_WINDOW_MAX_DAYS = 31
 const DAY_MS = 24 * 60 * 60 * 1_000
 const LATENCY_MAX_MS = 600_000
-const POSTGRES_INTEGER_MAX = 2_147_483_647
 
 export type McpCallDoor = 'mcp' | 'connect'
 export type McpClientFamily = 'chatgpt' | 'codex' | 'claude_ai' | 'claude_code' | 'other'
@@ -46,7 +46,6 @@ export interface McpCallLogDatabase {
 export type McpCallLogRow = Readonly<{
   door: McpCallDoor
   tool: string
-  residentId: number | null
   clientFamily: McpClientFamily
   requestId: string
   outcome: McpCallOutcome
@@ -95,8 +94,6 @@ export function refusalClassFromEnvelope(text: string): McpCallRefusalClass | nu
 function validRow(row: McpCallLogRow): boolean {
   return DOORS.has(row.door)
     && TOOL_NAME.test(row.tool)
-    && (row.residentId === null
-      || (Number.isSafeInteger(row.residentId) && row.residentId > 0 && row.residentId <= POSTGRES_INTEGER_MAX))
     && CLIENT_FAMILIES.has(row.clientFamily)
     && UUID.test(row.requestId)
     && OUTCOMES.has(row.outcome)
@@ -107,7 +104,7 @@ function validRow(row: McpCallLogRow): boolean {
     && Number.isInteger(row.latencyMs) && row.latencyMs >= 0 && row.latencyMs <= LATENCY_MAX_MS
 }
 
-/** One parameterised insert of exactly the nine closed fields. */
+/** One parameterised insert of exactly the eight closed fields. */
 export async function recordMcpCall(
   database: McpCallLogDatabase,
   row: McpCallLogRow,
@@ -116,14 +113,13 @@ export async function recordMcpCall(
   await database.query(`
     /* mcp-call-log:insert */
     INSERT INTO mcp_call_log (
-      door, tool, resident_id, client_family, request_id,
+      door, tool, client_family, request_id,
       outcome, refusal_class, http_status, latency_ms
     )
-    VALUES ($1, $2, $3, $4, $5::uuid, $6, $7, $8, $9)
+    VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, $8)
   `, [
     row.door,
     row.tool,
-    row.residentId,
     row.clientFamily,
     row.requestId,
     row.outcome,
@@ -262,14 +258,13 @@ export async function runMcpCallLogRetention(
 }
 
 export type McpCallLogQuery = Readonly<{
-  residentId: number | null
   since: Date | null
   until: Date | null
   beforeId: number | null
   limit: number
 }>
 
-const QUERY_NAMES: readonly string[] = ['resident_id', 'since', 'until', 'before_id', 'limit']
+const QUERY_NAMES: readonly string[] = ['since', 'until', 'before_id', 'limit']
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})$/u
 
 function wholeNumber(value: string, maximum: number): number | null {
@@ -295,7 +290,7 @@ export function parseMcpCallLogQuery(
     const shown = unsupported.slice(0, 3).map(name => name.slice(0, 40)).join(', ')
     return {
       ok: false,
-      error: `unsupported query option: ${shown}; use only resident_id, since, until, before_id and limit`,
+      error: `unsupported query option: ${shown}; use only since, until, before_id and limit`,
     }
   }
   const single: Record<string, string | null> = {}
@@ -305,10 +300,6 @@ export function parseMcpCallLogQuery(
     single[name] = values?.[0] ?? null
   }
 
-  const residentId = single.resident_id == null ? null : wholeNumber(single.resident_id, POSTGRES_INTEGER_MAX)
-  if (single.resident_id != null && residentId === null) {
-    return { ok: false, error: 'resident_id must be a positive whole resident number' }
-  }
   const beforeId = single.before_id == null ? null : wholeNumber(single.before_id, Number.MAX_SAFE_INTEGER)
   if (single.before_id != null && beforeId === null) {
     return { ok: false, error: 'before_id must be a positive whole call id from next_before_id' }
@@ -336,7 +327,7 @@ export function parseMcpCallLogQuery(
       }
     }
   }
-  return { ok: true, value: Object.freeze({ residentId, since, until, beforeId, limit }) }
+  return { ok: true, value: Object.freeze({ since, until, beforeId, limit }) }
 }
 
 export type McpCallLogEntry = Readonly<{
@@ -344,7 +335,6 @@ export type McpCallLogEntry = Readonly<{
   at: string
   door: McpCallDoor
   tool: string
-  resident_id: number | null
   client_family: McpClientFamily
   request_id: string
   outcome: McpCallOutcome
@@ -367,7 +357,6 @@ function entryFromRow(row: Record<string, unknown>): McpCallLogEntry {
     at: Number.isFinite(at.getTime()) ? at.toISOString() : '',
     door: row.door,
     tool: row.tool,
-    resident_id: nullableInteger(row.resident_id),
     client_family: row.client_family,
     request_id: String(row.request_id ?? ''),
     outcome: row.outcome,
@@ -378,7 +367,6 @@ function entryFromRow(row: Record<string, unknown>): McpCallLogEntry {
   if (!Number.isSafeInteger(entry.id) || entry.id < 1 || entry.at === '' || !validRow({
     door: entry.door,
     tool: entry.tool,
-    residentId: entry.resident_id,
     clientFamily: entry.client_family,
     requestId: entry.request_id,
     outcome: entry.outcome,
@@ -403,13 +391,12 @@ export async function readMcpCallLog(
     conditions.push(sql.replace('?', `$${params.length}`))
   }
   if (query.beforeId !== null) add('id < ?::bigint', query.beforeId)
-  if (query.residentId !== null) add('resident_id = ?::integer', query.residentId)
   if (query.since !== null) add('at >= ?::timestamptz', query.since.toISOString())
   if (query.until !== null) add('at < ?::timestamptz', query.until.toISOString())
   params.push(query.limit + 1)
   const rows = await database.query(`
     /* founder:mcp-call-log */
-    SELECT id, at, door, tool, resident_id, client_family, request_id,
+    SELECT id, at, door, tool, client_family, request_id,
       outcome, refusal_class, http_status, latency_ms
     FROM mcp_call_log
     ${conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''}

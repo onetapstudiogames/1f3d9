@@ -81,7 +81,6 @@ function row(overrides: Partial<McpCallLogRow> = {}): McpCallLogRow {
   return Object.freeze({
     door: 'connect',
     tool: 'look',
-    residentId: 77,
     clientFamily: 'chatgpt',
     requestId: randomUUID(),
     outcome: 'ok',
@@ -114,24 +113,39 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   await pool.query('ALTER TABLE mcp_call_log ADD COLUMN arguments TEXT')
   await assert.rejects(pool.query(migrationDdl), /mcp call log table conflicts with the reviewed columns/u)
   await pool.query('ALTER TABLE mcp_call_log DROP COLUMN arguments')
+  // A table left by the earlier shape, with a resident column, is refused too.
+  await pool.query('ALTER TABLE mcp_call_log ADD COLUMN resident_id INTEGER')
+  await assert.rejects(pool.query(migrationDdl), /mcp call log table conflicts with the reviewed columns/u)
+  await pool.query('ALTER TABLE mcp_call_log DROP COLUMN resident_id')
   await pool.query(migrationDdl)
+  const columns = (await pool.query(`SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'mcp_call_log' ORDER BY ordinal_position`)).rows
+    .map(column => column.column_name as string)
+  assert.deepEqual(columns, [
+    'id', 'at', 'door', 'tool', 'client_family', 'request_id',
+    'outcome', 'refusal_class', 'http_status', 'latency_ms',
+  ])
+  const indexes = (await pool.query(`SELECT indexname FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'mcp_call_log' ORDER BY indexname`)).rows
+    .map(index => index.indexname as string)
+  assert.deepEqual(indexes, ['mcp_call_log_at', 'mcp_call_log_pkey'])
 
   // The check constraints refuse rows outside the reviewed shape.
   const insert = `INSERT INTO mcp_call_log
-    (door, tool, resident_id, client_family, request_id, outcome, refusal_class, http_status, latency_ms)
-    VALUES ($1, $2, $3, $4, $5::uuid, $6, $7, $8, $9)`
-  const good = ['mcp', 'me', 1, 'codex', randomUUID(), 'refused', 'conflict', 409, 5]
+    (door, tool, client_family, request_id, outcome, refusal_class, http_status, latency_ms)
+    VALUES ($1, $2, $3, $4::uuid, $5, $6, $7, $8)`
+  const good = ['mcp', 'me', 'codex', randomUUID(), 'refused', 'conflict', 409, 5]
   await pool.query(insert, good)
   for (const [index, value] of [
-    [0, 'web'], [1, 'Me'], [1, 'x'.repeat(65)], [2, 0], [3, 'browser'], [5, 'maybe'],
-    [6, 'teapot'], [7, 99], [7, 600], [8, -1], [8, 600_001],
+    [0, 'web'], [1, 'Me'], [1, 'x'.repeat(65)], [2, 'browser'], [4, 'maybe'],
+    [5, 'teapot'], [6, 99], [6, 600], [7, -1], [7, 600_001],
   ] as const) {
     const params = [...good]
     params[index] = value
-    params[4] = randomUUID()
+    params[3] = randomUUID()
     await assert.rejects(pool.query(insert, params), /check constraint/u, `column ${index} = ${value}`)
   }
-  await assert.rejects(pool.query(insert, ['mcp', 'me', 1, 'codex', randomUUID(), 'ok', 'conflict', 200, 5]),
+  await assert.rejects(pool.query(insert, ['mcp', 'me', 'codex', randomUUID(), 'ok', 'conflict', 200, 5]),
     /mcp_call_log_ok_has_no_refusal_class/u)
   await assert.rejects(pool.query('INSERT INTO mcp_call_log (id, door, tool, client_family, request_id, outcome, latency_ms) VALUES (1, \'mcp\', \'me\', \'other\', gen_random_uuid(), \'ok\', 1)'),
     /cannot insert a non-DEFAULT value into column "id"/u)
@@ -141,12 +155,11 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   const now = new Date()
   await pool.query(`
     INSERT INTO mcp_call_log
-      (at, door, tool, resident_id, client_family, request_id, outcome, refusal_class, http_status, latency_ms)
+      (at, door, tool, client_family, request_id, outcome, refusal_class, http_status, latency_ms)
     SELECT
       $1::timestamptz - (series * interval '8600 milliseconds'),
       CASE WHEN series % 3 = 0 THEN 'mcp' ELSE 'connect' END,
       (ARRAY['look', 'me', 'say', 'browse', 'act'])[1 + series % 5],
-      CASE WHEN series % 5 = 0 THEN NULL ELSE 1 + series % 5000 END,
       (ARRAY['chatgpt', 'codex', 'claude_ai', 'claude_code', 'other'])[1 + series % 5],
       gen_random_uuid(),
       CASE WHEN series % 10 = 0 THEN 'refused' ELSE 'ok' END,
@@ -156,9 +169,9 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
     FROM generate_series(1, $2::integer) AS series
   `, [now.toISOString(), SEEDED_ROWS - 1])
   await pool.query(`
-    INSERT INTO mcp_call_log (at, door, tool, resident_id, client_family, request_id, outcome, latency_ms)
+    INSERT INTO mcp_call_log (at, door, tool, client_family, request_id, outcome, latency_ms)
     SELECT $1::timestamptz - interval '31 days' - (series * interval '1 second'),
-      'mcp', 'look', 77, 'other', gen_random_uuid(), 'ok', 3
+      'mcp', 'look', 'other', gen_random_uuid(), 'ok', 3
     FROM generate_series(1, $2::integer) AS series
   `, [now.toISOString(), EXPIRED_ROWS])
   await pool.query('ANALYZE mcp_call_log')
@@ -168,7 +181,7 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   for (let index = 0; index < 20; index += 1) await recordMcpCall(database, row())
   for (let index = 0; index < TIMED_INSERTS; index += 1) {
     const started = performance.now()
-    await recordMcpCall(database, row({ residentId: index % 7 === 0 ? null : 77 }))
+    await recordMcpCall(database, row({ clientFamily: index % 7 === 0 ? 'other' : 'chatgpt' }))
     samples.push(performance.now() - started)
   }
   const baseline: number[] = []
@@ -183,43 +196,34 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   t.diagnostic(`SELECT 1 round trip p50 ${percentile(baseline, 0.5).toFixed(3)} ms, p95 ${percentile(baseline, 0.95).toFixed(3)} ms`)
   assert.ok(insertP95 < INSERT_P95_BUDGET_MS, `insert p95 ${insertP95} ms is over ${INSERT_P95_BUDGET_MS} ms`)
 
-  // The founder query with a resident filter, newest first.
+  // The founder query, newest first, holds no resident field.
   const queryStarted = performance.now()
   const page = await readMcpCallLog(database, {
-    residentId: 77, since: null, until: null, beforeId: null, limit: 100,
+    since: null, until: null, beforeId: null, limit: 100,
   })
   const queryMs = performance.now() - queryStarted
-  t.diagnostic(`founder query (resident filter, limit 100) ${queryMs.toFixed(3)} ms`)
+  t.diagnostic(`founder query (newest first, limit 100) ${queryMs.toFixed(3)} ms`)
   assert.equal(page.calls.length, 100)
   assert.equal(page.hasMore, true)
-  assert.ok(page.calls.every(call => call.resident_id === 77))
+  assert.ok(page.calls.every(call => !Object.hasOwn(call, 'resident_id')))
   assert.ok(page.calls.every((call, index) => index === 0 || call.id < page.calls[index - 1]!.id))
   const next = await readMcpCallLog(database, {
-    residentId: 77, since: null, until: null, beforeId: page.nextBeforeId, limit: 100,
+    since: null, until: null, beforeId: page.nextBeforeId, limit: 100,
   })
   assert.ok(next.calls[0]!.id < page.calls.at(-1)!.id)
+  const windowStarted = performance.now()
   const windowed = await readMcpCallLog(database, {
-    residentId: null,
     since: new Date(now.getTime() - 60_000),
     until: new Date(now.getTime() - 30_000),
     beforeId: null,
     limit: 500,
   })
   assert.ok(windowed.calls.length > 0)
+  t.diagnostic(`founder query (30-second window, ${windowed.calls.length} rows) ${(performance.now() - windowStarted).toFixed(3)} ms`)
   assert.ok(windowed.calls.every(call => {
     const at = Date.parse(call.at)
     return at >= now.getTime() - 60_000 && at < now.getTime() - 30_000
   }))
-  // A typical resident (about 60 calls in 30 days) is read through the resident index.
-  const rareStarted = performance.now()
-  const rare = await readMcpCallLog(database, {
-    residentId: 4322, since: null, until: null, beforeId: null, limit: 100,
-  })
-  t.diagnostic(`founder query (typical resident, ${rare.calls.length} rows) ${(performance.now() - rareStarted).toFixed(3)} ms`)
-  assert.ok(rare.calls.length > 0 && rare.calls.every(call => call.resident_id === 4322))
-  const plan = (await pool.query(`EXPLAIN (FORMAT JSON) SELECT id FROM mcp_call_log
-    WHERE resident_id = 4322 ORDER BY id DESC LIMIT 101`)).rows[0]!['QUERY PLAN'] as unknown
-  assert.match(JSON.stringify(plan), /mcp_call_log_resident/u)
 
   // The purge deletes only rows older than 30 days, once per hour, one page at a time.
   const hour = new Date(now)

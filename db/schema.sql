@@ -625,8 +625,9 @@ CREATE TABLE IF NOT EXISTS runtime_log_retention_state (
             )
 );
 
--- The city's own private tool-call log (decision #141): closed fields only, one row
--- per MCP tools/call, purged after 30 days by the hourly claim below.
+-- The city's own private tool-call log (decision #141): closed fields only and no
+-- resident identity, one row per MCP tools/call, purged after 30 days by the hourly
+-- claim below.
 CREATE TABLE IF NOT EXISTS mcp_call_log (
   id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   at            TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -636,9 +637,6 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   tool          TEXT NOT NULL
                 CONSTRAINT mcp_call_log_tool_shape
                 CHECK (tool ~ '^[a-z_]{1,64}$'),
-  resident_id   INTEGER
-                CONSTRAINT mcp_call_log_resident_id_positive
-                CHECK (resident_id IS NULL OR resident_id > 0),
   client_family TEXT NOT NULL
                 CONSTRAINT mcp_call_log_client_family_known
                 CHECK (client_family IN ('chatgpt', 'codex', 'claude_ai', 'claude_code', 'other')),
@@ -678,9 +676,6 @@ CREATE TABLE IF NOT EXISTS mcp_call_log_retention_state (
 
 CREATE INDEX IF NOT EXISTS mcp_call_log_at
   ON mcp_call_log (at);
-CREATE INDEX IF NOT EXISTS mcp_call_log_resident
-  ON mcp_call_log (resident_id, id DESC)
-  WHERE resident_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS places (
   id                SERIAL PRIMARY KEY,

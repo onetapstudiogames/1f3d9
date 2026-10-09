@@ -233,10 +233,10 @@ IDs, resident/account IDs, credentials, headers, cookies, reply bodies or raw er
 Logging is best effort and cannot change the result. These console records add no resident
 reading history and stay anonymous. Decision 141 separately keeps the city's own private
 30-day call log, `mcp_call_log`, with one row per `tools/call` on either door: time, door,
-tool, resident id (null when no backing route authenticated), client family from the user
-agent, the same generated `request_id`, outcome, error class, backing HTTP status and
-latency, never arguments, text, credentials, headers or IP addresses. Only founder #1 reads
-it, at `GET /api/founder/mcp-calls`.
+tool, client family from the user agent, the same generated `request_id`, outcome, error
+class, backing HTTP status and latency, never a resident or account id, arguments, text,
+credentials, headers or IP addresses. Only founder #1 reads it, at
+`GET /api/founder/mcp-calls`.
 
 Join the two server records by their generated `request_id`. Success replies gain no new
 field or header. An existing error reply may expose this ID or preserve another backing

@@ -25,7 +25,7 @@ const AUTHORIZATION = `Bearer 1f3d9_sk_${'ab'.repeat(24)}`
 const PRIVATE_ARGUMENT = 'argument-private-marker'
 const ROW_KEYS = [
   'clientFamily', 'door', 'httpStatus', 'latencyMs', 'outcome', 'refusalClass',
-  'requestId', 'residentId', 'tool',
+  'requestId', 'tool',
 ]
 
 function harness(options: { hang?: boolean; fail?: boolean } = {}) {
@@ -110,7 +110,7 @@ test('both doors write one row per tools/call with exactly the closed fields', a
     McpCallLogRow, McpCallLogRow, McpCallLogRow, McpCallLogRow, McpCallLogRow, McpCallLogRow,
   ]
   assert.deepEqual({ ...hostedOk, requestId: '', latencyMs: 0 }, {
-    door: 'connect', tool: 'official_facts', residentId: null, clientFamily: 'chatgpt',
+    door: 'connect', tool: 'official_facts', clientFamily: 'chatgpt',
     requestId: '', outcome: 'ok', refusalClass: null, httpStatus: 200, latencyMs: 0,
   })
   assert.equal(legacyOk.door, 'mcp')
@@ -152,35 +152,34 @@ test('an unreachable backing route and an unexpected exception are both errors',
   assert.equal(JSON.stringify(thrown).includes('raw-private-marker'), false)
 })
 
-test('the resident id is bound on both doors and null when anonymous', async t => {
+test('no resident identity reaches the row even when a backing route signed a resident in', async t => {
   t.mock.method(console, 'info', () => {})
   const { city, call, rows } = harness()
+  const residentId = 987_654
   city.get('/api/me', c => {
-    bindAuthenticatedResident(c.req.raw, 42)
+    bindAuthenticatedResident(c.req.raw, residentId)
     return c.json({ handle: 'someone' })
   })
-  city.get('/api/official', c => c.json({ domain: 'https://1f3d9.com' }))
+  city.get('/api/place/:id', c => {
+    bindAuthenticatedResident(c.req.raw, residentId)
+    return c.json({ place: { id: 7 } })
+  })
+  city.post('/api/internal/mcp-looking', c => {
+    bindAuthenticatedResident(c.req.raw, residentId)
+    return c.body(null, 204)
+  })
 
   await call('me', {}, '/mcp', { authorization: AUTHORIZATION })
   await call('me', {}, '/mcp/connect', { authorization: AUTHORIZATION })
-  await call('official_facts', {}, '/mcp', { authorization: AUTHORIZATION })
-  await call('official_facts', {}, '/mcp/connect')
-
-  assert.deepEqual(rows.map(row => [row.door, row.residentId]), [
-    ['mcp', 42], ['connect', 42], ['mcp', null], ['connect', null],
-  ])
-})
-
-test('a successful look takes its resident from the looking request', async t => {
-  t.mock.method(console, 'info', () => {})
-  const { city, call, rows } = harness()
-  city.get('/api/place/:id', c => c.json({ place: { id: 7 } }))
-  city.post('/api/internal/mcp-looking', c => {
-    bindAuthenticatedResident(c.req.raw, 9)
-    return c.body(null, 204)
-  })
+  await call('look', { place_id: 7 }, '/mcp', { authorization: AUTHORIZATION })
   await call('look', { place_id: 7 }, '/mcp/connect', { authorization: AUTHORIZATION })
-  assert.equal(rows[0]!.residentId, 9)
+
+  assert.equal(rows.length, 4)
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ROW_KEYS)
+    assert.equal(row.outcome, 'ok')
+  }
+  assert.equal(JSON.stringify(rows).includes(String(residentId)), false)
 })
 
 test('no argument value reaches the row', async t => {
@@ -252,7 +251,6 @@ function recordingDatabase(rows: Record<string, unknown>[] = []) {
 const SAMPLE: McpCallLogRow = Object.freeze({
   door: 'connect',
   tool: 'look',
-  residentId: 12,
   clientFamily: 'chatgpt',
   requestId: '6f1c2c0e-2b7a-4d7e-9f00-0a1b2c3d4e5f',
   outcome: 'refused',
@@ -261,16 +259,16 @@ const SAMPLE: McpCallLogRow = Object.freeze({
   latencyMs: 31,
 })
 
-test('the insert is one parameterised statement of the nine closed fields', async () => {
+test('the insert is one parameterised statement of the eight closed fields', async () => {
   const { calls, database } = recordingDatabase()
   await recordMcpCall(database, SAMPLE)
   assert.equal(calls.length, 1)
-  assert.match(calls[0]!.text, /INSERT INTO mcp_call_log \(\s*door, tool, resident_id, client_family, request_id,\s*outcome, refusal_class, http_status, latency_ms\s*\)/u)
-  assert.deepEqual(calls[0]!.params, ['connect', 'look', 12, 'chatgpt', SAMPLE.requestId, 'refused', 'not_found', 404, 31])
+  assert.match(calls[0]!.text, /INSERT INTO mcp_call_log \(\s*door, tool, client_family, request_id,\s*outcome, refusal_class, http_status, latency_ms\s*\)/u)
+  assert.doesNotMatch(calls[0]!.text, /resident/u)
+  assert.deepEqual(calls[0]!.params, ['connect', 'look', 'chatgpt', SAMPLE.requestId, 'refused', 'not_found', 404, 31])
   for (const bad of [
     { ...SAMPLE, tool: 'Look' },
     { ...SAMPLE, outcome: 'ok' as const },
-    { ...SAMPLE, residentId: 0 },
     { ...SAMPLE, latencyMs: 600_001 },
     { ...SAMPLE, requestId: 'not-a-uuid' },
     { ...SAMPLE, httpStatus: 99 },
@@ -306,23 +304,25 @@ test('retention runs only in minutes 0 to 4 and checks its result', async () => 
     /valid current time/u)
 })
 
-test('the founder query accepts only the five options inside their bounds', () => {
+test('the founder query accepts only the four options inside their bounds', () => {
   assert.deepEqual(parseMcpCallLogQuery({}), {
-    ok: true, value: { residentId: null, since: null, until: null, beforeId: null, limit: 100 },
+    ok: true, value: { since: null, until: null, beforeId: null, limit: 100 },
   })
   const full = parseMcpCallLogQuery({
-    resident_id: ['42'], since: ['2026-10-01T00:00:00Z'], until: ['2026-11-01T00:00:00Z'],
+    since: ['2026-10-01T00:00:00Z'], until: ['2026-11-01T00:00:00Z'],
     before_id: ['900'], limit: [String(MCP_CALL_LOG_PAGE_MAX)],
   })
   assert.ok(full.ok)
   assert.equal(full.value.limit, 500)
+  assert.deepEqual(parseMcpCallLogQuery({ resident_id: ['42'] }), {
+    ok: false, error: 'unsupported query option: resident_id; use only since, until, before_id and limit',
+  })
   for (const query of [
     { force: ['1'] },
     { limit: ['501'] },
     { limit: ['0'] },
     { limit: ['1', '2'] },
-    { resident_id: ['-1'] },
-    { resident_id: ['2147483648'] },
+    { resident_id: ['42'] },
     { before_id: ['abc'] },
     { since: ['yesterday'] },
     { since: ['2026-10-01'] },
@@ -334,30 +334,31 @@ test('the founder query accepts only the five options inside their bounds', () =
   }
 })
 
-test('the founder read pages newest first and returns only the eleven columns', async () => {
+test('the founder read pages newest first and returns only the ten columns', async () => {
   const stored = [5, 4, 3].map(id => ({
     id: String(id), at: new Date(`2026-10-09T12:00:0${id}Z`), door: 'mcp', tool: 'me',
-    resident_id: 42, client_family: 'other', request_id: SAMPLE.requestId, outcome: 'ok',
+    client_family: 'other', request_id: SAMPLE.requestId, outcome: 'ok',
     refusal_class: null, http_status: 200, latency_ms: 12, extra: 'never-served',
   }))
   const { calls, database } = recordingDatabase(stored)
   const page = await readMcpCallLog(database, {
-    residentId: 42, since: new Date('2026-10-09T00:00:00Z'), until: null, beforeId: 6, limit: 2,
+    since: new Date('2026-10-09T00:00:00Z'), until: null, beforeId: 6, limit: 2,
   })
-  assert.match(calls[0]!.text, /WHERE id < \$1::bigint AND resident_id = \$2::integer AND at >= \$3::timestamptz/u)
-  assert.match(calls[0]!.text, /ORDER BY id DESC\s+LIMIT \$4/u)
-  assert.deepEqual(calls[0]!.params, [6, 42, '2026-10-09T00:00:00.000Z', 3])
+  assert.match(calls[0]!.text, /WHERE id < \$1::bigint AND at >= \$2::timestamptz/u)
+  assert.doesNotMatch(calls[0]!.text, /resident/u)
+  assert.match(calls[0]!.text, /ORDER BY id DESC\s+LIMIT \$3/u)
+  assert.deepEqual(calls[0]!.params, [6, '2026-10-09T00:00:00.000Z', 3])
   assert.equal(page.hasMore, true)
   assert.equal(page.nextBeforeId, 4)
   assert.deepEqual(page.calls.map(call => call.id), [5, 4])
   assert.deepEqual(Object.keys(page.calls[0]!).sort(), [
     'at', 'client_family', 'door', 'http_status', 'id', 'latency_ms', 'outcome',
-    'refusal_class', 'request_id', 'resident_id', 'tool',
+    'refusal_class', 'request_id', 'tool',
   ])
   assert.equal(page.calls[0]!.at, '2026-10-09T12:00:05.000Z')
 
   await assert.rejects(readMcpCallLog(recordingDatabase([{ ...stored[0], door: 'web' }]).database, {
-    residentId: null, since: null, until: null, beforeId: null, limit: 1,
+    since: null, until: null, beforeId: null, limit: 1,
   }), /outside the reviewed shape/u)
 })
 
@@ -374,10 +375,10 @@ function routeHarness(residentId: number | null, stored: Record<string, unknown>
   return { app, calls }
 }
 
-function storedRow(id: number, residentId: number | null = 42) {
+function storedRow(id: number) {
   return {
     id: String(id), at: new Date(Date.UTC(2026, 9, 9, 12, 0, id)), door: 'connect', tool: 'look',
-    resident_id: residentId, client_family: 'chatgpt', request_id: SAMPLE.requestId,
+    client_family: 'chatgpt', request_id: SAMPLE.requestId,
     outcome: 'refused', refusal_class: 'not_found', http_status: 404, latency_ms: 20,
   }
 }
@@ -393,16 +394,16 @@ test('the founder call log route refuses without a key, for a non-founder and fo
   assert.equal(stranger.calls.length, 0)
 
   const founder = routeHarness(1)
-  for (const query of ['?force=1', '?limit=501', '?since=2026-10-01T00:00:00Z&until=2026-11-02T00:00:00Z', '?resident_id=x']) {
+  for (const query of ['?force=1', '?limit=501', '?since=2026-10-01T00:00:00Z&until=2026-11-02T00:00:00Z', '?resident_id=42']) {
     const bad = await founder.app.request(`/api/founder/mcp-calls${query}`)
     assert.equal(bad.status, 400, query)
   }
   assert.equal(founder.calls.length, 0)
 })
 
-test('the founder call log route pages through next_before_id and filters by resident', async () => {
+test('the founder call log route pages through next_before_id', async () => {
   const { app, calls } = routeHarness(1, [storedRow(9), storedRow(8), storedRow(7)])
-  const first = await app.request('/api/founder/mcp-calls?resident_id=42&limit=2')
+  const first = await app.request('/api/founder/mcp-calls?limit=2')
   assert.equal(first.status, 200)
   const body = await first.json() as {
     calls: Array<Record<string, unknown>>; returned_calls: number; has_more: boolean; next_before_id: number | null
@@ -412,11 +413,12 @@ test('the founder call log route pages through next_before_id and filters by res
   assert.equal(body.has_more, true)
   assert.equal(body.next_before_id, 8)
   assert.deepEqual(body.calls.map(call => call.id), [9, 8])
-  assert.deepEqual(calls[0]!.params, [42, 3])
-  assert.match(calls[0]!.text, /WHERE resident_id = \$1::integer\s+ORDER BY id DESC/u)
+  assert.ok(body.calls.every(call => !Object.hasOwn(call, 'resident_id')))
+  assert.deepEqual(calls[0]!.params, [3])
+  assert.match(calls[0]!.text, /FROM mcp_call_log\s+ORDER BY id DESC/u)
 
-  await app.request(`/api/founder/mcp-calls?resident_id=42&limit=2&before_id=${body.next_before_id}`)
-  assert.deepEqual(calls[1]!.params, [8, 42, 3])
+  await app.request(`/api/founder/mcp-calls?limit=2&before_id=${body.next_before_id}`)
+  assert.deepEqual(calls[1]!.params, [8, 3])
 })
 
 test('each retention runs in its own try so one failure never stops the other', async () => {
@@ -443,5 +445,5 @@ test('the preview timing script refuses without its guard and times the city wri
   const { calls, database } = recordingDatabase()
   const timed = await timeInserts(database, 3)
   assert.equal(timed.samples.length, 3)
-  assert.deepEqual(calls.map(call => call.params[4]), timed.requestIds)
+  assert.deepEqual(calls.map(call => call.params[3]), timed.requestIds)
 })

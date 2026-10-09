@@ -405,11 +405,11 @@ export function registerFounderOperationsTests(): void {
     assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:mcp-call-log */')), false)
 
     setActor(1, 'founder')
-    const response = await app.request(`${path}?resident_id=7`, { headers: authHeaders() })
+    const response = await app.request(`${path}?limit=10`, { headers: authHeaders() })
     assert.equal(response.status, 200, await response.clone().text())
     assert.deepEqual(await response.json(), {
       calls: [{
-        id: 41, at: '2026-10-09T12:00:00.000Z', door: 'connect', tool: 'look', resident_id: 7,
+        id: 41, at: '2026-10-09T12:00:00.000Z', door: 'connect', tool: 'look',
         client_family: 'chatgpt', request_id: '6f1c2c0e-2b7a-4d7e-9f00-0a1b2c3d4e5f',
         outcome: 'ok', refusal_class: null, http_status: 200, latency_ms: 18,
       }],
@@ -429,7 +429,11 @@ export function registerFounderOperationsTests(): void {
     const inserts = sqlCalls().filter(call => call.query?.includes('/* mcp-call-log:insert */'))
     assert.equal(inserts.length, before + 1)
     const params = inserts.at(-1)!.params as unknown[]
-    assert.deepEqual(params.slice(0, 4), ['mcp', 'official_facts', null, 'claude_code'])
+    assert.equal(params.length, 8)
+    assert.deepEqual(params.slice(0, 3), ['mcp', 'official_facts', 'claude_code'])
+    assert.doesNotMatch(inserts.at(-1)!.query ?? '', /resident/u)
+    const residentFilter = await app.request(`${path}?resident_id=7`, { headers: authHeaders() })
+    assert.equal(residentFilter.status, 400)
   })
 
   const FOUNDER_FLAG_PATH = '/api/founder/flags'

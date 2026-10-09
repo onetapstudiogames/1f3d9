@@ -538,9 +538,10 @@ The column is nullable with no default and the trigger only ever clears it, so t
 Before merging the change that gives the city its own private tool-call log (decision #141),
 apply `npm run migrate:preview:mcp-call-log` to the PR's Preview database branch and to
 the shared Preview branch the Vercel preview reads, then apply it a second time to each to
-prove it is safe to repeat. Verify that `mcp_call_log` has exactly the eleven reviewed
-columns, nine check constraints and the `mcp_call_log_at` and `mcp_call_log_resident`
-indexes, that `mcp_call_log_retention_state` exists, and that both tables start empty.
+prove it is safe to repeat. Verify that `mcp_call_log` has exactly the ten reviewed
+columns and no `resident_id` column, eight check constraints, the primary key and the
+`mcp_call_log_at` index and no other, that `mcp_call_log_retention_state` exists, and that
+both tables start empty.
 Then record real-network write timing against the shared Preview branch with
 `CONFIRM_MCP_CALL_LOG_TIMING=PREVIEW_ONLY node --experimental-strip-types scripts/mcp-call-log-timing.ts`,
 with `PREVIEW_DATABASE_URL_UNPOOLED` loaded only into that child process. It makes 200 inserts
