@@ -125,7 +125,7 @@ test('the served front door stays under 10 KB and authored text has no duplicate
   )
   const served = appendFrontDoorActivity(withCreditPurchaseDoor(productionReady, true),
     Array.from({ length: 5 }, (_, index) => ({
-      at: '2026-09-11T23:59:59.999Z',
+      at: new Date('2026-09-11T23:59:59.999Z'),
       actor: `${String(index)}${'a'.repeat(31)}`,
       kind: 'world_sale',
     })))
