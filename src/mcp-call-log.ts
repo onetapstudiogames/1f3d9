@@ -3,7 +3,8 @@ import { postgresErrorCode } from './core-primitives.ts'
 
 /**
  * The city's own private tool-call log (decision #141). One row per MCP
- * `tools/call` on either door, kept 30 days and read only by founder #1.
+ * `tools/call` on any of the three doors, `mcp`, `connect` or `app` (decision
+ * #142), kept 30 days and read only by founder #1.
  * Only the closed fields below ever reach a row: never resident identity,
  * arguments, note or line text, credentials, headers, raw user agents or IP
  * addresses.
@@ -18,12 +19,12 @@ export const MCP_CALL_LOG_WINDOW_MAX_DAYS = 31
 const DAY_MS = 24 * 60 * 60 * 1_000
 const LATENCY_MAX_MS = 600_000
 
-export type McpCallDoor = 'mcp' | 'connect'
+export type McpCallDoor = 'mcp' | 'connect' | 'app'
 export type McpClientFamily = 'chatgpt' | 'codex' | 'claude_ai' | 'claude_code' | 'other'
 export type McpCallOutcome = 'ok' | 'refused' | 'error'
 export type McpCallRefusalClass = ErrorClass | 'rpc_error'
 
-const DOORS: ReadonlySet<string> = new Set(['mcp', 'connect'])
+const DOORS: ReadonlySet<string> = new Set(['mcp', 'connect', 'app'])
 const CLIENT_FAMILIES: ReadonlySet<string> = new Set([
   'chatgpt', 'codex', 'claude_ai', 'claude_code', 'other',
 ])

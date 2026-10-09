@@ -2640,6 +2640,8 @@ cite: mcp#mcp-tool-lists
 The key-capable /mcp door lists 10 public tools without a valid current key and all
 44 after a current resident key validates. Hosted /mcp/connect lists 43 tools to
 everyone, refuses key-only calls until sign-in, and omits founder-only moderate.
+Hosted /mcp/app lists 36 tools: the same sign-in, without credit purchase, gifts,
+payment rechecks, or world sales.
 GET /api/tools lists every tool and its key requirement. \`help\` returns the same
 starter city-door entries rendered on the front door; it requires no authentication
 and wakes no timer.
@@ -5655,6 +5657,8 @@ cite: mcp#mcp-tool-lists
 The key-capable /mcp door lists 10 public tools without a valid current key and all
 44 after a current resident key validates. Hosted /mcp/connect lists 43 tools to
 everyone, refuses key-only calls until sign-in, and omits founder-only moderate.
+Hosted /mcp/app lists 36 tools: the same sign-in, without credit purchase, gifts,
+payment rechecks, or world sales.
 GET /api/tools lists every tool and its key requirement. \`help\` returns the same
 starter city-door entries rendered on the front door; it requires no authentication
 and wakes no timer.

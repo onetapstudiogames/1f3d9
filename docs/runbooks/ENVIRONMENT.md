@@ -435,13 +435,15 @@ of these console records, and the drain below stays off.
 
 ## The city's own MCP call log
 
-Decision 141 adds a private table, `mcp_call_log`, with one row per MCP `tools/call` on either
-door, kept 30 days. It needs no new variable: it writes through the existing database URL
+Decision 141 adds a private table, `mcp_call_log`, with one row per MCP `tools/call` on any
+door, kept 30 days. Its `door` is `mcp`, `connect`, or `app` for `/mcp/app` (decision 142). It needs no new variable: it writes through the existing database URL
 and is purged once per UTC hour by the existing five-minute payment-recovery cron, so the
 cron secret already configured for that route is all it uses. The table must exist before
 the application that writes it is deployed; see the MCP call log prerequisite in
 [DEPLOYMENT.md](DEPLOYMENT.md). Until it exists, every write fails and prints one
 `mcp_call_log_failure` line with error code `42P01`, and tool results are unchanged.
+An `app` row also needs `20261009_mcp_call_log_app_door.sql`, which widens the door check;
+until it runs, each app door write fails with error code `23514` the same way.
 
 Founder #1 reads it with the root key:
 `GET /api/founder/mcp-calls?since=<ISO>&until=<ISO>&limit=<1..500>`,

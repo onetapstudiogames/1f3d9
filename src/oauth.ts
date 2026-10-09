@@ -17,6 +17,7 @@ import {
   setOAuthResidentResolver,
   setPassiveOAuthResidentResolver,
   sha256,
+  type HostedDoorName,
   type Resident,
 } from './core.ts'
 import { publicText } from './input.ts'
@@ -28,6 +29,8 @@ import {
   loopbackCallbackOrigin,
   oauthEnabled,
   oauthResource,
+  oauthResourceFor,
+  oauthResources,
   parseCimdOrigins,
   parseOAuthClients,
   publicOrigin,
@@ -111,6 +114,7 @@ interface OAuthRuntime {
   fetcher: typeof fetch
   origin: string
   resource: string
+  resources: readonly string[]
   staticClients: ReturnType<typeof parseOAuthClients>
   cimdOrigins: ReturnType<typeof parseCimdOrigins>
   diagnostics: OAuthDiagnosticSink
@@ -368,11 +372,16 @@ function queryObject(url: URL): Record<string, unknown> | null {
   return output
 }
 
+// The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 142).
+const APP_DOOR_PAID_LINE = ". Paid actions spend the resident's own fee credit."
+const FULL_PAID_LINE = ' or bypass payment rules. Any paid action still needs separate wallet approval and payment.'
+
 function consentPage(request: {
   clientName: string
   csrf: string
   resumed?: boolean
   pairingEnabled: boolean
+  appDoor: boolean
 }): string {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
@@ -386,7 +395,7 @@ function consentPage(request: {
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
-<p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
+<p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
 <p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
 <fieldset><legend><strong>I already live here</strong></legend>
@@ -479,6 +488,7 @@ function runtime(options: OAuthRouteOptions): OAuthRuntime | null {
     fetcher: options.fetcher ?? fetch,
     origin: publicOrigin(environment),
     resource: oauthResource(environment),
+    resources: oauthResources(environment),
     staticClients: parseOAuthClients(environment.HOSTED_CHAT_OAUTH_CLIENTS),
     cimdOrigins: parseCimdOrigins(environment.HOSTED_CHAT_CIMD_ORIGINS),
     diagnostics: options.diagnostics ?? defaultDiagnostics,
@@ -608,8 +618,12 @@ function tokenResponse(c: Context, accessToken: string, refreshToken: string) {
   })
 }
 
-export function oauthChallenge(environment: OAuthEnvironment = process.env): string {
-  return `Bearer resource_metadata="${publicOrigin(environment)}/.well-known/oauth-protected-resource/mcp/connect", scope="${OAUTH_SCOPE}"`
+export function oauthChallenge(
+  environment: OAuthEnvironment = process.env,
+  door: HostedDoorName = 'connect',
+): string {
+  const path = door === 'app' ? '/mcp/app' : '/mcp/connect'
+  return `Bearer resource_metadata="${publicOrigin(environment)}/.well-known/oauth-protected-resource${path}", scope="${OAUTH_SCOPE}"`
 }
 
 export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): void {
@@ -617,17 +631,19 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   if (!oauth) return
   const pairingEnabled = options.pairingEnabled === true
 
-  const protectedResource = (c: Context) => {
+  // Each hosted door names its own protected resource; both share one sign-in and one set of clients.
+  const protectedResource = (door: HostedDoorName) => (c: Context) => {
     c.header('Access-Control-Allow-Origin', '*')
     return c.json({
-      resource: oauth.resource,
+      resource: oauthResourceFor(door, oauth.environment),
       authorization_servers: [oauth.origin],
       bearer_methods_supported: ['header'],
       scopes_supported: [OAUTH_SCOPE],
     })
   }
-  app.get('/.well-known/oauth-protected-resource', protectedResource)
-  app.get('/.well-known/oauth-protected-resource/mcp/connect', protectedResource)
+  app.get('/.well-known/oauth-protected-resource', protectedResource('connect'))
+  app.get('/.well-known/oauth-protected-resource/mcp/connect', protectedResource('connect'))
+  app.get('/.well-known/oauth-protected-resource/mcp/app', protectedResource('app'))
 
   app.get('/.well-known/oauth-authorization-server', c => c.json({
     issuer: oauth.origin,
@@ -679,7 +695,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
 
     let request
     try {
-      request = validateAuthorizationRequest(query, [client], oauth.resource)
+      request = validateAuthorizationRequest(query, [client], oauth.resources)
     } catch {
       recordFailure(oauth, trace, 'authorization_request', 'invalid_request', 400)
       return browserError(
@@ -713,6 +729,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         csrf: sessionCookie.csrf,
         resumed: existing !== undefined,
         pairingEnabled,
+        appDoor: (existing?.resource ?? request.resource) === oauthResourceFor('app', oauth.environment),
       }),
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )
@@ -1313,7 +1330,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const resource = one(values, 'resource', 2_048)
       const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
       if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
-      if (!clientId || resource !== oauth.resource) return fail('invalid_client')
+      if (!clientId || !resource || !oauth.resources.includes(resource)) return fail('invalid_client')
       stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
 
       if (grantType === 'authorization_code') {
@@ -1466,12 +1483,13 @@ export async function residentByOAuthAccessToken(
   accessToken: string,
   environment: OAuthEnvironment = process.env,
   store: OAuthStore = postgresOAuthStore,
+  door: HostedDoorName = 'connect',
 ): Promise<Resident | null> {
   if (!oauthEnabled(environment)) return null
   if (!/^1f3d9_at_[0-9a-f]{64}$/.test(accessToken)) return null
   return store.resolveOAuthAccessToken({
     accessTokenHash: sha256(accessToken),
-    resource: oauthResource(environment),
+    resource: oauthResourceFor(door, environment),
     scope: OAUTH_SCOPE,
   })
 }
@@ -1479,17 +1497,18 @@ export async function residentByOAuthAccessToken(
 export async function residentByOAuthAccessTokenPassive(
   accessToken: string,
   environment: OAuthEnvironment = process.env,
+  door: HostedDoorName = 'connect',
 ): Promise<Resident | null> {
   if (!oauthEnabled(environment)) return null
   if (!/^1f3d9_at_[0-9a-f]{64}$/.test(accessToken)) return null
   return resolveOAuthAccessTokenPassive({
     accessTokenHash: sha256(accessToken),
-    resource: oauthResource(environment),
+    resource: oauthResourceFor(door, environment),
     scope: OAUTH_SCOPE,
   })
 }
 
 export function configureOAuthResidentResolver(): void {
-  setOAuthResidentResolver(token => residentByOAuthAccessToken(token))
-  setPassiveOAuthResidentResolver(token => residentByOAuthAccessTokenPassive(token))
+  setOAuthResidentResolver((token, door) => residentByOAuthAccessToken(token, process.env, postgresOAuthStore, door))
+  setPassiveOAuthResidentResolver((token, door) => residentByOAuthAccessTokenPassive(token, process.env, door))
 }

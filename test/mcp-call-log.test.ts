@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { Hono } from 'hono'
 import { bindAuthenticatedResident } from '../src/core.ts'
@@ -41,6 +42,9 @@ function harness(options: { hang?: boolean; fail?: boolean } = {}) {
   connector.post('/mcp', c => mcp(c, city, { callLog }))
   connector.post('/mcp/connect', c => mcp(c, city, {
     hostedChat: true, forwardUnauthorizedStatus: true, callLog,
+  }))
+  connector.post('/mcp/app', c => mcp(c, city, {
+    door: 'app', forwardUnauthorizedStatus: true, callLog,
   }))
   const call = (name: unknown, args: unknown = {}, path = '/mcp/connect', headers: Record<string, string> = {}) =>
     connector.request(path, {
@@ -124,6 +128,50 @@ test('both doors write one row per tools/call with exactly the closed fields', a
     ['unknown', 'refused', 'rpc_error', null])
   assert.deepEqual([badInput.tool, badInput.outcome, badInput.refusalClass, badInput.httpStatus],
     ['look', 'refused', 'bad_input', null])
+})
+
+test('an app door call records door app with the same closed fields (decision 142)', async t => {
+  t.mock.method(console, 'info', () => {})
+  const { city, call, rows } = harness()
+  city.get('/api/official', c => c.json({ domain: 'https://1f3d9.com' }))
+  city.get('/api/me', c => c.json({ error: 'nope' }, 409))
+
+  await call('official_facts', {}, '/mcp/app', { 'user-agent': 'openai-mcp/1.0.0' })
+  await call('me', {}, '/mcp/app', { authorization: AUTHORIZATION, 'user-agent': 'Claude-User' })
+  // A tool the app door drops is unknown there, so it is an rpc_error refusal.
+  await call('buy_credit', {}, '/mcp/app')
+  await call('official_facts', {}, '/mcp/connect')
+  await call('official_facts', {}, '/mcp')
+
+  assert.equal(rows.length, 5)
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ROW_KEYS)
+    assert.match(row.requestId, UUID)
+  }
+  const [appOk, appConflict, appDropped, hostedOk, legacyOk] = rows as [
+    McpCallLogRow, McpCallLogRow, McpCallLogRow, McpCallLogRow, McpCallLogRow,
+  ]
+  assert.deepEqual({ ...appOk, requestId: '', latencyMs: 0 }, {
+    door: 'app', tool: 'official_facts', clientFamily: 'chatgpt',
+    requestId: '', outcome: 'ok', refusalClass: null, httpStatus: 200, latencyMs: 0,
+  })
+  assert.deepEqual([appConflict.door, appConflict.clientFamily, appConflict.outcome, appConflict.refusalClass, appConflict.httpStatus],
+    ['app', 'claude_ai', 'refused', 'conflict', 409])
+  assert.deepEqual([appDropped.door, appDropped.outcome, appDropped.refusalClass, appDropped.httpStatus],
+    ['app', 'refused', 'rpc_error', null])
+  assert.equal(hostedOk.door, 'connect')
+  assert.equal(legacyOk.door, 'mcp')
+})
+
+test('the city app hands the call log to all three doors', () => {
+  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
+  const mounts = [...source.matchAll(/await mcp\(c, app, \{([\s\S]*?)\}\)|return mcp\(c, app, \{([\s\S]*?)\}\)/gu)]
+    .map(match => (match[1] ?? match[2] ?? '').replace(/\s+/gu, ' ').trim())
+  assert.deepEqual(mounts, [
+    'callLog: mcpCallLog',
+    'hostedChat: true, forwardUnauthorizedStatus: true, callLog: mcpCallLog,',
+    "door: 'app', forwardUnauthorizedStatus: true, callLog: mcpCallLog,",
+  ])
 })
 
 test('an unreachable backing route and an unexpected exception are both errors', async t => {
@@ -266,16 +314,19 @@ test('the insert is one parameterised statement of the eight closed fields', asy
   assert.match(calls[0]!.text, /INSERT INTO mcp_call_log \(\s*door, tool, client_family, request_id,\s*outcome, refusal_class, http_status, latency_ms\s*\)/u)
   assert.doesNotMatch(calls[0]!.text, /resident/u)
   assert.deepEqual(calls[0]!.params, ['connect', 'look', 'chatgpt', SAMPLE.requestId, 'refused', 'not_found', 404, 31])
+  await recordMcpCall(database, { ...SAMPLE, door: 'app' })
+  assert.equal(calls[1]!.params[0], 'app')
   for (const bad of [
     { ...SAMPLE, tool: 'Look' },
     { ...SAMPLE, outcome: 'ok' as const },
     { ...SAMPLE, latencyMs: 600_001 },
     { ...SAMPLE, requestId: 'not-a-uuid' },
     { ...SAMPLE, httpStatus: 99 },
+    { ...SAMPLE, door: 'web' as McpCallLogRow['door'] },
   ]) {
     await assert.rejects(recordMcpCall(database, bad), /outside the reviewed shape/u)
   }
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
 })
 
 test('writeMcpCallBriefly swallows a late rejection after the cap', async t => {
@@ -357,6 +408,10 @@ test('the founder read pages newest first and returns only the ten columns', asy
   ])
   assert.equal(page.calls[0]!.at, '2026-10-09T12:00:05.000Z')
 
+  const appPage = await readMcpCallLog(recordingDatabase([{ ...stored[0], door: 'app' }]).database, {
+    since: null, until: null, beforeId: null, limit: 1,
+  })
+  assert.equal(appPage.calls[0]!.door, 'app')
   await assert.rejects(readMcpCallLog(recordingDatabase([{ ...stored[0], door: 'web' }]).database, {
     since: null, until: null, beforeId: null, limit: 1,
   }), /outside the reviewed shape/u)

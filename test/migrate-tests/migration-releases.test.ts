@@ -334,6 +334,62 @@ export function registerMigrationReleaseTests(): void {
     )
   })
 
+  test('the app door call log widening is one explicit guarded transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261009_mcp_call_log_app_door.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(
+      migration,
+      /ALTER\s+TABLE\s+mcp_call_log\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+mcp_call_log_door_known,\s*ADD\s+CONSTRAINT\s+mcp_call_log_door_known\s+CHECK\s*\(\s*door\s+IN\s*\(\s*'mcp',\s*'connect',\s*'app'\s*\)\s*\)/iu,
+    )
+    assert.match(migration, /mcp call log table conflicts with the reviewed columns/iu)
+    assert.match(migration, /mcp call log table conflicts with the reviewed constraints/iu)
+    assert.match(migration, /mcp call log door check does not name exactly the three doors/iu)
+    assert.doesNotMatch(migration, /resident_id/iu, 'the log still holds no resident identity')
+    assert.doesNotMatch(migration, /CREATE\s+TABLE/iu, 'it only widens the existing table')
+    assert.ok(
+      schemaDdl.includes("CHECK (door IN ('mcp', 'connect', 'app'))"),
+      'db/schema.sql mirrors the three-door check',
+    )
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'mcp-call-log-app-door'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'mcp-call-log-app-door'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'mcp-call-log-app-door-release',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:mcp-call-log-app-door'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration mcp-call-log-app-door')
+    assert.equal(packageJson.scripts?.['migrate:production:mcp-call-log-app-door'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration mcp-call-log-app-door')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

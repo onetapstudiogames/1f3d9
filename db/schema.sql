@@ -633,7 +633,7 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   at            TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   door          TEXT NOT NULL
                 CONSTRAINT mcp_call_log_door_known
-                CHECK (door IN ('mcp', 'connect')),
+                CHECK (door IN ('mcp', 'connect', 'app')),
   tool          TEXT NOT NULL
                 CONSTRAINT mcp_call_log_tool_shape
                 CHECK (tool ~ '^[a-z_]{1,64}$'),
@@ -660,6 +660,13 @@ CREATE TABLE IF NOT EXISTS mcp_call_log (
   CONSTRAINT mcp_call_log_ok_has_no_refusal_class
     CHECK (outcome <> 'ok' OR refusal_class IS NULL)
 );
+
+-- The app door's calls are logged with door 'app' (decision #142); an older
+-- local table with the two-door check is widened in place.
+ALTER TABLE mcp_call_log
+  DROP CONSTRAINT IF EXISTS mcp_call_log_door_known,
+  ADD CONSTRAINT mcp_call_log_door_known
+    CHECK (door IN ('mcp', 'connect', 'app'));
 
 CREATE TABLE IF NOT EXISTS mcp_call_log_retention_state (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE

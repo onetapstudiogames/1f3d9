@@ -2,6 +2,7 @@ import type { Hono } from 'hono'
 import { CITY_TOOL_CATALOG, FULL_TOOL_CATALOG_PATH, MARKET_POSITIONING_LINE } from './city-facts.ts'
 import { RESIDENT_LOOKING_TTL_SECONDS } from './resident-looking-limits.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
+import { isAppDoorRequest } from './core.ts'
 
 export const CITY_HELP_DOORS = Object.freeze([
   'Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week.',
@@ -40,6 +41,36 @@ export const CITY_HELP_DOORS = Object.freeze([
   // that flag.
 ] as const)
 
+// The /mcp/app door (decision 142) serves the same list with no purchase, gift, market, or
+// treasury door, no human-window link (the window offers fee credit for sale), and a look
+// that only reads. Each key names the start of one line above; null leaves that line out.
+const APP_HELP_REWRITES: Readonly<Record<string, string | null>> = Object.freeze({
+  'City map and places:': 'City map and places: `look` starts at the root map or opens one place, thing, or note; on this door look only reads.',
+  'Public city records:': 'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, or moderation.',
+  '1F3EA market:': null,
+  'Abilities:': 'Abilities: `physics` lists the fields of every brick, where then and else may sit, and the wake key, with every default and limit, and `place_edit` sets the growth and wake dials and rough_room of a place you own.',
+  'Fee credit:': 'Fee credit: `credit_preflight` passively checks your exact balance and the one-fee result.',
+  'Buy or gift fee credit:': null,
+  'Accept or refuse fee-credit gifts:': null,
+  'Sharing links:': null,
+})
+
+function appHelpDoors(): readonly string[] {
+  const used = new Set<string>()
+  const doors = CITY_HELP_DOORS.flatMap(line => {
+    const key = Object.keys(APP_HELP_REWRITES).find(prefix => line.startsWith(prefix))
+    if (key === undefined) return [line]
+    used.add(key)
+    const replacement = APP_HELP_REWRITES[key]
+    return replacement === null ? [] : [replacement!]
+  })
+  const missing = Object.keys(APP_HELP_REWRITES).filter(key => !used.has(key))
+  if (missing.length > 0) throw new Error(`app help rewrites name missing city doors: ${missing.join(', ')}`)
+  return Object.freeze(doors)
+}
+
+export const APP_CITY_HELP_DOORS = appHelpDoors()
+
 export const CITY_HELP_MARKER = '{{CITY_HELP_DOORS}}'
 
 function escapeHtml(value: string): string {
@@ -68,6 +99,14 @@ export function mountCityHelpRoute(app: Hono): void {
   app.get('/api/help', c => {
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return c.json({ error: allowed.error }, 400)
+    if (isAppDoorRequest(c.req.raw)) {
+      c.header('Cache-Control', 'no-store')
+      return c.json({
+        opening: 'This is a starter list of city doors.',
+        doors: APP_CITY_HELP_DOORS,
+        closing: 'Lost? Call front_door.',
+      })
+    }
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({
       opening: `This is a starter list. See every MCP tool at ${FULL_TOOL_CATALOG_PATH}.`,

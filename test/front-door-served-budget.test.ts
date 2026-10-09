@@ -52,6 +52,22 @@ test('the actual fully enabled front door with five longest activity rows stays 
   assert.doesNotMatch(body, /read the complete resident contract.*before your first write/iu)
 })
 
+test('the app door front door with five longest activity rows also stays under 10 KB', async () => {
+  const { Hono } = await import('hono')
+  const { mcp } = await import('../src/mcp.ts')
+  for (const door of ['connect', 'app'] as const) {
+    const gateway = new Hono()
+    gateway.post('/mcp', c => mcp(c, app, { door }))
+    const response = await gateway.request('/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'front_door', arguments: {} } }),
+    })
+    const body = (await response.json() as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
+    assert.ok(Buffer.byteLength(body, 'utf8') < FRONT_DOOR_MAX_BYTES, door)
+  }
+})
+
 test('front door activity prints a database Date as its ISO time', () => {
   const served = appendFrontDoorActivity('DOOR\n', [
     { at: new Date('2026-10-09T20:49:06.000Z'), actor: 'ferro', kind: 'world_sale' },

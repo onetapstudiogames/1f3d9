@@ -570,6 +570,38 @@ The tables are new and nothing in the old application reads or writes them, so t
 application keeps working against them; the rollback is to merge the previous application,
 never to drop them. Until the new application is live, nothing is written.
 
+### MCP call log app door prerequisite
+
+The call log names three doors: `mcp` for `/mcp`, `connect` for `/mcp/connect`, and `app`
+for `/mcp/app` (decision #142). Before merging the change that adds the `/mcp/app` door,
+the MCP call log prerequisite above must already be done, and then
+`db/migrations/20261009_mcp_call_log_app_door.sql` must widen the door check. Apply
+`npm run migrate:preview:mcp-call-log-app-door` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify that `mcp_call_log_door_known` names exactly `mcp`,
+`connect` and `app`, that the table still has the ten reviewed columns and eight check
+constraints, and that existing rows are untouched. Take the required Production snapshot,
+for example `PRODUCTION_SNAPSHOT_NAME=pre-mcp-call-log-app-door-20261009`, apply
+`npm run migrate:production:mcp-call-log-app-door` from a fresh clone of the reviewed head,
+and record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT pg_get_constraintdef(oid) AS door_check
+FROM pg_constraint
+WHERE conrelid = 'mcp_call_log'::regclass AND conname = 'mcp_call_log_door_known';
+SELECT count(*)::int AS call_log_checks
+FROM pg_constraint
+WHERE conrelid = 'mcp_call_log'::regclass AND contype = 'c';
+SELECT door, count(*)::int AS calls FROM mcp_call_log GROUP BY door ORDER BY door;
+```
+
+The wider check accepts every row the old application writes, so the old application keeps
+working against it; the rollback is to merge the previous application, never to narrow the
+check again. If the application merged without this migration, each app door call's write
+fails with error code `23514` and prints one `mcp_call_log_failure` line, and the tool result
+is unchanged.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

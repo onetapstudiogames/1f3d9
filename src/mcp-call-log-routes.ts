@@ -13,8 +13,9 @@ export type McpCallLogRouteDependencies = Readonly<{
 
 /**
  * GET /api/founder/mcp-calls (decision #141): founder #1's private, paged read of
- * the city's own tool-call log. It is not an MCP tool, never public, and never part
- * of /api/tools, snapshots or the window.
+ * the city's own tool-call log. Each call's `door` is `mcp` (/mcp), `connect`
+ * (/mcp/connect) or `app` (/mcp/app, decision #142). It is not an MCP tool, never
+ * public, and never part of /api/tools, snapshots or the window.
  */
 export function mountMcpCallLogRoutes(app: Hono, dependencies: McpCallLogRouteDependencies): void {
   app.get('/api/founder/mcp-calls', async c => {

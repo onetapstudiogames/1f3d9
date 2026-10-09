@@ -25,6 +25,12 @@ const migrationDdl = await readFile(
   new URL('../../db/migrations/20261009_mcp_call_log.sql', import.meta.url),
   'utf8',
 )
+// Decision 142: the app door widens the door check; it runs after the table migration.
+const appDoorMigrationDdl = await readFile(
+  new URL('../../db/migrations/20261009_mcp_call_log_app_door.sql', import.meta.url),
+  'utf8',
+)
+const THREE_DOOR_CHECK = "CHECK ((door = ANY (ARRAY['mcp'::text, 'connect'::text, 'app'::text])))"
 
 function runDocker(args: readonly string[]): string {
   const result = spawnSync('docker', [...args], { encoding: 'utf8' })
@@ -91,7 +97,7 @@ function row(overrides: Partial<McpCallLogRow> = {}): McpCallLogRow {
   }) as McpCallLogRow
 }
 
-test('the call log migration is repeatable, refuses bad rows, purges hourly, and keeps inserts cheap', {
+test('both call log migrations apply in order and repeat, refuse bad rows, purge hourly, and keep inserts cheap', {
   timeout: 600_000,
 }, async t => {
   const postgres = await startPostgres()
@@ -103,6 +109,9 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   const database: McpCallLogDatabase = {
     query: async (text, params = []) => (await pool.query(text, [...params])).rows as Record<string, unknown>[],
   }
+
+  // The app door widening refuses to run before the table exists.
+  await assert.rejects(pool.query(appDoorMigrationDdl), /needs 20261009_mcp_call_log\.sql applied first/u)
 
   // The DDL applies twice and its shape guard refuses a drifted table.
   await pool.query(migrationDdl)
@@ -118,6 +127,41 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
   await assert.rejects(pool.query(migrationDdl), /mcp call log table conflicts with the reviewed columns/u)
   await pool.query('ALTER TABLE mcp_call_log DROP COLUMN resident_id')
   await pool.query(migrationDdl)
+
+  // Before the widening, the table holds two doors and refuses the app door.
+  const doorCheck = async () => (await pool.query(`SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint WHERE conrelid = 'mcp_call_log'::regclass
+      AND conname = 'mcp_call_log_door_known'`)).rows[0]?.definition as string | undefined
+  assert.equal(await doorCheck(), "CHECK ((door = ANY (ARRAY['mcp'::text, 'connect'::text])))")
+  await recordMcpCall(database, row({ door: 'mcp' }))
+  await recordMcpCall(database, row({ door: 'connect' }))
+  await assert.rejects(recordMcpCall(database, row({ door: 'app' })), /mcp_call_log_door_known/u)
+
+  // The widening applies twice, keeps existing rows, and accepts door 'app'.
+  await pool.query(appDoorMigrationDdl)
+  await pool.query(appDoorMigrationDdl)
+  assert.equal(await doorCheck(), THREE_DOOR_CHECK)
+  assert.deepEqual((await pool.query('SELECT door FROM mcp_call_log ORDER BY id')).rows.map(stored => stored.door),
+    ['mcp', 'connect'])
+  await recordMcpCall(database, row({ door: 'app', tool: 'official_facts' }))
+  const appPage = await readMcpCallLog(database, { since: null, until: null, beforeId: null, limit: 1 })
+  assert.equal(appPage.calls[0]!.door, 'app')
+  // The table migration still repeats after the widening and leaves the three doors in place.
+  await pool.query(migrationDdl)
+  assert.equal(await doorCheck(), THREE_DOOR_CHECK)
+  // The widening's shape guard refuses a drifted table and an extra constraint.
+  await pool.query('ALTER TABLE mcp_call_log ADD COLUMN arguments TEXT')
+  await assert.rejects(pool.query(appDoorMigrationDdl), /mcp call log table conflicts with the reviewed columns/u)
+  await pool.query('ALTER TABLE mcp_call_log DROP COLUMN arguments')
+  await pool.query("ALTER TABLE mcp_call_log ADD CONSTRAINT mcp_call_log_extra CHECK (latency_ms >= 0)")
+  await assert.rejects(pool.query(appDoorMigrationDdl), /mcp call log table conflicts with the reviewed constraints/u)
+  await pool.query('ALTER TABLE mcp_call_log DROP CONSTRAINT mcp_call_log_extra')
+  // A two-door check left by a failed or reverted change is widened again.
+  await pool.query(`ALTER TABLE mcp_call_log DROP CONSTRAINT mcp_call_log_door_known,
+    ADD CONSTRAINT mcp_call_log_door_known CHECK (door IN ('mcp', 'connect')) NOT VALID`)
+  await pool.query(appDoorMigrationDdl)
+  assert.equal(await doorCheck(), THREE_DOOR_CHECK)
+  await pool.query('TRUNCATE mcp_call_log')
   const columns = (await pool.query(`SELECT column_name FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'mcp_call_log' ORDER BY ordinal_position`)).rows
     .map(column => column.column_name as string)
@@ -158,7 +202,7 @@ test('the call log migration is repeatable, refuses bad rows, purges hourly, and
       (at, door, tool, client_family, request_id, outcome, refusal_class, http_status, latency_ms)
     SELECT
       $1::timestamptz - (series * interval '8600 milliseconds'),
-      CASE WHEN series % 3 = 0 THEN 'mcp' ELSE 'connect' END,
+      (ARRAY['mcp', 'connect', 'app'])[1 + series % 3],
       (ARRAY['look', 'me', 'say', 'browse', 'act'])[1 + series % 5],
       (ARRAY['chatgpt', 'codex', 'claude_ai', 'claude_code', 'other'])[1 + series % 5],
       gen_random_uuid(),

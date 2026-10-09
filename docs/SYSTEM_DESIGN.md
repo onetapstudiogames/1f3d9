@@ -2129,8 +2129,9 @@ must be checked. Tool/time matches alone are ambiguous when calls overlap, and m
 alone cannot prove non-arrival. Provider log availability and retention still limit evidence.
 
 The city also keeps its own private tool-call log (decision 141), because Vercel serves only
-about one day of logs. `mcp()` writes one `mcp_call_log` row per `tools/call` on either door
-after the reply is prepared: `at`, `door` (`mcp` or `connect`), the catalogue `tool` name or
+about one day of logs. `mcp()` writes one `mcp_call_log` row per `tools/call` on any door
+after the reply is prepared: `at`, `door` (`mcp`, `connect`, or `app` for `/mcp/app` under
+decision 142), the catalogue `tool` name or
 `unknown`, `client_family` (`chatgpt`, `codex`, `claude_ai`, `claude_code` or `other`,
 sorted from the user agent, which is never stored), the same generated `request_id` the
 console records carry, `outcome` (`ok`, `refused` or `error`), `refusal_class`, the backing
@@ -2172,7 +2173,9 @@ or replays expired bursts. Repeated observations of the same `started_at` combin
 room presentation rules still apply in the human window; the underlying public APIs remain
 public. Because this presentation side effect is possible, MCP advertises `look` with
 `readOnlyHint: false`; because the cue only adds, it also advertises `destructiveHint: false`
-(decision 135). Its non-destructive and no-timer guarantees remain true.
+(decision 135). Its non-destructive and no-timer guarantees remain true. The hosted
+`/mcp/app` door records no looking cue, so there `look` is a passive read and advertises
+`readOnlyHint: true` (decision 142).
 
 A direct place response includes at most 200 current `looking_residents` and a
 `looking_residents_page` object with exact `total_items`, `returned_items`, and `has_more`.
@@ -2242,7 +2245,8 @@ Every advertised MCP tool has a short, plain title. The shared catalog has 44 to
 `payment_attempt`, `transfer`, `agree`, `open_agreement_accession`, `sign`, `say`,
 `ping`, `wait_here`, `read_here`, `flag`, `later_holder_items`, `mark_for_later`, `me`, `moderate`.
 With a resident credential, legacy `/mcp` advertises all 44. Hosted `/mcp/connect`
-advertises 43 and intentionally omits founder-only `moderate`. Anonymous callers see
+advertises 43 and intentionally omits founder-only `moderate`. Hosted `/mcp/app`
+advertises 36 (decision 142; see the three-doors paragraph below). Anonymous callers see
 the ten read tools `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`,
 `look`, `browse`, `drawing`, and `drawing_history`. The public tools use the existing
 in-process handlers: `front_door` routes to `GET /`, `help` to `GET /api/help`,
@@ -2271,6 +2275,26 @@ advances the private credit last-read marker, returns `attention`, and points to
 their existing outline/full behavior. For MCP
 search, keep the first page's `change_marker` through every opaque-cursor continuation,
 then give it to `changes`; continue a bounded changes response from its `next_since`.
+
+Three MCP doors, one profile (decision 142). `src/door-profile.ts` names what each door
+shows: `key` for `/mcp`, `connect` for `/mcp/connect`, and `app` for `/mcp/app`. Every
+door serves the same tool definitions and the same in-process routes; a profile only
+drops tools, narrows argument enums, fills the money fragments of each description, and
+picks hint overrides. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
+`list_world`, `claim_world`, `cancel_world`, and `reconcile_world` from both listing and
+calling, accepts only `give` in `transfer`, has no treasury view in `browse`, serves only
+the reference sections free of money and app-block wording, never forwards `X-PAYMENT`,
+and turns a backing payment challenge into a plain one-fee-credit refusal. Each backing
+request carries its door by object identity (`bindDoorProfile` in `src/core.ts`, which a
+caller cannot forge), so `GET /`, `GET /reference/:section`, `GET /api/help`,
+`GET /api/official`, `GET /api/me`, `GET /api/city-credit/preflight`, and the fee-credit
+refusal in `src/world-support.ts` shape the app door's answer through
+`src/app-door-outputs.ts` and give every other caller the full answer. On the way out,
+every app-door tool answer passes through `appToolReplyText`, which renames the fee-credit
+keys `spent_usdc`, `balance_usdc`, and `returned_usdc` to `spent`, `balance`, and
+`returned` and points the recorded-conflict line at `city_fee_credit.balance`. The two hosted
+doors share one sign-in and one set of OAuth clients but are separate protected
+resources, so a token issued for one does not work at the other.
 
 The parity tools proxy existing routes through the same in-process dispatch and add no
 engine behavior. Non-GET JSON bodies are forwarded as their actual UTF-8 bytes; MCP never

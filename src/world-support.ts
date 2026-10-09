@@ -2,11 +2,13 @@ import type { Context } from 'hono'
 import {
   auth,
   err,
+  isAppDoorRequest,
   postgresErrorConstraint,
   postgresErrorCode,
   postgresErrorMessage,
   type Resident,
 } from './core.ts'
+import { APP_INSUFFICIENT_CREDIT_REFUSAL } from './door-profile.ts'
 import {
   challenge402,
   CLAIM_FEE_USDC,
@@ -313,7 +315,9 @@ export async function treasuryFee(
       const message = postgresErrorMessage(error) ?? (error instanceof Error ? error.message : '')
       if (/insufficient city fee credit/iu.test(message)) {
         return c.json({
-          error: 'insufficient city fee credit; buy or receive one city fee credit, then retry this same request_id; no x402 payment was attempted',
+          error: isAppDoorRequest(c.req.raw)
+            ? APP_INSUFFICIENT_CREDIT_REFUSAL
+            : 'insufficient city fee credit; buy or receive one city fee credit, then retry this same request_id; no x402 payment was attempted',
         }, 409)
       }
       if (error instanceof CityCreditConflictError) {
