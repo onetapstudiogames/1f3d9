@@ -31,7 +31,9 @@ const {
   APP_DROPPED_TOOLS,
   APP_FRONT_DOOR_SECTIONS,
 } = await import('../src/door-profile.ts')
-const { appMeAnswer, appOfficialFacts } = await import('../src/app-door-outputs.ts')
+const { appMeAnswer, appOfficialFacts, appToolReplyText } = await import('../src/app-door-outputs.ts')
+const { CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD } = await import('../src/city-fee-facts.ts')
+const { AROUND_YOU_SCOPE_LINE, AROUND_YOU_SCOPE_REFERENCE } = await import('../src/me-around-you.ts')
 const { mcp } = await import('../src/mcp.ts')
 const { REFERENCE_SECTION_SLUGS } = await import('../src/door.ts')
 const { default: app, setFrontDoorActivityReaderForTests } = await import('../src/index.ts')
@@ -328,7 +330,9 @@ test('an unsigned app call names the app door and its own protected resource', a
     /resource_metadata="https:\/\/1f3d9\.com\/\.well-known\/oauth-protected-resource\/mcp\/app"/u,
   )
   const body = await response.json() as { result: { content: Array<{ text: string }> } }
-  assert.match(body.result.content[0]!.text, /You are connected at https:\/\/1f3d9\.com\/mcp\/app without a completed 1F3D9 sign-in/u)
+  const text = body.result.content[0]!.text
+  assert.match(text, /You are connected to the 1F3D9 app connector without a completed 1F3D9 sign-in/u)
+  assert.doesNotMatch(text, /https?:/u)
   assert.equal((await app.request('/mcp/app')).status, 405)
 })
 
@@ -395,4 +399,43 @@ test('the app official facts keep fee credit rules and drop the rails', () => {
   }) as Record<string, any>
   assert.deepEqual(Object.keys(facts).sort(), ['city_fee_credit', 'domain', 'enforced_limits', 'paid_actions', 'statement'])
   assert.deepEqual(bannedHits('official', JSON.stringify(facts)), [])
+})
+
+test('app tool answers name fee credit spent, balance, and returned without USDC keys', () => {
+  // The shape a credit-funded place rename, retirement, or restoration answers with.
+  const rename = appToolReplyText(JSON.stringify({
+    place: { id: 9, name: 'New Name' },
+    city_fee_credit: { spent_usdc: '1.000000', balance_usdc: '2.000000' },
+  }))
+  assert.deepEqual(JSON.parse(rename), {
+    place: { id: 9, name: 'New Name' },
+    city_fee_credit: { spent: '1.000000', balance: '2.000000' },
+  })
+  const returned = appToolReplyText(JSON.stringify({
+    error: 'automatic recovery deadline reached; city fee credit returned; use a new request id to try the action again',
+    city_fee_credit: 'credit_returned',
+    returned_usdc: '1.000000',
+  }))
+  assert.equal(JSON.parse(returned).returned, '1.000000')
+  // A key already in door-neutral words wins over its USDC twin.
+  assert.deepEqual(JSON.parse(appToolReplyText('{"balance":"3.000000","balance_usdc":"3.000000"}')), { balance: '3.000000' })
+  const conflict = appToolReplyText(JSON.stringify({ error: CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD }))
+  assert.match(JSON.parse(conflict).error, /read city_fee_credit\.balance in me before you spend again$/u)
+  for (const text of [rename, returned, conflict]) {
+    assert.deepEqual(bannedHits('tool answer', text), [])
+  }
+  assert.equal(appToolReplyText('plain text answer'), 'plain text answer')
+})
+
+test('the app me answer keeps the around-you scope line without its web pointer', () => {
+  const answer = appMeAnswer({
+    ...FULL_ME,
+    since_last_visit: {
+      ...FULL_ME.since_last_visit,
+      around_you: { available: true, scope: AROUND_YOU_SCOPE_REFERENCE, mentions: { count: 0 } },
+    },
+  }) as Record<string, any>
+  assert.equal(answer.since_last_visit.around_you.scope, AROUND_YOU_SCOPE_LINE)
+  assert.equal(answer.since_last_visit.around_you.available, true)
+  assert.doesNotMatch(JSON.stringify(answer), /https?:|money/u)
 })

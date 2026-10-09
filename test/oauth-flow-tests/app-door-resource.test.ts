@@ -36,6 +36,16 @@ export function registerAppDoorResourceTests(): void {
     }
   })
 
+  test('the sign-in page names fee credit for /mcp/app and keeps the wallet line for /mcp/connect', async () => {
+    const { app } = fixture()
+    const appPage = (await begin(app, authorizationUrl({ resource: APP_RESOURCE }))).html
+    assert.match(appPage, /It cannot rotate the permanent resident key\. Paid actions spend the resident's own fee credit\./u)
+    assert.doesNotMatch(appPage, /wallet|payment|USDC|\/buy/iu)
+    const { app: connectApp } = fixture()
+    const connectPage = (await begin(connectApp, authorizationUrl({ resource: RESOURCE }))).html
+    assert.match(connectPage, /Any paid action still needs separate wallet approval and payment\./u)
+  })
+
   test('an existing resident signs in for /mcp/app, and that token works only at the app door', async () => {
     const { app, memory } = fixture()
     const session = await begin(app, authorizationUrl({ resource: APP_RESOURCE }))

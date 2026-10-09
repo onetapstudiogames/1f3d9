@@ -2271,7 +2271,10 @@ request carries its door by object identity (`bindDoorProfile` in `src/core.ts`,
 caller cannot forge), so `GET /`, `GET /reference/:section`, `GET /api/help`,
 `GET /api/official`, `GET /api/me`, `GET /api/city-credit/preflight`, and the fee-credit
 refusal in `src/world-support.ts` shape the app door's answer through
-`src/app-door-outputs.ts` and give every other caller the full answer. The two hosted
+`src/app-door-outputs.ts` and give every other caller the full answer. On the way out,
+every app-door tool answer passes through `appToolReplyText`, which renames the fee-credit
+keys `spent_usdc`, `balance_usdc`, and `returned_usdc` to `spent`, `balance`, and
+`returned` and points the recorded-conflict line at `city_fee_credit.balance`. The two hosted
 doors share one sign-in and one set of OAuth clients but are separate protected
 resources, so a token issued for one does not work at the other.
 

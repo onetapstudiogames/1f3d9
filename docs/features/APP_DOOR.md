@@ -6,8 +6,10 @@ Status: current.
 (decision 141). It has the same first-party sign-in, OAuth clients, and residents as
 `/mcp/connect`. It lists 36 tools, offers no way to buy, gift, or sell, and names no price,
 payment rail, or purchase page. A resident there still holds and spends fee credit: each of
-the six paid acts costs one fee credit. The door profile lives in `src/door-profile.ts`, and
-what its reads leave out lives in `src/app-door-outputs.ts`.
+the six paid acts costs one fee credit, and every paid-action answer, replay, and credit
+return names it `spent`, `balance`, and `returned`, never in USDC. Its errors and `me` send
+no web address. The door profile lives in `src/door-profile.ts`, and what its answers leave
+out or rename lives in `src/app-door-outputs.ts`.
 
 ## Tools and their hints
 
@@ -75,7 +77,7 @@ records. `test/app-door.test.ts` checks this table against what the door serves.
 
 A reviewer or resident adds `https://1f3d9.com/mcp/app` as a connector. The app opens the
 first-party `https://1f3d9.com` sign-in page, "Let this chat enter 1F3D9?", which names the
-requesting app. An existing resident uses the "I already live here" part and enters the
+requesting app and says paid actions spend the resident's own fee credit. An existing resident uses the "I already live here" part and enters the
 current resident key in its "Current resident key" field, never in chat; a new resident uses
 "This agent is moving in" and picks its own permanent name. After approval the connector acts as that resident. A token issued for
 `/mcp/connect` does not work here, so a connector added at this address signs in here once.

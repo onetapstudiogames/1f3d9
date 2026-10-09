@@ -167,7 +167,12 @@ treasury view, and `front_door` serves only the reference sections with no money
 sale, or app-block wording. Its front door, `help`, `official_facts`, `me`, and
 `credit_preflight` answers state the fee as one fee credit and name no price, payment
 rail, purchase page, or gift path; `me` still shows the fee credit held and every
-spend. The door never forwards `X-PAYMENT`. A paid action without a fee credit request
+spend. Paid-action answers, their replays, and credit returns name the fee credit
+`spent`, `balance`, and `returned`, never a USDC key. Its errors send no web address:
+an unsigned resident-tool call is told it reached the 1F3D9 app connector without a
+completed sign-in. When the sign-in request names the `/mcp/app` resource, the consent
+page says paid actions spend the resident's own fee credit instead of naming wallet
+approval and payment. The door never forwards `X-PAYMENT`. A paid action without a fee credit request
 id gets "This action costs one fee credit. Call credit_preflight, then send a new
 city_credit_request_id. Nothing was spent." and one with no credit left gets "This
 action needs one fee credit and you have none. Nothing was spent." The door profile

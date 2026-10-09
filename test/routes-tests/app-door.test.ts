@@ -131,6 +131,64 @@ export function registerAppDoorRoutesTests(): void {
     assert.match(reply.text, /Unsupported tool argument: offer_limit/u)
   })
 
+  const APP_PAID_CALLS = [
+    {
+      tool: 'found',
+      args: { parent_id: null, name: 'Credit Continent', description: 'founded with credit' },
+      resultKey: 'place',
+    },
+    {
+      tool: 'invent_kind',
+      args: { name: 'credit-lantern', description: 'made with credit', traits: [], recipe: [] },
+      resultKey: 'kind',
+    },
+    {
+      tool: 'revise_kind',
+      args: { kind_id: 3, description: 'revised with credit', traits: ['glowing'], recipe: [] },
+      resultKey: 'kind',
+    },
+  ] as const
+
+  test('app door: a paid action and its replay name fee credit spent and balance, never USDC', async () => {
+    for (const [index, call] of APP_PAID_CALLS.entries()) {
+      reset({ scenario: 'paid claims', cityCreditBalances: new Map([[7, 1_000_000n]]) })
+      const args = { ...call.args, city_credit_request_id: `app-door-spend-0000${index}` }
+      const first = await callAppTool(call.tool, args)
+      assert.equal(first.isError, false, `${call.tool}: ${first.text}`)
+      assert.doesNotMatch(first.text, APP_BANNED_TEXT, call.tool)
+      assert.doesNotMatch(first.text, /_usdc/u, call.tool)
+      const body = JSON.parse(first.text) as Record<string, unknown>
+      assert.ok(body[call.resultKey], call.tool)
+      assert.deepEqual(body.city_fee_credit, { spent: '1.000000', balance: '0.000000' }, call.tool)
+
+      const replay = await callAppTool(call.tool, args)
+      assert.equal(replay.isError, false, `${call.tool} replay: ${replay.text}`)
+      assert.equal(replay.text, first.text, `${call.tool} replay`)
+    }
+  })
+
+  test('app door: a fee credit returned after a failed paid write names returned, never USDC', async () => {
+    for (const [index, call] of APP_PAID_CALLS.entries()) {
+      reset({ scenario: 'paid claims', cityCreditBalances: new Map([[7, 1_000_000n]]), failPaidWriteOnce: true })
+      const reply = await callAppTool(call.tool, { ...call.args, city_credit_request_id: `app-door-return-000${index}` })
+      assert.equal(reply.isError, true, call.tool)
+      assert.doesNotMatch(reply.text, APP_BANNED_TEXT, call.tool)
+      assert.doesNotMatch(reply.text, /_usdc|https?:/u, call.tool)
+      const body = JSON.parse(reply.text) as Record<string, unknown>
+      assert.equal(body.city_fee_credit, 'credit_returned', call.tool)
+      assert.equal(body.returned, '1.000000', call.tool)
+    }
+  })
+
+  test('app door: me sends no web address anywhere', async () => {
+    reset({ cityCreditBalances: new Map([[7, 1_000_000n]]) })
+    const reply = await callAppTool('me', {})
+    assert.equal(reply.isError, false, reply.text)
+    assert.doesNotMatch(reply.text, /https?:\/\//u)
+    assert.doesNotMatch(reply.text, /reference\/money/u)
+    assert.match(reply.text, /"scope":"Owned places include where you stand\."/u)
+  })
+
   test('app door: credit_preflight shows the one-fee result without a gift count', async () => {
     reset({ cityCreditBalances: new Map([[7, 1_000_000n]]) })
     const reply = await callAppTool('credit_preflight', {})

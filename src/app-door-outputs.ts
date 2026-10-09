@@ -15,6 +15,7 @@ import {
   APP_FRONT_DOOR_SECTIONS,
   APP_HIDDEN_EVENT_KINDS,
 } from './door-profile.ts'
+import { AROUND_YOU_SCOPE_LINE, AROUND_YOU_SCOPE_REFERENCE } from './me-around-you.ts'
 
 export const APP_DOOR_TOOL_COUNT = CITY_TOOL_CATALOG.filter(tool => (
   tool.hostedVisible && !(APP_DROPPED_TOOLS as readonly string[]).includes(tool.name)
@@ -219,6 +220,11 @@ export function appMeAnswer(answer: Json): Json {
     fee_credit_received: received,
     ...sinceRest
   } = since
+  const aroundYou = sinceRest.around_you
+  const appAroundYou = aroundYou && typeof aroundYou === 'object' && !Array.isArray(aroundYou)
+    && (aroundYou as Json).scope === AROUND_YOU_SCOPE_REFERENCE
+    ? Object.freeze({ ...(aroundYou as Json), scope: AROUND_YOU_SCOPE_LINE })
+    : aroundYou
   const receivedRecord = (received ?? {}) as Json
   const part = (key: string) => units(((receivedRecord[key] ?? {}) as Json).amount_units)
   const receivedUnits = part('accepted_gifts') + part('settled_purchases') + part('founder_issues')
@@ -232,6 +238,7 @@ export function appMeAnswer(answer: Json): Json {
         founder_issues: receivedRecord.founder_issues ?? null,
       }),
       ...sinceRest,
+      ...(appAroundYou === undefined ? {} : { around_you: appAroundYou }),
     }),
     city_fee_credit: Object.freeze({
       resident_id: credit.resident_id,
@@ -242,4 +249,36 @@ export function appMeAnswer(answer: Json): Json {
     }),
     pages: Object.freeze(appPages),
   })
+}
+
+// Fee-credit amounts in paid-action answers, their replays, and credit returns use the
+// door-neutral keys that appMeAnswer uses. A key already present wins over its renamed twin.
+const APP_CREDIT_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  spent_usdc: 'spent',
+  balance_usdc: 'balance',
+  returned_usdc: 'returned',
+})
+const FULL_BALANCE_FIELD = 'city_fee_credit.balance_usdc'
+const APP_BALANCE_FIELD = 'city_fee_credit.balance'
+
+function appCreditValue(value: unknown): unknown {
+  if (typeof value === 'string') return value.replaceAll(FULL_BALANCE_FIELD, APP_BALANCE_FIELD)
+  if (Array.isArray(value)) return value.map(appCreditValue)
+  if (!value || typeof value !== 'object') return value
+  const record = value as Json
+  const entries = Object.entries(record).flatMap(([key, inner]) => {
+    const renamed = APP_CREDIT_KEYS[key]
+    if (renamed === undefined) return [[key, appCreditValue(inner)] as const]
+    return Object.hasOwn(record, renamed) ? [] : [[renamed, appCreditValue(inner)] as const]
+  })
+  return Object.fromEntries(entries)
+}
+
+/** Any tool answer on the app door, success or refusal, with fee credit in door-neutral words. */
+export function appToolReplyText(text: string): string {
+  try {
+    return JSON.stringify(appCreditValue(JSON.parse(text)))
+  } catch {
+    return text.replaceAll(FULL_BALANCE_FIELD, APP_BALANCE_FIELD)
+  }
 }

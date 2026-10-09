@@ -372,11 +372,16 @@ function queryObject(url: URL): Record<string, unknown> | null {
   return output
 }
 
+// The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 141).
+const APP_DOOR_PAID_LINE = ". Paid actions spend the resident's own fee credit."
+const FULL_PAID_LINE = ' or bypass payment rules. Any paid action still needs separate wallet approval and payment.'
+
 function consentPage(request: {
   clientName: string
   csrf: string
   resumed?: boolean
   pairingEnabled: boolean
+  appDoor: boolean
 }): string {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
@@ -390,7 +395,7 @@ function consentPage(request: {
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
-<p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key or bypass payment rules. Any paid action still needs separate wallet approval and payment.</p>
+<p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
 <p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
 <p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
 <fieldset><legend><strong>I already live here</strong></legend>
@@ -724,6 +729,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         csrf: sessionCookie.csrf,
         resumed: existing !== undefined,
         pairingEnabled,
+        appDoor: (existing?.resource ?? request.resource) === oauthResourceFor('app', oauth.environment),
       }),
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )

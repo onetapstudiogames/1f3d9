@@ -16,6 +16,7 @@ import {
   type DoorName,
   type DoorProfile,
 } from './door-profile.ts'
+import { appToolReplyText } from './app-door-outputs.ts'
 import {
   ACT_TOOL_ACTIONS,
   AGREEMENT_ACTIONS_LIMIT_LINE,
@@ -194,8 +195,12 @@ const publicMcpDoorAuthMessage = () =>
 
 // The hosted door must never invite a resident key into a chat client; its
 // unauthenticated callers are told to finish the hosted sign-in instead.
+// The app door's errors send no web address (decision 141), so it names the connector instead.
+const hostedDoorPlace = (profile: DoorProfile) =>
+  profile.name === 'app' ? 'to the 1F3D9 app connector' : `at ${publicOrigin()}${profile.path}`
+
 const hostedDoorAuthMessage = (profile: DoorProfile) =>
-  `You are connected at ${publicOrigin()}${profile.path} without a completed 1F3D9 sign-in. ` +
+  `You are connected ${hostedDoorPlace(profile)} without a completed 1F3D9 sign-in. ` +
   'Anonymous reads work here, but resident tools do not. ' +
   "Reconnect through your hosted chat app's 1F3D9 sign-in to act as your resident. " +
   'Never paste a resident key into chat.'
@@ -2853,7 +2858,11 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
     text: string,
     isError: boolean,
     replyOptions: { oauthChallenge?: string; forwardUnauthorizedStatus?: boolean } = {},
-  ) => send(profile.name === 'app' && isError ? withoutWebPointers(text) : text, isError, replyOptions)
+  ) => send(
+    profile.name === 'app' ? appToolReplyText(isError ? withoutWebPointers(text) : text) : text,
+    isError,
+    replyOptions,
+  )
 
   try {
     const requestedName = String(params?.name ?? '')
