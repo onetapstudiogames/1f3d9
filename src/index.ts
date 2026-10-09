@@ -25,6 +25,7 @@ import { NETWORK, USDC, usdcBalance } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
 import { FRONTDOOR, HUMANS, LLMS, REFERENCE_INDEX, REFERENCE_SECTIONS, ROBOTS } from './door.ts'
 import { APP_SAFETY_BLOCK_GUIDANCE, mountCityToolCatalogRoute } from './city-facts.ts'
+import { isoTimestamp } from './timestamp.ts'
 import {
   hostedChatDiscovery,
   hostedChatSigninReadiness,
@@ -357,7 +358,8 @@ export function configuredDiscoveryText(
 }
 
 export type FrontDoorActivity = Readonly<{
-  at: string
+  // The database driver returns the events.at TIMESTAMPTZ as a Date.
+  at: Date | string
   kind: string
   actor: string
 }>
@@ -384,7 +386,7 @@ export function appendFrontDoorActivity(text: string, events: readonly FrontDoor
   const activity = events.slice(0, 5).map(event => {
     const label = HUMAN_VIEW_EVENT_LABELS[event.kind]
     const actor = redactResidentCredentialText(event.actor) || 'the city'
-    return `${event.at}  ${actor}  ${label ?? event.kind}`
+    return `${isoTimestamp(event.at)}  ${actor}  ${label ?? event.kind}`
   }).join('\n')
   return `${text.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`
 }
