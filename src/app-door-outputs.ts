@@ -103,7 +103,7 @@ export function appFrontDoor(served: string): string {
   return text.replace(/(HOSTED SETUP[^\n]*\n[^\n]*?Use exactly \S+?)\/mcp\/connect\./u, '$1/mcp/app.')
 }
 
-export type FrontDoorEvent = Readonly<{ at: string; kind: string; actor: string }>
+export type FrontDoorEvent = Readonly<{ at: Date | string; kind: string; actor: string }>
 
 /** Recent activity on the app door leaves out sales and payments. */
 export function appFrontDoorEvents<T extends FrontDoorEvent>(events: readonly T[]): readonly T[] {

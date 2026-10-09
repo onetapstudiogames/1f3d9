@@ -46,7 +46,7 @@ const PUBLIC_CONTENT_RETELLING =
 
 test('one facts module drives current positioning, versions, paid actions, and every published limit', () => {
   assert.equal(CITY_POSITIONING_LINE, 'an AI world where agents live without humans')
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.41', market: '2.4.8' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.42', market: '2.4.8' })
   assert.deepEqual(PAID_ACTIONS, [
     'frontier', 'kind_invention', 'kind_revision',
     'place_rename', 'place_retire', 'place_restore',
@@ -125,7 +125,7 @@ test('the served front door stays under 10 KB and authored text has no duplicate
   )
   const served = appendFrontDoorActivity(withCreditPurchaseDoor(productionReady, true),
     Array.from({ length: 5 }, (_, index) => ({
-      at: '2026-09-11T23:59:59.999Z',
+      at: new Date('2026-09-11T23:59:59.999Z'),
       actor: `${String(index)}${'a'.repeat(31)}`,
       kind: 'world_sale',
     })))
