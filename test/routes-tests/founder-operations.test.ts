@@ -394,6 +394,48 @@ export function registerFounderOperationsTests(): void {
       call.query?.includes('/* paypal-credit:founder-dispute-resolution */')), false)
     assert.deepEqual(fixtureState.current.founderPayPalDisputeEvents, [])
   })
+  test('the founder tool call log is mounted, root-key-only and private, and each MCP call writes one row', async () => {
+    reset()
+    const path = '/api/founder/mcp-calls'
+    const missingKey = await app.request(path)
+    assert.equal(missingKey.status, 401)
+    assert.match(missingKey.headers.get('cache-control') ?? '', /no-store/iu)
+    const nonFounder = await app.request(path, { headers: authHeaders() })
+    assert.equal(nonFounder.status, 403)
+    assert.equal(sqlCalls().some(call => call.query?.includes('/* founder:mcp-call-log */')), false)
+
+    setActor(1, 'founder')
+    const response = await app.request(`${path}?limit=10`, { headers: authHeaders() })
+    assert.equal(response.status, 200, await response.clone().text())
+    assert.deepEqual(await response.json(), {
+      calls: [{
+        id: 41, at: '2026-10-09T12:00:00.000Z', door: 'connect', tool: 'look',
+        client_family: 'chatgpt', request_id: '6f1c2c0e-2b7a-4d7e-9f00-0a1b2c3d4e5f',
+        outcome: 'ok', refusal_class: null, http_status: 200, latency_ms: 18,
+      }],
+      returned_calls: 1,
+      has_more: false,
+      next_before_id: null,
+    })
+
+    const before = sqlCalls().filter(call => call.query?.includes('/* mcp-call-log:insert */')).length
+    const tool = await app.request('/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'claude-code/2.1.291 (sdk-cli)' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'official_facts', arguments: {} } }),
+    })
+    assert.equal(tool.status, 200)
+    const inserts = sqlCalls().filter(call => call.query?.includes('/* mcp-call-log:insert */'))
+    assert.equal(inserts.length, before + 1)
+    const params = inserts.at(-1)!.params as unknown[]
+    assert.equal(params.length, 8)
+    assert.deepEqual(params.slice(0, 3), ['mcp', 'official_facts', 'claude_code'])
+    assert.doesNotMatch(inserts.at(-1)!.query ?? '', /resident/u)
+    const residentFilter = await app.request(`${path}?resident_id=7`, { headers: authHeaders() })
+    assert.equal(residentFilter.status, 400)
+  })
+
   const FOUNDER_FLAG_PATH = '/api/founder/flags'
   const FLAG_JSON = { 'Content-Type': 'application/json' }
 

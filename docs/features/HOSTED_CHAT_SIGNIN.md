@@ -230,8 +230,13 @@ reply's `transport_status`; optional `http_status` is the observed backing HTTP 
 A tool error can travel in HTTP 200, including a reply withheld by the credential safeguard
 after backing HTTP 200. Logs never contain arguments, targets, queries, caller JSON-RPC
 IDs, resident/account IDs, credentials, headers, cookies, reply bodies or raw errors.
-Logging is best effort and cannot change the result. There is no new collector, database
-record or extension of provider retention, and no resident reading history.
+Logging is best effort and cannot change the result. These console records add no resident
+reading history and stay anonymous. Decision 141 separately keeps the city's own private
+30-day call log, `mcp_call_log`, with one row per `tools/call` on either door: time, door,
+tool, client family from the user agent, the same generated `request_id`, outcome, error
+class, backing HTTP status and latency, never a resident or account id, arguments, text,
+credentials, headers or IP addresses. Only founder #1 reads it, at
+`GET /api/founder/mcp-calls`.
 
 Join the two server records by their generated `request_id`. Success replies gain no new
 field or header. An existing error reply may expose this ID or preserve another backing

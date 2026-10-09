@@ -77,6 +77,8 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/human-pages.ts:Error',
   'src/index.ts:Error',
   'src/later-holder.ts:Error',
+  'src/mcp-call-log.ts:Error',
+  'src/mcp-call-log.ts:TypeError',
   'src/me-around-you.ts:TypeError',
   'src/oauth-config.ts:Error',
   'src/pay.ts:Error',

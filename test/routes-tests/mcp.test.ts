@@ -214,7 +214,8 @@ export function registerMcpTests(): void {
     }
     assert.equal(invalidResult.result.isError, true)
     assert.match(invalidResult.result.content[0]!.text, /before_place_id.*scope.*continent_id/iu)
-    assert.equal(sqlCalls().length, 0)
+    // The refusal reaches no backing route; only the private call log row is written (#141).
+    assert.equal(sqlCalls().filter(call => !call.query?.includes('/* mcp-call-log:insert */')).length, 0)
 
     const mixed = await app.request('/mcp', {
       method: 'POST',
@@ -232,7 +233,8 @@ export function registerMcpTests(): void {
     }
     assert.equal(mixedResult.result.isError, true)
     assert.match(mixedResult.result.content[0]!.text, /scope=continent.*does not accept view/iu)
-    assert.equal(sqlCalls().length, 0)
+    // The refusal reaches no backing route; only the private call log row is written (#141).
+    assert.equal(sqlCalls().filter(call => !call.query?.includes('/* mcp-call-log:insert */')).length, 0)
   })
 
   test('MCP drawing inputs have parity with every owner write and upgrade route', async () => {

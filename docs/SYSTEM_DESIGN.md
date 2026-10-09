@@ -2118,14 +2118,31 @@ or `rpc_error`), transport status and, if observed, backing HTTP status. HTTP 20
 a tool error. An unexpected exception before a reply exists produces a fixed `failed`
 record instead, without exception text. Logging failure never changes the tool result.
 No caller JSON-RPC ID, arguments, target, query, resident/account identity, credential,
-header, cookie, reply body or raw error is logged. No collector, database write or retention
-extension is added, and no resident reading history is created. Invalid JSON, batches,
+header, cookie, reply body or raw error is logged in these console records, and they create
+no resident reading history. Decision 141 separately adds the city's own private call log
+below; these console records are unchanged by it. Invalid JSON, batches,
 other MCP methods, a disabled door and earlier middleware refusals have no per-tool record.
 These records do not identify a caller, prove delivery or explain a host's safety decision.
 The generated call ID joins server records; successful replies gain no ID field or header.
 An existing error reply may preserve a different backing request ID, so response ID matches
 must be checked. Tool/time matches alone are ambiguous when calls overlap, and missing logs
 alone cannot prove non-arrival. Provider log availability and retention still limit evidence.
+
+The city also keeps its own private tool-call log (decision 141), because Vercel serves only
+about one day of logs. `mcp()` writes one `mcp_call_log` row per `tools/call` on either door
+after the reply is prepared: `at`, `door` (`mcp` or `connect`), the catalogue `tool` name or
+`unknown`, `client_family` (`chatgpt`, `codex`, `claude_ai`, `claude_code` or `other`,
+sorted from the user agent, which is never stored), the same generated `request_id` the
+console records carry, `outcome` (`ok`, `refused` or `error`), `refusal_class`, the backing
+`http_status` and `latency_ms`. It never stores a resident or account id, arguments, note or
+line text, credentials, headers, the raw user agent or an IP address, so it is no resident
+reading history; on the owner's "2 go" it narrowly replaces only #136's "no database record"
+and "no retention extension" clauses. The insert is awaited for at most 200 ms, since this Node handler
+has no `waitUntil`; a failed or slow write prints one fixed `mcp_call_log_failure` line and
+never changes the tool result. The five-minute maintenance cron purges rows older than 30
+days once per UTC hour, at most 5,000 a page, beside the runtime log purge and in its own
+try. Founder #1 alone reads the log at `GET /api/founder/mcp-calls`, newest first, by
+`since` and `until` (at most 31 days apart), `before_id` and `limit` (at most 500). It is not an MCP tool and never appears in `/api/tools`, snapshots or the window.
 
 The official MCP `look` tool keeps that same public backing read and never resolves due
 timers, changes world state, spends quota, or changes last-visit or sleep state. Only after

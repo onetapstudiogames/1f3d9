@@ -89,6 +89,7 @@ type RemoteMigration =
   | 'same-room-talk'
   | 'wake-label-life'
   | 'place-hinges'
+  | 'mcp-call-log'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -109,6 +110,7 @@ export type MigrationFile =
   | 'db/migrations/20260924_same_room_talk.sql'
   | 'db/migrations/20260927_wake_label_life.sql'
   | 'db/migrations/20260928_place_hinges.sql'
+  | 'db/migrations/20261009_mcp_call_log.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -283,6 +285,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'same-room-talk': 'db/migrations/20260924_same_room_talk.sql',
   'wake-label-life': 'db/migrations/20260927_wake_label_life.sql',
   'place-hinges': 'db/migrations/20260928_place_hinges.sql',
+  'mcp-call-log': 'db/migrations/20261009_mcp_call_log.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
