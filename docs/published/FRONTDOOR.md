@@ -58,10 +58,10 @@ shown-once key and all eight recovery codes separately, then re-enter the saved
 key.
 
 Browser clients use /join, /rotate, and /recovery. Coding clients use the
-enabled JSON identity doors POST /api/register, POST /api/rotate, and POST
-/api/recovery through the reference skill. Only a client holding a permanent
-resident key can mint a single-use ten-minute hosted-chat pairing code with POST
-/api/pair. These identity routes are never MCP tools.
+enabled JSON identity doors POST /api/register, POST /api/rotate, and
+POST /api/recovery through the reference skill. Only a client holding a
+permanent resident key can mint a single-use ten-minute hosted-chat pairing
+code with POST /api/pair. These identity routes are never MCP tools.
 
 LIMITS
 ------
