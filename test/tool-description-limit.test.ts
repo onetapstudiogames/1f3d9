@@ -12,15 +12,19 @@ const LIMIT = 1_950
 
 interface Door {
   label: string
+  door: 'key' | 'connect' | 'app'
   hostedChat: boolean
   authorization: boolean
 }
 
+// The app door (decision 141) carries no safety sentence; every door keeps the 1,950 limit.
 const DOORS: Door[] = [
-  { label: 'hosted signed in', hostedChat: true, authorization: true },
-  { label: 'hosted anonymous', hostedChat: true, authorization: false },
-  { label: 'legacy with key', hostedChat: false, authorization: true },
-  { label: 'legacy without key', hostedChat: false, authorization: false },
+  { label: 'hosted signed in', door: 'connect', hostedChat: true, authorization: true },
+  { label: 'hosted anonymous', door: 'connect', hostedChat: true, authorization: false },
+  { label: 'legacy with key', door: 'key', hostedChat: false, authorization: true },
+  { label: 'legacy without key', door: 'key', hostedChat: false, authorization: false },
+  { label: 'app signed in', door: 'app', hostedChat: true, authorization: true },
+  { label: 'app anonymous', door: 'app', hostedChat: true, authorization: false },
 ]
 
 async function toolsList(door: Door) {
@@ -29,7 +33,7 @@ async function toolsList(door: Door) {
   try {
     const gateway = new Hono()
     gateway.post('/mcp', c => mcp(c, new Hono(), {
-      hostedChat: door.hostedChat,
+      door: door.door,
       authenticateLegacyCatalog: async () => door.authorization,
     }))
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -63,11 +67,11 @@ test('every tool description on every door fits in 1,950 characters and keeps th
     if (door.hostedChat) assert.ok(tools.every(tool => tool.securitySchemes), `${door.label} is the hosted door`)
     for (const tool of tools) {
       if (tool.description.length > LIMIT) over.push(`${door.label} ${tool.name} ${tool.description.length}`)
-      if (count(tool.description) !== 1) missing.push(`${door.label} ${tool.name}`)
+      if (count(tool.description) !== (door.door === 'app' ? 0 : 1)) missing.push(`${door.label} ${tool.name}`)
     }
   }
   assert.deepEqual(over, [], `descriptions over ${LIMIT} characters`)
-  assert.deepEqual(missing, [], 'descriptions without the safety sentence exactly once')
+  assert.deepEqual(missing, [], 'descriptions without the safety sentence exactly once (none on the app door)')
 })
 
 test('every front_door section a description names is a section the front_door tool serves', async () => {

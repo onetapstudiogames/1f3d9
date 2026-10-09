@@ -204,15 +204,19 @@ function requestText(value: unknown, label: string, maximum: number): string {
 export function validateAuthorizationRequest(
   request: Record<string, unknown>,
   clients: readonly OAuthClient[],
-  expectedResource = OAUTH_RESOURCE,
+  expectedResource: string | readonly string[] = OAUTH_RESOURCE,
 ): ValidAuthorizationRequest {
+  const resources: readonly string[] = typeof expectedResource === 'string' ? [expectedResource] : expectedResource
   if (request.response_type !== 'code') throw new Error('only authorization code is supported')
   const clientId = requestText(request.client_id, 'client_id', MAX_CLIENT_ID)
   const client = clients.find(candidate => candidate.clientId === clientId)
   if (!client) throw new Error('unknown OAuth client')
   const redirectUri = requestText(request.redirect_uri, 'redirect_uri', MAX_REDIRECT_URI)
   if (!registeredRedirect(client, redirectUri)) throw new Error('redirect_uri is not registered')
-  if (request.resource !== expectedResource) throw new Error('wrong protected resource')
+  if (typeof request.resource !== 'string' || !resources.includes(request.resource)) {
+    throw new Error('wrong protected resource')
+  }
+  const resource = request.resource
   if (request.scope !== OAUTH_SCOPE) throw new Error('wrong OAuth scope')
   if (request.code_challenge_method !== 'S256') throw new Error('PKCE S256 is required')
   const codeChallenge = requestText(request.code_challenge, 'code_challenge', 128)
@@ -222,7 +226,7 @@ export function validateAuthorizationRequest(
     clientId,
     clientName: client.clientName,
     redirectUri,
-    resource: expectedResource,
+    resource,
     scope: OAUTH_SCOPE,
     state,
     codeChallenge,
@@ -267,6 +271,18 @@ export function publicOrigin(environment: OAuthEnvironment = process.env): strin
 
 export function oauthResource(environment: OAuthEnvironment = process.env): string {
   return `${publicOrigin(environment)}/mcp/connect`
+}
+
+/** The hosted doors' protected resources: /mcp/connect and /mcp/app, one sign-in for both. */
+export function oauthResourceFor(
+  door: 'connect' | 'app',
+  environment: OAuthEnvironment = process.env,
+): string {
+  return `${publicOrigin(environment)}${door === 'app' ? '/mcp/app' : '/mcp/connect'}`
+}
+
+export function oauthResources(environment: OAuthEnvironment = process.env): readonly string[] {
+  return Object.freeze([oauthResourceFor('connect', environment), oauthResourceFor('app', environment)])
 }
 
 interface CimdDocument {

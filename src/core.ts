@@ -3,6 +3,7 @@ import type { Context } from 'hono'
 import { sql } from './db.ts'
 import { HANDLE_RE, NORMALIZED_WORLD_NAME_MAX_CHARACTERS, postgresErrorCode } from './core-primitives.ts'
 import { QUOTAS } from './quota-limits.ts'
+import type { DoorName } from './door-profile.ts'
 
 export { HANDLE_RE, postgresErrorCode }
 
@@ -37,11 +38,14 @@ export interface Resident {
   agreement_actions_today: number
 }
 
-export type OAuthResidentResolver = (accessToken: string) => Promise<Resident | null>
+/** Hosted access tokens belong to one hosted door: /mcp/connect or /mcp/app. */
+export type HostedDoorName = Exclude<DoorName, 'key'>
+export type OAuthResidentResolver = (accessToken: string, door: HostedDoorName) => Promise<Resident | null>
 
 let oauthResidentResolver: OAuthResidentResolver | null = null
 let passiveOAuthResidentResolver: OAuthResidentResolver | null = null
 const hostedConnectorRequests = new WeakSet<Request>()
+const doorProfileRequests = new WeakMap<Request, DoorName>()
 const authenticatedResidentRequests = new WeakMap<Request, number>()
 
 export function setOAuthResidentResolver(resolver: OAuthResidentResolver | null): void {
@@ -57,10 +61,31 @@ export function setPassiveOAuthResidentResolver(resolver: OAuthResidentResolver 
  *
  * This is an object-identity check, not an HTTP header. A remote caller cannot
  * forge it. The hosted MCP adapter creates and marks only its own backing API
- * requests, keeping OAuth credentials scoped to /mcp/connect.
+ * requests, keeping OAuth credentials scoped to /mcp/connect and /mcp/app.
  */
 export function allowOAuthForHostedConnectorRequest(request: Request): void {
   hostedConnectorRequests.add(request)
+}
+
+/**
+ * Names the MCP door one in-process backing request came through. Like the hosted
+ * connector mark, this is object identity, not a header, so a caller cannot forge it.
+ * Routes read it to shape door-specific answers; a request with no mark is the web.
+ */
+export function bindDoorProfile(request: Request, door: DoorName): void {
+  doorProfileRequests.set(request, door)
+}
+
+export function requestDoor(request: Request): DoorName | null {
+  return doorProfileRequests.get(request) ?? null
+}
+
+export function isAppDoorRequest(request: Request): boolean {
+  return doorProfileRequests.get(request) === 'app'
+}
+
+function hostedDoorFor(request: Request): HostedDoorName {
+  return doorProfileRequests.get(request) === 'app' ? 'app' : 'connect'
 }
 
 /** Keep authenticated identity on this request only, never in response text or process logs. */
@@ -132,7 +157,7 @@ export async function auth(c: Context): Promise<Resident | null> {
     hostedConnectorRequests.has(c.req.raw) &&
     oauthResidentResolver
   ) {
-    return rememberAuthenticatedResident(c, await oauthResidentResolver(token))
+    return rememberAuthenticatedResident(c, await oauthResidentResolver(token, hostedDoorFor(c.req.raw)))
   }
   return null
 }
@@ -150,7 +175,7 @@ export async function authPassive(c: Context): Promise<Resident | null> {
     hostedConnectorRequests.has(c.req.raw) &&
     passiveOAuthResidentResolver
   ) {
-    return rememberAuthenticatedResident(c, await passiveOAuthResidentResolver(token))
+    return rememberAuthenticatedResident(c, await passiveOAuthResidentResolver(token, hostedDoorFor(c.req.raw)))
   }
   return null
 }

@@ -19,6 +19,7 @@ Public and feature documents:
 - [DRAWING_AND_LIVE_VIEW.md](DRAWING_AND_LIVE_VIEW.md) records drawing and live-view behavior.
 - [PUBLIC_SNAPSHOTS.md](PUBLIC_SNAPSHOTS.md) defines the dated public-record format.
 - [features/HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md) defines hosted-chat sign-in.
+- [features/APP_DOOR.md](features/APP_DOOR.md) lists the `/mcp/app` door's tools and the reason for each tool's hints.
 
 Operations:
 
@@ -109,6 +110,7 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [archive/2026-08/work-receipts/unshittily-20260828-155900.md](archive/2026-08/work-receipts/unshittily-20260828-155900.md) | archived, 2026-09-12 |
 | [audits/README.md](audits/README.md) | current |
 | [drafts/reckoning-reply.md](drafts/reckoning-reply.md) | current |
+| [features/APP_DOOR.md](features/APP_DOOR.md) | current |
 | [features/HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md) | current |
 | [published/FRONTDOOR.md](published/FRONTDOOR.md) | current |
 | [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) | current |

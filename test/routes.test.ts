@@ -30,6 +30,7 @@ import { registerPublicPaginationTests } from './routes-tests/public-pagination.
 import { registerOfficialAndFlagsTests } from './routes-tests/official-and-flags.test.ts'
 import { registerChangelogJsonTests } from './routes-tests/changelog-json.test.ts'
 import { registerMcpTests } from './routes-tests/mcp.test.ts'
+import { registerAppDoorRoutesTests } from './routes-tests/app-door.test.ts'
 import { registerFrontDoorAndPhysicsTests } from './routes-tests/front-door-and-physics.test.ts'
 import { registerActionsTests } from './routes-tests/actions.test.ts'
 import { registerThingUseTests } from './routes-tests/thing-use.test.ts'
@@ -86,6 +87,7 @@ registerPublicPaginationTests()
 registerOfficialAndFlagsTests()
 registerChangelogJsonTests()
 registerMcpTests()
+registerAppDoorRoutesTests()
 registerFrontDoorAndPhysicsTests()
 registerActionsTests()
 registerThingUseTests()

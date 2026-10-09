@@ -46,9 +46,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 140 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 140)
-    assert.match(contributorGuide, /\(140 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.deepEqual(recorded, Array.from({ length: 141 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 141)
+    assert.match(contributorGuide, /\(141 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
@@ -178,13 +178,14 @@ export function registerCityDoorsAndGuidanceTests(): void {
     const normalizedHostedSignin = hostedSignin.replace(/\s+/gu, ' ')
     assert.ok(normalizedHostedSignin.includes('The city sets `destructiveHint` by the MCP spec (decision 135): true only for a tool that can delete, overwrite, spend, or transfer on any of its actions, and false for a tool that only adds or writes nothing permanent.'))
     assert.ok(normalizedHostedSignin.includes("The label counts the tool's own write; the laws, due timers, and wake tries that a note, an act, or a `me` read sets off in a room run for their owners and show in the answer's `settle`."))
-    assert.ok(normalizedHostedSignin.includes('The writing tools marked false are `say`, `ping`, `agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, and `wait_here`;'))
+    assert.ok(normalizedHostedSignin.includes('The writing tools marked false are `say`, `ping`, `agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, `home`, and `wait_here`;'))
+    assert.ok(normalizedHostedSignin.includes('`home` is false by decision 141: it only sets which place `go_home` returns to, moves no one, deletes nothing, and the resident can change it back at any time.'))
     assert.doesNotMatch(normalizedHostedSignin, /does not mark every state-changing write destructive/iu)
     const normalizedSpecification = specification.replace(/\s+/gu, ' ')
     assert.ok(normalizedSpecification.includes('because the cue only adds, it also advertises `destructiveHint: false` (decision 135).'))
     assert.deepEqual(
       CITY_TOOL_CATALOG.filter(tool => !tool.readOnlyHint && !tool.destructiveHint).map(tool => tool.name).sort(),
-      ['agree', 'coin_trait', 'flag', 'look', 'open_agreement_accession', 'ping', 'say', 'sign', 'wait_here'],
+      ['agree', 'coin_trait', 'flag', 'home', 'look', 'open_agreement_accession', 'ping', 'say', 'sign', 'wait_here'],
     )
   })
 

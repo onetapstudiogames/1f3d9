@@ -209,6 +209,13 @@ export const AGREEMENT_ACTIONS_LIMIT_LINE =
 export const RESIDENT_LOOKING_LIMIT_LINE =
   `Looking cues last ${RESIDENT_LOOKING_TTL_SECONDS} seconds, refresh every ${RESIDENT_LOOKING_REFRESH_SECONDS} seconds, at most ${RESIDENT_LOOKING_READ_LIMIT} residents/read.`
 
+const FEE_RAILS_LIMIT_LINE =
+  `${CITY_FEE_RAILS_LINE} Credit buys: $${CITY_CREDIT_PURCHASE_MIN_DOLLARS}..$${CITY_CREDIT_PURCHASE_MAX_DOLLARS}, ${CITY_CREDIT_PURCHASE_BODY_MAX_BYTES}-byte bodies.`
+const SALES_LIMIT_LINE =
+  `Sales: >0..${USDC_AMOUNT_MAX} USDC, 6 decimals; claim ${CLAIM_WINDOW_SECONDS / 60} minutes; recovery ${PAYMENT_RECOVERY_WINDOW_MILLISECONDS / 3_600_000} hours.`
+const GIFTS_LIMIT_LINE =
+  `Gifts: ${CREDIT_GIFT_LIMITS.actionBodyBytes}-byte bodies, ${CREDIT_GIFT_LIMITS.redirectsPerCallerHour} redirects/caller/hour, pages 1..${CREDIT_GIFT_LIMITS.pageMax}.`
+
 export const CITY_LIMIT_LINES = Object.freeze([
   ...IDENTITY_LIMIT_LINES,
   AGREEMENT_ACTIONS_LIMIT_LINE,
@@ -226,8 +233,8 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `State box: ${STATE_BOX_MAX_KEYS} keys, ${STATE_BOX_MAX_BYTES} bytes, ${STATE_TEXT_MAX_CHARACTERS}-character lines, ${STATE_LIST_MAX_ITEMS}-line lists.`,
   `Growth: generations 1..${MAX_EFFECT_GENERATIONS} (default ${COPY_GENERATIONS_DEFAULT}), copies 1..${COPY_COPIES_MAX} or unlimited (default ${COPY_COPIES_DEFAULT}), not counted in the daily things; place 0..${GROWTH_CAP_MAX}/day (default ${GROWTH_CAP_DEFAULT}), family 1..${GROWTH_CAP_MAX} (default ${GROWTH_SHARE_DEFAULT}); reach 1..${REACH_MAX_CEILING} (default ${REACH_MAX_DEFAULT}), ${MAX_REACH_APPLICATIONS_PER_ACTION}/action.`,
   `Crafting: ${MAX_KIND_INGREDIENTS} kinds, ${MAX_CRAFT_INGREDIENTS} ingredients; timers 1..${MAX_TIMER_SECONDS} seconds.`,
-  `${CITY_FEE_RAILS_LINE} Credit buys: $${CITY_CREDIT_PURCHASE_MIN_DOLLARS}..$${CITY_CREDIT_PURCHASE_MAX_DOLLARS}, ${CITY_CREDIT_PURCHASE_BODY_MAX_BYTES}-byte bodies.`,
-  `Sales: >0..${USDC_AMOUNT_MAX} USDC, 6 decimals; claim ${CLAIM_WINDOW_SECONDS / 60} minutes; recovery ${PAYMENT_RECOVERY_WINDOW_MILLISECONDS / 3_600_000} hours.`,
+  FEE_RAILS_LIMIT_LINE,
+  SALES_LIMIT_LINE,
   `Community tools: ${COMMUNITY_TOOL_SUBMISSIONS_PER_IP_DAY}/IP/day, 1..${COMMUNITY_TOOL_TAG_LIMIT} tags; title/URL/operator/description ${COMMUNITY_TOOL_FIELD_LIMITS.titleCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.urlCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.operatorCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.descriptionCharacters} characters.`,
   `Text: notes/descriptions ${NOTE_CHARACTERS}/${WORLD_DESCRIPTION_MAX_CHARACTERS} characters, thing body ${THING_BODY_MAX_BYTES} bytes, purpose ${PLACE_PURPOSE_MAX_CHARACTERS} characters.`,
   `Names: place/thing 1..${PUBLIC_LABEL_MAX_CHARACTERS}; normalized world/kind/trait up to ${NORMALIZED_WORLD_NAME_MAX_CHARACTERS} characters.`,
@@ -236,13 +243,22 @@ export const CITY_LIMIT_LINES = Object.freeze([
   RESIDENT_LOOKING_LIMIT_LINE,
   `Talk: lines 1..${LINE_BODY_MAX_BYTES} UTF-8 bytes, ${LINES_PER_UTC_MINUTE}/resident/UTC minute and ${LINES_PER_UTC_DAY}/resident/UTC day, no citywide limit; ping offers ${PING_OFFER_MINUTES} minutes; one wait per resident, and a new one takes over from the open one; ${WAIT_DEFAULT_SECONDS_HOSTED_CHAT} seconds by default on hosted chat and ${WAIT_DEFAULT_SECONDS_CODING} seconds through a coding client, ${WAIT_SECONDS_MAX} seconds at most.`,
   `Gazette: ${QUOTAS.gazetteSubmissions}/resident/Monday-16:00 week; identical-note replay ${NOTE_IDEMPOTENCY_WINDOW_SECONDS / 60} minutes.`,
-  `Gifts: ${CREDIT_GIFT_LIMITS.actionBodyBytes}-byte bodies, ${CREDIT_GIFT_LIMITS.redirectsPerCallerHour} redirects/caller/hour, pages 1..${CREDIT_GIFT_LIMITS.pageMax}.`,
+  GIFTS_LIMIT_LINE,
   `OAuth life: ${OAUTH_LIMITS.formBodyBytes}-byte forms; request/code/access/refresh ${OAUTH_LIMITS.authorizationRequestMinutes}m/${OAUTH_LIMITS.authorizationCodeMinutes}m/${OAUTH_LIMITS.accessTokenMinutes}m/${OAUTH_LIMITS.refreshTokenDays}d.`,
   `OAuth/hour: authorize ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour}/IP+client, key/pair ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour}/IP+client, signup ${OAUTH_LIMITS.signupStartsPerIpHour}/IP/${OAUTH_LIMITS.signupStartsGlobalHour} global/${OAUTH_LIMITS.signupStartsPerClientHour}/client, confirm ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour}/IP+session.`,
   `OAuth/hour: token/revoke ${OAUTH_LIMITS.tokenExchangesPerIpClientHour}/${OAUTH_LIMITS.revocationsPerIpClientHour} per IP+client; refresh ${OAUTH_LIMITS.refreshesPerConnectionHour}/connection, junk ${OAUTH_LIMITS.junkRefreshesPerNetworkHour}/network.`,
   `Private reads: me credit/gift 1..${CITY_CREDIT_HISTORY_MAX}, later-holder 1..${LATER_HOLDER_PAGE_MAX}, replay ${PUBLIC_REPLAY_ROW_CEILING} rows/${PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES} note bytes.`,
   `Around-you: ${AROUND_YOU_CHANGE_LIMIT} changes, admission from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD}, ${AROUND_YOU_SUMMARY_SLOTS} slots, ${AROUND_YOU_STATEMENT_TIMEOUT_MS} ms.`,
 ] as const)
+
+// The /mcp/app door (decision 141) states the same limits without the fee rails, credit
+// buys, sales, and gifts lines; its fee is one fee credit, stated in its own words.
+export const APP_DOOR_DROPPED_LIMIT_LINES = Object.freeze([
+  FEE_RAILS_LIMIT_LINE, SALES_LIMIT_LINE, GIFTS_LIMIT_LINE,
+] as const)
+export const APP_DOOR_LIMIT_LINES = Object.freeze(
+  CITY_LIMIT_LINES.filter(line => !(APP_DOOR_DROPPED_LIMIT_LINES as readonly string[]).includes(line)),
+)
 
 // The starter door carries the limits needed before move-in and first writes.
 // The machine index and full reference render the complete caller-visible list.
@@ -288,7 +304,9 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'draw_self', writesPublicOrPermanent: true },
   { name: 'act', writesPublicOrPermanent: true },
   { name: 'laws', writesPublicOrPermanent: true },
-  { name: 'home', writesPublicOrPermanent: true },
+  // home sets which place go_home returns to; it moves no one, wakes nothing, deletes nothing,
+  // and the resident can change it back at any time (decision 141 narrows 135 for home).
+  { name: 'home', writesPublicOrPermanent: true, additiveOnly: true },
   { name: 'withdraw', writesPublicOrPermanent: true },
   { name: 'list_world', writesPublicOrPermanent: true },
   { name: 'claim_world', writesPublicOrPermanent: true },

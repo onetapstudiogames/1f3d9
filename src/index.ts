@@ -13,6 +13,7 @@ import {
   err,
   FOUNDER_AUTH_REFUSAL,
   HANDLE_RE,
+  isAppDoorRequest,
   isHostedConnectorRequest,
   isRetryableCollision,
   postgresErrorCode,
@@ -120,6 +121,14 @@ import {
   unhandledFlagCount,
 } from './flag-review.ts'
 import { mountCityHelpRoute } from './city-help.ts'
+import {
+  appCreditPreflight,
+  appFrontDoor,
+  appFrontDoorEvents,
+  appMeAnswer,
+  appOfficialFacts,
+} from './app-door-outputs.ts'
+import { APP_DOOR_PATH, APP_FRONT_DOOR_SECTIONS } from './door-profile.ts'
 import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
@@ -549,6 +558,12 @@ app.use('/mcp/connect', cors({
   allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
   exposeHeaders: ['WWW-Authenticate'],
 }))
+// The app door shares the hosted door's browser rules; mcp.ts never forwards X-PAYMENT from it.
+app.use(APP_DOOR_PATH, cors({
+  origin: '*',
+  allowHeaders: ['Content-Type', 'Authorization', 'X-PAYMENT', 'X-1F3D9-FEE-CREDIT'],
+  exposeHeaders: ['WWW-Authenticate'],
+}))
 app.use('*', async (c, next) => {
   await next()
   if (c.req.header('x-1f3d9-fee-credit')) privateResidentHeaders(c)
@@ -602,12 +617,13 @@ app.onError((error, c) => {
 })
 
 app.get('/', async c => {
-  c.header('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300')
+  const appDoor = isAppDoorRequest(c.req.raw)
+  c.header('Cache-Control', appDoor ? 'no-store' : 'public, s-maxage=60, stale-while-revalidate=300')
   const frontDoor = configuredDiscoveryText(FRONTDOOR, 'frontdoor')
-  const purchaseDoor = withCreditPurchaseDoor(frontDoor)
+  const purchaseDoor = appDoor ? appFrontDoor(frontDoor) : withCreditPurchaseDoor(frontDoor)
   try {
     const events = await readFrontDoorActivity()
-    return c.text(appendFrontDoorActivity(purchaseDoor, events))
+    return c.text(appendFrontDoorActivity(purchaseDoor, appDoor ? appFrontDoorEvents(events) : events))
   } catch {
     return c.text(purchaseDoor)
   }
@@ -621,6 +637,9 @@ app.get('/reference/:section', c => {
   if (!file.endsWith('.txt')) return c.notFound()
   const slug = file.slice(0, -4)
   if (!Object.hasOwn(REFERENCE_SECTIONS, slug)) return c.notFound()
+  if (isAppDoorRequest(c.req.raw) && !(APP_FRONT_DOOR_SECTIONS as readonly string[]).includes(slug)) {
+    return c.notFound()
+  }
   return c.text(configuredDiscoveryText(
     REFERENCE_SECTIONS[slug as keyof typeof REFERENCE_SECTIONS],
     'reference',
@@ -831,7 +850,7 @@ app.get('/api/city-credit/preflight', async c => {
   if (!allowed.ok) return err(c, 400, allowed.error)
   const preflight = await readCityCreditPreflight(runtimeDatabase, resident.id)
   return c.json({
-    ...preflight,
+    ...(isAppDoorRequest(c.req.raw) ? appCreditPreflight(preflight) : preflight),
     next_action: preflight.can_confirm
       ? 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.'
       : 'Do not confirm a credit-funded fee action; the current balance cannot pay its exact cost.',
@@ -1229,7 +1248,11 @@ app.get('/api/me', async c => {
     ORDER BY label
   ` as Array<{ label: string }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
-  const attention = cityCreditAttentionLines(creditAttention)
+  const appDoor = isAppDoorRequest(c.req.raw)
+  // The app door offers no gift tool, so it raises no gift attention line.
+  const attention = cityCreditAttentionLines(appDoor
+    ? { ...creditAttention, pending_gifts_count: 0, frozen_gifts_count: 0 }
+    : creditAttention)
   const gazettePointer = creditAttention.gazette
   let gazette: ReturnType<typeof buildGazetteDelivery> | null = null
   if (gazettePointer !== null && gazettePointer !== undefined) {
@@ -1331,7 +1354,7 @@ app.get('/api/me', async c => {
       console.error('receipt_seen_failure', error instanceof Error ? error.name : typeof error)
     }
   }
-  return c.json(answer)
+  return c.json(appDoor ? appMeAnswer(answer) : answer)
 })
 
 app.post('/api/thing/:id/mark', async c => {
@@ -1689,7 +1712,7 @@ app.get('/api/official', c => {
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
   c.header('Cache-Control', 'no-store')
-  return c.json(publicOfficialFacts({
+  const facts = publicOfficialFacts({
     domain: DOMAIN,
     marketOrigin: process.env.MARKET_ORIGIN,
     deploymentCommit: process.env.VERCEL_GIT_COMMIT_SHA,
@@ -1697,7 +1720,8 @@ app.get('/api/official', c => {
     identityRecoveryEnabled: IDENTITY_RECOVERY_ENABLED,
     identityRotationEnabled: IDENTITY_ROTATION_ENABLED,
     codingIdentityDoorsEnabled: CODING_IDENTITY_DOORS_ENABLED,
-  }))
+  })
+  return c.json(isAppDoorRequest(c.req.raw) ? appOfficialFacts(facts) : facts)
 })
 
 app.get('/api/physics', async c => {
@@ -2036,6 +2060,22 @@ app.get('/mcp', c => {
   })
 })
 app.get('/mcp/connect', c => {
+  if (!hostedChatSignin.ready) return missingStreetResponse(c)
+  c.header('Allow', 'POST')
+  return apiFailureResponse(c, 405, {
+    error: 'GET is not accepted by the hosted-chat MCP connector. POST JSON-RPC 2.0 messages here.',
+  })
+})
+// Decision 141: the app door, with the same sign-in and residents as /mcp/connect.
+app.post(APP_DOOR_PATH, async c => {
+  if (!hostedChatSignin.ready) return missingStreetResponse(c)
+  const response = await mcp(c, app, { door: 'app', forwardUnauthorizedStatus: true })
+  if (response.status === 401 && !response.headers.get('WWW-Authenticate')) {
+    response.headers.set('WWW-Authenticate', oauthChallenge(process.env, 'app'))
+  }
+  return response
+})
+app.get(APP_DOOR_PATH, c => {
   if (!hostedChatSignin.ready) return missingStreetResponse(c)
   c.header('Allow', 'POST')
   return apiFailureResponse(c, 405, {
