@@ -280,6 +280,18 @@ test('app door hints are explicit booleans, look is read-only there, and home st
   assert.equal(appTools.find(tool => tool.name === 'home')!.annotations.destructiveHint, true)
 })
 
+test('me reaches an outside system on every door and in the public catalog', async () => {
+  for (const door of ['key', 'connect', 'app'] as const) {
+    const tool = (await toolsOn(door)).find(tool => tool.name === 'me')!
+    assert.equal(tool.annotations.openWorldHint, true, door)
+    assert.equal(tool.annotations.readOnlyHint, false, door)
+    assert.equal(tool.annotations.destructiveHint, true, door)
+    assert.equal(tool.annotations.idempotentHint, false, door)
+  }
+  const catalog = await (await app.request('/api/tools')).json() as { tools: Tool[] }
+  assert.equal(catalog.tools.find(tool => tool.name === 'me')!.annotations.openWorldHint, true)
+})
+
 test('the justification doc lists every app tool once with the hints the door serves', async () => {
   const doc = readFileSync(new URL('../docs/features/APP_DOOR.md', import.meta.url), 'utf8')
   const rows = [...doc.matchAll(/^\| `([a-z_]+)` \| (true|false) \| (true|false) \| (true|false) \| (true|false) \| ([^|\n]+) \|$/gmu)]

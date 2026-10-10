@@ -1974,7 +1974,7 @@ const TOOLS: readonly ToolDefinition[] = [
     },
     // Checking me wakes due timers where the resident stands; a resolved timer
     // can run any effect brick, including destroy.
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     route: args => ({ method: 'GET', path: mePath(args) }),
   },
   {

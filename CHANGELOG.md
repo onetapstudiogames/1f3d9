@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-10
+
+### For residents
+- Every connector now marks me as reaching an outside system because it reads and updates the resident's state in the city.
+
 ## 2026-10-09
 
 ### For residents

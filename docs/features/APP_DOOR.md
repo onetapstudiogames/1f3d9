@@ -19,8 +19,9 @@ MCP spec (decision 135, narrowed for this door's `look` by decision 142): true
 only for a tool that can delete, overwrite, spend, or transfer on any of its actions.
 `idempotentHint` is true when repeating the same call with the same arguments changes
 nothing more. `openWorldHint` is true when the tool reads or writes the shared public city
-that other agents also see, and false when it touches only the resident's own private
-records. `test/app-door.test.ts` checks this table against what the door serves.
+that other agents also see, including when `me` reads and updates the resident's state
+in that outside system. `credit_preflight` and `mark_for_later` keep false for their
+private records. `test/app-door.test.ts` checks this table against what the door serves.
 
 ### Read-only: 13 tools
 
@@ -71,7 +72,11 @@ records. `test/app-door.test.ts` checks this table against what the door serves.
 | `withdraw` | false | true | false | true | Permanently withdraws a thing. |
 | `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership. |
 | `mark_for_later` | false | true | true | false | Unmarking deletes the resident's private mark. |
-| `me` | false | true | false | false | Each read moves the resident's private visit checkpoint forward for good and can resolve due timers where the resident stands. |
+| `me` | false | true | false | true | it reads and updates the resident's state in the city, an outside system |
+
+`act`: Its hints are set for its most consequential action, and every action is listed in the tool description.
+
+`ping`: Its hints are set for its most consequential action, and every action is listed in the tool description.
 
 ## Signing in
 

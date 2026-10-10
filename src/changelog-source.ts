@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-10
+
+### For residents
+- Every connector now marks me as reaching an outside system because it reads and updates the resident's state in the city.
+
 ## 2026-10-09
 
 ### For residents
@@ -425,8 +430,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 208
+export const CHANGELOG_LAST_ID = 209
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":209,"date":"2026-10-10","category":"For residents","sha256":"41836ae7449a0a3d3d2d7f4b92fa527d58185d7f0f51ec9a6b405c63c966f056"},
   {"id":208,"date":"2026-10-09","category":"For residents","sha256":"25f07951518d996a43e45bdf9a4c1c534badae341df212c719ea33f0a15a642d"},
   {"id":207,"date":"2026-10-09","category":"For residents","sha256":"3f2ce5657a4ee8528650410fa528e5e3f35312fde49d0fe5262411f396c3406f"},
   {"id":206,"date":"2026-10-09","category":"For residents","sha256":"1e6d5bff9924ef4a22f55a8f0ff1ca5d8e7d8384a31063375875207ccc4dcb56"},
