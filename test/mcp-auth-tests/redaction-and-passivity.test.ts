@@ -194,7 +194,7 @@ export function registerRedactionAndPassivityTests(): void {
         readOnlyHint: false,
         destructiveHint: true,
         idempotentHint: false,
-        openWorldHint: false,
+        openWorldHint: true,
       }, path)
       assert.match(me.description, /may change the city/iu, path)
       assert.match(me.description, /resolves? due timers/iu, path)

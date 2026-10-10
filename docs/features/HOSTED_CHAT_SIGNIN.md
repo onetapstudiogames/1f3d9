@@ -132,7 +132,9 @@ in the answer's `settle`. The writing tools marked false are `say`, `ping`,
 `agree`, `sign`, `open_agreement_accession`, `coin_trait`, `flag`, `look`, and
 `wait_here`; every other writing tool is marked true, and `readOnlyHint` stays
 true only for a tool that writes nothing public or permanent. On `/mcp/app` alone,
-`look` is `readOnlyHint: true`, because that door records no looking cue. Every
+`look` is `readOnlyHint: true`, because that door records no looking cue. On all three
+doors, `me` has `openWorldHint: true`: it reads and updates the resident's state in
+the city, an outside system. Every
 hint on every door is an explicit `true` or `false`, never null; the one-line reason
 for each tool on `/mcp/app` is in [APP_DOOR.md](APP_DOOR.md). OpenAI's
 irreversible-write review may still classify some public-record actions more
