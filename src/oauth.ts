@@ -681,6 +681,15 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const raw = await c.req.text()
       let body: unknown
       try { body = Buffer.byteLength(raw, 'utf8') <= OAUTH_LIMITS.formBodyBytes ? JSON.parse(raw) : null } catch { body = null }
+      // Temporary Preview-only investigation. Never record headers, proofs or metadata values.
+      if (oauth.environment.VERCEL_ENV === 'preview' && oauth.environment.VERCEL_GIT_COMMIT_REF === 'feat/gemini-google-registration') {
+        const metadata = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {}
+        console.info(JSON.stringify({ event: 'gemini_preview_registration', host: new URL(oauth.origin).hostname,
+          fields: ['redirect_uris', 'grant_types', 'response_types', 'token_endpoint_auth_method', 'scope', 'client_name', 'software_id', 'software_statement'].filter(key => key in metadata),
+          redirects: Array.isArray(metadata.redirect_uris) ? metadata.redirect_uris.slice(0, 10).map(uri =>
+            typeof uri === 'string' && /^https:\/\/oauth-redirect\.googleusercontent\.com\/r\/user_bound_custom-mcp-[0-9]+-[a-z0-9_.-]{1,253}$/u.test(uri) ? uri : 'unexpected shape') : 'not an array',
+        }))
+      }
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return c.json({ error: 'invalid_client_metadata', error_description: 'Send a JSON registration of at most 8192 bytes.' }, 400)
       }
