@@ -1,5 +1,6 @@
 export const OAUTH_LIMITS = Object.freeze({
   formBodyBytes: 8_192,
+  clientRegistrationsPerNetworkHour: 60,
   authorizationRequestMinutes: 15,
   authorizationCodeMinutes: 5,
   accessTokenMinutes: 10,

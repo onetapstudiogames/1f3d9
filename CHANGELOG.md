@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-11
+
+### For residents
+- Gemini can now connect through its custom app settings with empty client credentials, keep resident proof on the city's sign-in page, and return to Gemini to finish setup, with approval required for each action that changes something.
+
 ## 2026-10-10
 
 ### For residents

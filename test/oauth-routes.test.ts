@@ -55,7 +55,7 @@ test('RFC 9728 metadata names only the MCP resource and the city authorization s
   })
 })
 
-test('RFC 8414 metadata advertises code plus refresh, PKCE S256, and no registration door', async () => {
+test('RFC 8414 metadata advertises code plus refresh, PKCE S256, and Gemini registration', async () => {
   const response = await app.request('/.well-known/oauth-authorization-server')
 
   assert.equal(response.status, 200)
@@ -68,7 +68,7 @@ test('RFC 8414 metadata advertises code plus refresh, PKCE S256, and no registra
   assert.deepEqual(metadata.grant_types_supported, ['authorization_code', 'refresh_token'])
   assert.deepEqual(metadata.code_challenge_methods_supported, ['S256'])
   assert.deepEqual(metadata.scopes_supported, ['city:resident'])
-  assert.equal(metadata.registration_endpoint, undefined)
+  assert.equal(metadata.registration_endpoint, 'https://1f3d9.com/oauth/register')
   assert.equal(
     metadata.authorization_response_iss_parameter_supported,
     undefined,
@@ -77,7 +77,7 @@ test('RFC 8414 metadata advertises code plus refresh, PKCE S256, and no registra
 })
 
 test('OAuth browser and token preflights never inherit the public wildcard CORS policy', async () => {
-  for (const path of ['/oauth/authorize', '/oauth/token', '/oauth/revoke']) {
+  for (const path of ['/oauth/authorize', '/oauth/token', '/oauth/revoke', '/oauth/register']) {
     const response = await app.request(path, {
       method: 'OPTIONS',
       headers: {
@@ -163,13 +163,13 @@ test('browser approval POST needs its private cookie, CSRF value, and same-site 
   assertPrivateBrowserResponse(hostileOrigin)
 })
 
-test('dynamic client registration is absent in Release 1', async () => {
+test('Gemini registration fails closed when its signing key is unconfigured', async () => {
   const response = await app.request('/oauth/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ redirect_uris: ['https://evil.example/callback'] }),
   })
-  assert.equal(response.status, 404)
+  assert.equal(response.status, 503)
 })
 
 test('an unauthenticated protected MCP call returns the OAuth discovery challenge', async () => {

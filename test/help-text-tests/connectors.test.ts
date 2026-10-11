@@ -87,13 +87,13 @@ export function registerConnectorTests(): void {
     }
   })
 
-  test('hosted sign-in design describes the Claude-inclusive metadata-origin door without inventing registration', () => {
+  test('hosted sign-in design keeps Claude metadata and restricts registration to Gemini', () => {
     assert.match(
       hostedSignin,
       /Clients\s*\|\s*Allowlisted chat-app client-metadata origins[\s\S]{0,100}ChatGPT[\s\S]{0,80}Claude/iu,
     )
-    assert.match(hostedSignin, /\/oauth\/register[\s\S]{0,100}(?:HTTP\s+)?404/iu)
-    assert.doesNotMatch(hostedSignin, /dynamic client registration|\bDCR\b/iu)
+    assert.match(hostedSignin, /POST \/oauth\/register[\s\S]{0,130}only Gemini user-bound Google redirects/iu)
+    assert.match(hostedSignin, /token_endpoint_auth_method: none/u)
     assert.doesNotMatch(hostedSignin, /ChatGPT client-metadata origins/iu)
     assert.match(
       hostedSignin,
