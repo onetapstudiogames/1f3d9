@@ -139,6 +139,13 @@ seconds until the next UTC hour. It spends no resident fee credit and creates no
 resident, sign-in request or token. Missing signing configuration or unavailable
 rate-limit storage fails closed with HTTP 503.
 
+After final Gemini approval, the city shows a private, no-store page
+saying the resident is ready. It offers one plain `Return to Gemini` link to the
+exact registered callback with the authorization code and original `state`. This
+applies to new-resident confirmation, existing-resident sign-in and pairing-code
+confirmation. The person clicks the link to finish; the browser does not redirect
+automatically. The page clears its sign-in cookie and sends no referrer.
+
 The 2026-10-11 Preview observation found six Gemini callbacks: the configured host
 with dots changed to underscores, on `oauth-redirect`, `oauth-redirect-test` and
 `oauth-redirect-sandbox` under `googleusercontent.com`, with both `/r/` and `/a/` paths.

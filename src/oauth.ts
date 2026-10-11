@@ -145,10 +145,15 @@ function clientAddress(c: Context, environment: OAuthEnvironment): string {
   return lastAddress(c.req.header('x-vercel-forwarded-for')) ?? 'unknown'
 }
 
-function privateHeaders(c: Context, html = false, callbackOrigin?: string): void {
+function privateHeaders(
+  c: Context,
+  html = false,
+  callbackOrigin?: string,
+  referrerPolicy: 'same-origin' | 'no-referrer' = html ? 'same-origin' : 'no-referrer',
+): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
-  c.header('Referrer-Policy', html ? 'same-origin' : 'no-referrer')
+  c.header('Referrer-Policy', referrerPolicy)
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('X-Frame-Options', 'DENY')
   c.res.headers.delete('Access-Control-Allow-Origin')
@@ -189,8 +194,9 @@ function html(
   title: string,
   body: string,
   callbackOrigin?: string,
+  referrerPolicy: 'same-origin' | 'no-referrer' = 'same-origin',
 ) {
-  privateHeaders(c, true, callbackOrigin)
+  privateHeaders(c, true, callbackOrigin, referrerPolicy)
   return c.html(page(title, body), status)
 }
 
@@ -555,17 +561,56 @@ function isStagedAuthorizationRequest(existing: AuthorizationRequestRecord): boo
     existing.root_key_confirmed_at === null
 }
 
+function authorizationCallback(
+  redirect: { redirectUri: string; state: string },
+  authorizationCode: string,
+): URL {
+  const location = new URL(redirect.redirectUri)
+  location.searchParams.set('code', authorizationCode)
+  location.searchParams.set('state', redirect.state)
+  return location
+}
+
 function redirectWithCode(
   c: Context,
   redirect: { redirectUri: string; state: string },
   authorizationCode: string,
 ) {
-  const location = new URL(redirect.redirectUri)
-  location.searchParams.set('code', authorizationCode)
-  location.searchParams.set('state', redirect.state)
   privateHeaders(c)
   clearSessionCookie(c)
-  return c.redirect(location.href, 303)
+  return c.redirect(authorizationCallback(redirect, authorizationCode).href, 303)
+}
+
+function geminiReadyPage(
+  c: Context,
+  redirect: { redirectUri: string; state: string },
+  authorizationCode: string,
+): Response {
+  const callbackOrigin = registeredCallbackOrigin(redirect.redirectUri)
+  const callback = authorizationCallback(redirect, authorizationCode)
+  clearSessionCookie(c)
+  return html(
+    c,
+    200,
+    'Resident ready',
+    `<h1>Your resident is ready</h1><p>Sign-in is ready to finish in Gemini.</p><p><a href="${escapeHtml(callback.href)}">Return to Gemini</a></p>`,
+    callbackOrigin,
+    'no-referrer',
+  )
+}
+
+function successfulAuthorizationResponse(
+  c: Context,
+  clientId: string,
+  environment: OAuthEnvironment,
+  redirect: { redirectUri: string; state: string },
+  authorizationCode: string,
+): Response {
+  const client = resolveGeminiClient(clientId, environment)
+  if (client?.redirectUris.includes(redirect.redirectUri)) {
+    return geminiReadyPage(c, redirect, authorizationCode)
+  }
+  return redirectWithCode(c, redirect, authorizationCode)
 }
 
 function redirectWithDenial(
@@ -1085,7 +1130,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             checkResidentsThenReturnToChat(),
           )
         }
-        return redirectWithCode(c, redirect, authorizationCode)
+        return successfulAuthorizationResponse(c, request.client_id, oauth.environment, redirect, authorizationCode)
       }
 
       if (action === 'link') {
@@ -1139,7 +1184,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             callbackOrigin,
           )
         }
-        return redirectWithCode(c, redirect, authorizationCode)
+        return successfulAuthorizationResponse(c, request.client_id, oauth.environment, redirect, authorizationCode)
       }
 
       if (action === 'pair') {
@@ -1238,7 +1283,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
             'code_not_accepted',
           )
         }
-        return redirectWithCode(c, redirect, authorizationCode)
+        return successfulAuthorizationResponse(c, request.client_id, oauth.environment, redirect, authorizationCode)
       }
 
       const handle = String(values.get('handle') ?? '').toLowerCase().trim()

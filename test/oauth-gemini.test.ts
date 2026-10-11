@@ -2,20 +2,23 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import { Hono } from 'hono'
+import { sha256 } from '../src/core.ts'
 import { mountOAuthRoutes, residentByOAuthAccessToken } from '../src/oauth.ts'
 import { OAUTH_LIMITS } from '../src/oauth-limits.ts'
 import { registerGeminiClient, resolveGeminiClient } from '../src/oauth-gemini.ts'
 import { EXISTING_KEY, MemoryOAuthStore, rateLimitResult } from './oauth-flow-tests/memory-oauth-store.ts'
-import { authorizationUrl, browserPost, environment, exchangeCode, readTokenPair, RESOURCE } from './oauth-flow-tests/fixture.ts'
+import { assertSecretsAbsent, authorizationUrl, browserPost, environment, exchangeCode, readTokenPair, RESOURCE } from './oauth-flow-tests/fixture.ts'
 
 const REDIRECT = 'https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-123456-1f3d9_com'
+const SECOND_REDIRECT = 'https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-654321-1f3d9_com'
 const signingKey = randomBytes(32).toString('hex')
 
-function fixture(patch: Record<string, string> = {}, memory = new MemoryOAuthStore()) {
+function fixture(patch: Record<string, string> = {}, memory = new MemoryOAuthStore(), pairingEnabled = false) {
   const env = { ...environment, GEMINI_DCR_SIGNING_KEY: signingKey, ...patch }
   const app = new Hono()
   mountOAuthRoutes(app, {
     environment: env, store: memory.api, diagnostics: () => undefined,
+    pairingEnabled,
     fetcher: (async () => { throw new Error('Gemini registration must not fetch metadata') }) as typeof fetch,
   })
   return { app, memory, env }
@@ -45,10 +48,48 @@ async function consent(app: Hono, clientId: string) {
   const approval = await browserPost(app, { cookie, csrf, html, location, rawSession: '' }, {
     action: 'link', csrf, resident_key: EXISTING_KEY,
   })
-  assert.equal(approval.status, 303)
-  const callback = new URL(approval.headers.get('location')!)
-  assert.equal(callback.origin + callback.pathname, REDIRECT)
+  const callback = await assertGeminiReturnPage(approval, REDIRECT, 'client-state-that-must-survive')
   return callback.searchParams.get('code')!
+}
+
+async function geminiSession(app: Hono, clientId: string, state: string) {
+  const location = authorizationUrl({ client_id: clientId, redirect_uri: SECOND_REDIRECT, state })
+  const started = await app.request(location)
+  assert.equal(started.status, 200)
+  const html = await started.text()
+  const cookie = started.headers.get('set-cookie')!.split(';')[0]!
+  const csrf = html.match(/name="csrf" value="([^"]+)"/)![1]!
+  return { cookie, csrf, html, location, rawSession: '' }
+}
+
+async function assertGeminiReturnPage(response: Response, redirectUri: string, state: string): Promise<URL> {
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('location'), null)
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/iu)
+  assert.equal(response.headers.get('pragma'), 'no-cache')
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer')
+  assert.equal(response.headers.get('x-frame-options'), 'DENY')
+  assert.equal(
+    response.headers.get('content-security-policy'),
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://oauth-redirect.googleusercontent.com; base-uri 'none'; frame-ancestors 'none'",
+  )
+  assert.match(response.headers.get('set-cookie') ?? '', /Max-Age=0/iu)
+
+  const body = await response.text()
+  assert.match(body, /<h1>Your resident is ready<\/h1>/u)
+  assert.equal([...body.matchAll(/<a\b/giu)].length, 1)
+  assert.match(body, /<a href="[^"]+">Return to Gemini<\/a>/u)
+  assert.doesNotMatch(body, /<script\b|http-equiv\s*=\s*["']?refresh/iu)
+  assert.doesNotMatch(body, /\*\.googleusercontent\.com/u)
+
+  const escapedHref = body.match(/<a href="([^"]+)">Return to Gemini<\/a>/u)?.[1]
+  assert.ok(escapedHref)
+  const callback = new URL(escapedHref!.replaceAll('&amp;', '&'))
+  assert.equal(`${callback.origin}${callback.pathname}`, redirectUri)
+  assert.match(callback.searchParams.get('code') ?? '', /^1f3d9_ac_[0-9a-f]{64}$/u)
+  assert.equal(callback.searchParams.get('state'), state)
+  assert.deepEqual([...callback.searchParams.keys()].sort(), ['code', 'state'])
+  return callback
 }
 
 function refresh(app: Hono, clientId: string, token: string) {
@@ -214,6 +255,47 @@ test('Gemini completes consent, S256 exchange, refresh rotation, reuse revocatio
   assert.notEqual(second.refresh_token, pair.refresh_token)
   assert.equal((await refresh(app, id, pair.refresh_token)).status, 400)
   assert.equal(await residentByOAuthAccessToken(second.access_token, env, memory.api), null)
+})
+
+test('Gemini signup, existing-resident, and pairing success return one private exact callback link', async () => {
+  const { app, memory } = fixture({}, undefined, true)
+  const id = await client(app, [REDIRECT, SECOND_REDIRECT])
+  const state = 'gemini-state-<img src=x onerror="bad"> & single-quote: \' '
+
+  const linkSession = await geminiSession(app, id, state)
+  const linked = await browserPost(app, linkSession, {
+    action: 'link', csrf: linkSession.csrf, resident_key: EXISTING_KEY,
+  })
+  await assertGeminiReturnPage(linked, SECOND_REDIRECT, state)
+
+  const signupSession = await geminiSession(app, id, state)
+  const staged = await browserPost(app, signupSession, {
+    action: 'register', csrf: signupSession.csrf, handle: 'gemini-ready', model: 'test client',
+  })
+  const stagedBody = await staged.text()
+  const rootKey = stagedBody.match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
+  const recoveryCodes = stagedBody.match(/1f3d9_rc_[0-9a-f]{64}/gu) ?? []
+  assert.ok(rootKey)
+  assert.equal(recoveryCodes.length, 8)
+  const confirmed = await browserPost(app, signupSession, {
+    action: 'confirm', csrf: signupSession.csrf, resident_key: rootKey!,
+  })
+  const confirmedBody = confirmed.clone().text()
+  const signupReturn = await assertGeminiReturnPage(confirmed, SECOND_REDIRECT, state)
+  assertSecretsAbsent(await confirmedBody, [rootKey!, ...recoveryCodes, EXISTING_KEY])
+  assert.match(signupReturn.searchParams.get('code') ?? '', /^1f3d9_ac_[0-9a-f]{64}$/u)
+
+  const pairingCode = `1f3d9_pc_${'cd'.repeat(32)}`
+  await memory.api.mintPairingCode({ residentId: 49, codeHash: sha256(pairingCode) })
+  const pairSession = await geminiSession(app, id, state)
+  const pairPage = await browserPost(app, pairSession, {
+    action: 'pair', csrf: pairSession.csrf, pairing_code: pairingCode,
+  })
+  assert.equal(pairPage.status, 200)
+  const paired = await browserPost(app, pairSession, {
+    action: 'pair_confirm', csrf: pairSession.csrf, pairing_code: pairingCode,
+  })
+  await assertGeminiReturnPage(paired, SECOND_REDIRECT, state)
 })
 
 test('Gemini signing key loss stops new registration and rechecks issued IDs at token exchange and refresh', async () => {

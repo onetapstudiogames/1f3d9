@@ -59,6 +59,7 @@ const environment = {
   PUBLIC_ORIGIN: origin,
   VERCEL: '1',
   VERCEL_ENV: 'preview',
+  GEMINI_DCR_SIGNING_KEY: 'ab'.repeat(32),
   HOSTED_CHAT_OAUTH_CLIENTS: JSON.stringify([{
     client_id: 'browser-e2e-client',
     client_name: 'Hosted Chat Browser Test',
@@ -413,6 +414,36 @@ app.post('/mcp/connect', async c => {
 app.get('/oauth/callback', c => c.html(
   '<!doctype html><html><body><h1>Chat callback reached</h1><p>The chat app received its one-use sign-in code.</p></body></html>',
 ))
+let geminiReturnRequests: ReadonlyArray<{
+  method: string
+  origin: string
+  path: string
+  status: number
+  has_referer: boolean
+}> = []
+app.get('/r/user_bound_custom-mcp-456789-127_0_0_1', c => {
+  const url = new URL(c.req.url)
+  const response = c.redirect('https://gemini-return.example/finish', 302)
+  response.headers.set('Referrer-Policy', 'no-referrer')
+  geminiReturnRequests = [...geminiReturnRequests, {
+    method: c.req.method, origin: url.origin, path: url.pathname,
+    status: response.status, has_referer: Boolean(c.req.header('referer')),
+  }]
+  return response
+})
+app.get('/finish', c => {
+  const url = new URL(c.req.url)
+  geminiReturnRequests = [...geminiReturnRequests, {
+    method: c.req.method, origin: url.origin, path: url.pathname,
+    status: 200, has_referer: Boolean(c.req.header('referer')),
+  }]
+  return c.html('<!doctype html><html><body><h1>Gemini return destination reached</h1></body></html>')
+})
+app.get('/__e2e/gemini-return-requests', c => c.json(geminiReturnRequests))
+app.post('/__e2e/reset-gemini-return-requests', c => {
+  geminiReturnRequests = []
+  return c.json({ ok: true })
+})
 // The redirect-chain spec maps these real HTTPS origins to this disposable
 // server, leaving Chromium to enforce the production page's form-action policy.
 let openAiReturnRequests: ReadonlyArray<{ method: string; origin: string; path: string; status: number }> = []
