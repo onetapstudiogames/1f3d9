@@ -10,13 +10,16 @@ export function geminiSigningReady(environment: OAuthEnvironment): boolean {
 }
 
 /** Match the raw spelling so URL normalization cannot admit ports or dot segments. */
-export function geminiRedirects(value: unknown, environment: OAuthEnvironment): string[] | null {
+export function geminiRedirects(value: unknown, environment: OAuthEnvironment, selectSupported = false): string[] | null {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_REDIRECTS) return null
+  if (value.some(uri => typeof uri !== 'string' || uri.length > 1_024)) return null
   const host = new URL(publicOrigin(environment)).hostname.replaceAll('.', '_')
   const escapedHost = host.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
   const shape = new RegExp(`^https://oauth-redirect\\.googleusercontent\\.com/r/user_bound_custom-mcp-[0-9]+-${escapedHost}$`, 'u')
-  if (value.some(uri => typeof uri !== 'string' || uri.length > 1_024 || !shape.test(uri) || /\s/u.test(uri))) return null
-  return [...new Set(value as string[])]
+  const supported = (value as string[]).filter(uri => shape.test(uri) && !/\s/u.test(uri))
+  // RFC 7591 registration returns only supported metadata. Issued IDs stay strict.
+  if (!supported.length || (!selectSupported && supported.length !== value.length)) return null
+  return [...new Set(supported)]
 }
 
 function signature(payload: string, environment: OAuthEnvironment): string {

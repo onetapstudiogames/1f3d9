@@ -4,6 +4,7 @@ import test from 'node:test'
 import { Hono } from 'hono'
 import { mountOAuthRoutes, residentByOAuthAccessToken } from '../src/oauth.ts'
 import { OAUTH_LIMITS } from '../src/oauth-limits.ts'
+import { registerGeminiClient, resolveGeminiClient } from '../src/oauth-gemini.ts'
 import { EXISTING_KEY, MemoryOAuthStore, rateLimitResult } from './oauth-flow-tests/memory-oauth-store.ts'
 import { authorizationUrl, browserPost, environment, exchangeCode, readTokenPair, RESOURCE } from './oauth-flow-tests/fixture.ts'
 
@@ -79,7 +80,7 @@ test('Gemini registration advertises its endpoint and fixes public client metada
   assert.ok(registered.client_id.length <= 2048)
 })
 
-test('Gemini refuses every raw near-match, mixed list and malformed registration', async () => {
+test('Gemini refuses every raw near-match and malformed registration', async () => {
   const { app } = fixture()
   const bad = [
     REDIRECT.replace('googleusercontent.com', 'googleusercontent.com.evil.test'),
@@ -92,13 +93,14 @@ test('Gemini refuses every raw near-match, mixed list and malformed registration
     REDIRECT.replace('googleusercontent', 'GOOGLEUSERCONTENT'), REDIRECT + '\n',
   ]
   for (const redirect of bad) {
-    for (const redirects of [[redirect], [REDIRECT, redirect]]) {
+    for (const redirects of [[redirect]]) {
       const response = await register(app, { redirect_uris: redirects })
       assert.equal(response.status, 400, JSON.stringify(redirects))
       assert.equal((await response.json()).error, 'invalid_redirect_uri')
     }
   }
-  for (const body of [null, [], {}, { redirect_uris: [] }, { redirect_uris: REDIRECT }, { redirect_uris: [4] }]) {
+  for (const body of [null, [], {}, { redirect_uris: [] }, { redirect_uris: REDIRECT }, { redirect_uris: [4] },
+    { redirect_uris: [REDIRECT, 4] }, { redirect_uris: [REDIRECT, 'x'.repeat(1025)] }]) {
     assert.equal((await register(app, body)).status, 400)
   }
   assert.equal((await register(app, { redirect_uris: [REDIRECT] }, { 'content-type': 'text/plain' })).status, 400)
@@ -108,6 +110,46 @@ test('Gemini refuses every raw near-match, mixed list and malformed registration
   assert.equal((await register(app, { redirect_uris: Array.from({ length: 11 }, () => REDIRECT) })).status, 400)
   const oversized = Array.from({ length: 10 }, (_, i) => REDIRECT.replace('123456', String(i).repeat(140)))
   assert.equal((await register(app, { redirect_uris: oversized })).status, 400)
+})
+
+// Gemini's real backend sends these six variants; its UI copies only the third.
+// The numeric account component is synthetic; host and path shapes are recorded Preview evidence.
+for (const host of ['1f3d9.com', '1f3d9-git-feat-gemini-google-ae6fcd-onetapstudiogames-projects.vercel.app']) {
+  test(`Gemini selects only the supported callback from its six-address registration for ${host}`, async () => {
+    const { app } = fixture({ PUBLIC_ORIGIN: `https://${host}` })
+    const suffix = `user_bound_custom-mcp-123456789012345678901-${host.replaceAll('.', '_')}`
+    const redirects = ['r', 'a'].flatMap(path => ['oauth-redirect-sandbox', 'oauth-redirect-test', 'oauth-redirect']
+      .map(domain => `https://${domain}.googleusercontent.com/${path}/${suffix}`))
+    const response = await register(app, {
+      redirect_uris: redirects, grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+      token_endpoint_auth_method: 'none', client_name: 'Gemini', scope: 'city:resident',
+      software_id: 'gemini', software_version: '1', unknown_metadata: { ignored: true },
+    })
+    assert.equal(response.status, 201)
+    const registered = await response.json()
+    assert.deepEqual(registered.redirect_uris, [redirects[2]])
+    assert.equal(registered.token_endpoint_auth_method, 'none')
+    assert.equal(registered.client_secret, undefined)
+    for (const redirect of redirects) {
+      const authorization = await app.request(authorizationUrl({ client_id: registered.client_id,
+        redirect_uri: redirect, resource: `https://${host}/mcp/connect` }))
+      assert.equal(authorization.status, redirect === redirects[2] ? 200 : 400, redirect)
+      assert.equal(authorization.headers.get('location'), null)
+    }
+    assert.equal((await register(app, { redirect_uris: redirects.filter(uri => uri !== redirects[2]) })).status, 400)
+  })
+}
+
+test('Gemini never registers a foreign callback when selecting supported redirects', async () => {
+  const { app, env } = fixture()
+  const foreign = REDIRECT.replace('oauth-redirect.googleusercontent.com', 'evil.example')
+  const response = await register(app, { redirect_uris: [foreign, REDIRECT, REDIRECT] })
+  assert.equal(response.status, 201)
+  const registered = await response.json()
+  assert.deepEqual(registered.redirect_uris, [REDIRECT])
+  assert.equal((await app.request(authorizationUrl({ client_id: registered.client_id, redirect_uri: foreign }))).status, 400)
+  const invalidId = registerGeminiClient([REDIRECT, foreign], env)!
+  assert.equal(resolveGeminiClient(invalidId, env), null)
 })
 
 test('Gemini exact redirects survive stateless resolution and are tied to the configured origin and key', async () => {

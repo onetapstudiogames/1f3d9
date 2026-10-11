@@ -681,25 +681,16 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const raw = await c.req.text()
       let body: unknown
       try { body = Buffer.byteLength(raw, 'utf8') <= OAUTH_LIMITS.formBodyBytes ? JSON.parse(raw) : null } catch { body = null }
-      // Temporary Preview-only investigation. Never record headers, proofs or metadata values.
-      if (oauth.environment.VERCEL_ENV === 'preview' && oauth.environment.VERCEL_GIT_COMMIT_REF === 'feat/gemini-google-registration') {
-        const metadata = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {}
-        console.info(JSON.stringify({ event: 'gemini_preview_registration', host: new URL(oauth.origin).hostname,
-          fields: ['redirect_uris', 'grant_types', 'response_types', 'token_endpoint_auth_method', 'scope', 'client_name', 'software_id', 'software_statement'].filter(key => key in metadata),
-          redirects: Array.isArray(metadata.redirect_uris) ? metadata.redirect_uris.slice(0, 10).map(uri =>
-            typeof uri === 'string' && uri.length <= 1024 && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[a-zA-Z0-9_./-]+$/u.test(uri) ? uri : 'unexpected shape') : 'not an array',
-        }))
-      }
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         return c.json({ error: 'invalid_client_metadata', error_description: 'Send a JSON registration of at most 8192 bytes.' }, 400)
       }
       if ('software_statement' in body) {
         return c.json({ error: 'unapproved_software_statement', error_description: 'Send the return addresses directly, without a software statement.' }, 400)
       }
-      const redirects = geminiRedirects((body as Record<string, unknown>).redirect_uris, oauth.environment)
+      const redirects = geminiRedirects((body as Record<string, unknown>).redirect_uris, oauth.environment, true)
       const clientId = redirects ? registerGeminiClient(redirects, oauth.environment) : null
       if (!redirects || !clientId) {
-        return c.json({ error: 'invalid_redirect_uri', error_description: 'Use only Google Gemini user-bound return addresses for this city, with no port, query, fragment or user information; send 1 to 10 addresses that fit a 2048-character client ID.' }, 400)
+        return c.json({ error: 'invalid_redirect_uri', error_description: 'Include a Google Gemini user-bound return address for this city, with no port, query, fragment or user information; send 1 to 10 addresses, each at most 1024 characters. Only supported addresses are registered and must fit a 2048-character client ID.' }, 400)
       }
       return c.json({ client_id: clientId, client_name: 'Gemini', redirect_uris: redirects,
         token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],

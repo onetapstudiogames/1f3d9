@@ -104,23 +104,26 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 The owner approved this narrow registration route on 2026-10-11; decision 143 is
 PROPOSED until the owner locks the row. Send a JSON object of at most 8192 bytes
 with `redirect_uris`, an array of 1 to 10 strings, each at most 1024 characters.
-Every raw address must be
+Each registered raw address must be
 `https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<digits>-<city-host>`.
 The digits are one or more ASCII digits; city-host is the hostname from
-`PUBLIC_ORIGIN` with dots replaced by underscores (`1f3d9_com` in production).
+`PUBLIC_ORIGIN` with dots replaced by underscores and hyphens kept (`1f3d9_com` in production).
 No port (even 443), query, fragment, user information, alternate case, encoded path,
-extra path or whitespace is accepted. All addresses must match; a valid one never
-rescues a bad one. Duplicate addresses are removed. The resulting client ID must
+extra path or whitespace is registered. Registration selects only matching addresses
+and returns that exact subset; unsupported addresses are left out. At least one must
+match. Invalid list sizes, non-string entries and entries over 1024 characters still
+refuse the whole request. Duplicate addresses are removed. The resulting client ID must
 fit 2048 characters, so long lists may need fewer addresses.
 
 The RFC 7591 response is HTTP 201 with `client_id`, the accepted `redirect_uris`,
 `client_name: Gemini`, `token_endpoint_auth_method: none`,
 `grant_types: [authorization_code, refresh_token]`, `response_types: [code]`, and
 `scope: city:resident`. Those values replace requested alternatives, including a
-requested secret-based method. Unknown metadata is ignored; software statements
+requested secret-based method. `software_id`, `software_version` and unknown metadata
+are ignored; software statements
 are refused with `unapproved_software_statement`. No client secret is issued or
 accepted, including an empty secret at the token endpoint. Malformed JSON or body
-size/type returns `invalid_client_metadata`; bad return addresses or a list too
+size/type returns `invalid_client_metadata`; no supported return address, an invalid list or a list too
 large for the ID returns `invalid_redirect_uri`. Responses are private `no-store`.
 
 The public ID contains the exact addresses and an HMAC-SHA256 signature, versioned
@@ -135,6 +138,13 @@ header (or the shared `unknown` bucket outside Vercel). HTTP 429 gives `Retry-Af
 seconds until the next UTC hour. It spends no resident fee credit and creates no
 resident, sign-in request or token. Missing signing configuration or unavailable
 rate-limit storage fails closed with HTTP 503.
+
+The 2026-10-11 Preview observation found six Gemini callbacks: the configured host
+with dots changed to underscores, on `oauth-redirect`, `oauth-redirect-test` and
+`oauth-redirect-sandbox` under `googleusercontent.com`, with both `/r/` and `/a/` paths.
+Only `oauth-redirect.googleusercontent.com/r/` is registered. The other five never
+enter the client ID and cannot receive a code. Gemini's copy button shows only the
+supported callback. This is RFC 7591 metadata selection, not a wider callback rule.
 
 `GEMINI_DCR_SIGNING_KEY` is a stable server-only 32-byte key, supplied as 64 lowercase
 hex characters. Its removal or rotation invalidates Gemini client IDs and their
