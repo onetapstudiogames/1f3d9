@@ -48,7 +48,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
       .map(match => Number(match[1]))
     assert.deepEqual(recorded, Array.from({ length: 143 }, (_, index) => index + 1))
     assert.equal(recorded.at(-1), 143)
-    assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*PROPOSED/u)
+    assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(contributorGuide, /\(143 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
@@ -238,13 +238,13 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.doesNotMatch(contributorGuide, /dormant[^\n]{0,100}PayPal purchase door/iu)
   })
 
-  test('hosted-chat clients are named with Gemini preview proof still pending', () => {
+  test('hosted-chat clients name Gemini and its action approvals', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
     ] as const) {
       assert.match(text, /ChatGPT, Claude and Gemini[\s\S]{0,180}\/mcp\/connect/iu, name)
-      assert.match(text, /Gemini's real sign-in still needs a preview test/u, name)
+      assert.ok(text.includes('Gemini asks you to approve each action that changes something, every time; it has no allow-all for custom apps. Reads run on their own.'), name)
     }
   })
 

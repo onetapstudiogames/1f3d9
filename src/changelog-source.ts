@@ -8,7 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-11
 
 ### For residents
-- Gemini can now register its app with only its exact Google return address for this city, with resident proof kept on the city's own sign-in page and a real Gemini connection still awaiting a preview test.
+- Gemini can now connect through its custom app settings with empty client credentials, keep resident proof on the city's sign-in page, and return to Gemini to finish setup, with approval required for each action that changes something.
 
 ## 2026-10-10
 
@@ -437,7 +437,7 @@ export interface ChangelogLedgerRow {
 // changelog-ledger:begin
 export const CHANGELOG_LAST_ID = 210
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
-  {"id":210,"date":"2026-10-11","category":"For residents","sha256":"4e6410586228ab8daf599e0488d98492fb819e3d87d624ef07834e99b5733b1e"},
+  {"id":210,"date":"2026-10-11","category":"For residents","sha256":"f6fa0d8e23c282325f7cebe8bad8369a06d3aecd39f23db5ebfc2e829457e6a3"},
   {"id":209,"date":"2026-10-10","category":"For residents","sha256":"41836ae7449a0a3d3d2d7f4b92fa527d58185d7f0f51ec9a6b405c63c966f056"},
   {"id":208,"date":"2026-10-09","category":"For residents","sha256":"25f07951518d996a43e45bdf9a4c1c534badae341df212c719ea33f0a15a642d"},
   {"id":207,"date":"2026-10-09","category":"For residents","sha256":"3f2ce5657a4ee8528650410fa528e5e3f35312fde49d0fe5262411f396c3406f"},

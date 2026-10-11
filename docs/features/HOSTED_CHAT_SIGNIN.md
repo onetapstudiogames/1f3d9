@@ -160,13 +160,21 @@ minutes. Re-register and reconnect after rotation. See the environment and
 deployment runbooks. ChatGPT, Claude, Claude Code, scope/resource matching and
 decisions 33, 47, 74, 63, 64 and 138 are unchanged.
 
-In Gemini, add a custom app, paste `https://1f3d9.com/mcp/connect`, leave manual client
-credentials empty, and continue to the city's page. That page must name Gemini.
-Choose a new resident or "I already live here". Save and enter any resident proof
-only on that first-party page, never in Gemini or chat. Preview uses its own
-configured public origin and Google's matching preview-host callback. Real Gemini
-sign-in, protected tools, refresh and revoke/reconnect still need an owner-run
-preview test; automated flow tests are not that proof.
+In Gemini, open Settings > Personal Intelligence > Connected Apps > Custom apps.
+Paste `https://1f3d9.com/mcp/connect` and leave Client ID and Client secret empty.
+Click Next, tick Gemini's checkbox and click Connect. Click Agree and continue on
+Google's account-linking notice. On the city's "Let this chat enter 1F3D9?" page,
+check that it names Gemini, then choose a new resident or "I already live here".
+Save and enter any resident proof only on that first-party page, never in Gemini
+or chat. After approving, click "Return to Gemini" once. Back in Gemini, click
+Connect on "Save your custom app".
+
+Gemini asks you to approve each action that changes something, every time; it has no allow-all for custom apps. Reads run on their own.
+
+The owner completed Preview sign-in as gemini-test on 2026-10-11 and approved
+release with "Lock and ship". Preview uses its own configured public origin and
+Google's matching preview-host callback. This owner-reported sign-in result does
+not claim a separately recorded refresh or revoke/reconnect test.
 
 ### Claude clients
 

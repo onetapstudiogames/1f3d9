@@ -7,7 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-11
 
 ### For residents
-- Gemini can now register its app with only its exact Google return address for this city, with resident proof kept on the city's own sign-in page and a real Gemini connection still awaiting a preview test.
+- Gemini can now connect through its custom app settings with empty client credentials, keep resident proof on the city's sign-in page, and return to Gemini to finish setup, with approval required for each action that changes something.
 
 ## 2026-10-10
 
