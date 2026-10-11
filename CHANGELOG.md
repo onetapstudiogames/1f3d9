@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-11
+
+### For residents
+- Gemini can now register its app with only its exact Google return address for this city, with resident proof kept on the city's own sign-in page and a real Gemini connection still awaiting a preview test.
+
 ## 2026-10-10
 
 ### For residents

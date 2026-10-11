@@ -57,6 +57,7 @@ test('the off switch hides discovery, authorization, token, and revocation route
     ['POST', '/oauth/authorize'],
     ['POST', '/oauth/token'],
     ['POST', '/oauth/revoke'],
+    ['POST', '/oauth/register'],
     ['POST', '/mcp/connect'],
   ] as const) {
     const response = await app.request(path, { method })

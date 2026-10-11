@@ -54,6 +54,7 @@ import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
 import { PAIRING_CODE_RE } from './pair.ts'
 import { HANDLE_HTML_PATTERN, HANDLE_RULE } from './core-primitives.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
+import { GEMINI_CLIENT_PREFIX, geminiRedirects, geminiSigningReady, registerGeminiClient, resolveGeminiClient } from './oauth-gemini.ts'
 import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import {
   postgresOAuthStore,
@@ -650,6 +651,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     authorization_endpoint: `${oauth.origin}/oauth/authorize`,
     token_endpoint: `${oauth.origin}/oauth/token`,
     revocation_endpoint: `${oauth.origin}/oauth/revoke`,
+    registration_endpoint: `${oauth.origin}/oauth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     token_endpoint_auth_methods_supported: ['none'],
@@ -657,6 +659,46 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     scopes_supported: [OAUTH_SCOPE],
     ...(oauth.cimdOrigins.length ? { client_id_metadata_document_supported: true } : {}),
   }))
+
+  app.post('/oauth/register', async c => {
+    privateHeaders(c)
+    if (!geminiSigningReady(oauth.environment)) {
+      return c.json({ error: 'temporarily_unavailable', error_description: 'Gemini registration is not ready. Ask the city owner to finish setup.' }, 503)
+    }
+    try {
+      // Reuse the existing database kind, with a separate bucket and allowance.
+      const admission = await rateLimitAdmission(oauth.store,
+        [`gemini-register-ip:${clientAddress(c, oauth.environment)}`],
+        'authorize', OAUTH_LIMITS.clientRegistrationsPerNetworkHour)
+      if (!admission.admitted) {
+        c.header('Retry-After', String(admission.retryAfterSeconds))
+        return c.json({ error: 'temporarily_unavailable', error_description: `Too many app registrations. Wait ${admission.retryAfterSeconds} seconds and retry.` }, 429)
+      }
+      const contentType = c.req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+      if (contentType !== 'application/json' || Number(c.req.header('content-length') ?? 0) > OAUTH_LIMITS.formBodyBytes) {
+        return c.json({ error: 'invalid_client_metadata', error_description: 'Send a JSON registration of at most 8192 bytes.' }, 400)
+      }
+      const raw = await c.req.text()
+      let body: unknown
+      try { body = Buffer.byteLength(raw, 'utf8') <= OAUTH_LIMITS.formBodyBytes ? JSON.parse(raw) : null } catch { body = null }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return c.json({ error: 'invalid_client_metadata', error_description: 'Send a JSON registration of at most 8192 bytes.' }, 400)
+      }
+      if ('software_statement' in body) {
+        return c.json({ error: 'unapproved_software_statement', error_description: 'Send the return addresses directly, without a software statement.' }, 400)
+      }
+      const redirects = geminiRedirects((body as Record<string, unknown>).redirect_uris, oauth.environment)
+      const clientId = redirects ? registerGeminiClient(redirects, oauth.environment) : null
+      if (!redirects || !clientId) {
+        return c.json({ error: 'invalid_redirect_uri', error_description: 'Use only Google Gemini user-bound return addresses for this city, with no port, query, fragment or user information; send 1 to 10 addresses that fit a 2048-character client ID.' }, 400)
+      }
+      return c.json({ client_id: clientId, client_name: 'Gemini', redirect_uris: redirects,
+        token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'], scope: OAUTH_SCOPE }, 201)
+    } catch {
+      return tokenUnavailable(c)
+    }
+  })
 
   app.get('/oauth/authorize', async c => {
     let trace = beginTrace(c)
@@ -676,12 +718,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
     let client
     try {
       const clientId = typeof query.client_id === 'string' ? query.client_id : ''
-      client = await resolveOAuthClient(
+      client = clientId.startsWith(GEMINI_CLIENT_PREFIX) ? resolveGeminiClient(clientId, oauth.environment) : await resolveOAuthClient(
         clientId,
         oauth.staticClients,
         oauth.cimdOrigins,
         oauth.fetcher,
       )
+      if (!client) throw new Error('unknown OAuth client')
     } catch {
       recordFailure(oauth, trace, 'client_metadata', 'client_not_approved', 400)
       return browserError(
@@ -737,6 +780,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       existing: AuthorizationRequestRecord,
       sessionCookie: BrowserSessionCookie,
     ): Response => {
+      if (existing.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(existing.client_id, oauth.environment)) {
+        return browserError(c, 400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+      }
       if (isInitialAuthorizationRequest(existing)) return renderConsent(sessionCookie, existing)
       if (isStagedAuthorizationRequest(existing)) {
         return stagedAuthorizationResponse(c, existing, sessionCookie.csrf)
@@ -918,6 +964,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const renderCurrentTerminalProgress = async (): Promise<Response | null> => {
         const progress = await oauth.store.getAuthorizationRequestProgress({ sessionHash, csrfHash })
         if (!progress) return null
+        if (progress.request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(progress.request.client_id, oauth.environment)) {
+          return fail(400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+        }
         trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
         return terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
       }
@@ -933,6 +982,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         )
       }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
+      if (request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(request.client_id, oauth.environment)) {
+        return fail(400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+      }
       const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 
       if (action === 'register' && isStagedAuthorizationRequest(request)) {
@@ -1331,6 +1383,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
       if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
       if (!clientId || !resource || !oauth.resources.includes(resource)) return fail('invalid_client')
+      if (clientId.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(clientId, oauth.environment)) return fail('invalid_client')
       stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
 
       if (grantType === 'authorization_code') {
@@ -1458,7 +1511,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
           token &&
           (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) || token.startsWith(OAUTH_REFRESH_TOKEN_PREFIX)),
         )
-        if (!token || !clientId || !validToken) {
+        if (!token || !clientId || !validToken ||
+          (clientId.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(clientId, oauth.environment))) {
           recordFailure(oauth, trace, 'revocation', 'invalid_request', 200)
         } else if (!(await admitted(
           oauth.store,

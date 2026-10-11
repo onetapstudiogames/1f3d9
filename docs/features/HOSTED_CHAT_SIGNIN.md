@@ -93,11 +93,65 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 | Surface | Contract |
 |---------|----------|
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
-| Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, plus pre-registered public client IDs with exact redirects |
-| Registration endpoint | `/oauth/register` is absent and remains HTTP `404`; there is no arbitrary metadata fetch or wildcard client matching. The only port-varying callback exception is the verified Claude Code client above |
+| Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
+| Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects for this city's configured public host; no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
 | Refresh throttle | Each token family (one connector connection) has its own 3,600-attempt UTC-hour allowance (decision #138, which replaces only the figure 120 in #63). Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
+
+### Gemini registration
+
+The owner approved this narrow registration route on 2026-10-11; decision 143 is
+PROPOSED until the owner locks the row. Send a JSON object of at most 8192 bytes
+with `redirect_uris`, an array of 1 to 10 strings, each at most 1024 characters.
+Every raw address must be
+`https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<digits>-<city-host>`.
+The digits are one or more ASCII digits; city-host is the hostname from
+`PUBLIC_ORIGIN` with dots replaced by underscores (`1f3d9_com` in production).
+No port (even 443), query, fragment, user information, alternate case, encoded path,
+extra path or whitespace is accepted. All addresses must match; a valid one never
+rescues a bad one. Duplicate addresses are removed. The resulting client ID must
+fit 2048 characters, so long lists may need fewer addresses.
+
+The RFC 7591 response is HTTP 201 with `client_id`, the accepted `redirect_uris`,
+`client_name: Gemini`, `token_endpoint_auth_method: none`,
+`grant_types: [authorization_code, refresh_token]`, `response_types: [code]`, and
+`scope: city:resident`. Those values replace requested alternatives, including a
+requested secret-based method. Unknown metadata is ignored; software statements
+are refused with `unapproved_software_statement`. No client secret is issued or
+accepted, including an empty secret at the token endpoint. Malformed JSON or body
+size/type returns `invalid_client_metadata`; bad return addresses or a list too
+large for the ID returns `invalid_redirect_uri`. Responses are private `no-store`.
+
+The public ID contains the exact addresses and an HMAC-SHA256 signature, versioned
+and bound to the configured public origin. The server verifies it on authorization,
+browser continuation, code exchange, refresh and revocation. It proves the city's
+registration, not the identity of whoever called registration. Only Google's exact
+return destination receives a code, and its exchange still needs PKCE S256 and
+first-party resident consent. No client table, registration row or migration is
+needed. Registration uses 60 attempts per network per UTC hour in a separate bucket
+of the existing OAuth `authorize` rate kind, using only the trusted Vercel network
+header (or the shared `unknown` bucket outside Vercel). HTTP 429 gives `Retry-After`
+seconds until the next UTC hour. It spends no resident fee credit and creates no
+resident, sign-in request or token. Missing signing configuration or unavailable
+rate-limit storage fails closed with HTTP 503.
+
+`GEMINI_DCR_SIGNING_KEY` is a stable server-only 32-byte key, supplied as 64 lowercase
+hex characters. Its removal or rotation invalidates Gemini client IDs and their
+future code exchanges and refreshes; already-issued access lasts at most ten
+minutes. Re-register and reconnect after rotation. See the environment and
+deployment runbooks. ChatGPT, Claude, Claude Code, scope/resource matching and
+decisions 33, 47, 74, 63, 64 and 138 are unchanged.
+
+In Gemini, add a custom app, paste `https://1f3d9.com/mcp/connect`, leave manual client
+credentials empty, and continue to the city's page. That page must name Gemini.
+Choose a new resident or "I already live here". Save and enter any resident proof
+only on that first-party page, never in Gemini or chat. Preview uses its own
+configured public origin and Google's matching preview-host callback. Real Gemini
+sign-in, protected tools, refresh and revoke/reconnect still need an owner-run
+preview test; automated flow tests are not that proof.
+
+### Claude clients
 
 Claude Code's official metadata client ID is
 `https://claude.ai/oauth/claude-code-client-metadata`. The sign-in configuration
@@ -210,9 +264,8 @@ The human window at `/window` stays web-only.
 
 Release 1 is connected by its direct custom MCP URL. Approval for a vendor's public
 connector directory is a separate distribution choice, not a dependency for this door.
-The protocol stays vendor-neutral: any compatible host may use an allowlisted
-client-metadata origin or a pre-registered public client rather than receiving
-product-specific server behavior.
+Compatible hosts may use an allowlisted client-metadata origin or a pre-registered
+public client. Only Gemini's narrow Google return-address shape may self-register.
 
 ### Current ChatGPT setup and wrong-address recovery
 

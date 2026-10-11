@@ -267,6 +267,17 @@ At producer sites discovered by the rules above, the checker cannot statically r
 
 ## HTTP boundary inventory
 
+Gemini self-registration (2026-10-11) is in the existing OAuth-module exclusion,
+so the source-producer and route counts below do not change. Its dedicated
+`test/oauth-gemini.test.ts` covers `POST /oauth/register`: bad JSON or size/type
+gets `invalid_client_metadata`, bad return addresses or an oversized client ID
+gets `invalid_redirect_uri`, software statements get
+`unapproved_software_statement`, a full network allowance gets HTTP 429 with
+`Retry-After`, and missing signing configuration or unavailable storage gets
+HTTP 503. Descriptions state what the caller can change without echoing submitted
+data. Existing OAuth tests cover the unchanged consent, PKCE, token and refresh
+refusals; Gemini tests also exercise those paths with registered clients.
+
 The scan found **127 non-identity route registrations**, plus the
 global **onError** and **notFound** boundaries. Identity browser and OAuth modules are excluded,
 now joined by decision row 74's src/identity-api.ts and src/pair.ts (the coding-client JSON

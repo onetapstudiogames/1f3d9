@@ -16,6 +16,22 @@ If GitHub has delayed its scheduled run, use `gh workflow run live-probe.yml --r
 
 ## Release a change
 
+### Gemini registration prerequisite
+
+Before releasing Gemini self-registration, provision the server-only
+`GEMINI_DCR_SIGNING_KEY` described in [ENVIRONMENT.md](ENVIRONMENT.md), separately
+for Preview and Production. Keep each value stable and never print it. No database
+migration is needed. Keep `PUBLIC_ORIGIN` set to the deployment's own canonical
+origin, so Google's return-address suffix names that host. Preview must use its
+isolated `HOSTED_CHAT_PREVIEW_DATABASE_URL`, never the production database.
+
+Verify discovery, registration acceptance/refusals and throttling on Preview.
+Then have the owner add Preview's `/mcp/connect` as a Gemini custom app, leave
+manual client credentials empty, and complete proof only on the city's page.
+Record a protected tool read, actual S256/scope/resource compatibility, refresh,
+revocation and reconnect. Until that real run succeeds, Gemini compatibility is
+unverified. Never type a resident key or sign-in code on the owner's behalf.
+
 ### Payment-recovery prerequisite
 
 Before every release containing bounded payment recovery or the Gazette printer, confirm that a valid

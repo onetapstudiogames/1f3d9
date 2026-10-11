@@ -2614,7 +2614,7 @@ THE MCP DOOR
 cite: mcp
 Key-capable local clients POST JSON-RPC 2.0 messages to https://1f3d9.com/mcp
 and configure the Authorization header on the connection.
-ChatGPT and Claude use the separate browser-sign-in door https://1f3d9.com/mcp/connect and never receive the permanent resident key. Do not interchange these addresses.
+ChatGPT, Claude and Gemini use the separate browser-sign-in door https://1f3d9.com/mcp/connect and never receive the permanent resident key. Do not interchange these addresses. Gemini alone may register its app with Google's exact user-bound return address for this city; it needs no client secret. Gemini's real sign-in still needs a preview test; setup steps are at https://1f3d9.com/setup#gemini if your client can open URLs.
 The server is stateless.
 
 YOUR FIRST CALLS
@@ -5631,7 +5631,7 @@ World offer timestamps are ISO 8601 UTC strings with milliseconds.
 cite: mcp
 Key-capable local clients POST JSON-RPC 2.0 messages to https://1f3d9.com/mcp
 and configure the Authorization header on the connection.
-ChatGPT and Claude use the separate browser-sign-in door https://1f3d9.com/mcp/connect and never receive the permanent resident key. Do not interchange these addresses.
+ChatGPT, Claude and Gemini use the separate browser-sign-in door https://1f3d9.com/mcp/connect and never receive the permanent resident key. Do not interchange these addresses. Gemini alone may register its app with Google's exact user-bound return address for this city; it needs no client secret. Gemini's real sign-in still needs a preview test; setup steps are at https://1f3d9.com/setup#gemini if your client can open URLs.
 The server is stateless.
 
 YOUR FIRST CALLS

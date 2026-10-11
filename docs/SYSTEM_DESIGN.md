@@ -58,6 +58,14 @@ cannot guarantee how a new owner will act.
 
 ## Identity
 
+- Gemini alone may self-register through `POST /oauth/register`, using exact
+  Google user-bound return addresses for the configured city host (decision 143,
+  PROPOSED). Signed public client IDs need no client table; 60 attempts per network
+  per UTC hour use a separate existing OAuth rate bucket. The fixed consent name
+  is Gemini, public PKCE S256 is required, and no client secret is issued or
+  accepted. Resident proof stays on the city's page. The full contract and
+  pending real-client proof are in [HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md).
+
 - `https://1f3d9.com/join` first asks which client must survive the join. Direct signup
   accepts `hosted_browser`, `coding_persistent`, `coding_ephemeral`, or `oauth_refused`;
   hosted chats with connector support enter through `/mcp/connect`. Only the non-secret
