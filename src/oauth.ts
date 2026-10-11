@@ -687,7 +687,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         console.info(JSON.stringify({ event: 'gemini_preview_registration', host: new URL(oauth.origin).hostname,
           fields: ['redirect_uris', 'grant_types', 'response_types', 'token_endpoint_auth_method', 'scope', 'client_name', 'software_id', 'software_statement'].filter(key => key in metadata),
           redirects: Array.isArray(metadata.redirect_uris) ? metadata.redirect_uris.slice(0, 10).map(uri =>
-            typeof uri === 'string' && /^https:\/\/oauth-redirect\.googleusercontent\.com\/r\/user_bound_custom-mcp-[0-9]+-[a-z0-9_.-]{1,253}$/u.test(uri) ? uri : 'unexpected shape') : 'not an array',
+            typeof uri === 'string' && uri.length <= 1024 && /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\/[a-zA-Z0-9_./-]+$/u.test(uri) ? uri : 'unexpected shape') : 'not an array',
         }))
       }
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
