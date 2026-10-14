@@ -165,3 +165,42 @@ test('the window shows the running announcement only between its start and end',
   setSeasonClockForTests(() => Date.parse('2026-10-13T23:59:59Z'))
   assert.doesNotMatch(await (await page('/window')).text(), /data-announcement=/u)
 })
+
+// How long after a UTC midnight a cache may still hand out the previous day's
+// stamped look: the shared cache's fresh life plus its stale-while-revalidate
+// window, or the browser's own max-age if that is longer. no-store is zero.
+function staleSecondsAfterMidnight(cacheControl: string | null): number {
+  const value = cacheControl ?? ''
+  if (/\b(?:no-store|no-cache|private)\b/u.test(value)) return 0
+  const read = (name: string): number | null => {
+    const match = new RegExp(String.raw`(?:^|[,\s])${name}=(\d+)`, 'u').exec(value)
+    return match ? Number(match[1]) : null
+  }
+  const maxAge = read('max-age') ?? 0
+  const shared = (read('s-maxage') ?? maxAge) + (read('stale-while-revalidate') ?? 0)
+  return Math.max(shared, maxAge)
+}
+
+const PAGE_STALE_MINUTES = 16
+const SEASON_API_STALE_MINUTES = 6
+
+test('no cached page can keep the previous day\'s look longer than SEASONS.md says, so a quiet day is never dressed for hours', async () => {
+  onDay('2027-10-11')
+  for (const [path] of PAGES) {
+    const cacheControl = (await page(path)).headers.get('cache-control')
+    assert.ok(staleSecondsAfterMidnight(cacheControl) <= PAGE_STALE_MINUTES * 60, `${path} ${cacheControl}`)
+  }
+  const api = (await app.request('/api/season')).headers.get('cache-control')
+  const apiStale = staleSecondsAfterMidnight(api)
+  assert.ok(apiStale <= SEASON_API_STALE_MINUTES * 60, `/api/season ${api}`)
+  // The open window retries /api/season after midnight; its last try must land
+  // after the longest stale answer the cache can give.
+  const { PART_48_SEASON } = await import('../src/window-client/program/48-season.ts')
+  const retryMs = Number(/SEASON_RETRY_MS = (\d+) \* (\d+) \* (\d+)/u.exec(PART_48_SEASON)!.slice(1).reduce((a, b) => String(Number(a) * Number(b))))
+  const tries = Number(/SEASON_TRIES_PER_DAY = (\d+)/u.exec(PART_48_SEASON)![1])
+  assert.ok((tries - 1) * retryMs >= apiStale * 1000, `window tries ${tries} every ${retryMs}ms against ${apiStale}s`)
+  const { readFile } = await import('node:fs/promises')
+  const doc = (await readFile(new URL('../docs/features/SEASONS.md', import.meta.url), 'utf8')).replace(/\s+/gu, ' ')
+  assert.ok(doc.includes(`up to about ${PAGE_STALE_MINUTES} minutes`), 'SEASONS.md states the page bound')
+  assert.ok(doc.includes(`up to about ${SEASON_API_STALE_MINUTES} minutes`), 'SEASONS.md states the /api/season bound')
+})

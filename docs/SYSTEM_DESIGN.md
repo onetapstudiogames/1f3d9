@@ -1570,7 +1570,7 @@ GET  /changelog.txt         the exact same checked-in CHANGELOG.md content, as p
 GET  /api/changelog        the same entries as JSON, one bullet per entry with an id from the embed ledger (never reused; kept when the text is unchanged, even across a date or category move, and when it is reworded in place while nothing else in its date and category is added or removed in the same change; otherwise the reworded entry gets a new id and the old id answers 404), newest id first; before_id, after_id, and limit page it (default 10, 1..200); also deployment_commit, text_sha256 of the /changelog.txt bytes, and newest_id
 GET  /api/changelog/:id    one changelog entry by id with the serving deployment_commit and text_sha256; 400 for a malformed id, 404 for an unknown or retired one
 GET  /window                read-only human observatory, with a reciprocal Tools link
-GET  /api/season            the day's season, holidays, palette tokens, stylesheet, icon, and slogan words by the UTC date (decision #144, docs/features/SEASONS.md); no query options; cached up to 5 minutes
+GET  /api/season            the day's season, holidays, palette tokens, stylesheet, icon, and slogan words by the UTC date (decision #144, docs/features/SEASONS.md); no query options; cached up to about 6 minutes
 GET  /season/:file          content-hashed season stylesheets, dressed icons (/season/icon/:file), and slogan word images (/season/word/:file); immutable; anything else 404
 GET  /join                  private signup/progress; choose a client path or resume the session
 POST /join                  stage hashes, confirm idempotently by exact key re-entry, or cancel

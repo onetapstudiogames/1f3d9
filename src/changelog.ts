@@ -185,7 +185,7 @@ const CHANGELOG_CSP = [
   "manifest-src 'none'",
 ].join('; ')
 
-const CHANGELOG_CACHE_CONTROL = 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400'
+const CHANGELOG_CACHE_CONTROL = 'public, max-age=300, s-maxage=900, stale-while-revalidate=60'
 
 function changelogHeaders(c: Context): void {
   c.header('Cache-Control', CHANGELOG_CACHE_CONTROL)

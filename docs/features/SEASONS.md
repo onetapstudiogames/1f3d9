@@ -70,15 +70,18 @@ each Easter), Ashura (10 Muharram).
 The server's UTC date decides, through `src/season/clock.ts`. Each page is stamped as it
 is sent (`src/season/stamp.ts`), so pages that run no scripts wear the day too. Pages
 served with `no-store` change exactly at midnight UTC. The guide pages and `/changelog`
-are cached for up to 15 minutes at the edge, so for a short while after midnight a visitor
-can still see the previous day's theme; this is accepted rather than shortening their
-caches. The window, left open across midnight, reads `GET /api/season` after its next
-city refresh and swaps the palette, icon and slogan in place.
+are cached for 15 minutes at the edge and may be served stale for one more minute while
+the edge refreshes them, so for up to about 16 minutes after midnight a visitor can still
+see the previous day's theme, and never longer (`test/season-pages.test.ts` checks every
+page's cache header against this). The window page itself is held for at most 6 minutes.
+The window, left open across midnight, reads `GET /api/season` after its next city refresh
+and swaps the palette, icon and slogan in place, trying again every 5 minutes up to four
+times until the answer carries the new date.
 
 `GET /api/season` returns the day as JSON: date, season, holidays with counts, quiet days,
 every palette family's tokens, the stylesheet, icon and word image URLs, and the slogan as
-text and parts. It is cached for up to 5 minutes and readable from any origin, for the
-`/live/` view. The files under `/season/` are content-hashed and cached for a year:
+text and parts. It is cached for up to about 6 minutes (5 fresh and one more while it
+refreshes) and readable from any origin, for the `/live/` view. The files under `/season/` are content-hashed and cached for a year:
 `/season/<season>-<family>.<hash>.css`, `/season/icon/<holidays>.<hash>.svg` (drawn on
 demand) and `/season/word/<word>.<hash>.svg`.
 

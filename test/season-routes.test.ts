@@ -20,7 +20,7 @@ async function seasonFor(date: string): Promise<{ response: Response; body: Reco
 test('GET /api/season answers today\'s theme by the UTC date, with a short shared cache', async () => {
   const { response, body } = await seasonFor('2027-12-25')
   assert.equal(response.status, 200)
-  assert.equal(response.headers.get('cache-control'), 'public, max-age=60, s-maxage=300, stale-while-revalidate=600')
+  assert.equal(response.headers.get('cache-control'), 'public, max-age=60, s-maxage=300, stale-while-revalidate=60')
   assert.equal(response.headers.get('access-control-allow-origin'), '*')
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   assert.equal(body.date, '2027-12-25')

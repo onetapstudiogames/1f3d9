@@ -31,7 +31,7 @@ const QUIET_NAMES: Readonly<Record<QuietKey, string>> = Object.freeze({
   ashura: 'Ashura',
 })
 
-const SEASON_CACHE = 'public, max-age=60, s-maxage=300, stale-while-revalidate=600'
+const SEASON_CACHE = 'public, max-age=60, s-maxage=300, stale-while-revalidate=60'
 const ASSET_CACHE = 'public, max-age=31536000, immutable'
 const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'"
 const HASHED_FILE = /^([a-z0-9+]+)\.([0-9a-f]{10})\.svg$/u
