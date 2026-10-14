@@ -17,6 +17,11 @@ export const WINDOW_CSS = `:root {
   --focus: #fff19b;
   --focus-dark: #092d22;
   --cursor-tint: #d7e5dc;
+  --glow: #315447;
+  --edge: #061e17;
+  --sign-strip: #1c5a45;
+  --search-panel: #183a30;
+  --filter-panel: #102c23;
   --content: 82rem;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -31,7 +36,7 @@ body {
   background:
     linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    radial-gradient(circle at 50% -8rem, #315447 0, var(--night-soft) 26rem, var(--night) 54rem);
+    radial-gradient(circle at 50% -8rem, var(--glow) 0, var(--night-soft) 26rem, var(--night) 54rem);
   background-size: 2.2rem 2.2rem, 2.2rem 2.2rem, auto;
 }
 a { color: inherit; text-underline-offset: 0.22em; }
@@ -61,7 +66,7 @@ button { color: inherit; }
   margin-block-start: 1.35rem;
   color: #fffdf3;
   background: var(--forest);
-  border: 4px solid #061e17;
+  border: 4px solid var(--edge);
   box-shadow: 11px 11px 0 rgba(0, 0, 0, 0.46);
   animation: instrument-on 280ms ease-out both;
 }
@@ -96,6 +101,24 @@ button { color: inherit; }
   font-size: clamp(1.9rem, 5vw, 4.55rem);
   line-height: 0.86;
 }
+/* The skyline icon and slogan line, like the guide masthead (src/season/). */
+.city-mark { flex-wrap: wrap; }
+.city-icon {
+  flex: none;
+  align-self: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 0.8rem;
+}
+.city-slogan {
+  flex-basis: 100%;
+  margin-top: -0.3rem;
+  color: var(--sky);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  line-height: 1.65;
+  text-transform: uppercase;
+}
 .watch-state {
   display: grid;
   align-content: center;
@@ -103,7 +126,7 @@ button { color: inherit; }
   padding: 1rem 1.25rem;
   color: var(--ink);
   background: var(--signal);
-  border-inline-start: 4px solid #061e17;
+  border-inline-start: 4px solid var(--edge);
   font-size: 0.75rem;
   line-height: 1.45;
 }
@@ -180,7 +203,7 @@ button { color: inherit; }
   color: #f5efe0;
   background: var(--forest);
 }
-.city-sign > .free-credit-line { background: #1c5a45; font-weight: 700; }
+.city-sign > .free-credit-line { background: var(--sign-strip); font-weight: 700; }
 @media (max-width: 400px) {
   /* At 320 wide the sign's name does not fit beside the code; let it drop a line instead of widening the page. */
   .city-mark { flex-wrap: wrap; row-gap: 0.35rem; }
@@ -195,7 +218,7 @@ button { color: inherit; }
   padding: 0.68rem clamp(1rem, 3vw, 1.65rem);
   color: var(--ink);
   background: var(--paper-light);
-  border-top: 4px solid #061e17;
+  border-top: 4px solid var(--edge);
   font-size: 0.72rem;
   font-weight: 800;
 }
@@ -242,6 +265,76 @@ button { color: inherit; }
   .owner-notice { border-color: CanvasText; box-shadow: none; }
 }
 
+/* A one-time announcement from the owner (src/window-client/announcement.ts). */
+.announcement-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(6, 18, 15, 0.72);
+}
+.announcement {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 32rem);
+  max-height: min(90dvh, 40rem);
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 3px solid var(--ink);
+  box-shadow: 8px 8px 0 var(--signal);
+}
+.announcement:focus { outline: none; }
+.announcement:focus-visible, .announcement-body:focus-visible { outline: 3px solid var(--focus-dark); outline-offset: -3px; }
+.announcement h2 {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  color: #fffdf3;
+  background: var(--forest);
+  border-bottom: 3px solid var(--ink);
+  font: 900 clamp(1.15rem, 3.5vw, 1.45rem)/1.15 "Arial Narrow", "Aptos Narrow", "Roboto Condensed", system-ui, sans-serif;
+  text-transform: uppercase;
+}
+.announcement-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.9rem 1rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.announcement-body p { margin: 0 0 0.7rem; }
+.announcement-body ul { margin: 0 0 0.7rem; padding-inline-start: 1.2rem; }
+.announcement-body li + li { margin-top: 0.3rem; }
+.announcement-body a { color: var(--brick-deep); font-weight: 800; }
+.announcement-footer {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.75rem 1rem;
+  background: var(--paper);
+  border-top: 3px solid var(--ink);
+}
+.announcement-ok {
+  min-height: 2.75rem;
+  padding: 0.6rem 1.2rem;
+  color: var(--ink);
+  background: var(--signal);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  cursor: pointer;
+  font: 900 0.95rem/1 system-ui, sans-serif;
+}
+.announcement-ok:hover { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
+.announcement-ok:focus-visible { outline: 3px solid var(--focus-dark); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .announcement-ok:hover { transform: none; }
+}
+@media (forced-colors: active) {
+  .announcement { border-color: CanvasText; box-shadow: none; }
+}
+
 .view-console {
   position: relative;
   z-index: 2;
@@ -283,7 +376,7 @@ button { color: inherit; }
   display: grid;
   gap: 0.24rem;
   padding: 0.62rem 0.68rem 0.7rem;
-  background: #183a30;
+  background: var(--search-panel);
   border-block-start: 3px solid var(--line);
 }
 .directory-search-field > label, .view-filters label > span {
@@ -355,7 +448,7 @@ button { color: inherit; }
   position: relative;
   display: flex;
   align-items: stretch;
-  background: #102c23;
+  background: var(--filter-panel);
 }
 .view-picker-row > .view-filters { flex: 1; min-width: 0; }
 .city-facts { flex: 0 0 auto; align-self: center; margin: 0.42rem 0.65rem; }
@@ -387,7 +480,7 @@ button { color: inherit; }
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  background: #102c23;
+  background: var(--filter-panel);
   border-block-start: 3px solid var(--line);
 }
 .view-filters > label {
@@ -1620,7 +1713,7 @@ button { color: inherit; }
 }
 @media (max-width: 40rem) {
   .city-sign { grid-template-columns: 1fr; }
-  .watch-state { border-block-start: 3px solid #061e17; border-inline-start: 0; }
+  .watch-state { border-block-start: 3px solid var(--edge); border-inline-start: 0; }
   .view-filters { display: grid; grid-template-columns: 1fr; }
   .view-picker-row { flex-wrap: wrap; }
   .view-picker-row > .view-filters { flex-basis: 100%; }

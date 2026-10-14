@@ -1,4 +1,5 @@
 import type { Context } from 'hono'
+import { stampSeason } from './season/stamp.ts'
 
 const GUIDE_CSP = [
   "default-src 'none'",
@@ -15,7 +16,7 @@ const GUIDE_CSP = [
 ].join('; ')
 
 export function guideHeaders(c: Context): void {
-  c.header('Cache-Control', 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400')
+  c.header('Cache-Control', 'public, max-age=300, s-maxage=900, stale-while-revalidate=60')
   c.header('Content-Security-Policy', GUIDE_CSP)
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('Referrer-Policy', 'no-referrer')
@@ -33,5 +34,5 @@ export function guidePage(
 ): Response {
   guideHeaders(c)
   if (options.cacheControl) c.header('Cache-Control', options.cacheControl)
-  return c.html(html)
+  return c.html(stampSeason(html, 'paper'))
 }

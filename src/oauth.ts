@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { FORM_BASE_CSS, FORM_TOKENS_CSS } from './season/form-palette.ts'
+import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
   inspectBrowserSessionCookie,
@@ -184,8 +186,9 @@ function page(title: string, body: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escapeHtml(title)} · 1F3D9</title><style>
-:root{color-scheme:dark}body{max-width:42rem;margin:3rem auto;padding:0 1.2rem;background:#0d1117;color:#e6edf3;font:17px/1.55 system-ui,sans-serif}main{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:1.4rem}h1{line-height:1.15}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:#0d1117;color:#e6edf3;border:1px solid #59636e;border-radius:7px}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:#f4a261;color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:1rem;background:#0d1117;border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}fieldset{border:0;padding:0;margin:0 0 1.6rem}
-</style></head><body><main>${body}</main></body></html>`
+${FORM_TOKENS_CSS}${FORM_BASE_CSS}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--field-border);border-radius:7px}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:var(--accent);color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:1rem;background:var(--bg);border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}fieldset{border:0;padding:0;margin:0 0 1.6rem}
+/* season:style */
+</style><!-- season:head --></head><body><main>${body}</main></body></html>`
 }
 
 function html(
@@ -197,7 +200,7 @@ function html(
   referrerPolicy: 'same-origin' | 'no-referrer' = 'same-origin',
 ) {
   privateHeaders(c, true, callbackOrigin, referrerPolicy)
-  return c.html(page(title, body), status)
+  return c.html(stampSeason(page(title, body), 'form'), status)
 }
 
 /**

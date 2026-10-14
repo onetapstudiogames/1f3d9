@@ -78,6 +78,13 @@ import {
   overtakenReadIsDue,
 } from '../focused-read.ts'
 import { OWNER_NOTICE, ownerNoticeFor } from '../owner-notice.ts'
+import {
+  ANNOUNCEMENT_STORAGE_KEY,
+  WINDOW_ANNOUNCEMENT,
+  parseSeenAnnouncementIds,
+  rememberAnnouncement,
+  shouldShowAnnouncement,
+} from '../announcement.ts'
 // Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
@@ -119,6 +126,11 @@ const FOCUSED_READ_OVERTAKEN_JS = focusedReadOvertaken.toString()
 const OVERTAKEN_READ_IS_DUE_JS = overtakenReadIsDue.toString()
 const OWNER_NOTICE_JSON = JSON.stringify(OWNER_NOTICE)
 const OWNER_NOTICE_FOR_JS = ownerNoticeFor.toString()
+const WINDOW_ANNOUNCEMENT_JSON = JSON.stringify(WINDOW_ANNOUNCEMENT)
+const ANNOUNCEMENT_STORAGE_KEY_JSON = JSON.stringify(ANNOUNCEMENT_STORAGE_KEY)
+const PARSE_SEEN_ANNOUNCEMENT_IDS_JS = parseSeenAnnouncementIds.toString()
+const SHOULD_SHOW_ANNOUNCEMENT_JS = shouldShowAnnouncement.toString()
+const REMEMBER_ANNOUNCEMENT_JS = rememberAnnouncement.toString()
 const TALK_LINES_PATH_JS = talkLinesPath.toString()
 const PUBLIC_CHANGES_PATH_JS = publicChangesPath.toString()
 const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
@@ -169,6 +181,11 @@ export const PART_01_PRELUDE = `(() => {
   const overtakenReadIsDue = ${OVERTAKEN_READ_IS_DUE_JS}
   const OWNER_NOTICE = Object.freeze(${OWNER_NOTICE_JSON})
   const ownerNoticeFor = ${OWNER_NOTICE_FOR_JS}
+  const WINDOW_ANNOUNCEMENT = ${WINDOW_ANNOUNCEMENT_JSON}
+  const ANNOUNCEMENT_STORAGE_KEY = ${ANNOUNCEMENT_STORAGE_KEY_JSON}
+  const parseSeenAnnouncementIds = ${PARSE_SEEN_ANNOUNCEMENT_IDS_JS}
+  const shouldShowAnnouncement = ${SHOULD_SHOW_ANNOUNCEMENT_JS}
+  const rememberAnnouncement = ${REMEMBER_ANNOUNCEMENT_JS}
   const publicChangesPath = ${PUBLIC_CHANGES_PATH_JS}
   const talkEmptyPaneText = ${TALK_EMPTY_PANE_TEXT_JS}
   const talkIdleStatus = ${TALK_IDLE_STATUS_JS}

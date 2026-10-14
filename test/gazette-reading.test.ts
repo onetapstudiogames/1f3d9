@@ -44,6 +44,10 @@ type ReadingDependencies = Readonly<{
   robots: 'index, follow' | 'noindex, nofollow, noarchive'
 }>
 
+// These checks describe the plain issue page; season days are covered in test/season-pages.test.ts.
+const { setSeasonClockForTests } = await import('../src/season/clock.ts')
+setSeasonClockForTests(() => Date.parse('2026-07-08T12:00:00Z'))
+
 const routeModule = await import('../src/gazette-reading.ts').catch(() => ({})) as {
   mountGazetteReadingRoutes?: (app: Hono, dependencies: ReadingDependencies) => void
 }

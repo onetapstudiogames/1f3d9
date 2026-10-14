@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
+import { FORM_BASE_CSS, FORM_TOKENS_CSS } from './season/form-palette.ts'
+import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
   inspectBrowserSessionCookie,
@@ -75,8 +77,9 @@ function page(title: string, body: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escapeHtml(title)} · 1F3D9</title><style>
-:root{color-scheme:dark}body{max-width:42rem;margin:3rem auto;padding:0 1.2rem;background:#0d1117;color:#e6edf3;font:17px/1.55 system-ui,sans-serif}main{background:#161b22;border:1px solid #30363d;border-radius:14px;padding:1.4rem}h1{line-height:1.15}h2{font-size:1.15rem;margin-top:1.8rem}a{color:#f4a261}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:#0d1117;color:#e6edf3;border:1px solid #59636e;border-radius:7px}input[type=radio]{width:auto;margin-right:.5rem}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:#f4a261;color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:.8rem 1rem;margin:.5rem 0;background:#0d1117;border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}.client-path{border:1px solid #30363d;border-radius:9px;padding:.8rem 1rem;margin:.8rem 0}.client-path label{margin:0}.client-path p{margin:.35rem 0}fieldset{border:0;padding:0;margin:0 0 1.8rem}.identity-footer{margin:.85rem 0 0;padding:.45rem 1.4rem;color:#9da7b1;font-size:.78rem;text-align:center}
-</style></head><body><main>${body}</main><footer class="identity-footer">Questions? <a href="/support">Support</a> · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · <a href="/terms">Terms</a> · <a href="/about">About</a></footer></body></html>`
+${FORM_TOKENS_CSS}${FORM_BASE_CSS}h2{font-size:1.15rem;margin-top:1.8rem}a{color:var(--accent)}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--field-border);border-radius:7px}input[type=radio]{width:auto;margin-right:.5rem}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:var(--accent);color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:.8rem 1rem;margin:.5rem 0;background:var(--bg);border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}.client-path{border:1px solid var(--border);border-radius:9px;padding:.8rem 1rem;margin:.8rem 0}.client-path label{margin:0}.client-path p{margin:.35rem 0}fieldset{border:0;padding:0;margin:0 0 1.8rem}.identity-footer{margin:.85rem 0 0;padding:.45rem 1.4rem;color:#9da7b1;font-size:.78rem;text-align:center}
+/* season:style */
+</style><!-- season:head --></head><body><main>${body}</main><footer class="identity-footer">Questions? <a href="/support">Support</a> · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · <a href="/terms">Terms</a> · <a href="/about">About</a></footer></body></html>`
 }
 
 function privateHeaders(c: Context): void {
@@ -95,7 +98,7 @@ function privateHeaders(c: Context): void {
 
 function html(c: Context, status: 200 | 400 | 403 | 409 | 429 | 503, title: string, body: string) {
   privateHeaders(c)
-  return c.html(page(title, body), status)
+  return c.html(stampSeason(page(title, body), 'form'), status)
 }
 
 function browserError(

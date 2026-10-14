@@ -1,0 +1,293 @@
+{
+  "generator": "scripts/build-season-words.mjs",
+  "fontsCommit": "66928797f271fed5ee428544e7229685e2d90127",
+  "unitsPerEm": 24,
+  "words": {
+    "spooky": {
+      "word": "spooky",
+      "file": "spooky.svg",
+      "width": 93.75,
+      "height": 31.37,
+      "baseline": 25.88,
+      "family": "Creepster",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "b18b9a7aef27bbe6236e4b64e11c3274d8ffdbab6a37c52f7750ca50f6b26d89"
+    },
+    "harvest": {
+      "word": "cozy",
+      "file": "harvest.svg",
+      "width": 59.24,
+      "height": 30.8,
+      "baseline": 18.31,
+      "family": "Caveat Brush",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "44543faca46f77e6c930087b85cd6df4f8edf5305227c6dd941ea85943f38bbf"
+    },
+    "winter": {
+      "word": "glowing",
+      "file": "winter.svg",
+      "width": 140.41,
+      "height": 40.46,
+      "baseline": 30.81,
+      "family": "Snowburst One",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "2e1e9cca46c87e18aafe82b6f0a9c1c092d20ce509d7c08afca8770e3a04e096"
+    },
+    "christmas": {
+      "word": "jolly",
+      "file": "christmas.svg",
+      "width": 66.05,
+      "height": 46.08,
+      "baseline": 30.43,
+      "family": "Mountains of Christmas",
+      "weight": 700,
+      "licence": "Apache-2.0",
+      "sha256": "92af2dd73810db09c444eaa2ff766ea847a585d37b4e027ba010dabd194b94cf"
+    },
+    "hanukkah": {
+      "word": "candlelit",
+      "file": "hanukkah.svg",
+      "width": 143.37,
+      "height": 31.89,
+      "baseline": 27.43,
+      "family": "Suez One",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "9f51f6db0d3a62d279b4c41200baaf1eeca958a99a70bb2f9c335526aa611d2a"
+    },
+    "kwanzaa": {
+      "word": "united",
+      "file": "kwanzaa.svg",
+      "width": 136.86,
+      "height": 29.84,
+      "baseline": 25.33,
+      "family": "Bungee",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "8e47ff52da05f8f4bfce62d13a38b08729193a5aa46fb1568dd3657970faf38f"
+    },
+    "diwali": {
+      "word": "lamp-lit",
+      "file": "diwali.svg",
+      "width": 122.38,
+      "height": 37.26,
+      "baseline": 25,
+      "family": "Yatra One",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "f3ce593ac45712e1c8c5556541f0b3999e0dff2d2fa7721a21d21ceae4a1bb26"
+    },
+    "newyear": {
+      "word": "sparkling",
+      "file": "newyear.svg",
+      "width": 213.48,
+      "height": 31.09,
+      "baseline": 25.92,
+      "family": "Monoton",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "652de382b41afd24e559a26d01cabcfca631ecf69e9a13877c2b259b51aa2a8e"
+    },
+    "lny": {
+      "word": "lantern-lit",
+      "file": "lny.svg",
+      "width": 145.25,
+      "height": 35.29,
+      "baseline": 28.89,
+      "family": "Kaushan Script",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "e680e1fa74226844f69c4ee0107067aa85bb173f28121b3200b7af0e5976c444"
+    },
+    "valentine": {
+      "word": "lovely",
+      "file": "valentine.svg",
+      "width": 77.83,
+      "height": 45.23,
+      "baseline": 27.66,
+      "family": "Great Vibes",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "58b1e6e49d93910c71f12c0b86b43e1e8f7d420813b3b32cc150ce64d0144e24"
+    },
+    "holi": {
+      "word": "colorful",
+      "file": "holi.svg",
+      "width": 120.37,
+      "height": 28.55,
+      "baseline": 24,
+      "family": "Baloo 2",
+      "weight": 800,
+      "licence": "OFL-1.1",
+      "sha256": "5d096274991c41e0deb37e17420e3897dad3cc93094e84fa9e9d2648091f5bfa"
+    },
+    "nowruz": {
+      "word": "new-day",
+      "file": "nowruz.svg",
+      "width": 124.48,
+      "height": 31.53,
+      "baseline": 21.67,
+      "family": "Lalezar",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "9eca6bbd33774e3a0d46e5b305546d9fbcb8587a269f75199788f630b58856a2"
+    },
+    "fitr": {
+      "word": "joyful",
+      "file": "fitr.svg",
+      "width": 90.14,
+      "height": 38.43,
+      "baseline": 27.56,
+      "family": "Reem Kufi",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "4da857656fb7cb0e10a74ce57828a0caa3d5bb06348ae8bc8891b9d6ee2eb379"
+    },
+    "adha": {
+      "word": "generous",
+      "file": "adha.svg",
+      "width": 143.47,
+      "height": 28.03,
+      "baseline": 16.87,
+      "family": "Reem Kufi",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "4b9aec81d79b26436d99f59d62e68af87a7711c61f62bfc0bf0ac973f3c8e18e"
+    },
+    "ramadan": {
+      "word": "moonlit",
+      "file": "ramadan.svg",
+      "width": 129.64,
+      "height": 29.03,
+      "baseline": 24.58,
+      "family": "Aref Ruqaa",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "d9cbffd4447f3e9b67c580368361b2cd3e07b816864082948690b5d61f6123e9"
+    },
+    "passover": {
+      "word": "springtime",
+      "file": "passover.svg",
+      "width": 167.23,
+      "height": 35.22,
+      "baseline": 24.32,
+      "family": "Frank Ruhl Libre",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "bca0d03714bb35e89a91fec2058d61e3ba573d5ab2ae7d44c9adc9d897a76b97"
+    },
+    "easter": {
+      "word": "blooming",
+      "file": "easter.svg",
+      "width": 122.6,
+      "height": 42.25,
+      "baseline": 27.92,
+      "family": "Dancing Script",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "1c7ca25b3234170706f7c3cdae695e814632364f9e31c6494901ce484c6e473e"
+    },
+    "oeaster": {
+      "word": "blooming",
+      "file": "oeaster.svg",
+      "width": 185.07,
+      "height": 29.84,
+      "baseline": 25.17,
+      "family": "Cinzel Decorative",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "dec152e63047c180ce4ad2334411ea5b7794b5719151b8351a8488df3e0c16cd"
+    },
+    "vesak": {
+      "word": "peaceful",
+      "file": "vesak.svg",
+      "width": 125.69,
+      "height": 38.03,
+      "baseline": 25.9,
+      "family": "Marcellus",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "d2116e09c4b648485888668f4aa05963e3086180bf10f9564011f2902bb54777"
+    },
+    "rosh": {
+      "word": "sweet",
+      "file": "rosh.svg",
+      "width": 86.63,
+      "height": 27.38,
+      "baseline": 22.96,
+      "family": "Frank Ruhl Libre",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "d4471447580ddb900f88802b649645271d270e9bb3857593afea8069cfc2016b"
+    },
+    "thanks": {
+      "word": "thankful",
+      "file": "thanks.svg",
+      "width": 104.97,
+      "height": 33.09,
+      "baseline": 28.04,
+      "family": "Amatic SC",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "d60503f32e9827090defd0daa170f280055f74c866db04135ec93f2947049a55"
+    },
+    "muertos": {
+      "word": "remembering",
+      "file": "muertos.svg",
+      "width": 207.79,
+      "height": 40.3,
+      "baseline": 29.75,
+      "family": "Sancreek",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "163d6276c2d67cc7e1cc6d84da31da8d09a6dc2e4a8e1e0547fb3c530857e247"
+    },
+    "decsol": {
+      "word": "starlit",
+      "file": "decsol.svg",
+      "width": 128.44,
+      "height": 26.77,
+      "baseline": 22.31,
+      "family": "Cinzel",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "e682144013b524f644f0cd5de63854a3fe7a72e437447b73bdfd1f1ad6f68010"
+    },
+    "junsol": {
+      "word": "sunlit",
+      "file": "junsol.svg",
+      "width": 87.05,
+      "height": 30.77,
+      "baseline": 26.43,
+      "family": "Righteous",
+      "weight": 400,
+      "licence": "OFL-1.1",
+      "sha256": "dc5e604239c3f56a531c303aaa0747502d480d8751d33d62f73b6e314ef4372e"
+    },
+    "equinox": {
+      "word": "balanced",
+      "file": "equinox.svg",
+      "width": 143.47,
+      "height": 31.98,
+      "baseline": 27.56,
+      "family": "Josefin Sans",
+      "weight": 700,
+      "licence": "OFL-1.1",
+      "sha256": "7e3361a8342ae331f5166ed257a2e6fc84c20bc23c213f096291950c98d3e860"
+    },
+    "birthday": {
+      "word": "birthday",
+      "file": "birthday.svg",
+      "width": 118.67,
+      "height": 40.58,
+      "baseline": 27.34,
+      "family": "Chewy",
+      "weight": 400,
+      "licence": "Apache-2.0",
+      "sha256": "b9ee0240d726f1aba59ec70fb33bf2d2d167b630ede3680111f35911cca18748"
+    }
+  }
+}

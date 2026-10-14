@@ -10,6 +10,7 @@ import {
   parsePublicRangeStart,
 } from './public-pagination.ts'
 import { publicDeploymentCommit } from './public-reference-facts.ts'
+import { stampSeason } from './season/stamp.ts'
 
 /**
  * The plain-language changelog at the repository root (CHANGELOG.md) is the
@@ -184,7 +185,7 @@ const CHANGELOG_CSP = [
   "manifest-src 'none'",
 ].join('; ')
 
-const CHANGELOG_CACHE_CONTROL = 'public, max-age=300, s-maxage=900, stale-while-revalidate=86400'
+const CHANGELOG_CACHE_CONTROL = 'public, max-age=300, s-maxage=900, stale-while-revalidate=60'
 
 function changelogHeaders(c: Context): void {
   c.header('Cache-Control', CHANGELOG_CACHE_CONTROL)
@@ -215,7 +216,7 @@ function changelogDeployFacts(): { deployment_commit: string | null; text_sha256
 export function mountChangelogRoutes(app: Hono): void {
   app.get('/changelog', c => {
     changelogHeaders(c)
-    return c.html(CHANGELOG_HTML)
+    return c.html(stampSeason(CHANGELOG_HTML, 'paper'))
   })
   app.get('/changelog.txt', c => {
     changelogHeaders(c)
