@@ -183,6 +183,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       settleOvertakenFocusedPlaces()
       scheduleRefresh(nextDelay)
       renderOwnerNotice()
+      void refreshSeasonIfDayChanged()
     }
   }
 

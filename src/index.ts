@@ -102,6 +102,7 @@ import { mountHumanPages } from './human-pages.ts'
 import { guidePage } from './human-guide-response.ts'
 import { prefersHtml } from './http-accept.ts'
 import { treasuryDocument, type TreasuryPageData } from './treasury-page.ts'
+import { mountSeasonRoutes } from './season/routes.ts'
 import {
   CHANGELOG_ENTRIES,
   countChangelogUpdatesSince,
@@ -676,6 +677,7 @@ mountCityHelpRoute(app)
 mountCityToolCatalogRoute(app, CITY_PUBLIC_TOOL_CATALOG)
 mountChangelogRoutes(app)
 mountLegalRoutes(app)
+mountSeasonRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
   c.header('Cache-Control', 'no-store')

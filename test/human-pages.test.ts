@@ -12,6 +12,9 @@ process.env.IDENTITY_RECOVERY_ENABLED = 'false'
 process.env.IDENTITY_ROTATION_ENABLED = 'false'
 
 const { default: app } = await import('../src/index.ts')
+// These checks describe the plain pages; season days are covered in test/season-pages.test.ts.
+const { setSeasonClockForTests } = await import('../src/season/clock.ts')
+setSeasonClockForTests(() => Date.parse('2026-07-08T12:00:00Z'))
 const { FRONTDOOR } = await import('../src/door.ts')
 const { hostedChatDiscovery } = await import('../src/hosted-chat-discovery.ts')
 const { mountHumanPages } = await import('../src/human-pages.ts')

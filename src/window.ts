@@ -79,6 +79,9 @@ import {
   type WindowShareDetail,
 } from './window-sharing.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
+import { seasonNowMs } from './season/clock.ts'
+import { stampSeason } from './season/stamp.ts'
+import { announcementIsActive, WINDOW_ANNOUNCEMENT } from './window-client/announcement.ts'
 
 const WINDOW_CSP = [
   "default-src 'none'",
@@ -1807,6 +1810,16 @@ async function readLiveWindowGazetteIssue(issueNumber: number): Promise<boolean>
   return rows[0].issue_exists
 }
 
+// The server decides by its UTC clock whether the owner's announcement runs;
+// the browser then shows it once (src/window-client/program/47-announcement.ts).
+function markActiveAnnouncement(html: string, nowMs: number): string {
+  if (WINDOW_ANNOUNCEMENT === null || !announcementIsActive(nowMs, WINDOW_ANNOUNCEMENT)) return html
+  return html.replace(
+    '<div id="announcement" class="announcement-backdrop" hidden>',
+    `<div id="announcement" class="announcement-backdrop" data-announcement="${WINDOW_ANNOUNCEMENT.id}" hidden>`,
+  )
+}
+
 export async function windowPage(
   c: Context,
   creditPurchasesReady = false,
@@ -1860,7 +1873,7 @@ export async function windowPage(
       )
     : WINDOW_HTML
   const html = renderWindowShareDocument(baseHtml, metadata)
-  return c.html(html, 200)
+  return c.html(stampSeason(markActiveAnnouncement(html, seasonNowMs()), 'window'), 200)
 }
 
 export function windowShareImage(c: Context, kind: WindowShareImageKind) {

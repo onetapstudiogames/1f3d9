@@ -34,7 +34,7 @@ excluded with a reason and their generic HTTP onError mapping where one exists.
 
 ## Runtime-dependent producer inventory
 
-At producer sites discovered by the rules above, the checker cannot statically resolve the 226 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
+At producer sites discovered by the rules above, the checker cannot statically resolve the 227 expressions below. They are listed manually and exact-set checked, so a new unresolved expression at one of those sites fails until reviewed.
 
 <!-- refusal-unresolved:begin -->
 - `src/actions.ts::result.error::1`
@@ -187,6 +187,7 @@ At producer sites discovered by the rules above, the checker cannot statically r
 - `src/room-talk-routes.ts::parsed.error::1`
 - `src/room-talk-routes.ts::rangeStart.error::1`
 - `src/room-talk-routes.ts::allowed.error::4`
+- `src/season/routes.ts::allowed.error::1`
 - `src/society.ts::allowed.error::1`
 - `src/society.ts::piece.error::1`
 - `src/society.ts::shaped.error::1`

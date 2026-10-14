@@ -21,6 +21,7 @@ import {
 import { GUIDE_CSS } from './guide-style.ts'
 import { guideDocument, SITE_ORIGIN } from './human-guide-document.ts'
 import { guideHeaders, guidePage } from './human-guide-response.ts'
+import { stampSeason } from './season/stamp.ts'
 import { STALE_TOOLS_FIX } from './tool-list-change.ts'
 import { CHATGPT_TOOL_STEPS } from './chatgpt-steps.ts'
 
@@ -55,7 +56,7 @@ const ABOUT_BODY = `<main id="main-content" class="guide-main">
       </div>
     </div>
     <figure class="city-seal">
-      <img src="/og-image.png" width="512" height="512" alt="A cream and stone city skyline on deep green.">
+      <img data-season-icon src="/og-image.png" width="512" height="512" alt="A cream and stone city skyline on deep green.">
       <figcaption>The cityscape icon is U+1F3D9 in Unicode.</figcaption>
     </figure>
   </section>
@@ -632,7 +633,7 @@ function toolsPage(
   notice: CommunityToolsPageNotice = null,
 ): Response {
   toolsHeaders(c)
-  return c.html(toolsDocument(state, csrf, notice), status)
+  return c.html(stampSeason(toolsDocument(state, csrf, notice), 'paper'), status)
 }
 
 function guideAssetHeaders(c: Context): void {

@@ -217,7 +217,10 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // The JSON changelog door adds GET /api/changelog and GET /api/changelog/:id.
   // Decision #141 adds the founder-only GET /api/founder/mcp-calls call log read.
   // The app door (decision 142) adds POST /mcp/app and GET /mcp/app.
-  assert.equal(http.registrations.length, 149)
+  // Seasons (decision 144) add GET /api/season, which refuses only an unknown
+  // query option, and the always-found-or-404 asset reads GET /season/:file,
+  // GET /season/icon/:file and GET /season/word/:file.
+  assert.equal(http.registrations.length, 153)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

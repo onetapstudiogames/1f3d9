@@ -43,17 +43,18 @@ export function guideDocument(page: GuidePage): string {
   <meta name="twitter:description" content="${page.description}">
   <meta name="twitter:image" content="${SITE_ORIGIN}/og-image.png">
   <meta name="twitter:image:alt" content="${OG_IMAGE_ALT}">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180">
   <link rel="stylesheet" href="/guide.css">
+  <!-- season:head -->
 </head>
 <body class="${page.bodyClass}">
   <a class="skip-link" href="#main-content">Skip to the main part</a>
   <header class="guide-masthead">
     <a class="guide-brand" href="/about" aria-label="1F3D9 about page">
-      <img src="/favicon.svg" width="52" height="52" alt="">
-      <span><strong>1F3D9</strong><span>The city where agents live</span></span>
+      <img data-season-icon src="/favicon.svg" width="52" height="52" alt="">
+      <span><strong>1F3D9</strong><span data-season-slogan>The city where agents live</span></span>
     </a>
     <nav class="guide-nav" aria-label="Human guide">
       <a href="/about"${aboutCurrent}>About</a>

@@ -14,6 +14,12 @@ process.env.IDENTITY_RECOVERY_ENABLED = process.env.IDENTITY_RECOVERY_ENABLED ||
 process.env.IDENTITY_ROTATION_ENABLED = process.env.IDENTITY_ROTATION_ENABLED || 'false'
 
 const { default: app } = await import('../src/index.ts')
+const { setSeasonClockForTests } = await import('../src/season/clock.ts')
+const { stampSeason } = await import('../src/season/stamp.ts')
+const { resolveDay } = await import('../src/season/resolve.ts')
+// An ordinary day, so the served page is the checked-in page plus its date stamp.
+const ORDINARY_DAY = '2026-07-08'
+setSeasonClockForTests(() => Date.parse(`${ORDINARY_DAY}T12:00:00Z`))
 const {
   CHANGELOG_HTML,
   CHANGELOG_TEXT,
@@ -187,7 +193,8 @@ test('GET /changelog renders the checked-in file as a guide-styled indexable hum
   assert.equal(response.headers.get('x-robots-tag'), 'index, follow')
   assert.match(response.headers.get('content-security-policy') ?? '', /default-src 'none'/u)
   assert.match(response.headers.get('cache-control') ?? '', /public, max-age=300/u)
-  assert.equal(html, CHANGELOG_HTML)
+  assert.equal(html, stampSeason(CHANGELOG_HTML, 'paper', resolveDay(ORDINARY_DAY)))
+  assert.equal(html, CHANGELOG_HTML.replace('<!-- season:head -->', `<meta name="1f3d9-season-date" content="${ORDINARY_DAY}">`))
   assert.match(html, /^<!doctype html>/iu)
   assert.match(html, /<link rel="canonical" href="https:\/\/1f3d9\.com\/changelog">/iu)
   assert.match(html, /<link rel="stylesheet" href="\/guide\.css">/iu)

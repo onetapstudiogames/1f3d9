@@ -18,6 +18,9 @@ import {
   renderCreditGiftRedirectPage,
 } from '../src/credit-gift-redirect.ts'
 import { mountGazetteReadingRoutes } from '../src/gazette-reading.ts'
+import { setSeasonClockForTests } from '../src/season/clock.ts'
+import { isDay } from '../src/season/dates.ts'
+import { mountSeasonRoutes } from '../src/season/routes.ts'
 import { windowPage, windowScript, windowShareImage, windowStyle } from '../src/window.ts'
 import type { WindowShareDetail } from '../src/window-sharing.ts'
 import { makeMemoryStore } from './helpers/oauth-test-server/memory-store.ts'
@@ -139,6 +142,20 @@ const submitCommunityToolForBrowserTest = async (
   communityToolWaitingCount += 1
   return { outcome: 'queued' as const }
 }
+
+// Browser tests run on a fixed ordinary day, so every page keeps its usual
+// colors and the window announcement stays closed. A test picks another UTC
+// day with POST /__e2e/season-date and resets it with { "date": null }.
+const E2E_SEASON_DATE = '2026-07-08'
+let seasonDate = E2E_SEASON_DATE
+setSeasonClockForTests(() => Date.parse(`${seasonDate}T12:00:00Z`))
+mountSeasonRoutes(app)
+app.post('/__e2e/season-date', async c => {
+  const body = await c.req.json() as { date?: unknown }
+  if (body.date !== null && !isDay(body.date)) return c.json({ ok: false }, 400)
+  seasonDate = body.date === null ? E2E_SEASON_DATE : body.date as string
+  return c.json({ ok: true, date: seasonDate })
+})
 
 const featureOffHumanPages = new Hono()
 mountHumanPages(featureOffHumanPages, {

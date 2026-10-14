@@ -10,6 +10,7 @@ import {
   parsePublicRangeStart,
 } from './public-pagination.ts'
 import { publicDeploymentCommit } from './public-reference-facts.ts'
+import { stampSeason } from './season/stamp.ts'
 
 /**
  * The plain-language changelog at the repository root (CHANGELOG.md) is the
@@ -215,7 +216,7 @@ function changelogDeployFacts(): { deployment_commit: string | null; text_sha256
 export function mountChangelogRoutes(app: Hono): void {
   app.get('/changelog', c => {
     changelogHeaders(c)
-    return c.html(CHANGELOG_HTML)
+    return c.html(stampSeason(CHANGELOG_HTML, 'paper'))
   })
   app.get('/changelog.txt', c => {
     changelogHeaders(c)

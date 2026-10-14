@@ -1,0 +1,30 @@
+{
+  "source": "https://raw.githubusercontent.com/google/fonts/66928797f271fed5ee428544e7229685e2d90127/",
+  "commit": "66928797f271fed5ee428544e7229685e2d90127",
+  "fonts": [
+    { "family": "Creepster", "path": "ofl/creepster/Creepster-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "402aeb734586c74aecd3dbdc454589b1fb12e2e1c71f782fd019ae68066d9f44" },
+    { "family": "Caveat Brush", "path": "ofl/caveatbrush/CaveatBrush-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "e565bd7bffd895ca64f8d1cb77c816b9b38d9c010246386a07c9648592f6f282" },
+    { "family": "Snowburst One", "path": "ofl/snowburstone/SnowburstOne-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "ede8110b5922b718c9b80717a4c5dcc2b4a862767d8319877983773c900bb00f" },
+    { "family": "Mountains of Christmas", "path": "apache/mountainsofchristmas/MountainsofChristmas-Bold.ttf", "licence": "Apache-2.0", "licenceFile": "LICENSE.txt", "sha256": "4c6126f43c650c81d236fd04ffc2fccbc3f37438c304cafad6894a835c2250ef" },
+    { "family": "Suez One", "path": "ofl/suezone/SuezOne-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "3ef86844aad0cf9db7dcbda326f3d2f54cc4ccfe56db949e9e0c60a17031bd41" },
+    { "family": "Bungee", "path": "ofl/bungee/Bungee-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "c4f5361ce120af3e6b9156d0bf379fa19cda2ea0cd18ac01fd99596c6bf66e3f" },
+    { "family": "Yatra One", "path": "ofl/yatraone/YatraOne-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "c47a94a4edf30f4eae0ca1c84777f4b70bc350221b6249de6b64fefdded2d3cd" },
+    { "family": "Monoton", "path": "ofl/monoton/Monoton-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "951c4cea65ffede784a7c9672feec5d329a7e1e12216c42d53ecf36c90d04dea" },
+    { "family": "Kaushan Script", "path": "ofl/kaushanscript/KaushanScript-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "6d8d379d9bba98178bee476d68114c8f83812c18005ecccf679e70f60e03d8f6" },
+    { "family": "Great Vibes", "path": "ofl/greatvibes/GreatVibes-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "8d509802186f1b51572531ecf313e8098f9a5bfdfaca93f0c9b34467f9982d15" },
+    { "family": "Baloo 2", "path": "ofl/baloo2/Baloo2[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "d47a6852548059b1db49a1319d06d499d546c3fa2237cf9eee9c43c8abb025c2" },
+    { "family": "Lalezar", "path": "ofl/lalezar/Lalezar-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "7b80807bc831f141de0f7dcf6816412bf0c548968d548c5156ca388733390ea9" },
+    { "family": "Reem Kufi", "path": "ofl/reemkufi/ReemKufi[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "33ead1986cd48c138c4d906c9e5a6341877268461f97623409a2014de1cd4aa4" },
+    { "family": "Aref Ruqaa", "path": "ofl/arefruqaa/ArefRuqaa-Bold.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "247071015b7eefd63f94d6e47949c5d10294ed31bd432f809ba9a219d93f91bb" },
+    { "family": "Frank Ruhl Libre", "path": "ofl/frankruhllibre/FrankRuhlLibre[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "f9bf26966681037aae894b031bd0dcf2c1bfdfa128dd0640cf276fe62a338a43" },
+    { "family": "Dancing Script", "path": "ofl/dancingscript/DancingScript[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "21808625578fe8d8cd10cb684be546dca077b27cd03a53a2f1ec11dc743c924c" },
+    { "family": "Cinzel Decorative", "path": "ofl/cinzeldecorative/CinzelDecorative-Bold.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "e854e68a388aa50d742a4415c1ae5c17a617ef7956c95a70021d0a4a44f20518" },
+    { "family": "Marcellus", "path": "ofl/marcellus/Marcellus-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "1cf0cd10b17d35e852729962cc1ffaffed94514895972458345e2df34abb2f81" },
+    { "family": "Amatic SC", "path": "ofl/amaticsc/AmaticSC-Bold.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "d367beadee66efbb657d24d3d8f30f3b60633e9d5c8ded7385541cf775cabb4d" },
+    { "family": "Sancreek", "path": "ofl/sancreek/Sancreek-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "8f87c42f6e6ba97125cd975c3d7d48902fc227d805948e678d5293a300e3fe55" },
+    { "family": "Cinzel", "path": "ofl/cinzel/Cinzel[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "f4d83d34d1f6c741193e4acf4b3dff9531e5a67b6aa65228d00a7db72a4e0f34" },
+    { "family": "Righteous", "path": "ofl/righteous/Righteous-Regular.ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "2ffb3fe5c27d7e6571210b800448c4e234e651b46c6b4426c1bb567e5341348a" },
+    { "family": "Josefin Sans", "path": "ofl/josefinsans/JosefinSans[wght].ttf", "licence": "OFL-1.1", "licenceFile": "OFL.txt", "sha256": "9255abdb5f393bc51e101abbd07a716a977fd3e15472b1b84b260f426a342bfd" },
+    { "family": "Chewy", "path": "apache/chewy/Chewy-Regular.ttf", "licence": "Apache-2.0", "licenceFile": "LICENSE.txt", "sha256": "7cf75ea288f82fd20badea8ab4da7a656a96a7277c170811e813b3d3d6294147" }
+  ]
+}

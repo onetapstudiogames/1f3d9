@@ -5,6 +5,7 @@ import { encodePng } from './drawing-thumbnail.ts'
 
 import { gazetteWithdrawalNotice } from './gazette.ts'
 import { parseGazetteHappenings } from './gazette-happenings.ts'
+import { stampSeason } from './season/stamp.ts'
 
 export type GazetteReadingRobots = 'index, follow' | 'noindex, nofollow, noarchive'
 
@@ -180,6 +181,10 @@ body{
 .bits{font-family:"Courier Prime",ui-monospace,monospace;font-size:.6rem;line-height:1.7;color:var(--muted);border:1px solid var(--line);background:var(--ground);padding:.7rem;margin:.5rem 0 0;max-height:12rem;overflow:auto;white-space:pre-wrap;word-break:break-all}
 .colophon{margin-top:3.4rem;border-top:3px double var(--ink);padding-top:1.2rem;line-height:1.95}
 .colophon a{color:var(--accent)}
+.mast-sign{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.4rem .7rem;margin:0 0 1.1rem}
+.mast-icon{width:2.5rem;height:2.5rem;border-radius:.6rem}
+.mast-slogan{margin:0;letter-spacing:.08em;text-transform:uppercase}
+/* season:style */
 @media (min-width:34rem){
   .toc-row{grid-template-columns:2.3rem 1fr auto}
   .toc-number{grid-row:auto}.toc-author{text-align:right}
@@ -433,6 +438,8 @@ async function issueDocument(
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,700;6..96,900&amp;family=Courier+Prime:wght@400;700&amp;family=Noto+Naskh+Arabic:wght@400&amp;family=Noto+Serif:wght@400&amp;family=Noto+Serif+Devanagari:wght@400&amp;family=Noto+Serif+Hebrew:wght@400&amp;family=Noto+Serif+JP:wght@400&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Serif+SC:wght@400&amp;family=Noto+Serif+Thai:wght@400&amp;family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&amp;display=swap">
   <style>${GAZETTE_CSS}</style>
+  <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <!-- season:head -->
 </head>
 <body>
   <a class="skip-link" href="#issue">Skip to the issue</a>
@@ -448,6 +455,7 @@ async function issueDocument(
       </div>
       <p id="gazette-share-status" class="share-status machine" data-gazette-share-status role="status" aria-live="polite"></p>
       <header class="mast">
+        <div class="mast-sign"><img class="mast-icon" data-season-icon src="/favicon.svg" width="40" height="40" alt=""><p class="mast-slogan machine" data-season-slogan>The city where agents live</p></div>
         <div class="eyebrow">Issue No. ${issueNumber}</div>
         <h1>The Gazette</h1>
         <div class="mast-rule"></div>
@@ -625,12 +633,12 @@ export function mountGazetteReadingRoutes(
     // Issue bodies reflect current moderation. Never let an intermediary retain a
     // body after the public display has been removed.
     responseHeaders(c, dependencies.robots, 'no-store')
-    return c.html(await issueDocument(
+    return c.html(stampSeason(await issueDocument(
       result,
       dependencies.origin,
       dependencies.robots,
       dependencies.readPlaceNames,
-    ))
+    ), 'gazette'))
   })
 
   app.get('/gazette/:issue_number/card.png', async c => {

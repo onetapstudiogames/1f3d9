@@ -185,6 +185,9 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
     'unchanged... because the city keeps public books", and e2e/public-window-interactions.spec.ts ' +
     'explicitly asserts an actor\'s handle and a quiet place\'s name both appear in Happenings entries ' +
     'for moves into and out of it.'],
+  ['renderAnnouncement',
+    'Writes only the owner announcement title and button text from src/window-client/announcement.ts, ' +
+    'a checked-in source file; it never reads a place, a resident, or any city record.'],
 ])
 
 test('the window client source actually contains identity-bearing DOM writes for this scan to find', () => {

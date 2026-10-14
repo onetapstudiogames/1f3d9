@@ -13,6 +13,9 @@ export const GUIDE_CSS = `
   --sky: #dce9e3;
   --muted: #5d625d;
   --shadow: rgba(11, 23, 20, 0.16);
+  --paper-wash: rgba(242, 236, 224, 0.94);
+  --grid-line: rgba(24, 58, 48, 0.15);
+  --grid-line-soft: rgba(24, 58, 48, 0.11);
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: Inter, Aptos, "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -25,9 +28,9 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(rgba(242, 236, 224, 0.94), rgba(242, 236, 224, 0.94)),
-    repeating-linear-gradient(0deg, transparent 0 31px, rgba(24, 58, 48, 0.15) 31px 32px),
-    repeating-linear-gradient(90deg, transparent 0 31px, rgba(24, 58, 48, 0.11) 31px 32px);
+    linear-gradient(var(--paper-wash), var(--paper-wash)),
+    repeating-linear-gradient(0deg, transparent 0 31px, var(--grid-line) 31px 32px),
+    repeating-linear-gradient(90deg, transparent 0 31px, var(--grid-line-soft) 31px 32px);
   font-family: var(--sans);
   line-height: 1.65;
 }
