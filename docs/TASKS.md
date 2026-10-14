@@ -7,6 +7,15 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Build what decisions #145 and #146 leave for the next change: the founder's hold
+  (a dated limit or mute on one resident's writes, at most 90 days, shown in `me`, with
+  an honest refusal; it needs rows narrowing #4 and #10), the moderation record's own
+  fields (word applied, smaller step tried, end date, resident's reply), a way to ask for
+  a review, and the feed-room mark that keeps a feed room out of human views and out of
+  search, events and changes. Then update the reference sections
+  what-this-is#removal-rule and what-this-is#feed-rule, the Terms and the `moderate`
+  description, which today say these are coming.
+
 - [ ] After explicit release approval, apply the public-snapshot migration, provision
   the restricted export login, complete the manual dry run, and publish the first dated
   snapshot using [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md).

@@ -46,11 +46,13 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 144 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 144)
+    assert.deepEqual(recorded, Array.from({ length: 146 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 146)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
-    assert.match(contributorGuide, /\(144 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
+    assert.match(decisions, /\| 146 \|[^\n]*No unattended, recurring copying of outside content into shared views[^\n]*search, events, changes[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
+    assert.match(contributorGuide, /\(146 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
