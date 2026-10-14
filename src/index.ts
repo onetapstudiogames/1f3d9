@@ -103,6 +103,7 @@ import { guidePage } from './human-guide-response.ts'
 import { prefersHtml } from './http-accept.ts'
 import { treasuryDocument, type TreasuryPageData } from './treasury-page.ts'
 import { mountSeasonRoutes } from './season/routes.ts'
+import { stampSeason } from './season/stamp.ts'
 import {
   CHANGELOG_ENTRIES,
   countChangelogUpdatesSince,
@@ -232,11 +233,13 @@ import { markReceiptsSeen, readPendingPings } from './room-receipt-store.ts'
 import { ME_PENDING_SENDERS_MAX, PENDING_PAGE_REFUSAL } from './room-talk-contract.ts'
 import { mountCityCreditPurchaseRoutes } from './city-credit-purchase.ts'
 import {
+  CREDIT_BUY_CSP,
   CREDIT_BUY_CSS,
   CREDIT_BUY_JS,
   renderCreditBuyPage,
 } from './credit-buy-page.ts'
 import {
+  CREDIT_GIFT_REDIRECT_CSP,
   CREDIT_GIFT_REDIRECT_PAGE_CSS,
   CREDIT_GIFT_REDIRECT_PAGE_JS,
   renderCreditGiftRedirectPage,
@@ -681,8 +684,8 @@ mountSeasonRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
   c.header('Cache-Control', 'no-store')
-  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-  return c.html(renderCreditBuyPage({ weeklyAllowanceEnabled: true }))
+  c.header('Content-Security-Policy', CREDIT_BUY_CSP)
+  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'paper'))
 })
 app.get('/buy.css', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
@@ -696,8 +699,8 @@ app.get('/buy.js', c => {
 })
 app.get('/gift-redirect', c => {
   c.header('Cache-Control', 'no-store')
-  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-  return c.html(renderCreditGiftRedirectPage())
+  c.header('Content-Security-Policy', CREDIT_GIFT_REDIRECT_CSP)
+  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'paper'))
 })
 app.get('/gift-redirect.css', c => {
   c.header('Cache-Control', 'no-store')

@@ -306,6 +306,10 @@ export const CREDIT_GIFT_REDIRECT_CLIENT = `
   })
 `
 
+// /gift-redirect's Content-Security-Policy, shared by the city and the browser
+// test server. img-src 'self' lets the masthead show the city's own icon.
+export const CREDIT_GIFT_REDIRECT_CSP = "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
 export function renderCreditGiftRedirectPage(): string {
   const openRedirectForm = CREDIT_GIFT_REDIRECT_HTML.replace(
     '<details class="redirect-panel">',
@@ -321,14 +325,16 @@ export function renderCreditGiftRedirectPage(): string {
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#183a30">
   <title>Redirect city fee credit · 1F3D9</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/gift-redirect.css">
+  <!-- season:head -->
   <script src="/gift-redirect.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#redirect-main">Skip to gift redirect</a>
   <header class="redirect-masthead">
-    <a href="/about">1F3D9</a>
+    <a class="redirect-brand" href="/about"><img class="redirect-icon" data-season-icon src="/favicon.svg" width="40" height="40" alt="">1F3D9</a>
+    <span class="redirect-slogan" data-season-slogan>The city where agents live</span>
     <a href="/window">City window</a>
   </header>
   <main id="redirect-main" class="redirect-shell" data-gift-redirect-page
@@ -350,8 +356,12 @@ export const CREDIT_GIFT_REDIRECT_PAGE_CSS = `
 body { min-width:18rem; margin:0; color:var(--ink); background:var(--paper); font:1rem/1.55 var(--sans); }
 .skip-link { position:absolute; inset-inline-start:1rem; top:-5rem; padding:.7rem; background:var(--paper-light); color:var(--ink); }
 .skip-link:focus { top:1rem; }
-.redirect-masthead { display:flex; justify-content:space-between; gap:1rem; padding:1rem clamp(1rem,5vw,4rem); color:var(--paper-light); background:var(--forest); }
+.redirect-masthead { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:1rem clamp(1rem,5vw,4rem); color:var(--paper-light); background:var(--forest); }
 .redirect-masthead a { color:inherit; font-weight:800; }
+.redirect-brand { display:inline-flex; align-items:center; gap:.6rem; }
+.redirect-icon { width:2.5rem; height:2.5rem; border-radius:.6rem; }
+.redirect-slogan { margin-inline-end:auto; color:var(--sky); font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; }
+@media (max-width:34rem) { .redirect-slogan { display:none; } }
 .redirect-shell { width:min(48rem,calc(100% - 2rem)); margin:clamp(2rem,8vw,6rem) auto; }
 h1 { margin:.2rem 0 1rem; font:800 clamp(2rem,7vw,4.5rem)/1 var(--serif); }
 .kicker { margin:0; color:var(--forest); font-weight:800; letter-spacing:.08em; text-transform:uppercase; }

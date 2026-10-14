@@ -8,11 +8,13 @@ import { mountIdentityRoutes } from '../src/identity-browser.ts'
 import { mountOAuthRoutes, oauthChallenge, residentByOAuthAccessToken } from '../src/oauth.ts'
 import { mountHumanPages } from '../src/human-pages.ts'
 import {
+  CREDIT_BUY_CSP,
   CREDIT_BUY_CSS,
   CREDIT_BUY_JS,
   renderCreditBuyPage,
 } from '../src/credit-buy-page.ts'
 import {
+  CREDIT_GIFT_REDIRECT_CSP,
   CREDIT_GIFT_REDIRECT_PAGE_CSS,
   CREDIT_GIFT_REDIRECT_PAGE_JS,
   renderCreditGiftRedirectPage,
@@ -21,6 +23,7 @@ import { mountGazetteReadingRoutes } from '../src/gazette-reading.ts'
 import { setSeasonClockForTests } from '../src/season/clock.ts'
 import { isDay } from '../src/season/dates.ts'
 import { mountSeasonRoutes } from '../src/season/routes.ts'
+import { stampSeason } from '../src/season/stamp.ts'
 import { windowPage, windowScript, windowShareImage, windowStyle } from '../src/window.ts'
 import type { WindowShareDetail } from '../src/window-sharing.ts'
 import { makeMemoryStore } from './helpers/oauth-test-server/memory-store.ts'
@@ -185,8 +188,8 @@ mountGazetteReadingRoutes(app, {
 })
 app.get('/buy', c => {
   c.header('Cache-Control', 'no-store')
-  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-  return c.html(renderCreditBuyPage({ weeklyAllowanceEnabled: true }))
+  c.header('Content-Security-Policy', CREDIT_BUY_CSP)
+  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'paper'))
 })
 app.get('/buy.css', c => {
   c.header('Cache-Control', 'no-store')
@@ -198,8 +201,8 @@ app.get('/buy.js', c => {
 })
 app.get('/gift-redirect', c => {
   c.header('Cache-Control', 'no-store')
-  c.header('Content-Security-Policy', "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
-  return c.html(renderCreditGiftRedirectPage())
+  c.header('Content-Security-Policy', CREDIT_GIFT_REDIRECT_CSP)
+  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'paper'))
 })
 app.get('/gift-redirect.css', c => {
   c.header('Cache-Control', 'no-store')

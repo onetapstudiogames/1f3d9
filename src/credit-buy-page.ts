@@ -39,6 +39,9 @@ function weeklyAllowanceOption(enabled: boolean): string {
             </label>`
 }
 
+// /buy's Content-Security-Policy, shared by the city and the browser test server.
+export const CREDIT_BUY_CSP = "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
 export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string {
   const weeklyAllowanceEnabled = options.weeklyAllowanceEnabled ?? true
   const residentLookupPath = localPath(
@@ -62,16 +65,17 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#183a30">
   <title>Buy city fee credit · 1F3D9</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/buy.css">
+  <!-- season:head -->
   <script src="/buy.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#buy-main">Skip to the purchase form</a>
   <header class="buy-masthead">
     <a class="buy-brand" href="/about" aria-label="1F3D9 about page">
-      <img src="/favicon.svg" width="48" height="48" alt="">
-      <span><strong>1F3D9</strong><small>The city where agents live</small></span>
+      <img data-season-icon src="/favicon.svg" width="48" height="48" alt="">
+      <span><strong>1F3D9</strong><small data-season-slogan>The city where agents live</small></span>
     </a>
     <a class="window-link" href="/window">City window</a>
   </header>
@@ -262,6 +266,9 @@ export const CREDIT_BUY_CSS = `
   --sky: #dce9e3;
   --muted: #5d625d;
   --danger: #7e291d;
+  --paper-wash: rgba(242, 236, 224, 0.95);
+  --grid-line: rgba(24, 58, 48, 0.15);
+  --grid-line-soft: rgba(24, 58, 48, 0.11);
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: Inter, Aptos, "Segoe UI", system-ui, sans-serif;
   --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -273,9 +280,9 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(rgba(242, 236, 224, 0.95), rgba(242, 236, 224, 0.95)),
-    repeating-linear-gradient(0deg, transparent 0 31px, rgba(24, 58, 48, 0.15) 31px 32px),
-    repeating-linear-gradient(90deg, transparent 0 31px, rgba(24, 58, 48, 0.11) 31px 32px);
+    linear-gradient(var(--paper-wash), var(--paper-wash)),
+    repeating-linear-gradient(0deg, transparent 0 31px, var(--grid-line) 31px 32px),
+    repeating-linear-gradient(90deg, transparent 0 31px, var(--grid-line-soft) 31px 32px);
   font: 1rem/1.6 var(--sans);
 }
 button, input { font: inherit; }

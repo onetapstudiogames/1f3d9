@@ -5,6 +5,13 @@ import { Hono } from 'hono'
 process.env.DATABASE_URL = ''
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
 process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'false'
+process.env.IDENTITY_RECOVERY_ENABLED = 'true'
+process.env.IDENTITY_ROTATION_ENABLED = 'true'
+// Placeholder sandbox settings only so /buy renders; no PayPal call is made.
+process.env.PAYPAL_ENV = 'sandbox'
+process.env.PAYPAL_CLIENT_ID = 'season-page-test-client'
+process.env.PAYPAL_CLIENT_SECRET = 'season-page-test-secret'
+process.env.PAYPAL_WEBHOOK_ID = 'season-page-test-webhook'
 
 const { default: app } = await import('../src/index.ts')
 const { setSeasonClockForTests } = await import('../src/season/clock.ts')
@@ -12,9 +19,11 @@ const { mountHumanPages } = await import('../src/human-pages.ts')
 const { mountGazetteReadingRoutes } = await import('../src/gazette-reading.ts')
 const { guidePage } = await import('../src/human-guide-response.ts')
 const { treasuryDocument } = await import('../src/treasury-page.ts')
+const { authorizationUrl, fixture } = await import('./oauth-flow-tests/fixture.ts')
 
 const GUIDE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'none'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'none'; manifest-src 'none'"
-// Each page's policy exactly as main served it before seasons.
+// Each page's policy exactly as main served it before seasons. Only /gift-redirect
+// gains img-src 'self', so its masthead can show the city's own icon.
 const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/about': GUIDE_CSP,
   '/setup': GUIDE_CSP,
@@ -28,6 +37,12 @@ const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/window': "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'none'; worker-src 'none'; manifest-src 'none'",
   '/window/things': "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'none'; worker-src 'none'; manifest-src 'none'",
   '/gazette/7': /^default-src 'none'; base-uri 'none'; object-src 'self'; frame-ancestors 'none'; form-action 'none'; script-src 'sha256-[A-Za-z0-9+/=]+'; style-src 'unsafe-inline' https:\/\/fonts\.googleapis\.com; font-src https:\/\/fonts\.gstatic\.com; img-src 'self'; connect-src 'none'; manifest-src 'none'$/u,
+  '/buy': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  '/gift-redirect': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  '/join': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  '/rotate': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  '/recovery': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  oauth: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chat.example.test; base-uri 'none'; frame-ancestors 'none'",
 }
 
 type Family = 'paper' | 'window' | 'gazette' | 'form'
@@ -35,6 +50,8 @@ const PAGES: readonly (readonly [string, Family, boolean])[] = [
   ['/about', 'paper', true], ['/setup', 'paper', true], ['/market', 'paper', true], ['/changelog', 'paper', true],
   ['/terms', 'paper', true], ['/privacy', 'paper', true], ['/support', 'paper', true], ['/treasury', 'paper', true],
   ['/tools', 'paper', true], ['/window', 'window', true], ['/window/things', 'window', true], ['/gazette/7', 'gazette', true],
+  ['/buy', 'paper', true], ['/gift-redirect', 'paper', true],
+  ['/join', 'form', false], ['/rotate', 'form', false], ['/recovery', 'form', false], ['oauth', 'form', false],
 ]
 
 const extra = new Hono()
@@ -53,8 +70,10 @@ extra.get('/treasury', c => guidePage(c, treasuryDocument({
   recent_fees: [], recent_fees_page: { total_items: 0, total_text_bytes: 0, returned_items: 0, returned_text_bytes: 0, has_more: false, next_before_id: null },
   note: 'Season page test.',
 }), { cacheControl: 'no-store' }))
+const oauth = fixture().app
 
 async function page(path: string): Promise<Response> {
+  if (path === 'oauth') return await oauth.request(authorizationUrl())
   if (path === '/tools' || path === '/treasury' || path.startsWith('/gazette/')) return await extra.request(path)
   return await app.request(path, { headers: { Accept: 'text/html' } })
 }
@@ -71,7 +90,7 @@ async function season(): Promise<{
   return await (await app.request('/api/season')).json()
 }
 
-test('every human page keeps its Content-Security-Policy', async () => {
+test('every human page keeps its Content-Security-Policy, with img-src added only on /gift-redirect', async () => {
   for (const date of ['2026-07-08', '2027-12-25']) {
     onDay(date)
     for (const [path] of PAGES) {

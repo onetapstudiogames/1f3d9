@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { GUIDE_CSS } from '../src/guide-style.ts'
 import { WINDOW_CSS } from '../src/window-style.ts'
+import { CREDIT_BUY_CSS } from '../src/credit-buy-page.ts'
 import { CREDIT_GIFT_REDIRECT_PAGE_CSS } from '../src/credit-gift-redirect.ts'
+import { FORM_TOKENS_CSS } from '../src/season/form-palette.ts'
 import {
   formTokens,
   gazetteDarkTokens,
@@ -79,7 +81,9 @@ test('every page family maps its tokens only onto design values', () => {
 test('every token a season overrides already exists on the page it repaints', () => {
   const families: readonly [string, string, readonly string[]][] = [
     ['guide', GUIDE_CSS, Object.keys(paperTokens('spooky'))],
+    ['buy', CREDIT_BUY_CSS, Object.keys(paperTokens('spooky'))],
     ['window', WINDOW_CSS, Object.keys(windowTokens('spooky'))],
+    ['forms', FORM_TOKENS_CSS, Object.keys(formTokens('spooky'))],
   ]
   for (const [name, css, tokens] of families) {
     const root = css.slice(0, css.indexOf('}'))
