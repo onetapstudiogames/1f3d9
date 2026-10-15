@@ -200,14 +200,22 @@ export function registerActionsTests(): void {
     })
     assert.equal(denied.status, 403)
     assert.deepEqual(await denied.json(), {
-      error: 'only founder resident #1 may remove or restore public content',
+      error: "only founder resident #1 may remove or restore public content or hold a resident's writes",
     })
     assert.equal(inserted('moderation_actions'), 0)
 
     setActor(1, 'founder')
-    const removed = await app.request('/api/moderation', {
+    const withoutWord = await app.request('/api/moderation', {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ action: 'remove', target_type: 'thing', target_id: 41, reason: 'illegal content' }),
+    })
+    assert.equal(withoutWord.status, 400)
+    assert.match((await withoutWord.json() as { error: string }).error, /names exactly one of rule_word/u)
+    const removed = await app.request('/api/moderation', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({
+        action: 'remove', target_type: 'thing', target_id: 41, reason: 'illegal content', at_once_for: 'illegal',
+      }),
     })
     assert.equal(removed.status, 201)
     assert.ok(inserted('moderation_actions') > 0)

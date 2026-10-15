@@ -18,7 +18,6 @@ import {
   isRetryableCollision,
   postgresErrorCode,
   presentedRootKey,
-  QUOTAS,
   RESIDENT_AUTH_REFUSAL,
   sha256,
 } from './core.ts'
@@ -53,7 +52,9 @@ import {
   residentPresence,
   withEngineTransaction,
 } from './engine.ts'
-import { moderationInput } from './moderation.ts'
+import { activeHold, effectiveDailyLimits, publicHold } from './resident-hold.ts'
+import { linesUsedToday } from './room-line-store.ts'
+import { MODERATION_FOUNDER_ONLY_REFUSAL, parseModerationRequest } from './moderation-request.ts'
 import { positiveId, publicText } from './input.ts'
 import {
   PUBLIC_RESPONSE_WITHHELD,
@@ -1305,6 +1306,9 @@ app.get('/api/me', async c => {
   const unhandledFlags = resident.id === 1 && presentedRootKey(c)
     ? await unhandledFlagCount(executePrivateStoreQuery)
     : null
+  // A founder hold lowers the daily numbers for its resident (decisions #150, #151).
+  const [hold, linesToday] = await Promise.all([activeHold(resident.id), linesUsedToday(resident.id)])
+  const dailyLimits = effectiveDailyLimits(hold)
   const answer = {
     pending_pings,
     help: '/api/help',
@@ -1331,10 +1335,12 @@ app.get('/api/me', async c => {
     current_place_id: presence.currentPlaceId,
     home_place_id: presence.homePlaceId,
     labels: labelRows.map(row => row.label),
+    ...(hold === null ? {} : { hold: publicHold(hold) }),
     quotas_left: {
-      things: Math.max(0, QUOTAS.things - resident.things_today),
-      notes: Math.max(0, QUOTAS.notes - resident.notes_today),
-      agreements: Math.max(0, QUOTAS.agreements - resident.agreement_actions_today),
+      things: Math.max(0, dailyLimits.things - resident.things_today),
+      notes: Math.max(0, dailyLimits.notes - resident.notes_today),
+      agreements: Math.max(0, dailyLimits.agreements - resident.agreement_actions_today),
+      lines: Math.max(0, dailyLimits.lines - linesToday),
     },
     places: places.items,
     things: things.items,
@@ -1949,18 +1955,12 @@ app.post('/api/flag', async c => {
 app.post('/api/moderation', async c => {
   const resident = await authRootKey(c)
   if (!resident) return err(c, 401, FOUNDER_AUTH_REFUSAL)
-  if (resident.id !== 1) {
-    return err(c, 403, 'only founder resident #1 may remove or restore public content')
-  }
-  const input = moderationInput(await c.req.json().catch(() => null))
-  if (!input) {
-    return err(c, 400, 'need exactly action (remove|restore), target_type, target_id, and a safe reason')
-  }
-  const recorded = await recordModeration(resident, input)
-  if (!recorded) {
-    return err(c, 404, `${input.target_type} target_id ${input.target_id} was not found; re-read the public record and send a current target_id`)
-  }
-  return c.json({ moderation: recorded }, 201)
+  if (resident.id !== 1) return err(c, 403, MODERATION_FOUNDER_ONLY_REFUSAL)
+  const parsed = parseModerationRequest(await c.req.json().catch(() => null))
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const recorded = await recordModeration(resident, parsed.request)
+  if (!recorded.ok) return err(c, recorded.status, recorded.error)
+  return c.json({ moderation: recorded.moderation }, 201)
 })
 
 app.get('/api/moderation', async c => {

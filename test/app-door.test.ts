@@ -32,6 +32,7 @@ const {
   APP_FRONT_DOOR_SECTIONS,
 } = await import('../src/door-profile.ts')
 const { appMeAnswer, appOfficialFacts, appToolReplyText } = await import('../src/app-door-outputs.ts')
+const { publicHold } = await import('../src/resident-hold.ts')
 const { CREDIT_REQUEST_ID_RECORDED_CONFLICT_UNREAD } = await import('../src/city-fee-facts.ts')
 const { AROUND_YOU_SCOPE_LINE, AROUND_YOU_SCOPE_REFERENCE } = await import('../src/me-around-you.ts')
 const { mcp } = await import('../src/mcp.ts')
@@ -395,6 +396,25 @@ test('the app me answer keeps fee credit held, spends, and credit received, and 
   assert.equal(answer.since_last_visit.city_updates.count, 2)
   assert.equal(Object.hasOwn(answer.since_last_visit, 'tools_changed'), false)
   assert.deepEqual(Object.keys(answer.pages), ['places'])
+})
+
+test('the app me answer carries a founder hold in plain words, with nothing about buying and no web address', () => {
+  const held = publicHold({
+    id: 77,
+    reason: 'flooding the square after a warning',
+    rule_word: 'disruptive',
+    at_once_for: null,
+    set_at: '2026-10-15T00:00:00.000Z',
+    ends_at: '2026-10-22T00:00:00.000Z',
+    daily_limits: { notes: 0, lines: 0, things: 0, agreements: 0 },
+    stops_pings: true,
+    stops_building: true,
+  })
+  const answer = appMeAnswer({ ...FULL_ME, hold: held }) as Record<string, any>
+  const text = JSON.stringify(answer.hold)
+  assert.deepEqual(answer.hold, held)
+  assert.deepEqual(bannedHits('me hold', text), [])
+  assert.doesNotMatch(text, /gift|offers|if_blocked|\/api\/|\/changelog|https?:|mute|blocked|safety|security|flag/iu)
 })
 
 test('the app official facts keep fee credit rules and drop the rails', () => {

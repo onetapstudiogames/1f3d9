@@ -771,7 +771,7 @@ function publicWindowEvent(value: unknown) {
   ) {
     detail.status = rawDetail.status
     carriesFailureCause = rawDetail.status === 'skipped' || rawDetail.status === 'failed'
-  } else if (kind === 'moderation' && ['remove', 'restore'].includes(String(rawDetail.action))) {
+  } else if (kind === 'moderation' && ['remove', 'restore', 'hold'].includes(String(rawDetail.action))) {
     detail.action = String(rawDetail.action)
   } else if (creditDisputeDecision) {
     detail.action = String(rawDetail.action)

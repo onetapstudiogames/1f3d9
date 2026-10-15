@@ -33,6 +33,7 @@ import {
   type TalkRefusal,
   type TalkRequestOperation,
 } from './room-talk-contract.ts'
+import { holdPingTalkRefusal, holdStopping } from './resident-hold.ts'
 
 type PingDbRow = Readonly<{
   id: number | string
@@ -323,6 +324,9 @@ export async function invitePing(
       }, refusal(value))
     }
 
+    // A founder hold may stop new pings (decision #151); answering one never stops.
+    const hold = await holdStopping(residentId, 'pings', transaction)
+    if (hold) return saveRefusal(holdPingTalkRefusal(hold))
     if (typeof input.toHandle !== 'string' || input.toHandle === '') {
       return saveRefusal(PING_INVITE_NO_HANDLE_REFUSAL)
     }

@@ -15,7 +15,9 @@ export const MODERATION_TARGET_TYPES = Object.freeze([
   'ping',
 ] as const)
 
-export const MODERATION_ACTIONS = Object.freeze(['remove', 'restore'] as const)
+// A hold (decision #151) is a moderation record on target_type 'hold', never on a
+// content target; it limits one resident's writes and hides nothing.
+export const MODERATION_ACTIONS = Object.freeze(['remove', 'restore', 'hold'] as const)
 export const MODERATION_REASON_MAX_BYTES = 4_000
 export const MODERATED_TEXT = '[removed by maintainer]'
 /** What the human window prints in place of a note or line founder moderation removed (founder note #23132). */
@@ -26,14 +28,11 @@ type RecordModerationTargetType = Exclude<ModerationTargetType, TalkTargetType>
 export type ModerationAction = typeof MODERATION_ACTIONS[number]
 export type ModerationActionId = number | bigint | `${bigint}`
 
-export interface ModerationInput {
+export interface ModerationActionRow {
   readonly target_type: ModerationTargetType
   readonly target_id: number
   readonly action: ModerationAction
   readonly reason: string
-}
-
-export interface ModerationActionRow extends ModerationInput {
   readonly id: ModerationActionId
   readonly actor_id: 1
   readonly created_at: string | Date
@@ -75,9 +74,6 @@ export type ModeratedRecord<T extends PublicRecord> = Readonly<
 
 const TARGET_TYPE_SET: ReadonlySet<string> = new Set(MODERATION_TARGET_TYPES)
 const ACTION_SET: ReadonlySet<string> = new Set(MODERATION_ACTIONS)
-const INPUT_FIELDS: ReadonlySet<string> = new Set([
-  'target_type', 'target_id', 'action', 'reason',
-])
 
 const DISPLAY_FIELDS = Object.freeze({
   resident: Object.freeze([] as const),
@@ -133,41 +129,6 @@ export function moderationAction(value: unknown): ModerationAction | null {
 
 export function moderationReason(value: unknown): string | null {
   return publicText(value, { maximumBytes: MODERATION_REASON_MAX_BYTES })
-}
-
-function exactDataRecord(value: unknown, fields: ReadonlySet<string>): UnknownRecord | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
-
-  try {
-    const prototype = Object.getPrototypeOf(value)
-    if (prototype !== Object.prototype && prototype !== null) return null
-    const keys = Reflect.ownKeys(value)
-    if (keys.length !== fields.size) return null
-    if (!keys.every(key => typeof key === 'string' && fields.has(key))) return null
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    if (Object.values(descriptors).some(descriptor => !Object.hasOwn(descriptor, 'value'))) return null
-    return value as UnknownRecord
-  } catch {
-    return null
-  }
-}
-
-export function moderationInput(value: unknown): ModerationInput | null {
-  const record = exactDataRecord(value, INPUT_FIELDS)
-  if (!record) return null
-  const targetType = moderationTargetType(record.target_type)
-  const action = moderationAction(record.action)
-  const reason = moderationReason(record.reason)
-  const targetId = record.target_id
-  if (!targetType || !action || reason === null) return null
-  if (typeof targetId !== 'number' || !Number.isSafeInteger(targetId) || targetId < 1) return null
-
-  return Object.freeze({
-    target_type: targetType,
-    target_id: targetId,
-    action,
-    reason,
-  })
 }
 
 function redactFields<T extends PublicRecord>(

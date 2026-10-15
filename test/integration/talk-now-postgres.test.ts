@@ -132,6 +132,7 @@ test('GET /api/talk/now reads the line marker and listening from real PostgreSQL
         target_type: 'line',
         target_id: lineId,
         reason: 'talk now marker test removal',
+        rule_word: 'disruptive',
       })
       assert.equal(removed.status, 201, JSON.stringify(removed.json))
       const after = String((await readNow()).body.line_marker)

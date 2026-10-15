@@ -10,7 +10,6 @@ import {
   lineAllowanceRefusal,
   lineBodyProblem,
   lineBodyRefusal,
-  LINES_PER_UTC_DAY,
   LINES_PER_UTC_MINUTE,
   nextUtcMidnight,
   nextUtcMinute,
@@ -24,6 +23,7 @@ import {
   type TalkRequestOperation,
   type TalkRefusal,
 } from './room-talk-contract.ts'
+import { dailyLimit, holdLineTalkRefusal } from './resident-hold.ts'
 
 export type SayLineInput = Readonly<{
   residentId: number
@@ -59,7 +59,7 @@ async function queryRows<T>(result: Promise<unknown>): Promise<T[]> {
   return await result as T[]
 }
 
-function allowance(dayUsed: number, minuteUsed: number, now: Date): LineAllowance {
+function allowance(dayUsed: number, minuteUsed: number, now: Date, dayLimit: number): LineAllowance {
   return {
     per_utc_minute: {
       used: minuteUsed,
@@ -68,7 +68,7 @@ function allowance(dayUsed: number, minuteUsed: number, now: Date): LineAllowanc
     },
     per_utc_day: {
       used: dayUsed,
-      limit: LINES_PER_UTC_DAY,
+      limit: dayLimit,
       reset_at: nextUtcMidnight(now).toISOString(),
     },
   }
@@ -89,6 +89,7 @@ function lineFromRow(row: LineRow): RoomLine {
 async function currentAllowance(
   transaction: TaggedSql,
   residentId: number,
+  dayLimit: number,
 ): Promise<Readonly<{ line_quota: LineAllowance; now: Date }>> {
   const rows = await queryRows<QuotaRow & Readonly<{ now: Date }>>(transaction`
     WITH sampled AS MATERIALIZED (
@@ -109,7 +110,7 @@ async function currentAllowance(
     FROM sampled
   `)
   const row = rows[0]!
-  return { line_quota: allowance(row.day_used, row.minute_used, row.now), now: row.now }
+  return { line_quota: allowance(row.day_used, row.minute_used, row.now, dayLimit), now: row.now }
 }
 
 async function allowanceAt(
@@ -131,6 +132,22 @@ async function allowanceAt(
       ), 0)::integer AS minute_used
   `)
   return rows[0]!
+}
+
+/** How many lines the resident has said this UTC day, for me's quotas_left. */
+export async function linesUsedToday(
+  residentId: number,
+  database: TaggedSql = engineSql,
+): Promise<number> {
+  const rows = await queryRows<Readonly<{ used: number }>>(database`
+    /* private:lines-used-today */
+    SELECT coalesce((
+      SELECT used FROM line_quota
+      WHERE resident_id = ${residentId}
+        AND utc_day = (clock_timestamp() AT TIME ZONE 'UTC')::date
+    ), 0)::integer AS used
+  `)
+  return Number(rows[0]?.used ?? 0)
 }
 
 function refusal(refusal: TalkRefusal): TalkOutcome<SayLineAnswer> {
@@ -160,6 +177,8 @@ export async function sayLine(
     await transaction`
       SELECT pg_advisory_xact_lock(${TALK_REQUEST_LOCK_NAMESPACE}::int, ${residentId}::int)
     `
+    // The day limit is the lower of the city's and a founder hold's (decision #150).
+    const lines = await dailyLimit(residentId, 'lines', transaction)
 
     const lineRows = await queryRows<LineRow>(transaction`
       SELECT line.id, line.place_id, line.resident_id AS author_id,
@@ -179,7 +198,7 @@ export async function sayLine(
           AND request_id = ${requestId}::uuid
       `)
       if (!sameRequestRows[0]!.same) return refusal(requestReuseRefusal('line'))
-      const current = await currentAllowance(transaction, residentId)
+      const current = await currentAllowance(transaction, residentId, lines.limit)
       return {
         ok: true,
         status: 200,
@@ -221,8 +240,10 @@ export async function sayLine(
     }
 
     const quotas = await allowanceAt(transaction, residentId, presence.now)
-    if (quotas.day_used >= LINES_PER_UTC_DAY) {
-      return refusal(lineAllowanceRefusal(nextUtcMidnight(presence.now).toISOString()))
+    if (quotas.day_used >= lines.limit) {
+      return refusal(lines.hold
+        ? holdLineTalkRefusal(lines.hold)
+        : lineAllowanceRefusal(nextUtcMidnight(presence.now).toISOString()))
     }
     if (quotas.minute_used >= LINES_PER_UTC_MINUTE) {
       return refusal(lineAllowanceRefusal(nextUtcMinute(presence.now).toISOString()))
@@ -285,7 +306,7 @@ export async function sayLine(
       status: 201,
       answer: {
         line: lineFromRow(line),
-        line_quota: allowance(line.day_used, line.minute_used, presence.now),
+        line_quota: allowance(line.day_used, line.minute_used, presence.now, lines.limit),
         replayed: false,
       },
     }

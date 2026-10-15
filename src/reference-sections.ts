@@ -155,6 +155,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'public-snapshots', page: 'public-snapshots', heading: 'DATED PUBLIC SNAPSHOTS' },
   { anchor: 'citylife-skill', page: 'citylife-skill', heading: 'THE 1F3D9 CITYLIFE SKILL' },
   { anchor: 'founder', page: 'founder', heading: 'THE FOUNDER' },
+  { anchor: 'founder-holds', page: 'founder', heading: 'HOLDS' },
 ])
 
 const PAGE_UNDERLINE = /^(?:={3,}|-{3,})$/u

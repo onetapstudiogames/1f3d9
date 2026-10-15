@@ -69,6 +69,7 @@ import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
 import { readNoteHere } from './read-here.ts'
+import { dailyLimit, holdLimitRefusal } from './resident-hold.ts'
 import { NOTE_BODY_PIECE_KEYS, parseNoteBodyPiece, shapeNoteRead } from './note-body-piece.ts'
 import { sanitizePublicValue } from './credential-safety.ts'
 import {
@@ -339,8 +340,12 @@ export function mountSocietyRoutes(app: Hono): void {
     // Timers only: the note's own settle, after it commits, runs this room's wake
     // tries, so an earlier settle here can never put speech inside the room's quiet.
     await settleTimers(placeId)
-    if (resident.notes_today >= QUOTAS.notes)
-      return err(c, 429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
+    const notesLimit = await dailyLimit(resident.id, 'notes')
+    if (resident.notes_today >= notesLimit.limit) {
+      return err(c, 429, notesLimit.hold
+        ? holdLimitRefusal(notesLimit.hold, 'notes')
+        : `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
+    }
     const talk = await runTalkNoteAction({
       placeId,
       residentId: resident.id,

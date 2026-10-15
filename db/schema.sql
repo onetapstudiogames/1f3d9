@@ -1354,7 +1354,7 @@ CREATE TABLE IF NOT EXISTS effect_resolutions (
 CREATE INDEX IF NOT EXISTS effect_resolutions_time
   ON effect_resolutions (resolved_at DESC, id DESC);
 
--- The maintainer can hide illegal public content and later restore it, but can
+-- The maintainer can hide public content under the removal rule and later restore it, but can
 -- never rewrite or delete it. The actor check anchors that narrow power to #1.
 CREATE TABLE IF NOT EXISTS moderation_actions (
   id           BIGSERIAL PRIMARY KEY,
@@ -1368,22 +1368,145 @@ CREATE TABLE IF NOT EXISTS moderation_actions (
     CHECK (target_type IN ('resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping'))
 );
 ALTER TABLE moderation_actions DROP CONSTRAINT IF EXISTS moderation_actions_target_type_check;
-DO $moderation_actions_resident_target$
+-- The founder's hold and the record's own fields (decisions #149 to #151), the same
+-- statements as db/migrations/20261015_moderation_holds.sql. They replace the inline
+-- action check and widen the named target-type check above; both only add 'hold'.
+DO $moderation_holds_guard$
 BEGIN
-  IF NOT EXISTS (
+  IF to_regclass('public.moderation_actions') IS NULL THEN
+    RAISE EXCEPTION 'moderation holds migration needs the moderation_actions table';
+  END IF;
+  IF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conrelid = 'moderation_actions'::regclass
-      AND conname = 'moderation_actions_target_type_allowed'
+      AND contype = 'c'
+      AND conname NOT IN (
+        'moderation_actions_action_check', 'moderation_actions_action_allowed',
+        'moderation_actions_target_type_allowed', 'moderation_actions_hold_fields'
+      )
+      AND pg_get_constraintdef(oid) ~ '\maction\M'
   ) THEN
-    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_target_type_allowed
-      CHECK (target_type IN (
-        'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping'
-      )) NOT VALID;
+    RAISE EXCEPTION 'a check other than moderation_actions_action_check restricts moderation_actions.action; review it before widening';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'moderation_actions'::regclass
+      AND conname = 'moderation_actions_action_check'
+      AND pg_get_constraintdef(oid) IS DISTINCT FROM
+        'CHECK ((action = ANY (ARRAY[''remove''::text, ''restore''::text])))'
+  ) THEN
+    RAISE EXCEPTION 'moderation_actions_action_check is not the reviewed remove or restore check';
   END IF;
 END
-$moderation_actions_resident_target$;
+$moderation_holds_guard$;
+
 ALTER TABLE moderation_actions
-  VALIDATE CONSTRAINT moderation_actions_target_type_allowed;
+  ADD COLUMN IF NOT EXISTS rule_word TEXT,
+  ADD COLUMN IF NOT EXISTS at_once_for TEXT,
+  ADD COLUMN IF NOT EXISTS smaller_step TEXT,
+  ADD COLUMN IF NOT EXISTS smaller_step_record_id BIGINT,
+  ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS hold_notes SMALLINT,
+  ADD COLUMN IF NOT EXISTS hold_lines SMALLINT,
+  ADD COLUMN IF NOT EXISTS hold_things SMALLINT,
+  ADD COLUMN IF NOT EXISTS hold_agreements SMALLINT,
+  ADD COLUMN IF NOT EXISTS hold_stops_pings BOOLEAN,
+  ADD COLUMN IF NOT EXISTS hold_stops_building BOOLEAN,
+  DROP CONSTRAINT IF EXISTS moderation_actions_action_check;
+
+DO $moderation_holds_constraints$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_action_allowed') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_action_allowed
+      CHECK (action IN ('remove', 'restore', 'hold')) NOT VALID;
+  END IF;
+  -- The target-type check keeps its name and also carries the hold's shape: a hold
+  -- row is always on target_type 'hold', and target_type 'hold' takes only a hold or
+  -- a restore. Keeping the name, and the word 'ping' in its list, means the
+  -- same-room-talk block that closes db/schema.sql neither drops it nor adds the
+  -- narrower list back.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_target_type_allowed'
+    AND pg_get_constraintdef(oid) LIKE '%''hold''%') THEN
+    ALTER TABLE moderation_actions
+      DROP CONSTRAINT IF EXISTS moderation_actions_target_type_allowed,
+      ADD CONSTRAINT moderation_actions_target_type_allowed
+        CHECK (CASE WHEN target_type = 'hold' THEN action IN ('hold', 'restore')
+          ELSE action <> 'hold' AND target_type IN (
+            'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping'
+          )
+        END) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_rule_word_allowed') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_rule_word_allowed
+      CHECK (rule_word IS NULL OR rule_word IN ('disruptive', 'harmful', 'detrimental')) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_at_once_for_allowed') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_at_once_for_allowed
+      CHECK (at_once_for IS NULL OR at_once_for IN ('illegal', 'doxxing', 'fraud', 'flooding')) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_smaller_step_bytes') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_smaller_step_bytes
+      CHECK (smaller_step IS NULL OR octet_length(smaller_step) BETWEEN 1 AND 500) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_hold_numbers') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_hold_numbers
+      CHECK (
+        (hold_notes IS NULL OR hold_notes BETWEEN 0 AND 50)
+        AND (hold_lines IS NULL OR hold_lines BETWEEN 0 AND 300)
+        AND (hold_things IS NULL OR hold_things BETWEEN 0 AND 20)
+        AND (hold_agreements IS NULL OR hold_agreements BETWEEN 0 AND 5)
+      ) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_hold_fields') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_hold_fields
+      CHECK (CASE WHEN action = 'hold' THEN
+        ends_at IS NOT NULL
+        AND ends_at > created_at
+        AND ends_at - created_at <= interval '90 days'
+        AND hold_stops_pings IS NOT NULL
+        AND hold_stops_building IS NOT NULL
+        AND (
+          coalesce(hold_notes < 50, false)
+          OR coalesce(hold_lines < 300, false)
+          OR coalesce(hold_things < 20, false)
+          OR coalesce(hold_agreements < 5, false)
+          OR hold_stops_pings
+          OR hold_stops_building
+        )
+      ELSE
+        ends_at IS NULL
+        AND hold_notes IS NULL
+        AND hold_lines IS NULL
+        AND hold_things IS NULL
+        AND hold_agreements IS NULL
+        AND hold_stops_pings IS NULL
+        AND hold_stops_building IS NULL
+      END) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'moderation_actions'::regclass
+    AND conname = 'moderation_actions_smaller_step_record_fk') THEN
+    ALTER TABLE moderation_actions ADD CONSTRAINT moderation_actions_smaller_step_record_fk
+      FOREIGN KEY (smaller_step_record_id) REFERENCES moderation_actions(id)
+      ON DELETE RESTRICT NOT VALID;
+  END IF;
+END
+$moderation_holds_constraints$;
+
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_action_allowed;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_target_type_allowed;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_rule_word_allowed;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_at_once_for_allowed;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_smaller_step_bytes;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_hold_numbers;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_hold_fields;
+ALTER TABLE moderation_actions VALIDATE CONSTRAINT moderation_actions_smaller_step_record_fk;
 CREATE INDEX IF NOT EXISTS moderation_actions_target
   ON moderation_actions (target_type, target_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS moderation_actions_time

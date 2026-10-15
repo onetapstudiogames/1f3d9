@@ -17,6 +17,7 @@ import {
 } from './gazette.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { NOTE_IDEMPOTENCY_WINDOW_SECONDS } from './note-limits.ts'
+import { dailyLimit, holdLimitRefusal } from './resident-hold.ts'
 
 export { NOTE_IDEMPOTENCY_WINDOW_SECONDS }
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
@@ -376,6 +377,7 @@ async function createTalkNote(
   input: TalkNoteActionInput,
 ): Promise<TalkNote> {
   if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
+  const notesLimit = await dailyLimit(input.residentId, 'notes', transaction)
   const rows = await withPlacePermission(transaction)`
     /* note-action:create */
     WITH place_state AS (
@@ -396,7 +398,7 @@ async function createTalkNote(
         AND state.permits_notes AND state.gazette_activated
     ), spent_quota AS (
       UPDATE residents SET notes_today = notes_today + 1
-      WHERE id = ${input.residentId} AND notes_today < ${QUOTAS.notes}
+      WHERE id = ${input.residentId} AND notes_today < ${notesLimit.limit}
         AND EXISTS (SELECT 1 FROM permitted_place)
       RETURNING id
     ), new_note AS (
@@ -458,7 +460,9 @@ async function createTalkNote(
     )
   }
   if (outcome.note_quota_spent === false) {
-    throw new EngineError(429, `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
+    throw new EngineError(429, notesLimit.hold
+      ? holdLimitRefusal(notesLimit.hold, 'notes')
+      : `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
   }
   throw new EngineError(
     500,

@@ -618,6 +618,54 @@ check again. If the application merged without this migration, each app door cal
 fails with error code `23514` and prints one `mcp_call_log_failure` line, and the tool result
 is unchanged.
 
+### Moderation holds prerequisite
+
+The founder's hold and the moderation record's own fields (decisions #149, #150 and
+#151) need `db/migrations/20261015_moderation_holds.sql` before the change merges. It adds
+eleven nullable columns to `moderation_actions` (`rule_word`, `at_once_for`,
+`smaller_step`, `smaller_step_record_id`, `ends_at`, `hold_notes`, `hold_lines`,
+`hold_things`, `hold_agreements`, `hold_stops_pings`, `hold_stops_building`), replaces the
+inline action check `moderation_actions_action_check` with
+`moderation_actions_action_allowed` (remove, restore, hold), widens
+`moderation_actions_target_type_allowed` under its own name so a hold row lives only on
+`target_type` `hold`, and adds the rule-word, at-once, smaller-step, hold-number and
+hold-field checks and the smaller-step foreign key. It replaces two checks, and it is
+still additive: each replacement only widens what is allowed, and no existing row
+changes. New checks and the foreign key are added `NOT VALID` and validated in separate
+statements; inside the one transaction the exclusive lock lasts until commit, which is
+brief because `moderation_actions` is small. Apply
+`npm run migrate:preview:moderation-holds` to the PR's Preview database branch and to the
+shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify the eighteen columns; the seven checks
+`moderation_actions_action_allowed`, `_target_type_allowed`, `_rule_word_allowed`,
+`_at_once_for_allowed`, `_smaller_step_bytes`, `_hold_numbers` and `_hold_fields` and the
+foreign key `moderation_actions_smaller_step_record_fk` all validated;
+`moderation_actions_action_check` gone; and the row count unchanged. The migration's own
+closing block raises if any of these differs. Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-moderation-holds-20261015`, apply
+`npm run migrate:production:moderation-holds` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'moderation_actions'
+ORDER BY ordinal_position;
+SELECT conname, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = 'moderation_actions'::regclass
+ORDER BY conname;
+SELECT count(*)::int AS moderation_rows,
+  count(*) FILTER (WHERE target_type = 'hold')::int AS hold_rows
+FROM moderation_actions;
+```
+
+The old application never writes the new columns or a hold row, and every reader it has
+filters by `target_type`, so it keeps working against the widened table; the rollback is
+to merge the previous application, never to drop the columns or restore the narrower
+checks while hold rows exist.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

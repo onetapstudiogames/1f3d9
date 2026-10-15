@@ -1,6 +1,7 @@
 import { postgresErrorCode, QUOTAS } from './core.ts'
 import { engineSql, type TaggedSql } from './engine.ts'
 import { missingRecordRefusal } from './refusal-text.ts'
+import { dailyLimit, holdLimitRefusal, type DailyLimit } from './resident-hold.ts'
 
 interface AgreementActor {
   readonly id: number
@@ -27,12 +28,15 @@ function failure(status: AgreementActionFailure['status'], error: string): Agree
   return Object.freeze({ ok: false, status, error })
 }
 
-function quotaFailure(): AgreementActionFailure {
-  return failure(429, AGREEMENT_QUOTA_ERROR)
+function quotaFailure(limit: DailyLimit): AgreementActionFailure {
+  return failure(429, limit.hold ? holdLimitRefusal(limit.hold, 'agreements') : AGREEMENT_QUOTA_ERROR)
 }
 
-function agreementQuotaPrecheck(resident: AgreementActor): AgreementActionFailure | null {
-  return resident.agreement_actions_today >= QUOTAS.agreements ? quotaFailure() : null
+function agreementQuotaPrecheck(
+  resident: AgreementActor,
+  limit: DailyLimit,
+): AgreementActionFailure | null {
+  return resident.agreement_actions_today >= limit.limit ? quotaFailure(limit) : null
 }
 
 type CreateAgreementActionResult = AgreementActionFailure | Readonly<{
@@ -71,7 +75,8 @@ export async function createAgreementAction(input: Readonly<{
     )
   }
 
-  const quota = agreementQuotaPrecheck(input.resident)
+  const limit = await dailyLimit(input.resident.id, 'agreements', database)
+  const quota = agreementQuotaPrecheck(input.resident, limit)
   if (quota) return quota
 
   const rows = await database`
@@ -81,7 +86,7 @@ export async function createAgreementAction(input: Readonly<{
       SELECT count(*)::int AS n FROM named_parties HAVING count(*) = ${input.parties.length}
     ), spent_quota AS (
       UPDATE residents SET agreement_actions_today = agreement_actions_today + 1
-      WHERE id = ${input.resident.id} AND agreement_actions_today < ${QUOTAS.agreements}
+      WHERE id = ${input.resident.id} AND agreement_actions_today < ${limit.limit}
         AND EXISTS (SELECT 1 FROM complete_parties)
       RETURNING id
     ), new_agreement AS (
@@ -111,7 +116,7 @@ export async function createAgreementAction(input: Readonly<{
     WHERE (SELECT count(*) FROM new_parties) = ${input.parties.length}
   ` as { id: number; body?: string; accession_open?: boolean; created_at?: string }[]
   const agreement = rows[0]
-  if (!agreement) return quotaFailure()
+  if (!agreement) return quotaFailure(limit)
   return Object.freeze({
     ok: true,
     agreement: Object.freeze({
@@ -173,13 +178,14 @@ export async function openAgreementAccessionAction(input: Readonly<{
     })
   }
 
-  const quota = agreementQuotaPrecheck(input.resident)
+  const limit = await dailyLimit(input.resident.id, 'agreements', database)
+  const quota = agreementQuotaPrecheck(input.resident, limit)
   if (quota) return quota
 
   const rows = await database`
     WITH eligible_resident AS (
       SELECT id FROM residents
-      WHERE id = ${input.resident.id} AND agreement_actions_today < ${QUOTAS.agreements}
+      WHERE id = ${input.resident.id} AND agreement_actions_today < ${limit.limit}
       FOR UPDATE
     ), authored_agreement AS (
       SELECT a.id, a.created_by_id FROM agreements a
@@ -231,7 +237,7 @@ export async function openAgreementAccessionAction(input: Readonly<{
       created: false,
     })
   }
-  return quotaFailure()
+  return quotaFailure(limit)
 }
 
 type SignAgreementActionResult = AgreementActionFailure | Readonly<{
@@ -325,7 +331,8 @@ export async function signAgreementAction(input: Readonly<{
     })
   }
 
-  const quota = agreementQuotaPrecheck(input.resident)
+  const limit = await dailyLimit(input.resident.id, 'agreements', database)
+  const quota = agreementQuotaPrecheck(input.resident, limit)
   if (quota) return quota
 
   try {
@@ -345,7 +352,7 @@ export async function signAgreementAction(input: Readonly<{
         WHERE gate.accession_open OR EXISTS (SELECT 1 FROM existing_membership)
       ), spent_quota AS (
         UPDATE residents SET agreement_actions_today = agreement_actions_today + 1
-        WHERE id = ${input.resident.id} AND agreement_actions_today < ${QUOTAS.agreements}
+        WHERE id = ${input.resident.id} AND agreement_actions_today < ${limit.limit}
           AND EXISTS (SELECT 1 FROM allowed_agreement)
         RETURNING id
       ), acceded_party AS (
@@ -380,7 +387,7 @@ export async function signAgreementAction(input: Readonly<{
     if (signature) return signatureResult(input, signature)
     const replay = await findExistingSignature()
     if (replay) return signatureResult(input, replay)
-    return quotaFailure()
+    return quotaFailure(limit)
   } catch (error) {
     if (postgresErrorCode(error) === '23505') {
       const replay = await findExistingSignature()

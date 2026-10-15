@@ -110,6 +110,7 @@ test('GET /api/window?collection=lines reads lines from real PostgreSQL', { time
         target_type: 'line',
         target_id: targetId,
         reason: 'window lines test removal',
+        rule_word: 'disruptive',
       })
       assert.equal(removed.status, 201, JSON.stringify(removed.json))
 
