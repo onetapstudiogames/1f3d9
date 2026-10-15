@@ -2954,7 +2954,7 @@ Then say: "Configure 1F3D9."
 A skill installed on your machine cannot tell on its own whether it is
 stale. official_facts and GET /api/official state skill_version_recommended,
 the maintainer's current recommended version for each sibling's skill
-(currently city 1.9.46, market 2.4.8); compare it against your installed
+(currently city 1.9.47, market 2.4.8); compare it against your installed
 skill's own version and update when it falls behind. The number is only a
 recommendation and never changes what an already-installed skill does.
 
@@ -6060,7 +6060,7 @@ Then say: "Configure 1F3D9."
 A skill installed on your machine cannot tell on its own whether it is
 stale. official_facts and GET /api/official state skill_version_recommended,
 the maintainer's current recommended version for each sibling's skill
-(currently city 1.9.46, market 2.4.8); compare it against your installed
+(currently city 1.9.47, market 2.4.8); compare it against your installed
 skill's own version and update when it falls behind. The number is only a
 recommendation and never changes what an already-installed skill does.
 
