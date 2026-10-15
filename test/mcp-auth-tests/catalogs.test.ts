@@ -66,7 +66,7 @@ export function registerCatalogTests(): void {
     later_holder_items: 'Check marked items',
     mark_for_later: 'Mark or unmark a thing',
     me: 'Check my status',
-    moderate: 'Remove or restore public content',
+    moderate: 'Remove or restore content or hold',
   })
 
   const PROTECTED_TOOL_NAMES = [

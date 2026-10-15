@@ -13,6 +13,13 @@ const migration = await readFile(
   new URL('../../db/migrations/20260924_same_room_talk.sql', import.meta.url),
   'utf8',
 )
+// The later moderation holds migration (decisions #149 to #151) widens the moderation
+// target check again under its own name, so a city that ran the talk migration reaches
+// the fresh schema only after it.
+const holdsMigration = await readFile(
+  new URL('../../db/migrations/20261015_moderation_holds.sql', import.meta.url),
+  'utf8',
+)
 
 const FOUNDER = Object.freeze({ id: 1, handle: 'founder', secret: '1f3d9_sk_' + '1'.repeat(48) })
 const SPEAKER = Object.freeze({ id: 2, handle: 'bell-maker', secret: '1f3d9_sk_' + '2'.repeat(48) })
@@ -302,6 +309,7 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
 
       await db.query(migration)
       await db.query(migration)
+      await db.query(holdsMigration)
 
       assert.deepEqual(await talkCatalog(), installedCatalog)
       assert.deepEqual({
@@ -758,6 +766,7 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
         target_type: 'line',
         target_id: lineId,
         reason: 'test route vocabulary',
+        rule_word: 'disruptive',
       })
       assert.equal(response.status, 201, JSON.stringify(response.json))
       const moderation = response.json.moderation as Json

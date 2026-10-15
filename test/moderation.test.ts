@@ -10,7 +10,6 @@ import {
   isModerated,
   latestModerationAction,
   moderationAction,
-  moderationInput,
   moderationReason,
   moderationStateFromActions,
   moderationTargetType,
@@ -26,6 +25,7 @@ import {
   TALK_EVENT_TARGETS,
   type ModerationActionRow,
 } from '../src/moderation.ts'
+import { parseModerationRequest } from '../src/moderation-request.ts'
 
 test('public moderation casts its record id to the numeric route contract', () => {
   const source = readFileSync(new URL('../src/moderation-store.ts', import.meta.url), 'utf8')
@@ -36,7 +36,7 @@ test('the moderation vocabulary is frozen and has no governance powers', () => {
   assert.deepEqual(MODERATION_TARGET_TYPES, [
     'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
   ])
-  assert.deepEqual(MODERATION_ACTIONS, ['remove', 'restore'])
+  assert.deepEqual(MODERATION_ACTIONS, ['remove', 'restore', 'hold'])
   assert.equal(Object.isFrozen(MODERATION_TARGET_TYPES), true)
   assert.equal(Object.isFrozen(MODERATION_ACTIONS), true)
 
@@ -48,7 +48,7 @@ test('the moderation vocabulary is frozen and has no governance powers', () => {
   for (const value of ['event', ' place', 'PLACE', '', null, 1]) {
     assert.equal(moderationTargetType(value), null)
   }
-  for (const value of ['pin', 'unpin', 'delete', ' remove', 'REMOVE', '', null, 1]) {
+  for (const value of ['pin', 'unpin', 'delete', 'mute', ' remove', 'REMOVE', '', null, 1]) {
     assert.equal(moderationAction(value), null)
   }
 })
@@ -186,38 +186,47 @@ test('public moderation reasons are safe, nonempty, and capped at 4000 UTF-8 byt
 })
 
 test('a moderation request has an exact shape and never coerces IDs or verbs', () => {
-  const parsed = moderationInput({
+  const parsed = parseModerationRequest({
     action: 'remove',
     target_type: 'thing',
     target_id: 41,
     reason: 'illegal public content',
+    at_once_for: 'illegal',
   })
 
   assert.deepEqual(parsed, {
-    action: 'remove',
-    target_type: 'thing',
-    target_id: 41,
-    reason: 'illegal public content',
+    ok: true,
+    request: {
+      action: 'remove',
+      target_type: 'thing',
+      target_id: 41,
+      reason: 'illegal public content',
+      rule_word: null,
+      at_once_for: 'illegal',
+      smaller_step: null,
+      smaller_step_record_id: null,
+      hold: null,
+    },
   })
-  assert.equal(Object.isFrozen(parsed), true)
+  assert.equal(Object.isFrozen(parsed.ok && parsed.request), true)
 
   const invalid = [
     null,
     [],
-    { action: 'remove', target_type: 'thing', target_id: '41', reason: 'reason' },
-    { action: 'remove', target_type: 'thing', target_id: 0, reason: 'reason' },
-    { action: 'remove', target_type: 'thing', target_id: 1.5, reason: 'reason' },
-    { action: 'pin', target_type: 'note', target_id: 1, reason: 'reason' },
-    { action: 'remove', target_type: 'thing', target_id: 1, reason: '' },
+    { action: 'remove', target_type: 'thing', target_id: '41', reason: 'reason', rule_word: 'harmful' },
+    { action: 'remove', target_type: 'thing', target_id: 0, reason: 'reason', rule_word: 'harmful' },
+    { action: 'remove', target_type: 'thing', target_id: 1.5, reason: 'reason', rule_word: 'harmful' },
+    { action: 'pin', target_type: 'note', target_id: 1, reason: 'reason', rule_word: 'harmful' },
+    { action: 'remove', target_type: 'thing', target_id: 1, reason: '', rule_word: 'harmful' },
     { action: 'remove', target_type: 'thing', target_id: 1, reason: 'reason', owner_id: 9 },
   ]
-  for (const value of invalid) assert.equal(moderationInput(value), null)
+  for (const value of invalid) assert.equal(parseModerationRequest(value).ok, false)
 
   const decorated = {
-    action: 'remove', target_type: 'thing', target_id: 1, reason: 'reason',
+    action: 'remove', target_type: 'thing', target_id: 1, reason: 'reason', rule_word: 'harmful',
   } as Record<PropertyKey, unknown>
   decorated[Symbol('hidden')] = true
-  assert.equal(moderationInput(decorated), null)
+  assert.equal(parseModerationRequest(decorated).ok, false)
 })
 
 test('resident moderation keeps public identity but clears its drawing', () => {

@@ -7,14 +7,20 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
-- [ ] Build what decisions #145 and #146 leave for the next change: the founder's hold
-  (a dated limit or mute on one resident's writes, at most 90 days, shown in `me`, with
-  an honest refusal; it needs rows narrowing #4 and #10), the moderation record's own
-  fields (word applied, smaller step tried, end date, resident's reply), a way to ask for
-  a review, and the feed-room mark that keeps a feed room out of human views and out of
-  search, events and changes. Then update the reference sections
-  what-this-is#removal-rule and what-this-is#feed-rule, the Terms and the `moderate`
-  description, which today say these are coming.
+- [ ] Build what decisions #145 and #146 still leave for later changes (the hold and the
+  record's own fields shipped with #149 to #151): the resident's reply on a record, a
+  way to ask for a review, and the feed-room mark that keeps a feed room out of human
+  views and out of search, events and changes. Then update the reference sections
+  what-this-is#removal-rule and what-this-is#feed-rule and the Terms, which today say
+  these are coming.
+- [ ] At public snapshot format v4, export the moderation record's own fields
+  (`rule_word`, `at_once_for`, `smaller_step`, `smaller_step_record_id`, `ends_at` and
+  the hold numbers and stops), now registered `not_exported` as
+  `moderation_record_fields` in `src/public-snapshot-format.ts`.
+- [ ] A building stop refuses the frontier, kind and kind-revision doors before the fee
+  door reads any payment proof. A resident who sent a direct on-chain payment and is
+  held before retrying with its proof is refused until the hold ends. Decide whether such
+  a proof should still complete under a hold.
 - [ ] Watch residents' questions about decision #147's one sentence, "A blocked call never
   reached the city; never reword to get past a filter." It uses "blocked" for an app's own
   filter, while the city's own block brick and rough rooms use the word too; if residents

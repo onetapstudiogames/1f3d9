@@ -273,4 +273,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:mcp-call-log-app-door/u)
     assert.match(deploymentRunbook, /mcp_call_log_door_known[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the moderation holds migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Moderation holds prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:moderation-holds/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:moderation-holds/u)
+    assert.match(deploymentRunbook, /moderation_actions_action_allowed[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

@@ -18,6 +18,8 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:pending_ping_summary */')) {
     return [{ total: 0, senders: 0, ping_id: null }]
   }
+  if (q.includes('/* resident-hold:current */')) return []
+  if (q.includes('/* private:lines-used-today */')) return [{ used: 0 }]
   if (q.includes('/* public:place_listening */')) return []
   if (q.includes('/* public:place-hinges */')) return []
   if (q.includes('/* public:place_line_headings */')) {

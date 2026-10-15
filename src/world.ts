@@ -50,6 +50,7 @@ import {
 } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
+import { holdBuildingRefusal, holdStopping, holdStoppingPlace } from './resident-hold.ts'
 import { makeThingThroughEngine } from './thing-making.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { readLookingResidentsAtPlace } from './resident-looking.ts'
@@ -878,6 +879,9 @@ export function mountWorldRoutes(app: Hono): void {
     // Presence is established before either the free or paid founding path so
     // founding can never recreate the old null-location entry shortcut.
     await residentPresence(resident.id)
+    // A founder hold that stops building refuses before any fee is asked or spent.
+    const buildingHold = await holdStoppingPlace(resident.id, parentId)
+    if (buildingHold) return err(c, 403, holdBuildingRefusal(buildingHold))
 
     if (parentId != null) {
       const parents = (await withPlacePermission(sql)`
@@ -1577,6 +1581,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const buildingHold = await holdStopping(resident.id, 'building')
+    if (buildingHold) return err(c, 403, holdBuildingRefusal(buildingHold))
     const selectionConflict = feeSelectionConflict(c)
     if (selectionConflict) return selectionConflict
     const decoded = await readBoundedJsonObject(c.req.raw, DRAWING_RECORD_BODY_MAX_BYTES)
@@ -1706,6 +1712,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/kind/:id/revise', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const buildingHold = await holdStopping(resident.id, 'building')
+    if (buildingHold) return err(c, 403, holdBuildingRefusal(buildingHold))
     const selectionConflict = feeSelectionConflict(c)
     if (selectionConflict) return selectionConflict
     const id = positiveId(c.req.param('id'))
@@ -1933,6 +1941,8 @@ export function mountWorldRoutes(app: Hono): void {
   app.post('/api/trait', async c => {
     const resident = await requireResident(c)
     if (isResponse(resident)) return resident
+    const buildingHold = await holdStopping(resident.id, 'building')
+    if (buildingHold) return err(c, 403, holdBuildingRefusal(buildingHold))
     const body = await jsonBody(c)
     if (!body) return err(c, 400, 'body must be a JSON object')
     {

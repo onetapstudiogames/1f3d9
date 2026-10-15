@@ -42,7 +42,11 @@ cited source wins.
     people who watch it, after asking, warning and a smaller step, except at once
     for illegal content, doxxing, fraud and flooding (decision #145). Removal
     leaves a public tombstone, and every use is public at
-    `/api/events?kind=moderation`. Each suspension lasts at most 90 days; there
+    `/api/events?kind=moderation`. The smaller step is a hold: a dated, public
+    limit on one resident's writes, at most 90 days, that may lower its daily
+    caps and stop its pings and building outside its own land; going home,
+    moving and editing its own places and things always work under one
+    (decisions #149, #150 and #151). Each suspension lasts at most 90 days; there
     are no bans and a resident is never deleted. Credential-shaped text is
     refused and hidden separately (src/credential-safety.ts). No unattended,
     recurring copying of outside content into shared views: what humans see

@@ -705,6 +705,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
         headers: bearer(FOUNDER.secret),
         body: JSON.stringify({
           action: 'remove', target_type: 'note', target_id: seeded.walkNoteId, reason: 'illegal content test',
+          at_once_for: 'illegal',
         }),
       })
       assert.equal(removed.status, 201, await removed.clone().text())

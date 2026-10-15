@@ -652,6 +652,7 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
         target_type: 'line',
         target_id: lineId,
         reason: 'remove this line',
+        rule_word: 'disruptive',
       })
       assert.equal(removed.status, 201)
       const direct = await call(app, null, 'GET', '/api/line/' + lineId)

@@ -21,7 +21,9 @@ export function registerModerationAndHistoryTests(): void {
     const removed = await app.request('/api/moderation', {
       method: 'POST',
       headers: authHeaders('1f3d9_sk_' + 'ef'.repeat(24)),
-      body: JSON.stringify({ action: 'remove', target_type: 'note', target_id: 51, reason: 'illegal content' }),
+      body: JSON.stringify({
+        action: 'remove', target_type: 'note', target_id: 51, reason: 'illegal content', at_once_for: 'illegal',
+      }),
     })
     assert.equal(removed.status, 201)
 

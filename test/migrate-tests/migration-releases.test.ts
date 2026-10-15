@@ -390,6 +390,72 @@ export function registerMigrationReleaseTests(): void {
       'node --experimental-strip-types scripts/migrate.ts --target production --migration mcp-call-log-app-door')
   })
 
+  test('the moderation holds migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261015_moderation_holds.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /a check other than moderation_actions_action_check restricts moderation_actions\.action/u)
+    assert.match(migration, /DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+moderation_actions_action_check/iu)
+    assert.match(migration, /moderation_actions conflicts with the reviewed hold columns/u)
+    assert.match(migration, /moderation_actions is missing a validated hold constraint/u)
+    for (const name of [
+      'moderation_actions_action_allowed', 'moderation_actions_target_type_allowed',
+      'moderation_actions_rule_word_allowed', 'moderation_actions_at_once_for_allowed',
+      'moderation_actions_smaller_step_bytes', 'moderation_actions_hold_numbers',
+      'moderation_actions_hold_fields', 'moderation_actions_smaller_step_record_fk',
+    ]) {
+      assert.match(migration, new RegExp(`ADD CONSTRAINT ${name}\\b[\\s\\S]*?NOT VALID;`, 'u'), name)
+      assert.match(migration, new RegExp(`VALIDATE CONSTRAINT ${name};`, 'u'), name)
+    }
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN)|DELETE\s+FROM|UPDATE\s+moderation_actions|TRUNCATE/iu)
+    assert.doesNotMatch(migration, /ADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS)/iu, 'every column add is repeatable')
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'moderation-holds'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'moderation-holds'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-moderation-holds-20261015',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:moderation-holds'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-holds')
+    assert.equal(packageJson.scripts?.['migrate:production:moderation-holds'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration moderation-holds')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $moderation_holds_guard$'),
+      migration.indexOf('DO $moderation_holds_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 1_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the moderation holds statements')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

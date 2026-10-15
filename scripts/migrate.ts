@@ -91,6 +91,7 @@ type RemoteMigration =
   | 'place-hinges'
   | 'mcp-call-log'
   | 'mcp-call-log-app-door'
+  | 'moderation-holds'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -113,6 +114,7 @@ export type MigrationFile =
   | 'db/migrations/20260928_place_hinges.sql'
   | 'db/migrations/20261009_mcp_call_log.sql'
   | 'db/migrations/20261009_mcp_call_log_app_door.sql'
+  | 'db/migrations/20261015_moderation_holds.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -289,6 +291,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'place-hinges': 'db/migrations/20260928_place_hinges.sql',
   'mcp-call-log': 'db/migrations/20261009_mcp_call_log.sql',
   'mcp-call-log-app-door': 'db/migrations/20261009_mcp_call_log_app_door.sql',
+  'moderation-holds': 'db/migrations/20261015_moderation_holds.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

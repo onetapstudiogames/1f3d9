@@ -1,8 +1,9 @@
 import { QUOTAS, type Resident } from './core.ts'
 import { craftKindThing, type CraftedThing, type CraftSql } from './crafting.ts'
-import { EngineError, runAction, type ActionExecution } from './engine.ts'
+import { EngineError, runAction, type ActionExecution, type TaggedSql } from './engine.ts'
 import type { ThingRow } from './world-support.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
+import { dailyLimit, holdLimitRefusal, type DailyLimit } from './resident-hold.ts'
 
 type MakeFailureStatus = 400 | 403 | 404 | 409 | 429 | 500
 
@@ -58,6 +59,19 @@ async function actionBoundary(
   }
 }
 
+/**
+ * The daily things limit inside the make transaction: the lower of the city cap and
+ * a founder hold's number. A hold of zero refuses here, before any recipe,
+ * ingredient, or place is read.
+ */
+async function thingsLimit(input: MakeThingInput, transaction: TaggedSql): Promise<DailyLimit> {
+  const things = await dailyLimit(input.actor.id, 'things', transaction)
+  if (things.hold && things.limit === 0) {
+    throw new EngineError(429, holdLimitRefusal(things.hold, 'things'))
+  }
+  return things
+}
+
 async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult> {
   if (input.kindId === null) throw new EngineError(500, 'typed thing needs a kind; send one current kind_id')
   const completed = Promise.withResolvers<MakeSuccess>()
@@ -69,6 +83,7 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
     primitiveHandledByCaller: true,
     primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
+      const things = await thingsLimit(input, transaction)
       const result = await craftKindThing(transaction as unknown as CraftSql, {
         actor: input.actor,
         kindId: input.kindId,
@@ -81,8 +96,13 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
         openToConvert: input.openToConvert === true,
         wakeEnabled: input.wakeEnabled !== false,
         ingredientIds: input.ingredientIds,
-      })
-      if (!result.ok) throw new EngineError(result.status, result.error)
+      }, { dailyThingLimit: things.limit })
+      if (!result.ok) {
+        if (result.status === 429 && things.hold) {
+          throw new EngineError(429, holdLimitRefusal(things.hold, 'things'))
+        }
+        throw new EngineError(result.status, result.error)
+      }
       completed.resolve(Object.freeze({
         ok: true,
         thing: result.thing,
@@ -106,6 +126,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
     primitiveHandledByCaller: true,
     primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
+      const things = await thingsLimit(input, transaction)
       const rows = (await withPlacePermission(transaction)`
         WITH permitted_place AS (
           SELECT place.id
@@ -118,7 +139,7 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
         ), quota_spend AS (
           UPDATE residents SET things_today = things_today + 1
           WHERE id = ${input.actor.id}
-            AND things_today < ${QUOTAS.things}
+            AND things_today < ${things.limit}
             AND EXISTS (SELECT 1 FROM permitted_place)
           RETURNING id, handle
         ), new_thing AS (
@@ -158,11 +179,13 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
           throw new EngineError(409, 'place is retired; restore it before making things there')
         }
         const quotaRows = (await transaction`
-          SELECT things_today < ${QUOTAS.things} AS available
+          SELECT things_today < ${things.limit} AS available
           FROM residents WHERE id = ${input.actor.id}
         `) as Array<{ available: boolean }>
         if (quotaRows[0]?.available === false) {
-          throw new EngineError(429, `daily thing limit reached (${QUOTAS.things}); retry after the UTC day resets`)
+          throw new EngineError(429, things.hold
+            ? holdLimitRefusal(things.hold, 'things')
+            : `daily thing limit reached (${QUOTAS.things}); retry after the UTC day resets`)
         }
         throw new EngineError(409, 'place changed before the thing could be made; retry')
       }

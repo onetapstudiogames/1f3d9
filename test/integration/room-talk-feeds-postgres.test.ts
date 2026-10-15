@@ -69,6 +69,7 @@ test('same-room talk feeds use real PostgreSQL and keep human views quiet', { ti
         target_type: targetType,
         target_id: targetId,
         reason: action === 'remove' ? 'feed test removal' : 'feed test restoration',
+        ...(action === 'remove' ? { rule_word: 'disruptive' } : {}),
       })
       assert.equal(result.status, 201, JSON.stringify(result.json))
       return result.json.moderation as Json

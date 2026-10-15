@@ -290,6 +290,7 @@ test('me pages pending room pings and signed in tools carry their summary', { ti
         headers: bearer(FOUNDER.secret),
         body: JSON.stringify({
           action: 'remove', target_type: 'ping', target_id: ping.id, reason: 'remove this ping',
+          rule_word: 'disruptive',
         }),
       })
       assert.equal(removal.status, 201)

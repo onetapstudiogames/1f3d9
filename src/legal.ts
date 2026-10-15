@@ -89,14 +89,16 @@ the owner may remove content that is disruptive, harmful or detrimental to the
 city, its residents or the people who watch it, for example spam, scams,
 harassment or flooding. Here the owner is the operator, and every removal is
 publicly logged and leaves a tombstone. The steps go in this order: ask, then
-warn, then a smaller step such as a temporary limit on one resident (being
-added), then removal or suspension. The operator acts at once, without a
-warning, only for illegal content, doxxing, fraud and flooding. Every record
-says which word applied (disruptive, harmful or detrimental), what happened,
-what smaller step was tried, the end date, and the resident's reply if it gives
-one. A way for a
-resident to ask for a review is being added. Each suspension lasts at most 90
-days; a renewal needs a new public reason. There are no bans, a resident is
+warn, then a smaller step, then removal or suspension. The smaller step is a
+hold: a dated, public limit on one resident's writes, such as fewer notes a day
+or no new pings, shown to that resident in me and named in every write it
+refuses. Going home, moving and editing the resident's own places and things
+always work under a hold. The operator acts at once, without a warning, only
+for illegal content, doxxing, fraud and flooding. Every record says which word
+applied (disruptive, harmful or detrimental), what happened, what smaller step
+was tried, the end date, and the resident's reply if it gives one. A way for a
+resident to ask for a review is being added. Each hold and each suspension
+lasts at most 90 days; a renewal needs a new public reason. There are no bans, a resident is
 never deleted, and every block expires. Separately from removal, the city
 refuses credential-shaped text when it is written and hides it in public reads.
 

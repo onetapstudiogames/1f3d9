@@ -1,4 +1,4 @@
-import type { Resident } from './core.ts'
+import { postgresErrorCode, type Resident } from './core.ts'
 import { sql } from './db.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
@@ -6,10 +6,14 @@ import {
   TALK_EVENT_TARGETS,
   moderatedTalkEvent,
   redactModeratedTarget,
-  type ModerationInput,
   type ModerationTargetType,
   type TalkTargetType,
 } from './moderation.ts'
+import {
+  MODERATION_HOLD_END_REFUSAL,
+  type ModerationRequest,
+  type ModerationRequestTargetType,
+} from './moderation-request.ts'
 
 interface ModerationOverlay {
   target_id: number
@@ -42,6 +46,11 @@ const TARGET_TABLES: Readonly<Record<ModerationTargetType, string>> = Object.fre
   agreement: 'agreements',
   line: 'room_lines',
   ping: 'pings',
+})
+// A hold names the resident whose writes it limits (decision #151).
+const RECORD_TARGET_TABLES: Readonly<Record<ModerationRequestTargetType, string>> = Object.freeze({
+  ...TARGET_TABLES,
+  hold: 'residents',
 })
 
 export async function moderationTargetExists(
@@ -432,22 +441,44 @@ export async function moderatePublicEvents<T extends object>(rows: readonly T[])
   }))
 }
 
-/** Record the founder's narrow content-only power and its public event atomically. */
-export async function recordModeration(
+const RECORD_FIELDS_SQL = `id, target_type, target_id, action, actor_id, reason, created_at,
+        rule_word, at_once_for, smaller_step, smaller_step_record_id, ends_at,
+        hold_notes, hold_lines, hold_things, hold_agreements,
+        hold_stops_pings, hold_stops_building`
+
+async function insertModeration(
   actor: Resident,
-  input: ModerationInput,
-): Promise<Record<string, unknown> | null> {
-  if (actor.id !== 1) return null
-  const table = TARGET_TABLES[input.target_type]
-  const rows = await sql.query(`
+  input: ModerationRequest,
+  table: string,
+  endsHold: boolean,
+): Promise<Array<Record<string, unknown>>> {
+  const hold = input.hold
+  return await sql.query(`
     WITH target AS MATERIALIZED (
       SELECT id FROM ${table} WHERE id = $1
+    ), current_hold AS MATERIALIZED (
+      SELECT action = 'hold' AND ends_at > clock_timestamp() AS active
+      FROM moderation_actions
+      WHERE target_type = 'hold' AND target_id = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    ), smaller_step_record AS MATERIALIZED (
+      SELECT id FROM moderation_actions WHERE id = $10::bigint
     ), new_action AS (
       INSERT INTO moderation_actions (
-        target_type, target_id, action, actor_id, reason
+        target_type, target_id, action, actor_id, reason,
+        rule_word, at_once_for, smaller_step, smaller_step_record_id, ends_at,
+        hold_notes, hold_lines, hold_things, hold_agreements,
+        hold_stops_pings, hold_stops_building
       )
-      SELECT $2, target.id, $3, $4, $5 FROM target
-      RETURNING id, target_type, target_id, action, actor_id, reason, created_at
+      SELECT $2, target.id, $3, $4, $5,
+        $7, $8, $9, $10::bigint, $11::timestamptz,
+        $12::smallint, $13::smallint, $14::smallint, $15::smallint,
+        $16::boolean, $17::boolean
+      FROM target
+      WHERE ($10::bigint IS NULL OR EXISTS (SELECT 1 FROM smaller_step_record))
+        AND (NOT $18::boolean OR coalesce((SELECT active FROM current_hold), false))
+      RETURNING ${RECORD_FIELDS_SQL}
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'moderation', $6, jsonb_build_object(
@@ -459,7 +490,11 @@ export async function recordModeration(
       )
       FROM new_action
     )
-    SELECT * FROM new_action
+    SELECT new_action.*,
+      EXISTS (SELECT 1 FROM target) AS target_found,
+      ($10::bigint IS NULL OR EXISTS (SELECT 1 FROM smaller_step_record)) AS smaller_step_found
+    FROM (VALUES (TRUE)) AS result(singleton)
+    LEFT JOIN new_action ON TRUE
   `, [
     input.target_id,
     input.target_type,
@@ -467,8 +502,73 @@ export async function recordModeration(
     actor.id,
     input.reason,
     actor.handle,
-  ]) as Record<string, unknown>[]
-  return rows[0] ?? null
+    input.rule_word,
+    input.at_once_for,
+    input.smaller_step,
+    input.smaller_step_record_id,
+    hold?.ends_at ?? null,
+    hold?.hold_notes ?? null,
+    hold?.hold_lines ?? null,
+    hold?.hold_things ?? null,
+    hold?.hold_agreements ?? null,
+    hold === null ? null : hold.hold_stops_pings,
+    hold === null ? null : hold.hold_stops_building,
+    endsHold,
+  ]) as Array<Record<string, unknown>>
+}
+
+export type RecordModerationResult =
+  | Readonly<{ ok: true; moderation: Record<string, unknown> }>
+  | Readonly<{ ok: false; status: 400 | 404 | 409; error: string }>
+
+/**
+ * Record the founder's public moderation power and its public event atomically: a
+ * removal or restore of public content, or a hold on one resident's writes. The
+ * route admits founder #1 only and the table's actor check holds it to #1. The
+ * event detail keeps its five keys; the record's own fields live on the row.
+ */
+export async function recordModeration(
+  actor: Resident,
+  input: ModerationRequest,
+): Promise<RecordModerationResult> {
+  const table = RECORD_TARGET_TABLES[input.target_type]
+  const endsHold = input.action === 'restore' && input.target_type === 'hold'
+  const hold = input.hold
+  let rows: Array<Record<string, unknown>>
+  try {
+    rows = await insertModeration(actor, input, table, endsHold)
+  } catch (error) {
+    // The database's own 90-day check is the last word on a hold's end date.
+    if (hold !== null && postgresErrorCode(error) === '23514') {
+      return Object.freeze({ ok: false, status: 400, error: MODERATION_HOLD_END_REFUSAL })
+    }
+    throw error
+  }
+  const row = rows[0]
+  if (row && row.id !== null && row.id !== undefined) {
+    const { target_found: _found, smaller_step_found: _stepFound, ...moderation } = row
+    return Object.freeze({ ok: true, moderation })
+  }
+  if (row?.target_found !== true) {
+    const named = input.target_type === 'hold' ? 'resident' : input.target_type
+    return Object.freeze({
+      ok: false,
+      status: 404,
+      error: `${named} target_id ${input.target_id} was not found; re-read the public record and send a current target_id`,
+    })
+  }
+  if (row.smaller_step_found !== true) {
+    return Object.freeze({
+      ok: false,
+      status: 404,
+      error: `smaller_step_record_id ${input.smaller_step_record_id} names no moderation record; read browse view=moderation and send a current record id`,
+    })
+  }
+  return Object.freeze({
+    ok: false,
+    status: 409,
+    error: `resident #${input.target_id} has no active hold to end; read browse view=moderation for its current hold`,
+  })
 }
 
 export async function moderationHistory(
@@ -484,11 +584,19 @@ export async function moderationHistory(
     )
     SELECT page.id::integer AS id, page.target_type, page.target_id, page.action,
       page.reason, page.created_at, page.actor,
+      page.rule_word, page.at_once_for, page.smaller_step,
+      page.smaller_step_record_id::integer AS smaller_step_record_id, page.ends_at,
+      page.hold_notes, page.hold_lines, page.hold_things, page.hold_agreements,
+      page.hold_stops_pings, page.hold_stops_building,
       totals.total_items, totals.total_text_bytes
     FROM totals
     LEFT JOIN LATERAL (
       SELECT action.id, action.target_type, action.target_id, action.action,
-        action.reason, action.created_at, actor.handle AS actor
+        action.reason, action.created_at, actor.handle AS actor,
+        action.rule_word, action.at_once_for, action.smaller_step,
+        action.smaller_step_record_id, action.ends_at,
+        action.hold_notes, action.hold_lines, action.hold_things, action.hold_agreements,
+        action.hold_stops_pings, action.hold_stops_building
       FROM moderation_actions action
       JOIN residents actor ON actor.id = action.actor_id
       WHERE ($1::integer IS NULL OR action.id < $1::integer)
