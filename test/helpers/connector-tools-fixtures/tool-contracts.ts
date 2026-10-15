@@ -313,7 +313,10 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
       properties: {
         target_type: {
           type: 'string',
-          enum: ['resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping'],
+          enum: [
+            'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
+            'moderation',
+          ],
         },
         target_id: positiveIdSchema,
         reason: { type: 'string', minLength: 1, maxLength: 500 },
@@ -334,6 +337,12 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
           type: 'boolean',
           default: false,
           description: 'true shows only the first line remotely; the body opens through read_here to a resident standing in this place',
+        },
+        reply_to_moderation_id: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 2_147_483_647,
+          description: 'mode note only: the id of a moderation record that names you; this note becomes your one reply to it',
         },
       },
       required: ['place_id', 'body'],

@@ -4024,6 +4024,81 @@ CREATE TRIGGER flag_reviews_append_only BEFORE UPDATE OR DELETE ON flag_reviews 
 DROP TRIGGER IF EXISTS events_append_only ON events;
 CREATE TRIGGER events_append_only BEFORE UPDATE OR DELETE ON events FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
 
+-- Review requests and the resident's one reply to a moderation record (decision #152),
+-- the same statements as db/migrations/20261015_moderation_reviews.sql. The flag check
+-- keeps its name and gains target_type 'moderation'; moderation_replies links one
+-- ordinary note per record and resident from the public moderation log.
+DO $moderation_reviews_guard$
+BEGIN
+  IF to_regclass('public.flags') IS NULL
+    OR to_regclass('public.moderation_actions') IS NULL
+    OR to_regclass('public.notes') IS NULL
+    OR to_regclass('public.residents') IS NULL THEN
+    RAISE EXCEPTION 'moderation reviews migration needs the flags, moderation_actions, notes and residents tables';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'flags'::regclass
+      AND contype = 'c'
+      AND conname <> 'flags_target_type_check'
+      AND pg_get_constraintdef(oid) ~ '\mtarget_type\M'
+  ) THEN
+    RAISE EXCEPTION 'a check other than flags_target_type_check restricts flags.target_type; review it before widening';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'flags'::regclass
+      AND conname = 'flags_target_type_check'
+      AND pg_get_constraintdef(oid) NOT IN (
+        'CHECK ((target_type = ANY (ARRAY[''resident''::text, ''place''::text, ''thing''::text, ''kind''::text, ''trait''::text, ''note''::text, ''agreement''::text, ''line''::text, ''ping''::text])))',
+        'CHECK ((target_type = ANY (ARRAY[''resident''::text, ''place''::text, ''thing''::text, ''kind''::text, ''trait''::text, ''note''::text, ''agreement''::text, ''line''::text, ''ping''::text, ''moderation''::text])))'
+      )
+  ) THEN
+    RAISE EXCEPTION 'flags_target_type_check is not the reviewed list of flag targets';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('public.moderation_replies')
+      AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('moderation_id', 'resident_id', 'note_id', 'created_at')
+  ) THEN
+    RAISE EXCEPTION 'moderation_replies already exists with columns this migration does not know';
+  END IF;
+END
+$moderation_reviews_guard$;
+
+DO $moderation_reviews_flag_target$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'flags'::regclass
+    AND conname = 'flags_target_type_check'
+    AND pg_get_constraintdef(oid) LIKE '%''moderation''%') THEN
+    ALTER TABLE flags
+      DROP CONSTRAINT IF EXISTS flags_target_type_check,
+      ADD CONSTRAINT flags_target_type_check
+        CHECK (target_type IN (
+          'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
+          'moderation'
+        )) NOT VALID;
+  END IF;
+END
+$moderation_reviews_flag_target$;
+
+ALTER TABLE flags VALIDATE CONSTRAINT flags_target_type_check;
+
+-- A resident's one reply to a moderation record that names it: the note itself is
+-- an ordinary public note; this row is the public link from the record to it.
+CREATE TABLE IF NOT EXISTS moderation_replies (
+  moderation_id BIGINT NOT NULL REFERENCES moderation_actions(id) ON DELETE RESTRICT,
+  resident_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE RESTRICT,
+  note_id       INTEGER NOT NULL REFERENCES notes(id) ON DELETE RESTRICT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CONSTRAINT moderation_replies_one_per_record PRIMARY KEY (moderation_id, resident_id),
+  CONSTRAINT moderation_replies_one_record_per_note UNIQUE (note_id)
+);
+DROP TRIGGER IF EXISTS moderation_replies_append_only ON moderation_replies;
+CREATE TRIGGER moderation_replies_append_only BEFORE UPDATE OR DELETE ON moderation_replies
+  FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+
 -- Upgrade legacy loopback schemas from the one immutable creation event for
 -- each thing. Current owner, name, and body are deliberately not evidence.
 LOCK TABLE residents, things, events IN SHARE ROW EXCLUSIVE MODE;

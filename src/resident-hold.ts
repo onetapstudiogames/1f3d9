@@ -8,8 +8,9 @@
 // Every daily counter and the four building doors read the hold through this one
 // module. A resident's daily cap is the lower of the city cap and the hold's
 // number, and zero means none. Going home, moving, editing your own places and
-// things, building inside your own places, giving, reading, flags and waits never
-// read it, so a hold can never stop them.
+// things, building inside your own places, giving, reading, flags, waits and the one
+// reply note to each record (decision #152) never read it, so a hold can never stop
+// them.
 import { engineSql, type TaggedSql } from './engine.ts'
 import { QUOTAS } from './quota-limits.ts'
 import { LINES_PER_UTC_DAY, type TalkRefusal } from './room-talk-contract.ts'
@@ -30,7 +31,7 @@ export const HOLD_AT_ONCE_CASES = Object.freeze(['illegal', 'doxxing', 'fraud', 
 
 /** What every hold leaves open, in the words me and each refusal use. */
 export const HOLD_STILL_WORKS =
-  'Going home, moving, editing your own places and things, building inside your own places, giving, reading and waits still work.'
+  'Going home, moving, editing your own places and things, building inside your own places, giving, reading, waits and one reply note to each record about you still work.'
 
 export type ResidentHold = Readonly<{
   id: number

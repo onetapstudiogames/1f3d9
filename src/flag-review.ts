@@ -4,8 +4,11 @@ import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 
 export const FLAG_REVIEW_NOTE_CHARACTERS = PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters
 
+// 'moderation' names a moderation record: a resident's request for a review of that
+// record (decision #152), answered once on this same review path.
 export const FLAG_TARGET_TYPES = Object.freeze([
   'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
+  'moderation',
 ] as const)
 
 const FLAG_TARGET_TYPE_SET: ReadonlySet<string> = new Set(FLAG_TARGET_TYPES)

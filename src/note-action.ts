@@ -18,6 +18,7 @@ import {
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { NOTE_IDEMPOTENCY_WINDOW_SECONDS } from './note-limits.ts'
 import { dailyLimit, holdLimitRefusal } from './resident-hold.ts'
+import { replyAlreadySentRefusal } from './moderation-review.ts'
 
 export { NOTE_IDEMPOTENCY_WINDOW_SECONDS }
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
@@ -57,6 +58,12 @@ interface TalkNoteActionInput {
   readonly text: string
   /** Decision #102: fixed on the note when it is written; omitted means an ordinary note. */
   readonly walkToRead?: boolean
+  /**
+   * Decision #152: this note is the resident's one reply to that moderation record. The
+   * caller has checked that the record names the resident; the note is not counted in
+   * the daily notes and no hold limits it.
+   */
+  readonly moderationReplyId?: number
 }
 
 interface TalkNoteCreationRow {
@@ -71,6 +78,7 @@ interface TalkNoteCreationRow {
   readonly active_place?: boolean
   readonly gazette_activated?: boolean
   readonly note_quota_spent?: boolean
+  readonly existing_reply_note_id?: number | null
 }
 
 type TalkNoteStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -316,9 +324,16 @@ async function findRecentDuplicate(
     WHERE note.author_id = $1
       AND note.place_id = $2
       AND note.body COLLATE "C" = $3::text COLLATE "C"
-      AND note.created_at >= statement_timestamp()
-        - ($4::integer * interval '1 second')
       AND note.walk_to_read = $5::boolean
+      -- An ordinary note replays within the window; a reply replays only as the note
+      -- already linked to the same moderation record, at any time.
+      AND CASE WHEN $6::bigint IS NULL
+        THEN note.created_at >= statement_timestamp() - ($4::integer * interval '1 second')
+        ELSE EXISTS (
+          SELECT 1 FROM moderation_replies reply
+          WHERE reply.note_id = note.id AND reply.moderation_id = $6::bigint
+        )
+      END
       ${gazetteReplayRule}
     ORDER BY note.created_at DESC, note.id DESC
     LIMIT 1
@@ -328,6 +343,7 @@ async function findRecentDuplicate(
     input.text,
     NOTE_IDEMPOTENCY_WINDOW_SECONDS,
     input.walkToRead === true,
+    input.moderationReplyId ?? null,
   ]) as TalkNote[]
   return rows[0] ?? null
 }
@@ -377,6 +393,7 @@ async function createTalkNote(
   input: TalkNoteActionInput,
 ): Promise<TalkNote> {
   if (!transaction.query) throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
+  const replyId = input.moderationReplyId ?? null
   const notesLimit = await dailyLimit(input.residentId, 'notes', transaction)
   const rows = await withPlacePermission(transaction)`
     /* note-action:create */
@@ -396,16 +413,42 @@ async function createTalkNote(
       FROM place_state state
       WHERE state.ordinary_place AND state.active_place
         AND state.permits_notes AND state.gazette_activated
+    ), reply_target AS (
+      -- Decision #152: a reply to this moderation record, or NULL for an ordinary note.
+      SELECT ${replyId}::bigint AS moderation_id
     ), spent_quota AS (
       UPDATE residents SET notes_today = notes_today + 1
       WHERE id = ${input.residentId} AND notes_today < ${notesLimit.limit}
+        AND (SELECT moderation_id FROM reply_target) IS NULL
         AND EXISTS (SELECT 1 FROM permitted_place)
       RETURNING id
+    ), existing_reply AS (
+      SELECT reply.note_id
+      FROM moderation_replies reply
+      JOIN reply_target target ON target.moderation_id = reply.moderation_id
+      WHERE reply.resident_id = ${input.residentId}
+    ), reply_writer AS (
+      -- The one reply is not counted in the daily notes and no hold limits it.
+      SELECT resident.id
+      FROM residents resident
+      WHERE resident.id = ${input.residentId}
+        AND (SELECT moderation_id FROM reply_target) IS NOT NULL
+        AND EXISTS (SELECT 1 FROM permitted_place)
+        AND NOT EXISTS (SELECT 1 FROM existing_reply)
+    ), writer AS (
+      SELECT id FROM spent_quota
+      UNION ALL
+      SELECT id FROM reply_writer
     ), new_note AS (
       INSERT INTO notes (place_id, author_id, walk_to_read, body, created_at)
       SELECT p.id, q.id, ${input.walkToRead === true}::boolean, ${input.text}, statement_timestamp()
-      FROM permitted_place p CROSS JOIN spent_quota q
+      FROM permitted_place p CROSS JOIN writer q
       RETURNING id, place_id, author_id, body, created_at, walk_to_read
+    ), new_reply AS (
+      INSERT INTO moderation_replies (moderation_id, resident_id, note_id)
+      SELECT target.moderation_id, note.author_id, note.id
+      FROM new_note note
+      JOIN reply_target target ON target.moderation_id IS NOT NULL
     ), new_event AS (
       INSERT INTO events (at, kind, actor, detail)
       SELECT created_at, 'note', ${input.residentHandle},
@@ -420,7 +463,8 @@ async function createTalkNote(
       coalesce((SELECT state.active_place FROM place_state state), FALSE) AS active_place,
       coalesce((SELECT state.gazette_activated FROM place_state state), FALSE)
         AS gazette_activated,
-      EXISTS (SELECT 1 FROM spent_quota) AS note_quota_spent
+      EXISTS (SELECT 1 FROM spent_quota) AS note_quota_spent,
+      (SELECT note_id FROM existing_reply) AS existing_reply_note_id
     FROM (VALUES (TRUE)) AS result(singleton)
     LEFT JOIN new_note n ON TRUE
   ` as TalkNoteCreationRow[]
@@ -459,7 +503,10 @@ async function createTalkNote(
       `place_id ${input.placeId} closed to notes before the note was left; check its note permission before retrying`,
     )
   }
-  if (outcome.note_quota_spent === false) {
+  if (replyId !== null && outcome.existing_reply_note_id != null) {
+    throw new EngineError(409, replyAlreadySentRefusal(replyId, Number(outcome.existing_reply_note_id)))
+  }
+  if (replyId === null && outcome.note_quota_spent === false) {
     throw new EngineError(429, notesLimit.hold
       ? holdLimitRefusal(notesLimit.hold, 'notes')
       : `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)

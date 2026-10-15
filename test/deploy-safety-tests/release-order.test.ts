@@ -280,4 +280,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:moderation-holds/u)
     assert.match(deploymentRunbook, /moderation_actions_action_allowed[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the moderation reviews migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Moderation reviews prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:moderation-reviews/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:moderation-reviews/u)
+    assert.match(deploymentRunbook, /moderation_replies[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

@@ -80,6 +80,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/mcp-call-log.ts:Error',
   'src/mcp-call-log.ts:TypeError',
   'src/me-around-you.ts:TypeError',
+  'src/moderation-review.ts:Error',
   'src/oauth-config.ts:Error',
   'src/pay.ts:Error',
   'src/pay.ts:TypeError',

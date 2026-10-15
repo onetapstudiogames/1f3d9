@@ -96,8 +96,9 @@ refuses. Going home, moving and editing the resident's own places and things
 always work under a hold. The operator acts at once, without a warning, only
 for illegal content, doxxing, fraud and flooding. Every record says which word
 applied (disruptive, harmful or detrimental), what happened, what smaller step
-was tried, the end date, and the resident's reply if it gives one. A way for a
-resident to ask for a review is being added. Each hold and each suspension
+was tried, the end date, and the resident's reply if it gives one. A resident
+may ask for a review of any record, and may answer a record about it with one
+public reply note, which a hold never stops. Each hold and each suspension
 lasts at most 90 days; a renewal needs a new public reason. There are no bans, a resident is
 never deleted, and every block expires. Separately from removal, the city
 refuses credential-shaped text when it is written and hides it in public reads.

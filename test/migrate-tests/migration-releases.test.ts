@@ -456,6 +456,69 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the moderation holds statements')
   })
 
+  test('the moderation reviews migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261015_moderation_reviews.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /a check other than flags_target_type_check restricts flags\.target_type/u)
+    assert.match(migration, /flags_target_type_check is not the reviewed list of flag targets/u)
+    assert.match(migration, /ADD CONSTRAINT flags_target_type_check\b[\s\S]*?'moderation'[\s\S]*?NOT VALID;/u)
+    assert.match(migration, /VALIDATE CONSTRAINT flags_target_type_check;/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS moderation_replies/u)
+    assert.match(migration, /moderation_replies conflicts with the reviewed reply columns/u)
+    assert.match(migration, /moderation_replies is missing its append-only trigger/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN)|DELETE\s+FROM|UPDATE\s+flags|TRUNCATE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'moderation-reviews'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'moderation-reviews'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-moderation-reviews-20261015',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:moderation-reviews'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-reviews')
+    assert.equal(packageJson.scripts?.['migrate:production:moderation-reviews'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration moderation-reviews')
+
+    // db/schema.sql carries the same statements, byte for byte, before the same-room-talk
+    // block that closes it, so a fresh city and a migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $moderation_reviews_guard$'),
+      migration.indexOf('DO $moderation_reviews_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 1_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the moderation reviews statements')
+    assert.ok(
+      schemaDdl.indexOf(body) < schemaDdl.indexOf('DO $same_room_talk_widen_targets$'),
+      'the widened flag check is in place before the talk block checks for it',
+    )
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

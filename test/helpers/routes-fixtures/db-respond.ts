@@ -19,6 +19,7 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
     return [{ total: 0, senders: 0, ping_id: null }]
   }
   if (q.includes('/* resident-hold:current */')) return []
+  if (q.includes('/* moderation-review:me */')) return []
   if (q.includes('/* private:lines-used-today */')) return [{ used: 0 }]
   if (q.includes('/* public:place_listening */')) return []
   if (q.includes('/* public:place-hinges */')) return []

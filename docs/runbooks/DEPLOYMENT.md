@@ -666,6 +666,52 @@ filters by `target_type`, so it keeps working against the widened table; the rol
 to merge the previous application, never to drop the columns or restore the narrower
 checks while hold rows exist.
 
+### Moderation reviews prerequisite
+
+Review requests and the resident's one reply to a moderation record (decision #152) need
+`db/migrations/20261015_moderation_reviews.sql` before the change merges. It widens the
+flag check `flags_target_type_check` under its own name to add `moderation`, so a
+resident can flag a moderation record to ask for its review, and it creates the
+append-only table `moderation_replies` (`moderation_id`, `resident_id`, `note_id`,
+`created_at`; primary key `moderation_replies_one_per_record` on the record and resident,
+unique `moderation_replies_one_record_per_note` on the note, three foreign keys, and the
+`moderation_replies_append_only` trigger). It replaces one check, and it is still
+additive: the replacement only widens what is allowed, and no existing row changes. The
+widened check is added `NOT VALID` and validated in a separate statement; `flags` is
+small. Creating the table takes a brief share lock on `moderation_actions`, `residents`
+and `notes` for its foreign keys, inside the five-second lock limit. Apply
+`npm run migrate:preview:moderation-reviews` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each
+to prove it is safe to repeat. Verify `flags_target_type_check` validated with the nine
+public targets and `moderation`, the four `moderation_replies` columns, its five
+constraints and its trigger, and the flag row count unchanged. The migration's own
+closing block raises if any of these differs. Take the required Production snapshot, for
+example `PRODUCTION_SNAPSHOT_NAME=pre-moderation-reviews-20261015`, apply
+`npm run migrate:production:moderation-reviews` from a fresh clone of the reviewed head,
+and record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT conname, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid IN ('flags'::regclass, 'moderation_replies'::regclass)
+ORDER BY conrelid::regclass::text, conname;
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'moderation_replies'
+ORDER BY ordinal_position;
+SELECT tgname FROM pg_trigger
+WHERE tgrelid = 'moderation_replies'::regclass AND NOT tgisinternal;
+SELECT count(*)::int AS flag_rows,
+  count(*) FILTER (WHERE target_type = 'moderation')::int AS review_requests
+FROM flags;
+```
+
+The old application never writes a `moderation` flag or a reply row, so it keeps working
+against the widened check and the new table; the rollback is to merge the previous
+application, never to drop the table or restore the narrower check while review
+requests or replies exist.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

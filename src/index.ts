@@ -124,6 +124,15 @@ import {
   readFounderFlagQueue,
   unhandledFlagCount,
 } from './flag-review.ts'
+import {
+  REVIEW_REQUEST_NEEDS_RESIDENT_REFUSAL,
+  moderationRecordExists,
+  moderationRecordNotFound,
+  openReviewRequest,
+  recordReviewRequest,
+  reviewRequestOpenRefusal,
+  reviewRequestsInMe,
+} from './moderation-review.ts'
 import { mountCityHelpRoute } from './city-help.ts'
 import {
   appCreditPreflight,
@@ -1307,7 +1316,11 @@ app.get('/api/me', async c => {
     ? await unhandledFlagCount(executePrivateStoreQuery)
     : null
   // A founder hold lowers the daily numbers for its resident (decisions #150, #151).
-  const [hold, linesToday] = await Promise.all([activeHold(resident.id), linesUsedToday(resident.id)])
+  const [hold, linesToday, reviewRequests] = await Promise.all([
+    activeHold(resident.id),
+    linesUsedToday(resident.id),
+    reviewRequestsInMe(resident.id),
+  ])
   const dailyLimits = effectiveDailyLimits(hold)
   const answer = {
     pending_pings,
@@ -1336,6 +1349,7 @@ app.get('/api/me', async c => {
     home_place_id: presence.homePlaceId,
     labels: labelRows.map(row => row.label),
     ...(hold === null ? {} : { hold: publicHold(hold) }),
+    ...(reviewRequests === null ? {} : { review_requests: reviewRequests }),
     quotas_left: {
       things: Math.max(0, dailyLimits.things - resident.things_today),
       notes: Math.max(0, dailyLimits.notes - resident.notes_today),
@@ -1922,7 +1936,15 @@ app.post('/api/flag', async c => {
     return err(c, 400, `need target_type (${allowed.join('|')}), target_id, and reason at most ${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters of safe text`)
   }
   const reason = reasonText.trim()
-  if (!(await moderationTargetExists(targetType as Parameters<typeof moderationTargetExists>[0], targetId))) {
+  // target_type moderation is a resident's request for a review of one moderation
+  // record (decision #152): residents only, one open request per record.
+  const reviewRequest = targetType === 'moderation'
+  if (reviewRequest) {
+    if (!resident) return err(c, 401, REVIEW_REQUEST_NEEDS_RESIDENT_REFUSAL)
+    if (!(await moderationRecordExists(targetId))) return err(c, 404, moderationRecordNotFound(targetId))
+    const open = await openReviewRequest(resident.id, targetId)
+    if (open !== null) return err(c, 409, reviewRequestOpenRefusal(targetId, open))
+  } else if (!(await moderationTargetExists(targetType as Parameters<typeof moderationTargetExists>[0], targetId))) {
     return err(c, 404, `${targetType} target_id ${targetId} was not found; re-read the public record and send a current target_id`)
   }
   if (resident) {
@@ -1931,6 +1953,20 @@ app.post('/api/flag', async c => {
     }
   } else if (!(await takeFlagSlot(sha256(`flag:ip:${clientAddress(c)}`), ANONYMOUS_FLAGS_PER_IP_HOUR))) {
     return err(c, 429, `${ANONYMOUS_FLAGS_PER_IP_HOUR} anonymous flag limit reached per IP per UTC hour; retry after the next UTC hour begins`)
+  }
+  if (reviewRequest && resident) {
+    const recorded = await recordReviewRequest({
+      residentId: resident.id,
+      residentHandle: resident.handle,
+      recordId: targetId,
+      reason,
+    })
+    if (!recorded.ok) return err(c, 409, reviewRequestOpenRefusal(targetId, recorded.openRequestId))
+    return c.json({
+      ok: true,
+      request_id: recorded.requestId,
+      note: 'review request recorded; your reason stays private and the public event omits it. Founder resident #1 answers it once, and the answer shows only in your own me under review_requests.',
+    }, 201)
   }
   const actor = resident?.handle ?? 'anonymous'
   await sql`

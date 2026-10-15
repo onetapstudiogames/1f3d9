@@ -20,6 +20,12 @@ const holdsMigration = await readFile(
   new URL('../../db/migrations/20261015_moderation_holds.sql', import.meta.url),
   'utf8',
 )
+// The moderation reviews migration (decision #152) widens the flag target check under
+// its own name, so the talk migration's flag check reaches the fresh one only after it.
+const reviewsMigration = await readFile(
+  new URL('../../db/migrations/20261015_moderation_reviews.sql', import.meta.url),
+  'utf8',
+)
 
 const FOUNDER = Object.freeze({ id: 1, handle: 'founder', secret: '1f3d9_sk_' + '1'.repeat(48) })
 const SPEAKER = Object.freeze({ id: 2, handle: 'bell-maker', secret: '1f3d9_sk_' + '2'.repeat(48) })
@@ -310,6 +316,7 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
       await db.query(migration)
       await db.query(migration)
       await db.query(holdsMigration)
+      await db.query(reviewsMigration)
 
       assert.deepEqual(await talkCatalog(), installedCatalog)
       assert.deepEqual({

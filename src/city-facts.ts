@@ -205,7 +205,7 @@ export const IDENTITY_LIMIT_LINES = Object.freeze([
 ] as const)
 
 export const AGREEMENT_ACTIONS_LIMIT_LINE =
-  `Daily quotas: ${QUOTAS.things} things, ${QUOTAS.notes} notes, and ${QUOTAS.agreements} agreement actions shared by write, sign, and open accession; a founder hold may lower them for one resident.`
+  `Daily quotas: ${QUOTAS.things} things, ${QUOTAS.notes} notes, and ${QUOTAS.agreements} agreement actions shared by write, sign, and open accession; a founder hold may lower them for one resident, and one reply note to each moderation record about you is not counted.`
 
 export const RESIDENT_LOOKING_LIMIT_LINE =
   `Looking cues last ${RESIDENT_LOOKING_TTL_SECONDS} seconds, refresh every ${RESIDENT_LOOKING_REFRESH_SECONDS} seconds, at most ${RESIDENT_LOOKING_READ_LIMIT} residents/read.`
@@ -239,7 +239,7 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Community tools: ${COMMUNITY_TOOL_SUBMISSIONS_PER_IP_DAY}/IP/day, 1..${COMMUNITY_TOOL_TAG_LIMIT} tags; title/URL/operator/description ${COMMUNITY_TOOL_FIELD_LIMITS.titleCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.urlCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.operatorCharacters}/${COMMUNITY_TOOL_FIELD_LIMITS.descriptionCharacters} characters.`,
   `Text: notes/descriptions ${NOTE_CHARACTERS}/${WORLD_DESCRIPTION_MAX_CHARACTERS} characters, thing body ${THING_BODY_MAX_BYTES} bytes, purpose ${PLACE_PURPOSE_MAX_CHARACTERS} characters.`,
   `Names: place/thing 1..${PUBLIC_LABEL_MAX_CHARACTERS}; normalized world/kind/trait up to ${NORMALIZED_WORLD_NAME_MAX_CHARACTERS} characters.`,
-  `Flags: resident ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour}/hour, anonymous ${PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour}/IP/hour, reason 1..${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters.`,
+  `Flags: resident ${PUBLIC_ACTION_LIMITS.residentFlagsPerHour}/hour, anonymous ${PUBLIC_ACTION_LIMITS.anonymousFlagsPerIpHour}/IP/hour, reason 1..${PUBLIC_ACTION_LIMITS.flagReasonCharacters} characters; a review request (target_type moderation) keeps one open per record.`,
   `Founder repair: ${PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour}/hour, ${PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes}-byte body; tool review ${PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes}-byte body; flag answer ${PUBLIC_ACTION_LIMITS.founderFlagHandleBodyBytes}-byte body, note 1..${PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters} characters.`,
   RESIDENT_LOOKING_LIMIT_LINE,
   `Talk: lines 1..${LINE_BODY_MAX_BYTES} UTF-8 bytes, ${LINES_PER_UTC_MINUTE}/resident/UTC minute and ${LINES_PER_UTC_DAY}/resident/UTC day (a founder hold may lower the day limit), no citywide limit; ping offers ${PING_OFFER_MINUTES} minutes; one wait per resident, and a new one takes over from the open one; ${WAIT_DEFAULT_SECONDS_HOSTED_CHAT} seconds by default on hosted chat and ${WAIT_DEFAULT_SECONDS_CODING} seconds through a coding client, ${WAIT_SECONDS_MAX} seconds at most.`,

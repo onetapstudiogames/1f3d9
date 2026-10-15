@@ -587,7 +587,7 @@ export async function moderationHistory(
       page.rule_word, page.at_once_for, page.smaller_step,
       page.smaller_step_record_id::integer AS smaller_step_record_id, page.ends_at,
       page.hold_notes, page.hold_lines, page.hold_things, page.hold_agreements,
-      page.hold_stops_pings, page.hold_stops_building,
+      page.hold_stops_pings, page.hold_stops_building, page.replies,
       totals.total_items, totals.total_text_bytes
     FROM totals
     LEFT JOIN LATERAL (
@@ -596,7 +596,15 @@ export async function moderationHistory(
         action.rule_word, action.at_once_for, action.smaller_step,
         action.smaller_step_record_id, action.ends_at,
         action.hold_notes, action.hold_lines, action.hold_things, action.hold_agreements,
-        action.hold_stops_pings, action.hold_stops_building
+        action.hold_stops_pings, action.hold_stops_building,
+        -- Each named resident's one reply note (decision #152), oldest first.
+        coalesce((
+          SELECT jsonb_agg(jsonb_build_object('note_id', reply.note_id, 'author', author.handle)
+            ORDER BY reply.created_at, reply.note_id)
+          FROM moderation_replies reply
+          JOIN residents author ON author.id = reply.resident_id
+          WHERE reply.moderation_id = action.id
+        ), '[]'::jsonb) AS replies
       FROM moderation_actions action
       JOIN residents actor ON actor.id = action.actor_id
       WHERE ($1::integer IS NULL OR action.id < $1::integer)

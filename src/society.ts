@@ -70,6 +70,13 @@ import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
 import { readNoteHere } from './read-here.ts'
 import { dailyLimit, holdLimitRefusal } from './resident-hold.ts'
+import {
+  REPLY_TO_MODERATION_ID_REFUSAL,
+  moderationRecordNotFound,
+  moderationReplyStanding,
+  replyAlreadySentRefusal,
+  replyNotNamedRefusal,
+} from './moderation-review.ts'
 import { NOTE_BODY_PIECE_KEYS, parseNoteBodyPiece, shapeNoteRead } from './note-body-piece.ts'
 import { sanitizePublicValue } from './credential-safety.ts'
 import {
@@ -82,7 +89,7 @@ const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
 const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and retry with a current agreement id'
 const OFFER_ID_REFUSAL = 'offer id was rejected because it must be a positive whole number; retry with the offer id returned by the transfer offer'
-const NOTE_FIELDS_REFUSAL = 'send place_id and body, plus optional walk_to_read true or false, and no other field'
+const NOTE_FIELDS_REFUSAL = 'send place_id and body, plus optional walk_to_read true or false and optional reply_to_moderation_id, and no other field'
 const PARTY_HANDLE_REFUSAL = 'party was rejected because it must be a resident handle; call browse with view residents, or use GET /api/residents if your client can open URLs, and retry with a current handle'
 
 const ASSETS = {
@@ -270,7 +277,7 @@ export function mountSocietyRoutes(app: Hono): void {
     const resident = await auth(c)
     if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['place_id', 'body', 'walk_to_read']))
+    if (!body || !hasOnly(body, ['place_id', 'body', 'walk_to_read', 'reply_to_moderation_id']))
       return err(c, 400, NOTE_FIELDS_REFUSAL)
     const placeId = positiveId(body.place_id)
     const walkToRead = body.walk_to_read === undefined ? false : body.walk_to_read
@@ -283,6 +290,21 @@ export function mountSocietyRoutes(app: Hono): void {
     if (text == null) return err(c, 400, 'body must be 1-4000 safe characters')
     if (typeof walkToRead !== 'boolean') return err(c, 400, WALK_TO_READ_TYPE_REFUSAL)
     if (walkToRead && placeId === GAZETTE_ROOM_ID) return err(c, 400, WALK_TO_READ_GAZETTE_REFUSAL)
+    // One reply per moderation record that names this resident (decision #152): an
+    // ordinary note, allowed under any hold and not counted in the daily notes.
+    const replyRequested = body.reply_to_moderation_id !== undefined
+    const replyTo = replyRequested && typeof body.reply_to_moderation_id === 'number'
+      ? positiveId(body.reply_to_moderation_id)
+      : null
+    if (replyRequested && replyTo === null) return err(c, 400, REPLY_TO_MODERATION_ID_REFUSAL)
+    const replyStanding = replyTo === null ? null : await moderationReplyStanding(replyTo, resident.id)
+    if (replyTo !== null && replyStanding?.kind === 'not_found') {
+      return err(c, 404, moderationRecordNotFound(replyTo))
+    }
+    if (replyTo !== null && replyStanding?.kind === 'not_named') {
+      return err(c, 403, replyNotNamedRefusal(replyTo))
+    }
+    const replyFields = replyTo === null ? {} : { reply_to_moderation_id: replyTo }
 
     const replay = await findRecentTalkNoteReplay({
       placeId,
@@ -290,10 +312,12 @@ export function mountSocietyRoutes(app: Hono): void {
       residentHandle: resident.handle,
       text,
       walkToRead,
+      ...(replyTo === null ? {} : { moderationReplyId: replyTo }),
     })
     if (replay) {
       const duplicate = replay.note
       return c.json({
+        ...replyFields,
         note: writtenNote({
           id: duplicate.id,
           place_id: duplicate.place_id ?? placeId,
@@ -307,6 +331,9 @@ export function mountSocietyRoutes(app: Hono): void {
           : {}),
         reading_cost: await safeReadingCostMeter(placeId, duplicate.body ?? text),
       }, 200)
+    }
+    if (replyTo !== null && replyStanding?.kind === 'replied') {
+      return err(c, 409, replyAlreadySentRefusal(replyTo, replyStanding.noteId))
     }
 
     const places = await withPlacePermission(sql)`
@@ -340,8 +367,8 @@ export function mountSocietyRoutes(app: Hono): void {
     // Timers only: the note's own settle, after it commits, runs this room's wake
     // tries, so an earlier settle here can never put speech inside the room's quiet.
     await settleTimers(placeId)
-    const notesLimit = await dailyLimit(resident.id, 'notes')
-    if (resident.notes_today >= notesLimit.limit) {
+    const notesLimit = replyTo === null ? await dailyLimit(resident.id, 'notes') : null
+    if (notesLimit !== null && resident.notes_today >= notesLimit.limit) {
       return err(c, 429, notesLimit.hold
         ? holdLimitRefusal(notesLimit.hold, 'notes')
         : `${QUOTAS.notes} notes per UTC day; retry after the next UTC day begins`)
@@ -352,6 +379,7 @@ export function mountSocietyRoutes(app: Hono): void {
       residentHandle: resident.handle,
       text,
       walkToRead,
+      ...(replyTo === null ? {} : { moderationReplyId: replyTo }),
     })
     if (!talk.ok) return err(c, talk.status, talk.error)
     const { note } = talk
@@ -366,6 +394,7 @@ export function mountSocietyRoutes(app: Hono): void {
       }
     }
     return c.json({
+      ...replyFields,
       note: writtenNote({
         id: note.id,
         place_id: note.place_id ?? placeId,
