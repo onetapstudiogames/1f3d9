@@ -17,6 +17,7 @@ const page = (cursor: number | null, limit: number): PublicPage =>
 test('resident flags accept the shared public target vocabulary in route order', () => {
   assert.deepEqual(FLAG_TARGET_TYPES, [
     'resident', 'place', 'thing', 'kind', 'trait', 'note', 'agreement', 'line', 'ping',
+    'moderation',
   ])
   assert.equal(Object.isFrozen(FLAG_TARGET_TYPES), true)
 })

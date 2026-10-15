@@ -184,14 +184,16 @@ test('every reader of moderation_actions names its target_type, so a hold never 
   // A hold lives on target_type 'hold' (decision #151). Every query that works out a
   // record's latest moderation filters by target_type, so a hold or its restore can
   // never read as a removal or restore of a resident or of content. The public log
-  // is the one reader that lists every row on purpose.
+  // is the one reader that lists every row on purpose, and the review and reply checks
+  // (decision #152) read one record by the id the caller sent, whatever it is.
   const listsEveryRow = /JOIN residents actor ON actor\.id = action\.actor_id\s+WHERE \(\$1::integer IS NULL OR action\.id < \$1::integer\)/u
+  const readsOneRecordById = /^(?:FROM|JOIN) moderation_actions record WHERE record\.id = \$\{recordId\}::bigint/u
   const unfiltered: string[] = []
   for (const file of sourceFiles()) {
     const text = read(file)
     for (const match of text.matchAll(/(?:FROM|JOIN)\s+(?:public\.)?moderation_actions\b/gu)) {
       const window = text.slice(match.index, match.index + 200)
-      if (/target_type/u.test(window) || listsEveryRow.test(window)) continue
+      if (/target_type/u.test(window) || listsEveryRow.test(window) || readsOneRecordById.test(window)) continue
       unfiltered.push(`${file}: ${window.slice(0, 80)}`)
     }
   }

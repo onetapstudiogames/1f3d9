@@ -214,7 +214,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
         400,
         'unknown field',
       )
-      assert.equal(firstLine(unknown.error), 'send place_id and body, plus optional walk_to_read true or false, and no other field')
+      assert.equal(firstLine(unknown.error), 'send place_id and body, plus optional walk_to_read true or false and optional reply_to_moderation_id, and no other field')
       const gazette = await json<{ error: string }>(
         await say(app, WRITER.secret, { place_id: 454, body: 'x', walk_to_read: true }),
         400,

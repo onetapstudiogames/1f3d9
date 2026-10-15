@@ -58,7 +58,9 @@ test("the fresh schema's moderation and flag target checks already allow line an
   const migrationStart = schema.length - migration.length
   const freshSchema = schema.slice(0, migrationStart)
   const occurrences = freshSchema.match(/'agreement', 'line', 'ping'/gu) ?? []
-  assert.equal(occurrences.length, 3)
+  // The two inline checks, the hold widening of the moderation check (#151), and the
+  // review widening of the flag check (#152).
+  assert.equal(occurrences.length, 4)
 })
 
 test('snapshot v3 reads no private talk table, request_id, or arrival mark', () => {

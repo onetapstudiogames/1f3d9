@@ -417,6 +417,28 @@ test('the app me answer carries a founder hold in plain words, with nothing abou
   assert.doesNotMatch(text, /gift|offers|if_blocked|\/api\/|\/changelog|https?:|mute|blocked|safety|security|flag/iu)
 })
 
+test('the app me answer carries review requests and their answers in plain words (decision #152)', () => {
+  const reviewRequests = {
+    total: 1,
+    newest: [{
+      request_id: 41,
+      record_id: 77,
+      asked_at: '2026-10-15T00:00:00.000Z',
+      answered: true,
+      answered_at: '2026-10-15T01:00:00.000Z',
+      answer_record_id: 78,
+      answer_note: 'restored on review',
+    }],
+    has_more: false,
+    note: "Your 20 newest review requests, newest first, and the founder's one answer to each; no fuller list exists. Only you see these answers.",
+  }
+  const answer = appMeAnswer({ ...FULL_ME, review_requests: reviewRequests }) as Record<string, any>
+  const text = JSON.stringify(answer.review_requests)
+  assert.deepEqual(answer.review_requests, reviewRequests)
+  assert.deepEqual(bannedHits('me review_requests', text), [])
+  assert.doesNotMatch(text, /gift|offers|if_blocked|\/api\/|\/changelog|https?:|mute|blocked|safety|security|flag/iu)
+})
+
 test('the app official facts keep fee credit rules and drop the rails', () => {
   const facts = appOfficialFacts({
     domain: 'https://1f3d9.com', treasury: '0x1', network: 'base', usdc_contract: '0x2', claim_fee_usdc: 1,

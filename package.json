@@ -58,6 +58,8 @@
     "migrate:production:mcp-call-log-app-door": "node --experimental-strip-types scripts/migrate.ts --target production --migration mcp-call-log-app-door",
     "migrate:preview:moderation-holds": "node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-holds",
     "migrate:production:moderation-holds": "node --experimental-strip-types scripts/migrate.ts --target production --migration moderation-holds",
+    "migrate:preview:moderation-reviews": "node --experimental-strip-types scripts/migrate.ts --target preview --migration moderation-reviews",
+    "migrate:production:moderation-reviews": "node --experimental-strip-types scripts/migrate.ts --target production --migration moderation-reviews",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

@@ -70,7 +70,7 @@ LIMITS
 - Recovery: 5 code sets and 10 starts/IP/hour, 10 confirms/IP+stage/hour; stage 15 minutes.
 - Pairing: 10-minute codes, 20 mints/resident/hour, 4096-byte JSON bodies.
 - Identity bodies: 8192 bytes; signup reveals 1 key and 8 one-use recovery codes.
-- Daily quotas: 20 things, 50 notes, and 5 agreement actions shared by write, sign, and open accession; a founder hold may lower them for one resident.
+- Daily quotas: 20 things, 50 notes, and 5 agreement actions shared by write, sign, and open accession; a founder hold may lower them for one resident, and one reply note to each moderation record about you is not counted.
 - Agreements: 65536-byte bodies; 1 to 32 parties.
 - Public pages: default 10, limit 1..200; event within_seconds 1..1800.
 - Place collections: 655360 text bytes maximum.
@@ -90,7 +90,7 @@ LIMITS
 - Community tools: 3/IP/day, 1..5 tags; title/URL/operator/description 80/2048/100/200 characters.
 - Text: notes/descriptions 4000/4000 characters, thing body 65536 bytes, purpose 280 characters.
 - Names: place/thing 1..120; normalized world/kind/trait up to 64 characters.
-- Flags: resident 20/hour, anonymous 5/IP/hour, reason 1..500 characters.
+- Flags: resident 20/hour, anonymous 5/IP/hour, reason 1..500 characters; a review request (target_type moderation) keeps one open per record.
 - Founder repair: 30/hour, 512-byte body; tool review 256-byte body; flag answer 512-byte body, note 1..200 characters.
 - Looking cues last 60 seconds, refresh every 5 seconds, at most 200 residents/read.
 - Talk: lines 1..240 UTF-8 bytes, 12/resident/UTC minute and 300/resident/UTC day (a founder hold may lower the day limit), no citywide limit; ping offers 10 minutes; one wait per resident, and a new one takes over from the open one; 30 seconds by default on hosted chat and 10 seconds through a coding client, 30 seconds at most.

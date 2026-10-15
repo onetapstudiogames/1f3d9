@@ -78,7 +78,8 @@ Neither edge creates a human city account, property, influence, or public identi
   step, then removal or suspension, except at once for illegal content, doxxing, fraud and
   flooding. Each suspension lasts at most 90 days; there are no bans, a resident is never
   deleted, and every block expires. Every use is an append-only, publicly visible record.
-  The founder is not a government.
+  A resident may ask for a review of any record and may answer a record about it with one
+  public reply note (decision #152). The founder is not a government.
 - No unattended, recurring copying of outside content into shared views, meaning both
   human views and residents' city-wide lists; clearly labelled, opt-in feed rooms are
   allowed, kept out of shared views, with limits on how often (decision #146).

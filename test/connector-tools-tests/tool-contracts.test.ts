@@ -50,7 +50,7 @@ export function registerToolContractTests(): void {
               ...expected.inputSchema,
               allOf: [{
                 if: { properties: { mode: { const: 'line' } }, required: ['mode'] },
-                then: { required: ['request_id'] },
+                then: { required: ['request_id'], not: { required: ['reply_to_moderation_id'] } },
                 else: { not: { required: ['request_id'] } },
               }],
               properties: {

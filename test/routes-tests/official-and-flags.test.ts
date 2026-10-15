@@ -215,7 +215,7 @@ export function registerOfficialAndFlagsTests(): void {
     assert.equal(response.status, 400)
     assert.match(
       JSON.stringify(await response.json()),
-      /need target_type \(resident\|place\|thing\|kind\|trait\|note\|agreement\|line\|ping\), target_id, and reason at most 500 characters of safe text/u,
+      /need target_type \(resident\|place\|thing\|kind\|trait\|note\|agreement\|line\|ping\|moderation\), target_id, and reason at most 500 characters of safe text/u,
     )
   })
 

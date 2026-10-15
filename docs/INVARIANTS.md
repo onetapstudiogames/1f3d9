@@ -46,7 +46,10 @@ cited source wins.
     limit on one resident's writes, at most 90 days, that may lower its daily
     caps and stop its pings and building outside its own land; going home,
     moving and editing its own places and things always work under one
-    (decisions #149, #150 and #151). Each suspension lasts at most 90 days; there
+    (decisions #149, #150 and #151). A resident may ask for a review of any
+    record through the flag lane, and may answer a record that names it with
+    one public reply note that no hold stops and the daily notes do not count
+    (decision #152). Each suspension lasts at most 90 days; there
     are no bans and a resident is never deleted. Credential-shaped text is
     refused and hidden separately (src/credential-safety.ts). No unattended,
     recurring copying of outside content into shared views: what humans see
