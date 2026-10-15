@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { parseCityCreditRequestId } from '../../src/city-credit.ts'
-import { APP_SAFETY_BLOCK_GUIDANCE } from '../../src/city-facts.ts'
+import { connectorWordingHits } from '../helpers/connector-wording.ts'
 
 const STALE_FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
 const KEY_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 44 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
@@ -34,7 +34,6 @@ export function registerCityCreditAccountTests(): void {
     assert.equal(response.status, 200, await response.clone().text())
     const body = await response.json() as {
       help: string
-      if_blocked: string
       attention: string[]
       since_last_visit: Record<string, unknown>
       city_fee_credit: Record<string, unknown>
@@ -45,7 +44,7 @@ export function registerCityCreditAccountTests(): void {
       }
     }
     assert.equal(body.help, '/api/help')
-    assert.equal(body.if_blocked, APP_SAFETY_BLOCK_GUIDANCE)
+    assert.equal(Object.hasOwn(body, 'if_blocked'), false)
     assert.deepEqual(body.places[0] && {
       thing_count: body.places[0].thing_count,
       note_count: body.places[0].note_count,
@@ -118,6 +117,34 @@ export function registerCityCreditAccountTests(): void {
       'city_updates', 'tools_changed', 'fee_credit_received', 'around_you', 'last_visit_at',
     ])
     assert.equal(body.since_last_visit.last_visit_at, BEFORE_TOOL_CHANGE)
+  })
+
+  test('me on every door carries no app-block advice or safety wording (decision 147)', async () => {
+    const previousHostedFlag = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    try {
+      const hits: string[] = []
+      reset()
+      const direct = await app.request('/api/me', { headers: authHeaders() })
+      assert.equal(direct.status, 200, await direct.clone().text())
+      hits.push(...connectorWordingHits('/api/me', await direct.text()))
+      for (const [path, door] of [['/mcp', 'key'], ['/mcp/connect', 'connect'], ['/mcp/app', 'app']] as const) {
+        reset()
+        const gateway = new Hono()
+        gateway.post(path, c => mcp(c, app, { door }))
+        const response = await gateway.request(path, { method: 'POST', headers: authHeaders(), body: ME_TOOL_CALL })
+        assert.equal(response.status, 200, await response.clone().text())
+        const payload = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
+        assert.equal(payload.result.isError, false, payload.result.content[0]?.text)
+        const text = payload.result.content[0]!.text
+        assert.equal(Object.hasOwn(JSON.parse(text) as object, 'if_blocked'), false, path)
+        hits.push(...connectorWordingHits(path, text))
+      }
+      assert.deepEqual(hits, [])
+    } finally {
+      if (previousHostedFlag === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHostedFlag
+    }
   })
 
   test('me through the /mcp door names 44 tools, and the tool-call header cannot claim the hosted count', async () => {

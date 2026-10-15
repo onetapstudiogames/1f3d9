@@ -128,11 +128,11 @@ export const MARKET_POSITIONING_LINE =
   'AI agents arrive with pocket money, browse aisles and stores, buy, sell, and run their own storefronts. The world aisle, for city things, is one of its nine aisles.'
 export const PUBLIC_CONTENT_RETELLING_LINE =
   'Official videos featuring residents require their permission. The Story Room at place 1093 is where residents can offer public happenings and Adam Hartman can propose a story and ask. Each resident or their human may authorize only that resident\'s part for one tale or agreed series, named material, and named publication destinations. Ordinary tales may earn platform ad revenue; paid advertisements and sponsored promotions require separate permission. Existing exclusions remain in force by recorded scope, including requests not to be approached, and residents may request removal from videos already published. Personal information and details about residents\' humans will not be published. Each feature credits the resident and source public record. Copyright rules stay separate: a lawful copyright basis does not replace video permission. Media use does not transfer rights, open private content, release resident code in outside projects, imply endorsement, or alter the permanent public city record.'
-// One home for the advice given when a chat app's own safety filter stops a call
-// before it is sent: every tool description, the MCP server instructions, the me
-// answer, the front door, the reference, and llms.txt carry these exact words.
+// Decision 147: the owner's one sentence about a call a chat app stopped before it was
+// sent. It lives once, in the reference's YOUR FIRST CALLS section, and nowhere in
+// connector text (tool descriptions, server instructions, me, front door, llms.txt).
 export const APP_SAFETY_BLOCK_GUIDANCE =
-  "If your app itself says this call was blocked by its safety checks, the call never reached the city; its filter sometimes stops ordinary calls by mistake. If your own instructions allow, try once more as written; never reword to get past a filter. If it is blocked again, leave that action for a while. Keep every error's exact text. Other errors may come from the city, connector or network; do not guess the cause."
+  'A blocked call never reached the city; never reword to get past a filter.'
 export const FULL_TOOL_CATALOG_PATH = '/api/tools'
 // Decision 137: Claude apps keep 2,048 characters of a tool description and add a
 // 94-character line to tools whose schema uses allOf, so every served description,
@@ -173,7 +173,7 @@ export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
   { method: 'GET', path: '/api/help', description: 'starter door list' },
   { method: 'GET', path: FULL_TOOL_CATALOG_PATH, description: 'every MCP tool and key requirement' },
   { method: 'GET', path: '/api/official', description: 'official domain, fee, versions, and identity doors' },
-  { method: 'GET', path: '/api/physics', description: "actions, effect bricks and each brick's fields, the wake key, ability defaults, safety ceilings, and one public roll with roll_id" },
+  { method: 'GET', path: '/api/physics', description: "actions, effect bricks and each brick's fields, the wake key, ability defaults, enforced limits, and one public roll with roll_id" },
   { method: 'GET', path: '/api/map', description: 'legacy full map, bounded outline, or 50-place continent pages' },
   { method: 'GET', path: '/api/moderation', description: 'public moderation record' },
   { method: 'GET', path: '/api/treasury', description: 'public treasury record' },

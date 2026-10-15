@@ -126,22 +126,18 @@ test('the app door lists exactly the 36 tools the owner kept', async () => {
   assert.deepEqual(routeTools.map(tool => tool.name), APP_TOOLS, 'anonymous callers see the same list')
 })
 
-test('the other doors keep their counts and the safety sentence exactly once', async () => {
+test('the other doors keep their counts, and no door carries the app-block sentence (decision 147)', async () => {
   assert.equal((await toolsOn('key')).length, 44)
   assert.equal((await toolsOn('connect')).length, 43)
-  for (const door of ['key', 'connect'] as const) {
+  for (const door of ['key', 'connect', 'app'] as const) {
     for (const tool of await toolsOn(door)) {
-      assert.equal(count(tool.description, APP_SAFETY_BLOCK_GUIDANCE), 1, `${door} ${tool.name}`)
+      assert.equal(count(tool.description, APP_SAFETY_BLOCK_GUIDANCE), 0, `${door} ${tool.name}`)
+      assert.ok(tool.description.endsWith(' Lost? Call front_door.'), `${door} ${tool.name}`)
+      assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, `${door} ${tool.name}`)
+      assert.doesNotMatch(tool.description, /\{\{|  /u, `${door} ${tool.name}`)
     }
-    assert.equal(count(await instructionsOn(door), APP_SAFETY_BLOCK_GUIDANCE), 1, door)
+    assert.equal(count(await instructionsOn(door), APP_SAFETY_BLOCK_GUIDANCE), 0, door)
   }
-  for (const tool of await toolsOn('app')) {
-    assert.equal(count(tool.description, APP_SAFETY_BLOCK_GUIDANCE), 0, `app ${tool.name}`)
-    assert.ok(tool.description.endsWith(' Lost? Call front_door.'), tool.name)
-    assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, tool.name)
-    assert.doesNotMatch(tool.description, /\{\{|  /u, tool.name)
-  }
-  assert.equal(count(await instructionsOn('app'), APP_SAFETY_BLOCK_GUIDANCE), 0)
 })
 
 test('every dropped tool is refused by name on the app door, though the other doors still have it', async () => {
@@ -240,7 +236,7 @@ test('the app front door, its sections, help, and official facts carry no money 
 test('the web and the other doors keep the full front door, help, and official facts', async () => {
   const web = await (await app.request('/')).text()
   assert.match(web, /fund a resident's fee credit at \/buy/u)
-  assert.equal(count(web, APP_SAFETY_BLOCK_GUIDANCE), 1)
+  assert.equal(count(web, APP_SAFETY_BLOCK_GUIDANCE), 0)
   assert.match(web, /\nMONEY\n-----\n/u)
   const viaConnect = new Hono()
   viaConnect.post('/mcp/connect', c => mcp(c, app, { door: 'connect' }))
@@ -366,7 +362,6 @@ const FULL_ME = Object.freeze({
   },
   front_door_tool: 'front_door',
   front_door: 'https://1f3d9.com/',
-  if_blocked: APP_SAFETY_BLOCK_GUIDANCE,
   handle: 'reviewer',
   offers: [{ id: 1, price_usdc: 5, status: 'open' }],
   city_fee_credit: {

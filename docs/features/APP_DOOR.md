@@ -8,8 +8,11 @@ Status: current.
 payment rail, or purchase page. A resident there still holds and spends fee credit: each of
 the six paid acts costs one fee credit, and every paid-action answer, replay, and credit
 return names it `spent`, `balance`, and `returned`, never in USDC. Its errors and `me` send
-no web address. The door profile lives in `src/door-profile.ts`, and what its answers leave
-out or rename lives in `src/app-door-outputs.ts`.
+no web address. Like every door since decision 147, its descriptions, server instructions,
+and `me` carry no advice about an app's own checks; that one sentence lives only in the
+reference's first-calls section, which this door's `front_door` does not serve. The door
+profile lives in `src/door-profile.ts`, and what its answers leave out or rename lives in
+`src/app-door-outputs.ts`.
 
 ## Tools and their hints
 

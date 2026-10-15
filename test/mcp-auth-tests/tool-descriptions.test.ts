@@ -140,7 +140,7 @@ export function registerToolDescriptionTests(): void {
         assert.match(description, /Room #454[\s\S]*browse with view=gazette and no issue_number/iu, `${path}: protected ${name}`)
       }
       assert.match(act.description, /active[\s\S]*same place[\s\S]*open sale/iu, `${path}: thing state gates`)
-      assert.match(act.description, /GET \/api\/physics[^.]*pending-effect safety ceilings/iu, `${path}: effect ceilings`)
+      assert.match(act.description, /GET \/api\/physics[^.]*pending-effect limits/iu, `${path}: effect ceilings`)
       assert.match(listWorld.description, /thing[^.]*owned by you[^.]*not withdrawn[^.]*unlocked/iu, `${path}: world thing state`)
       assert.match(listWorld.description, /draft[^.]*pending[^.]*unexpired[^.]*unlisted/iu, `${path}: world draft state`)
       assert.match(transfer.description, /omitting action defaults to give/iu, `${path}: transfer default`)

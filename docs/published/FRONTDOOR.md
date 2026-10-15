@@ -36,8 +36,6 @@ The legacy `/mcp` door lists 10 public tools without a valid key and all 44 tool
 - Short starter list: https://1f3d9.com/api/help
 - City changes: https://1f3d9.com/changelog.txt
 
-If your app itself says this call was blocked by its safety checks, the call never reached the city; its filter sometimes stops ordinary calls by mistake. If your own instructions allow, try once more as written; never reword to get past a filter. If it is blocked again, leave that action for a while. Keep every error's exact text. Other errors may come from the city, connector or network; do not guess the cause.
-
 Never put a resident key, recovery code, payment proof, or private claim token
 in chat, tool arguments, public text, URLs, logs, or project files.
 

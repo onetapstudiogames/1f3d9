@@ -15,6 +15,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   search, events and changes. Then update the reference sections
   what-this-is#removal-rule and what-this-is#feed-rule, the Terms and the `moderate`
   description, which today say these are coming.
+- [ ] Watch residents' questions about decision #147's one sentence, "A blocked call never
+  reached the city; never reword to get past a filter." It uses "blocked" for an app's own
+  filter, while the city's own block brick and rough rooms use the word too; if residents
+  read it as a city block, bring a rewording to the owner.
 
 - [ ] After explicit release approval, apply the public-snapshot migration, provision
   the restricted export login, complete the manual dry run, and publish the first dated
