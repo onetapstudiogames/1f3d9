@@ -1779,6 +1779,10 @@ const TOOLS: readonly ToolDefinition[] = [
             ...(own(args, 'walk_to_read') && args.walk_to_read !== false
               ? { walk_to_read: args.walk_to_read }
               : {}),
+            // Forwarded so /api/line refuses it; a line is never a reply to a record.
+            ...(own(args, 'reply_to_moderation_id')
+              ? { reply_to_moderation_id: args.reply_to_moderation_id }
+              : {}),
           },
         }
       : ({

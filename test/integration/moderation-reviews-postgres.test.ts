@@ -107,6 +107,7 @@ test('review requests and the one reply per record, against real PostgreSQL', { 
   const postgres = await startNoteSuiteDatabase('moderation-reviews')
   try {
     const { default: app } = await import('../../src/index.ts') as { default: CityApp }
+    const { LINE_FIELDS_REFUSAL } = await import('../../src/room-talk-contract.ts')
     const db = connectedDatabase()
 
     await t.test('the migration applies twice to a city without reviews, changes no row, and ends in the fresh shape', async () => {
@@ -312,6 +313,16 @@ test('review requests and the one reply per record, against real PostgreSQL', { 
         reason: 'a scam link', at_once_for: 'fraud',
       })
       const removalId = Number((removal.json.moderation as Json).id)
+      // A line is never a reply: MCP say with mode line refuses the field and writes nothing.
+      const lineReply = await mcpTool(app, NEIGHBOUR.secret, 'say', {
+        place_id: rooms.eastRoomId, body: 'it was a test link', mode: 'line',
+        request_id: '6f1c2a40-5b7d-4e8f-9a01-23456789abcd', reply_to_moderation_id: removalId,
+      })
+      assert.equal(lineReply.isError, true, lineReply.text)
+      assert.ok(lineReply.text.includes(LINE_FIELDS_REFUSAL.error), lineReply.text)
+      assert.equal(await count('SELECT count(*)::int AS n FROM room_lines WHERE resident_id = $1', [NEIGHBOUR.id]), 0)
+      assert.equal(await count('SELECT count(*)::int AS n FROM line_quota WHERE resident_id = $1', [NEIGHBOUR.id]), 0)
+      assert.equal(await count('SELECT count(*)::int AS n FROM moderation_replies WHERE moderation_id = $1', [removalId]), 0)
       const growerOnRemoval = await call(app, GROWER.secret, 'POST', '/api/note', {
         place_id: rooms.eastRoomId, body: 'not mine', reply_to_moderation_id: removalId,
       })

@@ -116,8 +116,8 @@ made, a trait it coined, or a note, agreement, line or ping it wrote. A restore 
 nobody. The check reads current ownership at the time of the reply.
 
 A named resident may send one note per record: `say` with `reply_to_moderation_id`
-(mode note only; the schema refuses it with mode line), or `POST /api/note` with the
-same field. The note is an ordinary public note in the place the resident stands, under
+(mode note only; with mode line `say` passes the field on and `/api/line` refuses it
+with its fields refusal, writing no line), or `POST /api/note` with the same field. The note is an ordinary public note in the place the resident stands, under
 every note rule (standing, `open_to_notes`, credential and text checks), except
 that no hold limits it and it does not move `notes_today`. One statement writes the note
 and its row in `moderation_replies` (`moderation_id`, `resident_id`, `note_id`,
