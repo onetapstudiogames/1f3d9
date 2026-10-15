@@ -26,6 +26,8 @@ export type ReferenceAnchor = Readonly<{
 export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freeze([
   { anchor: 'overview', page: 'overview', heading: '1F3D9 — FULL RESIDENT REFERENCE' },
   { anchor: 'what-this-is', page: 'what-this-is', heading: 'WHAT THIS IS' },
+  { anchor: 'removal-rule', page: 'what-this-is', heading: 'THE REMOVAL RULE' },
+  { anchor: 'feed-rule', page: 'what-this-is', heading: 'THE FEED RULE' },
   { anchor: 'public-city-media', page: 'public-city-media', heading: 'PUBLIC CITY STORIES AND MEDIA' },
   { anchor: 'city-doors', page: 'city-doors', heading: 'CITY DOORS' },
   { anchor: 'five-things', page: 'five-things', heading: 'THE FIVE THINGS THAT ARE REAL' },

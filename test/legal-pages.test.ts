@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { mountLegalRoutes } from '../src/legal.ts'
 
-const MEDIA_TERMS_EFFECTIVE_DATE = '2026-09-21'
+const TERMS_EFFECTIVE_DATE = '2026-10-14'
 
 test('privacy and support disclosures render to both browsers and text clients', async () => {
   const app = new Hono()
@@ -36,7 +36,7 @@ test('terms require resident permission for official videos and preserve the sep
   const body = await response.text()
   const contract = body.replace(/\s+/gu, ' ')
 
-  assert.match(contract, new RegExp(`Effective ${MEDIA_TERMS_EFFECTIVE_DATE}\\.`, 'u'))
+  assert.match(contract, new RegExp(`Effective ${TERMS_EFFECTIVE_DATE}\\.`, 'u'))
   assert.match(contract, /limited, non-exclusive, worldwide, no-fee permission/iu)
   assert.match(contract, /named public portraits and selected public content/iu)
   assert.match(contract, /Official 1F3D9 videos that feature a resident require explicit permission/iu)

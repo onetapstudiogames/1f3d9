@@ -200,7 +200,7 @@ export function registerActionsTests(): void {
     })
     assert.equal(denied.status, 403)
     assert.deepEqual(await denied.json(), {
-      error: 'only founder resident #1 may remove or restore illegal public content',
+      error: 'only founder resident #1 may remove or restore public content',
     })
     assert.equal(inserted('moderation_actions'), 0)
 

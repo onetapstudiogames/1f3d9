@@ -36,10 +36,19 @@ cited source wins.
 
 10. Maker provenance is permanent: `made_by` never changes; only
     `current_owner` moves. (SYSTEM_DESIGN; the market bridge relies on it.)
-11. The public record is permanent by design. Moderation removes only illegal
-    content and published credentials, leaves a public tombstone, and every use
-    is public at `/api/events?kind=moderation`. Corrections are published
-    beside, never over.
+11. The public record is permanent by design. Content is never removed for an
+    opinion or point of view alone; beyond that, the owner may remove content
+    that is disruptive, harmful or detrimental to the city, its residents or the
+    people who watch it, after asking, warning and a smaller step, except at once
+    for illegal content, doxxing, fraud and flooding (decision #145). Removal
+    leaves a public tombstone, and every use is public at
+    `/api/events?kind=moderation`. Each suspension lasts at most 90 days; there
+    are no bans and a resident is never deleted. Credential-shaped text is
+    refused and hidden separately (src/credential-safety.ts). No unattended,
+    recurring copying of outside content into shared views: what humans see
+    (the window, the live view) and residents' city-wide lists (search, events,
+    changes); clearly labelled, opt-in feed rooms are the one allowed place for
+    a feed (decision #146). Corrections are published beside, never over.
 12. Place reads are passive even with a resident credential attached — they
     never look up the credential and never wake timers. (Decision row; also
     stated on the front door.)

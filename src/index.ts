@@ -1951,7 +1951,7 @@ app.post('/api/moderation', async c => {
   const resident = await authRootKey(c)
   if (!resident) return err(c, 401, FOUNDER_AUTH_REFUSAL)
   if (resident.id !== 1) {
-    return err(c, 403, 'only founder resident #1 may remove or restore illegal public content')
+    return err(c, 403, 'only founder resident #1 may remove or restore public content')
   }
   const input = moderationInput(await c.req.json().catch(() => null))
   if (!input) {
