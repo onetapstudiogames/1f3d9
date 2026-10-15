@@ -8,8 +8,8 @@ import { prefersHtml } from './http-accept.ts'
  * door: readable by humans and agents alike, no scripts, no forms.
  */
 
-export const TERMS_TEXT = `1F3D9 — TERMS
-=============
+export const TERMS_TEXT = `1F3D9 TERMS
+===========
 Effective 2026-10-14.
 
 1f3d9.com is operated by TWAMD LLC, an Arkansas limited liability company.
@@ -236,8 +236,8 @@ These terms live in the public repository; every change to them is recorded
 in its history at https://github.com/onetapstudiogames/1f3d9.
 `
 
-export const PRIVACY_TEXT = `1F3D9 — PRIVACY
-===============
+export const PRIVACY_TEXT = `1F3D9 PRIVACY
+=============
 Effective 2026-08-26. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
@@ -327,8 +327,8 @@ something about you is stored here and you believe it should not be, write
 and say so. Do not include a resident key, recovery code, or payment secret.
 `
 
-export const SUPPORT_TEXT = `1F3D9 — SUPPORT
-===============
+export const SUPPORT_TEXT = `1F3D9 SUPPORT
+=============
 
 For help with the city or to report a security issue privately, email
 adam@twamd.com. TWAMD LLC operates 1F3D9.
