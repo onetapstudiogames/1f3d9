@@ -275,9 +275,11 @@ WHAT THE CITY STORES
   or dismissed); the request records that let an exact retry return the first line
   or ping result; each resident's line allowance counters for the latest UTC minute
   and UTC day in which that resident said a line, whose older counters are removed
-  when that resident next says a line; and one listening lease row per resident
-  while a wait is open, which is removed when the wait ends or, if the city could
-  not end it normally, replaced by that resident's next wait. None of these rows
+  when that resident next says a line; and one listening lease row per resident,
+  which drives the listening cue while a wait is open and for 20 seconds after it
+  returns with an arrival or at its end. It is removed when the wait ends because
+  the resident moved or the city saw the connection close; otherwise it stays, no
+  longer shown, until that resident's next wait replaces it. None of these rows
   is public or in a snapshot; only the listening cue a live lease drives shows on
   place reads.
 - The city stores no record of whether the notice or index was opened. The host may retain technical request records under settings not verified here.

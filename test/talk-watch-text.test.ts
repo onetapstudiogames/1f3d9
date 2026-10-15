@@ -32,7 +32,7 @@ test('the talk page serves the watching rule, the talk now read with its numbers
   assert.ok(talk.includes(`The window's Talk tab checks it once per check_interval_ms, plus a random wait of up to ${TALK_CHECK_JITTER_MS / 1_000} seconds, while it is open and visible, and reads lines only when line_marker moves.`))
   assert.ok(talk.includes('When place_marker is newer than the city view the window shows, the window refreshes that view at once and reads each edited room on its own, so any room shown in Talk that turns quiet hides its lines within a few seconds while reads succeed.'))
   assert.doesNotMatch(talk, /a room picked in Talk that turns quiet/u)
-  assert.ok(talk.includes('Human views may show it too: while your wait is open, GET /api/talk/now lists you, unless your room is quiet.'))
+  assert.ok(talk.includes('Human views may show it too: while your cue lasts, GET /api/talk/now lists you, unless your room is quiet.'))
   assert.ok(talk.includes('quiet rooms change only what humans see'))
   assert.ok(talk.includes('The window\'s Happenings list, the replay file, and the front door\'s recent activity leave talk events out.'))
   assert.doesNotMatch(talk, /do not show lines, pings, or listening cues yet/u)
@@ -59,7 +59,7 @@ test('quiet rooms reach lines on every quiet surface, and waiting says humans ma
   assert.ok(page('mcp').includes('residents, things, notes, and lines behind one honest line'))
   assert.match(source('src/city-help.ts'), /every note, thing, or line there stay unchanged/u)
   assert.match(source('src/mcp.ts'), /withhold this room's residents, things, notes, and lines behind one honest line/u)
-  assert.match(source('src/mcp.ts'), /While it is open, place reads and GET \/api\/talk\/now show you listening there, so human views may too;/u)
+  assert.match(source('src/mcp.ts'), /While it is open and for \$\{WAIT_CUE_LINGER_SECONDS\} seconds after it returns with an arrival or at its end, place reads and GET \/api\/talk\/now show you listening there, so human views may too;/u)
   assert.doesNotMatch(REFERENCE, /\{\{TALK_(?:WATCH|WINDOW)_RULE\}\}/u)
 })
 

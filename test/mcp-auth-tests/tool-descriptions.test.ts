@@ -178,7 +178,7 @@ export function registerToolDescriptionTests(): void {
         `${path}: wait says first that it only listens`,
       )
       assert.ok(
-        waitHere.description.includes(`or leave both out to start from now. ${WAIT_AGAIN} While it is open,`),
+        waitHere.description.includes(`or leave both out to start from now. ${WAIT_AGAIN} While it is open and for 20 seconds after it returns with an arrival or at its end,`),
         `${path}: wait says an empty timeout means wait again`,
       )
       assert.ok(

@@ -528,7 +528,7 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
       })
     })
 
-    await t.test('a place read lists a resident as listening only while its wait is open and it has not moved', async () => {
+    await t.test('a place read lists a resident as listening while its wait is open or lingers, and not once it has moved', async () => {
       await reset()
       const placePath = '/api/place/' + rooms.eastRoomId
       const before = await call(app, null, 'GET', placePath)
@@ -562,11 +562,25 @@ test('same-room talk HTTP routes use real PostgreSQL and preserve their public c
       const firstAnswer = await firstWait
       assert.equal(firstAnswer.status, 200)
       assert.equal(firstAnswer.json.reason, 'change')
+      // Decision 148: an arrival leaves the cue for 20 seconds, so waiting again shows no gap.
       const afterWait = await call(app, null, 'GET', placePath)
-      assert.deepEqual(afterWait.json.listening_residents, [])
+      assert.deepEqual(
+        (afterWait.json.listening_residents as Record<string, unknown>[]).map(listener => listener.resident_id),
+        [FOUNDER.id],
+      )
+      const lingeringLease = String((await db.query<{ lease_id: string }>(
+        'SELECT lease_id::text AS lease_id FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]!.lease_id)
 
       const secondWait = call(app, FOUNDER.secret, 'POST', '/api/wait-here', { seconds: 5 })
-      await waitForLease(FOUNDER.id)
+      const deadline = Date.now() + 4_000
+      while (Date.now() < deadline) {
+        const current = (await db.query<{ lease_id: string }>(
+          'SELECT lease_id::text AS lease_id FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+        )).rows[0]?.lease_id
+        if (current !== undefined && current !== lingeringLease) break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
       await standIn(FOUNDER.id, rooms.westRoomId)
       const afterMove = await call(app, null, 'GET', placePath)
       assert.deepEqual(afterMove.json.listening_residents, [])

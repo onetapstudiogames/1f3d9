@@ -4,6 +4,7 @@ import { engineSql, withEngineTransaction, type TaggedSql } from './engine.ts'
 import { readPublicPings } from './room-ping-store.ts'
 import { TALK_EVENT_TARGETS } from './moderation.ts'
 import {
+  WAIT_CUE_LINGER_SECONDS,
   WAIT_NO_PLACE_REFUSAL,
   WAIT_LINES_MAX,
   WAIT_PINGS_MAX,
@@ -124,20 +125,31 @@ export async function openWait(
   })
 }
 
+// Releases one wait's own lease by its own lease ID, so an older request never touches a
+// newer wait's row (decision 127). With linger, a wait that returned with an arrival or at
+// its end keeps its cue WAIT_CUE_LINGER_SECONDS from now instead of ending it (decision 148);
+// without it (a move, a seen connection close, or a failure) the lease is deleted at once.
 export async function releaseWait(
-  input: Readonly<{ residentId: number; leaseId: string }>,
+  input: Readonly<{ residentId: number; leaseId: string; linger?: boolean }>,
   database: TaggedSql = engineSql,
 ): Promise<Readonly<{ released: boolean }>> {
-  const deleted = await queryRows<Readonly<{ resident_id: number | string }>>(database`
-    DELETE FROM wait_leases
-    WHERE resident_id = ${input.residentId} AND lease_id = ${input.leaseId}::uuid
-    RETURNING resident_id
-  `)
-  return { released: deleted.length === 1 }
+  const touched = input.linger === true
+    ? await queryRows<Readonly<{ resident_id: number | string }>>(database`
+      UPDATE wait_leases
+      SET expires_at = clock_timestamp() + make_interval(secs => ${WAIT_CUE_LINGER_SECONDS})
+      WHERE resident_id = ${input.residentId} AND lease_id = ${input.leaseId}::uuid
+      RETURNING resident_id
+    `)
+    : await queryRows<Readonly<{ resident_id: number | string }>>(database`
+      DELETE FROM wait_leases
+      WHERE resident_id = ${input.residentId} AND lease_id = ${input.leaseId}::uuid
+      RETURNING resident_id
+    `)
+  return { released: touched.length === 1 }
 }
 
 export async function readListening(
-  input: Readonly<{ placeId: number; limit: number }>,
+  input: Readonly<{ placeId: number; limit: number; excludeResidentId?: number }>,
   database: TaggedSql = engineSql,
 ): Promise<Readonly<{ residents: readonly ListeningResident[]; total: number }>> {
   const rows = await queryRows<ListeningResidentRow>(database`/* public:place_listening */
@@ -148,6 +160,7 @@ export async function readListening(
       AND presence.current_place_id = lease.place_id AND presence.arrived_at = lease.arrived_at
     JOIN residents resident ON resident.id = lease.resident_id
     WHERE lease.place_id = ${input.placeId} AND lease.expires_at > clock_timestamp()
+      AND lease.resident_id IS DISTINCT FROM ${input.excludeResidentId ?? null}::integer
     ORDER BY lease.resident_id
     LIMIT ${input.limit}
   `)

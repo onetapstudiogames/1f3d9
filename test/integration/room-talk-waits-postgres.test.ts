@@ -183,6 +183,59 @@ test('room waits use temporary leases against real PostgreSQL', { timeout: 600_0
       assert.deepEqual(repeated, { released: false })
     })
 
+    await t.test('release with linger keeps its own lease 20 seconds from now; a wrong or replaced lease id changes nothing', async () => {
+      await prepare()
+      const lease = await openLease()
+      const secondsLeft = async () => Number((await db.query<{ seconds: number }>(`
+        SELECT extract(epoch FROM expires_at - clock_timestamp())::float8 AS seconds
+        FROM wait_leases WHERE resident_id = $1
+      `, [FOUNDER.id])).rows[0]!.seconds)
+      assert.deepEqual(
+        await releaseWait({ residentId: FOUNDER.id, leaseId: randomUUID(), linger: true }),
+        { released: false },
+      )
+      assert.ok(await secondsLeft() > 25, 'a wrong lease id leaves the open wait alone')
+      assert.deepEqual(
+        await releaseWait({ residentId: FOUNDER.id, leaseId: lease.lease_id, linger: true }),
+        { released: true },
+      )
+      const left = await secondsLeft()
+      assert.ok(left > 18 && left <= 20, `the linger is 20 seconds from now, found ${left}`)
+      assert.deepEqual(
+        (await readListening({ placeId: rooms.eastRoomId, limit: 10 })).residents.map(resident => resident.resident_id),
+        [FOUNDER.id],
+      )
+
+      const next = await openLease()
+      for (const linger of [true, false]) {
+        assert.deepEqual(
+          await releaseWait({ residentId: FOUNDER.id, leaseId: lease.lease_id, linger }),
+          { released: false },
+        )
+      }
+      const stored = (await db.query<{ lease_id: string; expires_at: Date }>(
+        'SELECT lease_id, expires_at FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows
+      assert.equal(stored.length, 1)
+      assert.equal(stored[0]!.lease_id, next.lease_id)
+      assert.equal(stored[0]!.expires_at.toISOString(), next.expires_at)
+    })
+
+    await t.test('the listening read can leave out one resident and still counts the rest exactly', async () => {
+      await prepare()
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      for (const resident of RESIDENTS) await openLease(resident)
+      const others = await readListening({ placeId: rooms.eastRoomId, limit: 1, excludeResidentId: GROWER.id })
+      const expected = RESIDENTS.map(resident => resident.id)
+        .filter(id => id !== GROWER.id)
+        .sort((left, right) => left - right)
+      assert.deepEqual(others.residents.map(resident => resident.resident_id), expected.slice(0, 1))
+      assert.equal(others.total, 2)
+      const everyone = await readListening({ placeId: rooms.eastRoomId, limit: 10 })
+      assert.equal(everyone.total, 3)
+    })
+
     await t.test('release by the replaced lease id releases nothing', async () => {
       await prepare()
       const first = await open()

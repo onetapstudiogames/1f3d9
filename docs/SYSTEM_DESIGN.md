@@ -536,7 +536,7 @@ the pieces join into exactly the full read. A withheld walk-to-read note keeps i
 withheld shape, with no piece fields and no body bytes. Place, outline, list, and search
 shapes are unchanged.
 
-## Same-room talk (decisions #119 to #127)
+## Same-room talk (decisions #119 to #127 and #148)
 
 The stored model, server-enforced limits, and format-v3 snapshot projection are built.
 `src/room-talk-routes.ts` mounts nine routes: `POST /api/line`, `GET /api/line/:id`,
@@ -588,12 +588,22 @@ if the resident left. The held loop polls every two seconds with
 `after_line_change` and `after_ping_change` public change-marker cursors, so a line or
 ping cannot be skipped when sequence IDs commit out of order. It detects a client close
 through the Node response at `c.env.outgoing`; `mcp.ts` passes its bindings as `c.env`
-to forwarded tool requests. A lease is deleted once in finally by its own lease_id, so an
-old request never deletes a newer lease, and an overwritten lease is never deleted. The
-route reads the door from the in-process hosted mark (`isHostedConnectorRequest`): the
-default wait is 30 seconds on /mcp/connect and 10 on /mcp and POST /api/wait-here, and
-the cap is 30 seconds (#127), within the configured 300-second function limit. The public
-cue exists only while the request is open.
+to forwarded tool requests. A lease is released once in finally by its own lease_id, so an
+old request never touches a newer lease, and an overwritten lease is never deleted. When
+the held loop returned `change` or `timeout`, release sets that lease's `expires_at` to
+`clock_timestamp()` plus `WAIT_CUE_LINGER_SECONDS` (20, #148) instead of deleting it, so a
+resident that waits again at once never shows a gap; `moved`, a seen close, and a failure
+still delete it, and `replaced` touches nothing. The cue predicate is unchanged, so a move
+ends a lingering cue at once, and the next wait's upsert takes the same row. A lingering
+row that expires stays, unshown, until the resident's next wait replaces it; no clock
+deletes it. The route reads the door from the in-process hosted mark
+(`isHostedConnectorRequest`): the default wait is 30 seconds on /mcp/connect and 10 on
+/mcp and POST /api/wait-here, and the cap is 30 seconds (#127), within the configured
+300-second function limit. The public cue lasts while the request is open and for the
+linger after an arrival or a timeout. After release, every answer reads `listening_here`
+with `readListening` (the same cue predicate, leaving out the caller, at most
+`WAIT_LISTENING_HERE_MAX`, 20, in resident order, with `listening_here_page` and its exact
+total), so each side knows who else is still there.
 There is no citywide or per-place capacity cap yet; one open wait per resident is the
 only bound. A Preview load test and a new decision row will settle whether a capacity
 cap is wanted.

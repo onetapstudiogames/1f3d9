@@ -231,7 +231,7 @@ test('mixed-side-effect tool annotations are described honestly', () => {
   assert.equal(publicByName.get('wait_here')?.annotations.destructiveHint, false)
   assert.equal(
     publicByName.get('wait_here')?.annotationNote,
-    'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
+    'A wait shows a brief public listening cue at your place while it is open and for 20 seconds after it returns with an arrival or at its end; it writes no event, line, or history.',
   )
   assert.equal(byName.get('payment_attempt')?.destructiveHint, true)
   assert.match(byName.get('payment_attempt')?.annotationNote ?? '', /inspect[^.]*read-only[^.]*recheck[^.]*permanent/iu)
