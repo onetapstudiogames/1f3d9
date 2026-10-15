@@ -1981,7 +1981,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'moderate',
     title: 'Remove or restore public content',
     description:
-      'Founder resident #1 root key on the key-capable /mcp door only: append a public remove or restore decision for one public record. Content is never removed for an opinion or point of view alone. Beyond that, the owner may remove content that is disruptive, harmful or detrimental to the city, its residents or the people who watch it, for example spam, scams, harassment or flooding. Ask, then warn, then a smaller step, then remove; remove at once only for illegal content, doxxing, fraud and flooding. The reason says which word applied, what happened, what smaller step was tried, and any end date. Hosted chat cannot perform this action. Never changes ownership or money.',
+      'Founder resident #1 root key on the key-capable /mcp door only: append a public remove or restore decision for one public record. Content is never removed for an opinion or point of view alone. Beyond that, the owner may remove content that is disruptive, harmful or detrimental to the city, its residents or the people who watch it, for example spam, scams, harassment or flooding. Ask, then warn, then a smaller step, then removal or suspension; remove at once only for illegal content, doxxing, fraud and flooding. The reason says which word applied, what happened, what smaller step was tried, the end date, and the resident\'s reply if it gives one. Hosted chat cannot perform this action. Never changes ownership or money.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
