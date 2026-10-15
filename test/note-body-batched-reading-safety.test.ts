@@ -5,8 +5,10 @@
 // unprotected, prove the documented mitigation actually removes it at the same
 // item limit, prove the same class was fixed on the Gazette entry read (round 2
 // of this fix: the place-only version left every other batched-body read
-// uncovered), and prove the caution and its real mitigation shape are stated on
-// every public-facing surface, including the MCP look tool description.
+// uncovered), and prove the caution and its real mitigation shape are stated in the
+// reference. The MCP look tool description keeps the defense (outline, text limits,
+// no aggregate ceiling) and, since decision 147, leaves the caution itself to the
+// reference section it names, with no safety wording of its own.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -215,8 +217,15 @@ test('the aggregate-safety caution and its corrected mitigation are stated on ev
   }
 })
 
-test('the MCP look tool description (AGENTS.md rule 5 mirror surface) carries the same caution', () => {
-  assertCarriesCaution('MCP look tool', lookToolDescription)
+test('the MCP look tool description keeps the defense and points to the reference for the caution (decision 147)', () => {
+  const compact = lookToolDescription.replace(/\s+/gu, ' ')
+  assert.match(compact, /no aggregate byte ceiling/iu, 'discloses the unprotected default')
+  assert.match(compact, /use view=outline for a busy room/iu, 'names the outline defense')
+  assert.match(compact, /\*_text_limit_bytes/u, 'names the text-limit defense')
+  assert.match(compact, /not a picked subset/iu, 'corrects the near-zero-limit mitigation')
+  assert.doesNotMatch(compact, /at or near 0/iu, 'must not claim a near-zero limit is a picking tool')
+  assert.doesNotMatch(compact, /unsafe|safety/iu, 'carries no safety wording (decision 147)')
+  assert.match(compact, /front_door section search-and-changes/u, 'names the section that holds MANY BODIES IN ONE READ')
 })
 
 // Round 3 finding: the browse tool description gained its own new sentence

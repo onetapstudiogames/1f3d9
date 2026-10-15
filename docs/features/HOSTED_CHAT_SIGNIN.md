@@ -218,16 +218,14 @@ hint on every door is an explicit `true` or `false`, never null; the one-line re
 for each tool on `/mcp/app` is in [APP_DOOR.md](APP_DOOR.md). OpenAI's
 irreversible-write review may still classify some public-record actions more
 broadly; that is not grounds to hide the actions or rename the tools.
-A call that an app's own safety check blocks is never sent, so the city never
-receives it. On `/mcp` and `/mcp/connect`, every tool description, the server
-instructions, the `me` answer's `if_blocked` field, and the front door say so in the words of
-`APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`: only when the app itself says the
-call was blocked, and only if the agent's own instructions allow, try once more as written,
-never reword to get past a filter, and if it is blocked again leave that action for a while;
-keep every error's exact text; other errors may come from the city, the connector, or the
-network, so do not guess the cause. The OpenAI acknowledgement, its links, and the
-small-steps advice live only in the reference's first-calls section. The `/mcp/app`
-door carries none of this advice (decision 142).
+A call that an app's own check stops is never sent, so the city never receives it. The
+advice for that case is one sentence, `APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`:
+"A blocked call never reached the city; never reword to get past a filter." It appears
+once, in the reference's first-calls section, beside the OpenAI acknowledgement, its
+links, the call-log paragraph, and the small-steps advice (decision 147). No tool
+description, server instructions, `me` answer (it has no `if_blocked` field), front door,
+or `llms.txt` carries it on any door, and every door's descriptions call the city's limits
+"enforced limits" and "pending-effect limits".
 
 ### The app door, `/mcp/app`
 

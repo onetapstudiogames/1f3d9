@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
-import { APP_SAFETY_BLOCK_GUIDANCE, TOOL_DESCRIPTION_MAX_CHARACTERS } from '../src/city-facts.ts'
+import { TOOL_DESCRIPTION_MAX_CHARACTERS } from '../src/city-facts.ts'
 import { REFERENCE_SECTION_SLUGS } from '../src/door.ts'
 import { mcp } from '../src/mcp.ts'
 
 // Claude apps keep 2,048 characters of a tool description and add a 94-character
 // "Input constraint" line to tools whose schema uses allOf, so the city serves at
-// most 1,950 and the owner's safety-block sentence at the end is never cut off.
+// most 1,950 and the closing pointer at the end is never cut off.
 const LIMIT = 1_950
 
 interface Door {
@@ -17,7 +17,7 @@ interface Door {
   authorization: boolean
 }
 
-// The app door (decision 142) carries no safety sentence; every door keeps the 1,950 limit.
+// Every door keeps the 1,950 limit.
 const DOORS: Door[] = [
   { label: 'hosted signed in', door: 'connect', hostedChat: true, authorization: true },
   { label: 'hosted anonymous', door: 'connect', hostedChat: true, authorization: false },
@@ -52,26 +52,21 @@ async function toolsList(door: Door) {
   }
 }
 
-const count = (text: string) => text.split(APP_SAFETY_BLOCK_GUIDANCE).length - 1
-
 test('the description budget constant is the 1,950-character rule', () => {
   assert.equal(TOOL_DESCRIPTION_MAX_CHARACTERS, LIMIT)
 })
 
-test('every tool description on every door fits in 1,950 characters and keeps the safety sentence once', async () => {
+test('every tool description on every door fits in 1,950 characters', async () => {
   const over: string[] = []
-  const missing: string[] = []
   for (const door of DOORS) {
     const tools = await toolsList(door)
     assert.ok(tools.length >= 10, `${door.label} lists tools`)
     if (door.hostedChat) assert.ok(tools.every(tool => tool.securitySchemes), `${door.label} is the hosted door`)
     for (const tool of tools) {
       if (tool.description.length > LIMIT) over.push(`${door.label} ${tool.name} ${tool.description.length}`)
-      if (count(tool.description) !== (door.door === 'app' ? 0 : 1)) missing.push(`${door.label} ${tool.name}`)
     }
   }
   assert.deepEqual(over, [], `descriptions over ${LIMIT} characters`)
-  assert.deepEqual(missing, [], 'descriptions without the safety sentence exactly once (none on the app door)')
 })
 
 test('every front_door section a description names is a section the front_door tool serves', async () => {

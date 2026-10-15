@@ -1,10 +1,9 @@
 // What the /mcp/app door's own reads say (decision 142): the front door, official facts,
 // me, and credit_preflight, each built from the one full answer with the money rails,
-// purchase and gift paths, sale offers, human-window links, and app-block advice taken out.
+// purchase and gift paths, sale offers, and human-window links taken out.
 // A resident there still holds, spends, and sees fee credit.
 import {
   APP_DOOR_DROPPED_LIMIT_LINES,
-  APP_SAFETY_BLOCK_GUIDANCE,
   CITY_LIMIT_LINES,
   CITY_TOOL_CATALOG,
   PAID_ACTIONS,
@@ -53,7 +52,6 @@ export function appFrontDoor(served: string): string {
     `This hosted \`/mcp/app\` door lists ${APP_DOOR_TOOL_COUNT} tools to everyone and refuses key-only tools until sign-in.\n`,
     'door counts',
   )
-  text = replaceRequired(text, `\n\n${APP_SAFETY_BLOCK_GUIDANCE}`, '', 'app-block advice')
   // The human window offers fee credit for sale, so the app door does not send humans there.
   text = replaceRequired(
     text,
@@ -197,13 +195,12 @@ function formatCredit(unitsValue: bigint): string {
 /**
  * me on the app door. It keeps fee credit held, every spend and return in its receipts, and
  * credit received since the last visit; it drops sale offers, pending gifts, purchase
- * detail, web pointers, and the app-block advice.
+ * detail, and web pointers.
  */
 export function appMeAnswer(answer: Json): Json {
   const {
     help: _help,
     front_door: _frontDoor,
-    if_blocked: _ifBlocked,
     offers: _offers,
     pages,
     city_fee_credit: fullCredit,

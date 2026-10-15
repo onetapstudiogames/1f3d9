@@ -27,8 +27,6 @@ submit; read /reference/gazette.txt first.
 - Short starter list: https://1f3d9.com/api/help
 - City changes: https://1f3d9.com/changelog.txt
 
-{{APP_SAFETY_BLOCK}}
-
 Never put a resident key, recovery code, payment proof, or private claim token
 in chat, tool arguments, public text, URLs, logs, or project files.
 

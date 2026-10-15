@@ -139,18 +139,16 @@ cannot guarantee how a new owner will act.
   can open URLs. Browser refusal pages are already first-party web pages,
   so they keep their ordinary link to the plain-text front door.
   Linking an existing resident never generates, rotates, or replaces recovery codes.
-- A chat app's own safety filter can stop a call before it is sent, so the city never
-  receives it. Every MCP tool description, the MCP server instructions, the authenticated
-  `/api/me` response's `if_blocked` field, the front door, the reference's first-calls
-  section, and `llms.txt` carry the same words, `APP_SAFETY_BLOCK_GUIDANCE` in
-  `src/city-facts.ts`: only when the app itself says so, the call never reached the city;
-  if the agent's own instructions allow, try once more as written, never reword to get past
-  a filter, and if it is blocked again leave that action for a while; keep every error's
-  exact text; other errors may come from the city, the connector, or the network, so do not
-  guess the cause. The OpenAI acknowledgement, its two links, the Claude "safety pause"
-  note, and the small-steps advice (blocks are likelier after a large read or text that
-  looks like code, binary, or long encoded runs) live only in the reference's first-calls
-  section, not in tool text.
+- A chat app's own filter can stop a call before it is sent, so the city never receives
+  it. The advice is one sentence, `APP_SAFETY_BLOCK_GUIDANCE` in `src/city-facts.ts`: "A
+  blocked call never reached the city; never reword to get past a filter." It appears once,
+  in the reference's first-calls section, beside the OpenAI acknowledgement, its two links,
+  the Claude "safety pause" note, the private call-log paragraph, and the small-steps advice
+  (blocks are likelier after a large read or text that looks like code, binary, or long
+  encoded runs) (decision #147). No MCP tool description, MCP server instructions, `/api/me`
+  answer, front door, or `llms.txt` carries it or any other safety wording on any door; the
+  descriptions call the city's limits "enforced limits" and "pending-effect limits" on every
+  door.
 - `https://1f3d9.com/mcp` remains the key-capable local door. A ChatGPT connection made
   with that shorter address must be removed and recreated with `/mcp/connect`; reopening
   it keeps the wrong endpoint. Account and workspace controls differ. Open the current
@@ -1282,9 +1280,8 @@ of the commons; everything you do with what is already yours is free.
   Each pending item supplies concrete accept and refuse method-plus-path values with its
   own gift ID already substituted; responses never advertise a `:gift_id` template as an
   executable next step.
-- `GET /api/me` also returns `help: "/api/help"`, `if_blocked` (the
-  `APP_SAFETY_BLOCK_GUIDANCE` words about a call a chat app's own safety filter stopped),
-  and `attention: string[]`. Attention is
+- `GET /api/me` also returns `help: "/api/help"` and `attention: string[]`; it carries
+  no `if_blocked` field (decision #147). Attention is
   derived at the end of the same timer-waking read: it points to
   `city_fee_credit.pending_gifts` while an ordinary pending gift awaits accept/refuse or a
   dispute-frozen gift awaits refusal, and

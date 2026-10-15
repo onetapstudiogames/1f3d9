@@ -1,7 +1,8 @@
 // One home for what each MCP door shows (decision 142). /mcp is the key-capable door,
 // /mcp/connect the hosted-chat door, and /mcp/app the hosted door made for app stores:
 // the same sign-in and residents as /mcp/connect, with no purchase, gift, payment
-// recheck, or world-sale tools, no money rails in any answer, and no app-block advice.
+// recheck, or world-sale tools and no money rails in any answer. Since decision 147 no door
+// carries app-block advice; the one sentence lives in the reference only.
 // This file imports nothing from the rest of the city, so core.ts and city-facts.ts
 // can read it without a cycle.
 
@@ -26,7 +27,6 @@ export interface DoorProfile {
   readonly frontDoorSections: readonly string[] | null
   /** Event kinds this door does not offer as a filter or show as recent activity. */
   readonly hiddenEventKinds: readonly string[]
-  readonly includesSafetyGuidance: boolean
   readonly moneyFacts: MoneyFacts
   readonly recordsLookingCue: boolean
   readonly forwardsPayment: boolean
@@ -94,7 +94,6 @@ export const APP_INSUFFICIENT_CREDIT_REFUSAL =
 const FULL_DESCRIPTION_TOKENS = Object.freeze({
   '{{OFFICIAL_FACTS_SUBJECTS}}': 'treasury, Base USDC, no-token statement',
   '{{OFFICIAL_FACTS_SAME_AS}}': 'This returns the exact same response as GET /api/official without requiring the host to open that URL.',
-  '{{PHYSICS_CEILINGS}}': 'enforced safety ceilings',
   '{{BROWSE_VIEWS}}': 'moderation, treasury, or gazette',
   '{{BROWSE_DEFAULTS}}': 'residents 200 and treasury 50',
   '{{PREFLIGHT_GIFTS}}': 'pending_gifts_count (ordinary pending plus dispute-frozen gifts still listed in me.city_fee_credit.pending_gifts), ',
@@ -108,7 +107,6 @@ const FULL_DESCRIPTION_TOKENS = Object.freeze({
   '{{REVISE_PAYMENT_CHOICE}}': 'then send a new city_credit_request_id for one credit, or omit it for outer X-PAYMENT, never both.',
   '{{GO_HOME_ALWAYS}}': 'is never blocked',
   '{{REFUSED_OR_BLOCKED}}': 'refused or blocked',
-  '{{PENDING_EFFECT_CEILINGS}}': 'pending-effect safety ceilings',
   '{{LOOK_CUE}}': 'Only an authenticated resident MCP look may publish a generic looking cue at your place for {{LOOKING_TTL}} seconds; recording is best effort and never changes or fails the read.',
   '{{ME_COLLECTIONS}}': 'notes, offers, labels, quotas, fee credit, pending gifts, and changes since your last visit',
   '{{ME_PENDING_GIFTS}}': 'Pending gifts name their empty-body accept or refuse paths. ',
@@ -120,7 +118,6 @@ export type DescriptionToken = keyof typeof FULL_DESCRIPTION_TOKENS
 const APP_DESCRIPTION_TOKENS: Readonly<Record<DescriptionToken, string>> = Object.freeze({
   '{{OFFICIAL_FACTS_SUBJECTS}}': 'fee credit rules, no-token statement',
   '{{OFFICIAL_FACTS_SAME_AS}}': 'This door returns those facts without requiring the host to open a URL.',
-  '{{PHYSICS_CEILINGS}}': 'enforced limits',
   '{{BROWSE_VIEWS}}': 'moderation, or gazette',
   '{{BROWSE_DEFAULTS}}': 'residents 200',
   '{{PREFLIGHT_GIFTS}}': '',
@@ -134,7 +131,6 @@ const APP_DESCRIPTION_TOKENS: Readonly<Record<DescriptionToken, string>> = Objec
   '{{REVISE_PAYMENT_CHOICE}}': 'then send a new city_credit_request_id for one fee credit.',
   '{{GO_HOME_ALWAYS}}': 'always works',
   '{{REFUSED_OR_BLOCKED}}': 'refused or stopped',
-  '{{PENDING_EFFECT_CEILINGS}}': 'pending-effect limits',
   '{{LOOK_CUE}}': 'On this door look only reads; it publishes no looking cue.',
   '{{ME_COLLECTIONS}}': 'notes, labels, quotas, fee credit held and spent, and changes since your last visit',
   '{{ME_PENDING_GIFTS}}': '',
@@ -153,7 +149,6 @@ const KEY_PROFILE: DoorProfile = Object.freeze({
   argumentDescriptions: Object.freeze({}),
   frontDoorSections: null,
   hiddenEventKinds: Object.freeze([]),
-  includesSafetyGuidance: true,
   moneyFacts: 'full',
   recordsLookingCue: true,
   forwardsPayment: true,
@@ -197,7 +192,6 @@ const APP_PROFILE: DoorProfile = Object.freeze({
   }),
   frontDoorSections: APP_FRONT_DOOR_SECTIONS,
   hiddenEventKinds: APP_HIDDEN_EVENT_KINDS,
-  includesSafetyGuidance: false,
   moneyFacts: 'credit-only',
   // Decision 82 lets a look leave the cue; this door chooses not to, so look is a passive read here.
   recordsLookingCue: false,
