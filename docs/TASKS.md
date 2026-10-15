@@ -33,6 +33,11 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   held one after a client timeout.
 - [ ] Measure whether talk pushes daily visitors' `around_you` intervals over 20,000
   changes; the owner decides whether talk should be excluded from that count.
+- [ ] At public snapshot format v4, reword the `listening_cues` class reason in
+  `src/public-snapshot-format.ts` and docs/PUBLIC_SNAPSHOTS.md ("exists only while its
+  request is open"): since #148 a cue also lingers 20 seconds after an arrival or a
+  timeout. It stays unchanged in v3 because published v3 manifests carry the registry
+  and verification compares it exactly; the cue is still never exported.
 - [ ] Decide whether `resetCity` should re-grant PostgreSQL's default `USAGE` on
   schema `public`; it drops the grant when recreating the schema. Until then,
   export-role tests must re-grant it inside their transaction, as

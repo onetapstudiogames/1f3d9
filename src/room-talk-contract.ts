@@ -18,6 +18,8 @@ export type WaitDoor = 'coding' | 'hosted_chat'
 export const WAIT_POLL_MILLISECONDS = 2_000 // design section 8: no more often than every 2 seconds
 export const WAIT_LINES_MAX = 50 // design section 6
 export const WAIT_PINGS_MAX = 20 // design section 6
+export const WAIT_CUE_LINGER_SECONDS = 20 // Decision #148, the owner's number: a cue stays this long after a wait returns with an arrival or at its end
+export const WAIT_LISTENING_HERE_MAX = 20 // Decision #148: listening_here lists at most this many other residents, with the exact total
 export const ME_PENDING_SENDERS_MAX = 20 // PROVISIONAL, decision #121
 export const TALK_REQUEST_LOCK_NAMESPACE = 0x1f3d9008 // Next free after 0x1f3d9007 in src/engine-chance.ts
 
@@ -87,6 +89,8 @@ export type WaitAnswer = Readonly<{
   place_id: number; reason: WaitReason; next_step?: string
   lines: readonly (RoomLine | TalkModerationMarker)[]; lines_has_more: boolean; next_after_line_change: string
   pings: readonly WaitPingEntry[]; pings_has_more: boolean; next_after_ping_change: string
+  listening_here: readonly ListeningResident[]
+  listening_here_page: Readonly<{ total_items: number; returned_items: number; has_more: boolean }>
 }>
 export type PingResult = Readonly<{ ping: PublicPing; replayed: boolean }>
 export type ReceiptDismissal = Readonly<{

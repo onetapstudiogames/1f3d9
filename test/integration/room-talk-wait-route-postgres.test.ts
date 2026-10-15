@@ -38,6 +38,8 @@ function requestId(value: number): string {
 }
 
 const TIMEOUT_NEXT_STEP = 'Nothing arrived yet. To keep listening, wait again at once with the two cursors this answer returned; there is no limit on waiting again.'
+// The owner's number (decision 148): a cue stays this long after a wait returns with an arrival or at its end.
+const LINGER_SECONDS = 20
 
 test('same-room wait route holds one request and releases its lease exactly once against PostgreSQL', {
   timeout: 600_000,
@@ -130,6 +132,49 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.equal(response.headers.get('Vary'), 'Authorization')
     }
     const assertNoLease = async () => assert.equal(await count('wait_leases'), 0)
+    const secondsLeft = async (residentId = FOUNDER.id) => {
+      const row = (await db.query<{ seconds: number }>(`
+        SELECT extract(epoch FROM expires_at - clock_timestamp())::float8 AS seconds
+        FROM wait_leases WHERE resident_id = $1
+      `, [residentId])).rows[0]
+      return row === undefined ? null : Number(row.seconds)
+    }
+    // Decision 148: after an arrival or a timeout the one lease stays for the linger, never longer.
+    const assertCueLingers = async (residentId = FOUNDER.id) => {
+      assert.equal(await count('wait_leases'), 1)
+      const left = await secondsLeft(residentId)
+      assert.ok(
+        left !== null && left > LINGER_SECONDS - 3 && left <= LINGER_SECONDS,
+        `the cue lingers about ${LINGER_SECONDS} seconds, found ${left}`,
+      )
+    }
+    const listenersAt = async (placeId: number) => {
+      const read = await call(cityApp, null, 'GET', '/api/place/' + placeId)
+      assert.equal(read.status, 200)
+      return read.json.listening_residents as Array<Record<string, unknown>>
+    }
+    const talkNowListeners = async () => {
+      const read = await call(cityApp, null, 'GET', '/api/talk/now')
+      assert.equal(read.status, 200)
+      return read.json.listening as Array<Record<string, unknown>>
+    }
+    const addListeners = async (firstId: number, total: number, placeId: number) => {
+      for (let index = 0; index < total; index += 1) {
+        const id = firstId + index
+        await db.query(
+          `INSERT INTO residents (id, handle, model, secret_hash) VALUES ($1, $2, 'note-suite', lpad(to_hex($1::integer), 64, '0'))`,
+          [id, `listener-${id}`],
+        )
+        await standIn(id, placeId)
+      }
+      await db.query(`
+        INSERT INTO wait_leases (resident_id, place_id, arrived_at, lease_id, started_at, expires_at)
+        SELECT presence.resident_id, presence.current_place_id, presence.arrived_at, gen_random_uuid(),
+          clock_timestamp(), clock_timestamp() + interval '30 seconds'
+        FROM resident_presence presence
+        WHERE presence.resident_id BETWEEN $1 AND $2
+      `, [firstId, firstId + total - 1])
+    }
     const assertRefusal = async (response: Response, status: number, sentence: string) => {
       assert.equal(response.status, status)
       assertHeaders(response)
@@ -179,7 +224,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.equal(Object.hasOwn(answer, 'next_step'), false)
       assert.equal((answer.lines as Record<string, unknown>[])[0]?.body, 'hello from the next resident')
       assert.equal(answer.lines_has_more, false)
-      await assertNoLease()
+      await assertCueLingers()
     })
 
     await t.test("a wait returns change for an invitation to the waiter and for an answer to the waiter's older ping, and not for a ping between two others", async () => {
@@ -225,7 +270,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.deepEqual(new Set(pings.map(entry => entry.kind)), new Set(['ping_answered', 'ping_sent']))
       assert.equal(pings.some(entry => Number((entry.ping as Record<string, unknown>).id)
         === Number((unrelated.json.ping as Record<string, unknown>).id)), false)
-      await assertNoLease()
+      await assertCueLingers()
     })
 
     await t.test('a cursor of "0" returns at once with at most fifty lines, has_more, and the fiftieth line change as the next cursor', async () => {
@@ -262,16 +307,15 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.equal(answer.lines_has_more, true)
       assert.equal(lines[49]?.id, Number(fiftiethLine.rows[0]!.id))
       assert.equal(answer.next_after_line_change, fiftiethLine.rows[0]!.change_id)
-      await assertNoLease()
+      await assertCueLingers()
     })
 
-    await t.test('nothing arriving returns an empty timeout after the asked seconds, with both cursors at the checkpoint, and writes no event, line, ping, or lease', async () => {
+    await t.test('nothing arriving returns an empty timeout after the asked seconds, with both cursors at the checkpoint, writes no event, line, or ping, and leaves only its own lingering lease', async () => {
       await reset()
       const before = {
         events: await count('events'),
         lines: await count('room_lines'),
         pings: await count('pings'),
-        leases: await count('wait_leases'),
       }
       const marker = await checkpoint()
       const response = await postJson(FOUNDER.secret, { seconds: 1 })
@@ -286,12 +330,14 @@ test('same-room wait route holds one request and releases its lease exactly once
       assert.deepEqual(answer.pings, [])
       assert.equal(answer.pings_has_more, false)
       assert.equal(answer.next_after_ping_change, marker)
+      assert.deepEqual(answer.listening_here, [])
+      assert.deepEqual(answer.listening_here_page, { total_items: 0, returned_items: 0, has_more: false })
       assert.deepEqual({
         events: await count('events'),
         lines: await count('room_lines'),
         pings: await count('pings'),
-        leases: await count('wait_leases'),
       }, before)
+      await assertCueLingers()
     })
 
     await t.test('moving away during a wait returns moved within one poll', async () => {
@@ -308,7 +354,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       await assertNoLease()
     })
 
-    await t.test('a second wait takes over: the first answers replaced within one poll, the cue follows the second, and only the second is ever deleted', async () => {
+    await t.test('a second wait takes over: the first answers replaced within one poll, the cue follows the second, and no lease is ever deleted', async () => {
       await reset()
       await addReleaseProbe()
       const first = postJson(FOUNDER.secret, { seconds: 5 })
@@ -344,11 +390,15 @@ test('same-room wait route holds one request and releases its lease exactly once
       const secondBody = await secondResponse.json() as Record<string, unknown>
       assert.equal(secondBody.reason, 'timeout')
       assert.equal(secondBody.next_step, TIMEOUT_NEXT_STEP)
-      await assertNoLease()
+      await assertCueLingers()
+      const stored = (await db.query<{ lease_id: string }>(`
+        SELECT lease_id::text AS lease_id FROM wait_leases WHERE resident_id = $1
+      `, [FOUNDER.id])).rows
+      assert.deepEqual(stored.map(row => row.lease_id), [secondLease.lease_id])
       const released = await db.query<{ lease_id: string }>(`
         SELECT lease_id::text AS lease_id FROM wait_release_probe WHERE resident_id = $1
       `, [FOUNDER.id])
-      assert.deepEqual(released.rows.map(row => row.lease_id), [secondLease.lease_id])
+      assert.deepEqual(released.rows.map(row => row.lease_id), [])
     })
 
     await t.test('thirty-one seconds, a numeric or negative cursor, a cursor ahead of the checkpoint, or an extra field is refused with its sentence and opens no lease', async () => {
@@ -458,7 +508,7 @@ test('same-room wait route holds one request and releases its lease exactly once
         $$
       `)
       await db.query(`
-        CREATE TRIGGER refuse_wait_release_probe BEFORE DELETE ON wait_leases
+        CREATE TRIGGER refuse_wait_release_probe BEFORE UPDATE OR DELETE ON wait_leases
         FOR EACH ROW EXECUTE FUNCTION refuse_wait_release_probe()
       `)
       const logs: unknown[][] = []
@@ -504,7 +554,7 @@ test('same-room wait route holds one request and releases its lease exactly once
       const answer = await response.json() as Record<string, unknown>
       assert.equal(answer.reason, 'change')
       assert.equal((answer.lines as Record<string, unknown>[])[0]?.body, 'the whitespace-body wait heard this line')
-      await assertNoLease()
+      await assertCueLingers()
       assert.equal(firstLease.place_id, rooms.eastRoomId)
       assert.equal(secondLease.place_id, rooms.eastRoomId)
     })
@@ -543,7 +593,7 @@ test('same-room wait route holds one request and releases its lease exactly once
         },
         body: '{}',
       }))
-      const unmarkedLease = await waitForLease()
+      const unmarkedLease = await waitForLease(FOUNDER.id, hostedLease.lease_id)
       const unmarkedDuration = await leaseDurationMilliseconds(unmarkedLease.lease_id)
       await wake('wake the unmarked wait')
       assert.equal((await unmarkedWait).status, 200)
@@ -558,7 +608,7 @@ test('same-room wait route holds one request and releases its lease exactly once
         },
         body: '{}',
       }))
-      const forgedHeaderLease = await waitForLease()
+      const forgedHeaderLease = await waitForLease(FOUNDER.id, unmarkedLease.lease_id)
       const forgedHeaderDuration = await leaseDurationMilliseconds(forgedHeaderLease.lease_id)
       await wake('wake the request with a made-up header')
       assert.equal((await forgedHeaderWait).status, 200)
@@ -602,6 +652,196 @@ test('same-room wait route holds one request and releases its lease exactly once
         assert.equal((await codingWait).status, 200)
         await assertNoLease()
         assert.equal(codingDuration, 10_000)
+      } finally {
+        if (previousHosted === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+        else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHosted
+      }
+    })
+
+    await t.test('after a timeout the cue stays 20 seconds on place reads and GET /api/talk/now, then ends by itself', async () => {
+      await reset()
+      const response = await postJson(FOUNDER.secret, { seconds: 1 })
+      const returnedAt = Date.now()
+      assert.equal(response.status, 200)
+      assert.equal((await response.json() as Record<string, unknown>).reason, 'timeout')
+      const lease = (await db.query<{ expires_at: Date }>(
+        'SELECT expires_at FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]
+      assert.ok(lease, 'the timed-out wait keeps its one lease for the linger')
+      // The database clock decides the cue, so the linger is measured on it, not on this host's clock.
+      await assertCueLingers()
+      const listeners = await listenersAt(rooms.eastRoomId)
+      assert.deepEqual(listeners.map(listener => listener.resident_id), [FOUNDER.id])
+      assert.equal(listeners[0]?.listening_until, lease.expires_at.toISOString())
+      assert.deepEqual((await talkNowListeners()).map(listener => [listener.place_id, listener.resident_id]), [
+        [rooms.eastRoomId, FOUNDER.id],
+      ])
+
+      let endedAt: number | null = null
+      while (Date.now() - returnedAt < (LINGER_SECONDS + 5) * 1_000) {
+        if ((await listenersAt(rooms.eastRoomId)).length === 0) {
+          endedAt = Date.now()
+          break
+        }
+        await delay(250)
+      }
+      assert.ok(endedAt !== null, 'the cue ended')
+      assert.ok(
+        endedAt - returnedAt >= (LINGER_SECONDS - 2) * 1_000,
+        `the cue lasted ${endedAt - returnedAt} ms, at least the linger`,
+      )
+      assert.deepEqual(await talkNowListeners(), [])
+    })
+
+    await t.test('after an arrival the cue stays 20 seconds from the return, not to the end of the asked seconds, and not after', async () => {
+      await reset()
+      const waiting = postJson(FOUNDER.secret, { seconds: 30 })
+      const opened = await waitForLease()
+      await delay(75)
+      const said = await call(cityApp, GROWER.secret, 'POST', '/api/line', {
+        place_id: rooms.eastRoomId,
+        body: 'an arrival ends the wait',
+        request_id: nextRequestId(),
+      })
+      assert.equal(said.status, 201)
+      const response = await waiting
+      assert.equal(response.status, 200)
+      assert.equal((await response.json() as Record<string, unknown>).reason, 'change')
+      await assertCueLingers()
+      const lingering = (await db.query<WaitLeaseRow>(
+        'SELECT lease_id, place_id, started_at, expires_at FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows[0]!
+      assert.equal(lingering.lease_id, opened.lease_id)
+      assert.ok(lingering.expires_at.getTime() < opened.expires_at.getTime(), 'the linger replaces the rest of the asked seconds')
+      assert.deepEqual((await listenersAt(rooms.eastRoomId)).map(listener => listener.resident_id), [FOUNDER.id])
+
+      await db.query(`
+        UPDATE wait_leases SET started_at = started_at - interval '21 seconds',
+          expires_at = expires_at - interval '21 seconds'
+        WHERE resident_id = $1
+      `, [FOUNDER.id])
+      assert.deepEqual(await listenersAt(rooms.eastRoomId), [])
+      assert.deepEqual(await talkNowListeners(), [])
+    })
+
+    await t.test('a move ends a lingering cue at once, and a move during the wait deletes the lease', async () => {
+      await reset()
+      const timedOut = await postJson(FOUNDER.secret, { seconds: 1 })
+      assert.equal((await timedOut.json() as Record<string, unknown>).reason, 'timeout')
+      await assertCueLingers()
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      assert.deepEqual(await listenersAt(rooms.eastRoomId), [])
+      assert.deepEqual(await listenersAt(rooms.westRoomId), [])
+      assert.deepEqual(await talkNowListeners(), [])
+
+      await standIn(FOUNDER.id, rooms.eastRoomId)
+      const waiting = postJson(FOUNDER.secret, { seconds: 5 })
+      await waitForLease()
+      await delay(75)
+      await standIn(FOUNDER.id, rooms.westRoomId)
+      const moved = await waiting
+      assert.equal((await moved.json() as Record<string, unknown>).reason, 'moved')
+      await assertNoLease()
+    })
+
+    await t.test('a second wait inside the linger takes the one row, and the earlier lease id changes nothing', async () => {
+      await reset()
+      const { releaseWait } = await import('../../src/room-wait-store.ts')
+      const first = postJson(FOUNDER.secret, { seconds: 1 })
+      const firstLease = await waitForLease()
+      assert.equal((await (await first).json() as Record<string, unknown>).reason, 'timeout')
+      await assertCueLingers()
+
+      const second = postJson(FOUNDER.secret, { seconds: 3 })
+      const secondLease = await waitForLease(FOUNDER.id, firstLease.lease_id)
+      assert.equal(await count('wait_leases'), 1)
+      for (const linger of [true, false]) {
+        assert.deepEqual(
+          await releaseWait({ residentId: FOUNDER.id, leaseId: firstLease.lease_id, linger }),
+          { released: false },
+        )
+      }
+      const stored = (await db.query<WaitLeaseRow>(
+        'SELECT lease_id, place_id, started_at, expires_at FROM wait_leases WHERE resident_id = $1', [FOUNDER.id],
+      )).rows
+      assert.equal(stored.length, 1)
+      assert.equal(stored[0]!.lease_id, secondLease.lease_id)
+      assert.equal(stored[0]!.expires_at.toISOString(), secondLease.expires_at.toISOString())
+      assert.equal(
+        (await listenersAt(rooms.eastRoomId))[0]?.listening_until,
+        secondLease.expires_at.toISOString(),
+      )
+      assert.equal((await (await second).json() as Record<string, unknown>).reason, 'timeout')
+      await assertCueLingers()
+    })
+
+    await t.test('listening_here names the other residents listening there, never the caller, at most 20 with the exact total', async () => {
+      await reset()
+      await addListeners(101, 22, rooms.eastRoomId)
+      await standIn(NEIGHBOUR.id, rooms.westRoomId)
+      await db.query(`
+        INSERT INTO wait_leases (resident_id, place_id, arrived_at, lease_id, started_at, expires_at)
+        SELECT presence.resident_id, presence.current_place_id, presence.arrived_at, gen_random_uuid(),
+          clock_timestamp(), clock_timestamp() + interval '30 seconds'
+        FROM resident_presence presence WHERE presence.resident_id = $1
+      `, [NEIGHBOUR.id])
+      const response = await postJson(FOUNDER.secret, { seconds: 1 })
+      assert.equal(response.status, 200)
+      const answer = await response.json() as Record<string, unknown>
+      assert.equal(answer.reason, 'timeout')
+      const here = answer.listening_here as Array<Record<string, unknown>>
+      assert.equal(here.length, 20)
+      assert.deepEqual(here.map(listener => listener.resident_id), Array.from({ length: 20 }, (_, index) => 101 + index))
+      assert.ok(here.every(listener => listener.handle === `listener-${listener.resident_id}`))
+      assert.ok(here.every(listener => typeof listener.listening_until === 'string'))
+      assert.ok(!here.some(listener => listener.resident_id === FOUNDER.id), 'the caller is never in its own list')
+      assert.ok(!here.some(listener => listener.resident_id === NEIGHBOUR.id), 'only listeners in the wait\'s place')
+      assert.deepEqual(answer.listening_here_page, { total_items: 22, returned_items: 20, has_more: true })
+    })
+
+    await t.test('a quiet room keeps a lingering cue out of GET /api/talk/now, while residents still see it', async () => {
+      await reset()
+      await db.query('UPDATE places SET quiet = TRUE WHERE id = $1', [rooms.eastRoomId])
+      const timedOut = await postJson(FOUNDER.secret, { seconds: 1 })
+      assert.equal((await timedOut.json() as Record<string, unknown>).reason, 'timeout')
+      await assertCueLingers()
+      assert.deepEqual(await talkNowListeners(), [])
+      assert.deepEqual((await listenersAt(rooms.eastRoomId)).map(listener => listener.resident_id), [FOUNDER.id])
+      const growerWait = await postJson(GROWER.secret, { seconds: 1 })
+      const growerAnswer = await growerWait.json() as Record<string, unknown>
+      assert.deepEqual(
+        (growerAnswer.listening_here as Array<Record<string, unknown>>).map(listener => listener.resident_id),
+        [FOUNDER.id],
+      )
+      assert.deepEqual(await talkNowListeners(), [])
+    })
+
+    await t.test('tools/call wait_here answers carry listening_here through /mcp, /mcp/connect and /mcp/app', async () => {
+      await reset()
+      await addListeners(101, 1, rooms.eastRoomId)
+      const previousHosted = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+      try {
+        for (const path of ['/mcp', '/mcp/connect', '/mcp/app'] as const) {
+          const response = await boundApp.request('http://city.test' + path, {
+            method: 'POST',
+            headers: { ...bearer(FOUNDER.secret), 'content-type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0', id: 1, method: 'tools/call',
+              params: { name: 'wait_here', arguments: { seconds: 1 } },
+            }),
+          }, { outgoing: Object.assign(new EventEmitter(), { destroyed: false }) })
+          assert.equal(response.status, 200, path)
+          const rpc = await response.json() as { result: { content: Array<{ text: string }> } }
+          const answer = JSON.parse(rpc.result.content[0]!.text) as Record<string, unknown>
+          assert.equal(answer.reason, 'timeout', path)
+          assert.deepEqual(
+            (answer.listening_here as Array<Record<string, unknown>>).map(listener => listener.handle),
+            ['listener-101'],
+            path,
+          )
+          assert.deepEqual(answer.listening_here_page, { total_items: 1, returned_items: 1, has_more: false }, path)
+        }
       } finally {
         if (previousHosted === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
         else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHosted

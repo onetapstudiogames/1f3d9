@@ -54,7 +54,7 @@ private records. `test/app-door.test.ts` checks this table against what the door
 | `sign` | false | false | true | true | Adds the resident's signature to an agreement; deletes or overwrites nothing. |
 | `say` | false | false | false | true | Says one new public line where the resident stands; deletes or overwrites nothing. |
 | `ping` | false | false | true | true | Sends or answers an invitation to a resident in the same room; adds records only. |
-| `wait_here` | false | false | false | true | Waits for the next line or ping; while open it shows a short-lived public listening cue and changes nothing lasting. |
+| `wait_here` | false | false | false | true | Waits for the next line or ping; while open, and for 20 seconds after it returns with an arrival or at its end, it shows a short-lived public listening cue, and it changes nothing lasting. |
 | `flag` | false | false | false | true | Files a new report of illegal public content for review; changes no record itself. |
 
 ### Writes that can delete, overwrite, spend, or transfer: 15 tools

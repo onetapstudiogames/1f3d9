@@ -20,7 +20,7 @@ import { readTalkNow, TALK_NOW_CREDENTIAL_HEADERS } from './talk-now.ts'
 import { TALK_PRIVATE_CACHE_CONTROL, TALK_SHARED_CACHE_CONTROL } from './talk-watch-limits.ts'
 import { sayLine } from './room-line-store.ts'
 import { holdWait } from './room-wait-hold.ts'
-import { openWait, readWaitChanges, releaseWait } from './room-wait-store.ts'
+import { openWait, readListening, readWaitChanges, releaseWait } from './room-wait-store.ts'
 import {
   LINE_FIELDS_REFUSAL,
   LINE_ID_REFUSAL,
@@ -33,12 +33,14 @@ import {
   PLACE_LINES_ID_REFUSAL,
   WAIT_CURSOR_REFUSAL,
   WAIT_FIELDS_REFUSAL,
+  WAIT_LISTENING_HERE_MAX,
   WAIT_SECONDS_REFUSAL,
   WAIT_TIMEOUT_NEXT_STEP,
   lineNotFoundRefusal,
   pingReadNotFoundRefusal,
   placeLinesNotFoundRefusal,
   requestedWaitSeconds,
+  type WaitAnswer,
   type WaitDoor,
   type TalkOutcome,
   type TalkRefusal,
@@ -202,6 +204,9 @@ export function mountRoomTalkRoutes(app: Hono): void {
     }
 
     let held: Awaited<ReturnType<typeof holdWait>>
+    // Decision 148: a wait that returns with an arrival or at its end keeps its cue a short
+    // while; a move, a connection close the city saw, or a failure ends it at once.
+    let lingers = false
     try {
       held = await holdWait({
         seconds,
@@ -221,9 +226,10 @@ export function mountRoomTalkRoutes(app: Hono): void {
           .catch(() => undefined),
         now: Date.now,
       })
+      lingers = held.reason === 'change' || held.reason === 'timeout'
     } finally {
       try {
-        await releaseWait({ residentId: resident.id, leaseId: lease.lease_id })
+        await releaseWait({ residentId: resident.id, leaseId: lease.lease_id, linger: lingers })
       } catch (error) {
         console.error('wait_release_failure', error instanceof Error ? error.name : 'UnknownError')
       } finally {
@@ -231,9 +237,14 @@ export function mountRoomTalkRoutes(app: Hono): void {
       }
     }
 
-    const [lines, publicPings] = await Promise.all([
+    const [lines, publicPings, listening] = await Promise.all([
       moderatePublicRows('line', held.read.lines),
       moderatePublicRows('ping', held.read.pings.map(entry => entry.ping)),
+      readListening({
+        placeId: lease.place_id,
+        limit: WAIT_LISTENING_HERE_MAX,
+        excludeResidentId: resident.id,
+      }),
     ])
     const pings = held.read.pings.map((entry, index) => ({
       ...entry,
@@ -250,7 +261,13 @@ export function mountRoomTalkRoutes(app: Hono): void {
       pings,
       pings_has_more: held.read.pingsHasMore,
       next_after_ping_change: held.read.next.ping,
-    }, 200)
+      listening_here: listening.residents,
+      listening_here_page: {
+        total_items: listening.total,
+        returned_items: listening.residents.length,
+        has_more: listening.total > listening.residents.length,
+      },
+    } satisfies WaitAnswer, 200)
   })
 
   app.get('/api/line/:id', async c => {

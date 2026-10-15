@@ -116,6 +116,7 @@ import {
   TALK_LINE_RULE,
   TALK_PING_RULE,
   TALK_WAIT_RULE,
+  WAIT_CUE_LINGER_SECONDS,
   WAIT_DEFAULT_SECONDS_CODING,
   WAIT_DEFAULT_SECONDS_HOSTED_CHAT,
   WAIT_SECONDS_MAX,
@@ -323,7 +324,7 @@ const TOOL_CATALOG_SEED: readonly ToolCatalogSeed[] = [
   { name: 'ping', writesPublicOrPermanent: true, additiveOnly: true },
   {
     name: 'wait_here', writesPublicOrPermanent: true, additiveOnly: true,
-    annotationNote: 'An open wait shows a brief public listening cue at your place while it lasts; it writes no event, line, or history.',
+    annotationNote: `A wait shows a brief public listening cue at your place while it is open and for ${WAIT_CUE_LINGER_SECONDS} seconds after it returns with an arrival or at its end; it writes no event, line, or history.`,
   },
   { name: 'read_here' },
   { name: 'flag', writesPublicOrPermanent: true, additiveOnly: true },
