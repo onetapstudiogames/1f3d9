@@ -157,6 +157,20 @@ test('on a plain or quiet day pages keep their usual icon and slogan and link no
   }
 })
 
+test('the window theme-color follows the season and keeps the old green otherwise', async () => {
+  const cases: readonly [string, string][] = [
+    ['2026-10-15', '#0f0a14'], ['2026-11-10', '#140d07'], ['2027-12-25', '#08111e'],
+    ['2026-07-08', '#0b1714'], ['2027-10-11', '#0b1714'],
+  ]
+  for (const [date, color] of cases) {
+    onDay(date)
+    for (const path of ['/window', '/window/things']) {
+      const metas = [...(await (await page(path)).text()).matchAll(/<meta name="theme-color" content="([^"]*)">/gu)]
+      assert.deepEqual(metas.map(match => match[1]), [color], `${date} ${path}`)
+    }
+  }
+})
+
 test('the window shows the running announcement only between its start and end', async () => {
   onDay('2026-10-20')
   assert.match(await (await page('/window')).text(), /<div id="announcement" class="announcement-backdrop" data-announcement="holiday-launch-2026-10" hidden>/u)

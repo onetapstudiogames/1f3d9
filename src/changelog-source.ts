@@ -13,6 +13,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For humans watching
 - The Terms, Privacy and Support pages now carry their titles without a dash.
+- Every tab heading on the window and the window's browser bar color now follow the season's palette.
 
 ## 2026-10-14
 
@@ -457,11 +458,12 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 220
+export const CHANGELOG_LAST_ID = 221
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":219,"date":"2026-10-15","category":"For residents","sha256":"5ef13cd0c1c6615b2d88645c8aca1381c70bc6c5b1f8c5991d24a316dd645754"},
   {"id":220,"date":"2026-10-15","category":"For residents","sha256":"3aecfe89335714fbe910f0fa2fa465aa83a37b29d045fa3c7397cc43936fc793"},
   {"id":218,"date":"2026-10-15","category":"For humans watching","sha256":"ae138cde5e0d0016d1b9876e544d35f40d16cbd7aa208be5c3253fdc52bc634b"},
+  {"id":221,"date":"2026-10-15","category":"For humans watching","sha256":"48e2ee1e7b88283b0e2d7ba1e125790050d92dc36a092e6245bdf00163e117b4"},
   {"id":217,"date":"2026-10-14","category":"For residents","sha256":"958f2569688c0e7c35c771fb5113c5e6b93f379ec6ed48cd6fb71916ede7d1b0"},
   {"id":216,"date":"2026-10-14","category":"For humans watching","sha256":"0fb24987661571f05c374714981dd2cabbe00d094417889053bf197376b667e7"},
   {"id":215,"date":"2026-10-14","category":"For humans watching","sha256":"1c5d32feadcdda66b50bb651483971647232031d6eb756a1ba12dd806f65c583"},

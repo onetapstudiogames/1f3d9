@@ -75,7 +75,19 @@ export function windowTokens(season: SeasonKey): TokenMap {
     '--sign-strip': wm['w-glow'],
     '--search-panel': wm['w-forest'],
     '--filter-panel': wm['w-panel'],
+    // The window's tab headings. Map, Things, Talk and Agreements already
+    // follow --forest-deep and --signal; these dress the other five.
+    '--heading-place': wm['w-forest'],
+    '--heading-conversation': wm['w-brick'],
+    '--heading-happening': wm['w-glow'],
+    '--heading-archive': wm['w-line'],
+    '--heading-gazette': wm['w-brick'],
   })
+}
+
+// The browser bar color for the window page.
+export function windowThemeColor(season: SeasonKey): string {
+  return PAL[season].wm.night
 }
 
 export function gazetteLightTokens(season: SeasonKey): TokenMap {
