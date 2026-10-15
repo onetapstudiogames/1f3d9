@@ -15,6 +15,7 @@ import {
   paperTokens,
   stylesheetByFile,
   stylesheetFor,
+  windowThemeColor,
   windowTokens,
 } from '../src/season/palettes.ts'
 
@@ -98,6 +99,7 @@ test('season colors keep readable contrast where the pages pair them', () => {
   const guideInk = tokenValue(GUIDE_CSS, '--ink')
   const guideMuted = tokenValue(GUIDE_CSS, '--muted')
   const windowInk = tokenValue(WINDOW_CSS, '--ink')
+  const windowHeadingText = tokenValue(WINDOW_CSS, '--paper-light')
   for (const season of SEASONS) {
     const { am, wm } = DESIGN[season]
     const pairs: readonly [string, string, string, number][] = [
@@ -119,6 +121,11 @@ test('season colors keep readable contrast where the pages pair them', () => {
       ['window sign strip text', '#f5efe0', wm['w-glow'], 4.5],
       ['window search help on its panel', '#b7cbc4', wm['w-forest'], 4.5],
       ['window filter labels on their panel', wm['w-sky'], wm['w-panel'], 4.5],
+      ['window place heading', windowHeadingText, wm['w-forest'], 4.5],
+      ['window conversation and gazette headings', windowHeadingText, wm['w-brick'], 4.5],
+      ['window happening heading', windowHeadingText, wm['w-glow'], 4.5],
+      ['window archive heading', windowHeadingText, wm['w-line'], 4.5],
+      ['window map, things and talk headings', windowHeadingText, wm['w-panel'], 4.5],
       ['gazette accent on light sheet', am.brick, am['paper-light'], 4.5],
       ['gazette text on dark sheet', wm['w-paper'], wm['night-soft'], 4.5],
       ['gazette accent on dark sheet', wm['w-signal'], wm['night-soft'], 4.5],
@@ -151,4 +158,21 @@ test('linked palette stylesheets are content-hashed and carry word sizing', () =
   assert.equal(stylesheetByFile('winter-paper.0000000000.css'), null)
   assert.match(paletteCss('gazette', 'winter'), /@media \(prefers-color-scheme:dark\)\{:root\{--ground:#08111e;/u)
   assert.doesNotMatch(paletteCss('form', 'winter'), /season-word/u)
+})
+
+const HEADING_TOKENS = ['--heading-place', '--heading-conversation', '--heading-happening', '--heading-archive', '--heading-gazette'] as const
+
+test('every season dresses every window tab heading, and no heading keeps a fixed color', () => {
+  for (const season of SEASONS) {
+    const tokens = windowTokens(season)
+    for (const token of HEADING_TOKENS) assert.ok(typeof tokens[token] === 'string', `${season} sets ${token}`)
+    assert.equal(windowThemeColor(season), DESIGN[season].wm.night)
+  }
+  const rules = [...WINDOW_CSS.matchAll(/^\.([a-z-]+-heading) \{ ([^}]*)\}/gmu)]
+  assert.deepEqual(rules.map(rule => rule[1]), ['place-heading', 'conversation-heading', 'happening-heading', 'agreement-heading', 'archive-heading', 'gazette-heading'])
+  for (const rule of rules) assert.doesNotMatch(rule[2]!, /#[0-9a-f]{3,6}/iu, `${rule[1]} uses a season variable`)
+  const panelHeading = /^\.panel-heading \{([^}]*)\}/mu.exec(WINDOW_CSS)
+  assert.ok(panelHeading)
+  assert.doesNotMatch(panelHeading[1]!, /#[0-9a-f]{3,6}/iu)
+  for (const token of HEADING_TOKENS) assert.ok(WINDOW_CSS.includes(`var(${token})`), `${token} is used`)
 })

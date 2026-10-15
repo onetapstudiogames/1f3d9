@@ -1,6 +1,6 @@
 import { seasonDateNow } from './clock.ts'
 import { iconLabel, iconSpec, iconUrl } from './icon.ts'
-import { paletteCss, stylesheetFor, type PageFamily } from './palettes.ts'
+import { paletteCss, stylesheetFor, windowThemeColor, type PageFamily } from './palettes.ts'
 import { isDressed, resolveDay, type SeasonDay } from './resolve.ts'
 import { escapeHtml, sloganHtml } from './slogan.ts'
 
@@ -11,11 +11,13 @@ import { escapeHtml, sloganHtml } from './slogan.ts'
 //   <img data-season-icon ...>            the dressed icon and its label
 //   <link data-season-icon rel="icon" ...>
 //   <span data-season-slogan>...</span>   the slogan with its word images
+// On the window, the theme-color meta also takes the season's night color.
 // On a plain or quiet day the icon and slogan markup is left exactly as written.
 
 const HEAD_MARKER = '<!-- season:head -->'
 const STYLE_MARKER = '/* season:style */'
 const ICON_TAG = /<(?:img|link)\b[^>]*\bdata-season-icon\b[^>]*>/gu
+const THEME_COLOR = /<meta name="theme-color" content="#[0-9a-f]{6}">/u
 const SLOGAN = /(<(span|small|p)\b[^>]*\bdata-season-slogan\b[^>]*>)[^<]*(<\/\2>)/gu
 
 function variantFor(day: SeasonDay) {
@@ -34,6 +36,11 @@ function styleText(day: SeasonDay, family: PageFamily): string {
   return paletteCss(family, variantFor(day))
 }
 
+function themeColorHtml(day: SeasonDay, family: PageFamily, tag: string): string {
+  if (family !== 'window' || !isDressed(day) || day.season === null) return tag
+  return `<meta name="theme-color" content="${windowThemeColor(day.season.key)}">`
+}
+
 function dressIcon(tag: string, url: string, label: string): string {
   const withSource = tag.replace(/\s(src|href)="[^"]*"/u, (_, name: string) => ` ${name}="${url}"`)
   return withSource.startsWith('<img') ? withSource.replace(/\salt="[^"]*"/u, ` alt="${escapeHtml(label)}"`) : withSource
@@ -43,6 +50,7 @@ export function stampSeason(html: string, family: PageFamily, day: SeasonDay = r
   const stamped = html
     .replace(HEAD_MARKER, headHtml(day, family))
     .replace(STYLE_MARKER, styleText(day, family))
+    .replace(THEME_COLOR, tag => themeColorHtml(day, family, tag))
   if (!isDressed(day)) return stamped
   const spec = iconSpec(day)
   const url = iconUrl(spec)

@@ -12,6 +12,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For humans watching
 - The Terms, Privacy and Support pages now carry their titles without a dash.
+- Every tab heading on the window and the window's browser bar color now follow the season's palette.
 
 ## 2026-10-14
 

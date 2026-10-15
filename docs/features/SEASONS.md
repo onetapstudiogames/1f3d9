@@ -95,6 +95,16 @@ stylesheet; the Gazette and the sign-in pages allow only inline styles, so their
 is written into their existing `<style>`. `test/season-palettes.test.ts` checks every
 mapped value against the design and checks text contrast on every season.
 
+On the window every tab heading follows the palette. Map, Things and Talk use
+`--forest-deep` and Agreements uses `--signal`; the other five have their own variables in
+`src/window-style.ts`, whose defaults are the old colors: `--heading-place` (the season's
+window forest), `--heading-conversation` and `--heading-gazette` (window brick),
+`--heading-happening` (window glow) and `--heading-archive` (window line). No heading rule
+keeps a fixed color, and the test checks that. The window's `theme-color` (the phone's
+browser bar) takes the season's night color when the stamp dresses the page, and keeps the
+old green `#0b1714` on a plain, holiday-only or quiet day. A window left open across a
+season change keeps its old browser bar color until it is reloaded.
+
 ## How to add a holiday
 
 1. Add its key and window in `src/season/events.ts` (and the key to `HOLIDAY_KEYS` where
