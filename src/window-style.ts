@@ -22,6 +22,11 @@ export const WINDOW_CSS = `:root {
   --sign-strip: #1c5a45;
   --search-panel: #183a30;
   --filter-panel: #102c23;
+  --heading-place: #184b46;
+  --heading-conversation: var(--brick-deep);
+  --heading-happening: #263f32;
+  --heading-archive: #172d3a;
+  --heading-gazette: var(--brick-deep);
   --content: 82rem;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -752,12 +757,12 @@ button { color: inherit; }
   opacity: 0.16;
   background: repeating-linear-gradient(-45deg, transparent 0 8px, currentColor 8px 10px);
 }
-.place-heading { background: #184b46; }
-.conversation-heading { background: var(--brick-deep); }
-.happening-heading { background: #263f32; }
+.place-heading { background: var(--heading-place); }
+.conversation-heading { background: var(--heading-conversation); }
+.happening-heading { background: var(--heading-happening); }
 .agreement-heading { color: var(--ink); background: var(--signal); }
-.archive-heading { background: #172d3a; }
-.gazette-heading { background: var(--brick-deep); }
+.archive-heading { background: var(--heading-archive); }
+.gazette-heading { background: var(--heading-gazette); }
 .eyebrow {
   position: relative;
   z-index: 1;
