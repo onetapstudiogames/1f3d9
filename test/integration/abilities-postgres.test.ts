@@ -1023,10 +1023,10 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       }
       const empty = await edit({})
       assert.equal(empty.status, 400, JSON.stringify(empty.json))
-      assert.equal(empty.json.error, 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, an ability dial, or hinge_to')
+      assert.equal(empty.json.error, 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, feed, a permission switch, an ability dial, or hinge_to')
       const unknown = await edit({ wake_everything: true })
       assert.equal(unknown.status, 400)
-      assert.equal(unknown.json.error, 'place edit does not accept wake_everything; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.')
+      assert.equal(unknown.json.error, 'place edit does not accept wake_everything; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, feed, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.')
 
       const saved = await edit({
         wake_visitors: true, rough_room: true, wake_random_cap: 4, wake_pins: [here],

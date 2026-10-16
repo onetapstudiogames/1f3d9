@@ -287,4 +287,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:moderation-reviews/u)
     assert.match(deploymentRunbook, /moderation_replies[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the place feed migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Place feed prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:place-feed/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:place-feed/u)
+    assert.match(deploymentRunbook, /places_feed_needs_quiet[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

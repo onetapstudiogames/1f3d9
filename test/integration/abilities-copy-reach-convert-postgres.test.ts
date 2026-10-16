@@ -36,6 +36,12 @@ const hingesDdl = await readFile(
   new URL('../../db/migrations/20260928_place_hinges.sql', import.meta.url),
   'utf8',
 )
+// Feed rooms (decision #153) add places.feed and its check after this one, so the upgraded
+// database takes that migration too before it is compared with a fresh db/schema.sql.
+const feedDdl = await readFile(
+  new URL('../../db/migrations/20261016_place_feed.sql', import.meta.url),
+  'utf8',
+)
 // db/schema.sql ends with this change's statements; everything before them is the
 // database exactly as production holds it once abilities-wake-chance-write has run.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
@@ -187,6 +193,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
 
       await db.query(laterPlacesDdl)
       await db.query(hingesDdl)
+      await db.query(feedDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })

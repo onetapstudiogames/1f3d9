@@ -38,6 +38,7 @@ export function registerSearchTests(): void {
         }],
         total_items: 1, total_text_bytes: 19, totals_capped: false, returned_items: 1,
         returned_text_bytes: 0, has_more: false, next_before: null, change_marker: '9',
+        left_out_feed_rooms: { count: 0, place_ids: [] },
       })
       const searchRead = sqlCalls().find(call => /\/\* public:search \*\//iu.test(call.query ?? ''))
       assert.match(searchRead?.query ?? '', /thing\.maker_id/iu)
@@ -70,6 +71,7 @@ export function registerSearchTests(): void {
           detail: { channel: 'public' }, created_at: '2026-08-11T00:00:09.000Z',
         }],
         returned_items: 1, unchanged: false, has_more: false, next_since: '9',
+        left_out_feed_rooms: { count: 0, place_ids: [] },
       })
       const changeRead = sqlCalls().find(call => /\/\* public:changes \*\//iu.test(call.query ?? ''))
       assert.deepEqual(changeRead?.params, ['8', '2', 'action'])

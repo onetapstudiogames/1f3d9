@@ -374,6 +374,7 @@ export function respondToDatabaseStage1(
         new_things_in_owned_places: { count: 0, records: [] },
         new_agreement_signers: { count: 0, records: [] },
         mentions: { count: 0, records: [] },
+        left_out_feed_rooms: { count: 0, place_ids: [] },
       },
     }]
   }

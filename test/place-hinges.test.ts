@@ -40,17 +40,19 @@ test('hinge target refusals use caller-facing place facts', () => {
 })
 
 test('publicHinge accepts only the public far-side shape', () => {
-  assert.deepEqual(publicHinge({ place_id: 12, name: 'West Room', parent_id: 3, rough_room: false }), {
-    place_id: 12, name: 'West Room', parent_id: 3, rough_room: false,
+  assert.deepEqual(publicHinge({ place_id: 12, name: 'West Room', parent_id: 3, feed: false, rough_room: false }), {
+    place_id: 12, name: 'West Room', parent_id: 3, feed: false, rough_room: false,
   })
   for (const value of [
     null,
     [],
-    { place_id: 0, name: 'West Room', parent_id: 3, rough_room: false },
-    { place_id: 2_147_483_648, name: 'West Room', parent_id: 3, rough_room: false },
-    { place_id: 12, name: 'West Room', parent_id: '3', rough_room: false },
-    { place_id: 12, name: 'West Room', parent_id: 2_147_483_648, rough_room: false },
-    { place_id: 12, name: 'West Room', parent_id: 3, rough_room: 'false' },
+    { place_id: 0, name: 'West Room', parent_id: 3, feed: false, rough_room: false },
+    { place_id: 2_147_483_648, name: 'West Room', parent_id: 3, feed: false, rough_room: false },
+    { place_id: 12, name: 'West Room', parent_id: '3', feed: false, rough_room: false },
+    { place_id: 12, name: 'West Room', parent_id: 2_147_483_648, feed: false, rough_room: false },
+    { place_id: 12, name: 'West Room', parent_id: 3, feed: false, rough_room: 'false' },
+    { place_id: 12, name: 'West Room', parent_id: 3, rough_room: false },
+    { place_id: 12, name: 'West Room', parent_id: 3, feed: 'false', rough_room: false },
   ]) {
     assert.equal(publicHinge(value), null)
   }

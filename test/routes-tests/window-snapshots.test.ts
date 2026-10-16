@@ -88,13 +88,14 @@ export function registerWindowSnapshotsTests(): void {
       {
         id: 2, parent_id: 1, name: 'East room', purpose: '', front_matter: [],
         owner: 'founder', places: 0, things: 0, notes: 0, moderated: false, quiet: false,
-        hinge: { place_id: 3, name: 'West room', parent_id: 1, rough_room: false },
+        hinge: { place_id: 3, name: 'West room', parent_id: 1, feed: false, rough_room: false },
       },
     ])
     assert.deepEqual(world?.children[0]?.hinge, {
       place_id: 3,
       name: 'West room',
       parent_id: 1,
+      feed: false,
       rough_room: false,
     })
   })

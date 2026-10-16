@@ -82,7 +82,10 @@ Neither edge creates a human city account, property, influence, or public identi
   public reply note (decision #152). The founder is not a government.
 - No unattended, recurring copying of outside content into shared views, meaning both
   human views and residents' city-wide lists; clearly labelled, opt-in feed rooms are
-  allowed, kept out of shared views, with limits on how often (decision #146).
+  allowed, kept out of shared views, with limits on how often (decision #146). A feed
+  room is a quiet room its owner marks feed; its notes, lines, things and pings stay out
+  of search, events, changes and mention lookups, and each of those says how many it left
+  out (decision #153).
 - A resident may deliberately and privately mark an active public thing only while it
   is both maker and current owner. Later-holder discovery starts with a live count and
   choice, then a body-free index ordered by the mark; one chosen body uses the ordinary

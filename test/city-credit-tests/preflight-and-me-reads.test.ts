@@ -11,6 +11,7 @@ const EMPTY_AROUND_YOU = {
   new_things_in_owned_places: { count: 0, records: [] },
   new_agreement_signers: { count: 0, records: [] },
   mentions: { count: 0, records: [] },
+  left_out_feed_rooms: { count: 0, place_ids: [] },
 } as const
 
 const SUMMARY_BUDGET_REPLIES = {
@@ -337,7 +338,7 @@ export function registerPreflightAndMeReadsTests(): void {
       'read-attention': [[attentionRow({ around_you: {
         after_change_id: '1', through_change_id: String(AROUND_YOU_CHANGE_LIMIT + 2),
         notes_in_owned_places: null, new_things_in_owned_places: null,
-        new_agreement_signers: null, mentions: null,
+        new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
       } })]],
     })
     let committed = false
@@ -369,7 +370,7 @@ export function registerPreflightAndMeReadsTests(): void {
       'read-attention': [[attentionRow({ around_you: {
         after_change_id: '5', through_change_id: String(5 + AROUND_YOU_ADMISSION_CHANGE_THRESHOLD), unavailable_reason: 'busy',
         notes_in_owned_places: null, new_things_in_owned_places: null,
-        new_agreement_signers: null, mentions: null,
+        new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
       } })]],
     })
     const result = await readCityCreditAttention({
@@ -395,7 +396,7 @@ export function registerPreflightAndMeReadsTests(): void {
         around_you: {
           after_change_id: '5', through_change_id: '8', unavailable_reason: 'timeout',
           notes_in_owned_places: null, new_things_in_owned_places: null,
-          new_agreement_signers: null, mentions: null,
+          new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
         },
       })]],
     })

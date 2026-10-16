@@ -53,6 +53,7 @@ export type PublicHinge = Readonly<{
   place_id: number
   name: string
   parent_id: number | null
+  feed: boolean
   rough_room: boolean
 }>
 
@@ -63,11 +64,13 @@ export function publicHinge(value: unknown): PublicHinge | null {
     if (!isPlaceId(row.place_id)
         || typeof row.name !== 'string'
         || !(row.parent_id === null || isPlaceId(row.parent_id))
+        || typeof row.feed !== 'boolean'
         || typeof row.rough_room !== 'boolean') return null
     return Object.freeze({
       place_id: row.place_id as number,
       name: row.name,
       parent_id: row.parent_id as number | null,
+      feed: row.feed,
       rough_room: row.rough_room,
     })
   } catch {
@@ -82,6 +85,7 @@ export function publicHingeSql(alias: string): string {
       'place_id', far.id,
       'name', CASE WHEN latest_moderation.action = 'remove' THEN ${moderatedText}::text ELSE far.name END,
       'parent_id', far.parent_id,
+      'feed', far.feed,
       'rough_room', far.rough_room
     )
     FROM places far

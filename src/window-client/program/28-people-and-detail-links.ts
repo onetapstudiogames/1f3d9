@@ -86,7 +86,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         : safeExactText(raw.description, null, 8000, true)
       return description !== null && Array.from(description).length <= 4000
         ? Object.freeze({
-          kind, id, description, rough_room: raw.rough_room === true,
+          kind, id, description, rough_room: raw.rough_room === true, feed: raw.feed === true,
           hinge: normalizeHinge(raw.hinge),
         })
         : null

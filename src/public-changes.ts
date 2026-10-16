@@ -10,6 +10,7 @@ import {
   PUBLIC_EVENT_KINDS,
   isPublicSystemEventActor,
 } from './public-events.ts'
+import { feedRoomEventLateralSql, feedRoomIdsSql, leftOutFeedRooms } from './feed-rooms.ts'
 
 const PUBLIC_CHANGE_PAGE_DEFAULT = 10
 export const PUBLIC_CHANGE_PAGE_MAX = 200
@@ -112,18 +113,19 @@ const PUBLIC_CHANGE_DETAIL_FIELD_SQL = PUBLIC_EVENT_DETAIL_FIELDS
 // Written into the query text, never sent as a parameter: every kind and field is a
 // fixed lower-case constant from public-events.ts.
 const PUBLIC_CHANGE_KIND_DETAIL_FIELD_SQL = `'${JSON.stringify(PUBLIC_EVENT_KIND_DETAIL_FIELDS)}'::jsonb`
+// Notes, lines, things and pings in a feed room stay out of the change log and are
+// counted instead (decision #153); place edits always stay in. The count covers the
+// interval this page reads, (since, next_since], so a caller walking every page sees
+// each left-out change counted once and the cursor still moves past it.
+const CHANGE_FEED_ROOM_IDS = feedRoomIdsSql()
 const CHANGES_SQL = `
   /* public:changes */
   WITH checkpoint AS MATERIALIZED (
     SELECT current_change_id, current_change_id::text AS checkpoint
     FROM public_change_state
     WHERE singleton = true
-  )
-  SELECT checkpoint.checkpoint,
-    page.change_id, page.kind, page.actor, page.detail, page.created_at
-  FROM checkpoint
-  LEFT JOIN LATERAL (
-    SELECT pcl.change_id::text AS change_id,
+  ), page AS MATERIALIZED (
+    SELECT pcl.change_id,
       e.kind, e.actor,
       coalesce((
         SELECT jsonb_object_agg(field.key, field.value)
@@ -139,13 +141,39 @@ const CHANGES_SQL = `
       e.at AS created_at
     FROM public_change_log pcl
     JOIN events e ON e.id = pcl.event_id
+    CROSS JOIN checkpoint
+    ${feedRoomEventLateralSql('e', CHANGE_FEED_ROOM_IDS)}
     WHERE pcl.change_id > $1::bigint
       AND pcl.change_id <= checkpoint.current_change_id
       AND ($3::text IS NULL OR e.kind = $3::text)
+      AND feed.feed_room_id IS NULL
     ORDER BY pcl.change_id ASC
     LIMIT $2::integer
-  ) page ON true
-  ORDER BY page.change_id::bigint ASC NULLS LAST
+  ), page_end AS MATERIALIZED (
+    SELECT CASE WHEN (SELECT count(*) FROM page) >= $2::integer
+      THEN (SELECT page.change_id FROM page ORDER BY page.change_id OFFSET ($2::integer - 2) LIMIT 1)
+      ELSE (SELECT current_change_id FROM checkpoint)
+    END AS change_id
+  ), left_out AS MATERIALIZED (
+    SELECT count(*)::integer AS left_out_feed_rooms,
+      array_agg(DISTINCT feed.feed_room_id) AS left_out_feed_room_ids
+    FROM public_change_log pcl
+    JOIN events e ON e.id = pcl.event_id
+    CROSS JOIN page_end
+    ${feedRoomEventLateralSql('e', CHANGE_FEED_ROOM_IDS)}
+    WHERE pcl.change_id > $1::bigint
+      AND pcl.change_id <= page_end.change_id
+      AND ($3::text IS NULL OR e.kind = $3::text)
+      AND cardinality(${CHANGE_FEED_ROOM_IDS}) > 0
+      AND feed.feed_room_id IS NOT NULL
+  )
+  SELECT checkpoint.checkpoint,
+    left_out.left_out_feed_rooms, left_out.left_out_feed_room_ids,
+    page.change_id::text AS change_id, page.kind, page.actor, page.detail, page.created_at
+  FROM checkpoint
+  CROSS JOIN left_out
+  LEFT JOIN page ON true
+  ORDER BY page.change_id ASC NULLS LAST
 `
 
 function checkpointFrom(rows: readonly Record<string, unknown>[]): string {
@@ -223,6 +251,7 @@ export async function loadPublicChanges(
     unchanged: BigInt(checkpoint) === BigInt(query.since),
     has_more: hasMore,
     next_since: nextSince,
+    left_out_feed_rooms: leftOutFeedRooms(rows[0]?.left_out_feed_rooms, rows[0]?.left_out_feed_room_ids),
   })
 }
 

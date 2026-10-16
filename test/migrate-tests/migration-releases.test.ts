@@ -519,6 +519,65 @@ export function registerMigrationReleaseTests(): void {
     )
   })
 
+  test('the place feed migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261016_place_feed.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /place feed migration needs the not-null boolean places\.quiet/u)
+    assert.match(migration, /places_feed_needs_quiet already exists with a different definition/u)
+    // One ALTER TABLE adds the column and the check NOT VALID; the check is validated alone.
+    assert.equal(migration.match(/ALTER TABLE places\b/gu)?.length, 2)
+    assert.match(migration, /ALTER TABLE places\s+ADD COLUMN IF NOT EXISTS feed BOOLEAN NOT NULL DEFAULT FALSE,\s+ADD CONSTRAINT places_feed_needs_quiet CHECK \(NOT feed OR quiet\) NOT VALID;/u)
+    assert.match(migration, /\nALTER TABLE places VALIDATE CONSTRAINT places_feed_needs_quiet;\n/u)
+    assert.match(migration, /places\.feed is not the reviewed not-null boolean with default false/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+places|TRUNCATE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'place-feed'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'place-feed'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-place-feed-20261016',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:place-feed'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration place-feed')
+    assert.equal(packageJson.scripts?.['migrate:production:place-feed'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration place-feed')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $place_feed_guard$'),
+      migration.indexOf('DO $place_feed_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 1_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the place feed statements')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

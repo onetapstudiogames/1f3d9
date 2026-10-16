@@ -8,17 +8,19 @@ const snapshot = () => ({
   after_change_id: '15', through_change_id: '100',
   notes_in_owned_places: empty(), new_things_in_owned_places: empty(),
   new_agreement_signers: empty(), mentions: empty(),
+  left_out_feed_rooms: { count: 0, place_ids: [] },
 })
 
 test('both place categories include ownership or current presence within the same bounded summary statement', () => {
   const sql = AROUND_YOU_SQL.replace(/\s+/gu, ' ')
-  assert.match(sql, /ELSE \( WITH reader_presence AS MATERIALIZED \( SELECT presence\.current_place_id FROM resident_presence presence WHERE presence\.resident_id = \$1::integer \), window_events/u)
+  assert.match(sql, /ELSE \( WITH reader_presence AS MATERIALIZED \( SELECT presence\.current_place_id FROM resident_presence presence WHERE presence\.resident_id = \$1::integer \), feed_rooms AS MATERIALIZED \( SELECT ARRAY\(SELECT feed_room\.id FROM places feed_room WHERE feed_room\.feed ORDER BY feed_room\.id\) AS ids \), window_events/u)
   for (const placeJoin of ['place.id = note.place_id', 'event.place_id = place.id']) {
     assert.ok(sql.includes(`JOIN places place ON ${placeJoin} AND ( place.owner_id = $1::integer OR place.id = (SELECT current_place_id FROM reader_presence) )`))
   }
   // A single OR predicate on each place's primary-key join cannot duplicate an
-  // owned room's records when the reader is also standing in that room.
-  assert.equal(sql.match(/FROM reader_presence/gu)?.length, 2)
+  // owned room's records when the reader is also standing in that room. The other
+  // three reads keep a feed room in the lists only for the reader standing there.
+  assert.equal(sql.match(/FROM reader_presence/gu)?.length, 5)
   assert.doesNotMatch(sql, /presence\.home_place_id|presence\.last_place_id/u)
 })
 
@@ -112,7 +114,7 @@ test('an interval above the change limit is explicitly unread, body-free, and li
   const report = mapAroundYou({
     after_change_id: String(after), through_change_id: String(through),
     notes_in_owned_places: null, new_things_in_owned_places: null,
-    new_agreement_signers: null, mentions: null,
+    new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
   })
   assert.equal(report.available, false)
   assert.equal(report.baseline, false)
@@ -144,7 +146,7 @@ test('an unavailable interval cannot carry fabricated counts or bodies', () => {
   assert.throws(() => mapAroundYou({ ...snapshot(), through_change_id: String(16 + AROUND_YOU_CHANGE_LIMIT) }), /around-you/u)
   assert.throws(() => mapAroundYou({
     ...snapshot(), notes_in_owned_places: null, new_things_in_owned_places: null,
-    new_agreement_signers: null, mentions: null,
+    new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
   }), /around-you/u)
 })
 
@@ -152,7 +154,7 @@ test('a busy admission slot names the unread interval without inventing counts',
   const report = mapAroundYou({
     ...snapshot(), unavailable_reason: 'busy', body: 'must not escape',
     notes_in_owned_places: null, new_things_in_owned_places: null,
-    new_agreement_signers: null, mentions: null,
+    new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
   })
   assert.equal(report.available, false)
   assert.equal(report.baseline, false)
@@ -177,7 +179,7 @@ test('a timed-out me statement names the whole attempt and preserves the skipped
   const report = mapAroundYou({
     ...snapshot(), unavailable_reason: 'timeout',
     notes_in_owned_places: null, new_things_in_owned_places: null,
-    new_agreement_signers: null, mentions: null,
+    new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
   })
   assert.equal(report.available, false)
   assert.equal(report.message, 'The me read attempt exceeded its database statement budget, so the around-you summary was skipped. Follow read_href through through_change_id.')

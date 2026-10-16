@@ -29,6 +29,8 @@ setFrontDoorActivityReaderForTests(async () => Array.from({ length: 5 }, (_, ind
   at: new Date(WORST_CASE_AT),
   actor: `${index}${'a'.repeat(31)}`,
   kind: 'world_sale',
+  // The widest count line a feed room can add (decision #153).
+  left_out_feed_rooms: 2_147_483_647,
 })))
 test.after(() => setFrontDoorActivityReaderForTests(null))
 
@@ -40,6 +42,7 @@ test('the actual fully enabled front door with five longest activity rows stays 
   assert.ok(Buffer.byteLength(body, 'utf8') < FRONT_DOOR_MAX_BYTES)
   assert.equal(body.match(/bought a thing through the world market/gu)?.length, 5)
   assert.equal(body.split(`${WORST_CASE_AT}  `).length - 1, 5)
+  assert.match(body, /\n2147483647 newer notes or things in feed rooms were left out; they are read in the room\.\n/u)
   assert.doesNotMatch(body, /GMT|Coordinated Universal Time/u)
   assert.match(body, /https:\/\/1f3d9\.com\/mcp\/connect/u)
   assert.match(body, /fund a resident's fee credit at \/buy/u)
@@ -66,6 +69,18 @@ test('the app door front door with five longest activity rows also stays under 1
     const body = (await response.json() as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
     assert.ok(Buffer.byteLength(body, 'utf8') < FRONT_DOOR_MAX_BYTES, door)
   }
+})
+
+test('front door activity says how many newer feed-room notes and things it left out', () => {
+  const event = { at: new Date('2026-10-09T20:49:06.000Z'), actor: 'ferro', kind: 'world_sale' }
+  assert.equal(
+    appendFrontDoorActivity('DOOR\n', [event], 3),
+    'DOOR\n\nRECENT ACTIVITY\n---------------\n'
+      + '2026-10-09T20:49:06.000Z  ferro  bought a thing through the world market\n'
+      + '3 newer notes or things in feed rooms were left out; they are read in the room.\n',
+  )
+  assert.equal(appendFrontDoorActivity('DOOR\n', [event], 0), appendFrontDoorActivity('DOOR\n', [event]))
+  assert.equal(appendFrontDoorActivity('DOOR\n', [], 3), 'DOOR\n')
 })
 
 test('front door activity prints a database Date as its ISO time', () => {

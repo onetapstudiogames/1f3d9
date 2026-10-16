@@ -658,6 +658,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
       unchanged: boolean
       has_more: boolean
       next_since: string
+      left_out_feed_rooms: { count: number; place_ids: number[] }
     }>(
       await cityApp.request(`http://city.test/api/changes?since=${finalMarker}&limit=2`),
       'unchanged poll',
@@ -669,6 +670,7 @@ test('a controlled 16 KiB reader can find, read, and answer in a heavy local roo
       unchanged: true,
       has_more: false,
       next_since: finalMarker,
+      left_out_feed_rooms: { count: 0, place_ids: [] },
     })
 
     t.diagnostic(
@@ -797,7 +799,7 @@ test('continent map pages stay bounded and scoped in real PostgreSQL', async t =
       },
     })
     assert.equal(first.places.some(place => place.parent_id === nestedParent.id), true)
-    assert.equal(first.places.every(place => Object.keys(place).sort().join(',') === 'id,name,parent_id,rough_room'), true)
+    assert.equal(first.places.every(place => Object.keys(place).sort().join(',') === 'feed,id,name,parent_id,rough_room'), true)
     assert.equal(first.places.some(place => foreignRows.some(row => row.id === place.id)), false)
     assert.equal(first.places.some(place => place.id === retired.id), false)
     assert.equal(first.places.some(place => place.id === activeBelowRetired.id), false)

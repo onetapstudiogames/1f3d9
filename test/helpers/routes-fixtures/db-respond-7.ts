@@ -65,6 +65,7 @@ export function respondToDatabaseStage7(
   // notes/things branches can swallow them.
   if (q.includes('select id, at, kind, actor, detail') ||
       q.includes('select at, kind, actor, detail') ||
+      q.includes('/* public:front-door-activity */') ||
       q.includes('/* public:events */') ||
       q.includes('/* public:window-events */')) {
     const withEventTotals = (

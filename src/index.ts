@@ -76,6 +76,7 @@ import {
   HUMAN_VIEW_EVENT_KINDS,
   HUMAN_VIEW_EVENT_LABELS,
 } from './public-events.ts'
+import { feedRoomEventLateralSql, feedRoomIdsSql } from './feed-rooms.ts'
 import {
   windowPage,
   windowShareImage,
@@ -385,18 +386,42 @@ export type FrontDoorActivity = Readonly<{
   at: Date | string
   kind: string
   actor: string
+  // How many newer notes and things in feed rooms were left out (decision #153).
+  left_out_feed_rooms?: number
 }>
 
 type FrontDoorActivityReader = () => Promise<readonly FrontDoorActivity[]>
 
-const readFrontDoorActivityFromDatabase: FrontDoorActivityReader = async () =>
-  await sql`
-    SELECT at, kind, actor, detail
-    FROM events
-    WHERE kind = ANY(${HUMAN_VIEW_EVENT_KINDS}::text[])
-    ORDER BY id DESC
+// The latest five human-view events outside feed rooms, each carrying how many newer
+// notes and things in feed rooms were left out to reach them.
+const FRONT_DOOR_FEED_ROOM_IDS = feedRoomIdsSql()
+const FRONT_DOOR_ACTIVITY_SQL = `
+  /* public:front-door-activity */
+  WITH shown AS MATERIALIZED (
+    SELECT event.id, event.at, event.kind, event.actor
+    FROM events event
+    ${feedRoomEventLateralSql('event', FRONT_DOOR_FEED_ROOM_IDS)}
+    WHERE event.kind = ANY($1::text[])
+      AND feed.feed_room_id IS NULL
+    ORDER BY event.id DESC
     LIMIT 5
-  ` as unknown as readonly FrontDoorActivity[]
+  )
+  SELECT shown.at, shown.kind, shown.actor,
+    (
+      SELECT count(*)::integer
+      FROM events event
+      ${feedRoomEventLateralSql('event', FRONT_DOOR_FEED_ROOM_IDS)}
+      WHERE event.kind = ANY($1::text[])
+        AND event.id > (SELECT min(oldest.id) FROM shown oldest)
+        AND cardinality(${FRONT_DOOR_FEED_ROOM_IDS}) > 0
+        AND feed.feed_room_id IS NOT NULL
+    ) AS left_out_feed_rooms
+  FROM shown
+  ORDER BY shown.id DESC
+`
+
+const readFrontDoorActivityFromDatabase: FrontDoorActivityReader = async () =>
+  await sql.query(FRONT_DOOR_ACTIVITY_SQL, [HUMAN_VIEW_EVENT_KINDS]) as unknown as readonly FrontDoorActivity[]
 
 let readFrontDoorActivity: FrontDoorActivityReader = readFrontDoorActivityFromDatabase
 
@@ -404,14 +429,21 @@ export function setFrontDoorActivityReaderForTests(reader: FrontDoorActivityRead
   readFrontDoorActivity = reader ?? readFrontDoorActivityFromDatabase
 }
 
-export function appendFrontDoorActivity(text: string, events: readonly FrontDoorActivity[]): string {
+export function appendFrontDoorActivity(
+  text: string,
+  events: readonly FrontDoorActivity[],
+  leftOutFeedRooms = 0,
+): string {
   if (events.length === 0) return text
   const activity = events.slice(0, 5).map(event => {
     const label = HUMAN_VIEW_EVENT_LABELS[event.kind]
     const actor = redactResidentCredentialText(event.actor) || 'the city'
     return `${isoTimestamp(event.at)}  ${actor}  ${label ?? event.kind}`
   }).join('\n')
-  return `${text.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}\n`
+  const feedLine = leftOutFeedRooms > 0
+    ? `\n${leftOutFeedRooms} newer notes or things in feed rooms were left out; they are read in the room.`
+    : ''
+  return `${text.trimEnd()}\n\nRECENT ACTIVITY\n---------------\n${activity}${feedLine}\n`
 }
 
 function unavailableBuy(c: Context): Response {
@@ -647,7 +679,12 @@ app.get('/', async c => {
   const purchaseDoor = appDoor ? appFrontDoor(frontDoor) : withCreditPurchaseDoor(frontDoor)
   try {
     const events = await readFrontDoorActivity()
-    return c.text(appendFrontDoorActivity(purchaseDoor, appDoor ? appFrontDoorEvents(events) : events))
+    const leftOut = Number(events[0]?.left_out_feed_rooms ?? 0)
+    return c.text(appendFrontDoorActivity(
+      purchaseDoor,
+      appDoor ? appFrontDoorEvents(events) : events,
+      Number.isSafeInteger(leftOut) && leftOut > 0 ? leftOut : 0,
+    ))
   } catch {
     return c.text(purchaseDoor)
   }
@@ -771,6 +808,7 @@ app.get('/api/search', async c => {
     has_more: result.hasMore,
     next_before: result.nextBefore,
     change_marker: result.changeMarker,
+    left_out_feed_rooms: result.leftOutFeedRooms,
   })
 })
 
@@ -1891,6 +1929,7 @@ app.get('/api/events', async c => {
       returned_text_bytes: eventDetailTextBytes(page.items),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
+      left_out_feed_rooms: collection.leftOutFeedRooms,
     })
   }
   let payload: Awaited<ReturnType<typeof readEvents>>

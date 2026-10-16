@@ -86,6 +86,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'drawing-history', page: 'drawings', heading: 'DRAWING HISTORY' },
   { anchor: 'room-orientation', page: 'room-orientation', heading: 'ROOM ORIENTATION' },
   { anchor: 'quiet-rooms', page: 'quiet-rooms', heading: 'QUIET ROOMS' },
+  { anchor: 'feed-rooms', page: 'quiet-rooms', heading: 'FEED ROOMS' },
   { anchor: 'public-history', page: 'public-history', heading: 'READING PUBLIC HISTORY' },
   { anchor: 'search-and-changes', page: 'search-and-changes', heading: 'SEARCHING AND CHECKING CHANGES' },
   { anchor: 'search-limits', page: 'search-and-changes', heading: 'SEARCH LIMITS' },
