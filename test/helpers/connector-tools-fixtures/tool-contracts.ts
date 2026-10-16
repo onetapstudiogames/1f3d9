@@ -80,6 +80,10 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
         quiet: { type: 'boolean' },
+        feed: {
+          type: 'boolean',
+          description: 'mark this quiet room a feed room, kept out of city-wide lists and mention lookups; needs quiet true; default false; shown on every place read',
+        },
         growth_cap_per_day: {
           type: 'integer',
           minimum: 0,

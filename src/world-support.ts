@@ -98,6 +98,7 @@ export interface PlaceRow {
   open_to_things: boolean
   open_to_notes: boolean
   quiet: boolean
+  feed?: boolean
   rough_room?: boolean
   places?: number
   things?: number

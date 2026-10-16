@@ -18,12 +18,14 @@ import {
 } from './public-search-limits.ts'
 import { noteFirstLineSql } from './note-first-line.ts'
 import { noteBodyWithheldSql, walkToReadInPerson } from './walk-to-read.ts'
+import { feedRoomIdsSql, leftOutFeedRooms, type LeftOutFeedRooms } from './feed-rooms.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
 export type PublicSearchItemType = 'note' | 'place' | 'thing'
 
 const PUBLIC_SEARCH_DEFAULT_LIMIT = 10
+const SEARCH_FEED_ROOM_IDS = feedRoomIdsSql()
 export { PUBLIC_SEARCH_MAX_LIMIT, PUBLIC_SEARCH_QUERY_MAX_BYTES, PUBLIC_SEARCH_WORD_MAX }
 const POSTGRES_INTEGER_MAX = 2_147_483_647
 const SAFE_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{1,6})Z$/u
@@ -283,19 +285,10 @@ function pageCursorPredicate(
   )) AND $5::text = '${before.itemType}'`
 }
 
-// A walk-to-read body is read in person, so while it is withheld a note matches
-// only on its public first line, the same line every remote read shows (decisions
-// #102 and #103); its whole body matches again once its place is retired.
-// The whole-body index only narrows ordinary notes. It never decides for a
-// walk-to-read note, because how the whole body splits into words can differ from
-// how its first line does; the final match on search_text decides alone.
-function publicSearchSql(
-  mode: PublicSearchMode,
-  before: PublicSearchBoundary | null,
-): string {
+// The note and thing candidates outside feed rooms, or inside them: matches in a feed
+// room are left out of search and only counted (decision #153).
+function noteCandidatesSql(mode: PublicSearchMode, inFeedRoom: boolean): string {
   return `
-    /* public:search */
-    WITH note_candidates AS NOT MATERIALIZED (
       SELECT 'note'::text AS result_type,
         note.id, note.place_id,
         NULL::text AS name,
@@ -331,7 +324,11 @@ function publicSearchSql(
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
-    ), thing_candidates AS NOT MATERIALIZED (
+        AND ${inFeedRoom ? '' : 'NOT '}(note.place_id = ANY(${SEARCH_FEED_ROOM_IDS}))`
+}
+
+function thingCandidatesSql(mode: PublicSearchMode, inFeedRoom: boolean): string {
+  return `
       SELECT 'thing'::text AS result_type,
         thing.id, thing.place_id,
         thing.name,
@@ -367,6 +364,25 @@ function publicSearchSql(
           ORDER BY moderation.created_at DESC, moderation.id DESC
           LIMIT 1
         ), 'restore') <> 'remove'
+        AND ${inFeedRoom ? '' : 'NOT '}(thing.place_id = ANY(${SEARCH_FEED_ROOM_IDS}))`
+}
+
+// A walk-to-read body is read in person, so while it is withheld a note matches
+// only on its public first line, the same line every remote read shows (decisions
+// #102 and #103); its whole body matches again once its place is retired.
+// The whole-body index only narrows ordinary notes. It never decides for a
+// walk-to-read note, because how the whole body splits into words can differ from
+// how its first line does; the final match on search_text decides alone.
+function publicSearchSql(
+  mode: PublicSearchMode,
+  before: PublicSearchBoundary | null,
+): string {
+  return `
+    /* public:search */
+    WITH note_candidates AS NOT MATERIALIZED (${noteCandidatesSql(mode, false)}
+    ), thing_candidates AS NOT MATERIALIZED (${thingCandidatesSql(mode, false)}
+    ), feed_note_candidates AS NOT MATERIALIZED (${noteCandidatesSql(mode, true)}
+    ), feed_thing_candidates AS NOT MATERIALIZED (${thingCandidatesSql(mode, true)}
     ), matching_places AS NOT MATERIALIZED (
       SELECT place.*
       FROM places place
@@ -544,6 +560,26 @@ function publicSearchSql(
         ORDER BY candidate.created_at DESC, candidate.id DESC
         LIMIT $7::integer
       )
+    ), feed_left_out AS MATERIALIZED (
+      SELECT least(count(*), 1000)::integer AS left_out_feed_rooms,
+        array_agg(DISTINCT feed_match.place_id) AS left_out_feed_room_ids
+      FROM (
+        (
+          SELECT candidate.place_id
+          FROM feed_note_candidates candidate
+          WHERE cardinality(${SEARCH_FEED_ROOM_IDS}) > 0
+            AND CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
+          LIMIT 1001
+        )
+        UNION ALL
+        (
+          SELECT candidate.place_id
+          FROM feed_thing_candidates candidate
+          WHERE cardinality(${SEARCH_FEED_ROOM_IDS}) > 0
+            AND CASE WHEN (${matchExpression(mode)}) THEN true ELSE false END
+          LIMIT 1001
+        )
+      ) feed_match
     ), checkpoint AS MATERIALIZED (
       SELECT current_change_id::text AS change_marker
       FROM public_change_state
@@ -562,8 +598,10 @@ function publicSearchSql(
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
       totals.total_items, totals.total_body_bytes, totals.totals_capped,
+      feed_left_out.left_out_feed_rooms, feed_left_out.left_out_feed_room_ids,
       checkpoint.change_marker
     FROM totals
+    CROSS JOIN feed_left_out
     CROSS JOIN checkpoint
     LEFT JOIN LATERAL (
       SELECT page_matches.*
@@ -669,6 +707,7 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
 }
 
 export interface PublicSearchResults {
+  readonly leftOutFeedRooms: LeftOutFeedRooms
   readonly items: readonly Readonly<Record<string, unknown>>[]
   readonly totalItems: number
   readonly totalBodyBytes: number
@@ -740,5 +779,6 @@ export async function loadPublicSearchResults(
     : null
   return Object.freeze({
     items, totalItems, totalBodyBytes, totalsCapped, hasMore, nextBefore, changeMarker,
+    leftOutFeedRooms: leftOutFeedRooms(rows[0]?.left_out_feed_rooms, rows[0]?.left_out_feed_room_ids),
   })
 }

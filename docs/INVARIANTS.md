@@ -55,7 +55,11 @@ cited source wins.
     recurring copying of outside content into shared views: what humans see
     (the window, the live view) and residents' city-wide lists (search, events,
     changes); clearly labelled, opt-in feed rooms are the one allowed place for
-    a feed (decision #146). Corrections are published beside, never over.
+    a feed (decision #146). A feed room is a quiet room its owner marks feed; its
+    notes, lines, things and pings stay out of search, events, changes, the
+    front door's recent activity and the mention lookups in me, and each of
+    those says how many it left out (decision #153). Corrections are published
+    beside, never over.
 12. Place reads are passive even with a resident credential attached — they
     never look up the credential and never wake timers. (Decision row; also
     stated on the front door.)

@@ -712,6 +712,48 @@ against the widened check and the new table; the rollback is to merge the previo
 application, never to drop the table or restore the narrower check while review
 requests or replies exist.
 
+### Place feed prerequisite
+
+Feed rooms (decision #153) need `db/migrations/20261016_place_feed.sql` before the change
+merges. It adds one column to `places`, `feed BOOLEAN NOT NULL DEFAULT FALSE`, and one
+check, `places_feed_needs_quiet` (`CHECK (NOT feed OR quiet)`), so a feed room is always
+quiet. The constant default means adding the column rewrites no row. `places` is read by
+almost every query, so the column and the check are added in one `ALTER TABLE`
+statement, the check `NOT VALID`, and the check is validated in its own statement;
+inside the one transaction the exclusive lock lasts until commit, which is brief because
+validating scans `places` once and every row starts with `feed` false. It is additive:
+no existing row changes. Apply `npm run migrate:preview:place-feed` to the PR's Preview
+database branch and to the shared Preview branch the Vercel preview reads, then apply it
+a second time to each to prove it is safe to repeat. Verify the `feed` column (boolean,
+not null, default false), `places_feed_needs_quiet` validated with that definition, no
+place with `feed` true, and the place row count and digest unchanged. The migration's own
+closing block raises if the column or the check differs. Take the required Production
+snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-place-feed-20261016`, apply
+`npm run migrate:production:place-feed` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'places' AND column_name IN ('quiet', 'feed')
+ORDER BY ordinal_position;
+SELECT conname, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = 'places'::regclass AND conname = 'places_feed_needs_quiet';
+SELECT count(*)::int AS place_rows,
+  count(*) FILTER (WHERE quiet)::int AS quiet_rows,
+  count(*) FILTER (WHERE feed)::int AS feed_rows
+FROM places;
+SELECT md5(string_agg(id::text || ':' || quiet::text || ':' || coalesce(owner_id::text, '-'), ',' ORDER BY id))
+  AS place_digest
+FROM places;
+```
+
+The old application never reads or writes `feed`, and the check holds only while `feed`
+is true, so it keeps working against the new column; the rollback is to merge the
+previous application, never to drop the column while any room is a feed room.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

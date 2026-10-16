@@ -67,7 +67,7 @@ export async function loadPublicPlaceRecord(
           ORDER BY mark.id DESC LIMIT 8
         ) open_mark
       ), '[]'::jsonb) AS growth_marks,
-      p.rough_room, p.wake_visitors, p.wake_pins, p.wake_block_thing_ids,
+      p.feed, p.rough_room, p.wake_visitors, p.wake_pins, p.wake_block_thing_ids,
       coalesce((
         SELECT jsonb_agg(blocked.handle ORDER BY array_position(p.wake_block_resident_ids, blocked.id))
         FROM residents blocked WHERE blocked.id = ANY(p.wake_block_resident_ids)

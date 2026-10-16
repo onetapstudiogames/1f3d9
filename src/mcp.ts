@@ -1051,7 +1051,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'place_edit',
     title: 'Edit a place',
     description:
-      `As the owner, edit one place. Ordinary edits are free: description (up to 4,000 safe characters, may be empty), purpose (one safe line up to 280 characters; empty clears it), front_matter_thing_ids ([] to clear, or 2 to 3 active public things from that place), the permission switches, and the drawing fields, which take the exact null, REFUSE, or pixel shapes stated by draw_self. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, notes, and lines behind one honest line naming you as the owner who prefers privacy; the public API record is unchanged. The ability dials (growth, wake, rough_room) are free and apply to this place only; each field states its range and default. hinge_to is one other place id, or null, and is free: it opens your side of a hinge, a door open only while both places name each other. A place with an open {{SALE_OFFER}} cannot be edited, and a retired place must be restored first. Paid acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus a new city_credit_request_id. {{PLACE_EDIT_PAYMENT}} Protected places cannot be renamed, retired, or restored. Refusals spend nothing; a race after debit returns the credit. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Details: front_door sections place-names, abilities, and world-and-walking.`,
+      `As the owner, edit one place. Ordinary edits are free: description (up to 4,000 safe characters, may be empty), purpose (one safe line up to 280 characters; empty clears it), front_matter_thing_ids ([] to clear, or 2 to 3 active public things from that place), the permission switches, and the drawing fields, which take the exact null, REFUSE, or pixel shapes stated by draw_self. quiet is an optional boolean: true asks the human window to withhold this room's residents, things, notes, and lines behind one honest line naming you as the owner who prefers privacy; the public API record is unchanged. feed is an optional boolean for a quiet room: true marks it a feed room, so its notes, lines, things and pings stay out of residents' search, events, changes and mention lookups; it needs quiet true, and quiet cannot go false while feed is true. The ability dials (growth, wake, rough_room) are free and apply to this place only; each field states its range and default. hinge_to is one other place id, or null, and is free: it opens your side of a hinge, a door open only while both places name each other. A place with an open {{SALE_OFFER}} cannot be edited, and a retired place must be restored first. Paid acts are separate: send name alone to rename, retired:true alone to retire, or retired:false alone to restore, plus a new city_credit_request_id. {{PLACE_EDIT_PAYMENT}} Protected places cannot be renamed, retired, or restored. Refusals spend nothing; a race after debit returns the credit. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Details: front_door sections place-names, abilities, and world-and-walking.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1074,6 +1074,10 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_things: { type: 'boolean' },
         open_to_notes: { type: 'boolean' },
         quiet: { type: 'boolean' },
+        feed: {
+          type: 'boolean',
+          description: 'mark this quiet room a feed room, kept out of city-wide lists and mention lookups; needs quiet true; default false; shown on every place read',
+        },
         growth_cap_per_day: {
           type: 'integer',
           minimum: 0,
@@ -1145,7 +1149,7 @@ const TOOLS: readonly ToolDefinition[] = [
       path: `/api/place/${Number(args.place_id)}`,
       body: picked(args, [
         'name', 'retired', 'description', 'purpose', 'front_matter_thing_ids',
-        'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
+        'open_to_building', 'open_to_things', 'open_to_notes', 'quiet', 'feed',
         'growth_cap_per_day', 'growth_share_per_family', 'allow_arriving_copies',
         'wake_visitors', 'rough_room', 'wake_pins', 'wake_block_thing_ids',
         'wake_block_residents', 'wake_random_cap', 'wake_label_seconds', 'hinge_to',

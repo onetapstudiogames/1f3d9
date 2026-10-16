@@ -1,6 +1,7 @@
 export const PUBLIC_PAGE_DEFAULT = 10
 export const PUBLIC_PAGE_MAX = 200
 import { PUBLIC_EVENT_THING_DRAWING_JOIN_SQL } from './public-drawing-presence.ts'
+import { feedRoomEventLateralSql, feedRoomIdsSql, leftOutFeedRooms, type LeftOutFeedRooms } from './feed-rooms.ts'
 import { noteFirstLineSql } from './note-first-line.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
@@ -275,6 +276,10 @@ export interface PublicCollectionRows {
   readonly total: PublicCollectionTotal
 }
 
+export interface PublicEventCollectionRows extends PublicCollectionRows {
+  readonly leftOutFeedRooms: LeftOutFeedRooms
+}
+
 export function extractPublicCollectionRows(
   rows: readonly Record<string, unknown>[],
 ): Readonly<PublicCollectionRows> {
@@ -289,11 +294,17 @@ export function extractPublicCollectionRows(
   return Object.freeze({ rows: Object.freeze(items), total })
 }
 
+// Notes, lines, things and pings in a feed room stay out of this city-wide list and
+// are counted instead (decision #153). A read scoped to one place keeps that place's
+// own events even when it is a feed room; a feed room below it is still left out.
+const PUBLIC_EVENT_FEED_ROOM_IDS = feedRoomIdsSql('$3::integer')
+const PUBLIC_EVENT_FEED_ROOM_JOIN = feedRoomEventLateralSql('event', PUBLIC_EVENT_FEED_ROOM_IDS)
+
 export async function loadPublicEventCollectionRows(
   query: PublicQueryExecutor,
   filters: PublicEventFilters,
   page: PublicPage,
-): Promise<Readonly<PublicCollectionRows>> {
+): Promise<Readonly<PublicEventCollectionRows>> {
   const includeDescendants = filters.includeDescendants === true
   const eventFilter = includeDescendants ? publicEventFilter(true) : PUBLIC_EVENT_FILTER
   const withClause = includeDescendants
@@ -307,20 +318,26 @@ export async function loadPublicEventCollectionRows(
   const rows = await query(
     `/* public:events */
      ${withClause}
-       SELECT count(*)::integer AS total_items,
+       SELECT count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
          coalesce(sum(
            octet_length(coalesce(event.detail->>'body', ''))
            + octet_length(coalesce(event.detail->>'description', ''))
            + octet_length(coalesce(event.detail->>'reason', ''))
-         ), 0)::bigint AS total_text_bytes
+         ) FILTER (WHERE feed.feed_room_id IS NULL), 0)::bigint AS total_text_bytes,
+         count(*) FILTER (WHERE feed.feed_room_id IS NOT NULL)::integer AS left_out_feed_rooms,
+         array_agg(DISTINCT feed.feed_room_id) FILTER (
+           WHERE feed.feed_room_id IS NOT NULL
+         ) AS left_out_feed_room_ids
        FROM events event
+       ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        /* These totals count the whole filtered list, so neither end of the page
           bounds them: not before_id, and not after_id either. */
        WHERE ${eventFilter}
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        page.thing_has_drawing,
-       totals.total_items, totals.total_text_bytes
+       totals.total_items, totals.total_text_bytes,
+       totals.left_out_feed_rooms, totals.left_out_feed_room_ids
      FROM totals
      LEFT JOIN LATERAL (
        SELECT event.id, change.change_id::text AS change_id,
@@ -329,7 +346,9 @@ export async function loadPublicEventCollectionRows(
        FROM events event
        ${PUBLIC_EVENT_THING_DRAWING_JOIN_SQL}
        JOIN public_change_log change ON change.event_id = event.id
+       ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        WHERE ${eventFilter}
+         AND feed.feed_room_id IS NULL
          AND ($4::integer IS NULL OR event.id < $4::integer)
          AND ($7::integer IS NULL OR event.id > $7::integer)
        ORDER BY event.id DESC
@@ -341,7 +360,16 @@ export async function loadPublicEventCollectionRows(
       filters.withinSeconds ?? null, filters.afterId ?? null,
     ],
   )
-  return extractPublicCollectionRows(rows)
+  const first = rows[0]
+  const { rows: items, total } = extractPublicCollectionRows(rows.map(row => {
+    const { left_out_feed_rooms: _count, left_out_feed_room_ids: _ids, ...rest } = row
+    return rest
+  }))
+  return Object.freeze({
+    rows: items,
+    total,
+    leftOutFeedRooms: leftOutFeedRooms(first?.left_out_feed_rooms, first?.left_out_feed_room_ids),
+  })
 }
 
 export async function loadPublicEventRows(
@@ -473,7 +501,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
      WITH subplace_source AS MATERIALIZED (
        SELECT p.id, p.parent_id, p.name, p.description, p.purpose,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.feed, p.rough_room, p.created_at,
          (octet_length(p.description) + octet_length(p.purpose))::integer AS __text_bytes
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
@@ -683,7 +711,7 @@ export async function loadPublicPlaceCollectionRows(
      WITH subplace_page AS MATERIALIZED (
        SELECT p.id, p.parent_id, p.name, ${subplaceTextProjection} p.purpose,
          p.owner_id, owner.handle AS owner,
-         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at
+         p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.feed, p.rough_room, p.created_at
        FROM places p
        LEFT JOIN residents owner ON owner.id = p.owner_id
        WHERE p.parent_id = $1::integer

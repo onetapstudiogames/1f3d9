@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util'
 import type { Hono } from 'hono'
-import { err, postgresErrorCode, type Resident } from './core.ts'
+import { err, postgresErrorCode, postgresErrorConstraint, type Resident } from './core.ts'
+import { FEED_KEEPS_QUIET_REFUSAL, FEED_NEEDS_QUIET_REFUSAL, feedQuietRefusal } from './feed-rooms.ts'
 import { sql } from './db.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import {
@@ -386,13 +387,13 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
   const rows = (await sql`
     WITH RECURSIVE place_tree AS (
       SELECT p.id, p.parent_id, p.name, p.description, p.purpose, p.owner_id,
-        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.rough_room, p.created_at,
+        p.open_to_building, p.open_to_things, p.open_to_notes, p.quiet, p.feed, p.rough_room, p.created_at,
         ARRAY[p.id] AS path
       FROM places p
       WHERE p.parent_id IS NULL AND p.retired_at IS NULL
       UNION ALL
       SELECT child.id, child.parent_id, child.name, child.description, child.purpose, child.owner_id,
-        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.rough_room,
+        child.open_to_building, child.open_to_things, child.open_to_notes, child.quiet, child.feed, child.rough_room,
         child.created_at,
         parent.path || child.id
       FROM places child
@@ -401,7 +402,7 @@ async function readPublicMap(): Promise<{ places: unknown[] }> {
     )
     SELECT tree.id, tree.parent_id, tree.name, tree.description, tree.purpose, tree.owner_id,
       owner.handle AS owner, tree.open_to_building, tree.open_to_things,
-      tree.open_to_notes, tree.quiet, tree.rough_room, tree.created_at,
+      tree.open_to_notes, tree.quiet, tree.feed, tree.rough_room, tree.created_at,
       (SELECT count(*)::int FROM places child
         WHERE child.parent_id = tree.id AND child.retired_at IS NULL) AS places,
       (SELECT count(*)::int FROM things thing
@@ -1186,15 +1187,15 @@ export function mountWorldRoutes(app: Hono): void {
     }
     const fields = [
       'description', 'purpose', 'front_matter_thing_ids',
-      'open_to_building', 'open_to_things', 'open_to_notes', 'quiet',
+      'open_to_building', 'open_to_things', 'open_to_notes', 'quiet', 'feed',
       'drawing', 'drawing_state', 'drawing_description', 'hinge_to',
       ...PLACE_DIAL_FIELDS,
     ] as const
     if (!hasOnly(body, fields) || Object.keys(body).length === 0) {
       const rejected = unsupportedFields(body, fields)
       return err(c, 400, rejected.length > 0
-        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
-        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, a permission switch, an ability dial, or hinge_to')
+        ? `place edit does not accept ${describeUnsupportedFields(rejected)}; place_edit takes description, purpose, front_matter_thing_ids, drawing, quiet, feed, a permission switch, an ability dial, or hinge_to. Call laws, or use PUT /api/place/:id/laws {"traits":[names]} if your client can open URLs.`
+        : 'place edit body is empty; edit description, purpose, front matter, drawing, quiet, feed, a permission switch, an ability dial, or hinge_to')
     }
     const placeDials = parsePlaceDials(body)
     if (!placeDials.ok) return err(c, 400, placeDials.error)
@@ -1211,16 +1212,17 @@ export function mountWorldRoutes(app: Hono): void {
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
     const quiet = optionalBoolean(body.quiet)
+    const feed = optionalBoolean(body.feed)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     if (description === null || purpose === null || frontMatterThingIds === null
         || openToBuilding === null || openToThings === null || openToNotes === null
-        || quiet === null) {
-      return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, quiet, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean switches')
+        || quiet === null || feed === null) {
+      return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, quiet, feed, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean switches')
     }
 
     const existingRows = (await sql`
-      SELECT p.id, p.owner_id, p.active_offer_id, p.retired_at,
+      SELECT p.id, p.owner_id, p.active_offer_id, p.retired_at, p.quiet, p.feed,
         (offer.id IS NOT NULL) AS has_open_offer
       FROM places p
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
@@ -1232,6 +1234,8 @@ export function mountWorldRoutes(app: Hono): void {
       active_offer_id: number | null
       has_open_offer?: boolean
       retired_at?: string | null
+      quiet?: boolean
+      feed?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
@@ -1241,6 +1245,10 @@ export function mountWorldRoutes(app: Hono): void {
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'place cannot be edited while it has an open sale offer; close that offer before editing the place')
     }
+    // Decision #153: a feed room is always quiet. The database check
+    // places_feed_needs_quiet holds the same rule against a racing edit.
+    const feedRefusal = feedQuietRefusal(existing, feed, quiet)
+    if (feedRefusal !== null) return err(c, 409, feedRefusal)
     if (hingeTo.value !== null) {
       if (hingeTo.value === GAZETTE_ROOM_ID) return err(c, 409, HINGE_TO_GAZETTE_REFUSAL)
       const hingeTargets = await sql`
@@ -1362,6 +1370,7 @@ export function mountWorldRoutes(app: Hono): void {
             open_to_things = coalesce(${openToThings ?? null}::boolean, open_to_things),
             open_to_notes = coalesce(${openToNotes ?? null}::boolean, open_to_notes),
             quiet = coalesce(${quiet ?? null}::boolean, quiet),
+            feed = coalesce(${feed ?? null}::boolean, feed),
             growth_cap_per_day = coalesce(${dials.growthCapPerDay ?? null}::smallint, growth_cap_per_day),
             growth_share_per_family = coalesce(
               ${dials.growthSharePerFamily ?? null}::smallint, growth_share_per_family
@@ -1410,6 +1419,8 @@ export function mountWorldRoutes(app: Hono): void {
                 AND open_to_notes IS DISTINCT FROM ${openToNotes ?? false}::boolean)
               OR (${quiet !== undefined}::boolean
                 AND quiet IS DISTINCT FROM ${quiet ?? false}::boolean)
+              OR (${feed !== undefined}::boolean
+                AND feed IS DISTINCT FROM ${feed ?? false}::boolean)
               OR (${dials.growthCapPerDay !== undefined}::boolean
                 AND growth_cap_per_day IS DISTINCT FROM ${dials.growthCapPerDay ?? 0}::smallint)
               OR (${dials.growthSharePerFamily !== undefined}::boolean
@@ -1499,6 +1510,9 @@ export function mountWorldRoutes(app: Hono): void {
       const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
       if (gazetteRoomError) return err(c, 409, gazetteRoomError)
       const code = postgresErrorCode(error)
+      if (code === '23514' && postgresErrorConstraint(error) === 'places_feed_needs_quiet') {
+        return err(c, 409, feed === true ? FEED_NEEDS_QUIET_REFUSAL : FEED_KEEPS_QUIET_REFUSAL)
+      }
       if ((code === '23514' || code === '23503') && frontMatterThingIds !== undefined) {
         return err(c, 409, 'front matter eligibility changed; retry')
       }

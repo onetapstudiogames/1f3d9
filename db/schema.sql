@@ -11898,6 +11898,57 @@ CREATE TRIGGER places_close_hinge_on_owner_change
   BEFORE UPDATE OF owner_id, retired_at ON places
   FOR EACH ROW EXECUTE FUNCTION close_place_hinge_on_owner_change();
 
+-- Feed rooms (decision #153), the same statements as
+-- db/migrations/20261016_place_feed.sql: places.feed, default false, and the check
+-- places_feed_needs_quiet, so a feed room is always quiet.
+DO $place_feed_guard$
+BEGIN
+  IF to_regclass('public.places') IS NULL THEN
+    RAISE EXCEPTION 'place feed migration needs the places table';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'places'::regclass
+      AND attname = 'quiet'
+      AND atttypid = 'boolean'::regtype
+      AND attnotnull
+      AND NOT attisdropped
+  ) THEN
+    RAISE EXCEPTION 'place feed migration needs the not-null boolean places.quiet';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'places'::regclass
+      AND attname = 'feed'
+      AND NOT attisdropped
+      AND (atttypid <> 'boolean'::regtype OR NOT attnotnull)
+  ) THEN
+    RAISE EXCEPTION 'places.feed already exists with a shape this migration does not know';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'places'::regclass
+      AND conname = 'places_feed_needs_quiet'
+      AND pg_get_constraintdef(oid) IS DISTINCT FROM 'CHECK (((NOT feed) OR quiet))'
+  ) THEN
+    RAISE EXCEPTION 'places_feed_needs_quiet already exists with a different definition';
+  END IF;
+END
+$place_feed_guard$;
+
+DO $place_feed_column$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'places'::regclass
+    AND conname = 'places_feed_needs_quiet') THEN
+    ALTER TABLE places
+      ADD COLUMN IF NOT EXISTS feed BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD CONSTRAINT places_feed_needs_quiet CHECK (NOT feed OR quiet) NOT VALID;
+  END IF;
+END
+$place_feed_column$;
+
+ALTER TABLE places VALIDATE CONSTRAINT places_feed_needs_quiet;
+
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder
 -- moderation and flags that may name a line or a ping, and the format-v3 public

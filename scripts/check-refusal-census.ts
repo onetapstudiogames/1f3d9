@@ -79,6 +79,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/later-holder.ts:Error',
   'src/mcp-call-log.ts:Error',
   'src/mcp-call-log.ts:TypeError',
+  'src/feed-rooms.ts:TypeError',
   'src/me-around-you.ts:TypeError',
   'src/moderation-review.ts:Error',
   'src/oauth-config.ts:Error',

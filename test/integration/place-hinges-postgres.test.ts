@@ -180,6 +180,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         place_id: rooms.westRoomId,
         name: 'West Room',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: false,
       })
 
@@ -191,6 +192,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         place_id: rooms.westRoomId,
         name: 'West Room',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: false,
       })
 
@@ -216,18 +218,20 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         place_id: rooms.westRoomId,
         name: 'West Room',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: true,
       })
       assert.deepEqual(westOutlinePlace.hinge, {
         place_id: rooms.eastRoomId,
         name: 'East Room',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: false,
       })
 
       const continentPage = await call(app, null, 'GET', `/api/map?view=continent&continent_id=${rooms.continentId}`)
       assert.equal(continentPage.status, 200, JSON.stringify(continentPage.json))
-      const rowKeys = ['id', 'name', 'parent_id', 'rough_room']
+      const rowKeys = ['feed', 'id', 'name', 'parent_id', 'rough_room']
       assert.deepEqual(Object.keys(continentPage.json.continent as Json).sort(), [...rowKeys].sort())
       for (const place of continentPage.json.places as Json[]) {
         assert.deepEqual(Object.keys(place).sort(), [...rowKeys].sort())
@@ -267,6 +271,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         place_id: rooms.eastRoomId,
         name: 'East Room',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: false,
       })
       let details = (await connectedDatabase().query<{ detail: Json }>(
@@ -388,6 +393,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
         place_id: rooms.eastRoomId,
         name: '[removed by maintainer]',
         parent_id: rooms.continentId,
+        feed: false,
         rough_room: false,
       })
     })

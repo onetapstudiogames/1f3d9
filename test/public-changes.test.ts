@@ -212,6 +212,7 @@ test('changes page forward by public change log id with exact checkpoints and no
     unchanged: false,
     has_more: true,
     next_since: '7',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   const second = await loadPublicChanges(
@@ -225,6 +226,7 @@ test('changes page forward by public change log id with exact checkpoints and no
     unchanged: false,
     has_more: false,
     next_since: '8',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   const unchanged = await loadPublicChanges(
@@ -238,6 +240,7 @@ test('changes page forward by public change log id with exact checkpoints and no
     unchanged: true,
     has_more: false,
     next_since: '8',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   assert.deepEqual(database.calls.map(call => call.params), [
@@ -302,6 +305,7 @@ test('public changes preserve explicit system actors without admitting arbitrary
     unchanged: false,
     has_more: false,
     next_since: '22',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 })
 
@@ -336,6 +340,7 @@ test('an exact kind filter pages in global change-id space and advances to the c
     unchanged: false,
     has_more: true,
     next_since: '9',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   const second = await loadPublicChanges(
@@ -349,6 +354,7 @@ test('an exact kind filter pages in global change-id space and advances to the c
     unchanged: false,
     has_more: false,
     next_since: '12',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   const exhausted = await loadPublicChanges(
@@ -362,6 +368,7 @@ test('an exact kind filter pages in global change-id space and advances to the c
     unchanged: true,
     has_more: false,
     next_since: '12',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 
   assert.deepEqual(database.calls.map(call => call.params), [
@@ -387,6 +394,7 @@ test('a filtered page with no match advances directly to its fixed checkpoint', 
     unchanged: false,
     has_more: false,
     next_since: '15',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
 })
 
@@ -526,6 +534,7 @@ test('unknown event kinds and invalid actors advance reconciliation without expo
     unchanged: false,
     has_more: false,
     next_since: '10',
+    left_out_feed_rooms: { count: 0, place_ids: [] },
   })
   assert.doesNotMatch(JSON.stringify(result), /internal_rebalance|private:service|991/iu)
 })

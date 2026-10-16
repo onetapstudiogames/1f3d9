@@ -299,7 +299,7 @@ test('the window keeps well-formed place hinges and nulls malformed ones', () =>
       things: 0,
       notes: 0,
       moderated: false,
-      hinge: { place_id: 8, name: 'east_hall', parent_id: 3, rough_room: false },
+      hinge: { place_id: 8, name: 'east_hall', parent_id: 3, feed: false, rough_room: false },
     },
     {
       id: 8,
@@ -312,12 +312,12 @@ test('the window keeps well-formed place hinges and nulls malformed ones', () =>
       things: 0,
       notes: 0,
       moderated: false,
-      hinge: { place_id: '9', name: 'bad_hall', parent_id: null, rough_room: false },
+      hinge: { place_id: '9', name: 'bad_hall', parent_id: null, feed: false, rough_room: false },
     },
   ])
 
   assert.deepEqual(places.map(place => place.hinge), [
-    { place_id: 8, name: 'east_hall', parent_id: 3, rough_room: false },
+    { place_id: 8, name: 'east_hall', parent_id: 3, feed: false, rough_room: false },
     null,
   ])
 })

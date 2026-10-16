@@ -270,6 +270,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     frontMatterEmpty: 'The world has no owner, so nothing can be chosen as front matter here.',
   }
 
+  const FEED_ROOM_LINE =
+    'Feed room: its owner marked this quiet room for a feed. Its notes, lines, things and pings stay out of city-wide search, events, changes and mention lookups.'
+
   const ROUGH_ROOM_LINE =
     'Rough room: things that wake here may hold or send home a resident who came in after its owner marked it rough. Going home is never blocked.'
 
@@ -321,6 +324,10 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       // Decision #109: a rough room says so before anyone walks in.
       if (description.record.rough_room === true) {
         nodes.placeDescription?.append(element('p', 'place-rough-room', ROUGH_ROOM_LINE))
+      }
+      // Decision #153: a feed room says so beside its quiet line.
+      if (description.record.feed === true) {
+        nodes.placeDescription?.append(element('p', 'place-feed-room', FEED_ROOM_LINE))
       }
       // Decision #132: an open hinge is one more step from here.
       if (description.record.hinge) {

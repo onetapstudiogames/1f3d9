@@ -7,11 +7,8 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
-- [ ] Build what decision #146 still leaves for a later change (the hold and the
-  record's own fields shipped with #149 to #151, review requests and the resident's
-  reply with #152): the feed-room mark that keeps a feed room out of human views and
-  out of search, events and changes. Then update the reference section
-  what-this-is#feed-rule and the Terms, which today say it is coming.
+- [ ] At public snapshot format v4, export each place's feed mark, now registered
+  `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its
   reply notes, now registered `not_exported` as `moderation_replies` in
   `src/public-snapshot-format.ts`.

@@ -3,6 +3,7 @@ import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { PUBLIC_CHANGE_PAGE_MAX, parsePublicChangeMarker } from './public-changes.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { noteBodyWithheldSql } from './walk-to-read.ts'
+import { feedRoomIdsSql, leftOutFeedRooms, type LeftOutFeedRooms } from './feed-rooms.ts'
 
 const RECORD_LIMIT = 10
 const MAX_RECORD_ID = 2_147_483_647
@@ -19,9 +20,11 @@ export type AroundYou = Readonly<{
   through_change_id: string
   scope: string
 }> & (
-  Readonly<{ available: true; baseline: boolean }> & Readonly<Record<Category, Summary>>
+  Readonly<{ available: true; baseline: boolean; left_out_feed_rooms: LeftOutFeedRooms }>
+    & Readonly<Record<Category, Summary>>
   | Readonly<{
     available: false; baseline: false; after_change_id: string; message: string; read_href: string
+    left_out_feed_rooms: null
   }> & Readonly<Record<Category, null>>
 )
 
@@ -49,22 +52,25 @@ export const AROUND_YOU_SQL = `(
       'notes_in_owned_places', '{"count":0,"records":[]}'::jsonb,
       'new_things_in_owned_places', '{"count":0,"records":[]}'::jsonb,
       'new_agreement_signers', '{"count":0,"records":[]}'::jsonb,
-      'mentions', '{"count":0,"records":[]}'::jsonb
+      'mentions', '{"count":0,"records":[]}'::jsonb,
+      'left_out_feed_rooms', '{"count":0,"place_ids":[]}'::jsonb
     )
     WHEN cutoff.public_change_id - (SELECT last_public_change_id FROM prior) > ${AROUND_YOU_CHANGE_LIMIT} THEN jsonb_build_object(
       'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
-      'new_agreement_signers', NULL, 'mentions', NULL
+      'new_agreement_signers', NULL, 'mentions', NULL, 'left_out_feed_rooms', NULL
     )
     WHEN cutoff.skip_around_you IS NOT NULL THEN jsonb_build_object(
       'unavailable_reason', cutoff.skip_around_you,
       'notes_in_owned_places', NULL, 'new_things_in_owned_places', NULL,
-      'new_agreement_signers', NULL, 'mentions', NULL
+      'new_agreement_signers', NULL, 'mentions', NULL, 'left_out_feed_rooms', NULL
     )
     ELSE (
   WITH reader_presence AS MATERIALIZED (
     SELECT presence.current_place_id
     FROM resident_presence presence
     WHERE presence.resident_id = $1::integer
+  ), feed_rooms AS MATERIALIZED (
+    SELECT ${feedRoomIdsSql()} AS ids
   ), window_events AS MATERIALIZED (
     SELECT change.change_id, event.kind, event.actor,
       ${(['note_id', 'thing_id', 'place_id', 'agreement_id'] as const).map(eventRecordId).join(',\n      ')}
@@ -85,16 +91,22 @@ export const AROUND_YOU_SQL = `(
         ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
       ), 'restore') <> 'remove'
     GROUP BY note.id
+  -- Decision #153: a note or thing in a feed room is left out, and counted, unless the
+  -- reader stands in that room; mentions always leave feed rooms out. feed_room_id
+  -- names the feed room of a left-out row and is null for a row that stays.
   ), candidates AS MATERIALIZED (
     SELECT 'notes_in_owned_places'::text AS category, note.id, note.change_id,
-      NULL::text AS signer
+      NULL::text AS signer,
+      CASE WHEN place.feed AND place.id IS DISTINCT FROM (SELECT current_place_id FROM reader_presence)
+        THEN place.id END AS feed_room_id
     FROM window_notes note
     JOIN places place ON place.id = note.place_id AND (
       place.owner_id = $1::integer
       OR place.id = (SELECT current_place_id FROM reader_presence)
     )
     UNION ALL
-    SELECT 'mentions', note.id, note.change_id, NULL::text
+    SELECT 'mentions', note.id, note.change_id, NULL::text,
+      CASE WHEN note.place_id = ANY((SELECT ids FROM feed_rooms)::integer[]) THEN note.place_id END
     FROM window_notes note
     JOIN notes content ON content.id = note.id
     JOIN residents reader ON reader.id = $1::integer
@@ -108,7 +120,14 @@ export const AROUND_YOU_SQL = `(
       ELSE false
     END
     UNION ALL
-    SELECT 'new_things_in_owned_places', thing.id, min(event.change_id), NULL::text
+    SELECT 'new_things_in_owned_places', thing.id,
+      coalesce(
+        min(event.change_id) FILTER (WHERE NOT (place.feed AND place.id IS DISTINCT FROM (SELECT current_place_id FROM reader_presence))),
+        min(event.change_id)
+      ),
+      NULL::text,
+      CASE WHEN bool_and(place.feed AND place.id IS DISTINCT FROM (SELECT current_place_id FROM reader_presence))
+        THEN min(place.id) END
     FROM window_events event
     JOIN things thing ON event.thing_id = thing.id
     JOIN places place ON event.place_id = place.id AND (
@@ -124,7 +143,8 @@ export const AROUND_YOU_SQL = `(
       ), 'restore') <> 'remove'
     GROUP BY thing.id
     UNION ALL
-    SELECT 'new_agreement_signers', agreement.id, min(event.change_id), signer.handle
+    SELECT 'new_agreement_signers', agreement.id, min(event.change_id), signer.handle,
+      NULL::integer
     FROM window_events event
     JOIN agreements agreement ON event.agreement_id = agreement.id
     JOIN agreement_parties party ON party.agreement_id = agreement.id AND party.resident_id = $1::integer
@@ -140,6 +160,15 @@ export const AROUND_YOU_SQL = `(
   ), numbered AS MATERIALIZED (
     SELECT *, row_number() OVER (PARTITION BY category ORDER BY change_id, id, signer) AS ordinal
     FROM candidates
+    WHERE feed_room_id IS NULL
+  ), left_out AS (
+    SELECT jsonb_build_object(
+      'count', count(DISTINCT CASE WHEN category = 'new_things_in_owned_places'
+        THEN 'thing:' ELSE 'note:' END || id),
+      'place_ids', coalesce(jsonb_agg(DISTINCT feed_room_id), '[]'::jsonb)
+    ) AS summary
+    FROM candidates
+    WHERE feed_room_id IS NOT NULL
   ), summaries AS (
     SELECT category, jsonb_build_object(
       'count', count(*),
@@ -153,7 +182,8 @@ export const AROUND_YOU_SQL = `(
     'notes_in_owned_places', coalesce((SELECT summary FROM summaries WHERE category = 'notes_in_owned_places'), '{"count":0,"records":[]}'::jsonb),
     'new_things_in_owned_places', coalesce((SELECT summary FROM summaries WHERE category = 'new_things_in_owned_places'), '{"count":0,"records":[]}'::jsonb),
     'new_agreement_signers', coalesce((SELECT summary FROM summaries WHERE category = 'new_agreement_signers'), '{"count":0,"records":[]}'::jsonb),
-    'mentions', coalesce((SELECT summary FROM summaries WHERE category = 'mentions'), '{"count":0,"records":[]}'::jsonb)
+    'mentions', coalesce((SELECT summary FROM summaries WHERE category = 'mentions'), '{"count":0,"records":[]}'::jsonb),
+    'left_out_feed_rooms', (SELECT summary FROM left_out)
   )
     ) END
 )`
@@ -161,7 +191,7 @@ export const AROUND_YOU_SQL = `(
 // The app door serves the scope line without the web pointer (decision 142).
 export const AROUND_YOU_SCOPE_LINE = 'Owned places include where you stand.'
 export const AROUND_YOU_SCOPE_REFERENCE = `${AROUND_YOU_SCOPE_LINE} Details: https://1f3d9.com/reference/money.txt`
-const SKIPPED_SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. Intervals with fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot; every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. Eligible intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} changes, including exactly ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')}, require one of two summary slots. If both slots are busy, message says so; if the me read attempt exceeds its database statement budget, message says the summary was skipped. In either case available is false with the same null category fields and interval link. The interval ends at the public cutoff captured before admission; later changes wait for your next visit. Counts and current record state use one final read snapshot. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. "Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text, and walk-to-read notes whose body is read in person, are excluded from mentions. Currently moderated-away records are excluded. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later movement, ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
+const SKIPPED_SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. Intervals with fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot; every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. Eligible intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} changes, including exactly ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')}, require one of two summary slots. If both slots are busy, message says so; if the me read attempt exceeds its database statement budget, message says the summary was skipped. In either case available is false with the same null category fields and interval link. The interval ends at the public cutoff captured before admission; later changes wait for your next visit. Counts and current record state use one final read snapshot. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. "Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text, and walk-to-read notes whose body is read in person, are excluded from mentions. Currently moderated-away records are excluded. Notes and things in a feed room are left out of every category unless you stand in that room, and mentions always leave feed rooms out; left_out_feed_rooms counts what was left out and names those rooms, and is null when the interval was not summarized. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later movement, ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
 
 function unavailable(): never {
   throw new TypeError('around-you summary is invalid')
@@ -210,6 +240,15 @@ function summary(value: unknown, category: Category, after: string | null, throu
   })
 }
 
+function feedRoomsLeftOut(value: unknown): LeftOutFeedRooms {
+  const row = object(value)
+  try {
+    return leftOutFeedRooms(row.count, row.place_ids)
+  } catch {
+    unavailable()
+  }
+}
+
 export function mapAroundYou(value: unknown): AroundYou {
   const row = object(value)
   const after = row.after_change_id === null ? null : marker(row.after_change_id)
@@ -220,6 +259,7 @@ export function mapAroundYou(value: unknown): AroundYou {
   if (budgetUnavailable && after === null) unavailable()
   if (after !== null && (budgetUnavailable || BigInt(through) - BigInt(after) > BigInt(AROUND_YOU_CHANGE_LIMIT))) {
     if (CATEGORIES.some(category => row[category] !== null)) unavailable()
+    if (row.left_out_feed_rooms != null) unavailable()
     return Object.freeze({
       after_change_id: after, through_change_id: through, baseline: false, scope: SKIPPED_SCOPE,
       available: false,
@@ -230,7 +270,7 @@ export function mapAroundYou(value: unknown): AroundYou {
         : 'Too much happened since your last visit to summarize here. This interval was not read; follow read_href through through_change_id.',
       read_href: `/api/changes?since=${after}&limit=${PUBLIC_CHANGE_PAGE_MAX}`,
       notes_in_owned_places: null, new_things_in_owned_places: null,
-      new_agreement_signers: null, mentions: null,
+      new_agreement_signers: null, mentions: null, left_out_feed_rooms: null,
     })
   }
   return Object.freeze({
@@ -240,5 +280,6 @@ export function mapAroundYou(value: unknown): AroundYou {
     new_things_in_owned_places: summary(row.new_things_in_owned_places, 'new_things_in_owned_places', after, through),
     new_agreement_signers: summary(row.new_agreement_signers, 'new_agreement_signers', after, through),
     mentions: summary(row.mentions, 'mentions', after, through),
+    left_out_feed_rooms: feedRoomsLeftOut(row.left_out_feed_rooms),
   })
 }
