@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
-import type { Hono } from 'hono'
+import type { Context, Hono } from 'hono'
 import { err, postgresErrorCode, postgresErrorConstraint, type Resident } from './core.ts'
 import { FEED_KEEPS_QUIET_REFUSAL, FEED_NEEDS_QUIET_REFUSAL, feedQuietRefusal } from './feed-rooms.ts'
 import { sql } from './db.ts'
@@ -115,12 +115,24 @@ import {
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
 import {
+  HIDDEN_REFUSAL,
+  judgeRead,
+  markMutedPlace,
   markReaderShaped,
+  mutedReadAnswer,
+  mutesFields,
+  parseHidden,
   parseShowEverything,
   readerShape,
   readingBlock,
+  rowIds,
   sendsOutlinesOnly,
   SHOW_EVERYTHING_REFUSAL,
+  splitMuted,
+  splitMutedResidents,
+  treePlaceIds,
+  type MuteJudge,
+  type ReaderShape,
 } from './reader-filter.ts'
 import { loadPublicPlaceRecord, loadPublicThingRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
@@ -451,6 +463,36 @@ async function cachedPublicMap() {
   }
 }
 
+/** The note text a dropped note row would have sent: its body or its first line. */
+function noteTextBytes(rows: readonly object[]): number {
+  return utf8TextBytes(rows, 'body') + utf8TextBytes(rows, 'first_line')
+}
+
+/** The purpose and description bytes a muted place row no longer sends. */
+function markedPlaceTextBytes(before: readonly object[], after: readonly object[]): number {
+  const marked = before.filter((_row, index) => (after[index] as Record<string, unknown>)?.muted === true)
+  return utf8TextBytes(marked, 'purpose') + utf8TextBytes(marked, 'description')
+}
+
+/**
+ * A map answer for its reader (decision #156): anonymous answers keep their shared cache
+ * and say they vary by Authorization; a signed-in answer marks the places its reader
+ * muted and is never shared from a cache.
+ */
+async function mapForReader<T>(
+  c: Context,
+  ids: readonly number[],
+  mark: (judge: MuteJudge | null) => T,
+): Promise<Readonly<{ reader: ReaderShape | null; body: T }>> {
+  const reader = await readerShape(c, false)
+  if (reader === null) {
+    c.header('Vary', 'Authorization')
+    return { reader, body: mark(null) }
+  }
+  const judge = await judgeRead(reader, { place: ids })
+  return { reader, body: mark(judge) }
+}
+
 export function mountWorldRoutes(app: Hono): void {
   app.get('/api/map', async c => {
     const query = c.req.queries()
@@ -494,7 +536,15 @@ export function mountWorldRoutes(app: Hono): void {
         return err(c, 404, `continent_id ${continentId} is not an active continent directly inside the world; call look with no target to choose a current continent_id`)
       }
       c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-      return publicJson(c, { view: 'continent', ...page })
+      const shaped = await mapForReader(c, [page.continent.id, ...rowIds(page.places)], judge => (
+        judge === null ? page : {
+          ...page,
+          continent: markMutedPlace(judge, page.continent),
+          places: page.places.map(place => markMutedPlace(judge, place)),
+        }
+      ))
+      markReaderShaped(c, shaped.reader)
+      return publicJson(c, { view: 'continent', ...shaped.body })
     }
     if (continentNames.some(name => Object.hasOwn(query, name))) {
       return err(c, 400, 'continent_id and before_place_id require view=continent; send both view=continent and a current continent_id')
@@ -556,9 +606,18 @@ export function mountWorldRoutes(app: Hono): void {
           ? 'public, max-age=15, s-maxage=60, stale-while-revalidate=300'
           : 'no-store',
       )
+      const found = outline
+      const shaped = await mapForReader(c, [found.place.id, ...rowIds(found.subplaces)], judge => (
+        judge === null ? found : {
+          ...found,
+          place: markMutedPlace(judge, found.place),
+          subplaces: found.subplaces.map(place => markMutedPlace(judge, place)),
+        }
+      ))
+      markReaderShaped(c, shaped.reader)
       return publicJson(c, {
         view: 'outline',
-        ...outline,
+        ...shaped.body,
         ...(changeMarker === null ? {} : { change_marker: changeMarker }),
       })
     }
@@ -569,7 +628,11 @@ export function mountWorldRoutes(app: Hono): void {
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-    return c.json(view === 'full' ? { view: 'full', ...body } : body)
+    const shaped = await mapForReader(c, treePlaceIds(body.places), judge => (
+      judge === null ? body : { ...body, places: body.places.map(place => markMutedPlace(judge, place)) }
+    ))
+    markReaderShaped(c, shaped.reader)
+    return c.json(view === 'full' ? { view: 'full', ...shaped.body } : shaped.body)
   })
 
   app.get('/api/place/:id', async c => {
@@ -586,6 +649,7 @@ export function mountWorldRoutes(app: Hono): void {
       'thing_text_limit_bytes',
       'note_text_limit_bytes',
       'show_everything',
+      'hidden',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(query, 'view')
@@ -595,6 +659,8 @@ export function mountWorldRoutes(app: Hono): void {
     if (askedView !== 'outline' && askedView !== 'full') return err(c, 400, 'view must be outline or full')
     const showEverything = parseShowEverything(query)
     if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
+    const hiddenQuery = parseHidden(query)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
     const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit', 'limit')
@@ -659,18 +725,23 @@ export function mountWorldRoutes(app: Hono): void {
             items: collections.notes as Array<Record<string, unknown> & { id: number }>,
             ...collections.pages.notes,
           }
-      const publicNotes = await moderatePublicRows('note', notesPage.items)
+      const moderatedNotes = await moderatePublicRows('note', notesPage.items)
+      // Mutes (decision #156): a retired place's notes by muted authors are left out and counted.
+      const tombstoneJudge = await judgeRead(reader, { note: rowIds(moderatedNotes) })
+      const tombstoneNotes = splitMuted(tombstoneJudge, 'note', moderatedNotes)
+      const publicNotes = tombstoneNotes.shown
       const tombstoneReading = readingBlock(reader, publicNotes, ['body'])
       return publicJson(c, {
         view,
         ...(tombstoneReading === null ? {} : { reading: tombstoneReading }),
+        ...mutesFields(reader, tombstoneNotes.hidden, hiddenQuery.outline),
         tombstone: publicPlace,
         notes: publicNotes,
         notes_page: {
           total_items: collections.totals.notes.items,
           total_text_bytes: collections.totals.notes.textBytes,
           returned_items: publicNotes.length,
-          returned_text_bytes: notesPage.returnedTextBytes,
+          returned_text_bytes: notesPage.returnedTextBytes - noteTextBytes(tombstoneNotes.hiddenRows),
           has_more: notesPage.hasMore,
           next_before_note_id: notesPage.nextCursor,
           ...(effectiveTextLimits.notes == null ? {} : {
@@ -755,38 +826,62 @@ export function mountWorldRoutes(app: Hono): void {
           items: collections.notes as Array<Record<string, unknown> & { id: number }>,
           ...collections.pages.notes,
         }
-    const [publicSubplaces, publicDetails, publicNotes, publicLineHeadings] = await Promise.all([
+    const [moderatedSubplaces, publicDetails, moderatedNotes, moderatedLineHeadings] = await Promise.all([
       moderatePublicRows('place', subplacesPage.items),
       moderatePlaceDetails(thingsPage.items, laws),
       moderatePublicRows('note', notesPage.items),
       moderatePublicRows('line', lineHeadings.headings),
     ])
+    const frontMatter = (publicPlace as unknown as Record<string, unknown>).moderated === true
+      ? Object.freeze([])
+      : frontMatterByPlace.get(id) ?? Object.freeze([])
+    // Mutes (decision #156), after the moderation overlay: muted notes, things and lines
+    // are left out and counted, muted places stay listed and marked, and the laws stay.
+    const judge = await judgeRead(reader, {
+      place: [id, ...rowIds(moderatedSubplaces)],
+      thing: [...rowIds(publicDetails.things), ...rowIds(frontMatter)],
+      note: rowIds(moderatedNotes),
+      line: rowIds(moderatedLineHeadings),
+    })
+    const mutedThings = splitMuted(judge, 'thing', publicDetails.things)
+    const mutedNotes = splitMuted(judge, 'note', moderatedNotes)
+    const mutedLines = splitMuted(judge, 'line', moderatedLineHeadings)
+    const mutedLooking = splitMutedResidents(judge, lookingResidents.residents, id)
+    const mutedListening = splitMutedResidents(judge, listeningResidents.residents, id)
+    const publicSubplaces = moderatedSubplaces.map(row => markMutedPlace(judge, row))
+    const shownPlace = markMutedPlace(judge, publicPlace)
+    const publicNotes = mutedNotes.shown
+    const publicLineHeadings = mutedLines.shown
     const reading = readingBlock(
       reader,
-      [...publicSubplaces, ...publicDetails.things, ...publicNotes],
+      [...publicSubplaces, ...mutedThings.shown, ...publicNotes],
       ['body', 'description'],
     )
     return publicJson(c, {
       view,
       ...(reading === null ? {} : { reading }),
-      place: { ...publicPlace, labels, laws: publicDetails.laws },
+      ...mutesFields(reader, [
+        ...mutedThings.hidden, ...mutedNotes.hidden, ...mutedLines.hidden,
+        ...mutedLooking.hidden, ...mutedListening.hidden,
+      ], hiddenQuery.outline),
+      place: { ...shownPlace, labels, laws: publicDetails.laws },
       ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
-      front_matter: (publicPlace as unknown as Record<string, unknown>).moderated === true
-        ? Object.freeze([])
-        : frontMatterByPlace.get(id) ?? Object.freeze([]),
+      front_matter: shownPlace === publicPlace
+        ? splitMuted(judge, 'thing', frontMatter).shown
+        : Object.freeze([]),
       subplaces: publicSubplaces,
-      things: publicDetails.things,
+      things: mutedThings.shown,
       notes: publicNotes,
-      looking_residents: lookingResidents.residents,
+      looking_residents: mutedLooking.shown,
       looking_residents_page: {
         total_items: lookingResidents.total,
-        returned_items: lookingResidents.residents.length,
+        returned_items: mutedLooking.shown.length,
         has_more: lookingResidents.has_more,
       },
-      listening_residents: listeningResidents.residents,
+      listening_residents: mutedListening.shown,
       listening_residents_page: {
         total_items: listeningResidents.total,
-        returned_items: listeningResidents.residents.length,
+        returned_items: mutedListening.shown.length,
         has_more: listeningResidents.total > listeningResidents.residents.length,
       },
       line_headings: publicLineHeadings,
@@ -800,7 +895,7 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.subplaces.items,
         total_text_bytes: collections.totals.subplaces.textBytes,
         returned_items: publicSubplaces.length,
-        returned_text_bytes: subplacesPage.returnedTextBytes,
+        returned_text_bytes: subplacesPage.returnedTextBytes - markedPlaceTextBytes(moderatedSubplaces, publicSubplaces),
         has_more: subplacesPage.hasMore,
         next_before_subplace_id: subplacesPage.nextCursor,
         ...(effectiveTextLimits.subplaces == null ? {} : {
@@ -817,8 +912,8 @@ export function mountWorldRoutes(app: Hono): void {
       things_page: {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
-        returned_items: publicDetails.things.length,
-        returned_text_bytes: thingsPage.returnedTextBytes,
+        returned_items: mutedThings.shown.length,
+        returned_text_bytes: thingsPage.returnedTextBytes - (view === 'full' ? utf8TextBytes(mutedThings.hiddenRows, 'body') : 0),
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
         ...(effectiveTextLimits.things == null ? {} : {
@@ -836,7 +931,7 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.notes.items,
         total_text_bytes: collections.totals.notes.textBytes,
         returned_items: publicNotes.length,
-        returned_text_bytes: notesPage.returnedTextBytes,
+        returned_text_bytes: notesPage.returnedTextBytes - noteTextBytes(mutedNotes.hiddenRows),
         has_more: notesPage.hasMore,
         next_before_note_id: notesPage.nextCursor,
         ...(effectiveTextLimits.notes == null ? {} : {
@@ -860,6 +955,11 @@ export function mountWorldRoutes(app: Hono): void {
     if (!id) return err(c, 400, 'thing id must be a positive integer')
     const thing = await loadPublicThingRecord(id)
     if (!thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
+    // Mutes (decision #156): a muted thing read by its id sends only its outline.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const judge = await judgeRead(reader, { thing: [id] })
+    if (judge?.hides('thing', id)) return publicJson(c, mutedReadAnswer('thing', judge.outline('thing', id)))
     return publicJson(c, { thing })
   })
 
@@ -1574,10 +1674,12 @@ export function mountWorldRoutes(app: Hono): void {
 
   app.get('/api/kinds', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit', 'hidden'])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
+    const hiddenQuery = parseHidden(queries)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const rows = await executeBudgetedExactQuery(`
       /* public:kinds */
       WITH totals AS (
@@ -1607,12 +1709,19 @@ export function mountWorldRoutes(app: Hono): void {
     `, [parsed.cursor, parsed.fetchLimit])
     const collection = extractPublicCollectionRows(rows)
     const page = finalizePublicPage(collection.rows as unknown as readonly KindRow[], parsed.limit)
+    const moderated = await moderatePublicKinds(page.items)
+    // Mutes (decision #156): a muted kind, or one owned by a muted resident, is left out and counted.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const kinds = splitMuted(await judgeRead(reader, { kind: rowIds(moderated) }), 'kind', moderated)
+    const sentItems = page.items.filter((_row, index) => kinds.shown.includes(moderated[index]!))
     return publicJson(c, {
-      kinds: await moderatePublicKinds(page.items),
+      ...mutesFields(reader, kinds.hidden, hiddenQuery.outline),
+      kinds: kinds.shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
-      returned_items: page.items.length,
-      returned_text_bytes: utf8TextBytes(page.items, 'description'),
+      returned_items: sentItems.length,
+      returned_text_bytes: utf8TextBytes(sentItems, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })
@@ -1933,10 +2042,12 @@ export function mountWorldRoutes(app: Hono): void {
 
   app.get('/api/traits', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
+    const allowed = allowedPublicQuery(queries, ['before_id', 'limit', 'hidden'])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
+    const hiddenQuery = parseHidden(queries)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const rows = await executeBudgetedExactQuery(`
       /* public:traits */
       WITH totals AS (
@@ -1964,15 +2075,19 @@ export function mountWorldRoutes(app: Hono): void {
       collection.rows as Array<Record<string, unknown> & { id: number }>,
       parsed.limit,
     )
+    const moderated = await moderatePublicRows('trait', page.items)
+    // Mutes (decision #156): a trait coined by a muted resident is left out and counted.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const traits = splitMuted(await judgeRead(reader, { trait: rowIds(moderated) }), 'trait', moderated)
+    const sentItems = page.items.filter((_row, index) => traits.shown.includes(moderated[index]!))
     return publicJson(c, {
-      traits: await moderatePublicRows(
-        'trait',
-        page.items,
-      ),
+      ...mutesFields(reader, traits.hidden, hiddenQuery.outline),
+      traits: traits.shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
-      returned_items: page.items.length,
-      returned_text_bytes: utf8TextBytes(page.items, 'description'),
+      returned_items: sentItems.length,
+      returned_text_bytes: utf8TextBytes(sentItems, 'description'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })

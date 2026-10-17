@@ -30,9 +30,9 @@ const { mountGazetteRoutes } = await import('../src/gazette-routes.ts')
 const { mcp } = await import('../src/mcp.ts')
 const { default: app } = await import('../src/index.ts')
 
-const FOCUSED = Object.freeze({ residentId: 7, focus: true, showEverything: false })
-const FOCUSED_ONCE = Object.freeze({ residentId: 7, focus: true, showEverything: true })
-const UNFOCUSED = Object.freeze({ residentId: 7, focus: false, showEverything: false })
+const FOCUSED = Object.freeze({ residentId: 7, focus: true, showEverything: false, mutes: null })
+const FOCUSED_ONCE = Object.freeze({ residentId: 7, focus: true, showEverything: true, mutes: null })
+const UNFOCUSED = Object.freeze({ residentId: 7, focus: false, showEverything: false, mutes: null })
 
 const drawing = Object.freeze({
   palette: Object.freeze(['#ad3f25', '#f0c95f', '#112233']),
@@ -44,7 +44,7 @@ test('the refusals are stated in caller words', () => {
   assert.equal(NOTE_VIEW_REFUSAL, 'note_view must be outline or full; outline sends each of your notes with its size instead of its body')
   assert.equal(
     SETTINGS_CHANGE_REFUSAL,
-    'settings changes must be an object with focus_mode set to true or false, like {"focus_mode": true}; send settings "show" to read your settings',
+    'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow or unallow, like {"focus_mode": true} or {"mute": {"type": "resident", "id": 12}}; send settings "show" to read your settings',
   )
   assert.equal(FOCUS_MODE_DEFAULT, false, 'focus mode is off until a resident turns it on')
 })
@@ -115,8 +115,9 @@ test('a read without a credential never looks up a reader, and an unreadable sto
   anonymous.get('/', async c => c.json({ shape: await readerShape(c, false, counting) }))
   assert.deepEqual(await (await anonymous.request('/')).json(), { shape: null })
   assert.equal(reads, 0)
-  assert.deepEqual(await residentReaderShape(7, true, counting), { residentId: 7, focus: true, showEverything: true })
-  assert.equal(await residentReaderShape(7, false, async () => { throw new Error('store down') }), null)
+  const noMutes = async () => null
+  assert.deepEqual(await residentReaderShape(7, true, counting, noMutes), { residentId: 7, focus: true, showEverything: true, mutes: null })
+  assert.equal(await residentReaderShape(7, false, async () => { throw new Error('store down') }, noMutes), null)
 })
 
 function drawingApp(reader: typeof FOCUSED | null) {
@@ -259,7 +260,7 @@ test('me with settings is its own call and refuses anything but "show" or an obj
     assert.equal(refused.isError, true, JSON.stringify(settings))
     assert.match(
       refused.content[0]!.text,
-      /settings changes must be an object with focus_mode set to true or false, like \{\\"focus_mode\\": true\}; send settings \\"show\\" to read your settings/u,
+      /settings changes must be an object with one of focus_mode \(true or false\), mute, unmute, allow or unallow, like \{\\"focus_mode\\": true\} or \{\\"mute\\": \{\\"type\\": \\"resident\\", \\"id\\": 12\}\}; send settings \\"show\\" to read your settings/u,
     )
   }
 })

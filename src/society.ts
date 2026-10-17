@@ -66,12 +66,20 @@ import {
 import { publicJson } from './public-output.ts'
 import {
   bodyOutline,
+  HIDDEN_REFUSAL,
+  judgeRead,
   markReaderShaped,
+  mutedReadAnswer,
+  mutesFields,
+  parseHidden,
   parseShowEverything,
   readerShape,
   readingBlock,
+  residentReaderShape,
+  rowIds,
   sendsOutlinesOnly,
   SHOW_EVERYTHING_REFUSAL,
+  splitMuted,
 } from './reader-filter.ts'
 import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
@@ -250,6 +258,11 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!piece.ok) return err(c, 400, piece.error)
     const note = await loadPublicNoteRecord(id)
     if (!note) return err(c, 404, missingNoteRefusal(id))
+    // Mutes (decision #156): a muted note read by its id sends only its outline.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const judge = await judgeRead(reader, { note: [id] })
+    if (judge?.hides('note', id)) return publicJson(c, mutedReadAnswer('note', judge.outline('note', id)))
     const safe = sanitizePublicValue(note)
     if (safe.withheld) return publicJson(c, { note })
     const shaped = shapeNoteRead(safe.value as Readonly<Record<string, unknown>>, piece.piece)
@@ -274,6 +287,9 @@ export function mountSocietyRoutes(app: Hono): void {
     const read = await readNoteHere(id, resident.id, resident.id === 1 && presentedRootKey(c))
     if (!read) return err(c, 404, missingNoteRefusal(id))
     if (!read.ok) return err(c, read.status, read.error)
+    // Mutes (decision #156): standing there does not open a note the reader muted.
+    const judge = await judgeRead(await residentReaderShape(resident.id, false), { note: [id] })
+    if (judge?.hides('note', id)) return c.json(mutedReadAnswer('note', judge.outline('note', id)))
     // Redact the whole body before slicing, so no credential is split across two pieces.
     const safe = sanitizePublicValue(read.note)
     if (safe.withheld) return publicJson(c, { note: read.note })
@@ -462,10 +478,12 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.get('/api/agreements', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit', 'show_everything'])
+    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit', 'show_everything', 'hidden'])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const showEverything = parseShowEverything(queries)
     if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
+    const hiddenQuery = parseHidden(queries)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
     const partyValue = singlePublicQueryValue(queries, 'party')
@@ -542,16 +560,21 @@ export function mountSocietyRoutes(app: Hono): void {
     // outline, its body as a size, unless this read asks for show_everything.
     const reader = await readerShape(c, showEverything.value)
     markReaderShaped(c, reader)
-    const shown = sendsOutlinesOnly(reader) ? moderated.map(row => bodyOutline(row)) : moderated
+    // Mutes (decision #156): an agreement written by a muted resident is left out and
+    // counted, unless the reader is one of its parties.
+    const muted = splitMuted(await judgeRead(reader, { agreement: rowIds(moderated) }), 'agreement', moderated)
+    const sentAgreements = agreements.filter((_row, index) => muted.shown.includes(moderated[index]!))
+    const shown = sendsOutlinesOnly(reader) ? muted.shown.map(row => bodyOutline(row)) : muted.shown
     const reading = readingBlock(reader, shown, ['body'])
     return publicJson(c, {
       ...(reading === null ? {} : { reading }),
+      ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
       agreements: shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
-      returned_items: agreements.length,
+      returned_items: sentAgreements.length,
       // Unshaped answers keep the count over the stored bodies, exactly as before focus mode.
-      returned_text_bytes: utf8TextBytes(sendsOutlinesOnly(reader) ? shown : agreements, 'body'),
+      returned_text_bytes: utf8TextBytes(sendsOutlinesOnly(reader) ? shown : sentAgreements, 'body'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })

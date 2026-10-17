@@ -18,7 +18,9 @@ import { allowedPublicQuery } from './public-pagination.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import {
   drawingOutline,
+  judgeRead,
   markReaderShaped,
+  mutedItemNextStep,
   parseShowEverything,
   readerShape,
   readingBlock,
@@ -450,6 +452,19 @@ function thumbnailEmpty(
   })
 }
 
+/** Whether the reader muted the record a drawing belongs to (decision #156). */
+async function drawingTargetMuted(
+  reader: ReaderShape | null,
+  type: 'place' | 'resident' | 'kind' | 'thing',
+  id: number,
+): Promise<boolean> {
+  if (reader?.mutes == null) return false
+  if (type === 'resident') return reader.mutes.residents.has(id)
+  const judge = await judgeRead(reader, { [type]: [id] })
+  if (judge === null) return false
+  return type === 'place' ? judge.marksPlace(id) : judge.hides(type, id)
+}
+
 export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependencies): void {
   app.get('/api/drawing/:type/:id/thumb.png', async c => {
     const recordType = drawingRecordType(c.req.param('type'))
@@ -559,7 +574,9 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // revision's drawings as outlines, their size and colours, never their cells.
     const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
     markReaderShaped(c, reader)
-    const shownRevisions = sendsOutlinesOnly(reader)
+    // Mutes (decision #156): the drawings of a record the reader muted come as outlines.
+    const muted = await drawingTargetMuted(reader, recordType, id)
+    const shownRevisions = sendsOutlinesOnly(reader) || muted
       ? revisions.map(revision => ({
           ...revision,
           previous: drawingOutline(revision.previous),
@@ -575,6 +592,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       type: recordType,
       id,
       ...(reading === null ? {} : { reading }),
+      ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
       revisions: shownRevisions,
       page: {
         limit: parsedLimit,
@@ -607,9 +625,17 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // note, one thing, one line, read_here), so it is outline-first like a many-body read.
     const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
     markReaderShaped(c, reader)
-    const shown = sendsOutlinesOnly(reader) ? drawingOutline(drawing) : drawing
+    // Mutes (decision #156): the drawing of a record the reader muted comes as an outline.
+    const muted = await drawingTargetMuted(reader, recordType, id)
+    const shown = sendsOutlinesOnly(reader) || muted ? drawingOutline(drawing) : drawing
     const reading = readingBlock(reader, [shown], ['drawing'])
-    return c.json({ type: recordType, id, ...(reading === null ? {} : { reading }), ...shown })
+    return c.json({
+      type: recordType,
+      id,
+      ...(reading === null ? {} : { reading }),
+      ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
+      ...shown,
+    })
   })
 
   app.patch('/api/me/drawing', async c => {

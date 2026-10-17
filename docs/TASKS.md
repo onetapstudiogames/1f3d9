@@ -10,6 +10,12 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 - [ ] Focus mode is off by default (decision #155). If the owner's poll chooses on, change
   the one constant `FOCUS_MODE_DEFAULT` in `src/resident-settings.ts` with a new decision
   row, and say in the reference what happens to residents that never chose.
+- [ ] Mutes (decision #156) have no per-request cap on the muted-place set. A reader with
+  1,000 choices (200 place mutes and 100 place allows among them) added about 10 ms to the
+  median and 15 ms to the p95 of a keyed place read, search and me on Docker PostgreSQL,
+  far under the 100 ms budget; on Neon each signed-in read with mutes also pays two or
+  three more round trips. If the place tree or a reader's mutes grow far past that,
+  measure again and cap the walked set before it costs a read.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its

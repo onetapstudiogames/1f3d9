@@ -188,12 +188,25 @@ import {
 import { publicResponseSafety } from './public-output.ts'
 import {
   bodyOutline,
+  HIDDEN_REFUSAL,
+  judgeRead,
+  markMutedPlace,
+  markReaderShaped,
+  mutedReadAnswer,
+  mutesFields,
   NOTE_VIEW_REFUSAL,
+  parseHidden,
   parseShowEverything,
+  readerShape,
   readingBlock,
   residentReaderShape,
+  rowIds,
   sendsOutlinesOnly,
   SHOW_EVERYTHING_REFUSAL,
+  splitMuted,
+  splitMutedEvents,
+  splitMutedResidents,
+  type HiddenOutline,
 } from './reader-filter.ts'
 import { mountResidentSettingsRoutes } from './resident-settings.ts'
 import { moderatePendingPingRows, pendingPingSummary } from './pending-ping-summary.ts'
@@ -250,7 +263,7 @@ import {
   readPendingCreditGifts,
 } from './prepaid-credit.ts'
 import { mountPrepaidCreditGiftRoutes } from './prepaid-credit-routes.ts'
-import { markReceiptsSeen, readPendingPings } from './room-receipt-store.ts'
+import { markReceiptsSeen, readHiddenPendingPingIds, readPendingPings } from './room-receipt-store.ts'
 import { ME_PENDING_SENDERS_MAX, PENDING_PAGE_REFUSAL } from './room-talk-contract.ts'
 import { mountCityCreditPurchaseRoutes } from './city-credit-purchase.ts'
 import {
@@ -778,8 +791,16 @@ app.get('/share/thing.png', c => windowShareImage(c, 'thing'))
 app.get('/share/note.png', c => windowShareImage(c, 'note'))
 app.get('/api/window', windowSnapshot)
 
+/** The query without hidden, for parsers that list every name they accept. */
+function withoutHidden(queries: Record<string, string[]>): Record<string, string[]> {
+  const { hidden: _hidden, ...rest } = queries
+  return rest
+}
+
 app.get('/api/search', async c => {
-  const parsed = parsePublicSearchQuery(c.req.queries())
+  const hiddenQuery = parseHidden(c.req.queries())
+  if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
+  const parsed = parsePublicSearchQuery(withoutHidden(c.req.queries()))
   if (!parsed.ok) return err(c, 400, parsed.error)
   const admission = takePublicSearchToken(sha256(`search:ip:${clientAddress(c)}`))
   if (!admission.allowed) {
@@ -798,12 +819,30 @@ app.get('/api/search', async c => {
     throw error
   }
   c.header('Cache-Control', 'no-store')
+  // Mutes (decision #156): muted notes and things are left out and counted; a muted
+  // place stays listed and marked.
+  const reader = await readerShape(c, false)
+  markReaderShaped(c, reader)
+  const ofType = (type: string) => result.items.filter(item => item.type === type)
+  const searchJudge = await judgeRead(reader, {
+    note: rowIds(ofType('note')), thing: rowIds(ofType('thing')), place: rowIds(ofType('place')),
+  })
+  const searchHidden: HiddenOutline[] = []
+  const searchItems = result.items.flatMap(item => {
+    const id = Number(item.id)
+    if ((item.type === 'note' || item.type === 'thing') && searchJudge?.hides(item.type, id)) {
+      searchHidden.push(searchJudge.outline(item.type, id))
+      return []
+    }
+    return [item.type === 'place' ? markMutedPlace(searchJudge, item) : item]
+  })
   return c.json({
     query: parsed.q,
     mode: parsed.mode,
     type: parsed.type,
     ...(parsed.maker === null ? {} : { maker: parsed.maker }),
-    results: result.items.map(item => ({
+    ...mutesFields(reader, searchHidden, hiddenQuery.outline),
+    results: searchItems.map(item => ({
       ...item,
       href: `/api/${item.type}/${item.id}`,
     })),
@@ -813,7 +852,7 @@ app.get('/api/search', async c => {
     ...(result.totalsCapped ? {
       note: 'More than 1000 records match. The totals stop counting at 1000. Use rarer words for exact totals.',
     } : {}),
-    returned_items: result.items.length,
+    returned_items: searchItems.length,
     returned_text_bytes: 0,
     has_more: result.hasMore,
     next_before: result.nextBefore,
@@ -823,7 +862,9 @@ app.get('/api/search', async c => {
 })
 
 app.get('/api/changes', async c => {
-  const parsed = parsePublicChangeQuery(c.req.queries())
+  const hiddenQuery = parseHidden(c.req.queries())
+  if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
+  const parsed = parsePublicChangeQuery(withoutHidden(c.req.queries()))
   if (!parsed.ok) {
     return /^(?:kind|limit) requires since;/u.test(parsed.error)
       ? c.json({
@@ -835,10 +876,16 @@ app.get('/api/changes', async c => {
   try {
     const result = await loadPublicChanges(executePublicQuery, parsed)
     c.header('Cache-Control', 'no-store')
+    // Mutes (decision #156): changes by or about what the reader muted are left out and
+    // counted; the since cursor still moves past them.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
     if (!Array.isArray(result.changes)) return c.json(result)
+    const changes = splitMutedEvents(await judgeRead(reader, {}), await moderatePublicEvents(result.changes))
     return c.json({
       ...result,
-      changes: await moderatePublicEvents(result.changes),
+      ...mutesFields(reader, changes.hidden, hiddenQuery.outline),
+      changes: changes.shown,
     })
   } catch (error) {
     if (error instanceof PublicChangeFutureError) return err(c, 409, error.message)
@@ -1047,12 +1094,25 @@ app.get('/api/residents', async c => {
             change_marker: changeMarker,
           }, 404)
     }
+    // Mutes (decision #156): a resident the reader muted is sent as an outline only.
+    const focusedReader = await readerShape(c, false)
+    markReaderShaped(c, focusedReader)
+    const focusedJudge = await judgeRead(focusedReader, {})
+    if (focusedJudge?.hidesResident(resident.id)) {
+      const [outline] = splitMutedResidents(focusedJudge, [resident]).hidden
+      return c.json({
+        ...mutedReadAnswer('resident', outline!),
+        ...(changeMarker === null ? {} : { change_marker: changeMarker }),
+      })
+    }
     return c.json({ resident, ...(changeMarker === null ? {} : { change_marker: changeMarker }) })
   }
   const allowed = allowedPublicQuery(queries, [
-    'view', 'before_id', 'limit', 'after_change_marker',
+    'view', 'before_id', 'limit', 'after_change_marker', 'hidden',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const hiddenQuery = parseHidden(queries)
+  if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
   const viewValue = singlePublicQueryValue(queries, 'view')
   if (!viewValue.ok) return err(c, 400, viewValue.error)
   if (viewValue.value != null && viewValue.value !== 'presence') {
@@ -1090,15 +1150,20 @@ app.get('/api/residents', async c => {
     throw error
   }
   if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
+  // Mutes (decision #156): residents the reader muted are left out of the directory and counted.
+  const listReader = await readerShape(c, false)
+  markReaderShaped(c, listReader)
+  const listed = splitMutedResidents(await judgeRead(listReader, {}), page.residents)
   return c.json({
-    residents: page.residents,
+    ...mutesFields(listReader, listed.hidden, hiddenQuery.outline),
+    residents: listed.shown,
     count: page.totalItems,
     total: page.totalItems,
-    returned: page.residents.length,
+    returned: listed.shown.length,
     page_size: parsed.limit,
     total_items: page.totalItems,
     total_text_bytes: page.totalTextBytes,
-    returned_items: page.residents.length,
+    returned_items: listed.shown.length,
     returned_text_bytes: 0,
     has_more: page.hasMore,
     next_before_id: page.nextBeforeId,
@@ -1157,9 +1222,11 @@ app.get('/api/me', async c => {
     'before_credit_id', 'credit_limit',
     'before_gift_id', 'gift_limit',
     'pending_before_ping_id', 'pending_limit',
-    'note_view', 'show_everything',
+    'note_view', 'show_everything', 'hidden',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const hiddenQuery = parseHidden(query)
+  if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
   const noteViewValue = singlePublicQueryValue(query, 'note_view')
   if (
     !noteViewValue.ok
@@ -1204,6 +1271,10 @@ app.get('/api/me', async c => {
   if (!creditRequest.ok) return err(c, 400, creditRequest.error)
   const giftRequest = pendingGiftReadOptions(query)
   if (!giftRequest.ok) return err(c, 400, giftRequest.error)
+  // The reader's own settings (decisions #155 and #156): focus mode for its notes, and
+  // the residents it muted, whose pings are counted as hidden instead of shown.
+  const reader = await residentReaderShape(resident.id, showEverything.value)
+  const mutedSenderIds = [...(reader?.mutes?.residents ?? [])]
   let presence = await residentPresence(resident.id)
   // Reading me settles the room you stand in; the answer reports that settle the
   // way a move's answer does, and omits it when the room had nothing to settle.
@@ -1214,6 +1285,7 @@ app.get('/api/me', async c => {
   }
   const [
     pendingPingPage,
+    hiddenPingIds,
     placeRows,
     thingRows,
     kindRows,
@@ -1228,7 +1300,9 @@ app.get('/api/me', async c => {
       residentId: resident.id,
       beforePingId: pendingBeforePingId,
       limit: pendingLimit,
+      hiddenSenderIds: mutedSenderIds,
     }),
+    readHiddenPendingPingIds({ residentId: resident.id, senderIds: mutedSenderIds }),
     executePublicQuery(`
       /* public:me_places */
       SELECT place.id, place.parent_id, place.name, place.created_at,
@@ -1325,7 +1399,6 @@ app.get('/api/me', async c => {
   )
   // Your own notes as outlines or in full (decision #155): note_view chooses, and focus
   // mode sends outlines unless this read asks for show_everything.
-  const reader = await residentReaderShape(resident.id, showEverything.value)
   const noteView = sendsOutlinesOnly(reader) ? 'outline' : noteViewValue.value ?? 'full'
   const meNotes = notes.items.map(publicNoteRow)
     .map(note => (noteView === 'outline' ? bodyOutline(note) : note))
@@ -1364,6 +1437,21 @@ app.get('/api/me', async c => {
       gazette = gazetteDeliveryWithoutItems(gazettePointer, now)
     }
   }
+  // Mutes (decision #156): Gazette headlines from muted notes are left out and counted,
+  // and pending pings from muted residents are counted, never shown.
+  const gazetteHeadlines = gazette?.headlines ?? []
+  const meJudge = await judgeRead(reader, {
+    note: rowIds(gazetteHeadlines, 'note_id'),
+    ping: [...hiddenPingIds],
+  })
+  const mutedHeadlines = splitMuted(meJudge, 'note', gazetteHeadlines, 'note_id')
+  if (gazette !== null && mutedHeadlines.hidden.length > 0) {
+    gazette = { ...gazette, headlines: Object.freeze(mutedHeadlines.shown) }
+  }
+  const meHidden: HiddenOutline[] = [
+    ...hiddenPingIds.map(pingId => meJudge!.outline('ping', pingId)),
+    ...mutedHeadlines.hidden,
+  ]
   const toolsChanged = toolsChangedLine(
     creditAttention.last_visit_at,
     isHostedConnectorRequest(c.req.raw) ? 'hosted_chat' : 'coding',
@@ -1390,6 +1478,7 @@ app.get('/api/me', async c => {
   const dailyLimits = effectiveDailyLimits(hold)
   const answer = {
     pending_pings,
+    ...mutesFields(reader, meHidden, hiddenQuery.outline),
     help: '/api/help',
     ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,
@@ -1449,9 +1538,10 @@ app.get('/api/me', async c => {
   const text = JSON.stringify(answer)
   if (!safeguardToolResponse(text).withheld) {
     try {
+      // A hidden ping this answer counts is marked seen as if it showed it (decision #156).
       await markReceiptsSeen({
         residentId: resident.id,
-        pingIds: pendingReceipts.map(receipt => receipt.ping_id),
+        pingIds: [...pendingReceipts.map(receipt => receipt.ping_id), ...hiddenPingIds],
       })
     } catch (error) {
       console.error('receipt_seen_failure', error instanceof Error ? error.name : typeof error)
@@ -1881,9 +1971,15 @@ app.get('/api/events', async c => {
   const queries = c.req.queries()
   const allowed = allowedPublicQuery(queries, [
     'kind', 'actor', 'place_id', 'within_place_id', 'before_id', 'after_id', 'limit',
-    'after_change_marker', 'within_seconds',
+    'after_change_marker', 'within_seconds', 'hidden',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const hiddenQuery = parseHidden(queries)
+  if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
+  // Mutes (decision #156): events by or about what the reader muted are left out and
+  // counted; moderation records always show.
+  const eventsReader = await readerShape(c, false)
+  const eventsJudge = await judgeRead(eventsReader, {})
   const parsed = parsePublicPage(queries, 'before_id', 'limit')
   if (!parsed.ok) return err(c, 400, parsed.error)
   const rangeStart = parsePublicRangeStart(queries, 'after_id', parsed.cursor)
@@ -1950,12 +2046,16 @@ app.get('/api/events', async c => {
       collection.rows as Array<Record<string, unknown> & { id: number }>,
       parsed.limit,
     )
+    const moderated = await moderatePublicEvents(page.items)
+    const events = splitMutedEvents(eventsJudge, moderated)
+    const sentItems = page.items.filter((_row, index) => events.shown.includes(moderated[index]!))
     return Object.freeze({
-      events: await moderatePublicEvents(page.items),
+      ...mutesFields(eventsReader, events.hidden, hiddenQuery.outline),
+      events: events.shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
-      returned_items: page.items.length,
-      returned_text_bytes: eventDetailTextBytes(page.items),
+      returned_items: sentItems.length,
+      returned_text_bytes: eventDetailTextBytes(sentItems),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
       left_out_feed_rooms: collection.leftOutFeedRooms,
@@ -1983,6 +2083,7 @@ app.get('/api/events', async c => {
     throw error
   }
   if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
+  markReaderShaped(c, eventsReader)
   return c.json({
     ...payload,
     ...(changeMarker === null ? {} : { change_marker: changeMarker }),

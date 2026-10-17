@@ -15,12 +15,18 @@ import {
   singlePublicQueryValue,
 } from './public-pagination.ts'
 import {
+  HIDDEN_REFUSAL,
+  judgeRead,
   markReaderShaped,
+  mutesFields,
+  parseHidden,
   parseShowEverything,
   readerShape as defaultReaderShape,
   readingBlock,
+  rowIds,
   SHOW_EVERYTHING_REFUSAL,
   sendsOutlinesOnly,
+  splitMuted,
   type ReaderShape,
 } from './reader-filter.ts'
 
@@ -252,9 +258,11 @@ export function mountGazetteRoutes<Database>(
     if (issueNumber === null) return err(c, 400, 'issue_number must be a positive integer')
     const queries = c.req.queries()
     const allowed = allowedPublicQuery(queries, [
-      'after_ordinal', 'limit', 'view', 'entry_text_limit_bytes', 'show_everything',
+      'after_ordinal', 'limit', 'view', 'entry_text_limit_bytes', 'show_everything', 'hidden',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const hiddenQuery = parseHidden(queries)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const page = parsePublicPage(queries, 'after_ordinal', 'limit')
     if (!page.ok) return err(c, 400, page.error)
     const viewValue = singlePublicQueryValue(queries, 'view')
@@ -289,19 +297,28 @@ export function mountGazetteRoutes<Database>(
     })
     if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number`)
     const stoppedForTextLimit = result.stoppedForTextLimit ?? false
+    // Mutes (decision #156): entries printed from notes the reader muted are left out and counted.
+    const muted = splitMuted(
+      await judgeRead(reader, { note: rowIds(result.entries, 'note_id') }),
+      'note',
+      result.entries,
+      'note_id',
+    )
     const entries = view === 'outline'
-      ? result.entries.map(issueEntryOutline)
-      : result.entries.map(issueEntry)
+      ? muted.shown.map(issueEntryOutline)
+      : muted.shown.map(issueEntry)
     const reading = readingBlock(reader, entries, ['body'])
     return c.json({
       ...(requestedView == null && view === askedView ? {} : { view }),
       ...(reading === null ? {} : { reading }),
+      ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
       issue: issueDetail(result.issue),
       entries,
       has_more: result.hasMore,
       next_after_ordinal: result.nextAfterOrdinal,
       ...(effectiveTextLimit == null ? {} : {
-        returned_text_bytes: result.returnedTextBytes ?? 0,
+        returned_text_bytes: (result.returnedTextBytes ?? 0)
+          - muted.hiddenRows.reduce((total, entry) => total + Buffer.byteLength(entry.body, 'utf8'), 0),
         text_limit_bytes: effectiveTextLimit,
         stopped_for_text_limit: stoppedForTextLimit,
         next_item_ordinal: result.nextItemOrdinal ?? null,

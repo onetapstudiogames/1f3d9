@@ -19,7 +19,22 @@ import { readLine, readPing, readPlaceLines } from './room-talk-reads.ts'
 import { readTalkNow, TALK_NOW_CREDENTIAL_HEADERS } from './talk-now.ts'
 import { TALK_PRIVATE_CACHE_CONTROL, TALK_SHARED_CACHE_CONTROL } from './talk-watch-limits.ts'
 import { sayLine } from './room-line-store.ts'
-import { holdWait } from './room-wait-hold.ts'
+import { holdWait, type WaitRead } from './room-wait-hold.ts'
+import {
+  HIDDEN_REFUSAL,
+  judgeRead,
+  markReaderShaped,
+  mutedReadAnswer,
+  mutesFields,
+  parseHidden,
+  readerShape,
+  residentReaderShape,
+  rowIds,
+  splitMuted,
+  splitMutedResidents,
+  type HiddenOutline,
+  type ReaderShape,
+} from './reader-filter.ts'
 import { openWait, readListening, readWaitChanges, releaseWait } from './room-wait-store.ts'
 import {
   LINE_FIELDS_REFUSAL,
@@ -70,6 +85,30 @@ function talkWriteHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Vary', 'Authorization')
+}
+
+/**
+ * Mutes (decision #156) inside a wait: the reader's muted lines and pings are dropped
+ * before the wait decides to return, so they never end it early; the cursors still move
+ * past them, and each dropped one is counted once.
+ */
+async function withoutMuted(
+  shape: ReaderShape | null,
+  read: WaitRead,
+  hidden: HiddenOutline[],
+): Promise<WaitRead> {
+  if (shape?.mutes == null || (read.lines.length === 0 && read.pings.length === 0)) return read
+  const judge = await judgeRead(shape, {
+    line: rowIds(read.lines),
+    ping: read.pings.map(entry => entry.ping.id),
+  })
+  const lines = splitMuted(judge, 'line', read.lines)
+  const pings = read.pings.filter(entry => !judge?.hides('ping', entry.ping.id))
+  hidden.push(
+    ...lines.hidden,
+    ...read.pings.filter(entry => !pings.includes(entry)).map(entry => judge!.outline('ping', entry.ping.id)),
+  )
+  return { ...read, lines: lines.shown, pings }
 }
 
 export function mountRoomTalkRoutes(app: Hono): void {
@@ -182,6 +221,9 @@ export function mountRoomTalkRoutes(app: Hono): void {
       || (afterPing !== null && BigInt(afterPing) > BigInt(checkpoint))
     ) return talkRefusalResponse(c, WAIT_CURSOR_REFUSAL)
 
+    // The reader's mutes are loaded once per wait, not once per poll.
+    const shape = await residentReaderShape(resident.id, false)
+    const hiddenInWait: HiddenOutline[] = []
     const opened = await openWait({ residentId: resident.id, seconds })
     if (!opened.ok) return talkRefusalResponse(c, opened.refusal)
     const { lease } = opened.answer
@@ -214,12 +256,12 @@ export function mountRoomTalkRoutes(app: Hono): void {
           line: afterLine ?? checkpoint,
           ping: afterPing ?? checkpoint,
         },
-        read: cursors => readWaitChanges({
+        read: async cursors => withoutMuted(shape, await readWaitChanges({
           residentId: resident.id,
           leaseId: lease.lease_id,
           placeId: lease.place_id,
           cursors,
-        }),
+        }), hiddenInWait),
         closed: () => closed,
         sleep: milliseconds => timerSleep(milliseconds, undefined, { signal: controller.signal })
           .then(() => undefined)
@@ -250,6 +292,8 @@ export function mountRoomTalkRoutes(app: Hono): void {
       ...entry,
       ping: publicPings[index]!,
     }))
+    const listeningJudge = await judgeRead(shape, {})
+    const shownListening = splitMutedResidents(listeningJudge, listening.residents, lease.place_id)
     const reason = held.reason === 'closed' ? 'timeout' : held.reason
     return c.json({
       place_id: lease.place_id,
@@ -261,12 +305,13 @@ export function mountRoomTalkRoutes(app: Hono): void {
       pings,
       pings_has_more: held.read.pingsHasMore,
       next_after_ping_change: held.read.next.ping,
-      listening_here: listening.residents,
+      listening_here: shownListening.shown,
       listening_here_page: {
         total_items: listening.total,
-        returned_items: listening.residents.length,
+        returned_items: shownListening.shown.length,
         has_more: listening.total > listening.residents.length,
       },
+      ...mutesFields(shape, [...hiddenInWait, ...shownListening.hidden], false),
     } satisfies WaitAnswer, 200)
   })
 
@@ -278,6 +323,11 @@ export function mountRoomTalkRoutes(app: Hono): void {
     const line = await readLine(id)
     if (!line) return talkRefusalResponse(c, lineNotFoundRefusal(id))
     const moderated = await moderatePublicRows('line', [line])
+    // Mutes (decision #156): a muted line read by its id sends only its outline.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const judge = await judgeRead(reader, { line: [id] })
+    if (judge?.hides('line', id)) return publicJson(c, mutedReadAnswer('line', judge.outline('line', id)))
     return publicJson(c, { line: moderated[0] })
   })
 
@@ -289,13 +339,20 @@ export function mountRoomTalkRoutes(app: Hono): void {
     const ping = await readPing(id)
     if (!ping) return talkRefusalResponse(c, pingReadNotFoundRefusal(id))
     const moderated = await moderatePublicRows('ping', [ping])
+    // Mutes (decision #156): a ping from a muted resident read by its id sends only its outline.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const judge = await judgeRead(reader, { ping: [id] })
+    if (judge?.hides('ping', id)) return publicJson(c, mutedReadAnswer('ping', judge.outline('ping', id)))
     return publicJson(c, { ping: moderated[0] })
   })
 
   app.get('/api/place/:id/lines', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['before_line_id', 'after_line_id', 'limit'])
+    const allowed = allowedPublicQuery(queries, ['before_line_id', 'after_line_id', 'limit', 'hidden'])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const hiddenQuery = parseHidden(queries)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const parsed = parsePublicPage(queries, 'before_line_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
     const rangeStart = parsePublicRangeStart(queries, 'after_line_id', parsed.cursor)
@@ -309,9 +366,16 @@ export function mountRoomTalkRoutes(app: Hono): void {
       limit: parsed.limit,
     })
     if (!result.placeExists) return talkRefusalResponse(c, placeLinesNotFoundRefusal(placeId))
-    const lines = await moderatePublicRows('line', result.lines)
+    const moderated = await moderatePublicRows('line', result.lines)
+    // Mutes (decision #156): muted lines are left out and counted; the cursor still
+    // moves past them, so the next page starts where this one ended.
+    const reader = await readerShape(c, false)
+    markReaderShaped(c, reader)
+    const muted = splitMuted(await judgeRead(reader, { line: rowIds(moderated) }), 'line', moderated)
+    const lines = muted.shown
     return publicJson(c, {
       place_id: placeId,
+      ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
       lines,
       lines_page: {
         total_items: result.totalItems,

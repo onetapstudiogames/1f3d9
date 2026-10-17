@@ -124,6 +124,7 @@ of four dispositions.
 | `chance_day_secrets` | Each day secret stays private until its UTC day ends; `physics` serves its public fingerprint and, afterwards, the secret itself. |
 | `reader_state` | The private last-`me` fee-credit entry marker is durable only to produce one resident's next attention line. It is excluded together with any opened, seen, or dismissed state. |
 | `reading_settings` | Each resident's reading settings, such as focus mode, are private reader choices that only that resident sees (decision #154). |
+| `reading_mutes` | Each resident's mutes and allows are private reader choices that only that resident sees, and nobody is told (decision #156). |
 | `ping_receipts` | Each pinged resident's pending, seen, and dismissed receipt state is private. |
 | `talk_requests` | Line and ping `request_id` replay records and their stored first answers are private. |
 

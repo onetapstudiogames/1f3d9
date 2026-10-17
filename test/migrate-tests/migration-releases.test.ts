@@ -635,6 +635,67 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the resident settings statements')
   })
 
+  test('the resident mutes migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261017_resident_mutes.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /resident mutes migration needs the residents table/u)
+    assert.match(migration, /resident_mutes already exists with columns this migration does not know/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS resident_mutes \(\s+id\s+BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\s+resident_id\s+INTEGER NOT NULL REFERENCES residents\(id\) ON DELETE CASCADE,/u)
+    for (const name of [
+      'resident_mutes_target_type_allowed', 'resident_mutes_target_id_positive', 'resident_mutes_choice_allowed',
+      'resident_mutes_allow_targets', 'resident_mutes_not_founder', 'resident_mutes_not_self', 'resident_mutes_one_choice',
+    ]) assert.ok(migration.includes(`CONSTRAINT ${name}`), name)
+    assert.match(migration, /resident_mutes conflicts with the reviewed mute columns/u)
+    assert.match(migration, /resident_mutes is missing one of its reviewed checks, keys or its unique choice/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+|TRUNCATE|ALTER\s+TABLE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'resident-mutes'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'resident-mutes'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-resident-mutes-20261017',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:resident-mutes'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration resident-mutes')
+    assert.equal(packageJson.scripts?.['migrate:production:resident-mutes'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration resident-mutes')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $resident_mutes_guard$'),
+      migration.indexOf('DO $resident_mutes_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 1_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the resident mutes statements')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

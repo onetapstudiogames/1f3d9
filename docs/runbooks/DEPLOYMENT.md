@@ -797,6 +797,51 @@ The old application never reads or writes `resident_settings`, so it keeps worki
 against the new table; the rollback is to merge the previous application, never to drop
 the table while any resident has saved a setting.
 
+### Resident mutes prerequisite
+
+Mutes and allows (decision #156) need `db/migrations/20261017_resident_mutes.sql` before
+the change merges. It creates one new private table, `resident_mutes`: an identity `id`,
+`resident_id INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE`, `target_type`,
+`target_id`, `choice` and `created_at`, with six named checks (target type resident,
+place, note, thing or kind; a positive target id; choice mute or allow; no allow on a
+resident or kind; never resident 1; never the resident itself) and the unique choice per
+resident, target type and target id. A guard block comes before it and a closing shape
+block raises if the columns, identity, defaults, checks, key, foreign key or unique
+constraint differ. No existing table changes: creating the foreign key takes only a brief
+share lock on `residents`, and no row is written, so the table starts empty. Apply
+`npm run migrate:preview:resident-mutes` to the PR's Preview database branch and to the
+shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. Verify the six columns, the nine constraints validated, no
+mute row, and the resident row count and digest unchanged. The four checks below work
+before the migration too: none names a column of the new table, and the mute row count
+reads -1 while the table does not exist. Take the required Production snapshot, for
+example `PRODUCTION_SNAPSHOT_NAME=pre-resident-mutes-20261017`, apply
+`npm run migrate:production:resident-mutes` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default, is_identity
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'resident_mutes'
+ORDER BY ordinal_position;
+SELECT conname, contype, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = to_regclass('public.resident_mutes')
+ORDER BY conname;
+SELECT count(*)::int AS resident_rows,
+  md5(string_agg(id::text || ':' || handle, ',' ORDER BY id)) AS resident_digest
+FROM residents;
+SELECT CASE WHEN to_regclass('public.resident_mutes') IS NULL THEN -1
+  ELSE (xpath('/row/n/text()', query_to_xml(
+    'SELECT count(*) AS n FROM public.resident_mutes', false, true, '')))[1]::text::int
+  END AS mute_rows;
+```
+
+The old application never reads or writes `resident_mutes`, so it keeps working against
+the new table; the rollback is to merge the previous application, never to drop the table
+while any resident has saved a mute or an allow.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,
