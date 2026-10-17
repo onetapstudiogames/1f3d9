@@ -4,8 +4,10 @@
 // byte for byte; a settings call through me is not a me read.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import test from 'node:test'
+import { Hono } from 'hono'
 import {
   call,
   FOUNDER,
@@ -102,6 +104,23 @@ async function focusOn(app: CityApp, secret: string, focus: boolean): Promise<Js
   return changed.json
 }
 
+const TEXT_LIMIT_FIELDS = [
+  'text_limit_bytes', 'stopped_for_text_limit', 'next_item_id', 'next_item_text_bytes', 'server_text_limit_applied',
+] as const
+
+// Focus mode forced the outline, so no page may carry a caller's or the server's text limit.
+function assertFocusedOutline(answer: Json, pages: readonly string[], label: string): void {
+  assert.equal(answer.view, 'outline', label)
+  assert.equal((answer.reading as Json).focus_mode, true, label)
+  assert.equal((answer.reading as Json).bodies_sent, 0, label)
+  assert.equal((answer.reading as Json).show_everything, false, label)
+  for (const page of pages) {
+    const shown = answer[page] as Json
+    assert.ok(shown, `${label}: ${page}`)
+    for (const field of TEXT_LIMIT_FIELDS) assert.equal(Object.hasOwn(shown, field), false, `${label}: ${page}.${field}`)
+  }
+}
+
 test('reading settings and focus mode against real PostgreSQL', { timeout: 600_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('reading-settings')
   try {
@@ -196,6 +215,49 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       const noteId = Number(notes[0]!.id)
       const single = await read(app, `/api/note/${noteId}`, GROWER.secret)
       assert.equal((single.json.note as Json).body, 'second note, a little longer')
+    })
+
+    await t.test('a focused view=full read with text byte limits sends outlines, not a city fault, and the tombstone does too', async () => {
+      const rooms = await resetCity(RESIDENTS)
+      await seedNotes(rooms.eastRoomId, GROWER.id, ['first note in the east room', 'second note, a little longer'])
+      await db.query(
+        "INSERT INTO things (place_id, name, body, owner_id, maker_id) VALUES ($1, 'lamp', 'a lamp with a long body', $2, $2)",
+        [rooms.eastRoomId, GROWER.id],
+      )
+      await seedNotes(rooms.westRoomId, GROWER.id, ['a note in a room that will retire'])
+      await db.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [rooms.westRoomId])
+      await focusOn(app, GROWER.secret, true)
+
+      const pages = ['subplaces_page', 'things_page', 'notes_page']
+      for (const query of [
+        'view=full&note_text_limit_bytes=5',
+        'view=full&note_text_limit_bytes=0&limit=2',
+        'view=full&thing_text_limit_bytes=3&subplace_text_limit_bytes=3',
+      ]) {
+        const focused = await read(app, `/api/place/${rooms.eastRoomId}?${query}`, GROWER.secret)
+        assert.equal(focused.status, 200, `${query}: ${focused.text}`)
+        assertFocusedOutline(focused.json, pages, query)
+        assert.equal((focused.json.notes as Json[]).some(note => Object.hasOwn(note, 'body')), false, query)
+        assert.equal((focused.json.things as Json[]).length, 1, query)
+        assert.equal(Object.hasOwn((focused.json.things as Json[])[0]!, 'body'), false, query)
+      }
+
+      const tombstone = await read(app, `/api/place/${rooms.westRoomId}?view=full&note_text_limit_bytes=5`, GROWER.secret)
+      assert.equal(tombstone.status, 200, tombstone.text)
+      assert.ok(tombstone.json.tombstone)
+      assertFocusedOutline(tombstone.json, ['notes_page'], 'tombstone')
+      assert.equal((tombstone.json.notes as Json[]).some(note => Object.hasOwn(note, 'body')), false)
+
+      // show_everything still honours the caller's limit, exactly as a reader without focus mode.
+      const once = await read(app, `/api/place/${rooms.eastRoomId}?view=full&note_text_limit_bytes=5&show_everything=true`, GROWER.secret)
+      assert.equal(once.status, 200)
+      assert.equal(once.json.view, 'full')
+      assert.equal((once.json.notes_page as Json).text_limit_bytes, 5)
+
+      for (const resident of RESIDENTS) await standIn(resident.id, rooms.eastRoomId)
+      const look = await mcpTool(app, GROWER.secret, 'look', { place_id: rooms.eastRoomId, view: 'full', note_text_limit_bytes: 5 })
+      assertFocusedOutline(look, pages, 'mcp look')
+      assert.equal(Object.hasOwn(look, 'pending_pings'), false)
     })
 
     await t.test('a keyed MCP look carries no pending-ping summary, and a settings call through me is not a me read', async () => {
@@ -364,6 +426,97 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       const keyedWithRow = await median(GROWER.secret)
       t.diagnostic(`median ms: anonymous ${anonymous.toFixed(2)}, keyed without a settings row ${keyedNoRow.toFixed(2)}, keyed with a settings row ${keyedWithRow.toFixed(2)}`)
       assert.ok(keyedWithRow > 0 && keyedNoRow > 0 && anonymous > 0)
+    })
+
+    await t.test('a hosted sign-in token shapes a place read and an MCP look by its own reader, binds no caller, and writes nothing', async () => {
+      const rooms = await resetCity(RESIDENTS)
+      for (const resident of RESIDENTS) await standIn(resident.id, rooms.eastRoomId)
+      await seedNotes(rooms.eastRoomId, NEIGHBOUR.id, ['a note for the hosted reader', 'another hosted note'])
+      const pingId = await seedPing(rooms.eastRoomId, NEIGHBOUR.id, GROWER.id)
+      await focusOn(app, GROWER.secret, true)
+
+      const { mcp } = await import('../../src/mcp.ts')
+      const core = await import('../../src/core.ts')
+      const { configureOAuthResidentResolver } = await import('../../src/oauth.ts')
+      const { oauthResourceFor } = await import('../../src/oauth-config.ts')
+      const hadSignin = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+      configureOAuthResidentResolver()
+      try {
+        const accessToken = `1f3d9_at_${'7c'.repeat(32)}`
+        const family = await db.query<{ id: string }>(`
+          INSERT INTO oauth_token_families (resident_id, client_id, resource, scope, expires_at)
+          VALUES ($1, 'reading-settings-client', $2, 'city:resident', now() + interval '1 day')
+          RETURNING id
+        `, [GROWER.id, oauthResourceFor('connect')])
+        await db.query(
+          "INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at) VALUES ($1, 'access', $2, now() + interval '9 minutes')",
+          [createHash('sha256').update(accessToken, 'utf8').digest('hex'), family.rows[0]!.id],
+        )
+        const snapshot = async () => (await db.query(`
+          SELECT
+            (SELECT count(*)::int FROM chance_days) AS chance_days,
+            (SELECT count(*)::int FROM events) AS events,
+            (SELECT count(*)::int FROM city_credit_last_me_reads) AS me_markers,
+            (SELECT count(*)::int FROM ping_receipts WHERE ping_id = ${pingId} AND seen_at IS NULL) AS unseen,
+            (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.resident_id) FROM resident_settings s) AS settings,
+            (SELECT jsonb_agg(to_jsonb(t) ORDER BY t.id) FROM oauth_tokens t) AS tokens,
+            (SELECT jsonb_agg(to_jsonb(f) ORDER BY f.id) FROM oauth_token_families f) AS families,
+            (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM residents r) AS residents
+        `)).rows[0]
+        const before = await snapshot()
+
+        // The hosted connector's own backing read: an in-process request it marked, never a header.
+        const backing = new Request(`http://1f3d9.internal/api/place/${rooms.eastRoomId}?view=full`, {
+          headers: { authorization: `Bearer ${accessToken}` },
+        })
+        core.allowOAuthForHostedConnectorRequest(backing)
+        core.bindDoorProfile(backing, 'connect')
+        const response = await (app as unknown as Hono).request(backing)
+        assert.equal(response.status, 200)
+        const placed = await response.json() as Json
+        assert.equal(response.headers.get('cache-control'), 'private, no-store')
+        assert.equal(response.headers.get('vary'), 'Authorization')
+        assert.equal(placed.view, 'outline')
+        assert.equal((placed.notes as Json[]).some(note => Object.hasOwn(note, 'body')), false)
+        assert.deepEqual([(placed.reading as Json).focus_mode, (placed.reading as Json).items, (placed.reading as Json).bodies_sent], [true, 2, 0])
+        assert.equal(core.authenticatedResidentId(backing), null, 'shaping binds no caller')
+
+        // The same token on an unmarked web request reads as anyone.
+        const unmarked = await read(app, `/api/place/${rooms.eastRoomId}?view=full`, accessToken)
+        assert.equal(unmarked.json.view, 'full')
+        assert.equal(Object.hasOwn(unmarked.json, 'reading'), false)
+        assert.deepEqual(await snapshot(), before, 'a shaped read writes nothing')
+
+        const hosted = new Hono()
+        hosted.post('/mcp/connect', c => mcp(c, app as unknown as Hono, { hostedChat: true, forwardUnauthorizedStatus: true }))
+        const rpc = await hosted.request('http://city.test/mcp/connect', {
+          method: 'POST',
+          headers: { ...bearer(accessToken), 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 1, method: 'tools/call',
+            params: { name: 'look', arguments: { place_id: rooms.eastRoomId, view: 'full', note_text_limit_bytes: 5 } },
+          }),
+        })
+        assert.equal(rpc.status, 200)
+        const result = (await rpc.json() as { result: { isError: boolean; content: Array<{ text: string }> } }).result
+        assert.equal(result.isError, false, result.content[0]?.text)
+        const look = JSON.parse(result.content[0]!.text) as Json
+        assertFocusedOutline(look, ['notes_page'], 'hosted look')
+        assert.equal((look.reading as Json).items, 2)
+        assert.equal(Object.hasOwn(look, 'pending_pings'), false)
+        const after = await snapshot()
+        assert.deepEqual(
+          [after!.chance_days, after!.events, after!.me_markers, after!.unseen, after!.settings, after!.residents],
+          [before!.chance_days, before!.events, before!.me_markers, before!.unseen, before!.settings, before!.residents],
+          'a hosted look settles nothing, sees no ping, and changes no setting',
+        )
+      } finally {
+        core.setOAuthResidentResolver(null)
+        core.setPassiveOAuthResidentResolver(null)
+        if (hadSignin === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+        else process.env.HOSTED_CHAT_SIGNIN_ENABLED = hadSignin
+      }
     })
   } finally {
     await postgres.stop()

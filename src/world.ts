@@ -629,7 +629,9 @@ export function mountWorldRoutes(app: Hono): void {
           things: effectivePublicPlaceTextLimit(thingTextLimit.value, thingRequest.limit),
           notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
         })
-      : textLimits
+      // When focus mode forced the outline, the caller's text limits have no text to
+      // limit; drop them so the outline loader is never asked for limited text.
+      : view === askedView ? textLimits : Object.freeze({ subplaces: null, things: null, notes: null })
     const publicPlace = await loadPublicPlaceRecord(id)
     if (!publicPlace) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
 
