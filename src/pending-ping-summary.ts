@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from 'hono'
 import { authenticatedResidentId } from './core.ts'
 import { moderatePublicRows } from './moderation-store.ts'
 import { readPendingSummary } from './room-receipt-store.ts'
+import { readMutedResidentIds } from './resident-mutes.ts'
 import { PENDING_PINGS_NEXT_STEP, type PendingPing } from './room-talk-contract.ts'
 
 const MAX_JSON_BODY_BYTES = 262_144
@@ -24,7 +25,14 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     && Object.getPrototypeOf(value) === Object.prototype
 }
 
-export function pendingPingSummary(read = readPendingSummary): MiddlewareHandler {
+type SummaryRead = (residentId: number, hiddenSenderIds: readonly number[]) => ReturnType<typeof readPendingSummary>
+
+// Pings from residents the reader muted never reach the summary (decision #156), and no
+// summary is added when every pending ping is from one.
+export function pendingPingSummary(
+  read: SummaryRead = (residentId, hiddenSenderIds) => readPendingSummary(residentId, undefined, hiddenSenderIds),
+  readMuted: (residentId: number) => Promise<readonly number[]> = readMutedResidentIds,
+): MiddlewareHandler {
   return async (c, next) => {
     await next()
 
@@ -56,7 +64,7 @@ export function pendingPingSummary(read = readPendingSummary): MiddlewareHandler
     if (!isPlainObject(original)) return
 
     try {
-      const summary = await read(residentId)
+      const summary = await read(residentId, await readMuted(residentId))
       if (summary.total === 0) return
       const [newest] = summary.newest === null
         ? []

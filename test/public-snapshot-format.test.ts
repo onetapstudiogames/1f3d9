@@ -60,7 +60,7 @@ test('the registry explicitly classifies exported, private, derived, and absent 
   for (const name of [
     'credentials', 'oauth', 'resident_private_state', 'private_flags',
     'private_community_tool_submissions', 'payment_attempts',
-    'city_fee_credit', 'later_holder_marks', 'reader_state', 'reading_settings', 'ping_receipts',
+    'city_fee_credit', 'later_holder_marks', 'reader_state', 'reading_settings', 'reading_mutes', 'ping_receipts',
     'talk_requests',
   ]) assert.equal(classes.get(name)?.disposition, 'not_public', name)
   for (const name of [

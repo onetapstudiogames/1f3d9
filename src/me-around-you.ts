@@ -4,6 +4,7 @@ import { PUBLIC_CHANGE_PAGE_MAX, parsePublicChangeMarker } from './public-change
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
 import { noteBodyWithheldSql } from './walk-to-read.ts'
 import { feedRoomIdsSql, leftOutFeedRooms, type LeftOutFeedRooms } from './feed-rooms.ts'
+import { READER_MUTES_SQL, readerMutedNoteSql, readerMutedThingSql } from './resident-mutes.ts'
 
 const RECORD_LIMIT = 10
 const MAX_RECORD_ID = 2_147_483_647
@@ -20,7 +21,9 @@ export type AroundYou = Readonly<{
   through_change_id: string
   scope: string
 }> & (
-  Readonly<{ available: true; baseline: boolean; left_out_feed_rooms: LeftOutFeedRooms }>
+  Readonly<{
+    available: true; baseline: boolean; left_out_feed_rooms: LeftOutFeedRooms; hidden_by_your_mutes?: number
+  }>
     & Readonly<Record<Category, Summary>>
   | Readonly<{
     available: false; baseline: false; after_change_id: string; message: string; read_href: string
@@ -81,7 +84,7 @@ export const AROUND_YOU_SQL = `(
       AND event.kind IN ('note', 'thing_created', 'thing_crafted', 'thing_moved', 'agreement_sign')
     LIMIT ${AROUND_YOU_CHANGE_LIMIT}
   ), window_notes AS MATERIALIZED (
-    SELECT note.id, note.place_id, min(event.change_id) AS change_id
+    SELECT note.id, note.place_id, note.author_id, min(event.change_id) AS change_id
     FROM window_events event
     JOIN notes note ON event.note_id = note.id
     WHERE event.kind = 'note'
@@ -94,11 +97,14 @@ export const AROUND_YOU_SQL = `(
   -- Decision #153: a note or thing in a feed room is left out, and counted, unless the
   -- reader stands in that room; mentions always leave feed rooms out. feed_room_id
   -- names the feed room of a left-out row and is null for a row that stays.
-  ), candidates AS MATERIALIZED (
+  -- Decision #156: a note or thing the reader muted is left out and counted as hidden;
+  -- agreement signers are agreements the reader is party to, which always show.
+  ), ${READER_MUTES_SQL}, candidates AS MATERIALIZED (
     SELECT 'notes_in_owned_places'::text AS category, note.id, note.change_id,
       NULL::text AS signer,
       CASE WHEN place.feed AND place.id IS DISTINCT FROM (SELECT current_place_id FROM reader_presence)
-        THEN place.id END AS feed_room_id
+        THEN place.id END AS feed_room_id,
+      ${readerMutedNoteSql('note')} AS muted
     FROM window_notes note
     JOIN places place ON place.id = note.place_id AND (
       place.owner_id = $1::integer
@@ -106,7 +112,8 @@ export const AROUND_YOU_SQL = `(
     )
     UNION ALL
     SELECT 'mentions', note.id, note.change_id, NULL::text,
-      CASE WHEN note.place_id = ANY((SELECT ids FROM feed_rooms)::integer[]) THEN note.place_id END
+      CASE WHEN note.place_id = ANY((SELECT ids FROM feed_rooms)::integer[]) THEN note.place_id END,
+      ${readerMutedNoteSql('note')}
     FROM window_notes note
     JOIN notes content ON content.id = note.id
     JOIN residents reader ON reader.id = $1::integer
@@ -127,7 +134,8 @@ export const AROUND_YOU_SQL = `(
       ),
       NULL::text,
       CASE WHEN bool_and(place.feed AND place.id IS DISTINCT FROM (SELECT current_place_id FROM reader_presence))
-        THEN min(place.id) END
+        THEN min(place.id) END,
+      ${readerMutedThingSql('thing')}
     FROM window_events event
     JOIN things thing ON event.thing_id = thing.id
     JOIN places place ON event.place_id = place.id AND (
@@ -144,7 +152,7 @@ export const AROUND_YOU_SQL = `(
     GROUP BY thing.id
     UNION ALL
     SELECT 'new_agreement_signers', agreement.id, min(event.change_id), signer.handle,
-      NULL::integer
+      NULL::integer, false
     FROM window_events event
     JOIN agreements agreement ON event.agreement_id = agreement.id
     JOIN agreement_parties party ON party.agreement_id = agreement.id AND party.resident_id = $1::integer
@@ -160,7 +168,12 @@ export const AROUND_YOU_SQL = `(
   ), numbered AS MATERIALIZED (
     SELECT *, row_number() OVER (PARTITION BY category ORDER BY change_id, id, signer) AS ordinal
     FROM candidates
-    WHERE feed_room_id IS NULL
+    WHERE feed_room_id IS NULL AND NOT muted
+  ), hidden_by_mutes AS (
+    SELECT count(DISTINCT CASE WHEN category = 'new_things_in_owned_places'
+      THEN 'thing:' ELSE 'note:' END || id)::integer AS count
+    FROM candidates
+    WHERE feed_room_id IS NULL AND muted
   ), left_out AS (
     SELECT jsonb_build_object(
       'count', count(DISTINCT CASE WHEN category = 'new_things_in_owned_places'
@@ -183,7 +196,9 @@ export const AROUND_YOU_SQL = `(
     'new_things_in_owned_places', coalesce((SELECT summary FROM summaries WHERE category = 'new_things_in_owned_places'), '{"count":0,"records":[]}'::jsonb),
     'new_agreement_signers', coalesce((SELECT summary FROM summaries WHERE category = 'new_agreement_signers'), '{"count":0,"records":[]}'::jsonb),
     'mentions', coalesce((SELECT summary FROM summaries WHERE category = 'mentions'), '{"count":0,"records":[]}'::jsonb),
-    'left_out_feed_rooms', (SELECT summary FROM left_out)
+    'left_out_feed_rooms', (SELECT summary FROM left_out),
+    'hidden_by_your_mutes', CASE WHEN EXISTS (SELECT 1 FROM reader_choices)
+      THEN (SELECT count FROM hidden_by_mutes) END
   )
     ) END
 )`
@@ -191,7 +206,7 @@ export const AROUND_YOU_SQL = `(
 // The app door serves the scope line without the web pointer (decision 142).
 export const AROUND_YOU_SCOPE_LINE = 'Owned places include where you stand.'
 export const AROUND_YOU_SCOPE_REFERENCE = `${AROUND_YOU_SCOPE_LINE} Details: https://1f3d9.com/reference/money.txt`
-const SKIPPED_SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. Intervals with fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot; every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. Eligible intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} changes, including exactly ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')}, require one of two summary slots. If both slots are busy, message says so; if the me read attempt exceeds its database statement budget, message says the summary was skipped. In either case available is false with the same null category fields and interval link. The interval ends at the public cutoff captured before admission; later changes wait for your next visit. Counts and current record state use one final read snapshot. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. "Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text, and walk-to-read notes whose body is read in person, are excluded from mentions. Currently moderated-away records are excluded. Notes and things in a feed room are left out of every category unless you stand in that room, and mentions always leave feed rooms out; left_out_feed_rooms counts what was left out and names those rooms, and is null when the interval was not summarized. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later movement, ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
+const SKIPPED_SCOPE = `Available counts cover committed public changes after after_change_id through through_change_id, inclusive of the latter, as visible in this read. Intervals containing at most ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')} city-wide public changes are eligible for summaries, including exactly ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}. Above ${AROUND_YOU_CHANGE_LIMIT.toLocaleString('en-US')}, available is false, all four category fields are null, and message and read_href identify an unread interval; follow next_since from read_href and stop at through_change_id. Intervals with fewer than ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} city-wide public changes need no summary slot; every me read attempt that computes a summary still has a ${AROUND_YOU_STATEMENT_TIMEOUT_MS.toLocaleString('en-US')} ms database statement budget. Eligible intervals from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')} changes, including exactly ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD.toLocaleString('en-US')}, require one of two summary slots. If both slots are busy, message says so; if the me read attempt exceeds its database statement budget, message says the summary was skipped. In either case available is false with the same null category fields and interval link. The interval ends at the public cutoff captured before admission; later changes wait for your next visit. Counts and current record state use one final read snapshot. The checkpoint still advances, so later me reads do not replay that skipped interval. The first public-checkpoint read sets an available empty baseline without scanning earlier history. "Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope. New things are distinct still-active things made, crafted or moved into those places during the interval, even if now elsewhere. New agreement signers are other residents signing agreements you are currently party to. Your own notes and things, and notes containing your own handle, count too; only new agreement signers exclude you. Mentions match your whole handle, case-insensitively, with or without @; notes containing credential-like text, and walk-to-read notes whose body is read in person, are excluded from mentions. Currently moderated-away records are excluded. Notes and things your mutes cover are left out of every category and counted in hidden_by_your_mutes, present only once you have a mute or an allow. Notes and things in a feed room are left out of every category unless you stand in that room, and mentions always leave feed rooms out; left_out_feed_rooms counts what was left out and names those rooms, and is null when the interval was not summarized. No bodies are included. Each category lists at most 10 records, oldest change first. When has_more is true, more_href opens the broader public change log, not a filtered category: follow next_since and stop at through_change_id; read the linked records to inspect the remainder. Later movement, ownership, moderation and withdrawals can change those public reads; this summary has no frozen replay.`
 
 function unavailable(): never {
   throw new TypeError('around-you summary is invalid')
@@ -240,6 +255,12 @@ function summary(value: unknown, category: Category, after: string | null, throu
   })
 }
 
+function hiddenByMutes(value: unknown): Readonly<{ hidden_by_your_mutes?: number }> {
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) unavailable()
+  return { hidden_by_your_mutes: value }
+}
+
 function feedRoomsLeftOut(value: unknown): LeftOutFeedRooms {
   const row = object(value)
   try {
@@ -281,5 +302,6 @@ export function mapAroundYou(value: unknown): AroundYou {
     new_agreement_signers: summary(row.new_agreement_signers, 'new_agreement_signers', after, through),
     mentions: summary(row.mentions, 'mentions', after, through),
     left_out_feed_rooms: feedRoomsLeftOut(row.left_out_feed_rooms),
+    ...hiddenByMutes(row.hidden_by_your_mutes),
   })
 }

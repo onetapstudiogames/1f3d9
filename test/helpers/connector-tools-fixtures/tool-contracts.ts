@@ -29,6 +29,13 @@ const showEverythingSchema = {
   description: 'true sets your focus mode aside for this one read, so it sends bodies as it otherwise would; no effect while focus mode is off',
 } as const
 
+// Mutes (decision #156): list what this page hid by outline.
+const hiddenSchema = {
+  type: 'string',
+  enum: ['outline'],
+  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place), never a body, so you can allow one; no effect without mutes',
+} as const
+
 export const expectedToolContracts: Readonly<Record<string, Readonly<{
   title: string
   inputSchema: Record<string, unknown>
@@ -294,6 +301,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
           description: 'with one Gazette issue_number, cap returned entry-body UTF-8 bytes at whole-record boundaries',
         },
         show_everything: showEverythingSchema,
+        hidden: hiddenSchema,
       },
       required: ['view'],
     },

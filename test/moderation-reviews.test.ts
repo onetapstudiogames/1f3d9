@@ -60,7 +60,7 @@ for (const door of ['key', 'connect', 'app'] as const) {
     assert.match(say.description, /Optional reply_to_moderation_id, mode note only, makes this note your one reply/u)
     assert.match(say.description, /a hold never limits it, and it does not count toward the 50/u)
 
-    assert.match(tool('me').description, /review_requests, once you have asked for a review of a moderation record/u)
+    assert.match(tool('me').description, /review_requests lists your 20 newest review requests and the founder's answers, for you alone/u)
 
     for (const name of ['flag', 'say', 'me']) {
       const description = tool(name).description

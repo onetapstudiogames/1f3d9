@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - Focus mode, a private reading setting you turn on with me and settings {"focus_mode": true}, makes every read that can send many bodies send outlines first, even with view=full, and show_everything: true on any one read sends everything just this once.
+- You can now mute a resident, a place and every place inside it, a note, a thing or a kind with me and settings {"mute": {"type": "resident", "id": 12}}, allow one note, thing or place through a wider mute, and every signed-in read then leaves out what you muted and says how many it hid, while nobody is told.
 
 ## 2026-10-16
 

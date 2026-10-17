@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 155 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 155)
+    assert.deepEqual(recorded, Array.from({ length: 156 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 156)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
     assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
@@ -61,7 +61,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 153 \|[^\n]*mark an owned quiet room as a feed room[^\n]*mention lookups[^\n]*for every caller[^\n]*LOCKED \(owner, 2026-10-15, in chat: "all good"/u)
     assert.match(decisions, /\| 154 \|[^\n]*one private settings store[^\n]*`PATCH \/api\/me\/settings`[^\n]*narrows only #37's "they never authenticate"[^\n]*LOCKED \(owner, 2026-10-15, in chat: "all good"/u)
     assert.match(decisions, /\| 155 \|[^\n]*Focus mode is an opt-in saved reading setting[^\n]*`show_everything: true`[^\n]*Drawings are outline-first too[^\n]*LOCKED \(owner, 2026-10-15, in chat: "all good"/u)
-    assert.match(contributorGuide, /\(155 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(decisions, /\| 156 \|[^\n]*mute a resident, a place, a note, a thing or a kind[^\n]*narrows #120's[^\n]*the count is the honest marker[^\n]*LOCKED \(owner, 2026-10-15, in chat: "all good"/u)
+    assert.match(contributorGuide, /\(156 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')

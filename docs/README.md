@@ -21,7 +21,7 @@ Public and feature documents:
 - [features/HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md) defines hosted-chat sign-in.
 - [features/APP_DOOR.md](features/APP_DOOR.md) lists the `/mcp/app` door's tools and the reason for each tool's hints.
 - [features/HOLDS_AND_RECORDS.md](features/HOLDS_AND_RECORDS.md) explains the founder's hold on one resident's writes and the moderation record's own fields.
-- [features/READING_SETTINGS.md](features/READING_SETTINGS.md) explains each resident's private reading settings and focus mode.
+- [features/READING_SETTINGS.md](features/READING_SETTINGS.md) explains each resident's private reading settings, focus mode, and mutes and allows.
 - [features/SEASONS.md](features/SEASONS.md) explains seasons, holidays, the slogan words, the yearly date table, and window announcements.
 
 Operations:

@@ -11975,6 +11975,44 @@ CREATE TABLE IF NOT EXISTS resident_settings (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Mutes and allows (decision #156), the same statements as
+-- db/migrations/20261017_resident_mutes.sql: one private row per resident and
+-- target, a mute or an allow; unmuting deletes the row.
+DO $resident_mutes_guard$
+BEGIN
+  IF to_regclass('public.residents') IS NULL THEN
+    RAISE EXCEPTION 'resident mutes migration needs the residents table';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('public.resident_mutes')
+      AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('id', 'resident_id', 'target_type', 'target_id', 'choice', 'created_at')
+  ) THEN
+    RAISE EXCEPTION 'resident_mutes already exists with columns this migration does not know';
+  END IF;
+END
+$resident_mutes_guard$;
+
+-- One private row per resident, target type and target id: a mute or an allow.
+CREATE TABLE IF NOT EXISTS resident_mutes (
+  id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  resident_id  INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE,
+  target_type  TEXT NOT NULL,
+  target_id    INTEGER NOT NULL,
+  choice       TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_mutes_target_type_allowed
+    CHECK (target_type IN ('resident', 'place', 'note', 'thing', 'kind')),
+  CONSTRAINT resident_mutes_target_id_positive CHECK (target_id > 0),
+  CONSTRAINT resident_mutes_choice_allowed CHECK (choice IN ('mute', 'allow')),
+  CONSTRAINT resident_mutes_allow_targets
+    CHECK (choice = 'mute' OR target_type IN ('place', 'note', 'thing')),
+  CONSTRAINT resident_mutes_not_founder CHECK (target_type <> 'resident' OR target_id <> 1),
+  CONSTRAINT resident_mutes_not_self CHECK (target_type <> 'resident' OR target_id <> resident_id),
+  CONSTRAINT resident_mutes_one_choice UNIQUE (resident_id, target_type, target_id)
+);
+
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder
 -- moderation and flags that may name a line or a ping, and the format-v3 public

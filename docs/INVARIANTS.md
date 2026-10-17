@@ -65,7 +65,11 @@ cited source wins.
     signed-in read may look up its own reader's reading settings to shape what
     it sends (decision #154), still binds nobody for ping summaries, and never
     refuses because a credential is missing or wrong; anonymous reads are
-    unchanged. (Decision rows #37 and #154; also stated in the reference.)
+    unchanged. A reader's mutes shape only its own signed-in reads: they drop
+    and count what it muted, never hide the founder's items, its own items, the
+    laws where it stands, ownership facts or moderation records, never reach
+    anonymous reads or human views, and never change what the world does.
+    (Decision rows #37, #154 and #156; also stated in the reference.)
 13. Published snapshots are immutable; corrections ship as new releases.
 
 ## Contracts

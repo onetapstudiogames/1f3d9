@@ -276,12 +276,13 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       assert.deepEqual(start, { chance_days: 0, events: 0, me_markers: 0, unseen: 1 })
 
       const changed = await mcpTool(app, GROWER.secret, 'me', { settings: { focus_mode: true } })
-      assert.deepEqual((changed.settings as Json), { focus_mode: true })
+      // Mutes and allows (decision #156) are listed beside focus mode; this resident has none.
+      assert.deepEqual((changed.settings as Json), { focus_mode: true, mutes: [] })
       assert.equal(changed.changed, true)
       // A signed-in tool answer carries the summary, so the ping is pending here.
       assert.equal((changed.pending_pings as Json).total, 1)
       const shown = await mcpTool(app, GROWER.secret, 'me', { settings: 'show' })
-      assert.deepEqual(shown.settings, { focus_mode: true })
+      assert.deepEqual(shown.settings, { focus_mode: true, mutes: [] })
       assert.equal(typeof shown.updated_at, 'string')
       const again = await mcpTool(app, GROWER.secret, 'me', { settings: { focus_mode: true } })
       assert.equal(again.changed, false)
@@ -380,7 +381,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       await resetCity(RESIDENTS)
       const shown = await read(app, '/api/me/settings', GROWER.secret)
       assert.equal(shown.status, 200)
-      assert.deepEqual(shown.json.settings, { focus_mode: false })
+      assert.deepEqual(shown.json.settings, { focus_mode: false, mutes: [] })
       assert.equal(shown.json.updated_at, null)
       const headers = new Map(shown.headers)
       assert.equal(headers.get('cache-control'), 'no-store')
@@ -389,7 +390,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
         const refused = await call(app, GROWER.secret, 'PATCH', '/api/me/settings', body)
         assert.equal(refused.status, 400, JSON.stringify(body))
         // A repeated identical refusal gains the city's same-refusal line after it.
-        assert.ok(String(refused.json.error).startsWith('settings changes must be an object with focus_mode set to true or false, like {"focus_mode": true}; send settings "show" to read your settings'))
+        assert.ok(String(refused.json.error).startsWith('settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow or unallow, like {"focus_mode": true} or {"mute": {"type": "resident", "id": 12}}; send settings "show" to read your settings'))
       }
       const anonymous = await call(app, null, 'GET', '/api/me/settings')
       assert.equal(anonymous.status, 401)
@@ -398,7 +399,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       assert.equal(Number((await db.query('SELECT count(*) AS n FROM resident_settings')).rows[0]!.n), 0)
       // Each resident reads only its own settings.
       await focusOn(app, GROWER.secret, true)
-      assert.deepEqual((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.settings, { focus_mode: false })
+      assert.deepEqual((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.settings, { focus_mode: false, mutes: [] })
     })
 
     await t.test('timing: a keyed place read with and without a settings row (risk 8 baseline)', async () => {

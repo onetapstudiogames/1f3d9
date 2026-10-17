@@ -31,7 +31,9 @@ function pendingPing(pingId: number, pings: ReadonlyMap<number, PublicPing>): Pe
 }
 
 export async function readPendingPings(
-  input: Readonly<{ residentId: number; beforePingId: number | null; limit: number }>,
+  // hiddenSenderIds: residents the reader muted (decision #156); their pings are counted
+  // by readHiddenPendingPingIds instead of being shown.
+  input: Readonly<{ residentId: number; beforePingId: number | null; limit: number; hiddenSenderIds?: readonly number[] }>,
   database: TaggedSql = engineSql,
 ): Promise<Readonly<{
   total: number
@@ -49,6 +51,7 @@ export async function readPendingPings(
         WHERE receipt.recipient_id = ${input.residentId}
           AND receipt.seen_at IS NULL
           AND receipt.dismissed_at IS NULL
+          AND NOT (ping.sender_id = ANY(${[...(input.hiddenSenderIds ?? [])]}::int[]))
       ),
       counts AS (
         SELECT count(*)::int AS total, count(DISTINCT sender_id)::int AS senders
@@ -103,6 +106,7 @@ export async function readPendingPings(
         AND receipt.seen_at IS NULL
         AND receipt.dismissed_at IS NULL
         AND receipt.ping_id < ${input.beforePingId}::bigint
+        AND NOT (ping.sender_id = ANY(${[...(input.hiddenSenderIds ?? [])]}::int[]))
     ),
     counts AS (
       SELECT count(*)::int AS total, count(DISTINCT sender_id)::int AS senders
@@ -137,6 +141,8 @@ export async function readPendingPings(
 export async function readPendingSummary(
   residentId: number,
   database: TaggedSql = engineSql,
+  // Residents the reader muted (decision #156): their pings never reach the summary.
+  hiddenSenderIds: readonly number[] = [],
 ): Promise<Readonly<{
   total: number
   senders: number
@@ -151,6 +157,7 @@ export async function readPendingSummary(
       WHERE receipt.recipient_id = ${residentId}
         AND receipt.seen_at IS NULL
         AND receipt.dismissed_at IS NULL
+        AND NOT (ping.sender_id = ANY(${[...hiddenSenderIds]}::int[]))
     ),
     counts AS (
       SELECT count(*)::int AS total, count(DISTINCT sender_id)::int AS senders
@@ -179,6 +186,28 @@ export async function readPendingSummary(
     newest: pendingPing(pingId, publicPings),
     nextBeforePingId: total > 1 ? pingId : null,
   }
+}
+
+/**
+ * Pending pings from residents the reader muted (decision #156), newest first. A
+ * completed me counts them as hidden and marks their receipts seen as if it showed them.
+ */
+export async function readHiddenPendingPingIds(
+  input: Readonly<{ residentId: number; senderIds: readonly number[] }>,
+  database: TaggedSql = engineSql,
+): Promise<readonly number[]> {
+  if (input.senderIds.length === 0) return []
+  const rows = await queryRows<Readonly<{ ping_id: number | string }>>(database`/* private:hidden_pending_pings */
+    SELECT receipt.ping_id
+    FROM ping_receipts receipt
+    JOIN pings ping ON ping.id = receipt.ping_id
+    WHERE receipt.recipient_id = ${input.residentId}
+      AND receipt.seen_at IS NULL
+      AND receipt.dismissed_at IS NULL
+      AND ping.sender_id = ANY(${[...input.senderIds]}::int[])
+    ORDER BY receipt.ping_id DESC
+  `)
+  return Object.freeze(rows.map(row => Number(row.ping_id)))
 }
 
 export async function markReceiptsSeen(

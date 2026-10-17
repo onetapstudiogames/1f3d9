@@ -91,6 +91,7 @@ export type WaitAnswer = Readonly<{
   pings: readonly WaitPingEntry[]; pings_has_more: boolean; next_after_ping_change: string
   listening_here: readonly ListeningResident[]
   listening_here_page: Readonly<{ total_items: number; returned_items: number; has_more: boolean }>
+  hidden_by_your_mutes?: number; hidden_next_step?: string
 }>
 export type PingResult = Readonly<{ ping: PublicPing; replayed: boolean }>
 export type ReceiptDismissal = Readonly<{
