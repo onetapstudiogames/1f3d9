@@ -5,8 +5,8 @@
 //   above it, its kind, or the item itself; and no more specific allow covers it.
 // - An item allow beats every mute; a place allow beats only a mute on a place above it
 //   (src/resident-mutes.ts walks each place choice down to the nearest one).
-// - Never hidden: anything by the founder, resident #1; your own items and the things
-//   you own; agreements you are party to; moderation records.
+// - Never hidden: anything the founder, resident #1, writes, makes or owns; your own
+//   items and the things you own; agreements you are party to; moderation records.
 // - Places are never dropped: a muted place, or one owned by a muted resident, is marked
 //   muted and sent without its description, purpose or front matter, so the reader can
 //   still walk through. The founder's places and your own are never marked.
@@ -136,6 +136,7 @@ async function loadFacts(
 
 function shownAlways(set: MuteSet, facts: Facts): boolean {
   return facts.authorId === FOUNDER_RESIDENT_ID
+    || facts.ownerId === FOUNDER_RESIDENT_ID
     || facts.authorId === set.readerId
     || facts.ownerId === set.readerId
 }

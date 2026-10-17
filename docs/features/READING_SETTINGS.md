@@ -96,7 +96,7 @@ A mute or an allow replaces the other choice on the same target. Refusals, nothi
 
 | Case | Status | Text |
 |---|---|---|
-| a mute on the founder, or on a note or thing the founder wrote or made | 400 | the founder, resident #1, cannot be muted, and the notes and things the founder writes or makes always show; mute something else |
+| a mute on the founder, or on a note or thing the founder wrote or made | 400 | the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else |
 | a mute on yourself, or on your own note or thing | 400 | you cannot mute yourself or your own notes and things; your own items always show to you |
 | a target that does not exist | 404 | `<type> <id>` was not found; read it again and send a current id |
 | an allow on a resident or a kind | 400 | allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead |

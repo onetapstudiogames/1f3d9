@@ -33,7 +33,7 @@ import {
 import { parseSettingsChange, settingsChangeRefusal } from '../src/resident-settings.ts'
 
 test('the mute refusals are stated in caller words', () => {
-  assert.equal(MUTE_FOUNDER_REFUSAL, 'the founder, resident #1, cannot be muted, and the notes and things the founder writes or makes always show; mute something else')
+  assert.equal(MUTE_FOUNDER_REFUSAL, 'the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else')
   assert.equal(MUTE_SELF_REFUSAL, 'you cannot mute yourself or your own notes and things; your own items always show to you')
   assert.equal(ALLOW_TYPE_REFUSAL, 'allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead')
   assert.equal(
@@ -104,6 +104,7 @@ const FACTS: readonly FactRow[] = [
   { type: 'thing', id: 40, author_id: 8, author: 'other-one', place_id: 1, kind_id: 60, kind: 'lamp', owner_id: 8 },
   { type: 'thing', id: 41, author_id: MUTED, author: 'muted-one', place_id: 1, kind_id: 60, kind: 'lamp', owner_id: MUTED },
   { type: 'thing', id: 42, author_id: MUTED, author: 'muted-one', place_id: 1, owner_id: READER },
+  { type: 'thing', id: 43, author_id: MUTED, author: 'muted-one', place_id: 1, owner_id: 1 },
   { type: 'ping', id: 50, author_id: 8, author: 'other-one', place_id: 100 },
   { type: 'ping', id: 51, author_id: MUTED, author: 'muted-one', place_id: 1 },
   { type: 'agreement', id: 70, author_id: MUTED, author: 'muted-one', owner_id: READER },
@@ -127,6 +128,7 @@ test('the one rule: most specific choice wins, and the founder, your own items a
   assert.equal(judge.hides('thing', 40), true, 'a muted kind')
   assert.equal(judge.hides('thing', 41), false, 'an item allow beats a muted maker and kind')
   assert.equal(judge.hides('thing', 42), false, 'a thing you own')
+  assert.equal(judge.hides('thing', 43), false, 'a thing the founder owns')
   assert.equal(judge.hides('ping', 50), false, 'a ping is covered only by its sender')
   assert.equal(judge.hides('ping', 51), true, 'a muted sender')
   assert.equal(judge.hides('agreement', 70), false, 'an agreement you are party to')

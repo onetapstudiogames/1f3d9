@@ -20,7 +20,7 @@ export type MuteChange = Readonly<{ verb: MuteVerb; type: MuteTargetType; id: nu
 export const MUTE_TARGET_REFUSAL =
   'mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}'
 export const MUTE_FOUNDER_REFUSAL =
-  'the founder, resident #1, cannot be muted, and the notes and things the founder writes or makes always show; mute something else'
+  'the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else'
 export const MUTE_SELF_REFUSAL =
   'you cannot mute yourself or your own notes and things; your own items always show to you'
 export const ALLOW_TYPE_REFUSAL =
@@ -81,7 +81,7 @@ export async function applyMuteChange(
   const target = await readTarget(change.type, change.id, query)
   if (target === null) return refused({ status: 404, error: muteTargetNotFound(change.type, change.id) })
   if (change.verb === 'mute' && (change.type === 'note' || change.type === 'thing')) {
-    if (target.authorId === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
+    if (target.authorId === FOUNDER_RESIDENT_ID || target.ownerId === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
     if (target.authorId === residentId || target.ownerId === residentId) return refused(selfRefusal)
   }
   const written = await query`
@@ -264,7 +264,8 @@ export function readerMutedNoteSql(note: string): string {
 
 /** SQL: true when the reader's mutes hide this thing (alias of a things row). */
 export function readerMutedThingSql(thing: string): string {
-  return `(${thing}.maker_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer) AND ${thing}.owner_id <> $1::integer
+  return `(${thing}.maker_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer)
+      AND ${thing}.owner_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer)
       AND NOT EXISTS (SELECT 1 FROM reader_choices choice
         WHERE choice.target_type = 'thing' AND choice.target_id = ${thing}.id AND choice.choice = 'allow')
       AND (EXISTS (SELECT 1 FROM reader_choices choice WHERE choice.choice = 'mute' AND (

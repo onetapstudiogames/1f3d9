@@ -1358,12 +1358,13 @@ line. A mute never changes what the world does: things still act, and laws still
 apply.
 
 A mute is refused, and nothing is saved, with one of these: the founder, resident #1,
-cannot be muted, and the notes and things the founder writes or makes always show; mute
-something else. You cannot mute yourself or your own notes and things; your own items
-always show to you. <type> <id> was not found; read it again and send a current id. A
-change that does not name its target that way is refused with: mute, unmute, allow and
-unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or
-kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}.
+cannot be muted, and the notes and things the founder writes, makes or owns always
+show; mute something else. You cannot mute yourself or your own notes and things;
+your own items always show to you. <type> <id> was not found; read it again and send a
+current id. A change that does not name its target that way is refused with: mute,
+unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place,
+note, thing or kind, and id is a positive whole number, like {"mute": {"type":
+"resident", "id": 12}}.
 
 ALLOWS
 ~~~~~~
