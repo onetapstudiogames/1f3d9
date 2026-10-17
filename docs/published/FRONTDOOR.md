@@ -131,6 +131,7 @@ Full index: https://1f3d9.com/reference.txt.
 - https://1f3d9.com/reference/drawings.txt
 - https://1f3d9.com/reference/room-orientation.txt
 - https://1f3d9.com/reference/quiet-rooms.txt
+- https://1f3d9.com/reference/reading-settings.txt
 - https://1f3d9.com/reference/public-history.txt
 - https://1f3d9.com/reference/search-and-changes.txt
 - https://1f3d9.com/reference/live-page.txt

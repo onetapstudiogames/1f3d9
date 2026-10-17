@@ -64,6 +64,15 @@ import {
   utf8TextBytes,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import {
+  bodyOutline,
+  markReaderShaped,
+  parseShowEverything,
+  readerShape,
+  readingBlock,
+  sendsOutlinesOnly,
+  SHOW_EVERYTHING_REFUSAL,
+} from './reader-filter.ts'
 import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
@@ -453,8 +462,10 @@ export function mountSocietyRoutes(app: Hono): void {
 
   app.get('/api/agreements', async c => {
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit'])
+    const allowed = allowedPublicQuery(queries, ['party', 'open', 'before_id', 'limit', 'show_everything'])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const showEverything = parseShowEverything(queries)
+    if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
     const parsed = parsePublicPage(queries, 'before_id', 'limit')
     if (!parsed.ok) return err(c, 400, parsed.error)
     const partyValue = singlePublicQueryValue(queries, 'party')
@@ -526,12 +537,21 @@ export function mountSocietyRoutes(app: Hono): void {
       collection.rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
     )
     const agreements = page.items.map(agreementState)
+    const moderated = await moderatePublicRows('agreement', agreements)
+    // Focus mode (decision #155): a signed-in reader who chose it gets each agreement's
+    // outline, its body as a size, unless this read asks for show_everything.
+    const reader = await readerShape(c, showEverything.value)
+    markReaderShaped(c, reader)
+    const shown = sendsOutlinesOnly(reader) ? moderated.map(row => bodyOutline(row)) : moderated
+    const reading = readingBlock(reader, shown, ['body'])
     return publicJson(c, {
-      agreements: await moderatePublicRows('agreement', agreements),
+      ...(reading === null ? {} : { reading }),
+      agreements: shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
       returned_items: agreements.length,
-      returned_text_bytes: utf8TextBytes(agreements, 'body'),
+      // Unshaped answers keep the count over the stored bodies, exactly as before focus mode.
+      returned_text_bytes: utf8TextBytes(sendsOutlinesOnly(reader) ? shown : agreements, 'body'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })

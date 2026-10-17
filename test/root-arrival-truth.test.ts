@@ -50,8 +50,10 @@ test('every root place view carries the same server line and remains passive wit
       for (const value of [body.notes, body.things, body.front_matter, body.place.labels, body.place.laws]) {
         assert.deepEqual(value, [])
       }
-      const queries = fixtureState.current.calls.map(call => call.query ?? '').join('\n')
-      assert.doesNotMatch(queries, /secret_hash|pending_effects|\b(?:insert|update|delete)\b/iu)
+      const calls = fixtureState.current.calls.map(call => call.query ?? '')
+      // Decision #154: a signed-in read may look up its own reader with a plain SELECT only.
+      assert.equal(calls.some(query => /secret_hash/iu.test(query) && !/^\s*select\b/iu.test(query)), false)
+      assert.doesNotMatch(calls.join('\n'), /pending_effects|\b(?:insert|update|delete)\b/iu)
     }
   }
 })

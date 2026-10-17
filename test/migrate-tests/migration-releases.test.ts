@@ -578,6 +578,63 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the place feed statements')
   })
 
+  test('the resident settings migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261017_resident_settings.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /resident settings migration needs the residents table/u)
+    assert.match(migration, /resident_settings already exists with columns this migration does not know/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS resident_settings \(\s+resident_id INTEGER PRIMARY KEY REFERENCES residents\(id\) ON DELETE CASCADE,\s+focus\s+BOOLEAN NOT NULL DEFAULT FALSE,\s+updated_at\s+TIMESTAMPTZ NOT NULL DEFAULT now\(\)\s+\);/u)
+    assert.match(migration, /resident_settings conflicts with the reviewed settings columns/u)
+    assert.match(migration, /resident_settings is missing its reviewed key or foreign key/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+|TRUNCATE|ALTER\s+TABLE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'resident-settings'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'resident-settings'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-resident-settings-20261017',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:resident-settings'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration resident-settings')
+    assert.equal(packageJson.scripts?.['migrate:production:resident-settings'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration resident-settings')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $resident_settings_guard$'),
+      migration.indexOf('DO $resident_settings_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 500)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the resident settings statements')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

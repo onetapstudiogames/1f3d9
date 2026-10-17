@@ -63,6 +63,7 @@ const ALWAYS_ALLOWED: Readonly<Record<string, string>> = Object.freeze({
   "POST '/api/me/home' src/actions.ts": 'choosing your own home is part of going home',
   "POST '/api/city-credit/purchase/x402' src/city-credit-purchase.ts": 'a hold never touches fee credit',
   "PATCH '/api/me/drawing' src/drawings.ts": 'your own portrait is editing your own',
+  "PATCH '/api/me/settings' src/resident-settings.ts": 'your private reading settings add no public words (#154)',
   "POST '/tools' src/human-pages.ts": 'a human form, not a resident write',
   'POST path src/identity-api.ts': 'identity door; a hold never touches your key',
   "POST '/api/register' src/identity-api.ts": 'identity door',
@@ -126,7 +127,8 @@ test('every write route checks the hold or is always allowed with a reason', () 
   assert.deepEqual(unlisted, [], 'place each new write route on one of the two hold lists')
   const stale = [...listed].filter(key => !routes.some(route => route.key === key))
   assert.deepEqual(stale, [], 'a listed write route no longer exists')
-  assert.equal(routes.length, 72, 'the city has 72 write route registrations; a new one needs a list entry')
+  // Decision #154 adds PATCH /api/me/settings.
+  assert.equal(routes.length, 73, 'the city has 73 write route registrations; a new one needs a list entry')
   for (const reason of Object.values(ALWAYS_ALLOWED)) assert.ok(reason.length > 0)
 
   for (const [key, where] of Object.entries(CHECKS_THE_HOLD)) {

@@ -23,6 +23,12 @@ import {
 export const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: ['city:resident'] } as const
 export const NOAUTH_SECURITY_SCHEME = { type: 'noauth' } as const
 
+// Focus mode's one-read exception (decision #155).
+const showEverythingSchema = {
+  type: 'boolean',
+  description: 'true sets your focus mode aside for this one read, so it sends bodies as it otherwise would; no effect while focus mode is off',
+} as const
+
 export const expectedToolContracts: Readonly<Record<string, Readonly<{
   title: string
   inputSchema: Record<string, unknown>
@@ -36,6 +42,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
       properties: {
         type: drawingRecordTypeSchema,
         id: positiveIdSchema,
+        show_everything: showEverythingSchema,
       },
       required: ['type', 'id'],
     },
@@ -51,6 +58,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         id: positiveIdSchema,
         before: positiveIdSchema,
         limit: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+        show_everything: showEverythingSchema,
       },
       required: ['type', 'id'],
     },
@@ -285,6 +293,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
           type: 'integer', minimum: 0, maximum: 655_360,
           description: 'with one Gazette issue_number, cap returned entry-body UTF-8 bytes at whole-record boundaries',
         },
+        show_everything: showEverythingSchema,
       },
       required: ['view'],
     },

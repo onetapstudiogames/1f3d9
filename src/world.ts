@@ -114,6 +114,14 @@ import {
   type PublicQueryExecutor,
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
+import {
+  markReaderShaped,
+  parseShowEverything,
+  readerShape,
+  readingBlock,
+  sendsOutlinesOnly,
+  SHOW_EVERYTHING_REFUSAL,
+} from './reader-filter.ts'
 import { loadPublicPlaceRecord, loadPublicThingRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
@@ -577,13 +585,16 @@ export function mountWorldRoutes(app: Hono): void {
       'subplace_text_limit_bytes',
       'thing_text_limit_bytes',
       'note_text_limit_bytes',
+      'show_everything',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const viewValue = singlePublicQueryValue(query, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const requestedView = viewValue.value
-    const view = requestedView ?? 'outline'
-    if (view !== 'outline' && view !== 'full') return err(c, 400, 'view must be outline or full')
+    const askedView = requestedView ?? 'outline'
+    if (askedView !== 'outline' && askedView !== 'full') return err(c, 400, 'view must be outline or full')
+    const showEverything = parseShowEverything(query)
+    if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
     const subplaceRequest = parsePublicPage(query, 'before_subplace_id', 'subplace_limit', 'limit')
     if (!subplaceRequest.ok) return err(c, 400, subplaceRequest.error)
     const thingRequest = parsePublicPage(query, 'before_thing_id', 'thing_limit', 'limit')
@@ -601,9 +612,14 @@ export function mountWorldRoutes(app: Hono): void {
       things: thingTextLimit.value,
       notes: noteTextLimit.value,
     })
-    if (view === 'outline' && Object.values(textLimits).some(value => value != null)) {
+    if (askedView === 'outline' && Object.values(textLimits).some(value => value != null)) {
       return err(c, 400, 'text byte limits require view=full; outline already omits collection text')
     }
+    // A signed-in reader may have chosen focus mode (decisions #154 and #155): its
+    // collections then come as outlines even with view=full, unless show_everything.
+    const reader = await readerShape(c, showEverything.value)
+    markReaderShaped(c, reader)
+    const view = sendsOutlinesOnly(reader) ? 'outline' : askedView
     const effectiveTextLimits = view === 'full'
       ? Object.freeze({
           subplaces: effectivePublicPlaceTextLimit(
@@ -613,7 +629,9 @@ export function mountWorldRoutes(app: Hono): void {
           things: effectivePublicPlaceTextLimit(thingTextLimit.value, thingRequest.limit),
           notes: effectivePublicPlaceTextLimit(noteTextLimit.value, noteRequest.limit),
         })
-      : textLimits
+      // When focus mode forced the outline, the caller's text limits have no text to
+      // limit; drop them so the outline loader is never asked for limited text.
+      : view === askedView ? textLimits : Object.freeze({ subplaces: null, things: null, notes: null })
     const publicPlace = await loadPublicPlaceRecord(id)
     if (!publicPlace) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
 
@@ -642,8 +660,10 @@ export function mountWorldRoutes(app: Hono): void {
             ...collections.pages.notes,
           }
       const publicNotes = await moderatePublicRows('note', notesPage.items)
+      const tombstoneReading = readingBlock(reader, publicNotes, ['body'])
       return publicJson(c, {
         view,
+        ...(tombstoneReading === null ? {} : { reading: tombstoneReading }),
         tombstone: publicPlace,
         notes: publicNotes,
         notes_page: {
@@ -741,8 +761,14 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePublicRows('note', notesPage.items),
       moderatePublicRows('line', lineHeadings.headings),
     ])
+    const reading = readingBlock(
+      reader,
+      [...publicSubplaces, ...publicDetails.things, ...publicNotes],
+      ['body', 'description'],
+    )
     return publicJson(c, {
       view,
+      ...(reading === null ? {} : { reading }),
       place: { ...publicPlace, labels, laws: publicDetails.laws },
       ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
       front_matter: (publicPlace as unknown as Record<string, unknown>).moderated === true

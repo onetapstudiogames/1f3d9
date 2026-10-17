@@ -7,7 +7,7 @@ Status: current.
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (153 recorded decisions; do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (155 recorded decisions; do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -52,7 +52,8 @@ property, every block expires, going home is unblockable, your land is yours. Da
 is a law that's off by default (war = consenting territory); spreading effects must
 burn out; entering, interacting, or checking `me` wakes due timers and settles owed wake
 tries, while place reads
-stay passive even with attached auth. **The dollar is for
+stay passive even with attached auth (a signed-in read may look up only its own
+reading settings, decision #154). **The dollar is for
 claiming, not for living**: frontier founding, kind invention, and kind revision
 each cost $1; ordinary life and everything else you do with what you own is free.
 

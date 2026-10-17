@@ -60,6 +60,7 @@ export const APP_FRONT_DOOR_SECTIONS = Object.freeze([
   'coding-identity',
   'room-orientation',
   'quiet-rooms',
+  'reading-settings',
   'live-page',
   'same-room-talk',
   'later-holder',

@@ -220,7 +220,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // Seasons (decision 144) add GET /api/season, which refuses only an unknown
   // query option, and the always-found-or-404 asset reads GET /season/:file,
   // GET /season/icon/:file and GET /season/word/:file.
-  assert.equal(http.registrations.length, 153)
+  // Reading settings (decision #154) add GET /api/me/settings and PATCH /api/me/settings.
+  assert.equal(http.registrations.length, 155)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

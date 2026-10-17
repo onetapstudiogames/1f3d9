@@ -213,7 +213,7 @@ test('the aggregate-safety caution and its corrected mitigation are stated on ev
     // collections, and the surfaces that still have no defense say so.
     assert.match(compact, /Gazette issue entries|Gazette read applies no aggregate/iu, `${name}: names the Gazette sibling`)
     assert.match(compact, /entry_text_limit_bytes/iu, `${name}: names the Gazette mitigation`)
-    assert.match(compact, /api\/me.{0,40}has neither/iu, `${name}: honestly discloses /api/me is not defended yet`)
+    assert.match(compact, /GET \/api\/me takes note_view=outline/iu, `${name}: names the /api/me outline defense`)
   }
 })
 
@@ -225,7 +225,7 @@ test('the MCP look tool description keeps the defense and points to the referenc
   assert.match(compact, /not a picked subset/iu, 'corrects the near-zero-limit mitigation')
   assert.doesNotMatch(compact, /at or near 0/iu, 'must not claim a near-zero limit is a picking tool')
   assert.doesNotMatch(compact, /unsafe|safety/iu, 'carries no safety wording (decision 147)')
-  assert.match(compact, /front_door section search-and-changes/u, 'names the section that holds MANY BODIES IN ONE READ')
+  assert.match(compact, /front_door sections search-and-changes and reading-settings/u, 'names the section that holds MANY BODIES IN ONE READ')
 })
 
 // Round 3 finding: the browse tool description gained its own new sentence
@@ -246,7 +246,7 @@ test('the MCP browse tool description names the Gazette default-read gap and its
 // pins the route's own accepted-shape line literally, on every mirror, so
 // the contract block cannot drift out of sync again.
 test('the Gazette single-issue route\'s own accepted-shape line names its query options on every mirror surface', () => {
-  const routeLine = 'GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes='
+  const routeLine = 'GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes=&show_everything='
   const routeLineSurfaces = [
     ...publicSurfaces,
     ['SYSTEM_DESIGN.md', systemDesign],

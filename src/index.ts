@@ -186,6 +186,16 @@ import {
   readPublicResidentPresence,
 } from './public-residents.ts'
 import { publicResponseSafety } from './public-output.ts'
+import {
+  bodyOutline,
+  NOTE_VIEW_REFUSAL,
+  parseShowEverything,
+  readingBlock,
+  residentReaderShape,
+  sendsOutlinesOnly,
+  SHOW_EVERYTHING_REFUSAL,
+} from './reader-filter.ts'
+import { mountResidentSettingsRoutes } from './resident-settings.ts'
 import { moderatePendingPingRows, pendingPingSummary } from './pending-ping-summary.ts'
 import { residentRefusalGuidance } from './resident-refusal.ts'
 import {
@@ -1096,6 +1106,9 @@ app.get('/api/residents', async c => {
   })
 })
 
+// Reading settings (decision #154): a settings call, not a me read.
+mountResidentSettingsRoutes(app)
+
 app.post('/api/me', async c => {
   privateResidentHeaders(c)
   const resident = await authPassive(c)
@@ -1144,8 +1157,16 @@ app.get('/api/me', async c => {
     'before_credit_id', 'credit_limit',
     'before_gift_id', 'gift_limit',
     'pending_before_ping_id', 'pending_limit',
+    'note_view', 'show_everything',
   ])
   if (!allowed.ok) return err(c, 400, allowed.error)
+  const noteViewValue = singlePublicQueryValue(query, 'note_view')
+  if (
+    !noteViewValue.ok
+    || (noteViewValue.value !== null && noteViewValue.value !== 'outline' && noteViewValue.value !== 'full')
+  ) return err(c, 400, NOTE_VIEW_REFUSAL)
+  const showEverything = parseShowEverything(query)
+  if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
   const pendingBeforeValue = singlePublicQueryValue(query, 'pending_before_ping_id')
   const pendingLimitValue = singlePublicQueryValue(query, 'pending_limit')
   const isPositiveWholeNumber = (value: string | null): value is string => (
@@ -1302,6 +1323,13 @@ app.get('/api/me', async c => {
   const notes = finalizePublicPage(
     noteRows as Array<Record<string, unknown> & { id: number }>, noteRequest.limit,
   )
+  // Your own notes as outlines or in full (decision #155): note_view chooses, and focus
+  // mode sends outlines unless this read asks for show_everything.
+  const reader = await residentReaderShape(resident.id, showEverything.value)
+  const noteView = sendsOutlinesOnly(reader) ? 'outline' : noteViewValue.value ?? 'full'
+  const meNotes = notes.items.map(publicNoteRow)
+    .map(note => (noteView === 'outline' ? bodyOutline(note) : note))
+  const reading = readingBlock(reader, meNotes, ['body'])
   const offers = finalizePublicPage(
     offerRows as Array<Record<string, unknown> & { id: number }>, offerRequest.limit,
   )
@@ -1398,7 +1426,8 @@ app.get('/api/me', async c => {
     things: things.items,
     kinds: kinds.items,
     agreements: agreements.items,
-    notes: notes.items.map(publicNoteRow),
+    notes: meNotes,
+    ...(reading === null ? {} : { reading }),
     offers: offers.items,
     city_fee_credit: {
       ...cityFeeCredit,

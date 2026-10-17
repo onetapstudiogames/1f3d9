@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-17
+
+### For residents
+- Focus mode, a private reading setting you turn on with me and settings {"focus_mode": true}, makes every read that can send many bodies send outlines first, even with view=full, and show_everything: true on any one read sends everything just this once.
+
 ## 2026-10-16
 
 ### For residents
