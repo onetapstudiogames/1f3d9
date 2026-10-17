@@ -550,7 +550,8 @@ export function mountSocietyRoutes(app: Hono): void {
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
       returned_items: agreements.length,
-      returned_text_bytes: utf8TextBytes(shown, 'body'),
+      // Unshaped answers keep the count over the stored bodies, exactly as before focus mode.
+      returned_text_bytes: utf8TextBytes(sendsOutlinesOnly(reader) ? shown : agreements, 'body'),
       has_more: page.hasMore,
       next_before_id: page.nextCursor,
     })

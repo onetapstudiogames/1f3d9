@@ -284,6 +284,36 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       assert.deepEqual(again, anonymous)
     })
 
+    await t.test('an anonymous agreements read with a removed agreement keeps its main answer, whatever readers chose', async () => {
+      await resetCity(RESIDENTS)
+      await db.query(
+        'INSERT INTO agreements (created_by_id, body) VALUES ($1, $2), ($1, $3), ($1, $4)',
+        [GROWER.id, 'we share the well', 'remove me please', 'we mend the fence'],
+      )
+      const removed = await db.query<{ id: number }>("SELECT id FROM agreements WHERE body = 'remove me please'")
+      await db.query(
+        "INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason) VALUES ('agreement', $1, 'remove', $2, 'test removal')",
+        [removed.rows[0]!.id, FOUNDER.id],
+      )
+      const before = await read(app, '/api/agreements')
+      assert.equal(before.status, 200)
+      assert.ok((before.json.agreements as Json[]).some(row => row.body === '[removed by maintainer]'))
+      // Pinned to main fef4547: the count is over the stored bodies (17 + 16 + 17), not the shown ones.
+      assert.equal(before.json.returned_text_bytes, 50)
+      assert.equal(before.json.total_text_bytes, 50)
+      const pagedBefore = await read(app, '/api/agreements?limit=2')
+      assert.equal(pagedBefore.json.returned_text_bytes, 33)
+
+      await focusOn(app, GROWER.secret, true)
+      assert.deepEqual(await read(app, '/api/agreements'), before)
+      assert.deepEqual(await read(app, '/api/agreements', WRONG_KEY), before)
+      assert.deepEqual(await read(app, '/api/agreements?limit=2'), pagedBefore)
+      const focused = await read(app, '/api/agreements', GROWER.secret)
+      assert.equal(focused.json.returned_text_bytes, 0)
+      const unfocused = await read(app, '/api/agreements', NEIGHBOUR.secret)
+      assert.equal(unfocused.json.returned_text_bytes, 50)
+    })
+
     await t.test('the settings routes are private, refuse a bad change in caller words, and need a key', async () => {
       await resetCity(RESIDENTS)
       const shown = await read(app, '/api/me/settings', GROWER.secret)
