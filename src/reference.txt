@@ -1125,7 +1125,8 @@ with drawing_variant_name null or one available exact name.
 READING ONE DRAWING
 ~~~~~~~~~~~~~~~~~~~
 GET /api/drawing/:type/:id accepts type place, resident, kind, or thing and a positive id
-without leading zeroes. It accepts no query options and returns state, presentation_state,
+without leading zeroes. Its one query option is show_everything (reading-settings#focus-mode),
+and it returns state, presentation_state,
 description, exact drawing, source, and canonical eight rows: eight strings of eight tokens
 separated by one space, where . means transparent and decimal 0..63 names a palette index.
 Kind-backed reads name kind_id, kind_name, pinned revision, and variant_name.
@@ -1144,7 +1145,8 @@ authentication, wakes no timer, and changes no JSON list or drawing-readback sha
 DRAWING HISTORY
 ~~~~~~~~~~~~~~~
 GET /api/drawing/:type/:id/history is a deliberate bounded read: limit defaults to 20 and
-caps at 50; optional before is an exclusive positive revision ID. It returns exact
+caps at 50; optional before is an exclusive positive revision ID; show_everything is its one
+other option (reading-settings#focus-mode). It returns exact
 previous/current snapshots, author relation, time, and the next cursor. Normal map, room,
 window, directory, and census reads stay drawing-payload-free and history-free. Only
 separate thumbnail or deliberate bounded drawing routes fetch presentation data. Window
@@ -1477,6 +1479,7 @@ PUBLIC READ ROUTES
                     &before_note_id=&note_limit=
                     &subplace_text_limit_bytes=
                     &thing_text_limit_bytes=&note_text_limit_bytes=
+                    &show_everything=
   GET /api/residents?view=presence&before_id=&limit=&after_change_marker=
   GET /api/residents?view=presence&handle=<public-handle>&after_change_marker=
   GET /api/window?view=outline&after_change_marker=
@@ -1493,7 +1496,8 @@ PUBLIC READ ROUTES
               &before_thing_id=&thing_limit=&before_kind_id=&kind_limit=
               &before_agreement_id=&agreement_limit=&before_note_id=&note_limit=
               &before_offer_id=&offer_limit=&before_credit_id=&credit_limit=
-              &before_gift_id=&gift_limit=
+              &before_gift_id=&gift_limit=&note_view=outline|full&show_everything=
+  GET /api/me/settings
   GET /api/changelog?before_id=&after_id=&limit=
   GET /api/changelog/:id
 
@@ -1914,6 +1918,7 @@ in the transfer answer. A given or sold place arrives with its hinge_to cleared.
   GET  /api/residents             census, recent arrivals first, never by score
   GET  /api/help                  public passive one-line city door list
   GET  /api/me                    private holdings, fee credit, attention, help pointer
+  GET  /api/me/settings           your private reading settings; PATCH changes them
   GET  /api/city-credit/preflight exact fee, before/after, pending gift count; passive
   POST /api/city-credit/gifts/:id/accept    recipient accepts; empty body
   POST /api/city-credit/gifts/:id/refuse    recipient refuses; empty body
@@ -2319,7 +2324,7 @@ displayed body, but Moderation never changes issue membership or the withdrawal
 notice. The permanent archive is public:
 
   GET /api/gazette?before_issue_number=&limit=
-  GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes=
+  GET /api/gazette/:issue_number?after_ordinal=&limit=&view=&entry_text_limit_bytes=&show_everything=
 
 Both limits default to 10 and accept 1..200. The issue-list response carries
 the live submission_room state even when there are no issues. Issue lists are
