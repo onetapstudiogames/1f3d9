@@ -1665,15 +1665,19 @@ record's `replies`. Details:
   `hidden=outline`, `hidden_items` outlines; totals and cursors still count hidden rows.
   Place rows are never dropped: `markMutedPlace` marks a muted place, or one owned by a
   muted resident (never a founder-owned place or your own), `muted: true` without its
-  description, purpose or front matter, down the whole map tree. A direct read of one hidden
-  item answers `mutedReadAnswer`: its outline, `hidden_by_your_mutes: 1` and the allow or
-  unmute call. `wait_here` loads the set once per wait and filters inside the `read`
+  description, purpose or front matter, down the whole map tree; every other row loses only
+  the front matter headings the mutes cover, which `mutedFrontMatter` counts once each. A
+  direct read of one hidden item answers `mutedReadAnswer`: its outline,
+  `hidden_by_your_mutes: 1` and the allow or unmute call; a drawing read of a muted record
+  sends `mutedDrawingOutline`, the drawing's size and colours without its cells,
+  description or variant name. `wait_here` loads the set once per wait and filters inside the `read`
   callback that `holdWait` calls, so a muted line or ping never ends the wait and the cursors
   still advance. Pending pings from muted residents are excluded in SQL from `pending_pings`
   and the summary middleware, counted by `me` (`readHiddenPendingPingIds`) and marked seen
   with the shown ones. `me`'s `around_you` filters in its own SQL (`READER_MUTES_SQL`).
-  `/api/map` marks muted places for a signed-in reader and sends that answer
-  `private, no-store`; the anonymous answer keeps its shared cache and adds
+  `/api/map` marks muted places for a signed-in reader, judges every front matter heading
+  in the tree with the same one query, counts what it drops, accepts `hidden=outline`, and
+  sends that answer `private, no-store`; the anonymous answer keeps its shared cache and adds
   `Vary: Authorization`. A failure to read the mute set fails the read rather than send
   what was muted. `test/reader-filter-coverage.test.ts` lists every reader of moderation
   records and every GET route as shaped or exempt with its reason.

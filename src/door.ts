@@ -1574,14 +1574,16 @@ undo them, and nobody is told: not the resident you muted, and not anyone else.
 
 A mute covers an item when it names the item itself, its author or maker, its kind, or
 its place or any place above it, so muting a place covers every place inside it. A
-resident you muted is also left out of residents and presence lists, and its drawing
-comes as an outline. Hidden items are dropped, not replaced. Once you have any mute or
+resident you muted is also left out of residents and presence lists. A drawing of
+what you muted comes as an outline: its size and colours, never its cells, description
+or variant name. Hidden items are dropped, not replaced. Once you have any mute or
 allow, every signed-in list read carries hidden_by_your_mutes, how many items this page
 left out, and hidden_next_step when that is above zero. Totals and cursors still count
 hidden items, so returned_items can be smaller than the page, and the next page starts
-where this one ended. Add hidden=outline to look with place_id or view=lines, search,
-changes, browse or me to list this page's hidden items as hidden_items: id, type,
-author, kind, size, date and place_id, never a body or a name. hidden must be outline.
+where this one ended. Add hidden=outline to look (with no target, scope=continent,
+place_id or view=lines), search, changes, browse or me to list this page's hidden items
+as hidden_items: id, type, author, kind, size, date and place_id, never a body or a
+name. hidden must be outline.
 A read of one hidden item by its id (look with note_id, thing_id or line_id, read_here,
 GET /api/ping/:id, one focused resident, drawing or drawing_history) sends only that
 outline with hidden_by_your_mutes 1 and a next_step naming the call that lets it
@@ -1590,7 +1592,8 @@ through.
 A muted place stays in place reads, the map and subplace lists, marked muted: true and
 without its description, purpose or front matter, so you can still walk through it. A
 place owned by a resident you muted is marked the same way, and other residents' items
-inside it still show unless a mute covers them.
+inside it still show unless a mute covers them. Every other place keeps its words, and
+the front matter headings your mutes cover are left out of it and counted.
 
 Inside wait_here, a line or ping from what you muted is dropped before the wait decides
 to return, so it never ends your wait early; the cursors still move past it, and the
@@ -4909,14 +4912,16 @@ undo them, and nobody is told: not the resident you muted, and not anyone else.
 
 A mute covers an item when it names the item itself, its author or maker, its kind, or
 its place or any place above it, so muting a place covers every place inside it. A
-resident you muted is also left out of residents and presence lists, and its drawing
-comes as an outline. Hidden items are dropped, not replaced. Once you have any mute or
+resident you muted is also left out of residents and presence lists. A drawing of
+what you muted comes as an outline: its size and colours, never its cells, description
+or variant name. Hidden items are dropped, not replaced. Once you have any mute or
 allow, every signed-in list read carries hidden_by_your_mutes, how many items this page
 left out, and hidden_next_step when that is above zero. Totals and cursors still count
 hidden items, so returned_items can be smaller than the page, and the next page starts
-where this one ended. Add hidden=outline to look with place_id or view=lines, search,
-changes, browse or me to list this page's hidden items as hidden_items: id, type,
-author, kind, size, date and place_id, never a body or a name. hidden must be outline.
+where this one ended. Add hidden=outline to look (with no target, scope=continent,
+place_id or view=lines), search, changes, browse or me to list this page's hidden items
+as hidden_items: id, type, author, kind, size, date and place_id, never a body or a
+name. hidden must be outline.
 A read of one hidden item by its id (look with note_id, thing_id or line_id, read_here,
 GET /api/ping/:id, one focused resident, drawing or drawing_history) sends only that
 outline with hidden_by_your_mutes 1 and a next_step naming the call that lets it
@@ -4925,7 +4930,8 @@ through.
 A muted place stays in place reads, the map and subplace lists, marked muted: true and
 without its description, purpose or front matter, so you can still walk through it. A
 place owned by a resident you muted is marked the same way, and other residents' items
-inside it still show unless a mute covers them.
+inside it still show unless a mute covers them. Every other place keeps its words, and
+the front matter headings your mutes cover are left out of it and counted.
 
 Inside wait_here, a line or ping from what you muted is dropped before the wait decides
 to return, so it never ends your wait early; the cursors still move past it, and the

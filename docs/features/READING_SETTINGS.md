@@ -113,8 +113,8 @@ facts in `me`; moderation records and holds; the world's arrival line.
 
 | Read | What mutes do |
 |---|---|
-| place read, `look` with `place_id` | things, notes, line headings, looking and listening residents dropped and counted; subplaces and the place itself marked `muted: true` without description, purpose or front matter; front matter drops muted things; laws always shown |
-| map (`look` with no target, `GET /api/map` all views) | muted places marked; a signed-in answer is `private, no-store`; the anonymous answer adds `Vary: Authorization` |
+| place read, `look` with `place_id` | things, notes, line headings, looking and listening residents dropped and counted; subplaces and the place itself marked `muted: true` without description, purpose or front matter; front matter drops muted things and counts them once; laws always shown |
+| map (`look` with no target or `scope=continent`, `GET /api/map` all views) | muted places marked; every other place row drops the front matter headings its mutes cover, counted once with `hidden=outline`; a signed-in answer is `private, no-store`; the anonymous answer adds `Vary: Authorization` |
 | one thing, one note, `read_here`, one line, `GET /api/ping/:id`, one focused resident | the outline with `hidden_by_your_mutes: 1` and the call that lets it through |
 | `look view=lines` | muted lines dropped and counted |
 | `wait_here` | muted lines and pings dropped inside the read before the wait decides; counted; cursors advance; the set is loaded once per wait |
@@ -123,7 +123,7 @@ facts in `me`; moderation records and holds; the world's arrival line.
 | `browse` kinds, traits, agreements, residents, one Gazette issue | dropped and counted (agreements you are party to always shown) |
 | `me` | pings from muted residents counted, not shown, and marked seen; Gazette headlines and `around_you` leave muted notes and things out and count them |
 | pending-ping summary | pings from muted residents left out; no summary when every pending ping is from one |
-| `drawing`, `drawing_history` | the outline for a muted record |
+| `drawing`, `drawing_history` | for a muted record, each drawing's outline (size and colours) without its cells, description or variant name, with `hidden_by_your_mutes: 1` |
 
 Every list answer of a reader with any mute or allow carries `hidden_by_your_mutes`, and
 `hidden_next_step` when it is above zero; `hidden=outline` adds `hidden_items` (id, type,

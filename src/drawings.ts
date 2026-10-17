@@ -18,6 +18,7 @@ import { allowedPublicQuery } from './public-pagination.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import {
   drawingOutline,
+  mutedDrawingOutline,
   judgeRead,
   markReaderShaped,
   mutedItemNextStep,
@@ -574,15 +575,22 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // revision's drawings as outlines, their size and colours, never their cells.
     const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
     markReaderShaped(c, reader)
-    // Mutes (decision #156): the drawings of a record the reader muted come as outlines.
+    // Mutes (decision #156): the drawings of a record the reader muted come as outlines,
+    // without their descriptions or variant names, which are their author's words.
     const muted = await drawingTargetMuted(reader, recordType, id)
-    const shownRevisions = sendsOutlinesOnly(reader) || muted
-      ? revisions.map(revision => ({
+    const shownRevisions = muted
+      ? revisions.map(({ slot_variant_name: _slotVariantName, ...revision }) => ({
           ...revision,
-          previous: drawingOutline(revision.previous),
-          current: drawingOutline(revision.current),
+          previous: mutedDrawingOutline(revision.previous),
+          current: mutedDrawingOutline(revision.current),
         }))
-      : revisions
+      : sendsOutlinesOnly(reader)
+        ? revisions.map(revision => ({
+            ...revision,
+            previous: drawingOutline(revision.previous),
+            current: drawingOutline(revision.current),
+          }))
+        : revisions
     const reading = readingBlock(
       reader,
       shownRevisions.flatMap(revision => [revision.previous, revision.current]),
@@ -625,9 +633,12 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // note, one thing, one line, read_here), so it is outline-first like a many-body read.
     const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
     markReaderShaped(c, reader)
-    // Mutes (decision #156): the drawing of a record the reader muted comes as an outline.
+    // Mutes (decision #156): the drawing of a record the reader muted comes as an outline,
+    // without its description or variant name, which are its author's words.
     const muted = await drawingTargetMuted(reader, recordType, id)
-    const shown = sendsOutlinesOnly(reader) || muted ? drawingOutline(drawing) : drawing
+    const shown = muted
+      ? mutedDrawingOutline(drawing)
+      : sendsOutlinesOnly(reader) ? drawingOutline(drawing) : drawing
     const reading = readingBlock(reader, [shown], ['drawing'])
     return c.json({
       type: recordType,

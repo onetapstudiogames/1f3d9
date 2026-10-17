@@ -10,6 +10,8 @@ import {
   HIDDEN_NEXT_STEP,
   HIDDEN_REFUSAL,
   markMutedPlace,
+  mutedDrawingOutline,
+  mutedFrontMatter,
   mutedItemNextStep,
   mutedReadAnswer,
   mutesFields,
@@ -17,6 +19,7 @@ import {
   splitMuted,
   splitMutedEvents,
   splitMutedResidents,
+  treeFrontMatterIds,
   treePlaceIds,
   type ReaderShape,
 } from '../src/reader-filter.ts'
@@ -199,6 +202,44 @@ test('a muted place stays listed, marked, without its words, all the way down a 
   assert.equal(markMutedPlace(null, plain), plain)
 })
 
+test('a map row the reader did not mute loses only the front matter headings its mutes cover, counted once', async () => {
+  const tree = [{
+    id: 100, name: 'Founder Hall', description: 'kept', front_matter: [{ id: 40, name: 'muted lamp', made_by: 'other-one' }, { id: 43, name: 'founder lamp' }],
+    children: [
+      { id: 101, name: 'Muted Room', description: 'gone', front_matter: [{ id: 40, name: 'muted lamp' }], children: [] },
+      { id: 103, name: 'Own Room', description: 'mine', front_matter: [{ id: 40, name: 'muted lamp' }], children: [] },
+    ],
+  }]
+  assert.deepEqual(treeFrontMatterIds(tree), [40, 43, 40, 40])
+  const judge = await judgeMutes(muteSet(), { place: treePlaceIds(tree), thing: treeFrontMatterIds(tree) }, factsQuery)
+  const [root] = tree.map(row => markMutedPlace(judge, row)) as Array<Record<string, unknown>>
+  assert.deepEqual(root!.front_matter, [{ id: 43, name: 'founder lamp' }])
+  const [muted, own] = root!.children as Array<Record<string, unknown>>
+  assert.deepEqual(muted!.front_matter, [])
+  assert.equal(own!.description, 'mine')
+  assert.deepEqual(own!.front_matter, [])
+  assert.doesNotMatch(JSON.stringify(root), /muted lamp/u)
+  const hidden = mutedFrontMatter(judge, tree)
+  assert.deepEqual(hidden.map(outline => `${outline.type}:${outline.id}`), ['thing:40'])
+  assert.doesNotMatch(JSON.stringify(hidden), /muted lamp/u)
+  assert.deepEqual(mutedFrontMatter(null, tree), [])
+  const untouched = { id: 100, name: 'x', front_matter: [{ id: 43 }] }
+  assert.equal(markMutedPlace(judge, untouched), untouched)
+})
+
+test('a muted drawing keeps its size and colours and drops its cells, description and variant name', () => {
+  const drawn = Object.freeze({
+    state: 'complete', presentation_state: 'complete', description: 'words by its author',
+    drawing: { palette: ['#ad3f25', '#f0c95f'], indices: Array.from({ length: 64 }, (_, i) => i % 2) },
+    rows: ['0101'], source: 'resident', kind_id: 3, kind_name: 'lamp', revision: 2, variant_name: 'a named variant',
+  })
+  const outline = mutedDrawingOutline(drawn as never)
+  assert.deepEqual(Object.keys(outline).sort(), ['kind_id', 'kind_name', 'outline', 'presentation_state', 'revision', 'source', 'state'])
+  assert.doesNotMatch(JSON.stringify(outline), /words by its author|a named variant/u)
+  const refused = Object.freeze({ state: 'refused', presentation_state: 'refused', description: 'refused words', drawing: null, rows: null, source: 'resident' })
+  assert.deepEqual(mutedDrawingOutline(refused as never), { state: 'refused', presentation_state: 'refused', drawing: null, rows: null, source: 'resident' })
+})
+
 test('the count appears only once a reader has mutes, and a direct read names the call that lets it through', () => {
   const anyone: ReaderShape = Object.freeze({ residentId: READER, focus: false, showEverything: false, mutes: null })
   const muting: ReaderShape = Object.freeze({ ...anyone, mutes: muteSet() })
@@ -244,6 +285,10 @@ test('the MCP doors carry the settings verbs and hidden=outline to the routes th
     ['me', { settings: { mute: { type: 'resident', id: 12 } } }],
     ['me', { settings: { allow: { type: 'note', id: 5 } } }],
     ['me', { hidden: 'outline' }],
+    ['look', {}],
+    ['look', { hidden: 'outline' }],
+    ['look', { view: 'full', hidden: 'outline' }],
+    ['look', { scope: 'continent', continent_id: 2, hidden: 'outline' }],
     ['look', { place_id: 3, hidden: 'outline' }],
     ['look', { place_id: 3, view: 'lines', hidden: 'outline' }],
     ['look', { note_id: 4, hidden: 'outline' }],
@@ -258,6 +303,10 @@ test('the MCP doors carry the settings verbs and hidden=outline to the routes th
     'PATCH /api/me/settings {"mute":{"type":"resident","id":12}}',
     'PATCH /api/me/settings {"allow":{"type":"note","id":5}}',
     'GET /api/me?hidden=outline',
+    'GET /api/map?view=outline',
+    'GET /api/map?view=outline&hidden=outline',
+    'GET /api/map?view=full&hidden=outline',
+    'GET /api/map?view=continent&continent_id=2&hidden=outline',
     'GET /api/place/3?view=outline&hidden=outline',
     'GET /api/place/3/lines?hidden=outline',
     'GET /api/note/4',

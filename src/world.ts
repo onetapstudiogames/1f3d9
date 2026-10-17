@@ -119,6 +119,7 @@ import {
   judgeRead,
   markMutedPlace,
   markReaderShaped,
+  mutedFrontMatter,
   mutedReadAnswer,
   mutesFields,
   parseHidden,
@@ -130,7 +131,9 @@ import {
   SHOW_EVERYTHING_REFUSAL,
   splitMuted,
   splitMutedResidents,
+  treeFrontMatterIds,
   treePlaceIds,
+  type HiddenOutline,
   type MuteJudge,
   type ReaderShape,
 } from './reader-filter.ts'
@@ -486,20 +489,21 @@ function markedPlaceTextBytes(stored: readonly object[], after: readonly object[
 /**
  * A map answer for its reader (decision #156): anonymous answers keep their shared cache
  * and say they vary by Authorization; a signed-in answer marks the places its reader
- * muted and is never shared from a cache.
+ * muted, drops the front matter headings its mutes cover and counts them, and is never
+ * shared from a cache. rows are the answer's place rows, with any nested children.
  */
 async function mapForReader<T>(
   c: Context,
-  ids: readonly number[],
+  rows: readonly unknown[],
   mark: (judge: MuteJudge | null) => T,
-): Promise<Readonly<{ reader: ReaderShape | null; body: T }>> {
+): Promise<Readonly<{ reader: ReaderShape | null; body: T; hidden: readonly HiddenOutline[] }>> {
   const reader = await readerShape(c, false)
   if (reader === null) {
     c.header('Vary', 'Authorization')
-    return { reader, body: mark(null) }
+    return { reader, body: mark(null), hidden: [] }
   }
-  const judge = await judgeRead(reader, { place: ids })
-  return { reader, body: mark(judge) }
+  const judge = await judgeRead(reader, { place: treePlaceIds(rows), thing: treeFrontMatterIds(rows) })
+  return { reader, body: mark(judge), hidden: mutedFrontMatter(judge, rows) }
 }
 
 export function mountWorldRoutes(app: Hono): void {
@@ -507,9 +511,11 @@ export function mountWorldRoutes(app: Hono): void {
     const query = c.req.queries()
     const allowed = allowedPublicQuery(query, [
       'view', 'parent_id', 'limit', 'before_subplace_id', 'subplace_limit',
-      'after_change_marker', 'continent_id', 'before_place_id',
+      'after_change_marker', 'continent_id', 'before_place_id', 'hidden',
     ])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const hiddenQuery = parseHidden(query)
+    if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
     const viewValue = singlePublicQueryValue(query, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const view = viewValue.value
@@ -545,7 +551,7 @@ export function mountWorldRoutes(app: Hono): void {
         return err(c, 404, `continent_id ${continentId} is not an active continent directly inside the world; call look with no target to choose a current continent_id`)
       }
       c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-      const shaped = await mapForReader(c, [page.continent.id, ...rowIds(page.places)], judge => (
+      const shaped = await mapForReader(c, [page.continent, ...page.places], judge => (
         judge === null ? page : {
           ...page,
           continent: markMutedPlace(judge, page.continent),
@@ -553,7 +559,11 @@ export function mountWorldRoutes(app: Hono): void {
         }
       ))
       markReaderShaped(c, shaped.reader)
-      return publicJson(c, { view: 'continent', ...shaped.body })
+      return publicJson(c, {
+        view: 'continent',
+        ...mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline),
+        ...shaped.body,
+      })
     }
     if (continentNames.some(name => Object.hasOwn(query, name))) {
       return err(c, 400, 'continent_id and before_place_id require view=continent; send both view=continent and a current continent_id')
@@ -616,7 +626,7 @@ export function mountWorldRoutes(app: Hono): void {
           : 'no-store',
       )
       const found = outline
-      const shaped = await mapForReader(c, [found.place.id, ...rowIds(found.subplaces)], judge => (
+      const shaped = await mapForReader(c, [found.place, ...found.subplaces], judge => (
         judge === null ? found : {
           ...found,
           place: markMutedPlace(judge, found.place),
@@ -626,6 +636,7 @@ export function mountWorldRoutes(app: Hono): void {
       markReaderShaped(c, shaped.reader)
       return publicJson(c, {
         view: 'outline',
+        ...mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline),
         ...shaped.body,
         ...(changeMarker === null ? {} : { change_marker: changeMarker }),
       })
@@ -637,11 +648,12 @@ export function mountWorldRoutes(app: Hono): void {
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-    const shaped = await mapForReader(c, treePlaceIds(body.places), judge => (
+    const shaped = await mapForReader(c, body.places, judge => (
       judge === null ? body : { ...body, places: body.places.map(place => markMutedPlace(judge, place)) }
     ))
     markReaderShaped(c, shaped.reader)
-    return c.json(view === 'full' ? { view: 'full', ...shaped.body } : shaped.body)
+    const mutes = mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline)
+    return c.json(view === 'full' ? { view: 'full', ...mutes, ...shaped.body } : { ...mutes, ...shaped.body })
   })
 
   app.get('/api/place/:id', async c => {
@@ -862,6 +874,13 @@ export function mountWorldRoutes(app: Hono): void {
     const shownPlace = markMutedPlace(judge, publicPlace)
     const publicNotes = mutedNotes.shown
     const publicLineHeadings = mutedLines.shown
+    // Front matter goes with a marked place's words; otherwise muted headings are dropped
+    // and counted once, even when the same thing is also on this page's things.
+    const shownFrontMatter = (shownPlace as unknown as Record<string, unknown>).muted === true
+      ? { shown: [] as typeof frontMatter[number][], hidden: [] as HiddenOutline[] }
+      : splitMuted(judge, 'thing', frontMatter)
+    const thingHiddenIds = new Set(rowIds(mutedThings.hidden))
+    const frontMatterHidden = shownFrontMatter.hidden.filter(outline => !thingHiddenIds.has(outline.id))
     const reading = readingBlock(
       reader,
       [...publicSubplaces, ...mutedThings.shown, ...publicNotes],
@@ -871,14 +890,12 @@ export function mountWorldRoutes(app: Hono): void {
       view,
       ...(reading === null ? {} : { reading }),
       ...mutesFields(reader, [
-        ...mutedThings.hidden, ...mutedNotes.hidden, ...mutedLines.hidden,
+        ...mutedThings.hidden, ...frontMatterHidden, ...mutedNotes.hidden, ...mutedLines.hidden,
         ...mutedLooking.hidden, ...mutedListening.hidden,
       ], hiddenQuery.outline),
       place: { ...shownPlace, labels, laws: publicDetails.laws },
       ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
-      front_matter: shownPlace === publicPlace
-        ? splitMuted(judge, 'thing', frontMatter).shown
-        : Object.freeze([]),
+      front_matter: shownFrontMatter.shown,
       subplaces: publicSubplaces,
       things: mutedThings.shown,
       notes: publicNotes,

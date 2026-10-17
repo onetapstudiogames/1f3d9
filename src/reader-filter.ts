@@ -182,10 +182,17 @@ export function splitMutedEvents<T>(
   return { shown, hidden }
 }
 
+/** A front matter heading whose thing the reader's mutes cover. */
+function hidesHeading(judge: MuteJudge, heading: unknown): boolean {
+  const id = rowIds([heading])[0]
+  return id !== undefined && judge.hides('thing', id)
+}
+
 /**
  * A place row the reader muted, or one owned by a muted resident, stays listed so the
  * reader can still walk through, marked muted and without its description, purpose or
- * front matter. Any other row is returned as it is.
+ * front matter. Any other row keeps its words and loses only the front matter headings
+ * the reader's mutes cover; mutedFrontMatter counts those.
  */
 export function markMutedPlace<T>(judge: MuteJudge | null, row: T): T {
   if (judge === null || row === null || typeof row !== 'object') return row
@@ -195,7 +202,15 @@ export function markMutedPlace<T>(judge: MuteJudge | null, row: T): T {
     : null
   const id = rowIds([record])[0]
   if (id === undefined || !judge.marksPlace(id)) {
-    return (children === null ? row : Object.freeze({ ...record, children })) as unknown as T
+    const headings = Array.isArray(record.front_matter) ? record.front_matter : null
+    const kept = headings === null ? null : headings.filter(heading => !hidesHeading(judge, heading))
+    const dropsHeadings = headings !== null && kept !== null && kept.length !== headings.length
+    if (children === null && !dropsHeadings) return row
+    return Object.freeze({
+      ...record,
+      ...(dropsHeadings ? { front_matter: Object.freeze(kept) } : {}),
+      ...(children === null ? {} : { children }),
+    }) as unknown as T
   }
   const { description: _description, purpose: _purpose, ...rest } = record
   return Object.freeze({
@@ -213,6 +228,43 @@ export function treePlaceIds(rows: readonly unknown[]): number[] {
     const record = row as Record<string, unknown>
     return [...rowIds([record]), ...(Array.isArray(record.children) ? treePlaceIds(record.children) : [])]
   })
+}
+
+/** Every front matter thing id in a nested map tree, so the same judge covers them. */
+export function treeFrontMatterIds(rows: readonly unknown[]): number[] {
+  return rows.flatMap(row => {
+    if (row === null || typeof row !== 'object') return []
+    const record = row as Record<string, unknown>
+    return [
+      ...(Array.isArray(record.front_matter) ? rowIds(record.front_matter) : []),
+      ...(Array.isArray(record.children) ? treeFrontMatterIds(record.children) : []),
+    ]
+  })
+}
+
+/**
+ * The front matter headings markMutedPlace drops from rows it leaves unmarked, once each,
+ * as outlines for the count and for hidden=outline. A marked row's front matter goes with
+ * its words and is not counted, like its description.
+ */
+export function mutedFrontMatter(judge: MuteJudge | null, rows: readonly unknown[]): HiddenOutline[] {
+  if (judge === null) return []
+  const hidden = new Map<number, HiddenOutline>()
+  const walk = (list: readonly unknown[]): void => {
+    for (const row of list) {
+      if (row === null || typeof row !== 'object') continue
+      const record = row as Record<string, unknown>
+      const id = rowIds([record])[0]
+      if ((id === undefined || !judge.marksPlace(id)) && Array.isArray(record.front_matter)) {
+        for (const thingId of rowIds(record.front_matter)) {
+          if (judge.hides('thing', thingId) && !hidden.has(thingId)) hidden.set(thingId, judge.outline('thing', thingId))
+        }
+      }
+      if (Array.isArray(record.children)) walk(record.children)
+    }
+  }
+  walk(rows)
+  return [...hidden.values()]
 }
 
 /**
@@ -317,4 +369,13 @@ export function drawingOutline<T extends DrawingCarrier>(snapshot: T): Readonly<
       colours_used: Object.freeze(drawing.palette.filter((_colour, index) => used.has(index))),
     }),
   })
+}
+
+/**
+ * A drawing of a record the reader muted: its outline without the words its author wrote
+ * about it (description) or a variant's name, so a muted drawing read sends no body.
+ */
+export function mutedDrawingOutline<T extends DrawingCarrier>(snapshot: T): Readonly<Record<string, unknown>> {
+  const { description: _description, variant_name: _variantName, ...rest } = drawingOutline(snapshot) as Record<string, unknown>
+  return Object.freeze(rest)
 }

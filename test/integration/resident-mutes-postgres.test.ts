@@ -2,9 +2,11 @@
 // routes, the real migration. Every signed-in resident read drops what its reader muted
 // and counts it; anonymous reads, and a signed-in read with no mutes, are unchanged.
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { Hono } from 'hono'
 import {
   call,
   FOUNDER,
@@ -607,6 +609,165 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
       assert.equal((west.json.place as Json).muted, undefined)
       const continent = await read(app, `/api/place/${rooms.continentId}?view=full`, GROWER.secret)
       assert.equal((continent.json.subplaces as Json[]).find(row => row.id === rooms.westRoomId)!.description, 'the west room')
+    })
+
+    await t.test('the map drops a muted maker\'s front matter headings and counts them; anonymous maps are unchanged', async () => {
+      const rooms = await resetCity(RESIDENTS)
+      const thingName = 'zq front matter lantern by next-door'
+      const frontThing = await seedThing(rooms.eastRoomId, NEIGHBOUR.id, thingName, 'a lantern body')
+      const keptThing = await seedThing(rooms.eastRoomId, FAR_SHORE.id, 'zq kept front matter lamp', 'a lamp body')
+      await db.query('UPDATE places SET front_matter_thing_ids = ARRAY[$2, $3]::integer[] WHERE id = $1', [rooms.eastRoomId, frontThing, keptThing])
+      const continent = `/api/map?view=continent&continent_id=${rooms.continentId}`
+      const outline = `/api/map?view=outline&parent_id=${rooms.continentId}`
+      const paths = ['/api/map', '/api/map?view=full', outline, continent]
+      const withHidden = (path: string): string => `${path}${path.includes('?') ? '&' : '?'}hidden=outline`
+      // The anonymous map and outline are shared for 30 seconds; step past an earlier
+      // subtest's copy so these reads build from this city.
+      const realNow = Date.now
+      Date.now = () => realNow() + 120_000
+      let anonymousBefore: Read[]
+      try {
+        anonymousBefore = await Promise.all(paths.map(path => read(app, path)))
+      } finally {
+        Date.now = realNow
+      }
+      assert.match(anonymousBefore[0]!.text, /zq front matter lantern/u)
+      assert.match(anonymousBefore[2]!.text, /zq front matter lantern/u)
+
+      await mute(app, GROWER.secret, 'mute', 'resident', NEIGHBOUR.id)
+      const eastRow = (answer: Json): Json => {
+        const rows: Json[] = []
+        const walk = (list: unknown): void => {
+          for (const row of (list ?? []) as Json[]) {
+            rows.push(row)
+            walk(row.children)
+          }
+        }
+        walk(answer.places)
+        walk(answer.subplaces)
+        return rows.find(row => row.id === rooms.eastRoomId)!
+      }
+      for (const path of ['/api/map', '/api/map?view=full', outline]) {
+        const keyed = await read(app, path, GROWER.secret)
+        assert.equal(keyed.status, 200, keyed.text)
+        assert.doesNotMatch(keyed.text, /zq front matter lantern/u, path)
+        assert.deepEqual(ids(eastRow(keyed.json).front_matter), [keptThing], path)
+        assert.equal(keyed.json.hidden_by_your_mutes, 1, path)
+        assert.equal(typeof keyed.json.hidden_next_step, 'string', path)
+        assert.equal(keyed.headers['cache-control'], 'private, no-store', path)
+        const listed = await read(app, withHidden(path), GROWER.secret)
+        assert.deepEqual(hiddenIds(listed.json), [`thing:${frontThing}`], path)
+        assertOutline((listed.json.hidden_items as Json[])[0]!, 'thing', frontThing)
+        assert.doesNotMatch(listed.text, /zq front matter lantern/u, path)
+      }
+      const keyedContinent = await read(app, continent, GROWER.secret)
+      assert.equal(keyedContinent.json.hidden_by_your_mutes, 0)
+      const refused = await read(app, '/api/map?hidden=all', GROWER.secret)
+      assert.equal(refused.status, 400)
+      assert.equal(refused.json.error, HIDDEN_REFUSAL)
+      const lookedRoot = await mcpCall(app, GROWER.secret, 'look', { hidden: 'outline' })
+      assert.equal(lookedRoot.hidden_by_your_mutes, 0)
+      const looked = await mcpCall(app, GROWER.secret, 'look', { view: 'full', hidden: 'outline' })
+      assert.doesNotMatch(JSON.stringify(looked), /zq front matter lantern/u)
+      assert.deepEqual(hiddenIds(looked), [`thing:${frontThing}`])
+      // The place read counts the same heading once, though it is also on its things page.
+      const east = await read(app, `/api/place/${rooms.eastRoomId}?hidden=outline`, GROWER.secret)
+      assert.doesNotMatch(east.text, /zq front matter lantern/u)
+      assert.deepEqual(ids(east.json.front_matter), [keptThing])
+      assert.deepEqual(hiddenIds(east.json), [`thing:${frontThing}`])
+
+      const anonymousAfter = await Promise.all(paths.map(path => read(app, path)))
+      assert.deepEqual(anonymousAfter.map(answer => answer.text), anonymousBefore.map(answer => answer.text))
+      const anonymousHidden = await Promise.all(paths.map(path => read(app, withHidden(path))))
+      assert.deepEqual(anonymousHidden.map(answer => answer.text), anonymousBefore.map(answer => answer.text))
+    })
+
+    await t.test('a muted resident\'s drawing and drawing history send no description on any door', async () => {
+      const rooms = await resetCity(RESIDENTS)
+      await standIn(GROWER.id, rooms.eastRoomId)
+      const cells = { palette: ['#ad3f25', '#f0c95f'], indices: Array.from({ length: 64 }, (_, i) => i % 2) }
+      for (const words of ['zq first portrait words', 'zq second portrait words']) {
+        const drew = await call(app, NEIGHBOUR.secret, 'PATCH', '/api/me/drawing', {
+          drawing: cells,
+          drawing_state: 'complete',
+          drawing_description: words,
+        })
+        assert.equal(drew.status, 200, JSON.stringify(drew.json))
+      }
+      const thing = await seedThing(rooms.eastRoomId, NEIGHBOUR.id, 'a drawn lantern', 'a lantern body')
+      await db.query(
+        `UPDATE things SET drawing = $2::jsonb, drawing_state = 'complete', drawing_description = 'zq thing drawing words' WHERE id = $1`,
+        [thing, JSON.stringify(cells)],
+      )
+      const portrait = `/api/drawing/resident/${NEIGHBOUR.id}`
+      assert.match((await read(app, portrait, GROWER.secret)).text, /zq second portrait words/u)
+      assert.match((await read(app, `${portrait}/history`, GROWER.secret)).text, /zq first portrait words/u)
+
+      await mute(app, GROWER.secret, 'mute', 'resident', NEIGHBOUR.id)
+      for (const path of [portrait, `${portrait}/history`, `/api/drawing/thing/${thing}`, `/api/drawing/thing/${thing}/history`]) {
+        const keyed = await read(app, path, GROWER.secret)
+        assert.equal(keyed.status, 200, keyed.text)
+        assert.doesNotMatch(keyed.text, /zq [a-z ]*words/u, path)
+        assert.equal(keyed.json.hidden_by_your_mutes, 1, path)
+      }
+      const single = (await read(app, portrait, GROWER.secret)).json
+      assert.deepEqual((single.outline as Json).colours_used, ['#ad3f25', '#f0c95f'])
+      assert.equal(single.drawing, undefined)
+      assert.equal(single.description, undefined)
+      const history = (await read(app, `${portrait}/history`, GROWER.secret)).json
+      assert.equal((history.revisions as Json[]).length, 2)
+      assert.match((await read(app, portrait)).text, /zq second portrait words/u)
+
+      const previousSignin = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+      try {
+        const { mcp } = await import('../../src/mcp.ts')
+        const { configureOAuthResidentResolver } = await import('../../src/oauth.ts')
+        const { oauthResourceFor } = await import('../../src/oauth-config.ts')
+        configureOAuthResidentResolver()
+        const tokenFor = async (door: 'connect' | 'app'): Promise<string> => {
+          const token = `1f3d9_at_${(door === 'app' ? 'ab' : 'cd').repeat(32)}`
+          const family = await db.query<{ id: string }>(`
+            INSERT INTO oauth_token_families (resident_id, client_id, resource, scope, expires_at)
+            VALUES ($1, 'mutes-client', $2, 'city:resident', now() + interval '1 day') RETURNING id
+          `, [GROWER.id, oauthResourceFor(door)])
+          await db.query(
+            `INSERT INTO oauth_tokens (token_hash, token_type, family_id, expires_at) VALUES ($1, 'access', $2, now() + interval '9 minutes')`,
+            [createHash('sha256').update(token, 'utf8').digest('hex'), family.rows[0]!.id],
+          )
+          return token
+        }
+        const hosted = new Hono()
+        hosted.post('/mcp', c => mcp(c, app as unknown as Hono, { door: 'key' }))
+        hosted.post('/mcp/connect', c => mcp(c, app as unknown as Hono, { hostedChat: true, forwardUnauthorizedStatus: true }))
+        hosted.post('/mcp/app', c => mcp(c, app as unknown as Hono, { door: 'app', forwardUnauthorizedStatus: true }))
+        const doors: ReadonlyArray<readonly [string, string]> = [
+          ['/mcp', GROWER.secret],
+          ['/mcp/connect', await tokenFor('connect')],
+          ['/mcp/app', await tokenFor('app')],
+        ]
+        const calls: ReadonlyArray<readonly [string, Json]> = [
+          ['drawing', { type: 'resident', id: NEIGHBOUR.id }],
+          ['drawing_history', { type: 'resident', id: NEIGHBOUR.id }],
+          ['drawing', { type: 'thing', id: thing }],
+        ]
+        for (const [door, token] of doors) {
+          for (const [name, args] of calls) {
+            const response = await hosted.request(`http://city.test${door}`, {
+              method: 'POST',
+              headers: { ...bearer(token), accept: 'application/json, text/event-stream' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+            }, { outgoing: Object.assign(new EventEmitter(), { destroyed: false }) })
+            const text = await response.text()
+            assert.equal(response.status, 200, `${door} ${name} ${text}`)
+            assert.match(text, /hidden_by_your_mutes/u, `${door} ${name} ${text}`)
+            assert.doesNotMatch(text, /zq [a-z ]*words/u, `${door} ${name}`)
+          }
+        }
+      } finally {
+        if (previousSignin === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+        else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousSignin
+      }
     })
   } finally {
     await postgres.stop()
