@@ -421,10 +421,12 @@ export function registerEffectsTests(): void {
         const credentialedBody = await credentialedLook.json() as { place: { labels?: string[] } }
         assert.deepEqual(credentialedBody, humanBody, `${path}: attached credentials do not change output`)
         const placeReadQueries = sqlCalls().map(call => call.query ?? '')
+        // Decision #154: a signed-in read may look up only its own reader, by a plain
+        // SELECT; it never resets quotas or touches the resident row.
         assert.equal(
-          placeReadQueries.some(query => /where\s+secret_hash/iu.test(query)),
+          placeReadQueries.some(query => /where\s+secret_hash/iu.test(query) && !/^\s*select\b/iu.test(query)),
           false,
-          `${path}: an attached credential must not be looked up`,
+          `${path}: an attached credential may be read but never written`,
         )
         assert.equal(
           placeReadQueries.some(query => /pending_effects|effect_resolutions/iu.test(query)),

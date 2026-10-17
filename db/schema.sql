@@ -11949,6 +11949,32 @@ $place_feed_column$;
 
 ALTER TABLE places VALIDATE CONSTRAINT places_feed_needs_quiet;
 
+-- Reading settings (decisions #154 and #155), the same statements as
+-- db/migrations/20261017_resident_settings.sql: one private row per resident,
+-- a missing row means every default, and focus mode is off by default.
+DO $resident_settings_guard$
+BEGIN
+  IF to_regclass('public.residents') IS NULL THEN
+    RAISE EXCEPTION 'resident settings migration needs the residents table';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('public.resident_settings')
+      AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('resident_id', 'focus', 'updated_at')
+  ) THEN
+    RAISE EXCEPTION 'resident_settings already exists with columns this migration does not know';
+  END IF;
+END
+$resident_settings_guard$;
+
+-- One private row per resident; a missing row means every default.
+CREATE TABLE IF NOT EXISTS resident_settings (
+  resident_id INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
+  focus       BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder
 -- moderation and flags that may name a line or a ping, and the format-v3 public

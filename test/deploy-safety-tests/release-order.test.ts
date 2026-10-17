@@ -294,4 +294,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:place-feed/u)
     assert.match(deploymentRunbook, /places_feed_needs_quiet[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the resident settings migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Resident settings prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:resident-settings/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:resident-settings/u)
+    assert.match(deploymentRunbook, /resident_settings[\s\S]*Never chain the migration with the merge\./u)
+  })
 }

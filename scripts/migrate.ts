@@ -94,6 +94,7 @@ type RemoteMigration =
   | 'moderation-holds'
   | 'moderation-reviews'
   | 'place-feed'
+  | 'resident-settings'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -119,6 +120,7 @@ export type MigrationFile =
   | 'db/migrations/20261015_moderation_holds.sql'
   | 'db/migrations/20261015_moderation_reviews.sql'
   | 'db/migrations/20261016_place_feed.sql'
+  | 'db/migrations/20261017_resident_settings.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -298,6 +300,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'moderation-holds': 'db/migrations/20261015_moderation_holds.sql',
   'moderation-reviews': 'db/migrations/20261015_moderation_reviews.sql',
   'place-feed': 'db/migrations/20261016_place_feed.sql',
+  'resident-settings': 'db/migrations/20261017_resident_settings.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

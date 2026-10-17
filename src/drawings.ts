@@ -16,6 +16,16 @@ import { renderDrawingThumbnailPng } from './drawing-thumbnail.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
+import {
+  drawingOutline,
+  markReaderShaped,
+  parseShowEverything,
+  readerShape,
+  readingBlock,
+  SHOW_EVERYTHING_REFUSAL,
+  sendsOutlinesOnly,
+  type ReaderShape,
+} from './reader-filter.ts'
 
 const DRAWING_RECORD_TYPES = Object.freeze(['place', 'resident', 'kind', 'thing'] as const)
 const DRAWING_RECORD_TYPE_SET: ReadonlySet<string> = new Set(DRAWING_RECORD_TYPES)
@@ -40,6 +50,8 @@ export interface DrawingRouteDatabase {
 export interface DrawingRouteDependencies {
   readonly database: DrawingRouteDatabase
   readonly authenticate: (context: Context) => Promise<Resident | null>
+  /** Who is reading, for focus mode (decision #155); defaults to the passive lookup. */
+  readonly readerShape?: (context: Context, showEverything: boolean) => Promise<ReaderShape | null>
 }
 
 type DrawingSource = 'none' | 'place' | 'resident' | 'thing' | 'kind_base' | 'kind_variant'
@@ -418,6 +430,8 @@ function exactResidentDrawingBody(body: Record<string, unknown>, state: DrawingS
     && expected.every((field, index) => actual[index] === field)
 }
 
+const DRAWING_HISTORY_QUERY_KEYS: readonly string[] = Object.freeze(['before', 'limit', 'show_everything'])
+
 function privateHeaders(c: Context): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
@@ -492,12 +506,14 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     if (id === null) return err(c, 400, 'drawing id must be a positive integer without leading zeroes')
 
     const query = new URL(c.req.url).searchParams
-    if ([...query.keys()].some(key => key !== 'before' && key !== 'limit')) {
-      return err(c, 400, 'drawing history accepts only before and limit')
+    if ([...query.keys()].some(key => !DRAWING_HISTORY_QUERY_KEYS.includes(key))) {
+      return err(c, 400, 'drawing history accepts only before, limit and show_everything')
     }
-    if (query.getAll('before').length > 1 || query.getAll('limit').length > 1) {
-      return err(c, 400, 'drawing history accepts before and limit once each')
+    if (DRAWING_HISTORY_QUERY_KEYS.some(key => query.getAll(key).length > 1)) {
+      return err(c, 400, 'drawing history accepts before, limit and show_everything once each')
     }
+    const showEverything = parseShowEverything({ show_everything: query.getAll('show_everything') })
+    if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
     const before = optionalPositiveQuery(query.get('before'))
     if (before === 'invalid') {
       return err(c, 400, 'drawing history before must be a positive integer without leading zeroes')
@@ -539,10 +555,27 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       })
     }
 
+    // Focus mode (decisions #154 and #155): a signed-in reader who chose it gets each
+    // revision's drawings as outlines, their size and colours, never their cells.
+    const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
+    markReaderShaped(c, reader)
+    const shownRevisions = sendsOutlinesOnly(reader)
+      ? revisions.map(revision => ({
+          ...revision,
+          previous: drawingOutline(revision.previous),
+          current: drawingOutline(revision.current),
+        }))
+      : revisions
+    const reading = readingBlock(
+      reader,
+      shownRevisions.flatMap(revision => [revision.previous, revision.current]),
+      ['drawing'],
+    )
     return c.json({
       type: recordType,
       id,
-      revisions,
+      ...(reading === null ? {} : { reading }),
+      revisions: shownRevisions,
       page: {
         limit: parsedLimit,
         has_more: hasMore,
@@ -553,8 +586,10 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
 
   app.get('/api/drawing/:type/:id', async c => {
     c.header('Cache-Control', 'no-store')
-    const allowed = allowedPublicQuery(c.req.queries(), [])
+    const allowed = allowedPublicQuery(c.req.queries(), ['show_everything'])
     if (!allowed.ok) return err(c, 400, allowed.error)
+    const showEverything = parseShowEverything(c.req.queries())
+    if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
     const recordType = drawingRecordType(c.req.param('type'))
     if (!recordType) return err(c, 400, 'drawing type must be place, resident, kind, or thing')
     const id = exactPositiveId(c.req.param('id'))
@@ -568,7 +603,13 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       return err(c, 500, 'saved drawing cannot be read because its stored record is invalid; the record owner should save a valid drawing again or contact the city operator')
     }
 
-    return c.json({ type: recordType, id, ...drawing })
+    // Focus mode (decision #155): one drawing is not on the single-record list (one
+    // note, one thing, one line, read_here), so it is outline-first like a many-body read.
+    const reader = await (dependencies.readerShape ?? readerShape)(c, showEverything.value)
+    markReaderShaped(c, reader)
+    const shown = sendsOutlinesOnly(reader) ? drawingOutline(drawing) : drawing
+    const reading = readingBlock(reader, [shown], ['drawing'])
+    return c.json({ type: recordType, id, ...(reading === null ? {} : { reading }), ...shown })
   })
 
   app.patch('/api/me/drawing', async c => {

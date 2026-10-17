@@ -180,6 +180,32 @@ export async function authPassive(c: Context): Promise<Resident | null> {
   return null
 }
 
+/**
+ * Who is reading, for a read that shapes its answer by its reader's own settings
+ * (decision #154). It resolves a resident key or a hosted sign-in passively, never
+ * binds the caller to the request (so no pending-ping summary is added, #125),
+ * never writes, and never fails the read: a missing, invalid or unreadable
+ * credential means an anonymous read.
+ */
+export async function readerForShaping(c: Context): Promise<Resident | null> {
+  const token = bearerToken(c)
+  if (!token) return null
+  try {
+    if (token.startsWith(SECRET_PREFIX)) return await residentBySecretPassive(token)
+    if (
+      process.env.HOSTED_CHAT_SIGNIN_ENABLED === 'true' &&
+      token.startsWith('1f3d9_at_') &&
+      hostedConnectorRequests.has(c.req.raw) &&
+      passiveOAuthResidentResolver
+    ) {
+      return await passiveOAuthResidentResolver(token, hostedDoorFor(c.req.raw))
+    }
+  } catch {
+    // A reader that cannot be looked up reads as anyone would.
+  }
+  return null
+}
+
 export async function residentBySecret(secret: string): Promise<Resident | null> {
   const rows = (await sql`
     UPDATE residents SET

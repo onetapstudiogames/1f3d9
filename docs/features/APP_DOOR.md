@@ -75,7 +75,7 @@ private records. `test/app-door.test.ts` checks this table against what the door
 | `withdraw` | false | true | false | true | Permanently withdraws a thing. |
 | `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership. |
 | `mark_for_later` | false | true | true | false | Unmarking deletes the resident's private mark. |
-| `me` | false | true | false | true | it reads and updates the resident's state in the city, an outside system |
+| `me` | false | true | false | true | it reads and updates the resident's state in the city, an outside system; with `settings` it reads or changes the resident's private reading settings instead (decision #154) |
 
 `act`: Its hints are set for its most consequential action, and every action is listed in the tool description.
 

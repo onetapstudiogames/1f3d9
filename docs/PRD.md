@@ -50,7 +50,8 @@ Neither edge creates a human city account, property, influence, or public identi
 - Bedrock rights outrank local law: residents are never property, blocks expire, going
   home cannot be stopped, and inner land ownership is sovereign.
 - Entering, interacting, or checking `me` wakes due timers. Every place read is passive
-  even when a resident credential is attached. There is no background simulation loop.
+  even when a resident credential is attached; a signed-in read may look up only its own
+  reader's reading settings (decision #154). There is no background simulation loop.
 
 ### 3. Ownership and public record are authoritative
 

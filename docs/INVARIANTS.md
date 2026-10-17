@@ -61,8 +61,11 @@ cited source wins.
     those says how many it left out (decision #153). Corrections are published
     beside, never over.
 12. Place reads are passive even with a resident credential attached — they
-    never look up the credential and never wake timers. (Decision row; also
-    stated on the front door.)
+    never wake timers, settle a room, change the city or record the read. A
+    signed-in read may look up its own reader's reading settings to shape what
+    it sends (decision #154), still binds nobody for ping summaries, and never
+    refuses because a credential is missing or wrong; anonymous reads are
+    unchanged. (Decision rows #37 and #154; also stated in the reference.)
 13. Published snapshots are immutable; corrections ship as new releases.
 
 ## Contracts

@@ -14,6 +14,15 @@ import {
   parsePublicTextLimit,
   singlePublicQueryValue,
 } from './public-pagination.ts'
+import {
+  markReaderShaped,
+  parseShowEverything,
+  readerShape as defaultReaderShape,
+  readingBlock,
+  SHOW_EVERYTHING_REFUSAL,
+  sendsOutlinesOnly,
+  type ReaderShape,
+} from './reader-filter.ts'
 
 export interface GazetteIssueSummary {
   readonly issue_number: number
@@ -87,6 +96,8 @@ export interface GazetteRouteDependencies<Database = unknown> {
   readonly database: Database
   printGazetteIssuesDue(database: Database): Promise<unknown>
   readonly environment: Readonly<Record<string, string | undefined>>
+  /** Who is reading, for focus mode (decision #155); defaults to the passive lookup. */
+  readerShape?(c: Context, showEverything: boolean): Promise<ReaderShape | null>
 }
 
 function noStoreHeaders(c: Context): void {
@@ -240,20 +251,29 @@ export function mountGazetteRoutes<Database>(
     const issueNumber = positivePostgresInteger(c.req.param('issue_number'))
     if (issueNumber === null) return err(c, 400, 'issue_number must be a positive integer')
     const queries = c.req.queries()
-    const allowed = allowedPublicQuery(queries, ['after_ordinal', 'limit', 'view', 'entry_text_limit_bytes'])
+    const allowed = allowedPublicQuery(queries, [
+      'after_ordinal', 'limit', 'view', 'entry_text_limit_bytes', 'show_everything',
+    ])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const page = parsePublicPage(queries, 'after_ordinal', 'limit')
     if (!page.ok) return err(c, 400, page.error)
     const viewValue = singlePublicQueryValue(queries, 'view')
     if (!viewValue.ok) return err(c, 400, viewValue.error)
     const requestedView = viewValue.value
-    const view = requestedView ?? 'full'
-    if (view !== 'outline' && view !== 'full') return err(c, 400, 'view must be outline or full')
+    const askedView = requestedView ?? 'full'
+    if (askedView !== 'outline' && askedView !== 'full') return err(c, 400, 'view must be outline or full')
+    const showEverything = parseShowEverything(queries)
+    if (!showEverything.ok) return err(c, 400, SHOW_EVERYTHING_REFUSAL)
     const entryTextLimit = parsePublicTextLimit(queries, 'entry_text_limit_bytes')
     if (!entryTextLimit.ok) return err(c, 400, entryTextLimit.error)
-    if (view === 'outline' && entryTextLimit.value != null) {
+    if (askedView === 'outline' && entryTextLimit.value != null) {
       return err(c, 400, 'entry_text_limit_bytes requires view=full; outline already omits entry text')
     }
+    // Focus mode (decisions #154 and #155): a signed-in reader who chose it gets the
+    // entries as outlines even with view=full, unless this read asks for show_everything.
+    const reader = await (dependencies.readerShape ?? defaultReaderShape)(c, showEverything.value)
+    markReaderShaped(c, reader)
+    const view = sendsOutlinesOnly(reader) ? 'outline' : askedView
     // Same unprotected-default gap as GET /api/place/:id (issue #71): a
     // caller who never asks for more than the default page size gets no
     // automatic aggregate ceiling either, unless they opt in explicitly.
@@ -269,12 +289,15 @@ export function mountGazetteRoutes<Database>(
     })
     if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number`)
     const stoppedForTextLimit = result.stoppedForTextLimit ?? false
+    const entries = view === 'outline'
+      ? result.entries.map(issueEntryOutline)
+      : result.entries.map(issueEntry)
+    const reading = readingBlock(reader, entries, ['body'])
     return c.json({
-      ...(requestedView == null ? {} : { view }),
+      ...(requestedView == null && view === askedView ? {} : { view }),
+      ...(reading === null ? {} : { reading }),
       issue: issueDetail(result.issue),
-      entries: view === 'outline'
-        ? result.entries.map(issueEntryOutline)
-        : result.entries.map(issueEntry),
+      entries,
       has_more: result.hasMore,
       next_after_ordinal: result.nextAfterOrdinal,
       ...(effectiveTextLimit == null ? {} : {

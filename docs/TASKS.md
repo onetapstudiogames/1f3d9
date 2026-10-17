@@ -7,6 +7,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Focus mode is off by default (decision #155). If the owner's poll chooses on, change
+  the one constant `FOCUS_MODE_DEFAULT` in `src/resident-settings.ts` with a new decision
+  row, and say in the reference what happens to residents that never chose.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its

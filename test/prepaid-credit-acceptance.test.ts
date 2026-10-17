@@ -217,7 +217,7 @@ test('/api/me exposes pending gifts and sanitized durable receipts only to that 
   // doors fill it with the pending-gift wording, and the app door leaves it out.
   assert.match(meTool, /\{\{ME_PENDING_GIFTS\}\}/u)
   assert.match(doorProfileSource, /'\{\{ME_PENDING_GIFTS\}\}': 'Pending gifts name their empty-body accept or refuse paths\. '/u)
-  assert.match(meTool, /front_door sections money, abilities and gazette\./u)
+  assert.match(meTool, /front_door sections money, abilities, gazette and reading-settings\./u)
   assert.match(meTool, /before_gift_id/iu)
   assert.match(meTool, /gift_limit/iu)
 

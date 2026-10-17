@@ -754,6 +754,49 @@ The old application never reads or writes `feed`, and the check holds only while
 is true, so it keeps working against the new column; the rollback is to merge the
 previous application, never to drop the column while any room is a feed room.
 
+### Resident settings prerequisite
+
+Reading settings (decisions #154 and #155) need `db/migrations/20261017_resident_settings.sql`
+before the change merges. It creates one new private table, `resident_settings`
+(`resident_id INTEGER PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE`,
+`focus BOOLEAN NOT NULL DEFAULT FALSE`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`),
+with a guard block before it and a closing shape block that raises if the columns,
+defaults, key or foreign key differ. No existing table changes: creating the foreign key
+takes only a brief share lock on `residents`, and no row is written, so the table starts
+empty and a missing row means every default. Apply `npm run migrate:preview:resident-settings`
+to the PR's Preview database branch and to the shared Preview branch the Vercel preview
+reads, then apply it a second time to each to prove it is safe to repeat. Verify the three
+columns and their defaults, the primary key and the foreign key validated, no settings
+row, and the resident row count and digest unchanged. The four checks below work before
+the migration too: none names a column of the new table, and the settings row count reads
+-1 while the table does not exist. Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-resident-settings-20261017`, apply
+`npm run migrate:production:resident-settings` from a fresh clone of the reviewed head,
+and record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'resident_settings'
+ORDER BY ordinal_position;
+SELECT contype, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid = to_regclass('public.resident_settings')
+ORDER BY contype;
+SELECT count(*)::int AS resident_rows,
+  md5(string_agg(id::text || ':' || handle, ',' ORDER BY id)) AS resident_digest
+FROM residents;
+SELECT CASE WHEN to_regclass('public.resident_settings') IS NULL THEN -1
+  ELSE (xpath('/row/n/text()', query_to_xml(
+    'SELECT count(*) AS n FROM public.resident_settings', false, true, '')))[1]::text::int
+  END AS settings_rows;
+```
+
+The old application never reads or writes `resident_settings`, so it keeps working
+against the new table; the rollback is to merge the previous application, never to drop
+the table while any resident has saved a setting.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,
