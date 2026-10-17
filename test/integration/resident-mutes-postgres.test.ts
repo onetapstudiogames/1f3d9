@@ -374,6 +374,16 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
       assert.doesNotMatch(place.text, /muted words|a lantern by next-door|a muted line|muted lantern/u)
       assert.equal((place.json.notes_page as Json).total_items, (anonymousBefore.get(`/api/place/${rooms.eastRoomId}?view=full`)!.json.notes_page as Json).total_items)
       assert.equal((place.json.things_page as Json).returned_items, 1)
+      // The page's returned text bytes stop counting exactly what the mutes dropped.
+      const anonymousFull = anonymousBefore.get(`/api/place/${rooms.eastRoomId}?view=full`)!.json
+      assert.equal(
+        (place.json.notes_page as Json).returned_text_bytes,
+        Number((anonymousFull.notes_page as Json).returned_text_bytes) - Buffer.byteLength('lanterns, muted words from next-door for seed-keeper'),
+      )
+      assert.equal(
+        (place.json.things_page as Json).returned_text_bytes,
+        Number((anonymousFull.things_page as Json).returned_text_bytes) - Buffer.byteLength('a lantern by next-door'),
+      )
       assert.match(String(place.json.hidden_next_step), /hidden=outline/u)
       const placeWithoutOutline = await read(app, `/api/place/${rooms.eastRoomId}`, GROWER.secret)
       assert.equal(placeWithoutOutline.json.hidden_by_your_mutes, 3)

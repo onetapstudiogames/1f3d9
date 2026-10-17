@@ -463,14 +463,23 @@ async function cachedPublicMap() {
   }
 }
 
+/**
+ * The stored rows behind the rows a mute dropped, so a page's returned text bytes stop
+ * counting them exactly as the page counted them (before the moderation overlay).
+ */
+function storedRowsOf(stored: readonly object[], dropped: readonly object[]): object[] {
+  const ids = new Set(rowIds(dropped))
+  return stored.filter(row => ids.has(rowIds([row])[0] ?? 0))
+}
+
 /** The note text a dropped note row would have sent: its body or its first line. */
 function noteTextBytes(rows: readonly object[]): number {
   return utf8TextBytes(rows, 'body') + utf8TextBytes(rows, 'first_line')
 }
 
 /** The purpose and description bytes a muted place row no longer sends. */
-function markedPlaceTextBytes(before: readonly object[], after: readonly object[]): number {
-  const marked = before.filter((_row, index) => (after[index] as Record<string, unknown>)?.muted === true)
+function markedPlaceTextBytes(stored: readonly object[], after: readonly object[]): number {
+  const marked = stored.filter((_row, index) => (after[index] as Record<string, unknown>)?.muted === true)
   return utf8TextBytes(marked, 'purpose') + utf8TextBytes(marked, 'description')
 }
 
@@ -741,7 +750,8 @@ export function mountWorldRoutes(app: Hono): void {
           total_items: collections.totals.notes.items,
           total_text_bytes: collections.totals.notes.textBytes,
           returned_items: publicNotes.length,
-          returned_text_bytes: notesPage.returnedTextBytes - noteTextBytes(tombstoneNotes.hiddenRows),
+          returned_text_bytes: notesPage.returnedTextBytes
+            - noteTextBytes(storedRowsOf(notesPage.items, tombstoneNotes.hiddenRows)),
           has_more: notesPage.hasMore,
           next_before_note_id: notesPage.nextCursor,
           ...(effectiveTextLimits.notes == null ? {} : {
@@ -895,7 +905,7 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.subplaces.items,
         total_text_bytes: collections.totals.subplaces.textBytes,
         returned_items: publicSubplaces.length,
-        returned_text_bytes: subplacesPage.returnedTextBytes - markedPlaceTextBytes(moderatedSubplaces, publicSubplaces),
+        returned_text_bytes: subplacesPage.returnedTextBytes - markedPlaceTextBytes(subplacesPage.items, publicSubplaces),
         has_more: subplacesPage.hasMore,
         next_before_subplace_id: subplacesPage.nextCursor,
         ...(effectiveTextLimits.subplaces == null ? {} : {
@@ -913,7 +923,8 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
         returned_items: mutedThings.shown.length,
-        returned_text_bytes: thingsPage.returnedTextBytes - (view === 'full' ? utf8TextBytes(mutedThings.hiddenRows, 'body') : 0),
+        returned_text_bytes: thingsPage.returnedTextBytes
+          - (view === 'full' ? utf8TextBytes(storedRowsOf(thingsPage.items, mutedThings.hiddenRows), 'body') : 0),
         has_more: thingsPage.hasMore,
         next_before_thing_id: thingsPage.nextCursor,
         ...(effectiveTextLimits.things == null ? {} : {
@@ -931,7 +942,7 @@ export function mountWorldRoutes(app: Hono): void {
         total_items: collections.totals.notes.items,
         total_text_bytes: collections.totals.notes.textBytes,
         returned_items: publicNotes.length,
-        returned_text_bytes: notesPage.returnedTextBytes - noteTextBytes(mutedNotes.hiddenRows),
+        returned_text_bytes: notesPage.returnedTextBytes - noteTextBytes(storedRowsOf(notesPage.items, mutedNotes.hiddenRows)),
         has_more: notesPage.hasMore,
         next_before_note_id: notesPage.nextCursor,
         ...(effectiveTextLimits.notes == null ? {} : {
