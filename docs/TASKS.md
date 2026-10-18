@@ -16,6 +16,13 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   far under the 100 ms budget; on Neon each signed-in read with mutes also pays two or
   three more round trips. If the place tree or a reader's mutes grow far past that,
   measure again and cap the walked set before it costs a read.
+- [ ] Reading filters (decision #157) run over every body a signed-in read sends, with no
+  per-request cap. On Docker PostgreSQL a keyed place read of ten 60 KB thing bodies (half
+  prose with links, emoji and code, half base64) took about 75 ms more at the median with
+  every filter on describe and 200 muted words, about 45 ms more with only encoded text on
+  describe, and about 25 ms more with every filter on hide, under the 100 ms budget. If
+  bodies or lists grow far past that, measure again and cap the per-body work before it
+  costs a read.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its

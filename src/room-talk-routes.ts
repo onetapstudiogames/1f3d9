@@ -21,6 +21,9 @@ import { TALK_PRIVATE_CACHE_CONTROL, TALK_SHARED_CACHE_CONTROL } from './talk-wa
 import { sayLine } from './room-line-store.ts'
 import { holdWait, type WaitRead } from './room-wait-hold.ts'
 import {
+  filterFields,
+  filterOne,
+  filterRows,
   HIDDEN_REFUSAL,
   judgeRead,
   markReaderShaped,
@@ -28,6 +31,7 @@ import {
   mutesFields,
   parseHidden,
   readerShape,
+  readFilter,
   residentReaderShape,
   rowIds,
   splitMuted,
@@ -292,14 +296,16 @@ export function mountRoomTalkRoutes(app: Hono): void {
       ...entry,
       ping: publicPings[index]!,
     }))
-    const listeningJudge = await judgeRead(shape, {})
+    const listeningJudge = await judgeRead(shape, { line: rowIds(lines) })
     const shownListening = splitMutedResidents(listeningJudge, listening.residents, lease.place_id)
+    // Reading filters (decision #157): each line's words, after the wait decided.
+    const lineFilter = readFilter(shape, listeningJudge)
     const reason = held.reason === 'closed' ? 'timeout' : held.reason
     return c.json({
       place_id: lease.place_id,
       reason,
       ...(reason === 'timeout' ? { next_step: WAIT_TIMEOUT_NEXT_STEP } : {}),
-      lines,
+      lines: filterRows(lineFilter, 'line', lines),
       lines_has_more: held.read.linesHasMore,
       next_after_line_change: held.read.next.line,
       pings,
@@ -312,6 +318,7 @@ export function mountRoomTalkRoutes(app: Hono): void {
         has_more: listening.total > listening.residents.length,
       },
       ...mutesFields(shape, [...hiddenInWait, ...shownListening.hidden], false),
+      ...filterFields(lineFilter),
     } satisfies WaitAnswer, 200)
   })
 
@@ -328,7 +335,9 @@ export function mountRoomTalkRoutes(app: Hono): void {
     markReaderShaped(c, reader)
     const judge = await judgeRead(reader, { line: [id] })
     if (judge?.hides('line', id)) return publicJson(c, mutedReadAnswer('line', judge.outline('line', id)))
-    return publicJson(c, { line: moderated[0] })
+    // Reading filters (decision #157): the line's words through the reader's filters.
+    const filter = readFilter(reader, judge)
+    return publicJson(c, { line: filterOne(filter, 'line', moderated[0]), ...filterFields(filter) })
   })
 
   app.get('/api/ping/:id', async c => {
@@ -371,12 +380,16 @@ export function mountRoomTalkRoutes(app: Hono): void {
     // moves past them, so the next page starts where this one ended.
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const muted = splitMuted(await judgeRead(reader, { line: rowIds(moderated) }), 'line', moderated)
+    const linesJudge = await judgeRead(reader, { line: rowIds(moderated) })
+    const muted = splitMuted(linesJudge, 'line', moderated)
     const lines = muted.shown
+    // Reading filters (decision #157): each line's words; the byte counts stay the stored ones.
+    const filter = readFilter(reader, linesJudge)
     return publicJson(c, {
       place_id: placeId,
       ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
-      lines,
+      ...filterFields(filter),
+      lines: filterRows(filter, 'line', lines),
       lines_page: {
         total_items: result.totalItems,
         total_text_bytes: result.totalTextBytes,

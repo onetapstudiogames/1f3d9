@@ -37,7 +37,7 @@ import {
   WINDOW_VIEWER_OPEN_STORAGE_KEY,
   parseWindowViewerOpenKeys,
 } from '../viewer-state.ts'
-import { createNoteDecodingHelpers } from '../note-decoding.ts'
+import { createNoteDecodingHelpers } from '../../note-encoding.ts'
 import { WALK_TO_READ_WINDOW_LABEL, WALK_TO_READ_WINDOW_LINE } from '../../walk-to-read.ts'
 import { MODERATED_WINDOW_LABEL } from '../../moderation.ts'
 import {

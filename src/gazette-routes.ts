@@ -15,6 +15,8 @@ import {
   singlePublicQueryValue,
 } from './public-pagination.ts'
 import {
+  filterFields,
+  filterOne,
   HIDDEN_REFUSAL,
   judgeRead,
   markReaderShaped,
@@ -22,6 +24,7 @@ import {
   parseHidden,
   parseShowEverything,
   readerShape as defaultReaderShape,
+  readFilter,
   readingBlock,
   rowIds,
   SHOW_EVERYTHING_REFUSAL,
@@ -298,20 +301,20 @@ export function mountGazetteRoutes<Database>(
     if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number`)
     const stoppedForTextLimit = result.stoppedForTextLimit ?? false
     // Mutes (decision #156): entries printed from notes the reader muted are left out and counted.
-    const muted = splitMuted(
-      await judgeRead(reader, { note: rowIds(result.entries, 'note_id') }),
-      'note',
-      result.entries,
-      'note_id',
-    )
+    const entryJudge = await judgeRead(reader, { note: rowIds(result.entries, 'note_id') })
+    const muted = splitMuted(entryJudge, 'note', result.entries, 'note_id')
+    // Reading filters (decision #157): each printed body, never a withdrawal notice,
+    // which is the city's own words.
+    const filter = readFilter(reader, entryJudge)
     const entries = view === 'outline'
       ? muted.shown.map(issueEntryOutline)
-      : muted.shown.map(issueEntry)
+      : muted.shown.map(issueEntry).map(entry => (entry.withdrawn ? entry : filterOne(filter, 'note', entry, 'note_id')))
     const reading = readingBlock(reader, entries, ['body'])
     return c.json({
       ...(requestedView == null && view === askedView ? {} : { view }),
       ...(reading === null ? {} : { reading }),
       ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
+      ...filterFields(filter),
       issue: issueDetail(result.issue),
       entries,
       has_more: result.hasMore,

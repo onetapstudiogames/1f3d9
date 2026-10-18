@@ -66,6 +66,8 @@
     "migrate:production:resident-settings": "node --experimental-strip-types scripts/migrate.ts --target production --migration resident-settings",
     "migrate:preview:resident-mutes": "node --experimental-strip-types scripts/migrate.ts --target preview --migration resident-mutes",
     "migrate:production:resident-mutes": "node --experimental-strip-types scripts/migrate.ts --target production --migration resident-mutes",
+    "migrate:preview:reading-filters": "node --experimental-strip-types scripts/migrate.ts --target preview --migration reading-filters",
+    "migrate:production:reading-filters": "node --experimental-strip-types scripts/migrate.ts --target production --migration reading-filters",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

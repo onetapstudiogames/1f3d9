@@ -47,7 +47,7 @@ test('the mute refusals are stated in caller words', () => {
   assert.equal(HIDDEN_REFUSAL, 'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)')
   assert.equal(
     settingsChangeRefusal({ focus: true }),
-    'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow or unallow, like {"focus_mode": true} or {"mute": {"type": "resident", "id": 12}}; send settings "show" to read your settings',
+    'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',
   )
   assert.equal(settingsChangeRefusal({ mute: { type: 'trait', id: 1 } }), MUTE_TARGET_REFUSAL)
   for (const text of [MUTE_FOUNDER_REFUSAL, MUTE_SELF_REFUSAL, ALLOW_TYPE_REFUSAL, MUTE_TARGET_REFUSAL, HIDDEN_REFUSAL, HIDDEN_NEXT_STEP]) {
@@ -91,6 +91,7 @@ function muteSet(overrides: Partial<MuteSet> = {}): MuteSet {
     things: { muted: new Set<number>(), allowed: new Set([41]) },
     kinds: new Set([60]),
     mutedPlaces: new Set([100, 101]),
+    showAnyway: { notes: new Set<number>(), things: new Set<number>(), places: new Set<number>() },
     ...overrides,
   })
 }
@@ -241,7 +242,7 @@ test('a muted drawing keeps its size and colours and drops its cells, descriptio
 })
 
 test('the count appears only once a reader has mutes, and a direct read names the call that lets it through', () => {
-  const anyone: ReaderShape = Object.freeze({ residentId: READER, focus: false, showEverything: false, mutes: null })
+  const anyone: ReaderShape = Object.freeze({ residentId: READER, focus: false, showEverything: false, mutes: null, filters: null })
   const muting: ReaderShape = Object.freeze({ ...anyone, mutes: muteSet() })
   const outline = Object.freeze({ id: 5, type: 'note', author: 'muted-one', kind: null, size: 3, date: null, place_id: 1 })
   assert.deepEqual(mutesFields(null, [outline], true), {})

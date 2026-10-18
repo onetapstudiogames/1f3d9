@@ -625,14 +625,17 @@ export function registerMigrationReleaseTests(): void {
     assert.equal(packageJson.scripts?.['migrate:production:resident-settings'],
       'node --experimental-strip-types scripts/migrate.ts --target production --migration resident-settings')
 
-    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
-    // migrated one end in the same shape.
+    // db/schema.sql carries the same statements, so a fresh city and a migrated one end in
+    // the same shape. Its guard alone also knows the reading filters columns a later block
+    // adds (decision #157), so the file still runs twice on one database.
     const body = migration.slice(
       migration.indexOf('DO $resident_settings_guard$'),
       migration.indexOf('DO $resident_settings_shape$'),
     ).trimEnd()
     assert.ok(body.length > 500)
-    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the resident settings statements')
+    const known = "AND attname NOT IN ('resident_id', 'focus', 'updated_at')"
+    assert.ok(body.includes(known))
+    assert.ok(schemaDdl.includes(body.replace(known, "AND attname NOT IN ('resident_id', 'focus', 'updated_at', 'encoded_text_filter', 'drawings_filter',\n        'code_like_text_filter', 'links_filter', 'emoji_filter', 'muted_words')")), 'db/schema.sql mirrors the resident settings statements')
   })
 
   test('the resident mutes migration is one guarded, additive, transactional preview or production migration', () => {
@@ -686,14 +689,88 @@ export function registerMigrationReleaseTests(): void {
     assert.equal(packageJson.scripts?.['migrate:production:resident-mutes'],
       'node --experimental-strip-types scripts/migrate.ts --target production --migration resident-mutes')
 
-    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
-    // migrated one end in the same shape.
+    // db/schema.sql carries the same statements, so a fresh city and a migrated one end in
+    // the same shape. Its guard alone also knows show_anyway, which the reading filters
+    // block adds (decision #157), so the file still runs twice on one database.
     const body = migration.slice(
       migration.indexOf('DO $resident_mutes_guard$'),
       migration.indexOf('DO $resident_mutes_shape$'),
     ).trimEnd()
     assert.ok(body.length > 1_000)
-    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the resident mutes statements')
+    const known = "'target_id', 'choice', 'created_at')"
+    assert.ok(body.includes(known))
+    assert.ok(schemaDdl.includes(body.replace(known, "'target_id', 'choice', 'created_at', 'show_anyway')")), 'db/schema.sql mirrors the resident mutes statements')
+  })
+
+  test('the reading filters migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261017_reading_filters.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /reading filters migration needs the resident_settings and resident_mutes tables/u)
+    assert.match(migration, /a reading filters column already exists with a shape this migration does not know/u)
+    for (const name of [
+      'resident_settings_encoded_text_filter_known', 'resident_settings_drawings_filter_known',
+      'resident_settings_code_like_text_filter_known', 'resident_settings_links_filter_known',
+      'resident_settings_emoji_filter_known', 'resident_settings_muted_words_count',
+      'resident_mutes_show_anyway_on_allow',
+    ]) {
+      assert.ok(migration.includes(`ADD CONSTRAINT ${name}`), name)
+      assert.ok(migration.includes(`VALIDATE CONSTRAINT ${name};`), `${name} is validated in its own statement`)
+    }
+    // One ALTER TABLE per table adds the columns, each with a constant default, and the
+    // checks NOT VALID; the only other ALTER TABLE statements validate one check each.
+    const alters = migration.match(/ALTER TABLE [a-z_]+\s+ADD COLUMN/gu) ?? []
+    assert.deepEqual(alters.map(alter => alter.split(/\s+/u)[2]), ['resident_settings', 'resident_mutes'])
+    assert.equal((migration.match(/ ADD COLUMN IF NOT EXISTS /gu) ?? []).length, 7)
+    assert.equal((migration.match(/\) NOT VALID[,;]/gu) ?? []).length, 7)
+    assert.match(migration, /resident_settings conflicts with the reviewed reading filters columns/u)
+    assert.match(migration, /a reading filters check is missing, not validated, or not the reviewed check/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+|TRUNCATE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'reading-filters'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'reading-filters'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-reading-filters-20261017',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:reading-filters'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration reading-filters')
+    assert.equal(packageJson.scripts?.['migrate:production:reading-filters'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration reading-filters')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $reading_filters_guard$'),
+      migration.indexOf('DO $reading_filters_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 2_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the reading filters statements')
   })
 
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {

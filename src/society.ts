@@ -66,6 +66,10 @@ import {
 import { publicJson } from './public-output.ts'
 import {
   bodyOutline,
+  filterFields,
+  filterOne,
+  filterRows,
+  filtersHidBody,
   HIDDEN_REFUSAL,
   judgeRead,
   markReaderShaped,
@@ -74,6 +78,7 @@ import {
   parseHidden,
   parseShowEverything,
   readerShape,
+  readFilter,
   readingBlock,
   residentReaderShape,
   rowIds,
@@ -265,9 +270,14 @@ export function mountSocietyRoutes(app: Hono): void {
     if (judge?.hides('note', id)) return publicJson(c, mutedReadAnswer('note', judge.outline('note', id)))
     const safe = sanitizePublicValue(note)
     if (safe.withheld) return publicJson(c, { note })
-    const shaped = shapeNoteRead(safe.value as Readonly<Record<string, unknown>>, piece.piece)
+    // Reading filters (decision #157): the whole body goes through the reader's filters
+    // before any piece is cut. A hidden body is its marker and its stored size, whole.
+    const filter = readFilter(reader, judge)
+    const filtered = filterOne(filter, 'note', safe.value as Readonly<Record<string, unknown>>)
+    if (filtersHidBody(filtered)) return publicJson(c, { note: filtered, ...filterFields(filter) })
+    const shaped = shapeNoteRead(filtered, piece.piece)
     if (!shaped.ok) return err(c, 400, shaped.error)
-    return publicJson(c, { note: shaped.note })
+    return publicJson(c, { note: shaped.note, ...filterFields(filter) })
   })
 
   // Decision #102: the one passive signed-in read that opens a walk-to-read body
@@ -288,14 +298,19 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!read) return err(c, 404, missingNoteRefusal(id))
     if (!read.ok) return err(c, read.status, read.error)
     // Mutes (decision #156): standing there does not open a note the reader muted.
-    const judge = await judgeRead(await residentReaderShape(resident.id, false), { note: [id] })
+    const hereReader = await residentReaderShape(resident.id, false)
+    const judge = await judgeRead(hereReader, { note: [id] })
     if (judge?.hides('note', id)) return c.json(mutedReadAnswer('note', judge.outline('note', id)))
     // Redact the whole body before slicing, so no credential is split across two pieces.
     const safe = sanitizePublicValue(read.note)
     if (safe.withheld) return publicJson(c, { note: read.note })
-    const shaped = shapeNoteRead(safe.value as Readonly<Record<string, unknown>>, piece.piece)
+    // Reading filters (decision #157), over the whole body before any piece is cut.
+    const filter = readFilter(hereReader, judge)
+    const filtered = filterOne(filter, 'note', safe.value as Readonly<Record<string, unknown>>)
+    if (filtersHidBody(filtered)) return c.json({ note: filtered, ...filterFields(filter) })
+    const shaped = shapeNoteRead(filtered, piece.piece)
     if (!shaped.ok) return err(c, 400, shaped.error)
-    return c.json({ note: shaped.note })
+    return c.json({ note: shaped.note, ...filterFields(filter) })
   })
 
   app.post('/api/note', async c => {
@@ -562,13 +577,21 @@ export function mountSocietyRoutes(app: Hono): void {
     markReaderShaped(c, reader)
     // Mutes (decision #156): an agreement written by a muted resident is left out and
     // counted, unless the reader is one of its parties.
-    const muted = splitMuted(await judgeRead(reader, { agreement: rowIds(moderated) }), 'agreement', moderated)
+    const agreementJudge = await judgeRead(reader, { agreement: rowIds(moderated) })
+    const muted = splitMuted(agreementJudge, 'agreement', moderated)
     const sentAgreements = agreements.filter((_row, index) => muted.shown.includes(moderated[index]!))
-    const shown = sendsOutlinesOnly(reader) ? muted.shown.map(row => bodyOutline(row)) : muted.shown
+    // Reading filters (decision #157): each body still sent, after focus mode and mutes.
+    const agreementFilter = readFilter(reader, agreementJudge)
+    const shown = filterRows(
+      agreementFilter,
+      'agreement',
+      sendsOutlinesOnly(reader) ? muted.shown.map(row => bodyOutline(row)) : muted.shown,
+    )
     const reading = readingBlock(reader, shown, ['body'])
     return publicJson(c, {
       ...(reading === null ? {} : { reading }),
       ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
+      ...filterFields(agreementFilter),
       agreements: shown,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,

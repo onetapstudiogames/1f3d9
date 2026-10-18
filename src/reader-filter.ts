@@ -6,15 +6,27 @@
 // Focus mode is the first setting: while it is on, a read that can send many bodies
 // sends outlines, unless that one read asks for show_everything. Mutes and allows are
 // the second (decision #156): a read drops what the reader muted, counts it, and on
-// request lists it by outline; src/reader-mutes.ts holds the one rule.
+// request lists it by outline; src/reader-mutes.ts holds the one rule. The reading
+// filters are the third (decision #157): the bodies a read still sends go through the
+// reader's filters (src/reading-filters.ts), never the founder's, the reader's own, or
+// an item it allowed with show_anyway, and the read counts what they described or hid.
 import type { Context } from 'hono'
 import { readerForShaping } from './core.ts'
 import type { Drawing } from './drawing.ts'
-import { judgeMutes, type HiddenOutline, type MuteItemType, type MuteJudge, type MuteRefs } from './reader-mutes.ts'
-import { readMuteSet, type MuteSet } from './resident-mutes.ts'
+import { judgeMutes, type FilterItemType, type HiddenOutline, type MuteItemType, type MuteJudge, type MuteRefs } from './reader-mutes.ts'
+import {
+  DEFAULT_READING_FILTERS,
+  filterText,
+  READING_FILTER_MARKERS,
+  textFilter,
+  type FilterOutcome,
+  type ReadingFilterSetting,
+  type TextFilter,
+} from './reading-filters.ts'
+import { emptyMuteSet, readMuteSet, type MuteSet } from './resident-mutes.ts'
 import { readReadingSettings, type ReadingSettings } from './resident-settings.ts'
 
-export type { HiddenOutline, MuteItemType, MuteJudge } from './reader-mutes.ts'
+export type { FilterItemType, HiddenOutline, MuteItemType, MuteJudge } from './reader-mutes.ts'
 
 export const SHOW_EVERYTHING_REFUSAL =
   'show_everything must be true or false; send true to see every body in this one read'
@@ -30,13 +42,26 @@ export const FOCUS_SET_ASIDE_NEXT_STEP =
 /** The 8 by 8 square every pixel drawing uses. */
 const DRAWING_SIDE = 8
 
+/** The reader's reading filters: the text filter, null when no body would change, and drawings. */
+export type ReaderFilters = Readonly<{ text: TextFilter | null; drawings: ReadingFilterSetting }>
+
 export type ReaderShape = Readonly<{
   residentId: number
   focus: boolean
   showEverything: boolean
   /** The reader's mutes and allows, or null when it has none. */
   mutes: MuteSet | null
+  /** The reader's reading filters, or null when every kind shows and it has no muted words. */
+  filters: ReaderFilters | null
 }>
+
+/** The filters one reader's saved settings make, or null when nothing would change. */
+export function readerFilters(settings: ReadingSettings): ReaderFilters | null {
+  const filters = settings.filters ?? DEFAULT_READING_FILTERS
+  const text = textFilter(filters, settings.muted_words ?? [])
+  if (text === null && filters.drawings === 'show') return null
+  return Object.freeze({ text, drawings: filters.drawings })
+}
 
 export const HIDDEN_REFUSAL =
   'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)'
@@ -70,9 +95,9 @@ export async function readerShape(
 }
 
 /**
- * The same shape for a read that has already signed its resident in, like me.
- * Settings that cannot be read now fall back to the defaults; mutes that cannot be read
- * fail the read instead, so a read never sends what its reader muted.
+ * The same shape for a read that has already signed its resident in, like me. Settings or
+ * mutes that cannot be read fail the read, so a read never sends what its reader muted
+ * or chose to have described or hidden.
  */
 export async function residentReaderShape(
   residentId: number,
@@ -80,10 +105,15 @@ export async function residentReaderShape(
   readSettings: (residentId: number) => Promise<ReadingSettings> = readReadingSettings,
   readMutes: (residentId: number) => Promise<MuteSet | null> = readMuteSet,
 ): Promise<ReaderShape | null> {
-  const settings = await readSettings(residentId).catch(() => null)
+  const settings = await readSettings(residentId)
   const mutes = await readMutes(residentId)
-  if (settings === null && mutes === null) return null
-  return Object.freeze({ residentId, focus: settings?.focus_mode === true, showEverything, mutes })
+  return Object.freeze({
+    residentId,
+    focus: settings.focus_mode === true,
+    showEverything,
+    mutes,
+    filters: readerFilters(settings),
+  })
 }
 
 /** hidden is absent, or exactly outline once. */
@@ -94,9 +124,14 @@ export function parseHidden(query: QueryValues): { ok: true; outline: boolean } 
   return { ok: true, outline: true }
 }
 
-/** The judge for one read over the ids it is about to send; null when nothing is muted. */
+/**
+ * The judge for one read over the ids it is about to send; null when the reader has no
+ * mutes and no reading filters. A reader with filters only gets a judge that hides
+ * nothing and knows which items always show.
+ */
 export async function judgeRead(shape: ReaderShape | null, refs: MuteRefs): Promise<MuteJudge | null> {
-  return judgeMutes(shape?.mutes ?? null, refs)
+  if (shape == null || (shape.mutes == null && shape.filters == null)) return null
+  return judgeMutes(shape.mutes ?? emptyMuteSet(shape.residentId), refs)
 }
 
 /** Ids of rows, skipping any row without a positive id. */
@@ -378,4 +413,152 @@ export function drawingOutline<T extends DrawingCarrier>(snapshot: T): Readonly<
 export function mutedDrawingOutline<T extends DrawingCarrier>(snapshot: T): Readonly<Record<string, unknown>> {
   const { description: _description, variant_name: _variantName, ...rest } = drawingOutline(snapshot) as Record<string, unknown>
   return Object.freeze(rest)
+}
+
+const OUTCOME_RANK: Readonly<Record<FilterOutcome, number>> = Object.freeze({ shown: 0, described: 1, hidden: 2 })
+
+/** What one read's reading filters did, and how to run them over its bodies. */
+export interface ReadFilter {
+  /**
+   * One row's text fields through the reader's filters, unless the row always shows. A
+   * row whose text a filter hides sends a marker in each of those fields, with its size.
+   */
+  row<T>(type: FilterItemType, row: T, fields: readonly string[], idField?: string): T
+  /** One drawing: its cells through the drawings filter, its description through the text filters. */
+  drawing(type: FilterItemType, id: number, snapshot: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>>
+  /** covered_by_your_filters: how many items this answer's filters described and hid. */
+  fields(): Readonly<Record<string, unknown>>
+}
+
+function stringField(row: Readonly<Record<string, unknown>>, field: string): string | null {
+  const value = row[field]
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+/** The filter for one read, or null when its reader has no reading filters on. */
+export function readFilter(shape: ReaderShape | null, judge: MuteJudge | null): ReadFilter | null {
+  const filters = shape?.filters ?? null
+  if (filters === null) return null
+  const outcomes = new Map<string, FilterOutcome>()
+  let unnamed = 0
+  const record = (key: string, outcome: FilterOutcome): void => {
+    const before = outcomes.get(key)
+    if (before === undefined || OUTCOME_RANK[outcome] > OUTCOME_RANK[before]) outcomes.set(key, outcome)
+  }
+  const skips = (type: FilterItemType, id: number | undefined): boolean => (
+    id !== undefined && judge !== null && judge.skipsFilters(type, id)
+  )
+  const filterRow = <T>(type: FilterItemType, row: T, fields: readonly string[], idField = 'id'): T => {
+    if (filters.text === null || row === null || typeof row !== 'object') return row
+    const source = row as unknown as Readonly<Record<string, unknown>>
+    if (source.moderated === true) return row
+    const id = rowIds([source], idField)[0]
+    if (skips(type, id)) return row
+    const results = fields.flatMap(field => {
+      const text = stringField(source, field)
+      return text === null ? [] : [{ field, text, result: filterText(filters.text!, text) }]
+    })
+    const changed = results.filter(entry => entry.result.outcome !== 'shown')
+    if (changed.length === 0) return row
+    const key = id === undefined ? `unnamed:${unnamed++}` : `${type}:${id}`
+    const hidden = changed.find(entry => entry.result.outcome === 'hidden')
+    if (hidden !== undefined) {
+      record(key, 'hidden')
+      const replaced = Object.fromEntries(results.flatMap(entry => [
+        [entry.field, hidden.result.text],
+        ...(Object.hasOwn(source, `${entry.field}_text_bytes`)
+          ? []
+          : [[`${entry.field}_text_bytes`, Buffer.byteLength(entry.text, 'utf8')]]),
+      ]))
+      return Object.freeze({ ...source, ...replaced }) as unknown as T
+    }
+    record(key, 'described')
+    return Object.freeze({
+      ...source,
+      ...Object.fromEntries(changed.map(entry => [entry.field, entry.result.text])),
+    }) as unknown as T
+  }
+  return Object.freeze({
+    row: filterRow,
+    drawing(type: FilterItemType, id: number, snapshot: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+      if (skips(type, id)) return snapshot
+      const key = `${type}:${id}:drawing:${unnamed++}`
+      let shown: Readonly<Record<string, unknown>> = snapshot
+      // Only a drawing that still carries its cells is filtered; an outline has none.
+      if (snapshot.drawing != null && filters.drawings !== 'show') {
+        if (filters.drawings === 'describe') {
+          shown = drawingOutline(snapshot as unknown as DrawingCarrier)
+          record(key, 'described')
+        } else {
+          const { drawing: _drawing, rows: _rows, ...rest } = snapshot
+          shown = Object.freeze({ ...rest, filter_marker: READING_FILTER_MARKERS.drawings })
+          record(key, 'hidden')
+        }
+      }
+      const description = stringField(shown, 'description')
+      if (filters.text === null || description === null) return shown
+      const result = filterText(filters.text, description)
+      if (result.outcome === 'shown') return shown
+      record(key, result.outcome)
+      return Object.freeze({ ...shown, description: result.text })
+    },
+    fields(): Readonly<Record<string, unknown>> {
+      const counted = [...outcomes.values()]
+      return Object.freeze({
+        covered_by_your_filters: Object.freeze({
+          described: counted.filter(outcome => outcome === 'described').length,
+          hidden: counted.filter(outcome => outcome === 'hidden').length,
+        }),
+      })
+    },
+  })
+}
+
+/** The count block of a read's filters, or nothing when its reader has none on. */
+export function filterFields(filter: ReadFilter | null): Readonly<Record<string, unknown>> {
+  return filter === null ? {} : filter.fields()
+}
+
+/** The resident-written text fields each kind of row carries. Names and labels are not bodies. */
+export const FILTERED_FIELDS = Object.freeze({
+  place: Object.freeze(['description', 'purpose']),
+  note: Object.freeze(['body', 'first_line']),
+  thing: Object.freeze(['body']),
+  line: Object.freeze(['body']),
+  kind: Object.freeze(['description']),
+  trait: Object.freeze(['description']),
+  agreement: Object.freeze(['body']),
+})
+
+/** Rows through a read's filters; the rows themselves when its reader has none on. */
+export function filterRows<T>(
+  filter: ReadFilter | null,
+  type: keyof typeof FILTERED_FIELDS,
+  rows: readonly T[],
+  idField = 'id',
+): T[] {
+  return filter === null ? [...rows] : rows.map(row => filter.row(type, row, FILTERED_FIELDS[type], idField))
+}
+
+/** One row through a read's filters; the row itself when its reader has none on. */
+export function filterOne<T>(filter: ReadFilter | null, type: keyof typeof FILTERED_FIELDS, row: T, idField = 'id'): T {
+  return filter === null ? row : filter.row(type, row, FILTERED_FIELDS[type], idField)
+}
+
+/** A place row and every nested child, as the map sends them, through a read's filters. */
+export function filterPlaceTree<T>(filter: ReadFilter | null, row: T): T {
+  if (filter === null || row === null || typeof row !== 'object') return row
+  const filtered = filter.row('place', row, FILTERED_FIELDS.place) as unknown as Record<string, unknown>
+  if (!Array.isArray(filtered.children)) return filtered as unknown as T
+  return Object.freeze({
+    ...filtered,
+    children: Object.freeze(filtered.children.map(child => filterPlaceTree(filter, child))),
+  }) as unknown as T
+}
+
+const HIDDEN_MARKERS: ReadonlySet<unknown> = new Set(Object.values(READING_FILTER_MARKERS))
+
+/** Whether the reader's filters hid this row's body, so a piece of it means nothing. */
+export function filtersHidBody(row: unknown, field = 'body'): boolean {
+  return row !== null && typeof row === 'object' && HIDDEN_MARKERS.has((row as Record<string, unknown>)[field])
 }

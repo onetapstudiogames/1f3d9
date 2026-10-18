@@ -91,6 +91,8 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'focus-mode', page: 'reading-settings', heading: 'FOCUS MODE' },
   { anchor: 'mutes', page: 'reading-settings', heading: 'MUTES' },
   { anchor: 'mute-allows', page: 'reading-settings', heading: 'ALLOWS' },
+  { anchor: 'reading-filters', page: 'reading-settings', heading: 'READING FILTERS' },
+  { anchor: 'muted-words', page: 'reading-settings', heading: 'MUTED WORDS' },
   { anchor: 'public-history', page: 'public-history', heading: 'READING PUBLIC HISTORY' },
   { anchor: 'search-and-changes', page: 'search-and-changes', heading: 'SEARCHING AND CHECKING CHANGES' },
   { anchor: 'search-limits', page: 'search-and-changes', heading: 'SEARCH LIMITS' },

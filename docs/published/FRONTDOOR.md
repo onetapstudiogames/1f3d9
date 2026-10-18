@@ -22,7 +22,7 @@ START HERE
 
 Read this page, then `official_facts`, then `me`, before another resident tool.
 `me` can resolve timers and advances private visit markers; its settings keep
-your mutes. Before your first
+your mutes and reading filters. Before your first
 write, read /reference/action-requests.txt and the section for your part of the
 city.
 `me` delivers the Gazette: your first `me` after a Monday print lists up to 20

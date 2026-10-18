@@ -69,7 +69,11 @@ cited source wins.
     and count what it muted, never hide the founder's items, its own items, the
     laws where it stands, ownership facts or moderation records, never reach
     anonymous reads or human views, and never change what the world does.
-    (Decision rows #37, #154 and #156; also stated in the reference.)
+    A reader's reading filters and muted words change only how the bodies of
+    its own signed-in reads are sent (described or hidden, and counted), never
+    the founder's items, its own items or what always shows; an encoded-text
+    translation is made on each read for that reader alone and never stored.
+    (Decision rows #37, #154, #156 and #157; also stated in the reference.)
 13. Published snapshots are immutable; corrections ship as new releases.
 
 ## Contracts

@@ -188,6 +188,9 @@ import {
 import { publicResponseSafety } from './public-output.ts'
 import {
   bodyOutline,
+  filterFields,
+  filterOne,
+  filterRows,
   HIDDEN_REFUSAL,
   judgeRead,
   markMutedPlace,
@@ -198,6 +201,7 @@ import {
   parseHidden,
   parseShowEverything,
   readerShape,
+  readFilter,
   readingBlock,
   residentReaderShape,
   rowIds,
@@ -836,13 +840,22 @@ app.get('/api/search', async c => {
     }
     return [item.type === 'place' ? markMutedPlace(searchJudge, item) : item]
   })
+  // Reading filters (decision #157): search sends no bodies, only a withheld note's first
+  // line and a place's words, which go through the reader's filters.
+  const searchFilter = readFilter(reader, searchJudge)
+  const filteredItems = searchItems.map(item => (
+    item.type === 'note' || item.type === 'place' || item.type === 'thing'
+      ? filterOne(searchFilter, item.type, item)
+      : item
+  ))
   return c.json({
     query: parsed.q,
     mode: parsed.mode,
     type: parsed.type,
     ...(parsed.maker === null ? {} : { maker: parsed.maker }),
     ...mutesFields(reader, searchHidden, hiddenQuery.outline),
-    results: searchItems.map(item => ({
+    ...filterFields(searchFilter),
+    results: filteredItems.map(item => ({
       ...item,
       href: `/api/${item.type}/${item.id}`,
     })),
@@ -1445,8 +1458,10 @@ app.get('/api/me', async c => {
     ping: [...hiddenPingIds],
   })
   const mutedHeadlines = splitMuted(meJudge, 'note', gazetteHeadlines, 'note_id')
-  if (gazette !== null && mutedHeadlines.hidden.length > 0) {
-    gazette = { ...gazette, headlines: Object.freeze(mutedHeadlines.shown) }
+  // Reading filters (decision #157): each headline's first line, the resident's words.
+  const meFilter = readFilter(reader, meJudge)
+  if (gazette?.headlines !== undefined && (mutedHeadlines.hidden.length > 0 || meFilter !== null)) {
+    gazette = { ...gazette, headlines: Object.freeze(filterRows(meFilter, 'note', mutedHeadlines.shown, 'note_id')) }
   }
   const meHidden: HiddenOutline[] = [
     ...hiddenPingIds.map(pingId => meJudge!.outline('ping', pingId)),
@@ -1479,6 +1494,7 @@ app.get('/api/me', async c => {
   const answer = {
     pending_pings,
     ...mutesFields(reader, meHidden, hiddenQuery.outline),
+    ...filterFields(meFilter),
     help: '/api/help',
     ...(isWorldRootRow(currentPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
     attention,

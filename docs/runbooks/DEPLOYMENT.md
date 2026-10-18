@@ -842,6 +842,68 @@ The old application never reads or writes `resident_mutes`, so it keeps working 
 the new table; the rollback is to merge the previous application, never to drop the table
 while any resident has saved a mute or an allow.
 
+### Reading filters prerequisite
+
+Reading filters (decision #157) need `db/migrations/20261017_reading_filters.sql` before
+the change merges. It adds six columns to the private `resident_settings` table, all with
+constant defaults: `encoded_text_filter`, `drawings_filter`, `code_like_text_filter`,
+`links_filter` and `emoji_filter` (`TEXT NOT NULL DEFAULT 'show'`, each with a named check
+that it is show, describe or hide) and `muted_words` (`TEXT[] NOT NULL DEFAULT '{}'`, with
+the named check `resident_settings_muted_words_count` that it holds at most 200 entries;
+the rules for each word are kept in code). It adds one column to the private
+`resident_mutes` table, `show_anyway BOOLEAN NOT NULL DEFAULT FALSE`, with the named check
+`resident_mutes_show_anyway_on_allow` that it is true only on an allow. Each table changes
+in one `ALTER TABLE` statement, so the exclusive lock is held only for the catalogue
+change; the checks are added `NOT VALID` and each is validated in its own statement. No
+row is rewritten and no existing row changes meaning: every resident reads as before. A
+guard block comes first and a closing shape block raises if a column, default or check
+differs. Apply `npm run migrate:preview:reading-filters` to the PR's Preview database
+branch and to the shared Preview branch the Vercel preview reads, then apply it a second
+time to each to prove it is safe to repeat. Verify the new columns, the seven checks
+validated, and the resident, settings and mute row counts and digests unchanged. The four
+checks below run before the migration as well as after it: none names a new column.
+Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-reading-filters-20261017`, apply
+`npm run migrate:production:reading-filters` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+After this migration the 20261017 resident settings and resident mutes migrations refuse
+a second run, because their guards do not know the new columns; they never need one. The
+copies of those two guards in `db/schema.sql` do know them, so the fresh-install file
+still runs twice on one database.
+
+```sql
+-- D1: every column of the two private tables.
+SELECT table_name, column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name IN ('resident_settings', 'resident_mutes')
+ORDER BY table_name, ordinal_position;
+-- D2: every constraint on them, and whether it is validated.
+SELECT conrelid::regclass AS table_name, conname, contype, convalidated,
+  pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid IN (to_regclass('public.resident_settings'), to_regclass('public.resident_mutes'))
+ORDER BY 1, conname;
+-- D3: the residents, unchanged.
+SELECT count(*)::int AS resident_rows,
+  md5(string_agg(id::text || ':' || handle, ',' ORDER BY id)) AS resident_digest
+FROM residents;
+-- D4: the settings and mute rows that existed before, unchanged.
+SELECT
+  (SELECT count(*)::int FROM resident_settings) AS settings_rows,
+  (SELECT md5(coalesce(string_agg(resident_id::text || ':' || focus::text, ',' ORDER BY resident_id), ''))
+    FROM resident_settings) AS settings_digest,
+  (SELECT count(*)::int FROM resident_mutes) AS mute_rows,
+  (SELECT md5(coalesce(string_agg(id::text || ':' || resident_id::text || ':' || target_type || ':'
+      || target_id::text || ':' || choice, ',' ORDER BY id), ''))
+    FROM resident_mutes) AS mute_digest;
+```
+
+The old application never reads the new columns, and their defaults keep its writes
+valid: a row it creates gets show for every filter, no muted words and show_anyway false,
+and its updates leave the new columns as they are. The rollback is to merge the previous application, never to drop a
+column while any resident has saved a filter, a muted word or show_anyway.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

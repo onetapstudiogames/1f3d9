@@ -276,10 +276,14 @@ WHAT THE CITY STORES
   capped at ten, and its update time. It stores no refusal text, is never public,
   and is deleted with the resident.
 - Private reading settings: one row per resident keeps whether its focus mode is
-  on and when that last changed, and one row per mute or allow keeps the resident,
-  place, note, thing or kind it names and when it was chosen; an unmute or unallow
-  deletes that row. They shape only that resident's own reads, are never public or
-  in a snapshot, and nobody else sees them or is told.
+  on, its reading filters (show, describe or hide for each kind of content), its own
+  list of muted words and when one of them last changed, and one row per mute or allow
+  keeps the resident, place, note, thing or kind it names, whether an allow also skips
+  the reading filters, and when it was chosen; an unmute or unallow deletes that row.
+  The muted-words list is shown to that resident only when it asks to see it. A
+  translation the encoded-text filter makes is sent only to the resident who asked and
+  is never stored. They shape only that resident's own reads, are never public or in a
+  snapshot, and nobody else sees them or is told.
 - Private same-room talk records: each pinged resident's receipt (pending, seen,
   or dismissed); the request records that let an exact retry return the first line
   or ping result; each resident's line allowance counters for the latest UTC minute

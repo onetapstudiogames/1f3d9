@@ -115,6 +115,10 @@ import {
 } from './public-pagination.ts'
 import { publicJson } from './public-output.ts'
 import {
+  filterFields,
+  filterOne,
+  filterPlaceTree,
+  filterRows,
   HIDDEN_REFUSAL,
   judgeRead,
   markMutedPlace,
@@ -125,6 +129,7 @@ import {
   parseHidden,
   parseShowEverything,
   readerShape,
+  readFilter,
   readingBlock,
   rowIds,
   sendsOutlinesOnly,
@@ -133,6 +138,7 @@ import {
   splitMutedResidents,
   treeFrontMatterIds,
   treePlaceIds,
+  type ReadFilter,
   type HiddenOutline,
   type MuteJudge,
   type ReaderShape,
@@ -495,15 +501,23 @@ function markedPlaceTextBytes(stored: readonly object[], after: readonly object[
 async function mapForReader<T>(
   c: Context,
   rows: readonly unknown[],
-  mark: (judge: MuteJudge | null) => T,
-): Promise<Readonly<{ reader: ReaderShape | null; body: T; hidden: readonly HiddenOutline[] }>> {
+  mark: (judge: MuteJudge | null, filter: ReadFilter | null) => T,
+): Promise<Readonly<{
+  reader: ReaderShape | null
+  body: T
+  hidden: readonly HiddenOutline[]
+  filtered: Readonly<Record<string, unknown>>
+}>> {
   const reader = await readerShape(c, false)
   if (reader === null) {
     c.header('Vary', 'Authorization')
-    return { reader, body: mark(null), hidden: [] }
+    return { reader, body: mark(null, null), hidden: [], filtered: {} }
   }
   const judge = await judgeRead(reader, { place: treePlaceIds(rows), thing: treeFrontMatterIds(rows) })
-  return { reader, body: mark(judge), hidden: mutedFrontMatter(judge, rows) }
+  // Reading filters (decision #157): place purposes and descriptions, after the mutes.
+  const filter = readFilter(reader, judge)
+  const body = mark(judge, filter)
+  return { reader, body, hidden: mutedFrontMatter(judge, rows), filtered: filterFields(filter) }
 }
 
 export function mountWorldRoutes(app: Hono): void {
@@ -551,17 +565,18 @@ export function mountWorldRoutes(app: Hono): void {
         return err(c, 404, `continent_id ${continentId} is not an active continent directly inside the world; call look with no target to choose a current continent_id`)
       }
       c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-      const shaped = await mapForReader(c, [page.continent, ...page.places], judge => (
+      const shaped = await mapForReader(c, [page.continent, ...page.places], (judge, filter) => (
         judge === null ? page : {
           ...page,
-          continent: markMutedPlace(judge, page.continent),
-          places: page.places.map(place => markMutedPlace(judge, place)),
+          continent: filterPlaceTree(filter, markMutedPlace(judge, page.continent)),
+          places: page.places.map(place => filterPlaceTree(filter, markMutedPlace(judge, place))),
         }
       ))
       markReaderShaped(c, shaped.reader)
       return publicJson(c, {
         view: 'continent',
         ...mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline),
+        ...shaped.filtered,
         ...shaped.body,
       })
     }
@@ -626,17 +641,18 @@ export function mountWorldRoutes(app: Hono): void {
           : 'no-store',
       )
       const found = outline
-      const shaped = await mapForReader(c, [found.place, ...found.subplaces], judge => (
+      const shaped = await mapForReader(c, [found.place, ...found.subplaces], (judge, filter) => (
         judge === null ? found : {
           ...found,
-          place: markMutedPlace(judge, found.place),
-          subplaces: found.subplaces.map(place => markMutedPlace(judge, place)),
+          place: filterPlaceTree(filter, markMutedPlace(judge, found.place)),
+          subplaces: found.subplaces.map(place => filterPlaceTree(filter, markMutedPlace(judge, place))),
         }
       ))
       markReaderShaped(c, shaped.reader)
       return publicJson(c, {
         view: 'outline',
         ...mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline),
+        ...shaped.filtered,
         ...shaped.body,
         ...(changeMarker === null ? {} : { change_marker: changeMarker }),
       })
@@ -648,11 +664,14 @@ export function mountWorldRoutes(app: Hono): void {
     // publicResponseSafety middleware still guards this response and only
     // parses it when the raw text actually matches the credential rule.
     c.header('Cache-Control', 'public, max-age=15, s-maxage=60, stale-while-revalidate=300')
-    const shaped = await mapForReader(c, body.places, judge => (
-      judge === null ? body : { ...body, places: body.places.map(place => markMutedPlace(judge, place)) }
+    const shaped = await mapForReader(c, body.places, (judge, filter) => (
+      judge === null ? body : {
+        ...body,
+        places: body.places.map(place => filterPlaceTree(filter, markMutedPlace(judge, place))),
+      }
     ))
     markReaderShaped(c, shaped.reader)
-    const mutes = mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline)
+    const mutes = { ...mutesFields(shaped.reader, shaped.hidden, hiddenQuery.outline), ...shaped.filtered }
     return c.json(view === 'full' ? { view: 'full', ...mutes, ...shaped.body } : { ...mutes, ...shaped.body })
   })
 
@@ -748,15 +767,18 @@ export function mountWorldRoutes(app: Hono): void {
           }
       const moderatedNotes = await moderatePublicRows('note', notesPage.items)
       // Mutes (decision #156): a retired place's notes by muted authors are left out and counted.
-      const tombstoneJudge = await judgeRead(reader, { note: rowIds(moderatedNotes) })
+      const tombstoneJudge = await judgeRead(reader, { place: [id], note: rowIds(moderatedNotes) })
       const tombstoneNotes = splitMuted(tombstoneJudge, 'note', moderatedNotes)
-      const publicNotes = tombstoneNotes.shown
+      // Reading filters (decision #157): the retired place's words and its notes' bodies.
+      const tombstoneFilter = readFilter(reader, tombstoneJudge)
+      const publicNotes = filterRows(tombstoneFilter, 'note', tombstoneNotes.shown)
       const tombstoneReading = readingBlock(reader, publicNotes, ['body'])
       return publicJson(c, {
         view,
         ...(tombstoneReading === null ? {} : { reading: tombstoneReading }),
         ...mutesFields(reader, tombstoneNotes.hidden, hiddenQuery.outline),
-        tombstone: publicPlace,
+        tombstone: filterOne(tombstoneFilter, 'place', publicPlace),
+        ...filterFields(tombstoneFilter),
         notes: publicNotes,
         notes_page: {
           total_items: collections.totals.notes.items,
@@ -881,9 +903,17 @@ export function mountWorldRoutes(app: Hono): void {
       : splitMuted(judge, 'thing', frontMatter)
     const thingHiddenIds = new Set(rowIds(mutedThings.hidden))
     const frontMatterHidden = shownFrontMatter.hidden.filter(outline => !thingHiddenIds.has(outline.id))
+    // Reading filters (decision #157), after the mutes: the place's own words and every
+    // body this read still sends go through the reader's filters; the founder's, the
+    // reader's own and the laws are untouched.
+    const filter = readFilter(reader, judge)
+    const filteredPlace = filterOne(filter, 'place', shownPlace)
+    const filteredSubplaces = filterRows(filter, 'place', publicSubplaces)
+    const filteredThings = filterRows(filter, 'thing', mutedThings.shown)
+    const filteredNotes = filterRows(filter, 'note', publicNotes)
     const reading = readingBlock(
       reader,
-      [...publicSubplaces, ...mutedThings.shown, ...publicNotes],
+      [...filteredSubplaces, ...filteredThings, ...filteredNotes],
       ['body', 'description'],
     )
     return publicJson(c, {
@@ -893,12 +923,13 @@ export function mountWorldRoutes(app: Hono): void {
         ...mutedThings.hidden, ...frontMatterHidden, ...mutedNotes.hidden, ...mutedLines.hidden,
         ...mutedLooking.hidden, ...mutedListening.hidden,
       ], hiddenQuery.outline),
-      place: { ...shownPlace, labels, laws: publicDetails.laws },
+      ...filterFields(filter),
+      place: { ...filteredPlace, labels, laws: publicDetails.laws },
       ...(isWorldRootRow(publicPlace) ? { next_step: WORLD_ARRIVAL_LINE } : {}),
       front_matter: shownFrontMatter.shown,
-      subplaces: publicSubplaces,
-      things: mutedThings.shown,
-      notes: publicNotes,
+      subplaces: filteredSubplaces,
+      things: filteredThings,
+      notes: filteredNotes,
       looking_residents: mutedLooking.shown,
       looking_residents_page: {
         total_items: lookingResidents.total,
@@ -988,7 +1019,9 @@ export function mountWorldRoutes(app: Hono): void {
     markReaderShaped(c, reader)
     const judge = await judgeRead(reader, { thing: [id] })
     if (judge?.hides('thing', id)) return publicJson(c, mutedReadAnswer('thing', judge.outline('thing', id)))
-    return publicJson(c, { thing })
+    // Reading filters (decision #157): its body through the reader's filters.
+    const filter = readFilter(reader, judge)
+    return publicJson(c, { thing: filterOne(filter, 'thing', thing), ...filterFields(filter) })
   })
 
   app.post('/api/place', async c => {
@@ -1741,11 +1774,16 @@ export function mountWorldRoutes(app: Hono): void {
     // Mutes (decision #156): a muted kind, or one owned by a muted resident, is left out and counted.
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const kinds = splitMuted(await judgeRead(reader, { kind: rowIds(moderated) }), 'kind', moderated)
+    const kindJudge = await judgeRead(reader, { kind: rowIds(moderated) })
+    const kinds = splitMuted(kindJudge, 'kind', moderated)
     const sentItems = page.items.filter((_row, index) => kinds.shown.includes(moderated[index]!))
+    // Reading filters (decision #157): each kind's description.
+    const kindFilter = readFilter(reader, kindJudge)
+    const filteredKinds = filterRows(kindFilter, 'kind', kinds.shown)
     return publicJson(c, {
       ...mutesFields(reader, kinds.hidden, hiddenQuery.outline),
-      kinds: kinds.shown,
+      ...filterFields(kindFilter),
+      kinds: filteredKinds,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
       returned_items: sentItems.length,
@@ -2107,11 +2145,16 @@ export function mountWorldRoutes(app: Hono): void {
     // Mutes (decision #156): a trait coined by a muted resident is left out and counted.
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const traits = splitMuted(await judgeRead(reader, { trait: rowIds(moderated) }), 'trait', moderated)
+    const traitJudge = await judgeRead(reader, { trait: rowIds(moderated) })
+    const traits = splitMuted(traitJudge, 'trait', moderated)
     const sentItems = page.items.filter((_row, index) => traits.shown.includes(moderated[index]!))
+    // Reading filters (decision #157): each trait's description.
+    const traitFilter = readFilter(reader, traitJudge)
+    const filteredTraits = filterRows(traitFilter, 'trait', traits.shown)
     return publicJson(c, {
       ...mutesFields(reader, traits.hidden, hiddenQuery.outline),
-      traits: traits.shown,
+      ...filterFields(traitFilter),
+      traits: filteredTraits,
       total_items: collection.total.items,
       total_text_bytes: collection.total.textBytes,
       returned_items: sentItems.length,

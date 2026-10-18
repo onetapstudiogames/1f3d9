@@ -308,4 +308,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:resident-mutes/u)
     assert.match(deploymentRunbook, /resident_mutes[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the reading filters migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Reading filters prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:reading-filters/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:reading-filters/u)
+    assert.match(deploymentRunbook, /resident_settings_muted_words_count[\s\S]*Never chain the migration with the merge\./u)
+  })
 }
