@@ -5,15 +5,17 @@
 //   above it, its kind, or the item itself; and no more specific allow covers it.
 // - An item allow beats every mute; a place allow beats only a mute on a place above it
 //   (src/resident-mutes.ts walks each place choice down to the nearest one).
-// - Never hidden: anything the founder, resident #1, writes, makes or owns; your own
-//   items and the things you own; agreements you are party to; moderation records.
+// - Never hidden: anything either founder account, resident #1 or #2 (src/founders.ts,
+//   decision #159), writes, makes or owns; your own items and the things you own;
+//   agreements you are party to; moderation records.
 // - Places are never dropped: a muted place, or one owned by a muted resident, is marked
 //   muted and sent without its description, purpose or front matter, so the reader can
-//   still walk through. The founder's places and your own are never marked.
+//   still walk through. Both founders' places and your own are never marked.
 // Facts come from one query per read over every id the read is about to send, so the
 // rule never depends on which fields a read happens to carry.
 import { sql } from './db.ts'
-import { FOUNDER_RESIDENT_ID, type MuteSet } from './resident-mutes.ts'
+import { isFounderResident } from './founders.ts'
+import type { MuteSet } from './resident-mutes.ts'
 
 export const MUTE_ITEM_TYPES = Object.freeze([
   'note', 'thing', 'line', 'ping', 'kind', 'trait', 'agreement', 'place',
@@ -137,8 +139,8 @@ async function loadFacts(
 }
 
 function shownAlways(set: MuteSet, facts: Facts): boolean {
-  return facts.authorId === FOUNDER_RESIDENT_ID
-    || facts.ownerId === FOUNDER_RESIDENT_ID
+  return isFounderResident(facts.authorId)
+    || isFounderResident(facts.ownerId)
     || facts.authorId === set.readerId
     || facts.ownerId === set.readerId
 }
@@ -156,7 +158,7 @@ function hiddenByFacts(set: MuteSet, type: MuteItemType, id: number, facts: Fact
 
 function placeMarked(set: MuteSet, placeId: number, facts: Facts | undefined): boolean {
   const ownerId = facts?.ownerId ?? null
-  if (ownerId === FOUNDER_RESIDENT_ID || ownerId === set.readerId) return false
+  if (isFounderResident(ownerId) || ownerId === set.readerId) return false
   if (ownerId !== null && set.residents.has(ownerId)) return true
   return set.mutedPlaces.has(placeId)
 }
@@ -182,7 +184,7 @@ function eventAboutReader(set: MuteSet, detail: Readonly<Record<string, unknown>
 function hiddenEvent(set: MuteSet, row: Readonly<Record<string, unknown>>): boolean {
   if (row.kind === 'moderation') return false
   const actor = typeof row.actor === 'string' ? row.actor : ''
-  if (actor === set.readerHandle || actor === set.founderHandle) return false
+  if (actor === set.readerHandle || set.founderHandles.has(actor)) return false
   const detail = eventDetail(row)
   if (eventAboutReader(set, detail)) return false
   const noteId = detailId(detail, 'note_id')
@@ -218,7 +220,7 @@ export interface MuteJudge {
   hides(type: MuteItemType, id: number): boolean
   /**
    * Whether this item skips the reader's reading filters (decision #157): it always shows
-   * (the founder's, the reader's own, a place the city itself holds), or the reader
+   * (either founder's, the reader's own, a place the city itself holds), or the reader
    * allowed it with show_anyway. An item this read did not ask about is filtered.
    */
   skipsFilters(type: FilterItemType, id: number): boolean
@@ -245,7 +247,7 @@ export async function judgeMutes(
       return known !== undefined && hiddenByFacts(set, type, id, known)
     },
     skipsFilters(type: FilterItemType, id: number): boolean {
-      if (type === 'resident') return id === FOUNDER_RESIDENT_ID || id === set.readerId
+      if (type === 'resident') return isFounderResident(id) || id === set.readerId
       const showAnyway = type === 'note' ? set.showAnyway.notes
         : type === 'thing' ? set.showAnyway.things
           : type === 'place' ? set.showAnyway.places : null
@@ -258,7 +260,7 @@ export async function judgeMutes(
       return placeMarked(set, placeId, factsOf('place', placeId))
     },
     hidesResident(id: number): boolean {
-      return set.residents.has(id)
+      return !isFounderResident(id) && set.residents.has(id)
     },
     hidesResidentHandle(handle: unknown): boolean {
       return typeof handle === 'string' && set.residentHandles.has(handle)

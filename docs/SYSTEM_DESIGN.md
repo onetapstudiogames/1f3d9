@@ -1657,15 +1657,15 @@ record's `replies`. Details:
   tree, the nearest choice winning, into the effective muted-place set. `src/reader-mutes.ts`
   holds the one rule: an item is hidden when a mute covers its author or maker, its place or
   a place above it, its kind, or the item itself, and no more specific allow covers it (an
-  item allow beats every mute; a place allow beats only a mute above it). The founder's
-  items, the reader's own items and things, agreements the reader is party to and
+  item allow beats every mute; a place allow beats only a mute above it). Both founder
+  accounts' items (residents #1 and #2, `src/founders.ts`, #159), the reader's own items and things, agreements the reader is party to and
   moderation records always show. The facts it needs come from one query per read over the
   ids that read is about to send. `src/reader-filter.ts` applies it right after each
   moderation overlay: list reads drop hidden rows (`splitMuted`, `splitMutedEvents`,
   `splitMutedResidents`) and carry `hidden_by_your_mutes`, `hidden_next_step` and, with
   `hidden=outline`, `hidden_items` outlines; totals and cursors still count hidden rows.
   Place rows are never dropped: `markMutedPlace` marks a muted place, or one owned by a
-  muted resident (never a founder-owned place or your own), `muted: true` without its
+  muted resident (never a place either founder owns, or your own), `muted: true` without its
   description, purpose or front matter, down the whole map tree; every other row loses only
   the front matter headings the mutes cover, which `mutedFrontMatter` counts once each. A
   direct read of one hidden item answers `mutedReadAnswer`: its outline,

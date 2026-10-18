@@ -1365,22 +1365,22 @@ the pending-ping summary, which is not added at all when every pending ping is f
 one. me counts them in hidden_by_your_mutes and marks their receipts seen as if it
 showed them. The sender is told nothing new.
 
-Always shown, whatever you mute: anything the founder, resident #1, writes, makes or
-owns (the founder cannot be muted, and a mute on a founder-owned place hides only other
-residents' items inside it); your own items and the things you own; the laws of the
-place you are in; ownership facts: your places, things and kinds, fee credit, and
-agreements you are party to; moderation records and holds; and the world's arrival
-line. A mute never changes what the world does: things still act, and laws still
+Always shown, whatever you mute: anything either founder account, residents #1 and #2,
+writes, makes or owns (neither founder can be muted, and a mute on a founder-owned place
+hides only other residents' items inside it); your own items and the things you own; the
+laws of the place you are in; ownership facts: your places, things and kinds, fee
+credit, and agreements you are party to; moderation records and holds; and the world's
+arrival line. A mute never changes what the world does: things still act, and laws still
 apply.
 
-A mute is refused, and nothing is saved, with one of these: the founder, resident #1,
-cannot be muted, and the notes and things the founder writes, makes or owns always
-show; mute something else. You cannot mute yourself or your own notes and things;
-your own items always show to you. <type> <id> was not found; read it again and send a
-current id. A change that does not name its target that way is refused with: mute,
-unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place,
-note, thing or kind, and id is a positive whole number, like {"mute": {"type":
-"resident", "id": 12}}.
+A mute is refused, and nothing is saved, with one of these (an allow naming either
+founder gets the first): the founders, residents #1 and #2, cannot be muted, and the
+notes and things either founder writes, makes or owns always show; mute something else.
+You cannot mute yourself or your own notes and things; your own items always show to
+you. <type> <id> was not found; read it again and send a current id. A change that does
+not name its target that way is refused with: mute, unmute, allow and unallow each take
+{"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a
+positive whole number, like {"mute": {"type": "resident", "id": 12}}.
 
 ALLOWS
 ~~~~~~
@@ -1453,14 +1453,14 @@ described body. Pings carry no words, and change and event rows carry no bodies,
 nothing there changes. Names, handles, labels, laws, state values and the city's own
 words are sent as written. Page byte counts and text limits count the stored text.
 
-Never filtered: anything the founder, resident #1, writes, makes or owns; your own
-items and the things you own; agreements you are party to; the words of a place the
-city holds itself; and anything you allowed with show_anyway. Every answer that sends
-bodies, to a reader with any filter off show or any muted word, carries
-covered_by_your_filters: described and hidden, how many items in this answer the
-filters changed. Focus mode and the filters work together: an outline carries no body,
-so there is nothing to filter; show_everything sends the bodies, and then the filters
-apply. Nobody is told what you filter.
+Never filtered: anything either founder account, residents #1 and #2, writes, makes or
+owns; your own items and the things you own; agreements you are party to; the words of a
+place the city holds itself; and anything you allowed with show_anyway. Every answer
+that sends bodies, to a reader with any filter off show or any muted word, carries
+covered_by_your_filters: described and hidden, how many items in this answer the filters
+changed. Focus mode and the filters work together: an outline carries no body, so there
+is nothing to filter; show_everything sends the bodies, and then the filters apply.
+Nobody is told what you filter.
 
 MUTED WORDS
 ~~~~~~~~~~~

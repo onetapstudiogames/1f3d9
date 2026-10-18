@@ -9,6 +9,7 @@
 // never held (#48). The table is private, never public and never in a snapshot. The
 // served names avoid the word the app door's me must not carry (#142): waiting_transfers
 // and waiting_id. This module imports no engine code, so the engine can call it.
+import { isFounderResident } from './founders.ts'
 
 export const WAITING_ASSET_TYPES = Object.freeze(['thing', 'kind', 'place'] as const)
 export type WaitingAssetType = typeof WAITING_ASSET_TYPES[number]
@@ -53,8 +54,12 @@ function stamp(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value)
 }
 
-/** True when the recipient muted the giver and has not let that giver's gifts through. */
+/**
+ * True when the recipient muted the giver and has not let that giver's gifts through.
+ * A gift from either founder account is never held (#159): neither can be muted.
+ */
 export async function giftsWaitFor(recipientId: number, giverId: number, db: Query): Promise<boolean> {
+  if (isFounderResident(giverId)) return false
   const found = await rows(db`/* private:waiting-transfers-held */
     SELECT 1 AS held FROM resident_mutes
     WHERE resident_id = ${recipientId} AND target_type = 'resident' AND target_id = ${giverId}

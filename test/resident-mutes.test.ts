@@ -36,7 +36,7 @@ import {
 import { parseSettingsChange, settingsChangeRefusal } from '../src/resident-settings.ts'
 
 test('the mute refusals are stated in caller words', () => {
-  assert.equal(MUTE_FOUNDER_REFUSAL, 'the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else')
+  assert.equal(MUTE_FOUNDER_REFUSAL, 'the founders, residents #1 and #2, cannot be muted, and the notes and things either founder writes, makes or owns always show; mute something else')
   assert.equal(MUTE_SELF_REFUSAL, 'you cannot mute yourself or your own notes and things; your own items always show to you')
   assert.equal(ALLOW_TYPE_REFUSAL, 'allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead')
   assert.equal(
@@ -84,7 +84,7 @@ function muteSet(overrides: Partial<MuteSet> = {}): MuteSet {
   return Object.freeze({
     readerId: READER,
     readerHandle: 'reader-one',
-    founderHandle: 'founder',
+    founderHandles: new Set(['founder', '1f3d9-founder']),
     residents: new Set([MUTED]),
     residentHandles: new Set(['muted-one']),
     notes: { muted: new Set([30]), allowed: new Set([31]) },
@@ -146,6 +146,33 @@ test('the one rule: most specific choice wins, and the founder, your own items a
     id: 20, type: 'note', author: 'muted-one', kind: null, size: 4, date: '2026-10-17T00:00:00.000Z', place_id: 1,
   })
   assert.equal(await judgeMutes(null, { note: [20] }, factsQuery), null, 'no mutes, no judge')
+})
+
+// Decision #159: the second founder account, resident #2 (1f3d9-founder), is exempt
+// exactly as resident #1 is, even from a mute saved on it before the rule.
+test('the second founder account, resident #2, is never hidden, marked or filtered', async () => {
+  const SECOND = 2
+  const set = muteSet({ residents: new Set([MUTED, SECOND]), residentHandles: new Set(['muted-one', '1f3d9-founder']) })
+  const facts: readonly FactRow[] = [
+    { type: 'note', id: 80, author_id: SECOND, author: '1f3d9-founder', place_id: 101 },
+    { type: 'line', id: 81, author_id: SECOND, author: '1f3d9-founder', place_id: 101 },
+    { type: 'thing', id: 82, author_id: SECOND, author: '1f3d9-founder', place_id: 101, kind_id: 60, kind: 'lamp', owner_id: SECOND },
+    { type: 'thing', id: 83, author_id: MUTED, author: 'muted-one', place_id: 101, kind_id: 60, kind: 'lamp', owner_id: SECOND },
+    { type: 'ping', id: 84, author_id: SECOND, author: '1f3d9-founder', place_id: 101 },
+    { type: 'place', id: 101, author_id: SECOND, place_id: 101, owner_id: SECOND },
+  ]
+  const judge = (await judgeMutes(set, { note: [80] }, async () => facts.map(row => ({ ...row }))))!
+  assert.equal(judge.hides('note', 80), false, 'its note in a muted place')
+  assert.equal(judge.hides('line', 81), false, 'its line in a muted place')
+  assert.equal(judge.hides('thing', 82), false, 'a thing it made, of a muted kind, in a muted place')
+  assert.equal(judge.hides('thing', 83), false, 'a thing it owns')
+  assert.equal(judge.hides('ping', 84), false, 'its ping')
+  assert.equal(judge.marksPlace(101), false, 'a place it owns is never marked, even when muted')
+  assert.equal(judge.hidesResident(SECOND), false)
+  assert.equal(judge.hidesEvent({ id: 2, kind: 'note', actor: '1f3d9-founder', detail: { place_id: 101 } }), false)
+  for (const [type, id] of [['note', 80], ['line', 81], ['thing', 82], ['thing', 83], ['place', 101], ['resident', SECOND]] as const) {
+    assert.equal(judge.skipsFilters(type, id), true, `${type} ${id} skips the reading filters`)
+  }
 })
 
 test('events: moderation, the founder, the reader and records about the reader always show; an allowed record beats its actor', async () => {

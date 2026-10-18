@@ -207,12 +207,15 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
     await t.test('settings mute, allow, unmute and unallow, refused in caller words', async () => {
       const rooms = await resetCity(RESIDENTS)
       const founderNote = await seedNote(rooms.eastRoomId, FOUNDER.id, 'founder words')
-      const ownNote = await seedNote(rooms.eastRoomId, GROWER.id, 'my own words')
-      const refusals: Array<[Json, number, string]> = [
+      const ownNote = await seedNote(rooms.eastRoomId, FAR_SHORE.id, 'my own words')
+      // GROWER, the reader here, is resident #2, one of the two founder accounts (#159), so
+      // the self refusals are proven by FAR_SHORE instead.
+      const refusals: Array<[Json, number, string, string?]> = [
         [{ mute: { type: 'resident', id: FOUNDER.id } }, 400, MUTE_FOUNDER_REFUSAL],
+        [{ allow: { type: 'resident', id: FOUNDER.id } }, 400, MUTE_FOUNDER_REFUSAL],
         [{ mute: { type: 'note', id: founderNote } }, 400, MUTE_FOUNDER_REFUSAL],
-        [{ mute: { type: 'resident', id: GROWER.id } }, 400, MUTE_SELF_REFUSAL],
-        [{ mute: { type: 'note', id: ownNote } }, 400, MUTE_SELF_REFUSAL],
+        [{ mute: { type: 'resident', id: FAR_SHORE.id } }, 400, MUTE_SELF_REFUSAL, FAR_SHORE.secret],
+        [{ mute: { type: 'note', id: ownNote } }, 400, MUTE_SELF_REFUSAL, FAR_SHORE.secret],
         [{ mute: { type: 'thing', id: 999 } }, 404, muteTargetNotFound('thing', 999)],
         [{ mute: { type: 'resident', id: 999 } }, 404, muteTargetNotFound('resident', 999)],
         [{ allow: { type: 'resident', id: NEIGHBOUR.id } }, 400, ALLOW_TYPE_REFUSAL],
@@ -220,8 +223,8 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
         [{ mute: { type: 'trait', id: 1 } }, 400, MUTE_TARGET_REFUSAL],
         [{ mute: { type: 'resident' } }, 400, MUTE_TARGET_REFUSAL],
       ]
-      for (const [change, status, error] of refusals) {
-        const refused = await settings(app, GROWER.secret, change)
+      for (const [change, status, error, secret = GROWER.secret] of refusals) {
+        const refused = await settings(app, secret, change)
         assert.equal(refused.status, status, JSON.stringify(change))
         // A repeated refusal may carry the city's repeated-refusal notice after it.
         assert.ok(String(refused.json.error).startsWith(error), `${JSON.stringify(change)}: ${refused.json.error}`)
@@ -623,6 +626,66 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
       assert.equal((west.json.place as Json).muted, undefined)
       const continent = await read(app, `/api/place/${rooms.continentId}?view=full`, GROWER.secret)
       assert.equal((continent.json.subplaces as Json[]).find(row => row.id === rooms.westRoomId)!.description, 'the west room')
+    })
+
+    await t.test('the second founder account, resident #2, cannot be muted or allowed, and nothing it writes, makes or owns is hidden or marked', async () => {
+      // Decision #159. GROWER is resident #2; FAR_SHORE is the reader here.
+      const rooms = await resetCity(RESIDENTS)
+      const hall = await seedPlace(rooms.continentId, 'Second Founder Hall', GROWER.id)
+      await standIn(GROWER.id, hall)
+      await standIn(FAR_SHORE.id, hall)
+      const kind = await seedKind(NEIGHBOUR.id, 'muted-lamp', [])
+      const founderNote = await seedNote(hall, GROWER.id, 'second founder words')
+      const founderThing = await seedThing(hall, GROWER.id, 'founder lamp', 'a lamp by the second founder', kind)
+      const otherNote = await seedNote(hall, NEIGHBOUR.id, 'next-door words in the hall')
+      const founderLine = await say(app, GROWER.secret, hall, 'a second founder line')
+      const anonymousPaths = [
+        `/api/place/${hall}?view=full`,
+        `/api/place/${hall}?view=full&note_text_limit_bytes=8&thing_text_limit_bytes=4`,
+        `/api/place/${hall}/lines`,
+        `/api/note/${founderNote}`,
+        `/api/thing/${founderThing}`,
+        `/api/map?view=outline&parent_id=${rooms.continentId}`,
+      ]
+      const anonymousBefore = new Map<string, Read>()
+      for (const path of anonymousPaths) anonymousBefore.set(path, await read(app, path))
+
+      for (const change of [
+        { mute: { type: 'resident', id: GROWER.id } },
+        { allow: { type: 'resident', id: GROWER.id } },
+        { mute: { type: 'note', id: founderNote } },
+        { mute: { type: 'thing', id: founderThing } },
+      ]) {
+        const refused = await settings(app, FAR_SHORE.secret, change)
+        assert.equal(refused.status, 400, JSON.stringify(change))
+        assert.ok(String(refused.json.error).startsWith(MUTE_FOUNDER_REFUSAL), `${JSON.stringify(change)}: ${refused.json.error}`)
+      }
+      assert.equal(Number((await db.query('SELECT count(*) FROM resident_mutes')).rows[0]!.count), 0)
+
+      // A mute on resident #2 saved before #159, as production may still hold, covers nothing.
+      await db.query(`INSERT INTO resident_mutes (resident_id, target_type, target_id, choice) VALUES ($1, 'resident', $2, 'mute')`, [FAR_SHORE.id, GROWER.id])
+      await mute(app, FAR_SHORE.secret, 'mute', 'place', hall)
+      await mute(app, FAR_SHORE.secret, 'mute', 'kind', kind)
+
+      const place = await read(app, `/api/place/${hall}?view=full&hidden=outline`, FAR_SHORE.secret)
+      assert.equal(place.status, 200, place.text)
+      assert.equal(ids(place.json.notes).includes(founderNote), true, 'its note in a place it owns that the reader muted')
+      assert.equal(ids(place.json.notes).includes(otherNote), false, 'the place mute still covers other residents')
+      assert.deepEqual(ids(place.json.things), [founderThing], 'a thing it made, of a muted kind')
+      assert.deepEqual(hiddenIds(place.json), [`note:${otherNote}`])
+      assert.equal((place.json.place as Json).muted, undefined, 'a place it owns is never marked')
+      assert.equal((place.json.place as Json).description, 'the Second Founder Hall description')
+      const lines = await read(app, `/api/place/${hall}/lines`, FAR_SHORE.secret)
+      assert.deepEqual(ids(lines.json.lines), [founderLine])
+      assert.match((await read(app, `/api/note/${founderNote}`, FAR_SHORE.secret)).text, /second founder words/u)
+      const map = await read(app, `/api/map?view=outline&parent_id=${rooms.continentId}`, FAR_SHORE.secret)
+      assert.equal(((map.json.places ?? map.json.subplaces) as Json[]).find(row => row.id === hall)?.muted, undefined)
+
+      for (const path of anonymousPaths) {
+        const after = await read(app, path)
+        assert.equal(after.status, anonymousBefore.get(path)!.status, path)
+        assert.equal(after.text, anonymousBefore.get(path)!.text, `anonymous ${path} is byte-identical`)
+      }
     })
 
     await t.test('the map drops a muted maker\'s front matter headings and counts them; anonymous maps are unchanged', async () => {

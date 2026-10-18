@@ -26,9 +26,11 @@ import {
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
 
-// GROWER gives; NEIGHBOUR muted GROWER; FAR_SHORE muted nobody.
+// GIVER gives; NEIGHBOUR muted GIVER; FAR_SHORE muted nobody. GROWER is resident #2, the
+// second founder account (decision #159): it cannot be muted, so its gifts are never held.
+const GIVER = Object.freeze({ id: 6, handle: 'lamp-giver', secret: `1f3d9_sk_${'6'.repeat(48)}` })
 const FAR_SHORE = Object.freeze({ id: 5, handle: 'far-shore', secret: `1f3d9_sk_${'5'.repeat(48)}` })
-const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR, FAR_SHORE] as const
+const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR, FAR_SHORE, GIVER] as const
 
 // What the giver is told, in the owner's accepted words (choice 3, 2026-10-15). Written out
 // here, not imported, so this suite reads the same on the code before held gifts.
@@ -58,13 +60,13 @@ async function read(app: CityApp, path: string, secret: string | null = null): P
 
 async function muteGrower(app: CityApp, extra: Json = {}): Promise<void> {
   const muted = await call(app, NEIGHBOUR.secret, 'PATCH', '/api/me/settings', {
-    mute: { type: 'resident', id: GROWER.id, ...extra },
+    mute: { type: 'resident', id: GIVER.id, ...extra },
   })
   assert.equal(muted.status, 200, JSON.stringify(muted.json))
 }
 
 async function give(app: CityApp, type: string, id: number, toHandle: string = NEIGHBOUR.handle) {
-  return call(app, GROWER.secret, 'POST', '/api/transfer', { type, id, to_handle: toHandle })
+  return call(app, GIVER.secret, 'POST', '/api/transfer', { type, id, to_handle: toHandle })
 }
 
 async function count(text: string, values: readonly unknown[] = []): Promise<number> {
@@ -155,11 +157,11 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
 
     await t.test('a give to a resident that muted the giver waits: nothing moves, no event, no law, and the giver is told', async () => {
       const rooms = await resetCity(RESIDENTS)
-      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(GIVER.id, rooms.eastRoomId)
       await standIn(NEIGHBOUR.id, rooms.eastRoomId)
       await standIn(FAR_SHORE.id, rooms.eastRoomId)
-      const lantern = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a lantern')
-      const kind = await insertId('INSERT INTO kinds (name, owner_id) VALUES ($1, $2) RETURNING id', ['held-kind', GROWER.id])
+      const lantern = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a lantern')
+      const kind = await insertId('INSERT INTO kinds (name, owner_id) VALUES ($1, $2) RETURNING id', ['held-kind', GIVER.id])
       await muteGrower(app)
       const before = await eventCounts()
 
@@ -171,14 +173,14 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       assert.equal(waiting.to, NEIGHBOUR.handle)
       assert.equal(waiting.type, 'thing')
       assert.equal(waiting.asset_id, lantern)
-      assert.equal(await ownerOf('things', lantern), GROWER.id)
+      assert.equal(await ownerOf('things', lantern), GIVER.id)
       assert.deepEqual(await eventCounts(), before)
       // Giving the same thing again finds the same waiting transfer.
       const again = await give(app, 'thing', lantern)
       assert.equal(waitingOf(again.json).waiting_id, waiting.waiting_id)
       const heldKind = await give(app, 'kind', kind)
       assert.equal(waitingOf(heldKind.json).note, HELD_FOR_NEIGHBOUR)
-      assert.equal(await ownerOf('kinds', kind), GROWER.id)
+      assert.equal(await ownerOf('kinds', kind), GIVER.id)
       assert.deepEqual(await eventCounts(), before)
 
       // The recipient sees a count in its own settings and nothing anywhere else.
@@ -186,7 +188,7 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       const listed = shown.json.waiting_transfers as Json
       assert.equal(listed.count, 2)
       assert.deepEqual((listed.oldest as Json[]).map(row => [row.type, row.asset_id, row.from]), [
-        ['thing', lantern, GROWER.handle], ['kind', kind, GROWER.handle],
+        ['thing', lantern, GIVER.handle], ['kind', kind, GIVER.handle],
       ])
       assert.doesNotMatch(shown.text, /gift/iu)
       const me = await read(app, '/api/me', NEIGHBOUR.secret)
@@ -209,10 +211,10 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
 
     await t.test('accept makes the ordinary give with its event; decline moves nothing; only the recipient may answer', async () => {
       const rooms = await resetCity(RESIDENTS)
-      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(GIVER.id, rooms.eastRoomId)
       await standIn(NEIGHBOUR.id, rooms.westRoomId)
-      const first = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a first lantern')
-      const second = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a second lantern')
+      const first = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a first lantern')
+      const second = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a second lantern')
       await muteGrower(app)
       const firstWaiting = waitingOf((await give(app, 'thing', first)).json)
       const secondWaiting = waitingOf((await give(app, 'thing', second)).json)
@@ -229,12 +231,12 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       assert.equal((accepted.json.waiting_transfer as Json).answer, 'accepted')
       const transfer = accepted.json.transfer as Json
       assert.deepEqual([transfer.type, transfer.asset_id, transfer.from, transfer.to, transfer.mode], [
-        'thing', first, GROWER.handle, NEIGHBOUR.handle, 'gift',
+        'thing', first, GIVER.handle, NEIGHBOUR.handle, 'gift',
       ])
       assert.equal(await ownerOf('things', first), NEIGHBOUR.id)
       const events = (await db.query(`SELECT actor, detail FROM events WHERE kind = 'transfer'`)).rows
       assert.equal(events.length, 1)
-      assert.equal(events[0]!.actor, GROWER.handle)
+      assert.equal(events[0]!.actor, GIVER.handle)
       assert.equal(events[0]!.detail.mode, 'gift')
       assert.equal(events[0]!.detail.to, NEIGHBOUR.handle)
       assert.deepEqual((await db.query('SELECT answer, answer_detail FROM waiting_transfers WHERE id = $1', [firstWaiting.waiting_id])).rows, [
@@ -247,7 +249,7 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       const declined = await call(app, NEIGHBOUR.secret, 'POST', `/api/transfer/waiting/${secondWaiting.waiting_id}/decline`)
       assert.equal(declined.status, 200, JSON.stringify(declined.json))
       assert.equal((declined.json.waiting_transfer as Json).answer, 'declined')
-      assert.equal(await ownerOf('things', second), GROWER.id)
+      assert.equal(await ownerOf('things', second), GIVER.id)
       assert.equal(await count(`SELECT count(*) FROM events WHERE kind = 'transfer'`), 1)
       const afterDecline = await call(app, NEIGHBOUR.secret, 'POST', `/api/transfer/waiting/${secondWaiting.waiting_id}/accept`)
       assert.equal(afterDecline.status, 409)
@@ -255,14 +257,36 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       assert.equal(((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.waiting_transfers as Json).count, 0)
     })
 
-    await t.test('let_transfers_through lets the next give move at once, and a mute without it holds again', async () => {
+    await t.test('a gift from the second founder account, resident #2, is never held, even under a mute saved before #159', async () => {
       const rooms = await resetCity(RESIDENTS)
       await standIn(GROWER.id, rooms.eastRoomId)
-      const lantern = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a lantern')
-      const other = await seedThing(GROWER.id, rooms.eastRoomId, null, 'another lantern')
+      await standIn(NEIGHBOUR.id, rooms.eastRoomId)
+      const refused = await call(app, NEIGHBOUR.secret, 'PATCH', '/api/me/settings', { mute: { type: 'resident', id: GROWER.id } })
+      assert.equal(refused.status, 400)
+      assert.ok(String(refused.json.error).startsWith(
+        'the founders, residents #1 and #2, cannot be muted, and the notes and things either founder writes, makes or owns always show; mute something else',
+      ), String(refused.json.error))
+      // A mute row saved on resident #2 before the rule, as production may still hold.
+      await db.query(`INSERT INTO resident_mutes (resident_id, target_type, target_id, choice) VALUES ($1, 'resident', $2, 'mute')`, [NEIGHBOUR.id, GROWER.id])
+      const lantern = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a founder lantern')
+      const plot = await seedPlace(rooms.continentId, 'Founder Plot', GROWER.id)
+      for (const [type, id] of [['thing', lantern], ['place', plot]] as const) {
+        const moved = await call(app, GROWER.secret, 'POST', '/api/transfer', { type, id, to_handle: NEIGHBOUR.handle })
+        assert.equal(moved.status, 200, JSON.stringify(moved.json))
+        assert.equal(moved.json.waiting_transfers, undefined, JSON.stringify(moved.json))
+        assert.equal(await ownerOf(type === 'thing' ? 'things' : 'places', id), NEIGHBOUR.id)
+      }
+      assert.equal(await count('SELECT count(*) FROM waiting_transfers'), 0)
+    })
+
+    await t.test('let_transfers_through lets the next give move at once, and a mute without it holds again', async () => {
+      const rooms = await resetCity(RESIDENTS)
+      await standIn(GIVER.id, rooms.eastRoomId)
+      const lantern = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a lantern')
+      const other = await seedThing(GIVER.id, rooms.eastRoomId, null, 'another lantern')
       await muteGrower(app, { let_transfers_through: true })
       const mutes = ((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.settings as Json).mutes as Json[]
-      assert.deepEqual(mutes.map(row => [row.type, row.id, row.let_transfers_through]), [['resident', GROWER.id, true]])
+      assert.deepEqual(mutes.map(row => [row.type, row.id, row.let_transfers_through]), [['resident', GIVER.id, true]])
       const moved = await give(app, 'thing', lantern)
       assert.equal(moved.status, 200, JSON.stringify(moved.json))
       assert.equal((moved.json.transfer as Json).to, NEIGHBOUR.handle)
@@ -271,8 +295,8 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       const { LET_TRANSFERS_THROUGH_REFUSAL } = await import('../../src/resident-mutes.ts')
       for (const change of [
         { mute: { type: 'place', id: rooms.westRoomId, let_transfers_through: true } },
-        { mute: { type: 'resident', id: GROWER.id, let_transfers_through: 'yes' } },
-        { unmute: { type: 'resident', id: GROWER.id, let_transfers_through: true } },
+        { mute: { type: 'resident', id: GIVER.id, let_transfers_through: 'yes' } },
+        { unmute: { type: 'resident', id: GIVER.id, let_transfers_through: true } },
       ]) {
         const refused = await call(app, NEIGHBOUR.secret, 'PATCH', '/api/me/settings', change)
         assert.equal(refused.status, 400, JSON.stringify(change))
@@ -281,16 +305,16 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       await muteGrower(app)
       const held = await give(app, 'thing', other)
       assert.equal(waitingOf(held.json).note, HELD_FOR_NEIGHBOUR)
-      assert.equal(await ownerOf('things', other), GROWER.id)
+      assert.equal(await ownerOf('things', other), GIVER.id)
     })
 
     await t.test('a place gift holding the giver\'s home says so to the giver alone, and clears the home only on accept', async () => {
       const rooms = await resetCity(RESIDENTS)
-      await standIn(GROWER.id, rooms.eastRoomId)
-      const plot = await seedPlace(rooms.continentId, 'Grower Plot', GROWER.id)
-      const shed = await seedPlace(plot, 'Grower Shed', GROWER.id)
-      const field = await seedPlace(rooms.continentId, 'Grower Field', GROWER.id)
-      await db.query('UPDATE resident_presence SET home_place_id = $2 WHERE resident_id = $1', [GROWER.id, shed])
+      await standIn(GIVER.id, rooms.eastRoomId)
+      const plot = await seedPlace(rooms.continentId, 'Grower Plot', GIVER.id)
+      const shed = await seedPlace(plot, 'Grower Shed', GIVER.id)
+      const field = await seedPlace(rooms.continentId, 'Grower Field', GIVER.id)
+      await db.query('UPDATE resident_presence SET home_place_id = $2 WHERE resident_id = $1', [GIVER.id, shed])
       await muteGrower(app)
 
       const held = await give(app, 'place', plot)
@@ -299,8 +323,8 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       assert.equal(waitingOf(held.json).note, HELD_FOR_NEIGHBOUR)
       const noHome = await give(app, 'place', field)
       assert.deepEqual(noHome.json.attention, [])
-      assert.equal(await ownerOf('places', plot), GROWER.id)
-      const home = async () => (await db.query('SELECT home_place_id FROM resident_presence WHERE resident_id = $1', [GROWER.id])).rows[0]!.home_place_id
+      assert.equal(await ownerOf('places', plot), GIVER.id)
+      const home = async () => (await db.query('SELECT home_place_id FROM resident_presence WHERE resident_id = $1', [GIVER.id])).rows[0]!.home_place_id
       assert.equal(await home(), shed)
 
       // The recipient's answers never carry the giver's home.
@@ -316,39 +340,39 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
 
     await t.test('a use with to_handle holds its transfer and runs the rest; an act give holds; the engine path holds', async () => {
       const rooms = await resetCity(RESIDENTS)
-      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(GIVER.id, rooms.eastRoomId)
       await standIn(NEIGHBOUR.id, rooms.eastRoomId)
-      const coined = await coin(app, GROWER.secret, 'hand-over', {
+      const coined = await coin(app, GIVER.secret, 'hand-over', {
         use: [
           { effect: 'label', target: 'source', label: 'offered' },
           { effect: 'transfer', target: 'source', to: 'recipient' },
         ],
       })
       assert.equal(coined.status, 201, JSON.stringify(coined.json))
-      const kind = await seedKind(GROWER.id, 'parcel', [await traitId('hand-over')])
-      const parcel = await seedThing(GROWER.id, rooms.eastRoomId, kind, 'a parcel')
-      const plain = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a plain lantern')
-      const engineThing = await seedThing(GROWER.id, rooms.eastRoomId, null, 'an engine lantern')
+      const kind = await seedKind(GIVER.id, 'parcel', [await traitId('hand-over')])
+      const parcel = await seedThing(GIVER.id, rooms.eastRoomId, kind, 'a parcel')
+      const plain = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a plain lantern')
+      const engineThing = await seedThing(GIVER.id, rooms.eastRoomId, null, 'an engine lantern')
       await muteGrower(app)
       const before = await count(`SELECT count(*) FROM events WHERE kind = 'transfer'`)
 
-      const used = await call(app, GROWER.secret, 'POST', '/api/action', { action: 'use', thing_id: parcel, to_handle: NEIGHBOUR.handle })
+      const used = await call(app, GIVER.secret, 'POST', '/api/action', { action: 'use', thing_id: parcel, to_handle: NEIGHBOUR.handle })
       assert.equal(used.status, 200, JSON.stringify(used.json))
       const usedAction = used.json.action as Json
       assert.equal(usedAction.status, 'applied')
       assert.equal(usedAction.effects_applied, 2)
       assert.equal(waitingOf(usedAction).note, HELD_FOR_NEIGHBOUR)
-      assert.equal(await ownerOf('things', parcel), GROWER.id)
+      assert.equal(await ownerOf('things', parcel), GIVER.id)
       assert.equal(await count(`SELECT count(*) FROM active_labels WHERE target_type = 'thing' AND target_id = $1 AND label = 'offered'`, [parcel]), 1)
       assert.equal(await count('SELECT count(*) FROM waiting_transfers WHERE asset_id = $1 AND answer IS NULL', [parcel]), 1)
       assert.equal(await count(`SELECT count(*) FROM events WHERE kind = 'transfer'`), before)
 
       const actionsBefore = await count('SELECT count(*) FROM action_runs')
-      const acted = await call(app, GROWER.secret, 'POST', '/api/action', { action: 'give', thing_id: plain, to_handle: NEIGHBOUR.handle })
+      const acted = await call(app, GIVER.secret, 'POST', '/api/action', { action: 'give', thing_id: plain, to_handle: NEIGHBOUR.handle })
       assert.equal(acted.status, 200, JSON.stringify(acted.json))
       assert.equal((acted.json.action as Json).status, 'held')
       assert.equal(waitingOf(acted.json.action as Json).note, HELD_FOR_NEIGHBOUR)
-      assert.equal(await ownerOf('things', plain), GROWER.id)
+      assert.equal(await ownerOf('things', plain), GIVER.id)
       assert.equal(await count('SELECT count(*) FROM action_runs'), actionsBefore)
       assert.equal(await count(`SELECT count(*) FROM events WHERE kind = 'transfer'`), before)
 
@@ -357,14 +381,14 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
       const { sql } = await import('../../src/db.ts')
       const abilityLog = newAbilityLog()
       await executeEffectsWithOutcome([{ effect: 'transfer', target: 'source', to: 'recipient' }], {
-        actionId: null, actorId: GROWER.id, actorHandle: GROWER.handle, placeId: rooms.eastRoomId,
+        actionId: null, actorId: GIVER.id, actorHandle: GIVER.handle, placeId: rooms.eastRoomId,
         sourceThingId: engineThing, sharedSourceThingId: null, target: null, destinationPlaceId: null,
         recipientId: NEIGHBOUR.id, sourceTraitId: null, lawAuthority: null, parentEffectId: null,
         generation: 1, logicalAt: new Date(), trigger: 'timer', abilityLog,
       }, sql as never)
       assert.equal(abilityLog.waiting.length, 1)
       assert.equal(abilityLog.waiting[0]!.note, HELD_FOR_NEIGHBOUR)
-      assert.equal(await ownerOf('things', engineThing), GROWER.id)
+      assert.equal(await ownerOf('things', engineThing), GIVER.id)
       assert.equal(await count(`SELECT count(*) FROM events WHERE kind = 'transfer'`), before)
     })
 
@@ -400,12 +424,12 @@ test('held gifts against real PostgreSQL', { timeout: 900_000 }, async t => {
 
     await t.test('anonymous reads are byte-identical before and after a held give and its decline', async () => {
       const rooms = await resetCity(RESIDENTS)
-      await standIn(GROWER.id, rooms.eastRoomId)
+      await standIn(GIVER.id, rooms.eastRoomId)
       await standIn(NEIGHBOUR.id, rooms.eastRoomId)
-      const lantern = await seedThing(GROWER.id, rooms.eastRoomId, null, 'a lantern')
-      const plot = await seedPlace(rooms.continentId, 'Grower Plot', GROWER.id)
-      const note = await insertId('INSERT INTO notes (place_id, author_id, body) VALUES ($1, $2, $3) RETURNING id', [rooms.eastRoomId, GROWER.id, 'a lantern for the neighbour'])
-      const removed = await insertId('INSERT INTO notes (place_id, author_id, body) VALUES ($1, $2, $3) RETURNING id', [rooms.eastRoomId, GROWER.id, 'a removed note'])
+      const lantern = await seedThing(GIVER.id, rooms.eastRoomId, null, 'a lantern')
+      const plot = await seedPlace(rooms.continentId, 'Grower Plot', GIVER.id)
+      const note = await insertId('INSERT INTO notes (place_id, author_id, body) VALUES ($1, $2, $3) RETURNING id', [rooms.eastRoomId, GIVER.id, 'a lantern for the neighbour'])
+      const removed = await insertId('INSERT INTO notes (place_id, author_id, body) VALUES ($1, $2, $3) RETURNING id', [rooms.eastRoomId, GIVER.id, 'a removed note'])
       await db.query(`INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason) VALUES ('note', $1, 'remove', 1, 'fixture removal')`, [removed])
       await muteGrower(app)
       const paths = [
