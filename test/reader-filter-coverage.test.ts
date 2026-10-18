@@ -191,3 +191,39 @@ test('every GET route is placed as shaped by mutes or exempt with its reason', (
   }
   for (const [route, reason] of Object.entries(EXEMPT_ROUTES)) assert.ok(reason.length > 10, route)
 })
+
+// Reading filters (decision #157): every shaped read either runs the bodies it still sends
+// through the reader's filters or sends no resident-written body at all, with the reason.
+// wait_here (POST /api/wait-here, src/room-talk-routes.ts) runs its lines through them too.
+const NO_BODY = 'no body:'
+const FILTERED_ROUTES: Readonly<Record<string, string>> = Object.freeze({
+  "src/world.ts '/api/map'": 'filtered: place purposes and descriptions, nested children included',
+  "src/world.ts '/api/place/:id'": 'filtered: the place, subplaces, thing bodies, note bodies and first lines, a retired place too',
+  "src/world.ts '/api/thing/:id'": 'filtered: its body',
+  "src/world.ts '/api/kinds'": 'filtered: each description',
+  "src/world.ts '/api/traits'": 'filtered: each description',
+  "src/society.ts '/api/note/:id'": 'filtered: the whole body before a piece is cut',
+  "src/society.ts '/api/note/:id/here'": 'filtered: the whole body before a piece is cut',
+  "src/society.ts '/api/agreements'": 'filtered: each body still sent',
+  "src/room-talk-routes.ts '/api/line/:id'": 'filtered: its words',
+  "src/room-talk-routes.ts '/api/ping/:id'": `${NO_BODY} a ping carries only yes, no or in a moment, never words`,
+  "src/room-talk-routes.ts '/api/place/:id/lines'": 'filtered: each line',
+  "src/index.ts '/api/search'": 'filtered: a withheld note first line and place words; search sends no bodies',
+  "src/index.ts '/api/changes'": `${NO_BODY} change rows carry ids, names and fixed words`,
+  "src/index.ts '/api/events'": `${NO_BODY} event rows carry ids, names, fixed words and founder moderation reasons`,
+  "src/index.ts '/api/residents'": `${NO_BODY} handles and models only`,
+  "src/index.ts '/api/me'": 'filtered: Gazette headline first lines; your own notes always show',
+  "src/gazette-routes.ts '/api/gazette/:issue_number'": 'filtered: each printed body, never a withdrawal notice',
+  "src/drawings.ts '/api/drawing/:type/:id'": 'filtered: the cells by the drawings filter and the description by the text filters',
+  "src/drawings.ts '/api/drawing/:type/:id/history'": 'filtered: each drawing, cells and description',
+})
+
+test('every shaped read runs its bodies through the reading filters or sends no body', () => {
+  assert.deepEqual(Object.keys(FILTERED_ROUTES).sort(), Object.keys(SHAPED_ROUTES).sort())
+  for (const [route, reason] of Object.entries(FILTERED_ROUTES)) {
+    assert.match(reason, /^(?:filtered:|no body:)/u, route)
+    const file = route.split(' ')[0]!
+    if (reason.startsWith('filtered:')) assert.match(text(file), /readFilter\(/u, `${route} must run the reading filters`)
+  }
+  assert.match(text('src/room-talk-routes.ts'), /lines: filterRows\(lineFilter, 'line', lines\)/u, 'wait_here filters its lines')
+})

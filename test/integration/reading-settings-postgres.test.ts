@@ -26,9 +26,18 @@ import {
 
 const RESIDENTS = [FOUNDER, GROWER, NEIGHBOUR] as const
 const WRONG_KEY = `1f3d9_sk_${'f'.repeat(48)}`
+// The reading filters (decision #157) show every kind as written until a resident chooses.
+const SHOW_EVERY_KIND = Object.freeze({
+  encoded_text: 'show', drawings: 'show', code_like_text: 'show', links: 'show', emoji: 'show',
+})
 
 const migration = await readFile(
   new URL('../../db/migrations/20261017_resident_settings.sql', import.meta.url),
+  'utf8',
+)
+// The reading filters columns (decision #157) come after the table, in their own migration.
+const filtersMigration = await readFile(
+  new URL('../../db/migrations/20261017_reading_filters.sql', import.meta.url),
   'utf8',
 )
 
@@ -67,7 +76,7 @@ async function settingsCatalog(): Promise<Json> {
   )
   const constraints = await db.query(
     'SELECT contype, convalidated, pg_get_constraintdef(oid) AS definition FROM pg_constraint ' +
-      "WHERE conrelid = to_regclass('public.resident_settings') ORDER BY contype",
+      "WHERE conrelid = to_regclass('public.resident_settings') ORDER BY contype, pg_get_constraintdef(oid)",
   )
   return { columns: columns.rows, constraints: constraints.rows }
 }
@@ -130,21 +139,30 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
     await t.test('the migration applies twice to a city without the table, changes no resident, and ends in the fresh shape', async () => {
       await resetCity(RESIDENTS)
       const fresh = await settingsCatalog()
-      assert.deepEqual(fresh, {
-        columns: [
-          { column_name: 'resident_id', data_type: 'integer', is_nullable: 'NO', column_default: null },
-          { column_name: 'focus', data_type: 'boolean', is_nullable: 'NO', column_default: 'false' },
-          { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: 'now()' },
-        ],
-        constraints: [
-          { contype: 'f', convalidated: true, definition: 'FOREIGN KEY (resident_id) REFERENCES residents(id) ON DELETE CASCADE' },
-          { contype: 'p', convalidated: true, definition: 'PRIMARY KEY (resident_id)' },
-        ],
-      })
+      const filterColumn = (name: string) => ({ column_name: name, data_type: 'text', is_nullable: 'NO', column_default: "'show'::text" })
+      assert.deepEqual(fresh.columns, [
+        { column_name: 'resident_id', data_type: 'integer', is_nullable: 'NO', column_default: null },
+        { column_name: 'focus', data_type: 'boolean', is_nullable: 'NO', column_default: 'false' },
+        { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: 'now()' },
+        filterColumn('encoded_text_filter'),
+        filterColumn('drawings_filter'),
+        filterColumn('code_like_text_filter'),
+        filterColumn('links_filter'),
+        filterColumn('emoji_filter'),
+        { column_name: 'muted_words', data_type: 'ARRAY', is_nullable: 'NO', column_default: "'{}'::text[]" },
+      ])
+      const constraints = fresh.constraints as Json[]
+      assert.deepEqual(constraints.filter(row => row.contype !== 'c'), [
+        { contype: 'f', convalidated: true, definition: 'FOREIGN KEY (resident_id) REFERENCES residents(id) ON DELETE CASCADE' },
+        { contype: 'p', convalidated: true, definition: 'PRIMARY KEY (resident_id)' },
+      ])
+      assert.equal(constraints.filter(row => row.contype === 'c' && row.convalidated === true).length, 6)
       await db.query('DROP TABLE resident_settings')
       const residentsBefore = (await db.query('SELECT * FROM residents ORDER BY id')).rows
       await db.query(migration)
       await db.query(migration)
+      await db.query(filtersMigration)
+      await db.query(filtersMigration)
       assert.deepEqual(await settingsCatalog(), fresh)
       assert.deepEqual((await db.query('SELECT * FROM residents ORDER BY id')).rows, residentsBefore)
       assert.equal(Number((await db.query('SELECT count(*) AS n FROM resident_settings')).rows[0]!.n), 0)
@@ -277,12 +295,12 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
 
       const changed = await mcpTool(app, GROWER.secret, 'me', { settings: { focus_mode: true } })
       // Mutes and allows (decision #156) are listed beside focus mode; this resident has none.
-      assert.deepEqual((changed.settings as Json), { focus_mode: true, mutes: [] })
+      assert.deepEqual((changed.settings as Json), { focus_mode: true, filters: SHOW_EVERY_KIND, muted_words_count: 0, mutes: [] })
       assert.equal(changed.changed, true)
       // A signed-in tool answer carries the summary, so the ping is pending here.
       assert.equal((changed.pending_pings as Json).total, 1)
       const shown = await mcpTool(app, GROWER.secret, 'me', { settings: 'show' })
-      assert.deepEqual(shown.settings, { focus_mode: true, mutes: [] })
+      assert.deepEqual(shown.settings, { focus_mode: true, filters: SHOW_EVERY_KIND, muted_words_count: 0, mutes: [] })
       assert.equal(typeof shown.updated_at, 'string')
       const again = await mcpTool(app, GROWER.secret, 'me', { settings: { focus_mode: true } })
       assert.equal(again.changed, false)
@@ -381,7 +399,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       await resetCity(RESIDENTS)
       const shown = await read(app, '/api/me/settings', GROWER.secret)
       assert.equal(shown.status, 200)
-      assert.deepEqual(shown.json.settings, { focus_mode: false, mutes: [] })
+      assert.deepEqual(shown.json.settings, { focus_mode: false, filters: SHOW_EVERY_KIND, muted_words_count: 0, mutes: [] })
       assert.equal(shown.json.updated_at, null)
       const headers = new Map(shown.headers)
       assert.equal(headers.get('cache-control'), 'no-store')
@@ -390,7 +408,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
         const refused = await call(app, GROWER.secret, 'PATCH', '/api/me/settings', body)
         assert.equal(refused.status, 400, JSON.stringify(body))
         // A repeated identical refusal gains the city's same-refusal line after it.
-        assert.ok(String(refused.json.error).startsWith('settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow or unallow, like {"focus_mode": true} or {"mute": {"type": "resident", "id": 12}}; send settings "show" to read your settings'))
+        assert.ok(String(refused.json.error).startsWith('settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings'))
       }
       const anonymous = await call(app, null, 'GET', '/api/me/settings')
       assert.equal(anonymous.status, 401)
@@ -399,7 +417,7 @@ test('reading settings and focus mode against real PostgreSQL', { timeout: 600_0
       assert.equal(Number((await db.query('SELECT count(*) AS n FROM resident_settings')).rows[0]!.n), 0)
       // Each resident reads only its own settings.
       await focusOn(app, GROWER.secret, true)
-      assert.deepEqual((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.settings, { focus_mode: false, mutes: [] })
+      assert.deepEqual((await read(app, '/api/me/settings', NEIGHBOUR.secret)).json.settings, { focus_mode: false, filters: SHOW_EVERY_KIND, muted_words_count: 0, mutes: [] })
     })
 
     await t.test('timing: a keyed place read with and without a settings row (risk 8 baseline)', async () => {

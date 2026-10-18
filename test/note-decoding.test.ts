@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createNoteDecodingHelpers } from '../src/window-client/note-decoding.ts'
+import { createNoteDecodingHelpers } from '../src/note-encoding.ts'
 
 const { decodeNoteText, detectNoteLanguage } = createNoteDecodingHelpers()
 

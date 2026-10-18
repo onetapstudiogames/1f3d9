@@ -18,15 +18,18 @@ import { allowedPublicQuery } from './public-pagination.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
 import {
   drawingOutline,
+  filterFields,
   mutedDrawingOutline,
   judgeRead,
   markReaderShaped,
   mutedItemNextStep,
   parseShowEverything,
   readerShape,
+  readFilter,
   readingBlock,
   SHOW_EVERYTHING_REFUSAL,
   sendsOutlinesOnly,
+  type ReadFilter,
   type ReaderShape,
 } from './reader-filter.ts'
 
@@ -453,6 +456,19 @@ function thumbnailEmpty(
   })
 }
 
+/**
+ * The reading filters for the drawings of one record (decision #157): null when the
+ * reader has none on. The founder's, the reader's own and its show_anyway allows skip them.
+ */
+async function drawingFilter(
+  reader: ReaderShape | null,
+  type: 'place' | 'resident' | 'kind' | 'thing',
+  id: number,
+): Promise<ReadFilter | null> {
+  if (reader?.filters == null) return null
+  return readFilter(reader, await judgeRead(reader, type === 'resident' ? {} : { [type]: [id] }))
+}
+
 /** Whether the reader muted the record a drawing belongs to (decision #156). */
 async function drawingTargetMuted(
   reader: ReaderShape | null,
@@ -578,7 +594,9 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // Mutes (decision #156): the drawings of a record the reader muted come as outlines,
     // without their descriptions or variant names, which are their author's words.
     const muted = await drawingTargetMuted(reader, recordType, id)
-    const shownRevisions = muted
+    // Reading filters (decision #157): each drawing still sent, cells and description.
+    const filter = muted ? null : await drawingFilter(reader, recordType, id)
+    const focused = muted
       ? revisions.map(({ slot_variant_name: _slotVariantName, ...revision }) => ({
           ...revision,
           previous: mutedDrawingOutline(revision.previous),
@@ -591,6 +609,13 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
             current: drawingOutline(revision.current),
           }))
         : revisions
+    const shownRevisions = filter === null
+      ? focused
+      : focused.map(revision => ({
+          ...revision,
+          previous: filter.drawing(recordType, id, revision.previous),
+          current: filter.drawing(recordType, id, revision.current),
+        }))
     const reading = readingBlock(
       reader,
       shownRevisions.flatMap(revision => [revision.previous, revision.current]),
@@ -601,6 +626,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
       id,
       ...(reading === null ? {} : { reading }),
       ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
+      ...filterFields(filter),
       revisions: shownRevisions,
       page: {
         limit: parsedLimit,
@@ -636,15 +662,19 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     // Mutes (decision #156): the drawing of a record the reader muted comes as an outline,
     // without its description or variant name, which are its author's words.
     const muted = await drawingTargetMuted(reader, recordType, id)
-    const shown = muted
+    // Reading filters (decision #157): the drawing's cells and description.
+    const filter = muted ? null : await drawingFilter(reader, recordType, id)
+    const focused = muted
       ? mutedDrawingOutline(drawing)
       : sendsOutlinesOnly(reader) ? drawingOutline(drawing) : drawing
+    const shown = filter === null ? focused : filter.drawing(recordType, id, focused)
     const reading = readingBlock(reader, [shown], ['drawing'])
     return c.json({
       type: recordType,
       id,
       ...(reading === null ? {} : { reading }),
       ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
+      ...filterFields(filter),
       ...shown,
     })
   })

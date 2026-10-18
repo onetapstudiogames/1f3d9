@@ -3,8 +3,10 @@
 // a thing or a kind, and allow one note, thing or place through a wider mute. One row
 // per choice; unmuting or unallowing deletes it. Unlimited, private, and nobody is told.
 // The founder, resident #1, cannot be muted, and nothing the founder writes, makes or
-// owns is hidden. This module stores the choices and loads one reader's mute set once
-// per request; src/reader-filter.ts decides what each read leaves out.
+// owns is hidden. An allow may also say show_anyway (decision #157), so that one note,
+// thing or place skips the reader's reading filters too. This module stores the choices
+// and loads one reader's mute set once per request; src/reader-filter.ts decides what
+// each read leaves out.
 import { sql } from './db.ts'
 
 export const FOUNDER_RESIDENT_ID = 1
@@ -15,7 +17,7 @@ export const ALLOW_TARGET_TYPES = Object.freeze(['place', 'note', 'thing'] as co
 export const MUTE_VERBS = Object.freeze(['mute', 'unmute', 'allow', 'unallow'] as const)
 export type MuteVerb = typeof MUTE_VERBS[number]
 
-export type MuteChange = Readonly<{ verb: MuteVerb; type: MuteTargetType; id: number }>
+export type MuteChange = Readonly<{ verb: MuteVerb; type: MuteTargetType; id: number; showAnyway?: boolean }>
 
 export const MUTE_TARGET_REFUSAL =
   'mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}'
@@ -23,6 +25,8 @@ export const MUTE_FOUNDER_REFUSAL =
   'the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else'
 export const MUTE_SELF_REFUSAL =
   'you cannot mute yourself or your own notes and things; your own items always show to you'
+export const SHOW_ANYWAY_REFUSAL =
+  'show_anyway goes only with allow and must be true or false, like {"allow": {"type": "note", "id": 5, "show_anyway": true}}; it lets that one note, thing or place skip your reading filters'
 export const ALLOW_TYPE_REFUSAL =
   'allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead'
 
@@ -35,17 +39,33 @@ const MAX_TARGET_ID = 2_147_483_647
 type MuteQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
 const defaultQuery = sql as unknown as MuteQuery
 
-/** One {type, id} target, or null when it is not one. */
-export function parseMuteTarget(value: unknown): Readonly<{ type: MuteTargetType; id: number }> | null {
+type MuteTarget = Readonly<{ type: MuteTargetType; id: number; showAnyway?: boolean }>
+
+/** Whether a target names show_anyway, which only an allow may carry, as true or false. */
+export function hasShowAnyway(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'show_anyway')
+}
+
+/**
+ * One {type, id} target, or null when it is not one. An allow may add show_anyway, true
+ * or false; every other verb takes exactly type and id.
+ */
+export function parseMuteTarget(value: unknown, allowShowAnyway = false): MuteTarget | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
-  const keys = Object.keys(record)
+  const withShowAnyway = allowShowAnyway && Object.hasOwn(record, 'show_anyway')
+  const keys = Object.keys(record).filter(key => !(withShowAnyway && key === 'show_anyway'))
   if (keys.length !== 2 || !keys.includes('type') || !keys.includes('id')) return null
   const type = record.type
   const id = record.id
   if (typeof type !== 'string' || !(MUTE_TARGET_TYPES as readonly string[]).includes(type)) return null
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || id > MAX_TARGET_ID) return null
-  return Object.freeze({ type: type as MuteTargetType, id })
+  if (withShowAnyway && typeof record.show_anyway !== 'boolean') return null
+  return Object.freeze({
+    type: type as MuteTargetType,
+    id,
+    ...(withShowAnyway ? { showAnyway: record.show_anyway as boolean } : {}),
+  })
 }
 
 export type MuteChangeRefusal = Readonly<{ status: 400 | 404; error: string }>
@@ -84,12 +104,15 @@ export async function applyMuteChange(
     if (target.authorId === FOUNDER_RESIDENT_ID || target.ownerId === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
     if (target.authorId === residentId || target.ownerId === residentId) return refused(selfRefusal)
   }
+  // Only an allow carries show_anyway; a mute that replaces an allow clears it.
+  const showAnyway = change.verb === 'allow' && change.showAnyway === true
   const written = await query`
-    INSERT INTO resident_mutes (resident_id, target_type, target_id, choice)
-    VALUES (${residentId}, ${change.type}, ${change.id}, ${change.verb})
+    INSERT INTO resident_mutes (resident_id, target_type, target_id, choice, show_anyway)
+    VALUES (${residentId}, ${change.type}, ${change.id}, ${change.verb}, ${showAnyway})
     ON CONFLICT (resident_id, target_type, target_id) DO UPDATE
-    SET choice = EXCLUDED.choice, created_at = now()
+    SET choice = EXCLUDED.choice, show_anyway = EXCLUDED.show_anyway, created_at = now()
     WHERE resident_mutes.choice IS DISTINCT FROM EXCLUDED.choice
+      OR resident_mutes.show_anyway IS DISTINCT FROM EXCLUDED.show_anyway
     RETURNING id
   `
   return Object.freeze({ ok: true, changed: written.length > 0 })
@@ -121,12 +144,18 @@ async function readTarget(
   })
 }
 
-export type ListedMute = Readonly<{ type: MuteTargetType; id: number; choice: 'mute' | 'allow'; since: string }>
+export type ListedMute = Readonly<{
+  type: MuteTargetType
+  id: number
+  choice: 'mute' | 'allow'
+  show_anyway?: boolean
+  since: string
+}>
 
 /** Every mute and allow of one resident, newest first, for settings "show". */
 export async function listMutes(residentId: number, query: MuteQuery = defaultQuery): Promise<readonly ListedMute[]> {
   const rows = await query`/* private:reader-mute-list */
-    SELECT target_type, target_id, choice, created_at
+    SELECT target_type, target_id, choice, show_anyway, created_at
     FROM resident_mutes
     WHERE resident_id = ${residentId}
     ORDER BY created_at DESC, id DESC
@@ -135,6 +164,7 @@ export async function listMutes(residentId: number, query: MuteQuery = defaultQu
     type: String(row.target_type) as MuteTargetType,
     id: Number(row.target_id),
     choice: row.choice === 'allow' ? 'allow' as const : 'mute' as const,
+    ...(row.choice === 'allow' ? { show_anyway: row.show_anyway === true } : {}),
     since: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   })))
 }
@@ -153,7 +183,26 @@ export type MuteSet = Readonly<{
   kinds: ReadonlySet<number>
   /** Places a place mute covers, after the allows inside them: computed once per request. */
   mutedPlaces: ReadonlySet<number>
+  /** Notes, things and places allowed with show_anyway, which skip the reading filters. */
+  showAnyway: Readonly<{ notes: ReadonlySet<number>; things: ReadonlySet<number>; places: ReadonlySet<number> }>
 }>
+
+/** A mute set with no choices, for a reader that has only reading filters. */
+export function emptyMuteSet(readerId: number): MuteSet {
+  const none: ReadonlySet<number> = new Set<number>()
+  return Object.freeze({
+    readerId,
+    readerHandle: null,
+    founderHandle: null,
+    residents: none,
+    residentHandles: new Set<string>(),
+    notes: Object.freeze({ muted: none, allowed: none }),
+    things: Object.freeze({ muted: none, allowed: none }),
+    kinds: none,
+    mutedPlaces: none,
+    showAnyway: Object.freeze({ notes: none, things: none, places: none }),
+  })
+}
 
 /**
  * The reader's mute set, or null when it has no mutes and no allows, so its reads stay
@@ -162,7 +211,7 @@ export type MuteSet = Readonly<{
  */
 export async function readMuteSet(residentId: number, query: MuteQuery = defaultQuery): Promise<MuteSet | null> {
   const rows = await query`/* private:reader-mutes */
-    SELECT choice.target_type, choice.target_id, choice.choice, muted.handle
+    SELECT choice.target_type, choice.target_id, choice.choice, choice.show_anyway, muted.handle
     FROM resident_mutes choice
     LEFT JOIN residents muted ON choice.target_type = 'resident' AND muted.id = choice.target_id
     WHERE choice.resident_id = ${residentId}
@@ -173,9 +222,16 @@ export async function readMuteSet(residentId: number, query: MuteQuery = default
   const notes = { muted: new Set<number>(), allowed: new Set<number>() }
   const things = { muted: new Set<number>(), allowed: new Set<number>() }
   const kinds = new Set<number>()
+  const showAnyway = { notes: new Set<number>(), things: new Set<number>(), places: new Set<number>() }
   for (const row of rows) {
     const id = Number(row.target_id)
     const allow = row.choice === 'allow'
+    if (allow && row.show_anyway === true) {
+      const kept = row.target_type === 'note' ? showAnyway.notes
+        : row.target_type === 'thing' ? showAnyway.things
+          : row.target_type === 'place' ? showAnyway.places : null
+      kept?.add(id)
+    }
     if (row.target_type === 'resident' && !allow) {
       residents.add(id)
       if (typeof row.handle === 'string') residentHandles.add(row.handle)
@@ -216,6 +272,7 @@ export async function readMuteSet(residentId: number, query: MuteQuery = default
     things: Object.freeze(things),
     kinds,
     mutedPlaces: new Set(mutedPlaces),
+    showAnyway: Object.freeze(showAnyway),
   })
 }
 

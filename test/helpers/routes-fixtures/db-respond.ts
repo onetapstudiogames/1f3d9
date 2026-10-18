@@ -18,8 +18,9 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:pending_ping_summary */')) {
     return [{ total: 0, senders: 0, ping_id: null }]
   }
-  // Mutes (decision #156): the route fixtures' residents have none.
+  // Mutes (decision #156) and reading settings (#154, #157): the route fixtures' residents have none.
   if (q.includes('/* private:reader-mutes */')) return []
+  if (q.includes('/* private:reader-settings */')) return []
   if (q.includes('/* private:reader-muted-residents */')) return []
   if (q.includes('/* private:hidden_pending_pings */')) return []
   if (q.includes('/* resident-hold:current */')) return []

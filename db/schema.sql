@@ -11951,7 +11951,9 @@ ALTER TABLE places VALIDATE CONSTRAINT places_feed_needs_quiet;
 
 -- Reading settings (decisions #154 and #155), the same statements as
 -- db/migrations/20261017_resident_settings.sql: one private row per resident,
--- a missing row means every default, and focus mode is off by default.
+-- a missing row means every default, and focus mode is off by default. Here the
+-- guard also knows the reading filters columns that a later block adds (decision
+-- #157), so this file still runs twice on one database.
 DO $resident_settings_guard$
 BEGIN
   IF to_regclass('public.residents') IS NULL THEN
@@ -11961,7 +11963,8 @@ BEGIN
     SELECT 1 FROM pg_attribute
     WHERE attrelid = to_regclass('public.resident_settings')
       AND attnum > 0 AND NOT attisdropped
-      AND attname NOT IN ('resident_id', 'focus', 'updated_at')
+      AND attname NOT IN ('resident_id', 'focus', 'updated_at', 'encoded_text_filter', 'drawings_filter',
+        'code_like_text_filter', 'links_filter', 'emoji_filter', 'muted_words')
   ) THEN
     RAISE EXCEPTION 'resident_settings already exists with columns this migration does not know';
   END IF;
@@ -11977,7 +11980,9 @@ CREATE TABLE IF NOT EXISTS resident_settings (
 
 -- Mutes and allows (decision #156), the same statements as
 -- db/migrations/20261017_resident_mutes.sql: one private row per resident and
--- target, a mute or an allow; unmuting deletes the row.
+-- target, a mute or an allow; unmuting deletes the row. Here the guard also knows
+-- show_anyway, which the reading filters block adds (decision #157), so this file
+-- still runs twice on one database.
 DO $resident_mutes_guard$
 BEGIN
   IF to_regclass('public.residents') IS NULL THEN
@@ -11987,7 +11992,7 @@ BEGIN
     SELECT 1 FROM pg_attribute
     WHERE attrelid = to_regclass('public.resident_mutes')
       AND attnum > 0 AND NOT attisdropped
-      AND attname NOT IN ('id', 'resident_id', 'target_type', 'target_id', 'choice', 'created_at')
+      AND attname NOT IN ('id', 'resident_id', 'target_type', 'target_id', 'choice', 'created_at', 'show_anyway')
   ) THEN
     RAISE EXCEPTION 'resident_mutes already exists with columns this migration does not know';
   END IF;
@@ -12012,6 +12017,91 @@ CREATE TABLE IF NOT EXISTS resident_mutes (
   CONSTRAINT resident_mutes_not_self CHECK (target_type <> 'resident' OR target_id <> resident_id),
   CONSTRAINT resident_mutes_one_choice UNIQUE (resident_id, target_type, target_id)
 );
+
+-- Reading filters (decision #157), the same statements as
+-- db/migrations/20261017_reading_filters.sql: one column per kind of content on the
+-- private settings store, show by default, the private muted-words list, and
+-- show_anyway on an allow.
+DO $reading_filters_guard$
+DECLARE
+  settings_checks INTEGER;
+BEGIN
+  IF to_regclass('public.resident_settings') IS NULL OR to_regclass('public.resident_mutes') IS NULL THEN
+    RAISE EXCEPTION 'reading filters migration needs the resident_settings and resident_mutes tables';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'resident_settings'::regclass
+      AND attnum > 0 AND NOT attisdropped
+      AND (
+        (attname IN ('encoded_text_filter', 'drawings_filter', 'code_like_text_filter', 'links_filter', 'emoji_filter')
+          AND (atttypid <> 'text'::regtype OR NOT attnotnull))
+        OR (attname = 'muted_words' AND (atttypid <> 'text[]'::regtype OR NOT attnotnull))
+      )
+  ) OR EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'resident_mutes'::regclass
+      AND attname = 'show_anyway'
+      AND NOT attisdropped
+      AND (atttypid <> 'boolean'::regtype OR NOT attnotnull)
+  ) THEN
+    RAISE EXCEPTION 'a reading filters column already exists with a shape this migration does not know';
+  END IF;
+  SELECT count(*) INTO settings_checks
+  FROM pg_constraint
+  WHERE conrelid = 'resident_settings'::regclass
+    AND conname IN (
+      'resident_settings_encoded_text_filter_known', 'resident_settings_drawings_filter_known',
+      'resident_settings_code_like_text_filter_known', 'resident_settings_links_filter_known',
+      'resident_settings_emoji_filter_known', 'resident_settings_muted_words_count'
+    );
+  IF settings_checks NOT IN (0, 6) THEN
+    RAISE EXCEPTION 'resident_settings holds only some of the reading filters checks';
+  END IF;
+END
+$reading_filters_guard$;
+
+DO $reading_filters_columns$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'resident_settings'::regclass
+    AND conname = 'resident_settings_muted_words_count') THEN
+    ALTER TABLE resident_settings
+      ADD COLUMN IF NOT EXISTS encoded_text_filter TEXT NOT NULL DEFAULT 'show',
+      ADD COLUMN IF NOT EXISTS drawings_filter TEXT NOT NULL DEFAULT 'show',
+      ADD COLUMN IF NOT EXISTS code_like_text_filter TEXT NOT NULL DEFAULT 'show',
+      ADD COLUMN IF NOT EXISTS links_filter TEXT NOT NULL DEFAULT 'show',
+      ADD COLUMN IF NOT EXISTS emoji_filter TEXT NOT NULL DEFAULT 'show',
+      ADD COLUMN IF NOT EXISTS muted_words TEXT[] NOT NULL DEFAULT '{}',
+      ADD CONSTRAINT resident_settings_encoded_text_filter_known
+        CHECK (encoded_text_filter IN ('show', 'describe', 'hide')) NOT VALID,
+      ADD CONSTRAINT resident_settings_drawings_filter_known
+        CHECK (drawings_filter IN ('show', 'describe', 'hide')) NOT VALID,
+      ADD CONSTRAINT resident_settings_code_like_text_filter_known
+        CHECK (code_like_text_filter IN ('show', 'describe', 'hide')) NOT VALID,
+      ADD CONSTRAINT resident_settings_links_filter_known
+        CHECK (links_filter IN ('show', 'describe', 'hide')) NOT VALID,
+      ADD CONSTRAINT resident_settings_emoji_filter_known
+        CHECK (emoji_filter IN ('show', 'describe', 'hide')) NOT VALID,
+      ADD CONSTRAINT resident_settings_muted_words_count
+        CHECK (cardinality(muted_words) <= 200) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'resident_mutes'::regclass
+    AND conname = 'resident_mutes_show_anyway_on_allow') THEN
+    ALTER TABLE resident_mutes
+      ADD COLUMN IF NOT EXISTS show_anyway BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD CONSTRAINT resident_mutes_show_anyway_on_allow
+        CHECK (NOT show_anyway OR choice = 'allow') NOT VALID;
+  END IF;
+END
+$reading_filters_columns$;
+
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_encoded_text_filter_known;
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_drawings_filter_known;
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_code_like_text_filter_known;
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_links_filter_known;
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_emoji_filter_known;
+ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_muted_words_count;
+ALTER TABLE resident_mutes VALIDATE CONSTRAINT resident_mutes_show_anyway_on_allow;
 
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder

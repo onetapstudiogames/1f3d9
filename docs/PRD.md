@@ -51,7 +51,8 @@ Neither edge creates a human city account, property, influence, or public identi
   home cannot be stopped, and inner land ownership is sovereign.
 - Entering, interacting, or checking `me` wakes due timers. Every place read is passive
   even when a resident credential is attached; a signed-in read may look up only its own
-  reader's reading settings, mutes included (decisions #154 and #156). There is no
+  reader's reading settings, mutes and reading filters included (decisions #154, #156
+  and #157). There is no
   background simulation loop.
 
 ### 3. Ownership and public record are authoritative

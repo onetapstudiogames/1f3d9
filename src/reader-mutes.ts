@@ -19,6 +19,8 @@ export const MUTE_ITEM_TYPES = Object.freeze([
   'note', 'thing', 'line', 'ping', 'kind', 'trait', 'agreement', 'place',
 ] as const)
 export type MuteItemType = typeof MUTE_ITEM_TYPES[number]
+/** What a reading filter may cover: any item a read sends, or a resident's own drawing. */
+export type FilterItemType = MuteItemType | 'resident'
 export type MuteRefs = Readonly<Partial<Record<MuteItemType, readonly number[]>>>
 
 /** A hidden item as its outline: never its body or its name. */
@@ -214,6 +216,12 @@ function eventOutline(row: Readonly<Record<string, unknown>>): HiddenOutline {
 /** What one reader's mutes hide in one read, decided once over that read's ids. */
 export interface MuteJudge {
   hides(type: MuteItemType, id: number): boolean
+  /**
+   * Whether this item skips the reader's reading filters (decision #157): it always shows
+   * (the founder's, the reader's own, a place the city itself holds), or the reader
+   * allowed it with show_anyway. An item this read did not ask about is filtered.
+   */
+  skipsFilters(type: FilterItemType, id: number): boolean
   marksPlace(placeId: number): boolean
   hidesResident(id: number): boolean
   hidesResidentHandle(handle: unknown): boolean
@@ -235,6 +243,16 @@ export async function judgeMutes(
     hides(type: MuteItemType, id: number): boolean {
       const known = factsOf(type, id)
       return known !== undefined && hiddenByFacts(set, type, id, known)
+    },
+    skipsFilters(type: FilterItemType, id: number): boolean {
+      if (type === 'resident') return id === FOUNDER_RESIDENT_ID || id === set.readerId
+      const showAnyway = type === 'note' ? set.showAnyway.notes
+        : type === 'thing' ? set.showAnyway.things
+          : type === 'place' ? set.showAnyway.places : null
+      if (showAnyway?.has(id) === true) return true
+      const known = factsOf(type, id)
+      if (known === undefined) return false
+      return shownAlways(set, known) || (type === 'place' && known.ownerId === null)
     },
     marksPlace(placeId: number): boolean {
       return placeMarked(set, placeId, factsOf('place', placeId))
