@@ -11981,8 +11981,9 @@ CREATE TABLE IF NOT EXISTS resident_settings (
 -- Mutes and allows (decision #156), the same statements as
 -- db/migrations/20261017_resident_mutes.sql: one private row per resident and
 -- target, a mute or an allow; unmuting deletes the row. Here the guard also knows
--- show_anyway, which the reading filters block adds (decision #157), so this file
--- still runs twice on one database.
+-- show_anyway, which the reading filters block adds (decision #157), and
+-- let_gifts_through, which the waiting transfers block adds (decision #158), so this
+-- file still runs twice on one database.
 DO $resident_mutes_guard$
 BEGIN
   IF to_regclass('public.residents') IS NULL THEN
@@ -11992,7 +11993,7 @@ BEGIN
     SELECT 1 FROM pg_attribute
     WHERE attrelid = to_regclass('public.resident_mutes')
       AND attnum > 0 AND NOT attisdropped
-      AND attname NOT IN ('id', 'resident_id', 'target_type', 'target_id', 'choice', 'created_at', 'show_anyway')
+      AND attname NOT IN ('id', 'resident_id', 'target_type', 'target_id', 'choice', 'created_at', 'show_anyway', 'let_gifts_through')
   ) THEN
     RAISE EXCEPTION 'resident_mutes already exists with columns this migration does not know';
   END IF;
@@ -12102,6 +12103,80 @@ ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_links_filter
 ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_emoji_filter_known;
 ALTER TABLE resident_settings VALIDATE CONSTRAINT resident_settings_muted_words_count;
 ALTER TABLE resident_mutes VALIDATE CONSTRAINT resident_mutes_show_anyway_on_allow;
+
+-- Waiting transfers (decision #158), the same statements as
+-- db/migrations/20261018_waiting_transfers.sql: one private row per held transfer,
+-- its answer all null while it waits and all set once it ends, and let_gifts_through
+-- on a mute of a resident.
+DO $waiting_transfers_guard$
+BEGIN
+  IF to_regclass('public.residents') IS NULL OR to_regclass('public.resident_mutes') IS NULL THEN
+    RAISE EXCEPTION 'waiting transfers migration needs the residents and resident_mutes tables';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = to_regclass('public.waiting_transfers')
+      AND attnum > 0 AND NOT attisdropped
+      AND attname NOT IN ('id', 'giver_id', 'recipient_id', 'asset_type', 'asset_id', 'created_at',
+        'answer', 'answer_detail', 'answered_at')
+  ) THEN
+    RAISE EXCEPTION 'waiting_transfers already exists with columns this migration does not know';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'resident_mutes'::regclass
+      AND attname = 'let_gifts_through'
+      AND NOT attisdropped
+      AND (atttypid <> 'boolean'::regtype OR NOT attnotnull)
+  ) THEN
+    RAISE EXCEPTION 'resident_mutes.let_gifts_through already exists with a shape this migration does not know';
+  END IF;
+END
+$waiting_transfers_guard$;
+
+-- One private row per held transfer: who gave what to whom, and the recipient's answer.
+CREATE TABLE IF NOT EXISTS waiting_transfers (
+  id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  giver_id       INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE,
+  recipient_id   INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE,
+  asset_type     TEXT NOT NULL,
+  asset_id       INTEGER NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answer         TEXT,
+  answer_detail  TEXT,
+  answered_at    TIMESTAMPTZ,
+  CONSTRAINT waiting_transfers_asset_type_allowed CHECK (asset_type IN ('thing', 'kind', 'place')),
+  CONSTRAINT waiting_transfers_asset_id_positive CHECK (asset_id > 0),
+  CONSTRAINT waiting_transfers_not_self CHECK (giver_id <> recipient_id),
+  CONSTRAINT waiting_transfers_answer_allowed
+    CHECK (answer IS NULL OR answer IN ('accepted', 'declined', 'failed')),
+  CONSTRAINT waiting_transfers_answer_complete CHECK (
+    (answer IS NULL AND answer_detail IS NULL AND answered_at IS NULL)
+    OR (answer IS NOT NULL AND answer_detail IS NOT NULL AND answered_at IS NOT NULL)
+  ),
+  CONSTRAINT waiting_transfers_answer_detail_size
+    CHECK (answer_detail IS NULL OR octet_length(answer_detail) BETWEEN 1 AND 2000)
+);
+-- One open row per giver, recipient and asset, so giving the same thing again finds it.
+CREATE UNIQUE INDEX IF NOT EXISTS waiting_transfers_one_open
+  ON waiting_transfers (giver_id, recipient_id, asset_type, asset_id) WHERE answer IS NULL;
+-- The recipient's open list, oldest first.
+CREATE INDEX IF NOT EXISTS waiting_transfers_recipient_open
+  ON waiting_transfers (recipient_id, id) WHERE answer IS NULL;
+
+DO $waiting_transfers_mutes$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'resident_mutes'::regclass
+    AND conname = 'resident_mutes_let_gifts_through_on_resident_mute') THEN
+    ALTER TABLE resident_mutes
+      ADD COLUMN IF NOT EXISTS let_gifts_through BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD CONSTRAINT resident_mutes_let_gifts_through_on_resident_mute
+        CHECK (NOT let_gifts_through OR (choice = 'mute' AND target_type = 'resident')) NOT VALID;
+  END IF;
+END
+$waiting_transfers_mutes$;
+
+ALTER TABLE resident_mutes VALIDATE CONSTRAINT resident_mutes_let_gifts_through_on_resident_mute;
 
 -- Same-room talk (decisions #119 to #123): one public line per active place,
 -- body-free pings with private receipts, one open wait per resident, founder

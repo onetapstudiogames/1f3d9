@@ -691,7 +691,8 @@ export function registerMigrationReleaseTests(): void {
 
     // db/schema.sql carries the same statements, so a fresh city and a migrated one end in
     // the same shape. Its guard alone also knows show_anyway, which the reading filters
-    // block adds (decision #157), so the file still runs twice on one database.
+    // block adds (decision #157), and let_gifts_through, which the waiting transfers block
+    // adds (decision #158), so the file still runs twice on one database.
     const body = migration.slice(
       migration.indexOf('DO $resident_mutes_guard$'),
       migration.indexOf('DO $resident_mutes_shape$'),
@@ -699,7 +700,7 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(body.length > 1_000)
     const known = "'target_id', 'choice', 'created_at')"
     assert.ok(body.includes(known))
-    assert.ok(schemaDdl.includes(body.replace(known, "'target_id', 'choice', 'created_at', 'show_anyway')")), 'db/schema.sql mirrors the resident mutes statements')
+    assert.ok(schemaDdl.includes(body.replace(known, "'target_id', 'choice', 'created_at', 'show_anyway', 'let_gifts_through')")), 'db/schema.sql mirrors the resident mutes statements')
   })
 
   test('the reading filters migration is one guarded, additive, transactional preview or production migration', () => {
@@ -771,6 +772,75 @@ export function registerMigrationReleaseTests(): void {
     ).trimEnd()
     assert.ok(body.length > 2_000)
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the reading filters statements')
+  })
+
+  test('the waiting transfers migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261018_waiting_transfers.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /waiting transfers migration needs the residents and resident_mutes tables/u)
+    assert.match(migration, /waiting_transfers already exists with columns this migration does not know/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS waiting_transfers \(\s+id\s+BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,/u)
+    for (const name of [
+      'waiting_transfers_asset_type_allowed', 'waiting_transfers_asset_id_positive', 'waiting_transfers_not_self',
+      'waiting_transfers_answer_allowed', 'waiting_transfers_answer_complete', 'waiting_transfers_answer_detail_size',
+    ]) assert.ok(migration.includes(`CONSTRAINT ${name}`), name)
+    // One ALTER TABLE adds the column with a constant default and its check NOT VALID; the
+    // only other ALTER TABLE validates that check in its own statement.
+    const alters = migration.match(/ALTER TABLE [a-z_]+\s+ADD COLUMN/gu) ?? []
+    assert.deepEqual(alters.map(alter => alter.split(/\s+/u)[2]), ['resident_mutes'])
+    assert.equal((migration.match(/ ADD COLUMN IF NOT EXISTS /gu) ?? []).length, 1)
+    assert.equal((migration.match(/\) NOT VALID[,;]/gu) ?? []).length, 1)
+    assert.ok(migration.includes('VALIDATE CONSTRAINT resident_mutes_let_gifts_through_on_resident_mute;'))
+    assert.match(migration, /waiting_transfers conflicts with the reviewed waiting transfer columns/u)
+    assert.match(migration, /waiting_transfers is missing one of its reviewed checks or keys/u)
+    assert.match(migration, /waiting_transfers is missing one of its reviewed indexes/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+|TRUNCATE/iu)
+
+    const preview = resolveMigrationRun(
+      ['--target', 'preview', '--migration', 'waiting-transfers'],
+      {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+    )
+    assert.equal(preview.migrationFile, migrationFile)
+    assert.equal(preview.executionMode, 'transactional')
+    const production = resolveMigrationRun(
+      ['--target', 'production', '--migration', 'waiting-transfers'],
+      {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-waiting-transfers-20261018',
+      },
+    )
+    assert.equal(production.migrationFile, migrationFile)
+    assert.equal(production.executionMode, 'transactional')
+
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:waiting-transfers'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration waiting-transfers')
+    assert.equal(packageJson.scripts?.['migrate:production:waiting-transfers'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration waiting-transfers')
+
+    // db/schema.sql carries the same statements, byte for byte, so a fresh city and a
+    // migrated one end in the same shape.
+    const body = migration.slice(
+      migration.indexOf('DO $waiting_transfers_guard$'),
+      migration.indexOf('DO $waiting_transfers_shape$'),
+    ).trimEnd()
+    assert.ok(body.length > 2_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the waiting transfers statements')
   })
 
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {

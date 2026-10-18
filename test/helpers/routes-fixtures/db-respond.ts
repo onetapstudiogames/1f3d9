@@ -22,6 +22,9 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:reader-mutes */')) return []
   if (q.includes('/* private:reader-settings */')) return []
   if (q.includes('/* private:reader-muted-residents */')) return []
+  // Waiting transfers (decision #158): nobody in the route fixtures muted a giver.
+  if (q.includes('/* private:waiting-transfers-held */')) return []
+  if (q.includes('/* private:waiting-transfers-list */')) return []
   if (q.includes('/* private:hidden_pending_pings */')) return []
   if (q.includes('/* resident-hold:current */')) return []
   if (q.includes('/* moderation-review:me */')) return []

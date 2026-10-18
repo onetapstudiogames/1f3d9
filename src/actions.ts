@@ -20,6 +20,8 @@ import { settleRoom, type SettleSummary } from './engine-settle.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 import { isOtherCityToolName } from './city-facts.ts'
+import { holdTransferIfWaiting } from './engine-effects.ts'
+import { waitingAnswer } from './waiting-transfers.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -226,6 +228,27 @@ async function runResidentAction(
 
   try {
     const before = await residentPresence(resident.id)
+    // Decision #158: a give to a resident that muted you waits for its yes. Nothing moves,
+    // no law or trait runs, and no room settles; the answer says it is held.
+    // give moves its thing_id when it names one, as runAction does, else its target.
+    const given = thingId !== null ? Object.freeze({ type: 'thing' as const, id: thingId }) : transferTarget
+    const held = action === 'give' && given !== null && toResidentId !== null
+      ? await holdTransferIfWaiting(given, resident.id, toResidentId)
+      : null
+    if (held !== null) {
+      const { attention, waiting_transfers: waiting } = waitingAnswer([held])
+      return c.json({
+        ...(attention === undefined ? {} : { attention }),
+        action: {
+          id: null,
+          action,
+          status: 'held',
+          place_id: before.currentPlaceId,
+          effects_applied: 0,
+          waiting_transfers: waiting,
+        },
+      })
+    }
     await settleRoom(before.currentPlaceId, 'act', resident.id)
     const result = await runAction({
       actorId: resident.id,
@@ -275,7 +298,12 @@ async function runResidentAction(
     if (result.error) {
       return c.json({ error: result.error, action: publicAction }, result.httpStatus as FailureStatus)
     }
-    return c.json({ action: publicAction })
+    // Decision #158: transfers this use held say so to the giver, with a private home line.
+    const { attention, waiting_transfers: waiting } = waitingAnswer(result.waitingTransfers ?? [])
+    return c.json({
+      ...(attention === undefined ? {} : { attention }),
+      action: { ...publicAction, ...(waiting === undefined ? {} : { waiting_transfers: waiting }) },
+    })
   } catch (error) {
     if (error instanceof EngineError) return err(c, error.status, error.message)
     throw error

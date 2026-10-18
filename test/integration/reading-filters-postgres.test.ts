@@ -32,6 +32,11 @@ const migration = await readFile(
   new URL('../../db/migrations/20261017_reading_filters.sql', import.meta.url),
   'utf8',
 )
+// let_gifts_through (decision #158) comes after show_anyway, in the waiting transfers migration.
+const waitingMigration = await readFile(
+  new URL('../../db/migrations/20261018_waiting_transfers.sql', import.meta.url),
+  'utf8',
+)
 
 const MARKERS = Object.freeze({
   encoded: '[hidden by your reading filters: encoded text]',
@@ -154,13 +159,14 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
         ALTER TABLE resident_settings
           DROP COLUMN encoded_text_filter, DROP COLUMN drawings_filter, DROP COLUMN code_like_text_filter,
           DROP COLUMN links_filter, DROP COLUMN emoji_filter, DROP COLUMN muted_words;
-        ALTER TABLE resident_mutes DROP COLUMN show_anyway;
+        ALTER TABLE resident_mutes DROP COLUMN show_anyway, DROP COLUMN let_gifts_through;
       `)
       const before = (await db.query('SELECT resident_id, focus FROM resident_settings')).rows
       const mutesBefore = (await db.query('SELECT id, resident_id, target_type, target_id, choice FROM resident_mutes')).rows
       const residentsBefore = (await db.query('SELECT * FROM residents ORDER BY id')).rows
       await db.query(migration)
       await db.query(migration)
+      await db.query(waitingMigration)
       assert.deepEqual(await settingsCatalog(), fresh)
       assert.deepEqual((await db.query('SELECT resident_id, focus FROM resident_settings')).rows, before)
       assert.deepEqual((await db.query('SELECT id, resident_id, target_type, target_id, choice FROM resident_mutes')).rows, mutesBefore)

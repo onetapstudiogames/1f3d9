@@ -13,6 +13,7 @@ import {
   type TaggedSql,
 } from './engine.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { giftsWaitFor, holdTransfer, type WaitingNote } from './waiting-transfers.ts'
 import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
@@ -132,10 +133,12 @@ export interface AbilityLog {
   readonly converted: number[]
   readonly reaches: ReachReport[]
   reachApplications: number
+  /** Transfers held for a recipient that muted the giver (decision #158). */
+  readonly waiting: WaitingNote[]
 }
 
 export function newAbilityLog(): AbilityLog {
-  return { copied: [], converted: [], reaches: [], reachApplications: 0 }
+  return { copied: [], converted: [], reaches: [], reachApplications: 0, waiting: [] }
 }
 export type EffectTrigger =
   | 'use' | 'consume' | 'give' | 'talk' | 'move' | 'make' | 'timer'
@@ -548,8 +551,11 @@ async function executeEffectWithOutcome(
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient; send one current resident in to_handle')
     // A transfer effect's event sits beside the action's row; only give's own
-    // transfer stands in for its row, and give decides that itself.
-    await transferAsset(target, context.actorId, recipientId, db)
+    // transfer stands in for its row, and give decides that itself. A transfer to a
+    // resident that muted the giver waits for its yes instead (decision #158).
+    const held = await holdTransferIfWaiting(target, context.actorId, recipientId, db)
+    if (held !== null) context.abilityLog?.waiting.push(held)
+    else await transferAsset(target, context.actorId, recipientId, db)
     return effectExecutionOutcome(1, false, destroyedThingIds)
   }
   if (effect.effect === 'wait') {
@@ -869,6 +875,58 @@ async function moveThing(
     SELECT id FROM moved
   `)
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move; re-read both and retry')
+}
+
+/** True when the asset would move now: the actor owns it, it is active, unheld and has no open offer. */
+async function transferableNow(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<boolean> {
+  if (target.type === 'thing') {
+    const thing = await thingState(target.id, db, { forUpdate: true })
+    return thing !== null && thing.ownerId === actorId && thing.withdrawnAt === null
+      && thing.activeOfferId === null && !thing.hasOpenOffer && thing.heldBy === null
+  }
+  const rows = target.type === 'place'
+    ? await queryRows<Record<string, unknown>>(db`
+      SELECT 1 AS movable FROM places asset
+      WHERE asset.id = ${target.id} AND asset.owner_id = ${actorId} AND asset.active_offer_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'place' AND offer.asset_id = asset.id AND offer.status = 'open'
+        )
+      FOR UPDATE OF asset
+    `)
+    : await queryRows<Record<string, unknown>>(db`
+      SELECT 1 AS movable FROM kinds asset
+      WHERE asset.id = ${target.id} AND asset.owner_id = ${actorId} AND asset.active_offer_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM transfer_offers offer
+          WHERE offer.asset_type = 'kind' AND offer.asset_id = asset.id AND offer.status = 'open'
+        )
+      FOR UPDATE OF asset
+    `)
+  return rows.length > 0
+}
+
+/**
+ * Decision #158: when the recipient muted the actor and has not let its gifts through, a
+ * transfer that could move now is held instead. It writes one private waiting row, moves
+ * nothing, writes no event and locks nothing, and returns what the giver is told; a
+ * transfer that could not move now is refused exactly as the move would be. Null means
+ * the transfer is not held and moves as before.
+ */
+export async function holdTransferIfWaiting(
+  target: RuntimeTarget,
+  actorId: number,
+  recipientId: number,
+  db: TaggedSql = engineSql,
+): Promise<WaitingNote | null> {
+  if (target.type === 'resident' || actorId === recipientId) return null
+  if (!await giftsWaitFor(recipientId, actorId, db)) return null
+  if (target.type === 'thing') {
+    const thing = await thingState(target.id, db)
+    if (thing?.ownerId === actorId && thing.heldBy != null) throw new EngineError(409, HELD_THING_ERROR)
+  }
+  if (!await transferableNow(target, actorId, db)) await throwTransferFailure(target, actorId, db)
+  return holdTransfer({ giverId: actorId, recipientId, type: target.type, assetId: target.id }, db)
 }
 
 async function transferAsset(

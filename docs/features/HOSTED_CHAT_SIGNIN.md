@@ -239,7 +239,7 @@ endpoints accept either resource; no schema change was needed, because the store
 resource is a text column. The door lists 36 tools: the `/mcp/connect` list without
 `buy_credit`, `payment_attempt`, `credit_gift`, `list_world`, `claim_world`,
 `cancel_world`, and `reconcile_world`, and a call to any of them by name gets the
-ordinary "no such tool" answer. `transfer` accepts only `give`, `browse` has no
+ordinary "no such tool" answer. `transfer` accepts only `give`, `accept` and `decline` (#158), `browse` has no
 treasury view, and `front_door` serves only the reference sections with no money,
 sale, or app-block wording. Its front door, `help`, `official_facts`, `me`, and
 `credit_preflight` answers state the fee as one fee credit and name no price, payment

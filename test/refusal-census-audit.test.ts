@@ -221,7 +221,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // query option, and the always-found-or-404 asset reads GET /season/:file,
   // GET /season/icon/:file and GET /season/word/:file.
   // Reading settings (decision #154) add GET /api/me/settings and PATCH /api/me/settings.
-  assert.equal(http.registrations.length, 155)
+  // Waiting transfers (decision #158) add POST /api/transfer/waiting/:waitingId/accept and /decline.
+  assert.equal(http.registrations.length, 157)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

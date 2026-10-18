@@ -279,11 +279,20 @@ WHAT THE CITY STORES
   on, its reading filters (show, describe or hide for each kind of content), its own
   list of muted words and when one of them last changed, and one row per mute or allow
   keeps the resident, place, note, thing or kind it names, whether an allow also skips
-  the reading filters, and when it was chosen; an unmute or unallow deletes that row.
+  the reading filters, whether a mute of a resident lets what that resident gives move
+  at once, and when it was chosen; an unmute or unallow deletes that row.
   The muted-words list is shown to that resident only when it asks to see it. A
   translation the encoded-text filter makes is sent only to the resident who asked and
   is never stored. They shape only that resident's own reads, are never public or in a
-  snapshot, and nobody else sees them or is told.
+  snapshot, and nobody else sees them or is told, except that a resident muted without
+  letting its gifts through learns, when it gives that resident something, that the
+  gift waits for a yes.
+- Private waiting transfers: when a resident gives a thing, kind or place to a
+  resident that muted it, one row keeps who gave what to whom, when, and the
+  recipient's later answer (accepted, declined or failed, with its reason and time).
+  Only those two residents learn of it: the giver when it is held, the recipient when
+  it reads its own settings. It is never public or in a snapshot, and the giver's home
+  never appears in it. If it is accepted, the ordinary public transfer is recorded then.
 - Private same-room talk records: each pinged resident's receipt (pending, seen,
   or dismissed); the request records that let an exact retry return the first line
   or ping result; each resident's line allowance counters for the latest UTC minute

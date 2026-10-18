@@ -162,7 +162,9 @@ test('every dropped tool is refused by name on the app door, though the other do
 test('transfer offers, the treasury view, and money arguments are refused by the app schema', async () => {
   const tools = await toolsOn('app')
   const transfer = tools.find(tool => tool.name === 'transfer')!
-  assert.deepEqual(transfer.inputSchema.properties.action!.enum, ['give'])
+  // Decision #158: the recipient answers a waiting transfer here too; offers stay off.
+  assert.deepEqual(transfer.inputSchema.properties.action!.enum, ['give', 'accept', 'decline'])
+  assert.equal(Object.hasOwn(transfer.inputSchema.properties, 'waiting_id'), true)
   for (const key of ['price_usdc', 'seller_wallet', 'offer_id', 'buyer_wallet']) {
     assert.equal(Object.hasOwn(transfer.inputSchema.properties, key), false, key)
   }
@@ -172,7 +174,11 @@ test('transfer offers, the treasury view, and money arguments are refused by the
   assert.deepEqual(frontDoor.inputSchema.properties.section!.enum, [...APP_FRONT_DOOR_SECTIONS])
 
   const offer = await rpc('app', 'tools/call', { name: 'transfer', arguments: { action: 'offer', type: 'thing', id: 1 } })
-  assert.match(offer.body.result.content[0].text, /Unsupported action value for transfer\. Use one of: give\./u)
+  assert.match(offer.body.result.content[0].text, /Unsupported action value for transfer\. Use one of: give, accept, decline\./u)
+  for (const action of ['claim', 'cancel']) {
+    const refused = await rpc('app', 'tools/call', { name: 'transfer', arguments: { action } })
+    assert.match(refused.body.result.content[0].text, /Unsupported action value for transfer\. Use one of: give, accept, decline\./u, action)
+  }
   const treasury = await rpc('app', 'tools/call', { name: 'browse', arguments: { view: 'treasury' } })
   assert.match(treasury.body.result.content[0].text, /Unsupported view value for browse/u)
   const wallet = await rpc('app', 'tools/call', { name: 'transfer', arguments: { type: 'thing', id: 1, to_handle: 'abc', buyer_wallet: 'x' } })
@@ -437,6 +443,48 @@ test('the app me answer carries review requests and their answers in plain words
   assert.deepEqual(answer.review_requests, reviewRequests)
   assert.deepEqual(bannedHits('me review_requests', text), [])
   assert.doesNotMatch(text, /gift|offers|if_blocked|\/api\/|\/changelog|https?:|mute|blocked|safety|security|flag/iu)
+})
+
+test('the app door transfer answers a waiting transfer through accept and decline (decision #158)', async () => {
+  const seen: string[] = []
+  const backing = new Hono()
+  backing.post('/api/transfer/waiting/:id/:answer', c => {
+    seen.push(`${c.req.param('answer')} ${c.req.param('id')}`)
+    return c.json({ waiting_transfer: { waiting_id: Number(c.req.param('id')), answer: `${c.req.param('answer')}ed` } })
+  })
+  for (const action of ['accept', 'decline']) {
+    const answered = await rpc('app', 'tools/call', { name: 'transfer', arguments: { action, waiting_id: 7 } }, backing)
+    assert.equal(answered.body.result.isError, false, answered.body.result.content[0].text)
+  }
+  assert.deepEqual(seen, ['accept 7', 'decline 7'])
+})
+
+test('the app me settings answer names waiting transfers without the word the app me must not carry', async () => {
+  const { listMutes, LET_TRANSFERS_THROUGH_REFUSAL } = await import('../src/resident-mutes.ts')
+  const {
+    listWaitingTransfers, WAITING_ID_REFUSAL, waitingAcceptFailed, waitingAlreadyAnswered, waitingNotFound,
+  } = await import('../src/waiting-transfers.ts')
+  const query = async (strings: TemplateStringsArray) => {
+    const text = strings.join('?')
+    if (text.includes('private:waiting-transfers-list')) {
+      return [{ id: 4, asset_type: 'thing', asset_id: 9, giver_handle: 'giver-one', created_at: '2026-10-18T00:00:00.000Z', total: 1 }]
+    }
+    if (text.includes('private:reader-mute-list')) {
+      return [{ target_type: 'resident', target_id: 3, choice: 'mute', show_anyway: false, let_gifts_through: true, created_at: '2026-10-18T00:00:00.000Z' }]
+    }
+    return []
+  }
+  const waiting = await listWaitingTransfers(2, query) as Record<string, any>
+  assert.equal(waiting.count, 1)
+  assert.deepEqual(waiting.oldest, [{ waiting_id: 4, type: 'thing', asset_id: 9, from: 'giver-one', held_at: '2026-10-18T00:00:00.000Z' }])
+  const mutes = await listMutes(2, query as never)
+  assert.equal(mutes[0]!.let_transfers_through, true)
+  const served = [
+    JSON.stringify(waiting), JSON.stringify(mutes), LET_TRANSFERS_THROUGH_REFUSAL, WAITING_ID_REFUSAL, waitingNotFound(4),
+    waitingAlreadyAnswered(4, 'declined'), waitingAcceptFailed(4, 'only the thing owner may transfer it'),
+  ].join(' ')
+  assert.deepEqual(bannedHits('me settings', served), [])
+  assert.doesNotMatch(served, /gift|offers|if_blocked|\/changelog|https?:|blocked|safety|security|flag/iu)
 })
 
 test('the app official facts keep fee credit rules and drop the rails', () => {

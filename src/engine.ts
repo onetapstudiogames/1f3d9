@@ -29,6 +29,7 @@ import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import type { WaitingNote } from './waiting-transfers.ts'
 import {
   newRollLog,
   publicRolls,
@@ -238,6 +239,8 @@ export interface ActionExecution {
   readonly copiedThingIds?: readonly number[]
   readonly convertedThingIds?: readonly number[]
   readonly reaches?: readonly ReachReport[]
+  /** Transfers this action held for a recipient that muted the giver (decision #158). */
+  readonly waitingTransfers?: readonly WaitingNote[]
 }
 
 export interface SymbolicContext {
@@ -1031,11 +1034,12 @@ function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): re
 /** The ability parts of an action answer; each is absent when empty. */
 function abilityAnswer(
   log: AbilityLog,
-): Pick<ActionExecution, 'copiedThingIds' | 'convertedThingIds' | 'reaches'> {
+): Pick<ActionExecution, 'copiedThingIds' | 'convertedThingIds' | 'reaches' | 'waitingTransfers'> {
   return {
     ...(log.copied.length === 0 ? {} : { copiedThingIds: Object.freeze([...log.copied]) }),
     ...(log.converted.length === 0 ? {} : { convertedThingIds: Object.freeze([...log.converted]) }),
     ...(log.reaches.length === 0 ? {} : { reaches: Object.freeze([...log.reaches]) }),
+    ...(log.waiting.length === 0 ? {} : { waitingTransfers: Object.freeze([...log.waiting]) }),
   }
 }
 
@@ -1418,6 +1422,7 @@ async function intrinsicAction(
   input: RequiredActionInput,
   actionId: number,
   db: TaggedSql,
+  abilityLog: AbilityLog,
 ): Promise<IntrinsicActionOutcome> {
   if (input.primitiveHandledByCaller) return intrinsicActionOutcome(false, false)
   if (input.action === 'move') {
@@ -1430,12 +1435,13 @@ async function intrinsicAction(
     }
     // The transfer brick implementation owns the same guarded transfer path. A give to
     // someone else writes a typed transfer event, which stands in for its action row;
-    // a give to yourself changes no owner and keeps the row.
+    // a give to yourself changes no owner and keeps the row. A give held for a recipient
+    // that muted the giver (decision #158) writes no event and no public row either.
     await executeEffectsWithOutcome([{
       effect: 'transfer',
       target: input.sourceThingId === null ? 'target' : 'source',
       to: 'recipient',
-    }], actionContext(0, input), db)
+    }], actionContext(0, input, null, newRollLog(), abilityLog), db)
     return intrinsicActionOutcome(true, input.recipientId !== input.actorId)
   }
   return intrinsicActionOutcome(false, false)
@@ -1596,7 +1602,7 @@ export async function runAction(
         transaction,
         input.primitiveHandledByCaller,
         async () => {
-          const intrinsic = await intrinsicAction(input, actionId, transaction)
+          const intrinsic = await intrinsicAction(input, actionId, transaction, abilityLog)
           const base = actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog)
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent

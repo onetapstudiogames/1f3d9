@@ -42,6 +42,17 @@ import {
   PaymentSaleConflictError,
 } from './payment-sale-operations.ts'
 import { EngineError, residentPresence, runAction } from './engine.ts'
+import { holdTransferIfWaiting } from './engine-effects.ts'
+import {
+  answerWaiting,
+  readWaiting,
+  WAITING_ID_REFUSAL,
+  waitingAcceptFailed,
+  waitingAlreadyAnswered,
+  waitingAnswer,
+  waitingNotFound,
+  type WaitingNote,
+} from './waiting-transfers.ts'
 import { settleRoom, settleTimers, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
@@ -123,6 +134,15 @@ const ASSETS = {
 
 type AssetType = keyof typeof ASSETS
 type JsonObject = Record<string, unknown>
+
+/** What the ordinary give did: refused with an answer, held for a yes (#158), or moved. */
+type GiveOutcome =
+  | Readonly<{ kind: 'refused'; response: Response }>
+  | Readonly<{ kind: 'held'; note: WaitingNote }>
+  | Readonly<{ kind: 'moved'; transfer: Readonly<{ id: number; created_at?: string; home_cleared?: boolean }> }>
+
+const WAITING_ANSWERED_MEANWHILE = 'this waiting transfer was answered meanwhile; nothing moved'
+const WAITING_ACCEPT_UNAVAILABLE = 'accepting is unavailable right now and nothing moved; retry once, then contact the city operator'
 
 interface OwnerRow {
   id: number
@@ -604,29 +624,41 @@ export function mountSocietyRoutes(app: Hono): void {
     })
   })
 
-  app.post('/api/transfer', async c => {
-    const resident = await auth(c)
-    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
-    const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['type', 'id', 'to_handle']))
-      return err(c, 400, 'need type, id, and to_handle')
-    const type = assetType(body.type)
-    const id = positiveId(body.id)
-    const toHandle = typeof body.to_handle === 'string' && HANDLE_RE.test(body.to_handle)
-      ? body.to_handle
-      : null
-    if (!type || !id || !toHandle) return err(c, 400, 'type must be place, thing, or kind; need id and to_handle')
-
+  /**
+   * The ordinary give (decision #29), shared by POST /api/transfer and by accepting a
+   * waiting transfer (decision #158), so an accepted one passes every check again. A
+   * fresh give to a resident that muted the giver is held instead; accepting one ends
+   * its waiting row in the same transaction as the move.
+   */
+  async function giveProperty(
+    c: Context,
+    resident: Readonly<{ id: number; handle: string }>,
+    type: AssetType,
+    id: number,
+    toHandle: string,
+    acceptingWaitingId: number | null,
+  ): Promise<GiveOutcome> {
+    const refused = (response: Response): GiveOutcome => Object.freeze({ kind: 'refused', response })
     const asset = await ownerOf(type, id)
-    if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
-    if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
-    if (asset.owner_id !== resident.id) return err(c, 403, `only the ${type} owner may transfer it`)
-    if (type === 'thing' && asset.held_by != null) return err(c, 409, HELD_THING_ERROR)
+    if (!asset) return refused(err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`))
+    if (type === 'place' && asset.owner_id === null) return refused(err(c, 403, WORLD_TRANSIT_ONLY_ERROR))
+    if (asset.owner_id !== resident.id) return refused(err(c, 403, `only the ${type} owner may transfer it`))
+    if (type === 'thing' && asset.held_by != null) return refused(err(c, 409, HELD_THING_ERROR))
     if (asset.active_offer_id != null || await openOffer(type, id))
-      return err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset')
+      return refused(err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset'))
     const recipient = await residentId(toHandle)
-    if (!recipient) return err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
-    if (recipient === resident.id) return err(c, 400, 'you already own this asset; send a different current resident in to_handle')
+    if (!recipient) return refused(err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`))
+    if (recipient === resident.id) return refused(err(c, 400, 'you already own this asset; send a different current resident in to_handle'))
+    if (acceptingWaitingId === null) {
+      // Decision #158: nothing moves, no event is written, no law runs, no room settles.
+      try {
+        const held = await holdTransferIfWaiting({ type, id }, resident.id, recipient)
+        if (held !== null) return Object.freeze({ kind: 'held', note: held })
+      } catch (error) {
+        if (error instanceof EngineError) return refused(err(c, error.status, error.message))
+        throw error
+      }
+    }
     const presence = await residentPresence(resident.id)
     await settleRoom(presence.currentPlaceId, 'act', resident.id)
     const { table, transferable } = ASSETS[type]
@@ -775,12 +807,43 @@ export function mountSocietyRoutes(app: Hono): void {
           ...(result.home_cleared == null ? {} : { home_cleared: result.home_cleared }),
         }
         if (!transfer) throw new EngineError(409, 'ownership or offer state changed; re-read the asset')
+        // An accepted waiting transfer ends with the move, or nothing moves.
+        if (acceptingWaitingId !== null
+          && !await answerWaiting(acceptingWaitingId, 'accepted', `moved as transfer_id ${transfer.id}`, transaction)) {
+          throw new EngineError(409, WAITING_ANSWERED_MEANWHILE)
+        }
       },
     })
     if (actionGate.error) {
-      return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
+      return refused(err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error))
     }
-    if (!transfer) return err(c, 500, 'transfer result is unavailable after the city write; re-read the asset owner before deciding whether to retry')
+    if (!transfer) return refused(err(c, 500, 'transfer result is unavailable after the city write; re-read the asset owner before deciding whether to retry'))
+    return Object.freeze({ kind: 'moved', transfer })
+  }
+
+  app.post('/api/transfer', async c => {
+    const resident = await auth(c)
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
+    const body = await jsonObject(c)
+    if (!body || !hasOnly(body, ['type', 'id', 'to_handle']))
+      return err(c, 400, 'need type, id, and to_handle')
+    const type = assetType(body.type)
+    const id = positiveId(body.id)
+    const toHandle = typeof body.to_handle === 'string' && HANDLE_RE.test(body.to_handle)
+      ? body.to_handle
+      : null
+    if (!type || !id || !toHandle) return err(c, 400, 'type must be place, thing, or kind; need id and to_handle')
+    const outcome = await giveProperty(c, resident, type, id, toHandle, null)
+    if (outcome.kind === 'refused') return outcome.response
+    if (outcome.kind === 'held') {
+      // Decision #158: the giver is told it waits, and only the giver hears about its home.
+      const { attention, waiting_transfers: waiting } = waitingAnswer([outcome.note])
+      return c.json({
+        ...(type === 'place' ? { attention: attention ?? [] } : {}),
+        waiting_transfers: waiting,
+      })
+    }
+    const { transfer } = outcome
     return c.json({
       ...(type === 'place' ? {
         attention: transfer.home_cleared
@@ -1183,5 +1246,57 @@ export function mountSocietyRoutes(app: Hono): void {
     const canceled = rows[0]
     if (!canceled) return err(c, 409, 'offer, ownership, or reservation changed before cancellation; re-read the offer before retrying')
     return c.json({ offer: { id: canceled.id, status: 'canceled' } })
+  })
+
+  // Decision #158: the recipient of a waiting transfer accepts it, which makes the
+  // ordinary give then with every check again, or declines it. Neither takes a body.
+  app.post('/api/transfer/waiting/:waitingId/accept', async c => {
+    const resident = await auth(c)
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
+    const waitingId = positiveId(c.req.param('waitingId'))
+    if (!waitingId) return err(c, 400, WAITING_ID_REFUSAL)
+    const waiting = await readWaiting(waitingId, resident.id, sql)
+    if (!waiting) return err(c, 404, waitingNotFound(waitingId))
+    if (waiting.answer !== null) return err(c, 409, waitingAlreadyAnswered(waitingId, waiting.answer))
+    const giver = Object.freeze({ id: waiting.giverId, handle: waiting.giverHandle })
+    const outcome = await giveProperty(c, giver, waiting.type, waiting.assetId, resident.handle, waitingId)
+    if (outcome.kind === 'moved') {
+      return c.json({
+        waiting_transfer: { waiting_id: waitingId, answer: 'accepted', type: waiting.type, asset_id: waiting.assetId, from: giver.handle },
+        transfer: {
+          id: outcome.transfer.id,
+          type: waiting.type,
+          asset_id: waiting.assetId,
+          from: giver.handle,
+          to: resident.handle,
+          mode: 'gift',
+          ...(outcome.transfer.created_at ? { created_at: outcome.transfer.created_at } : {}),
+        },
+      })
+    }
+    if (outcome.kind === 'held') return err(c, 500, WAITING_ACCEPT_UNAVAILABLE)
+    if (outcome.response.status >= 500) return outcome.response
+    // One gift rule no longer holds: the waiting transfer ends with that rule's words.
+    const reason = String((await outcome.response.clone().json() as { error?: unknown }).error)
+    if (await answerWaiting(waitingId, 'failed', reason, sql)) return err(c, 409, waitingAcceptFailed(waitingId, reason))
+    const now = await readWaiting(waitingId, resident.id, sql)
+    return err(c, 409, waitingAlreadyAnswered(waitingId, now?.answer ?? 'answered'))
+  })
+
+  app.post('/api/transfer/waiting/:waitingId/decline', async c => {
+    const resident = await auth(c)
+    if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
+    const waitingId = positiveId(c.req.param('waitingId'))
+    if (!waitingId) return err(c, 400, WAITING_ID_REFUSAL)
+    const waiting = await readWaiting(waitingId, resident.id, sql)
+    if (!waiting) return err(c, 404, waitingNotFound(waitingId))
+    if (waiting.answer !== null || !await answerWaiting(waitingId, 'declined', 'declined; nothing moved', sql)) {
+      const now = waiting.answer === null ? await readWaiting(waitingId, resident.id, sql) : waiting
+      return err(c, 409, waitingAlreadyAnswered(waitingId, now?.answer ?? 'answered'))
+    }
+    return c.json({
+      waiting_transfer: { waiting_id: waitingId, answer: 'declined', type: waiting.type, asset_id: waiting.assetId, from: waiting.giverHandle },
+      note: 'Declined. Nothing moved; it stays theirs.',
+    })
   })
 }

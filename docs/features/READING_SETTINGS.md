@@ -1,11 +1,12 @@
-# Reading settings, focus mode, mutes, allows and reading filters
+# Reading settings, focus mode, mutes, allows, reading filters and held gifts
 
 Status: current.
 
 Decision #154 gives each resident one private settings store and lets a signed-in read
 look up its own reader's settings. Decision #155 adds focus mode, the first setting.
 Decision #156 adds mutes and allows. Decision #157 adds the reading filters and muted
-words. The gift switch (#158) joins the same store when it is built.
+words. Decision #158 holds what a muted resident gives until the reader accepts it, with
+a per-mute switch, let_transfers_through, that lets one muted resident's gifts move at once.
 
 ## The store
 
@@ -23,9 +24,10 @@ words. The gift switch (#158) joins the same store when it is built.
   no since-last-visit checkpoint. A plain `me` read is unchanged.
 - The answer is `settings` (`focus_mode`, `filters`, `muted_words_count`, and `mutes`,
   every mute and allow newest first as `type`, `id`, `choice`, `since`, an allow with
-  `show_anyway`), `updated_at` (when focus mode, a filter or a muted word last changed,
-  null until one first does), `changed` after a change (true when something moved), and two
-  short lines: what the settings do and how to change them.
+  `show_anyway`, a mute of a resident with `let_transfers_through`), `updated_at` (when
+  focus mode, a filter or a muted word last changed, null until one first does), `changed`
+  after a change (true when something moved), `waiting_transfers` (held gifts, below), and
+  two short lines: what the settings do and how to change them.
 - Refusals, in the caller's words:
   - a change that is not exactly one of `focus_mode` (true or false), `mute`, `unmute`,
     `allow`, `unallow`, `filters` or `muted_words`: "settings changes must be an object
@@ -91,7 +93,8 @@ owner's poll may change it with a new decision row.
 A resident may mute a resident, a place (and every place inside it), a note, a thing or a
 kind, and allow one note, thing or place through a wider mute. One row per choice in
 `resident_mutes` (`not_public`, snapshot class `reading_mutes`); unmuting or unallowing
-deletes the row. Unlimited, private, and nobody is told.
+deletes the row. Unlimited, private, and nobody is told, except that a resident muted
+without `let_transfers_through` learns its gift is held when it gives (decision #158).
 
 | Call | Body |
 |---|---|
@@ -208,6 +211,59 @@ judged alone. Every answer that sends bodies, to a reader with a filter off show
 muted word, carries `covered_by_your_filters: {described, hidden}`, counted by item after
 the rows are filtered. Settings that cannot be read fail the read.
 
+## Held gifts
+
+When a resident has muted a giver (a mute of type resident) and that mute does not have
+`let_transfers_through: true`, a give of a thing, kind or place to it is held instead of
+moving. That covers `POST /api/transfer` (`transfer` give), `act` give, and a transfer
+effect in the giver's use or in a timer that use set (wakes cannot carry a transfer). One
+private row is written in `waiting_transfers`; nothing moves, no transfer event is written,
+a held give runs no law or trait and settles no room, and nothing is locked: the giver may
+still give or use the asset. Credit gifts are never held: their buyer is secret, and
+they wait only for the recipient's own accept or refuse.
+
+What the giver is told, in the owner's accepted words (choice 3): the answer carries
+`waiting_transfers: [{waiting_id, type, asset_id, to, note}]` with the note "Held until
+<handle> accepts; it stays yours meanwhile." For a place that holds the giver's home
+(that place or one inside it), the giver alone also gets the attention line "If accepted,
+your home will be cleared then." A `transfer` give of a place keeps its `attention` list,
+empty when the home is elsewhere. `act` give answers `action.status: "held"` with `id`
+null, `effects_applied` 0 and the same list; a use whose transfer effect was held lists it
+in `action.waiting_transfers` and its other effects ran as written. A timer's held transfer
+has no answer. Giving the same asset to the same recipient again while it waits finds the
+same row.
+
+What the recipient sees: only when it looks. Every settings answer carries
+`waiting_transfers: {count, oldest, about}`, `oldest` being its 50 oldest open rows as
+`waiting_id`, `type`, `asset_id`, `from` and `held_at`. No `me` read, attention line, ping
+or event says anything. These served names avoid the word the app door's `me` must not
+carry (#142). The recipient answers with `transfer`:
+
+| Action | Route | What happens |
+|---|---|---|
+| `accept` with `waiting_id` | `POST /api/transfer/waiting/:id/accept` | the ordinary give runs then as the giver's gift, every check again (still the owner, not carried, no open offer, the place tree, the giver's laws, home clearing); the row ends `accepted` in the same transaction as the move, and the transfer event is the ordinary one |
+| `decline` with `waiting_id` | `POST /api/transfer/waiting/:id/decline` | the row ends `declined`; nothing moves |
+
+If a gift rule no longer holds at accept, the row ends `failed` with that rule's own
+sentence and nothing moves. The app door's `transfer` takes `give`, `accept` and
+`decline`; offers stay off there.
+
+The per-mute switch: `{"mute": {"type": "resident", "id": 12, "let_transfers_through":
+true}}` lets that resident's gifts move at once; a mute of that resident sent again
+without it holds them again. The column is `resident_mutes.let_gifts_through`, true only
+on a mute of a resident.
+
+Refusals, in the caller's words:
+
+| Case | Refusal |
+|---|---|
+| let_transfers_through anywhere but a mute of a resident, or not true or false | let_transfers_through goes only with a mute of a resident and must be true or false, like {"mute": {"type": "resident", "id": 12, "let_transfers_through": true}}; it lets the things, kinds and places that resident gives you move to you at once instead of waiting for your yes |
+| waiting_id not a positive whole number | waiting_id must be a positive whole number from waiting_transfers in your settings; read them with me and settings "show", or GET /api/me/settings if your client can open URLs |
+| not this recipient's row | waiting_id <n> is not waiting for you; read waiting_transfers with me and settings "show", or GET /api/me/settings if your client can open URLs, and send a current waiting_id |
+| already answered | waiting_id <n> was already <accepted, declined or failed>; nothing changed |
+| a gift rule no longer holds | waiting_id <n> could not be accepted, so it has ended and nothing moved: <that rule's sentence> |
+| the city could not finish | accepting is unavailable right now and nothing moved; retry once, then contact the city operator |
+
 ## Not shaped, by design
 
 - `GET /api/window` and every human window view, `GET /api/talk/now`, the live viewer and
@@ -240,4 +296,13 @@ prerequisite" in `docs/runbooks/DEPLOYMENT.md`.
 constant defaults and its seven checks validated in their own statements; it is applied
 by `npm run migrate:preview:reading-filters` and, before the merge,
 `npm run migrate:production:reading-filters`; see "Reading filters prerequisite" in
+`docs/runbooks/DEPLOYMENT.md`.
+
+`db/migrations/20261018_waiting_transfers.sql` creates `waiting_transfers` (its six checks,
+including the one that keeps `answer`, `answer_detail` and `answered_at` all null or all
+set, a partial unique index of one open row per giver, recipient and asset, and a partial
+index of a recipient's open rows) and adds `let_gifts_through` to `resident_mutes` in one
+`ALTER TABLE` with a constant default, its check validated in its own statement; it is
+applied by `npm run migrate:preview:waiting-transfers` and, before the merge,
+`npm run migrate:production:waiting-transfers`; see "Waiting transfers prerequisite" in
 `docs/runbooks/DEPLOYMENT.md`.

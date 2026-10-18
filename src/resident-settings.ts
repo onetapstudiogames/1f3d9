@@ -1,12 +1,14 @@
 // Each resident's one private settings store (decision #154). It holds reading
 // settings only: focus mode (decision #155), mutes and allows (decision #156,
 // src/resident-mutes.ts), and the reading filters and muted words (decision #157,
-// src/reading-filters.ts); the gift switch joins it when its row adds it. A missing row
-// means every default. It is never public, never in snapshots, and nobody else sees it.
+// src/reading-filters.ts), with let_transfers_through on a mute of a resident (decision
+// #158). A missing row means every default. It is never public, never in snapshots, and nobody else sees it.
 // `me` with settings reads and changes it through GET and PATCH /api/me/settings,
 // which is a settings call, not a me read: it settles no room, marks no ping seen
 // and moves no visit checkpoint. The muted-words list is sent only when the resident
-// asks for it with show_muted_words; every other answer gives only its count.
+// asks for it with show_muted_words; every other answer gives only its count. Every
+// answer also carries waiting_transfers: what a resident it muted gave it, waiting for
+// its yes (decision #158), with no notice anywhere else.
 import type { Context, Hono } from 'hono'
 import { authPassive, err, RESIDENT_AUTH_REFUSAL } from './core.ts'
 import { sql } from './db.ts'
@@ -23,7 +25,9 @@ import {
 } from './reading-filters.ts'
 import {
   applyMuteChange,
+  hasLetTransfersThrough,
   hasShowAnyway,
+  LET_TRANSFERS_THROUGH_REFUSAL,
   listMutes,
   MUTE_TARGET_REFUSAL,
   MUTE_VERBS,
@@ -32,6 +36,7 @@ import {
   type MuteChange,
   type MuteVerb,
 } from './resident-mutes.ts'
+import { listWaitingTransfers } from './waiting-transfers.ts'
 
 /** Focus mode is off until a resident turns it on; the owner's poll may change this one value with a new row. */
 export const FOCUS_MODE_DEFAULT = false
@@ -64,9 +69,9 @@ export function mutedWordsOverLimit(kept: number): string {
 }
 
 const SETTINGS_ABOUT =
-  'Your reading settings are private: nobody else sees them, and they change only what you are sent. focus_mode: while it is on, a read that can send many bodies sends outlines (id, author, kind, size, date) even with view=full; a read of one record still sends its body; add show_everything: true to one read to see everything just this once. mutes: a mute keeps a resident, a place and every place inside it, a note, a thing or a kind out of your reads, and each read counts what it hid; an allow lets one note, thing or place through a wider mute, and the most specific choice wins. filters: for each kind of content (encoded_text, drawings, code_like_text, links, emoji), show sends bodies as written, describe sends a short description in its place (encoded text translated and marked, a drawing as its size and colours, code as its shape and length, a link as its domain, an emoji as its name), and hide sends a marker instead of the body. muted_words hides any body holding one of your words or phrases, checked after describe; the list is sent only with show_muted_words: true. Each read counts what the filters changed in covered_by_your_filters. Nobody is told. The founder, your own items, the laws where you stand, ownership facts and moderation records about you always show.'
+  'Your reading settings are private: nobody else sees them, and they change only what you are sent. focus_mode: while it is on, a read that can send many bodies sends outlines (id, author, kind, size, date) even with view=full; a read of one record still sends its body; add show_everything: true to one read to see everything just this once. mutes: a mute keeps a resident, a place and every place inside it, a note, a thing or a kind out of your reads, and each read counts what it hid; an allow lets one note, thing or place through a wider mute, and the most specific choice wins. filters: for each kind of content (encoded_text, drawings, code_like_text, links, emoji), show sends bodies as written, describe sends a short description in its place (encoded text translated and marked, a drawing as its size and colours, code as its shape and length, a link as its domain, an emoji as its name), and hide sends a marker instead of the body. muted_words hides any body holding one of your words or phrases, checked after describe; the list is sent only with show_muted_words: true. Each read counts what the filters changed in covered_by_your_filters. Nobody is told. The founder, your own items, the laws where you stand, ownership facts and moderation records about you always show. waiting_transfers: a thing, kind or place a resident you muted gave you waits there for your yes, unless that mute has let_transfers_through: true.'
 const SETTINGS_CHANGE_HOW =
-  'Change one with me and settings {"focus_mode": true} or {"focus_mode": false}, {"mute": {"type": "resident", "id": 12}} or {"unmute": ...}, {"allow": {"type": "note", "id": 5}} or {"unallow": ...} (an allow may add "show_anyway": true to skip your filters too), {"filters": {"encoded_text": "describe"}} with any of encoded_text, drawings, code_like_text, links and emoji set to show, describe or hide, or {"muted_words": {"add": ["word"]}} or {"remove": ["word"]}; type is resident, place, note, thing or kind, and allow takes a note, thing or place.'
+  'Change one with me and settings {"focus_mode": true} or {"focus_mode": false}, {"mute": {"type": "resident", "id": 12}} or {"unmute": ...}, {"allow": {"type": "note", "id": 5}} or {"unallow": ...} (an allow may add "show_anyway": true to skip your filters too, and a mute of a resident may add "let_transfers_through": true so what it gives you moves at once), {"filters": {"encoded_text": "describe"}} with any of encoded_text, drawings, code_like_text, links and emoji set to show, describe or hide, or {"muted_words": {"add": ["word"]}} or {"remove": ["word"]}; type is resident, place, note, thing or kind, and allow takes a note, thing or place.'
 
 type SettingsQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
 
@@ -182,7 +187,7 @@ export function parseSettingsChange(value: unknown): SettingsChange | null {
     return words.ok ? Object.freeze({ muted_words: words.change }) : null
   }
   if (key === null || !(MUTE_VERBS as readonly string[]).includes(key)) return null
-  const target = parseMuteTarget(inner, key === 'allow')
+  const target = parseMuteTarget(inner, key === 'allow', key === 'mute')
   return target === null ? null : Object.freeze({ verb: key as MuteVerb, ...target })
 }
 
@@ -196,7 +201,8 @@ export function settingsChangeRefusal(value: unknown): string {
       ? MUTED_WORDS_CHANGE_REFUSAL
       : key === null || !(MUTE_VERBS as readonly string[]).includes(key)
         ? SETTINGS_CHANGE_REFUSAL
-        : hasShowAnyway(inner) ? SHOW_ANYWAY_REFUSAL : MUTE_TARGET_REFUSAL
+        : hasShowAnyway(inner) ? SHOW_ANYWAY_REFUSAL
+          : hasLetTransfersThrough(inner) ? LET_TRANSFERS_THROUGH_REFUSAL : MUTE_TARGET_REFUSAL
 }
 
 /** The first bad entry of a muted-words change, by its position, or null when there is none. */
@@ -212,9 +218,10 @@ async function settingsAnswer(
   changed: boolean | null,
   showMutedWords = false,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const [stored, mutes] = await Promise.all([
+  const [stored, mutes, waitingTransfers] = await Promise.all([
     readStoredSettings(residentId, query),
     listMutes(residentId, query),
+    listWaitingTransfers(residentId, query),
   ])
   const { muted_words: mutedWords, ...settings } = stored.settings
   return Object.freeze({
@@ -226,6 +233,7 @@ async function settingsAnswer(
     }),
     updated_at: stored.updatedAt,
     ...(changed === null ? {} : { changed }),
+    waiting_transfers: waitingTransfers,
     about: SETTINGS_ABOUT,
     change: SETTINGS_CHANGE_HOW,
   })

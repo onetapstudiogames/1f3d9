@@ -111,7 +111,7 @@ const FULL_DESCRIPTION_TOKENS = Object.freeze({
   '{{LOOK_CUE}}': 'Only an authenticated resident MCP look may publish a generic looking cue at your place for {{LOOKING_TTL}} seconds; recording is best effort and never changes or fails the read.',
   '{{ME_COLLECTIONS}}': 'notes, offers, labels, quotas, fee credit, pending gifts, and changes since your last visit',
   '{{ME_PENDING_GIFTS}}': 'Pending gifts name their empty-body accept or refuse paths. ',
-  '{{TRANSFER_DESCRIPTION}}': 'Omitting action defaults to give. give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open sale blocks the whole gift. offer also requires price_usdc and seller_wallet; price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. claim requires offer_id; its first call also requires buyer_wallet to reserve a five-minute payment window and receive the current payment requirements before payment. cancel requires offer_id and is available only to the seller outside an active payment window.',
+  '{{TRANSFER_DESCRIPTION}}': 'Omitting action defaults to give. give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open sale blocks the whole gift. A give to a resident that muted you waits for its yes: nothing moves, and the answer\'s waiting_transfers says it is held until that resident accepts and stays yours meanwhile; for a place holding your home, its attention line says your home will be cleared if it is accepted. accept or decline requires waiting_id, from waiting_transfers in your own me settings "show": accept makes that give then, with every rule checked again, and decline leaves it with the giver. offer also requires price_usdc and seller_wallet; price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. claim requires offer_id; its first call also requires buyer_wallet to reserve a five-minute payment window and receive the current payment requirements before payment. cancel requires offer_id and is available only to the seller outside an active payment window.',
 } as const)
 
 export type DescriptionToken = keyof typeof FULL_DESCRIPTION_TOKENS
@@ -135,7 +135,7 @@ const APP_DESCRIPTION_TOKENS: Readonly<Record<DescriptionToken, string>> = Objec
   '{{LOOK_CUE}}': 'On this door look only reads; it publishes no looking cue.',
   '{{ME_COLLECTIONS}}': 'notes, labels, quotas, fee credit held and spent, and changes since your last visit',
   '{{ME_PENDING_GIFTS}}': '',
-  '{{TRANSFER_DESCRIPTION}}': 'Give one place, thing, or kind you own to another resident. action may be omitted or give; give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open offer blocks the whole gift.',
+  '{{TRANSFER_DESCRIPTION}}': 'Give one place, thing, or kind you own to another resident. action may be omitted or give; give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open offer blocks the whole gift. A give to a resident that muted you waits for its yes: nothing moves, and the answer\'s waiting_transfers says it is held until that resident accepts and stays yours meanwhile; for a place holding your home, its attention line says your home will be cleared if it is accepted. accept or decline requires waiting_id, from waiting_transfers in your own me settings "show": accept makes that give then, with every rule checked again, and decline leaves it with the giver.',
 })
 
 const NO_TOOLS: ReadonlySet<string> = Object.freeze(new Set<string>())
@@ -172,7 +172,8 @@ const APP_PROFILE: DoorProfile = Object.freeze({
   hostedChat: true,
   droppedTools: Object.freeze(new Set<string>([...APP_DROPPED_TOOLS, 'moderate'])),
   narrowedEnums: Object.freeze({
-    transfer: Object.freeze({ action: Object.freeze(['give']) }),
+    // Decision #158: the recipient answers a waiting transfer here too; offers stay off.
+    transfer: Object.freeze({ action: Object.freeze(['give', 'accept', 'decline']) }),
     browse: Object.freeze({
       view: Object.freeze([
         'kinds', 'traits', 'agreements', 'residents', 'events', 'moderation', 'gazette',
