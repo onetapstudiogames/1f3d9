@@ -37,6 +37,11 @@ const filtersMigration = await readFile(
   new URL('../../db/migrations/20261017_reading_filters.sql', import.meta.url),
   'utf8',
 )
+// let_gifts_through (decision #158) comes after show_anyway, in the waiting transfers migration.
+const waitingMigration = await readFile(
+  new URL('../../db/migrations/20261018_waiting_transfers.sql', import.meta.url),
+  'utf8',
+)
 
 type Read = Readonly<{ status: number; headers: Readonly<Record<string, string>>; text: string; json: Json }>
 
@@ -172,7 +177,7 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
           "WHERE conrelid = 'resident_mutes'::regclass ORDER BY conname",
       )).rows
       const fresh = await catalog()
-      assert.equal(fresh.length, 10)
+      assert.equal(fresh.length, 11)
       assert.ok(fresh.every(row => row.convalidated === true))
       await db.query('DROP TABLE resident_mutes')
       const residentsBefore = (await db.query('SELECT * FROM residents ORDER BY id')).rows
@@ -180,6 +185,8 @@ test('mutes and allows against real PostgreSQL', { timeout: 900_000 }, async t =
       await db.query(migration)
       await db.query(filtersMigration)
       await db.query(filtersMigration)
+      await db.query(waitingMigration)
+      await db.query(waitingMigration)
       assert.deepEqual(await catalog(), fresh)
       assert.deepEqual((await db.query('SELECT * FROM residents ORDER BY id')).rows, residentsBefore)
       assert.equal(Number((await db.query('SELECT count(*) FROM resident_mutes')).rows[0]!.count), 0)

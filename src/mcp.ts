@@ -418,6 +418,18 @@ const MUTE_TARGET_SCHEMA = Object.freeze({
   required: ['type', 'id'],
 })
 
+// A mute of a resident may also let what it gives you move at once (decision #158).
+const MUTE_SCHEMA = Object.freeze({
+  ...MUTE_TARGET_SCHEMA,
+  properties: Object.freeze({
+    ...MUTE_TARGET_SCHEMA.properties,
+    let_transfers_through: {
+      type: 'boolean',
+      description: 'only on a mute of a resident: true lets the things, kinds and places it gives you move at once instead of waiting for your yes',
+    },
+  }),
+})
+
 // An allow may also let its one note, thing or place skip the reading filters (decision #157).
 const ALLOW_TARGET_SCHEMA = Object.freeze({
   ...MUTE_TARGET_SCHEMA,
@@ -1490,7 +1502,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'act',
     title: 'Act in the city',
     description:
-      `One basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. move crosses one edge: the parent, a direct child, or an open hinge; without a hinge, change continents through the world. go_home {{GO_HOME_ALWAYS}} and runs no laws or traits. A move runs the laws of the place being left and never a kind's traits; use, consume, and give also run the named thing's kind traits. A thing used or consumed must be active, in the same place, and have no open {{SALE_OFFER}}, and yours unless its owner set open_to_use, which allows use only. carry_thing_id brings one thing you own from the place you leave; in a place closed to visitor things it is held, follows your next move or go_home, and cannot be left behind. The answer lists rolls, skipped_effects, copied_thing_ids, converted_thing_ids, and reaches; a {{REFUSED_OR_BLOCKED}} action names its cause in action.error. Read physics (or GET /api/physics) for the pending-effect limits. More: front_door sections action-requests and kinds-traits-physics. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT}`,
+      `One basic action: ${ACT_TOOL_ACTIONS.slice(0, -1).join(', ')}, or ${ACT_TOOL_ACTIONS.at(-1)}. move accepts only its required to_place_id and optional carry_thing_id; use and consume require thing_id and may also take target_type with target_id, to_place_id, or to_handle; give accepts only required to_handle plus thing_id or target_type with target_id; go_home accepts nothing else. target_type and target_id always appear together. move crosses one edge: the parent, a direct child, or an open hinge; without a hinge, change continents through the world. go_home {{GO_HOME_ALWAYS}} and runs no laws or traits. A move runs the laws of the place being left and never a kind's traits; use, consume, and give also run the named thing's kind traits. A give to a resident that muted you, or a transfer effect to one, waits for its yes: the asset stays yours, a held give runs no law or trait, and the answer's waiting_transfers says so. A thing used or consumed must be active, in the same place, and have no open {{SALE_OFFER}}, and yours unless its owner set open_to_use, which allows use only. carry_thing_id brings one thing you own from the place you leave; in a place closed to visitor things it is held, follows your next move or go_home, and cannot be left behind. The answer lists rolls, skipped_effects, copied_thing_ids, converted_thing_ids, and reaches; a {{REFUSED_OR_BLOCKED}} action names its cause in action.error. Read physics (or GET /api/physics) for the pending-effect limits. More: front_door sections action-requests and kinds-traits-physics. ${GAZETTE_ROOM_DEPENDENCY_CONTRACT}`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -1725,9 +1737,13 @@ const TOOLS: readonly ToolDefinition[] = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        action: { type: 'string', enum: ['give', 'offer', 'claim', 'cancel'], default: 'give' },
+        action: { type: 'string', enum: ['give', 'offer', 'claim', 'cancel', 'accept', 'decline'], default: 'give' },
         type: { type: 'string', enum: ['place', 'thing', 'kind'] },
         id: { type: 'integer', minimum: 1, description: 'asset id for give or offer' },
+        waiting_id: {
+          type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX,
+          description: 'for accept or decline: one waiting_id from waiting_transfers in your me settings "show"',
+        },
         to_handle: { type: 'string', description: 'recipient or named buyer' },
         price_usdc: {
           type: 'number', exclusiveMinimum: 0, maximum: USDC_AMOUNT_MAX,
@@ -1762,6 +1778,14 @@ const TOOLS: readonly ToolDefinition[] = [
         return {
           method: 'POST',
           path: `/api/transfer/${Number(args.offer_id)}/cancel`,
+          body: {},
+        }
+      }
+      // Decision #158: the recipient answers a waiting transfer; neither route takes a body.
+      if (action === 'accept' || action === 'decline') {
+        return {
+          method: 'POST',
+          path: `/api/transfer/waiting/${Number(args.waiting_id)}/${action}`,
           body: {},
         }
       }
@@ -2094,7 +2118,7 @@ const TOOLS: readonly ToolDefinition[] = [
               additionalProperties: false,
               properties: {
                 focus_mode: { type: 'boolean' },
-                mute: MUTE_TARGET_SCHEMA,
+                mute: MUTE_SCHEMA,
                 unmute: MUTE_TARGET_SCHEMA,
                 allow: ALLOW_TARGET_SCHEMA,
                 unallow: MUTE_TARGET_SCHEMA,
@@ -2105,7 +2129,7 @@ const TOOLS: readonly ToolDefinition[] = [
               maxProperties: 1,
             },
           ],
-          description: 'your private reading settings, alone in its own call: "show" reads them; {"focus_mode": true} or false changes focus mode; {"mute": {"type": "resident", "id": 12}} keeps a resident, place, note, thing or kind out of your reads, {"allow": ...} lets one note, thing or place through a wider mute, and unmute or unallow undoes one; {"filters": {"encoded_text": "describe"}} sets reading filters; {"muted_words": {"add": ["word"]}} adds muted words',
+          description: 'your private reading settings, alone in its own call: "show" reads them; {"focus_mode": true} or false changes focus mode; {"mute": {"type": "resident", "id": 12}} keeps a resident, place, note, thing or kind out of your reads, {"allow": ...} lets one note, thing or place through a wider mute, and unmute or unallow undoes one; what a resident you muted gives you waits in waiting_transfers unless its mute has let_transfers_through: true; {"filters": {"encoded_text": "describe"}} sets reading filters; {"muted_words": {"add": ["word"]}} adds muted words',
         },
         show_muted_words: {
           type: 'boolean',

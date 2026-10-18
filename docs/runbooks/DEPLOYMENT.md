@@ -904,6 +904,74 @@ valid: a row it creates gets show for every filter, no muted words and show_anyw
 and its updates leave the new columns as they are. The rollback is to merge the previous application, never to drop a
 column while any resident has saved a filter, a muted word or show_anyway.
 
+### Waiting transfers prerequisite
+
+Held gifts (decision #158) need `db/migrations/20261018_waiting_transfers.sql` before the
+change merges. It creates the private table `waiting_transfers`: one row per held transfer,
+with the giver, the recipient, the asset type (thing, kind or place) and id, when it was
+held, and the recipient's answer (accepted, declined or failed), its detail and its time,
+which are all null while it waits and all set once it ends. Its named checks keep the
+asset type known, the asset id positive, the giver and recipient different, the answer
+known, the three answer columns all null or all set, and the detail 1 to 2,000 bytes; a
+partial unique index keeps one open row per giver, recipient and asset, and a partial
+index lists a recipient's open rows. It adds one column to the private `resident_mutes`
+table, `let_gifts_through BOOLEAN NOT NULL DEFAULT FALSE`, with the named check
+`resident_mutes_let_gifts_through_on_resident_mute` that it is true only on a mute of a
+resident. The table is new, so no existing row changes; its two foreign keys take only a
+brief share lock on `residents`. `resident_mutes` changes in one `ALTER TABLE` statement
+with a constant default, so no row is rewritten and the exclusive lock is held only for
+the catalogue change; the check is added `NOT VALID` and validated in its own statement.
+A guard block comes first and a closing shape block raises if a column, default, check,
+key or index differs. Apply `npm run migrate:preview:waiting-transfers` to the PR's Preview
+database branch and to the shared Preview branch the Vercel preview reads, then apply it
+a second time to each to prove it is safe to repeat. Verify the new table and column, the
+nine table constraints and the mute check validated, the two indexes, and the resident
+and mute row counts and digests unchanged. The four checks below run before the
+migration as well as after it: each reads the catalogue by pattern, so none fails before
+the new table or column exists. Take the required Production snapshot, for example
+`PRODUCTION_SNAPSHOT_NAME=pre-waiting-transfers-20261018`, apply
+`npm run migrate:production:waiting-transfers` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. The
+rollout does not apply this migration, and `--prepare` does not query either database.
+The copy of the resident mutes guard in `db/schema.sql` knows the new column, so the
+fresh-install file still runs twice on one database.
+
+```sql
+-- D1: every column of the private mute table and of any waiting table.
+SELECT table_name, column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND (table_name = 'resident_mutes' OR table_name LIKE 'waiting%')
+ORDER BY table_name, ordinal_position;
+-- D2: every constraint on them, and whether it is validated, with their indexes.
+SELECT conrelid::regclass AS table_name, conname, contype, convalidated,
+  pg_get_constraintdef(oid) AS definition
+FROM pg_constraint
+WHERE conrelid IN (
+  SELECT oid FROM pg_class
+  WHERE relnamespace = 'public'::regnamespace AND (relname = 'resident_mutes' OR relname LIKE 'waiting%')
+)
+ORDER BY 1, conname;
+SELECT tablename, indexname, indexdef FROM pg_indexes
+WHERE schemaname = 'public' AND (tablename = 'resident_mutes' OR tablename LIKE 'waiting%')
+ORDER BY tablename, indexname;
+-- D3: the residents, unchanged.
+SELECT count(*)::int AS resident_rows,
+  md5(string_agg(id::text || ':' || handle, ',' ORDER BY id)) AS resident_digest
+FROM residents;
+-- D4: the mute rows that existed before, unchanged.
+SELECT count(*)::int AS mute_rows,
+  md5(coalesce(string_agg(id::text || ':' || resident_id::text || ':' || target_type || ':'
+    || target_id::text || ':' || choice || ':' || show_anyway::text, ',' ORDER BY id), '')) AS mute_digest
+FROM resident_mutes;
+```
+
+The old application never reads `waiting_transfers` or the new column, and the default
+keeps its writes valid: a mute it writes gets let_gifts_through false, and its updates
+leave the column as it is. Under the old application every gift moves at once, as before, and transfers already
+waiting stay waiting, with nothing moved, until the new application returns.
+The rollback is to merge the previous application, never to drop the table or the column
+while any transfer waits or any resident has let a muted resident's transfers through.
+
 ### Drawing-contract and world-root drawing prerequisite
 
 Before the first application rollout containing public drawing states, history,

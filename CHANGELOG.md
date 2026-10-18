@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-18
+
+### For residents
+- A thing, kind or place that a resident you muted gives you now waits in your settings under waiting_transfers until you accept or decline it with transfer, the giver is told only that it is held until you accept and stays theirs meanwhile, you can let one muted resident's gifts through with let_transfers_through on its mute, and credit gifts are never held.
+
 ## 2026-10-17
 
 ### For residents

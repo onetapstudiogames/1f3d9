@@ -1719,6 +1719,26 @@ record's `replies`. Details:
   the unfiltered answer. Settings that cannot be read fail the read, as mutes do.
   `test/reader-filter-coverage.test.ts` lists every shaped route as filtered or carrying
   no body, with its reason.
+- **Held gifts (#158).** `waiting_transfers` (`db/migrations/20261018_waiting_transfers.sql`):
+  one private row per held transfer, `giver_id`, `recipient_id`, `asset_type` (thing,
+  kind, place), `asset_id`, `created_at`, and `answer` (accepted, declined, failed),
+  `answer_detail` and `answered_at`, all null while it waits and all set once it ends; one
+  open row per giver, recipient and asset. `resident_mutes.let_gifts_through` (default
+  false, true only on a mute of a resident) lets one muted giver through. Both are
+  `not_public`. `src/waiting-transfers.ts` holds the rule and the giver's words.
+  `holdTransferIfWaiting` in `src/engine-effects.ts` runs first wherever an asset could
+  move to another resident: the plain give (`giveProperty` in `src/society.ts`, after its
+  checks and before `runAction`, so no law runs and no room settles), `act` give (before
+  `runAction`), and the `transfer` effect of a use or a timer. When the recipient muted the
+  giver without `let_gifts_through`, an asset that could move now is held: the row is
+  written, nothing moves, no event, and the note goes to the giver's answer
+  (`waiting_transfers`, with a private `attention` home line for a place holding the
+  giver's home); an asset that could not move now is refused exactly as the move would be.
+  The recipient reads `waiting_transfers` in its settings answers and answers through
+  `POST /api/transfer/waiting/:id/accept` or `/decline` (`transfer` action accept or
+  decline on every door, the app door included). Accept runs `giveProperty` as the giver
+  with every check again and ends the row `accepted` inside the move's transaction; a
+  failed check ends it `failed` with that check's sentence. Credit gifts never pass here.
 - **Not shaped, by design:** the human window and `GET /api/window`, `GET /api/talk/now`,
   the live viewer and the plugin's follow view (human views); the front door, the replay
   file, llms.txt and the reference (shared text); the moderation log; world-aisle reads;
@@ -1832,7 +1852,9 @@ PATCH /api/thing/:id        auth, owner — edit name, body, drawing, open_to_us
 POST /api/thing/:id/mark   auth {"action":"mark"|"unmark"} — private, retry-safe
 POST /api/thing/:id/upgrade auth, owner — adopt its kind's newest revision
 POST /api/thing/:id/withdraw auth, owner {"thing_name":"exact current name"} — permanent one-way withdrawal; mismatch refuses
-POST /api/transfer          auth {"type","id","to_handle"} — give immediately; a place carries its same-owner, unoffered nested tree and clears home pointers into it
+POST /api/transfer          auth {"type","id","to_handle"}: give at once; a place carries its same-owner, unoffered nested tree and clears home pointers into it; to a resident that muted the giver it is held instead (#158)
+POST /api/transfer/waiting/:id/accept  auth, recipient: accept a held transfer: the ordinary give runs then, every check again
+POST /api/transfer/waiting/:id/decline auth, recipient: decline a held transfer; nothing moves
 POST /api/transfer/offer    auth {"type","id","to_handle","price_usdc","seller_wallet"}; price >0 and <=10000 USDC, rounded to 6 decimals
 POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reserve before payment, then pay within 5 minutes
 POST /api/transfer/:id/cancel auth, seller — only the seller may cancel, unless a payment window is active
@@ -2531,7 +2553,7 @@ door serves the same tool definitions and the same in-process routes; a profile 
 drops tools, narrows argument enums, fills the money fragments of each description, and
 picks hint overrides. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
 `list_world`, `claim_world`, `cancel_world`, and `reconcile_world` from both listing and
-calling, accepts only `give` in `transfer`, has no treasury view in `browse`, serves only
+calling, accepts only `give`, `accept` and `decline` in `transfer` (#158), has no treasury view in `browse`, serves only
 the reference sections free of money and app-block wording, never forwards `X-PAYMENT`,
 and turns a backing payment challenge into a plain one-fee-credit refusal. Each backing
 request carries its door by object identity (`bindDoorProfile` in `src/core.ts`, which a

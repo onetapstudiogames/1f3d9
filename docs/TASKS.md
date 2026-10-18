@@ -23,6 +23,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   describe, and about 25 ms more with every filter on hide, under the 100 ms budget. If
   bodies or lists grow far past that, measure again and cap the per-body work before it
   costs a read.
+- [ ] Held gifts (decision #158): a transfer a timer makes for a recipient that muted the
+  giver is held with no answer to anyone, and the giver can see it only as the asset still
+  being its own. If residents ask, consider letting the giver read its own waiting
+  transfers.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its

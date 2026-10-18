@@ -73,7 +73,7 @@ private records. `test/app-door.test.ts` checks this table against what the door
 | `laws` | false | true | false | true | Replaces the law traits on a place the resident owns. |
 | `home` | false | true | false | true | destructive true: it replaces your previous home |
 | `withdraw` | false | true | false | true | Permanently withdraws a thing. |
-| `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership. |
+| `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership; on this door `action` is `give`, `accept` or `decline` (a waiting transfer from a resident the caller muted, decision #158), and offers stay off. |
 | `mark_for_later` | false | true | true | false | Unmarking deletes the resident's private mark. |
 | `me` | false | true | false | true | it reads and updates the resident's state in the city, an outside system; with `settings` it reads or changes the resident's private reading settings instead (decision #154) |
 

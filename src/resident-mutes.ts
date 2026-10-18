@@ -4,9 +4,11 @@
 // per choice; unmuting or unallowing deletes it. Unlimited, private, and nobody is told.
 // The founder, resident #1, cannot be muted, and nothing the founder writes, makes or
 // owns is hidden. An allow may also say show_anyway (decision #157), so that one note,
-// thing or place skips the reader's reading filters too. This module stores the choices
-// and loads one reader's mute set once per request; src/reader-filter.ts decides what
-// each read leaves out.
+// thing or place skips the reader's reading filters too. A mute of a resident may also say
+// let_transfers_through (decision #158): then the things, kinds and places that resident
+// gives move at once instead of waiting for a yes (src/waiting-transfers.ts); the column
+// is let_gifts_through. This module stores the choices and loads one reader's mute set
+// once per request; src/reader-filter.ts decides what each read leaves out.
 import { sql } from './db.ts'
 
 export const FOUNDER_RESIDENT_ID = 1
@@ -17,7 +19,13 @@ export const ALLOW_TARGET_TYPES = Object.freeze(['place', 'note', 'thing'] as co
 export const MUTE_VERBS = Object.freeze(['mute', 'unmute', 'allow', 'unallow'] as const)
 export type MuteVerb = typeof MUTE_VERBS[number]
 
-export type MuteChange = Readonly<{ verb: MuteVerb; type: MuteTargetType; id: number; showAnyway?: boolean }>
+export type MuteChange = Readonly<{
+  verb: MuteVerb
+  type: MuteTargetType
+  id: number
+  showAnyway?: boolean
+  letTransfersThrough?: boolean
+}>
 
 export const MUTE_TARGET_REFUSAL =
   'mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}'
@@ -27,6 +35,8 @@ export const MUTE_SELF_REFUSAL =
   'you cannot mute yourself or your own notes and things; your own items always show to you'
 export const SHOW_ANYWAY_REFUSAL =
   'show_anyway goes only with allow and must be true or false, like {"allow": {"type": "note", "id": 5, "show_anyway": true}}; it lets that one note, thing or place skip your reading filters'
+export const LET_TRANSFERS_THROUGH_REFUSAL =
+  'let_transfers_through goes only with a mute of a resident and must be true or false, like {"mute": {"type": "resident", "id": 12, "let_transfers_through": true}}; it lets the things, kinds and places that resident gives you move to you at once instead of waiting for your yes'
 export const ALLOW_TYPE_REFUSAL =
   'allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead'
 
@@ -39,32 +49,43 @@ const MAX_TARGET_ID = 2_147_483_647
 type MuteQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
 const defaultQuery = sql as unknown as MuteQuery
 
-type MuteTarget = Readonly<{ type: MuteTargetType; id: number; showAnyway?: boolean }>
+type MuteTarget = Readonly<{ type: MuteTargetType; id: number; showAnyway?: boolean; letTransfersThrough?: boolean }>
 
 /** Whether a target names show_anyway, which only an allow may carry, as true or false. */
 export function hasShowAnyway(value: unknown): boolean {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'show_anyway')
 }
 
+/** Whether a target names let_transfers_through, which only a mute of a resident may carry. */
+export function hasLetTransfersThrough(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.hasOwn(value, 'let_transfers_through')
+}
+
 /**
  * One {type, id} target, or null when it is not one. An allow may add show_anyway, true
- * or false; every other verb takes exactly type and id.
+ * or false, and a mute of a resident may add let_transfers_through, true or false; every
+ * other verb takes exactly type and id.
  */
-export function parseMuteTarget(value: unknown, allowShowAnyway = false): MuteTarget | null {
+export function parseMuteTarget(value: unknown, allowShowAnyway = false, allowLetTransfersThrough = false): MuteTarget | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   const withShowAnyway = allowShowAnyway && Object.hasOwn(record, 'show_anyway')
-  const keys = Object.keys(record).filter(key => !(withShowAnyway && key === 'show_anyway'))
+  const withLetThrough = allowLetTransfersThrough && Object.hasOwn(record, 'let_transfers_through')
+  const keys = Object.keys(record).filter(key => !(withShowAnyway && key === 'show_anyway')
+    && !(withLetThrough && key === 'let_transfers_through'))
   if (keys.length !== 2 || !keys.includes('type') || !keys.includes('id')) return null
   const type = record.type
   const id = record.id
   if (typeof type !== 'string' || !(MUTE_TARGET_TYPES as readonly string[]).includes(type)) return null
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || id > MAX_TARGET_ID) return null
   if (withShowAnyway && typeof record.show_anyway !== 'boolean') return null
+  if (withLetThrough && (type !== 'resident' || typeof record.let_transfers_through !== 'boolean')) return null
   return Object.freeze({
     type: type as MuteTargetType,
     id,
     ...(withShowAnyway ? { showAnyway: record.show_anyway as boolean } : {}),
+    ...(withLetThrough ? { letTransfersThrough: record.let_transfers_through as boolean } : {}),
   })
 }
 
@@ -104,15 +125,20 @@ export async function applyMuteChange(
     if (target.authorId === FOUNDER_RESIDENT_ID || target.ownerId === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
     if (target.authorId === residentId || target.ownerId === residentId) return refused(selfRefusal)
   }
-  // Only an allow carries show_anyway; a mute that replaces an allow clears it.
+  // Only an allow carries show_anyway; a mute that replaces an allow clears it. Only a
+  // mute of a resident carries let_transfers_through (#158); a mute sent without it holds
+  // that resident's transfers again.
   const showAnyway = change.verb === 'allow' && change.showAnyway === true
+  const letThrough = change.verb === 'mute' && change.type === 'resident' && change.letTransfersThrough === true
   const written = await query`
-    INSERT INTO resident_mutes (resident_id, target_type, target_id, choice, show_anyway)
-    VALUES (${residentId}, ${change.type}, ${change.id}, ${change.verb}, ${showAnyway})
+    INSERT INTO resident_mutes (resident_id, target_type, target_id, choice, show_anyway, let_gifts_through)
+    VALUES (${residentId}, ${change.type}, ${change.id}, ${change.verb}, ${showAnyway}, ${letThrough})
     ON CONFLICT (resident_id, target_type, target_id) DO UPDATE
-    SET choice = EXCLUDED.choice, show_anyway = EXCLUDED.show_anyway, created_at = now()
+    SET choice = EXCLUDED.choice, show_anyway = EXCLUDED.show_anyway,
+      let_gifts_through = EXCLUDED.let_gifts_through, created_at = now()
     WHERE resident_mutes.choice IS DISTINCT FROM EXCLUDED.choice
       OR resident_mutes.show_anyway IS DISTINCT FROM EXCLUDED.show_anyway
+      OR resident_mutes.let_gifts_through IS DISTINCT FROM EXCLUDED.let_gifts_through
     RETURNING id
   `
   return Object.freeze({ ok: true, changed: written.length > 0 })
@@ -149,13 +175,14 @@ export type ListedMute = Readonly<{
   id: number
   choice: 'mute' | 'allow'
   show_anyway?: boolean
+  let_transfers_through?: boolean
   since: string
 }>
 
 /** Every mute and allow of one resident, newest first, for settings "show". */
 export async function listMutes(residentId: number, query: MuteQuery = defaultQuery): Promise<readonly ListedMute[]> {
   const rows = await query`/* private:reader-mute-list */
-    SELECT target_type, target_id, choice, show_anyway, created_at
+    SELECT target_type, target_id, choice, show_anyway, let_gifts_through, created_at
     FROM resident_mutes
     WHERE resident_id = ${residentId}
     ORDER BY created_at DESC, id DESC
@@ -165,6 +192,8 @@ export async function listMutes(residentId: number, query: MuteQuery = defaultQu
     id: Number(row.target_id),
     choice: row.choice === 'allow' ? 'allow' as const : 'mute' as const,
     ...(row.choice === 'allow' ? { show_anyway: row.show_anyway === true } : {}),
+    ...(row.choice === 'mute' && row.target_type === 'resident'
+      ? { let_transfers_through: row.let_gifts_through === true } : {}),
     since: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   })))
 }

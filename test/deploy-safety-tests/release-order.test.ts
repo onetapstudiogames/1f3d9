@@ -315,4 +315,11 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /npm run migrate:production:reading-filters/u)
     assert.match(deploymentRunbook, /resident_settings_muted_words_count[\s\S]*Never chain the migration with the merge\./u)
   })
+
+  test('release preparation applies the waiting transfers migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Waiting transfers prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:waiting-transfers/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:waiting-transfers/u)
+    assert.match(deploymentRunbook, /resident_mutes_let_gifts_through_on_resident_mute[\s\S]*Never chain the migration with the merge\./u)
+  })
 }
