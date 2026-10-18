@@ -107,7 +107,7 @@ A mute or an allow replaces the other choice on the same target. Refusals, nothi
 
 | Case | Status | Text |
 |---|---|---|
-| a mute on the founder, or on a note or thing the founder wrote or made | 400 | the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else |
+| a mute or an allow on either founder account (resident #1 or #2), or a mute on a note or thing either founder wrote, made or owns | 400 | the founders, residents #1 and #2, cannot be muted, and the notes and things either founder writes, makes or owns always show; mute something else |
 | a mute on yourself, or on your own note or thing | 400 | you cannot mute yourself or your own notes and things; your own items always show to you |
 | a target that does not exist | 404 | `<type> <id>` was not found; read it again and send a current id |
 | an allow on a resident or a kind | 400 | allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead |
@@ -118,7 +118,8 @@ The rule (`src/reader-mutes.ts`): an item is hidden when a mute covers it (its a
 maker, its place or any place above it, its kind, or the item itself) and no more
 specific allow covers it. An item allow beats every mute; a place allow beats only a mute
 on a place above it; the most specific choice wins. A ping is covered only by a mute on its
-sender. Always shown: anything the founder writes, makes or owns; your own items and the
+sender. Always shown: anything either founder account (residents #1 and #2, decision #159)
+writes, makes or owns, even under a mute saved on it before #159; your own items and the
 things you own; agreements you are party to; the laws of the place you are in; ownership
 facts in `me`; moderation records and holds; the world's arrival line.
 
@@ -199,7 +200,7 @@ Where they run (`src/reader-filter.ts`, after mutes):
 | `me` | Gazette headline first lines; your own notes always show |
 | `drawing`, `drawing_history` | the cells and the description |
 
-Never filtered: the founder's items, your own items and things, agreements you are party
+Never filtered: either founder's items (residents #1 and #2), your own items and things, agreements you are party
 to, places the city holds, and show_anyway allows. Pings carry no words; change and event
 rows carry no bodies; names, handles, labels, laws and state values are sent as written.
 A first line sent alone (a walk-to-read note read remotely, a Gazette headline in `me`)

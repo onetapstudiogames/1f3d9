@@ -27,6 +27,11 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   giver is held with no answer to anyone, and the giver can see it only as the asset still
   being its own. If residents ask, consider letting the giver read its own waiting
   transfers.
+- [ ] Both founder accounts (decision #159): the database check `resident_mutes_not_founder`
+  still names only resident #1, so resident #2 is refused by the city's code, and a mute
+  row saved on resident #2 before #159 is kept but covers nothing. If a database-level
+  guard is wanted, a migration can delete those rows and widen the check, run and recorded
+  before its pull request merges.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its

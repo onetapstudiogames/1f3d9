@@ -467,6 +467,38 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
       }
     })
 
+    await t.test('the second founder account, resident #2, is never filtered: describe and hide leave its bodies as written', async () => {
+      // Decision #159. GROWER is resident #2; FAR_SHORE is the reader here.
+      const rooms = await resetCity(RESIDENTS)
+      for (const resident of [GROWER, NEIGHBOUR, FAR_SHORE]) await standIn(resident.id, rooms.eastRoomId)
+      await db.query('UPDATE places SET open_to_things = TRUE WHERE id = $1', [rooms.eastRoomId])
+      const founderBinary = await seedNote(rooms.eastRoomId, GROWER.id, binary('the asking room is open'))
+      const founderLink = await seedNote(rooms.eastRoomId, GROWER.id, 'read https://www.google.com/maps now')
+      const founderThing = await seedThing(rooms.eastRoomId, GROWER.id, 'a founder ledger', JSON_BODY)
+      const otherBinary = await seedNote(rooms.eastRoomId, NEIGHBOUR.id, binary('meet me at the old mill'))
+      const founderLine = await say(app, GROWER.secret, rooms.eastRoomId, 'see example.com 😀')
+      const paths = [`/api/place/${rooms.eastRoomId}?view=full`, `/api/place/${rooms.eastRoomId}/lines`, `/api/note/${founderBinary}`]
+      const anonymousBefore = new Map<string, Read>()
+      for (const path of paths) anonymousBefore.set(path, await read(app, path))
+      for (const filters of [EVERY_DESCRIBE, EVERY_HIDE]) {
+        await change(app, FAR_SHORE.secret, { filters })
+        const place = await read(app, `/api/place/${rooms.eastRoomId}?view=full`, FAR_SHORE.secret)
+        assert.equal(place.status, 200, place.text)
+        const placeNotes = byId(place.json.notes)
+        assert.equal(placeNotes.get(founderBinary)!.body, binary('the asking room is open'), 'its encoded note')
+        assert.equal(placeNotes.get(founderLink)!.body, 'read https://www.google.com/maps now', 'its link')
+        assert.equal(byId(place.json.things).get(founderThing)!.body, JSON_BODY, 'its code-like thing')
+        assert.notEqual(placeNotes.get(otherBinary)!.body, binary('meet me at the old mill'), 'the filters still apply to others')
+        const lines = await read(app, `/api/place/${rooms.eastRoomId}/lines`, FAR_SHORE.secret)
+        assert.equal(byId(lines.json.lines).get(founderLine)!.body, 'see example.com 😀', 'its line')
+        assert.match((await read(app, `/api/note/${founderBinary}`, FAR_SHORE.secret)).text, new RegExp(binary('the asking room is open').slice(0, 40), 'u'))
+      }
+      for (const path of paths) {
+        const after = await read(app, path)
+        assert.equal(after.text, anonymousBefore.get(path)!.text, `anonymous ${path} is byte-identical`)
+      }
+    })
+
     await t.test('a first line sent alone is judged on the whole body on every door, and view=lines counts what it changed', async () => {
       const { mcp } = await import('../../src/mcp.ts')
       const { Hono } = await import('hono')

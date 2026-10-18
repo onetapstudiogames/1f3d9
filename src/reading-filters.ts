@@ -4,8 +4,8 @@
 // body. The kinds are encoded text, drawings, code-like text, links and emoji; the
 // resident's own muted words run last, over the described text, and hide only. There is
 // no city-written word list. This module is the one rule for a body's text; it reads and
-// writes nothing. src/reader-filter.ts applies it to every signed-in read, never to the
-// founder's items, the reader's own, or what always shows.
+// writes nothing. src/reader-filter.ts applies it to every signed-in read, never to
+// either founder's items (#159), the reader's own, or what always shows.
 import { redactResidentCredentialText, containsPublicCredential } from './credential-safety.ts'
 import { emojiCharacterName } from './emoji-names.ts'
 import {

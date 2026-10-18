@@ -3,16 +3,16 @@
 // a thing or a kind, and allow one note, thing or place through a wider mute. One row
 // per choice; unmuting or unallowing deletes it. Unlimited, private, and nobody is told,
 // except that a muted giver learns its gift is held (decision #158).
-// The founder, resident #1, cannot be muted, and nothing the founder writes, makes or
-// owns is hidden. An allow may also say show_anyway (decision #157), so that one note,
-// thing or place skips the reader's reading filters too. A mute of a resident may also say
+// Neither founder account, residents #1 and #2 (src/founders.ts, decision #159), can be
+// muted or allowed, and nothing either writes, makes or owns is hidden. An allow may also
+// say show_anyway (decision #157), so that one note, thing or place skips the reader's
+// reading filters too. A mute of a resident may also say
 // let_transfers_through (decision #158): then the things, kinds and places that resident
 // gives move at once instead of waiting for a yes (src/waiting-transfers.ts); the column
 // is let_gifts_through. This module stores the choices and loads one reader's mute set
 // once per request; src/reader-filter.ts decides what each read leaves out.
 import { sql } from './db.ts'
-
-export const FOUNDER_RESIDENT_ID = 1
+import { FOUNDER_RESIDENT_IDS, isFounderResident } from './founders.ts'
 
 export const MUTE_TARGET_TYPES = Object.freeze(['resident', 'place', 'note', 'thing', 'kind'] as const)
 export type MuteTargetType = typeof MUTE_TARGET_TYPES[number]
@@ -31,7 +31,7 @@ export type MuteChange = Readonly<{
 export const MUTE_TARGET_REFUSAL =
   'mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}'
 export const MUTE_FOUNDER_REFUSAL =
-  'the founder, resident #1, cannot be muted, and the notes and things the founder writes, makes or owns always show; mute something else'
+  'the founders, residents #1 and #2, cannot be muted, and the notes and things either founder writes, makes or owns always show; mute something else'
 export const MUTE_SELF_REFUSAL =
   'you cannot mute yourself or your own notes and things; your own items always show to you'
 export const SHOW_ANYWAY_REFUSAL =
@@ -111,19 +111,18 @@ export async function applyMuteChange(
     `
     return Object.freeze({ ok: true, changed: removed.length > 0 })
   }
+  const founderRefusal = { status: 400, error: MUTE_FOUNDER_REFUSAL } as const
+  // A mute or an allow naming either founder account is refused with the same sentence.
+  if (change.type === 'resident' && isFounderResident(change.id)) return refused(founderRefusal)
   if (change.verb === 'allow' && !(ALLOW_TARGET_TYPES as readonly string[]).includes(change.type)) {
     return refused({ status: 400, error: ALLOW_TYPE_REFUSAL })
   }
-  const founderRefusal = { status: 400, error: MUTE_FOUNDER_REFUSAL } as const
   const selfRefusal = { status: 400, error: MUTE_SELF_REFUSAL } as const
-  if (change.verb === 'mute' && change.type === 'resident') {
-    if (change.id === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
-    if (change.id === residentId) return refused(selfRefusal)
-  }
+  if (change.verb === 'mute' && change.type === 'resident' && change.id === residentId) return refused(selfRefusal)
   const target = await readTarget(change.type, change.id, query)
   if (target === null) return refused({ status: 404, error: muteTargetNotFound(change.type, change.id) })
   if (change.verb === 'mute' && (change.type === 'note' || change.type === 'thing')) {
-    if (target.authorId === FOUNDER_RESIDENT_ID || target.ownerId === FOUNDER_RESIDENT_ID) return refused(founderRefusal)
+    if (isFounderResident(target.authorId) || isFounderResident(target.ownerId)) return refused(founderRefusal)
     if (target.authorId === residentId || target.ownerId === residentId) return refused(selfRefusal)
   }
   // Only an allow carries show_anyway; a mute that replaces an allow clears it. Only a
@@ -205,7 +204,8 @@ type Choices = Readonly<{ muted: ReadonlySet<number>; allowed: ReadonlySet<numbe
 export type MuteSet = Readonly<{
   readerId: number
   readerHandle: string | null
-  founderHandle: string | null
+  /** The handles of both founder accounts, read in the same query as the reader's. */
+  founderHandles: ReadonlySet<string>
   residents: ReadonlySet<number>
   residentHandles: ReadonlySet<string>
   notes: Choices
@@ -223,7 +223,7 @@ export function emptyMuteSet(readerId: number): MuteSet {
   return Object.freeze({
     readerId,
     readerHandle: null,
-    founderHandle: null,
+    founderHandles: new Set<string>(),
     residents: none,
     residentHandles: new Set<string>(),
     notes: Object.freeze({ muted: none, allowed: none }),
@@ -263,6 +263,8 @@ export async function readMuteSet(residentId: number, query: MuteQuery = default
       kept?.add(id)
     }
     if (row.target_type === 'resident' && !allow) {
+      // A mute saved on a founder account before #159 covers nothing.
+      if (isFounderResident(id)) continue
       residents.add(id)
       if (typeof row.handle === 'string') residentHandles.add(row.handle)
     } else if (row.target_type === 'note') {
@@ -287,15 +289,18 @@ export async function readMuteSet(residentId: number, query: MuteQuery = default
       WHERE NOT EXISTS (SELECT 1 FROM choices nearer WHERE nearer.place_id = child.id)
     )
     SELECT
-      (SELECT handle FROM residents WHERE id = ${FOUNDER_RESIDENT_ID}) AS founder_handle,
+      coalesce((SELECT array_agg(handle) FROM residents WHERE id = ANY(${[...FOUNDER_RESIDENT_IDS]}::integer[])),
+        '{}'::text[]) AS founder_handles,
       (SELECT handle FROM residents WHERE id = ${residentId}) AS reader_handle,
       coalesce((SELECT array_agg(id) FROM walk WHERE choice = 'mute'), '{}'::integer[]) AS muted_places
   `
   const mutedPlaces = Array.isArray(places?.muted_places) ? places.muted_places.map(Number) : []
+  const founderHandles: string[] = Array.isArray(places?.founder_handles)
+    ? places.founder_handles.filter((handle: unknown): handle is string => typeof handle === 'string') : []
   return Object.freeze({
     readerId: residentId,
     readerHandle: typeof places?.reader_handle === 'string' ? places.reader_handle : null,
-    founderHandle: typeof places?.founder_handle === 'string' ? places.founder_handle : null,
+    founderHandles: new Set(founderHandles),
     residents,
     residentHandles,
     notes: Object.freeze(notes),
@@ -312,7 +317,7 @@ export async function readMutedResidentIds(residentId: number, query: MuteQuery 
     SELECT target_id FROM resident_mutes
     WHERE resident_id = ${residentId} AND target_type = 'resident' AND choice = 'mute'
   `
-  return Object.freeze(rows.map(row => Number(row.target_id)))
+  return Object.freeze(rows.map(row => Number(row.target_id)).filter(id => !isFounderResident(id)))
 }
 
 /**
@@ -338,9 +343,12 @@ export const READER_MUTES_SQL = `reader_choices AS MATERIALIZED (
     SELECT id FROM walk WHERE choice = 'mute'
   )`
 
+// The founder ids as an SQL list; they are whole-number constants, never caller input.
+const FOUNDER_IDS_SQL = FOUNDER_RESIDENT_IDS.map(id => String(Math.trunc(id))).join(', ')
+
 /** SQL: true when the reader's mutes hide this note (alias with id, author_id, place_id). */
 export function readerMutedNoteSql(note: string): string {
-  return `(${note}.author_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer)
+  return `(${note}.author_id NOT IN (${FOUNDER_IDS_SQL}, $1::integer)
       AND NOT EXISTS (SELECT 1 FROM reader_choices choice
         WHERE choice.target_type = 'note' AND choice.target_id = ${note}.id AND choice.choice = 'allow')
       AND (EXISTS (SELECT 1 FROM reader_choices choice WHERE choice.choice = 'mute' AND (
@@ -351,8 +359,8 @@ export function readerMutedNoteSql(note: string): string {
 
 /** SQL: true when the reader's mutes hide this thing (alias of a things row). */
 export function readerMutedThingSql(thing: string): string {
-  return `(${thing}.maker_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer)
-      AND ${thing}.owner_id NOT IN (${FOUNDER_RESIDENT_ID}, $1::integer)
+  return `(${thing}.maker_id NOT IN (${FOUNDER_IDS_SQL}, $1::integer)
+      AND ${thing}.owner_id NOT IN (${FOUNDER_IDS_SQL}, $1::integer)
       AND NOT EXISTS (SELECT 1 FROM reader_choices choice
         WHERE choice.target_type = 'thing' AND choice.target_id = ${thing}.id AND choice.choice = 'allow')
       AND (EXISTS (SELECT 1 FROM reader_choices choice WHERE choice.choice = 'mute' AND (

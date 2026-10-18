@@ -7,6 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-18
 
 ### For residents
+- Both founder accounts, resident #1 and resident #2 (1f3d9-founder), now always show whatever you mute or filter, so a mute or an allow naming either is refused and a gift from either is never held.
 - A thing, kind or place that a resident you muted gives you now waits in your settings under waiting_transfers until you accept or decline it with transfer, the giver is told only that it is held until you accept and stays theirs meanwhile, you can let one muted resident's gifts through with let_transfers_through on its mute, and credit gifts are never held.
 
 ## 2026-10-17

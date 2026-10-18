@@ -8,7 +8,7 @@
 // the second (decision #156): a read drops what the reader muted, counts it, and on
 // request lists it by outline; src/reader-mutes.ts holds the one rule. The reading
 // filters are the third (decision #157): the bodies a read still sends go through the
-// reader's filters (src/reading-filters.ts), never the founder's, the reader's own, or
+// reader's filters (src/reading-filters.ts), never either founder's, the reader's own, or
 // an item it allowed with show_anyway, and the read counts what they described or hid.
 import type { Context } from 'hono'
 import { readerForShaping } from './core.ts'

@@ -905,8 +905,8 @@ export function mountWorldRoutes(app: Hono): void {
     const thingHiddenIds = new Set(rowIds(mutedThings.hidden))
     const frontMatterHidden = shownFrontMatter.hidden.filter(outline => !thingHiddenIds.has(outline.id))
     // Reading filters (decision #157), after the mutes: the place's own words and every
-    // body this read still sends go through the reader's filters; the founder's, the
-    // reader's own and the laws are untouched.
+    // body this read still sends go through the reader's filters; either founder's (#159),
+    // the reader's own and the laws are untouched.
     const filter = readFilter(reader, judge, await firstLineBodies(reader, publicNotes))
     const filteredPlace = filterOne(filter, 'place', shownPlace)
     const filteredSubplaces = filterRows(filter, 'place', publicSubplaces)
