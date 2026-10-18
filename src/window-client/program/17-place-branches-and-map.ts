@@ -137,10 +137,21 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
     return item
   }
 
-  function placeList(values, snapshot, depth) {
+  // Decision #160: a place this browser muted is left out with its card, and any place
+  // inside it that is allowed takes its spot; hiddenTally collects what the map left out.
+  function placeList(values, snapshot, depth, hiddenTally = null) {
     const list = element('ul', 'place-tree')
     if (!Array.isArray(values) || depth >= 32) return list
     for (const place of values) {
+      if (isMutedRow('place', place)) {
+        hiddenTally?.set('place:' + String(place.id), Object.freeze({ kind: 'place', row: place }))
+        for (const item of splitMutedRows('resident', residentsAt(snapshot, place.id),
+          placeId => placeReference(snapshot, placeId)).hidden) {
+          hiddenTally?.set('resident:' + String(item.row.id), item)
+        }
+        list.append(...placeList(branchEntry(place).rows, snapshot, depth + 1, hiddenTally).children)
+        continue
+      }
       const node = element('li', 'place-node')
       const card = element('article', 'place-card')
       card.dataset.watched = String(state.placeId === place.id)
@@ -152,7 +163,12 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
       watch.type = 'button'
       watch.dataset.focusKey = 'watch:' + String(place.id)
       watch.addEventListener('click', () => choosePlace(place.id, true))
-      const occupants = residentsAt(snapshot, place.id)
+      const mutedOccupants = splitMutedRows('resident', residentsAt(snapshot, place.id),
+        placeId => placeReference(snapshot, placeId))
+      for (const item of mutedOccupants.hidden) {
+        hiddenTally?.set('resident:' + String(item.row.id), item)
+      }
+      const occupants = mutedOccupants.shown
       const owner = element('span', 'place-owner')
       if (place.owner) {
         owner.append(
@@ -206,9 +222,11 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
       if (occupants.length) {
         card.append(occupantLine(place, occupants, placeId => placeReference(snapshot, placeId)))
       }
+      const placeMenu = muteMenu([placeMuteTarget(place)], 'place-card:' + String(place.id))
+      if (placeMenu) card.append(placeMenu)
       node.append(card)
       if (hasChildren) {
-        const children = placeList(branch.rows, snapshot, depth + 1)
+        const children = placeList(branch.rows, snapshot, depth + 1, hiddenTally)
         children.id = 'place-children-' + String(place.id)
         children.hidden = !expanded
         if (expanded) {
@@ -245,7 +263,10 @@ export const PART_17_PLACE_BRANCHES_AND_MAP = `  function togglePlaceBranch(plac
       renderEmpty(nodes.map, 'empty-row', missing)
       return
     }
-    nodes.map.replaceChildren(placeList(roots, snapshot, 0))
+    const hiddenTally = new Map()
+    const tree = placeList(roots, snapshot, 0, hiddenTally)
+    const notice = muteNotice('map', [...hiddenTally.values()])
+    nodes.map.replaceChildren(...(notice ? [tree, notice] : [tree]))
   }
 
 `

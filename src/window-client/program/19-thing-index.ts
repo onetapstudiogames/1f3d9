@@ -76,11 +76,13 @@ export const PART_19_THING_INDEX = `  function liveSurveyIsComplete(snapshot) {
       return
     }
     const exactTotal = exactThingIndexTotal(snapshot)
+    // Decision #160: after quiet, things this browser muted are left out and counted.
+    const muted = splitMutedRows('thing', index.rows, placeId => placeReference(snapshot, placeId))
     if (exactTotal === null) {
       nodes.thingsSummary.textContent = 'The exact public thing count is unavailable. ' +
         'The completed headings below remain newest first.'
     } else {
-      nodes.thingsSummary.textContent = String(index.rows.length) + ' of ' + String(exactTotal) +
+      nodes.thingsSummary.textContent = String(muted.shown.length) + ' of ' + String(exactTotal) +
         (exactTotal === 1 ? ' public thing shown. ' : ' public things shown. ') +
         'Bodies stay closed until you choose one.'
     }
@@ -110,7 +112,7 @@ export const PART_19_THING_INDEX = `  function liveSurveyIsComplete(snapshot) {
       return
     }
     const list = element('ul', 'thing-index-list')
-    list.append(...index.rows.map(thing => {
+    list.append(...muted.shown.map(thing => {
       const row = element('li', 'thing-index-row')
       row.dataset.thingId = String(thing.id)
       const resolvedPlace = placeReference(snapshot, thing.place_id)
@@ -140,12 +142,16 @@ export const PART_19_THING_INDEX = `  function liveSurveyIsComplete(snapshot) {
         document.createTextNode(' · ' + String(thing.body_text_bytes) + ' UTF-8 body bytes'),
       )
       row.append(title, meta)
+      const menu = muteMenu(thingMuteTargets(thing), 'things:' + String(thing.id))
+      if (menu) row.append(menu)
       return viewerRecordNode(row, 'thing', thing, Object.freeze({
         place: placePresentation,
         maker: viewerResidentPresentation(residentReference(snapshot, thing.made_by)),
         owner: viewerResidentPresentation(residentReference(snapshot, thing.current_owner)),
       }))
     }))
+    const notice = muteNotice('things:' + expectedScopeKey, muted.hidden, 'li')
+    if (notice) list.append(notice)
     renderViewerList(nodes.thingsList, list, 'thing-index:' + expectedScopeKey)
     renderThingIndexPage()
   }

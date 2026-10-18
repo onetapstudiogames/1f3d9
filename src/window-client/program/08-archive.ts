@@ -134,7 +134,7 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
       result.type === 'note' && result.actor ? 'by ' + result.actor : '',
       result.type === 'thing' && result.madeBy ? 'made by ' + result.madeBy : '',
       result.type === 'thing' && result.currentOwner
-        ? 'currently owned by ' + result.currentOwner
+        ? 'currently owned by ' + shownHandle(result.currentOwner)
         : '',
       result.placeId ? 'place #' + String(result.placeId) : '',
       dateLabel(result.createdAt),
@@ -145,6 +145,10 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     card.append(heading, meta)
     if (result.walkToRead) card.append(walkToReadNoteBlock({ first_line: result.firstLine }))
     card.append(link)
+    const menu = muteMenu(result.type === 'thing'
+      ? thingMuteTargets(result)
+      : noteMuteTargets(result, result.actor), 'archive:' + result.type + ':' + String(result.id))
+    if (menu) card.append(menu)
     return card
   }
 
@@ -219,8 +223,12 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
         ' public text bytes in the counted matches · bodies stay on their original records',
     )
     const note = archive.note ? element('p', 'archive-summary', archive.note) : null
+    // Decision #160: results this browser muted are left out and counted.
+    const muted = splitMutedRows('archive', archive.results, null)
     const list = element('ol', 'archive-list')
-    list.append(...archive.results.map(archiveResultCard))
+    list.append(...muted.shown.map(archiveResultCard))
+    const notice = muteNotice('archive', muted.hidden, 'li')
+    if (notice) list.append(notice)
     nodes.archiveResults.replaceChildren(...(note ? [summary, note, list] : [summary, list]))
     renderArchivePage(archive)
   }

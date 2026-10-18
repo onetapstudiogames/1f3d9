@@ -347,9 +347,10 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         state.snapshot.flatPlaces.find(candidate => candidate.id === target.id)
       if (!place) return null
       return Object.freeze({
+        row: place,
         title: place.name,
         meta: place.path + (place.owner
-          ? ' · kept by ' + place.owner
+          ? ' · kept by ' + shownHandle(place.owner)
           : ' · nobody owns it · transit only'),
       })
     }
@@ -365,6 +366,7 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         resident.current_place_id ? placeReference(state.snapshot, resident.current_place_id) : null,
       )
       return Object.freeze({
+        row: resident,
         title: resident.handle,
         meta: 'resident #' + String(resident.id) +
           (resident.asleep ? ' · asleep' : '') +

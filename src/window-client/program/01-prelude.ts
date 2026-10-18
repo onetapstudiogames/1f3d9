@@ -85,6 +85,8 @@ import {
   rememberAnnouncement,
   shouldShowAnnouncement,
 } from '../announcement.ts'
+import { WINDOW_MUTES_STORAGE_KEY, createWindowMuteHelpers } from '../mutes.ts'
+import { FOUNDER_RESIDENT_IDS } from '../../founders.ts'
 // Same-room talk has its own quiet-aware Talk tab; it is not folded into Conversations, replay, or front-door activity.
 const PUBLIC_EVENT_LABELS_JSON = JSON.stringify(HUMAN_VIEW_EVENT_LABELS)
 const PUBLIC_EVENT_DETAIL_ID_FIELDS_JSON = JSON.stringify(PUBLIC_EVENT_DETAIL_ID_FIELDS)
@@ -137,6 +139,9 @@ const TALK_EMPTY_PANE_TEXT_JS = talkEmptyPaneText.toString()
 const TALK_IDLE_STATUS_JS = talkIdleStatus.toString()
 const TALK_PANE_JS = talkPane.toString()
 const TALK_RENDER_ROWS_JS = talkRenderRows.toString()
+const WINDOW_MUTES_STORAGE_KEY_JSON = JSON.stringify(WINDOW_MUTES_STORAGE_KEY)
+const CREATE_WINDOW_MUTE_HELPERS_JS = createWindowMuteHelpers.toString()
+const FOUNDER_RESIDENT_IDS_JSON = JSON.stringify(FOUNDER_RESIDENT_IDS)
 
 
 export const PART_01_PRELUDE = `(() => {
@@ -230,5 +235,8 @@ export const PART_01_PRELUDE = `(() => {
   const normalizeWindowDrawing = ${NORMALIZE_WINDOW_DRAWING_JS}
   const windowDrawingStateLabel = ${WINDOW_DRAWING_STATE_LABEL_JS}
   const windowDrawingSourceLabel = ${WINDOW_DRAWING_SOURCE_LABEL_JS}
+  // Decision #160: this browser's mute list, read and written only under its one key.
+  const WINDOW_MUTES_STORAGE_KEY = ${WINDOW_MUTES_STORAGE_KEY_JSON}
+  const windowMuteHelpers = (${CREATE_WINDOW_MUTE_HELPERS_JS})(${FOUNDER_RESIDENT_IDS_JSON})
 
 `

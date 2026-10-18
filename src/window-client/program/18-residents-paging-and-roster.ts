@@ -171,13 +171,18 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
       (!state.resident || resident.handle === state.resident) &&
       (!selectedPlaceIds || selectedPlaceIds.has(resident.current_place_id)))
     const quietPlaces = new Map()
-    const visible = matching.filter(resident => {
+    const unquiet = matching.filter(resident => {
       const residentPlace = placeReference(snapshot, resident.current_place_id)
       if (!isQuietPlace(residentPlace)) return true
       quietPlaces.set(residentPlace.id, residentPlace)
       return false
     })
-    if (!visible.length && !quietPlaces.size) {
+    // Decision #160: after quiet, a resident this browser muted (or one standing in a
+    // muted place) is left out and counted.
+    const muted = splitMutedRows('resident', unquiet, null)
+    const visible = muted.shown
+    const notice = muteNotice('roster', muted.hidden)
+    if (!visible.length && !quietPlaces.size && !notice) {
       const empty = element('p', 'empty-row', snapshot.residents.length
         ? 'Watching. No currently loaded resident matches this view.'
         : 'Watching. No residents are loaded in this view.')
@@ -209,6 +214,8 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
         row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
+        const menu = muteMenu([residentMuteTarget(resident.handle)], 'roster:' + resident.handle)
+        if (menu) row.append(menu)
         group.append(row)
       }
       fragment.append(group)
@@ -218,6 +225,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
       group.append(quietRoomNotice(quietPlace))
       fragment.append(group)
     }
+    if (notice) fragment.append(notice)
     nodes.roster.replaceChildren(fragment)
   }
 

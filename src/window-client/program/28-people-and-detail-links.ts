@@ -4,12 +4,14 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
   // list itself was scoped to — the same way noteCard and renderThings do.
   function renderPeople(target, residents, placeOf) {
     if (!target) return
+    const muted = splitMutedRows('resident', residents, placeOf)
     if (!residents.length) {
       renderEmpty(target, 'empty-row', 'No included resident matching this view is standing inside this place.')
       return
     }
     const list = element('ul', 'person-list')
-    list.append(...[...residents.filter(r => !r.asleep), ...residents.filter(r => r.asleep)].map(resident => {
+    const shown = muted.shown
+    list.append(...[...shown.filter(r => !r.asleep), ...shown.filter(r => r.asleep)].map(resident => {
       const item = element('li', resident.asleep ? 'person-card asleep' : 'person-card')
       const residentPlace = placeOf ? placeOf(resident.current_place_id) : null
       if (isQuietPlace(residentPlace)) {
@@ -29,8 +31,12 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
         (location ? ' · at ' + location : '')))
       item.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
+      const menu = muteMenu([residentMuteTarget(resident.handle)], 'person:' + resident.handle)
+      if (menu) item.append(menu)
       return item
     }))
+    const notice = muteNotice('people:' + target.id, muted.hidden, 'li')
+    if (notice) list.append(notice)
     target.replaceChildren(list)
   }
 
@@ -52,6 +58,8 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
   // A handle earns a button when any public source can resolve it. The complete
   // directory deliberately knows more names than the bounded presence page.
   function residentNode(handle, className, focusKey) {
+    // Decision #160: a muted resident named in a row shown for another reason stays unnamed.
+    if (handleIsMuted(handle)) return element('span', className, MUTED_RESIDENT_LABEL)
     const known = state.snapshot && residentReference(state.snapshot, handle)
     if (!known) return element('span', className, handle)
     const follow = element('button', className + ' resident-follow-inline', handle)
@@ -136,6 +144,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       : labels.length
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
+      kindId: safeId(raw.kind_id),
       moderated: raw.moderated === true,
       has_drawing: raw.has_drawing === true,
       stateVersion,

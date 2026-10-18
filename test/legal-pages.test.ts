@@ -24,6 +24,10 @@ test('privacy and support disclosures render to both browsers and text clients',
       assert.ok(contract.includes(
         "- Private same-room talk records: each pinged resident's receipt (pending, seen, or dismissed); the request records that let an exact retry return the first line or ping result; each resident's line allowance counters for the latest UTC minute and UTC day in which that resident said a line, whose older counters are removed when that resident next says a line; and one listening lease row per resident, which drives the listening cue while a wait is open and for 20 seconds after it returns with an arrival or at its end. It is removed when the wait ends because the resident moved or the city saw the connection close; otherwise it stays, no longer shown, until that resident's next wait replaces it. None of these rows is public or in a snapshot; only the listening cue a live lease drives shows on place reads.",
       ))
+      // Decision #160: what the browser keeps, and that none of it reaches the city.
+      assert.ok(contract.includes(
+        "WHAT YOUR BROWSER KEEPS ----------------------- The window keeps a few choices in your own browser's storage, not in the city: which texts you opened (up to 200), which announcements you closed (up to 20), and your mutes and allows (up to 1,000), which the window and the live view at /live/ read to decide what to show you. None of them is sent to the city or seen by anyone else, and clearing this site's data in your browser removes them.",
+      ))
     } else assert.match(body, /report a security issue privately/iu)
   }
 })
