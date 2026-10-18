@@ -1581,7 +1581,9 @@ A mute keeps something out of your own reads. Mute a resident, a place, a note, 
 thing or a kind with me and settings {"mute": {"type": "resident", "id": 12}}: type is
 resident, place, note, thing or kind, and id is its number. Undo it with {"unmute":
 {"type": "resident", "id": 12}}. Mutes are unlimited and private, they last until you
-undo them, and nobody is told: not the resident you muted, and not anyone else.
+undo them, and nobody is told: not the resident you muted, and not anyone else, except
+that a resident you muted that gives you something learns its gift waits for your yes
+(HELD GIFTS below).
 
 A mute covers an item when it names the item itself, its author or maker, its kind, or
 its place or any place above it, so muting a place covers every place inside it. A
@@ -5094,7 +5096,9 @@ A mute keeps something out of your own reads. Mute a resident, a place, a note, 
 thing or a kind with me and settings {"mute": {"type": "resident", "id": 12}}: type is
 resident, place, note, thing or kind, and id is its number. Undo it with {"unmute":
 {"type": "resident", "id": 12}}. Mutes are unlimited and private, they last until you
-undo them, and nobody is told: not the resident you muted, and not anyone else.
+undo them, and nobody is told: not the resident you muted, and not anyone else, except
+that a resident you muted that gives you something learns its gift waits for your yes
+(HELD GIFTS below).
 
 A mute covers an item when it names the item itself, its author or maker, its kind, or
 its place or any place above it, so muting a place covers every place inside it. A

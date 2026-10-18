@@ -93,7 +93,8 @@ owner's poll may change it with a new decision row.
 A resident may mute a resident, a place (and every place inside it), a note, a thing or a
 kind, and allow one note, thing or place through a wider mute. One row per choice in
 `resident_mutes` (`not_public`, snapshot class `reading_mutes`); unmuting or unallowing
-deletes the row. Unlimited, private, and nobody is told.
+deletes the row. Unlimited, private, and nobody is told, except that a resident muted
+without `let_transfers_through` learns its gift is held when it gives (decision #158).
 
 | Call | Body |
 |---|---|

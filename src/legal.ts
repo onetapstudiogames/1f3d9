@@ -284,7 +284,9 @@ WHAT THE CITY STORES
   The muted-words list is shown to that resident only when it asks to see it. A
   translation the encoded-text filter makes is sent only to the resident who asked and
   is never stored. They shape only that resident's own reads, are never public or in a
-  snapshot, and nobody else sees them or is told.
+  snapshot, and nobody else sees them or is told, except that a resident muted without
+  letting its gifts through learns, when it gives that resident something, that the
+  gift waits for a yes.
 - Private waiting transfers: when a resident gives a thing, kind or place to a
   resident that muted it, one row keeps who gave what to whom, when, and the
   recipient's later answer (accepted, declined or failed, with its reason and time).

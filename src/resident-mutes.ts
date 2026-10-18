@@ -1,7 +1,8 @@
 // Mutes and allows (decision #156), kept in each resident's private settings store
 // (#154). A resident may mute a resident, a place (and every place inside it), a note,
 // a thing or a kind, and allow one note, thing or place through a wider mute. One row
-// per choice; unmuting or unallowing deletes it. Unlimited, private, and nobody is told.
+// per choice; unmuting or unallowing deletes it. Unlimited, private, and nobody is told,
+// except that a muted giver learns its gift is held (decision #158).
 // The founder, resident #1, cannot be muted, and nothing the founder writes, makes or
 // owns is hidden. An allow may also say show_anyway (decision #157), so that one note,
 // thing or place skips the reader's reading filters too. A mute of a resident may also say
