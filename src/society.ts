@@ -67,6 +67,7 @@ import { publicJson } from './public-output.ts'
 import {
   bodyOutline,
   filterFields,
+  firstLineBodies,
   filterOne,
   filterRows,
   filtersHidBody,
@@ -272,7 +273,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (safe.withheld) return publicJson(c, { note })
     // Reading filters (decision #157): the whole body goes through the reader's filters
     // before any piece is cut. A hidden body is its marker and its stored size, whole.
-    const filter = readFilter(reader, judge)
+    const filter = readFilter(reader, judge, await firstLineBodies(reader, [safe.value]))
     const filtered = filterOne(filter, 'note', safe.value as Readonly<Record<string, unknown>>)
     if (filtersHidBody(filtered)) return publicJson(c, { note: filtered, ...filterFields(filter) })
     const shaped = shapeNoteRead(filtered, piece.piece)

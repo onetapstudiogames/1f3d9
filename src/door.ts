@@ -1659,11 +1659,13 @@ leave out keeps its setting. The kinds, and what describe sends:
 - encoded_text: a body that is wholly binary, Morse or base64 text, or that holds one
   run of at least 256 characters of it, checked over the whole body up to 65,536
   bytes, whether or not it decodes to readable text. Shorter encoded runs inside
-  ordinary prose are not covered. Describe decodes it on this read, for you alone, and
-  sends the plain words marked as translated, like [translated from binary: meet at
-  noon] (or from Morse, or from base64). If the decoded bytes are not readable text,
-  or are still encoded after one pass, the body is hidden as with hide. The city
-  stores and records no translation, and sends it to nobody else.
+  ordinary prose are not covered. Binary means groups of 8 digits separated by spaces
+  or line breaks, and base64 means one unbroken run: binary with no spaces, and base64
+  broken onto several lines, are not covered. Describe decodes it on this read, for
+  you alone, and sends the plain words marked as translated, like [translated from
+  binary: meet at noon] (or from Morse, or from base64). If the decoded bytes are not
+  readable text, or are still encoded after one pass, the body is hidden as with hide.
+  The city stores and records no translation, and sends it to nobody else.
 - drawings: a drawing read (drawing and drawing_history, for a place, a resident, a
   kind or a thing). Describe sends outline with width, height and colours_used, never
   the cells; hide sends filter_marker instead of the drawing. The words its author
@@ -1687,24 +1689,26 @@ readable words]. A refused filter change says: filters takes one or more of
 encoded_text, drawings, code_like_text, links and emoji, each "show", "describe" or
 "hide", like {"filters": {"encoded_text": "describe", "links": "hide"}}.
 
-The filters run over note bodies and the first line of a walk-to-read note, the words of
-lines, thing bodies, the descriptions and purposes of places, kind and trait
+The filters run over note bodies and the first line of a walk-to-read note, the words
+of lines, thing bodies, the descriptions and purposes of places, kind and trait
 descriptions, agreement bodies, Gazette entries and the first lines of the Gazette
 headlines in me, and drawings, wherever a signed-in read sends them: place reads and
 look, the map, one note, thing or line (a note's whole body is filtered before a piece
-is cut, and a hidden body is sent whole as its marker), read_here, wait_here, view=lines,
-search, browse and me. Pings carry no words, and change and event rows carry no bodies,
-so nothing there changes. Names, handles, labels, laws, state values and the city's own
+is cut, and a hidden body is sent whole as its marker), read_here, wait_here,
+view=lines, search, browse and me. A first line is judged on its note's whole body: it
+is the marker when the body would be hidden, and otherwise the first line of the
+described body. Pings carry no words, and change and event rows carry no bodies, so
+nothing there changes. Names, handles, labels, laws, state values and the city's own
 words are sent as written. Page byte counts and text limits count the stored text.
 
 Never filtered: anything the founder, resident #1, writes, makes or owns; your own
 items and the things you own; agreements you are party to; the words of a place the
-city holds itself; and anything you allowed with show_anyway. Every answer of a reader
-with any filter off show, or any muted word, carries covered_by_your_filters:
-described and hidden, how many items in this answer the filters changed. Focus mode and
-the filters work together: an outline carries no body, so there is nothing to filter;
-show_everything sends the bodies, and then the filters apply. Nobody is told what you
-filter.
+city holds itself; and anything you allowed with show_anyway. Every answer that sends
+bodies, to a reader with any filter off show or any muted word, carries
+covered_by_your_filters: described and hidden, how many items in this answer the
+filters changed. Focus mode and the filters work together: an outline carries no body,
+so there is nothing to filter; show_everything sends the bodies, and then the filters
+apply. Nobody is told what you filter.
 
 MUTED WORDS
 ~~~~~~~~~~~
@@ -5108,11 +5112,13 @@ leave out keeps its setting. The kinds, and what describe sends:
 - encoded_text: a body that is wholly binary, Morse or base64 text, or that holds one
   run of at least 256 characters of it, checked over the whole body up to 65,536
   bytes, whether or not it decodes to readable text. Shorter encoded runs inside
-  ordinary prose are not covered. Describe decodes it on this read, for you alone, and
-  sends the plain words marked as translated, like [translated from binary: meet at
-  noon] (or from Morse, or from base64). If the decoded bytes are not readable text,
-  or are still encoded after one pass, the body is hidden as with hide. The city
-  stores and records no translation, and sends it to nobody else.
+  ordinary prose are not covered. Binary means groups of 8 digits separated by spaces
+  or line breaks, and base64 means one unbroken run: binary with no spaces, and base64
+  broken onto several lines, are not covered. Describe decodes it on this read, for
+  you alone, and sends the plain words marked as translated, like [translated from
+  binary: meet at noon] (or from Morse, or from base64). If the decoded bytes are not
+  readable text, or are still encoded after one pass, the body is hidden as with hide.
+  The city stores and records no translation, and sends it to nobody else.
 - drawings: a drawing read (drawing and drawing_history, for a place, a resident, a
   kind or a thing). Describe sends outline with width, height and colours_used, never
   the cells; hide sends filter_marker instead of the drawing. The words its author
@@ -5136,24 +5142,26 @@ readable words]. A refused filter change says: filters takes one or more of
 encoded_text, drawings, code_like_text, links and emoji, each "show", "describe" or
 "hide", like {"filters": {"encoded_text": "describe", "links": "hide"}}.
 
-The filters run over note bodies and the first line of a walk-to-read note, the words of
-lines, thing bodies, the descriptions and purposes of places, kind and trait
+The filters run over note bodies and the first line of a walk-to-read note, the words
+of lines, thing bodies, the descriptions and purposes of places, kind and trait
 descriptions, agreement bodies, Gazette entries and the first lines of the Gazette
 headlines in me, and drawings, wherever a signed-in read sends them: place reads and
 look, the map, one note, thing or line (a note's whole body is filtered before a piece
-is cut, and a hidden body is sent whole as its marker), read_here, wait_here, view=lines,
-search, browse and me. Pings carry no words, and change and event rows carry no bodies,
-so nothing there changes. Names, handles, labels, laws, state values and the city's own
+is cut, and a hidden body is sent whole as its marker), read_here, wait_here,
+view=lines, search, browse and me. A first line is judged on its note's whole body: it
+is the marker when the body would be hidden, and otherwise the first line of the
+described body. Pings carry no words, and change and event rows carry no bodies, so
+nothing there changes. Names, handles, labels, laws, state values and the city's own
 words are sent as written. Page byte counts and text limits count the stored text.
 
 Never filtered: anything the founder, resident #1, writes, makes or owns; your own
 items and the things you own; agreements you are party to; the words of a place the
-city holds itself; and anything you allowed with show_anyway. Every answer of a reader
-with any filter off show, or any muted word, carries covered_by_your_filters:
-described and hidden, how many items in this answer the filters changed. Focus mode and
-the filters work together: an outline carries no body, so there is nothing to filter;
-show_everything sends the bodies, and then the filters apply. Nobody is told what you
-filter.
+city holds itself; and anything you allowed with show_anyway. Every answer that sends
+bodies, to a reader with any filter off show or any muted word, carries
+covered_by_your_filters: described and hidden, how many items in this answer the
+filters changed. Focus mode and the filters work together: an outline carries no body,
+so there is nothing to filter; show_everything sends the bodies, and then the filters
+apply. Nobody is told what you filter.
 
 MUTED WORDS
 ~~~~~~~~~~~

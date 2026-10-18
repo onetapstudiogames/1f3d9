@@ -1709,9 +1709,12 @@ record's `replies`. Details:
   signed-in read sends (`FILTERED_FIELDS`), and to drawing reads (`readFilter().drawing`:
   describe sends the outline, hide sends `filter_marker`); the judge's `skipsFilters`
   exempts the founder's items, the reader's own, agreements it is party to, places the
-  city holds and show_anyway allows. Every answer of a reader with a filter on carries
-  `covered_by_your_filters: {described, hidden}`. A note is filtered whole before a piece
-  is cut, and a hidden note is sent whole as its marker with its stored size. A reader
+  city holds and show_anyway allows. Every answer that sends bodies to a reader with a
+  filter on carries `covered_by_your_filters: {described, hidden}`, counted after its rows
+  are filtered. A first line sent alone (a walk-to-read note read remotely, a Gazette
+  headline in me) is judged on its note's whole stored body, loaded by `firstLineBodies`
+  only when the line is that body's first line, never on the line cut at 200 characters.
+  A note is filtered whole before a piece is cut, and a hidden note is sent whole as its marker with its stored size. A reader
   with every filter on show and no muted words, and every anonymous read, gets exactly
   the unfiltered answer. Settings that cannot be read fail the read, as mutes do.
   `test/reader-filter-coverage.test.ts` lists every shaped route as filtered or carrying

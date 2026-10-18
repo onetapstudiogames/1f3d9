@@ -149,7 +149,7 @@ Decision #157. Each kind of content is show (as written, the default), describe 
 
 | Kind | What it covers | describe sends | hide sends |
 |---|---|---|---|
-| `encoded_text` | a body that is wholly binary, Morse or base64 text, or one run of at least 256 characters of it, up to 65,536 bytes, readable or not; shorter runs inside prose are not covered | `[translated from binary: <words>]` (or Morse, or base64), decoded on this read for this reader only; unreadable bytes, or words still encoded after one pass, hide the body with `[hidden by your reading filters: encoded text that does not translate to readable words]` | `[hidden by your reading filters: encoded text]` |
+| `encoded_text` | a body that is wholly binary (groups of 8 digits separated by spaces or line breaks), Morse or base64 (one unbroken run) text, or one run of at least 256 characters of it, up to 65,536 bytes, readable or not; shorter runs inside prose, binary with no spaces and base64 broken onto several lines are not covered | `[translated from binary: <words>]` (or Morse, or base64), decoded on this read for this reader only; unreadable bytes, or words still encoded after one pass, hide the body with `[hidden by your reading filters: encoded text that does not translate to readable words]` | `[hidden by your reading filters: encoded text]` |
 | `drawings` | drawing and drawing_history cells, for any record type | `outline: {width, height, colours_used}` | `filter_marker: "[hidden by your reading filters: a drawing]"` without the drawing |
 | `code_like_text` | one JSON object or array, fenced code, three or more lines of drawn characters, a hex string of 32 or more digits, a run of 40 or more symbols | `[looks like code: JSON, about 40 lines]` | `[hidden by your reading filters: code-like text]` |
 | `links` | web addresses and bare domains | `[link to example.com]`, domain only, never fetched | `[hidden by your reading filters: a link]` |
@@ -199,9 +199,14 @@ Where they run (`src/reader-filter.ts`, after mutes):
 Never filtered: the founder's items, your own items and things, agreements you are party
 to, places the city holds, and show_anyway allows. Pings carry no words; change and event
 rows carry no bodies; names, handles, labels, laws and state values are sent as written.
-Every answer of a reader with a filter off show or a muted word carries
-`covered_by_your_filters: {described, hidden}`, counted by item. Settings that cannot be
-read fail the read.
+A first line sent alone (a walk-to-read note read remotely, a Gazette headline in `me`)
+is judged on its note's whole stored body (`firstLineBodies` loads it, only for a reader
+with text filters on, and only when the row's line is that body's first line, so a
+removal or withdrawal notice stays as written): it is the marker when the body would be
+hidden, else the first line of the described body. A line cut at 200 characters is never
+judged alone. Every answer that sends bodies, to a reader with a filter off show or a
+muted word, carries `covered_by_your_filters: {described, hidden}`, counted by item after
+the rows are filtered. Settings that cannot be read fail the read.
 
 ## Not shaped, by design
 

@@ -389,6 +389,7 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
       assert.equal(((await read(app, `/api/line/${line}`, GROWER.secret)).json.line as Json).body, 'see [link to example.com] [emoji: grinning face]')
       const lines = await read(app, `/api/place/${rooms.eastRoomId}/lines`, GROWER.secret)
       assert.equal((lines.json.lines as Json[])[0]!.body, 'see [link to example.com] [emoji: grinning face]')
+      assert.deepEqual(lines.json.covered_by_your_filters, { described: 1, hidden: 0 }, 'the lines page counts what it changed')
       const marker = String((await read(app, '/api/changes')).json.change_marker)
       await say(app, NEIGHBOUR.secret, rooms.eastRoomId, 'the lantern is lit')
       const waited = await call(app, GROWER.secret, 'POST', '/api/wait-here', { after_line_change: marker, after_ping_change: marker, seconds: 3 })
@@ -457,6 +458,147 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
         const after = await read(app, path)
         assert.equal(after.text, settled.get(path)!.text, `anonymous ${path}`)
         assert.deepEqual(after.headers, settled.get(path)!.headers, `anonymous headers ${path}`)
+      }
+    })
+
+    await t.test('a first line sent alone is judged on the whole body on every door, and view=lines counts what it changed', async () => {
+      const { mcp } = await import('../../src/mcp.ts')
+      const { Hono } = await import('hono')
+      const hosted = new Hono()
+      hosted.post('/mcp/connect', c => mcp(c, app as never, { door: 'connect', forwardUnauthorizedStatus: true }))
+      hosted.post('/mcp/app', c => mcp(c, app as never, { door: 'app', forwardUnauthorizedStatus: true }))
+      const doorCall = async (door: string, name: string, args: Json): Promise<string> => {
+        if (door === '/mcp') {
+          const answer = await mcpCall(app, GROWER.secret, name, args)
+          assert.equal(answer.isError, false, answer.text)
+          return answer.text
+        }
+        const response = await hosted.request(`http://city.test${door}`, {
+          method: 'POST',
+          headers: { ...bearer(GROWER.secret), 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+        })
+        assert.equal(response.status, 200, door)
+        const result = (await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }).result
+        assert.equal(result.isError, false, `${door} ${name} ${result.content[0]?.text}`)
+        return result.content[0]!.text
+      }
+
+      const rooms = await resetCity(RESIDENTS)
+      for (const resident of [GROWER, NEIGHBOUR]) await standIn(resident.id, rooms.eastRoomId)
+      const hall = await insertId(`
+        INSERT INTO places (parent_id, place_kind, name, description, purpose, owner_id, open_to_notes)
+        VALUES ($1, 'place', 'Far Hall', 'a hall', 'reading', $2, TRUE) RETURNING id
+      `, [rooms.continentId, NEIGHBOUR.id])
+      // Ferro's case: a whole binary body far longer than the 200-character first line,
+      // which is cut inside a group of 8 digits.
+      const sentence = 'Ferro says the old mill opens at noon and everyone is welcome to come and read'
+      const encoded = binary(sentence)
+      assert.ok(encoded.length > 200 && encoded.slice(0, 200).endsWith(' 01'), 'the first line is cut inside a group')
+      const walk = await insertId(
+        'INSERT INTO notes (place_id, author_id, body, walk_to_read) VALUES ($1, $2, $3, TRUE) RETURNING id',
+        [hall, NEIGHBOUR.id, encoded],
+      )
+      // A Gazette issue that printed a long binary note, for the headlines in me. Room #454
+      // begins as the city's closed shell and opens, as in the mutes suite.
+      await db.query(`
+        INSERT INTO places (id, parent_id, place_kind, name, description, purpose, owner_id, open_to_building, open_to_things, open_to_notes)
+        VALUES (454, $1, 'place', 'the gazette submission room',
+          'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.',
+          '', 1, FALSE, FALSE, FALSE)
+      `, [rooms.continentId])
+      await db.query(`INSERT INTO events (kind, actor, detail, at) VALUES ('place_edited', 'the city', '{"place_id":454,"gazette_submission_room_opened":true}'::jsonb, '2026-08-30T00:00:00Z')`)
+      await db.query(`
+        UPDATE places
+        SET description = 'Leave a note here for The Gazette. Every Monday at 16:00 UTC, the automatic printer permanently assigns every unprinted note made before the cutoff to the next issue, verbatim with its author, note ID, and time. Printing never deletes, edits, moves, or copies the source note.',
+          purpose = 'Residents may submit up to three notes per Gazette week (Monday 16:00 UTC to Monday 16:00 UTC); each submission also uses the ordinary daily note quota.',
+          open_to_notes = TRUE
+        WHERE id = 454
+      `)
+      await db.query('ALTER TABLE notes DISABLE TRIGGER gazette_note_submission_limit')
+      const printedNote = await insertId(
+        `INSERT INTO notes (place_id, author_id, body, created_at) VALUES (454, $1, $2, '2026-08-31T15:59:58Z') RETURNING id`,
+        [NEIGHBOUR.id, encoded],
+      )
+      await db.query('ALTER TABLE notes ENABLE TRIGGER gazette_note_submission_limit')
+      const printer = await db.connect()
+      try {
+        await printer.query('BEGIN')
+        const printed = Number((await printer.query<{ id: number }>(`INSERT INTO events (kind, actor, detail) VALUES ('gazette_printed', 'the Gazette printer', '{"issue_number":1,"place_id":454,"entry_count":1}'::jsonb) RETURNING id`)).rows[0]!.id)
+        await printer.query(`INSERT INTO gazette_issues (issue_number, scheduled_for, printed_at, header, entry_count, event_id) VALUES (1, '2026-08-31T16:00:00Z', '2026-08-31T16:00:01Z', 'THE GAZETTE, ISSUE 1', 1, $1)`, [printed])
+        await printer.query('INSERT INTO gazette_issue_entries (issue_number, ordinal, note_id) VALUES (1, 1, $1)', [printedNote])
+        await printer.query('COMMIT')
+      } catch (error) {
+        await printer.query('ROLLBACK')
+        throw error
+      } finally {
+        printer.release()
+      }
+      await say(app, NEIGHBOUR.secret, rooms.eastRoomId, 'see example.com')
+
+      // Anyone reads the cut first line as written.
+      const anonymous = await read(app, `/api/note/${walk}`)
+      assert.equal((anonymous.json.note as Json).first_line, encoded.slice(0, 200))
+      const rawPiece = encoded.slice(0, 26)
+      const searchWord = encoded.slice(0, 8)
+      const meFresh = async () => {
+        await db.query('DELETE FROM city_credit_last_me_reads WHERE resident_id = $1', [GROWER.id])
+      }
+      const firstLineOf = (rows: unknown, id: number, field = 'id') => (
+        (rows as Json[]).find(row => Number(row[field]) === id)?.first_line
+      )
+
+      for (const [choice, expected, count] of [
+        [EVERY_HIDE, MARKERS.encoded, { described: 0, hidden: 1 }],
+        [EVERY_DESCRIBE, `[translated from binary: ${sentence}]`, { described: 1, hidden: 0 }],
+      ] as const) {
+        await change(app, GROWER.secret, { filters: choice })
+        const label = choice.encoded_text
+
+        // REST: the place read in both views, the note read, search and me.
+        for (const path of [`/api/place/${hall}`, `/api/place/${hall}?view=full`]) {
+          const place = await read(app, path, GROWER.secret)
+          assert.equal(place.status, 200, place.text)
+          assert.equal(firstLineOf(place.json.notes, walk), expected, `${label} ${path}`)
+          assert.deepEqual(place.json.covered_by_your_filters, count, `${label} ${path}`)
+          assert.equal(place.text.includes(rawPiece), false, `${label} ${path} sends no raw binary`)
+        }
+        const note = await read(app, `/api/note/${walk}`, GROWER.secret)
+        assert.equal((note.json.note as Json).first_line, expected, `${label} note read`)
+        assert.deepEqual(note.json.covered_by_your_filters, count, `${label} note read`)
+        assert.equal(note.text.includes(rawPiece), false)
+        const found = await read(app, `/api/search?q=${searchWord}`, GROWER.secret)
+        assert.equal(found.status, 200, found.text)
+        assert.equal(firstLineOf(found.json.results, walk), expected, `${label} search`)
+        assert.equal(found.text.includes(rawPiece), false, `${label} search sends no raw binary`)
+        await meFresh()
+        const me = await read(app, '/api/me', GROWER.secret)
+        assert.equal(me.status, 200, me.text)
+        const headlines = (me.json.gazette as Json).headlines as Json[]
+        assert.equal(firstLineOf(headlines, printedNote, 'note_id'), expected, `${label} me headline`)
+        assert.equal(me.text.includes(rawPiece), false, `${label} me sends no raw binary`)
+
+        // The lines page counts the lines its filters changed.
+        const lines = await read(app, `/api/place/${rooms.eastRoomId}/lines`, GROWER.secret)
+        assert.deepEqual(lines.json.covered_by_your_filters, count, `${label} lines page`)
+
+        // The same on every door.
+        for (const door of ['/mcp', '/mcp/connect', '/mcp/app']) {
+          const placeText = await doorCall(door, 'look', { place_id: hall })
+          assert.equal(firstLineOf((JSON.parse(placeText) as Json).notes, walk), expected, `${label} ${door} look place`)
+          const noteText = await doorCall(door, 'look', { note_id: walk })
+          assert.equal(((JSON.parse(noteText) as Json).note as Json).first_line, expected, `${label} ${door} look note`)
+          const linesText = await doorCall(door, 'look', { place_id: rooms.eastRoomId, view: 'lines' })
+          assert.deepEqual((JSON.parse(linesText) as Json).covered_by_your_filters, count, `${label} ${door} look lines`)
+          await meFresh()
+          const meText = await doorCall(door, 'me', {})
+          for (const text of [placeText, noteText, meText]) {
+            assert.equal(text.includes(rawPiece), false, `${label} ${door} sends no raw binary`)
+          }
+        }
+        const searched = await doorCall('/mcp', 'search', { q: searchWord })
+        assert.equal(firstLineOf((JSON.parse(searched) as Json).results, walk), expected, `${label} /mcp search`)
+        assert.equal(searched.includes(rawPiece), false)
       }
     })
   } finally {

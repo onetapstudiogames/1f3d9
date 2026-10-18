@@ -116,6 +116,7 @@ import {
 import { publicJson } from './public-output.ts'
 import {
   filterFields,
+  firstLineBodies,
   filterOne,
   filterPlaceTree,
   filterRows,
@@ -906,7 +907,7 @@ export function mountWorldRoutes(app: Hono): void {
     // Reading filters (decision #157), after the mutes: the place's own words and every
     // body this read still sends go through the reader's filters; the founder's, the
     // reader's own and the laws are untouched.
-    const filter = readFilter(reader, judge)
+    const filter = readFilter(reader, judge, await firstLineBodies(reader, publicNotes))
     const filteredPlace = filterOne(filter, 'place', shownPlace)
     const filteredSubplaces = filterRows(filter, 'place', publicSubplaces)
     const filteredThings = filterRows(filter, 'thing', mutedThings.shown)

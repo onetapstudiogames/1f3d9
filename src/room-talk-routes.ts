@@ -385,11 +385,13 @@ export function mountRoomTalkRoutes(app: Hono): void {
     const lines = muted.shown
     // Reading filters (decision #157): each line's words; the byte counts stay the stored ones.
     const filter = readFilter(reader, linesJudge)
+    // Filter the lines before counting, so the count says what this page changed.
+    const filteredLines = filterRows(filter, 'line', lines)
     return publicJson(c, {
       place_id: placeId,
       ...mutesFields(reader, muted.hidden, hiddenQuery.outline),
       ...filterFields(filter),
-      lines: filterRows(filter, 'line', lines),
+      lines: filteredLines,
       lines_page: {
         total_items: result.totalItems,
         total_text_bytes: result.totalTextBytes,

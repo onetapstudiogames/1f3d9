@@ -19,7 +19,7 @@ import {
   textFilter,
   type ReadingFilters,
 } from '../src/reading-filters.ts'
-import { filterFields, filterRows, readFilter, readerFilters, type ReaderShape } from '../src/reader-filter.ts'
+import { filterFields, filterRows, firstLineBodies, readFilter, readerFilters, type ReaderShape } from '../src/reader-filter.ts'
 import type { MuteJudge } from '../src/reader-mutes.ts'
 import {
   FILTERS_CHANGE_REFUSAL,
@@ -239,6 +239,48 @@ test('a read runs the filters over every row it sends, never the founder\'s or t
   assert.equal(rows[4]!.body, 'plain words')
   assert.deepEqual(filterFields(filter), { covered_by_your_filters: { described: 1, hidden: 1 } })
   assert.deepEqual(filterFields(null), {})
+})
+
+test('a first line sent alone is judged on its whole body, never on a line cut inside a group', async () => {
+  // Ferro's case: a whole binary body whose 200-character first line ends inside a group.
+  const sentence = 'Ferro says the old mill opens at noon and everyone is welcome to come and read'
+  const body = binary(sentence)
+  const line = body.slice(0, 200)
+  const removal = 'note #3, removed by the moderator'
+  const rows = [
+    { id: 3, author: 'other', first_line: line, body_text_bytes: body.length, walk_to_read: true },
+    { id: 4, author: 'other', first_line: removal, walk_to_read: true },
+  ]
+  const asked: unknown[][] = []
+  const query = async (_text: string, params: readonly unknown[]) => {
+    asked.push([...params])
+    return [{ id: 3, body }, { id: 4, body: binary('a removed body') }]
+  }
+  // A reader with no text filters on costs no query.
+  assert.equal((await firstLineBodies(shape({ drawings: 'hide' }), rows, 'id', query)).size, 0)
+  assert.deepEqual(asked, [])
+  for (const [setting, expected, counted] of [
+    ['hide', READING_FILTER_MARKERS.encoded_text, { described: 0, hidden: 1 }],
+    ['describe', `[translated from binary: ${sentence}]`, { described: 1, hidden: 0 }],
+  ] as const) {
+    const reader = shape({ encoded_text: setting })
+    const bodies = await firstLineBodies(reader, rows, 'id', query)
+    // The removal notice is not that body's first line, so its body is never used.
+    assert.deepEqual([...bodies.keys()], [3])
+    const filter = readFilter(reader, judge, bodies)!
+    const [walk, removed] = filterRows(filter, 'note', rows)
+    assert.equal(walk!.first_line, expected, setting)
+    assert.equal(removed!.first_line, removal, `${setting}: the city's own line is sent as written`)
+    assert.deepEqual(filterFields(filter), { covered_by_your_filters: counted })
+    // Without the whole body, the cut line alone escapes: why the body is needed.
+    assert.equal(filterRows(readFilter(reader, judge), 'note', rows)[0]!.first_line, line)
+  }
+  // A row that carries its own body too judges its first line on that body.
+  const own = filterRows(readFilter(shape({ encoded_text: 'describe' }), judge), 'note', [
+    { id: 5, author: 'other', body, first_line: line, walk_to_read: true },
+  ])
+  assert.equal(own[0]!.body, `[translated from binary: ${sentence}]`)
+  assert.equal(own[0]!.first_line, `[translated from binary: ${sentence}]`)
 })
 
 test('drawings: describe sends the size and colours, hide sends a marker; an outline carries no cells to filter', () => {

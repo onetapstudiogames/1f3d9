@@ -189,6 +189,7 @@ import { publicResponseSafety } from './public-output.ts'
 import {
   bodyOutline,
   filterFields,
+  firstLineBodies,
   filterOne,
   filterRows,
   HIDDEN_REFUSAL,
@@ -842,7 +843,9 @@ app.get('/api/search', async c => {
   })
   // Reading filters (decision #157): search sends no bodies, only a withheld note's first
   // line and a place's words, which go through the reader's filters.
-  const searchFilter = readFilter(reader, searchJudge)
+  const searchFilter = readFilter(
+    reader, searchJudge, await firstLineBodies(reader, searchItems.filter(item => item.type === 'note')),
+  )
   const filteredItems = searchItems.map(item => (
     item.type === 'note' || item.type === 'place' || item.type === 'thing'
       ? filterOne(searchFilter, item.type, item)
@@ -1459,7 +1462,7 @@ app.get('/api/me', async c => {
   })
   const mutedHeadlines = splitMuted(meJudge, 'note', gazetteHeadlines, 'note_id')
   // Reading filters (decision #157): each headline's first line, the resident's words.
-  const meFilter = readFilter(reader, meJudge)
+  const meFilter = readFilter(reader, meJudge, await firstLineBodies(reader, mutedHeadlines.shown, 'note_id'))
   if (gazette?.headlines !== undefined && (mutedHeadlines.hidden.length > 0 || meFilter !== null)) {
     gazette = { ...gazette, headlines: Object.freeze(filterRows(meFilter, 'note', mutedHeadlines.shown, 'note_id')) }
   }

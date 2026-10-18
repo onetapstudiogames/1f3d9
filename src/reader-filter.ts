@@ -12,6 +12,7 @@
 // an item it allowed with show_anyway, and the read counts what they described or hid.
 import type { Context } from 'hono'
 import { readerForShaping } from './core.ts'
+import { sql } from './db.ts'
 import type { Drawing } from './drawing.ts'
 import { judgeMutes, type FilterItemType, type HiddenOutline, type MuteItemType, type MuteJudge, type MuteRefs } from './reader-mutes.ts'
 import {
@@ -19,10 +20,12 @@ import {
   filterText,
   READING_FILTER_MARKERS,
   textFilter,
+  type FilteredText,
   type FilterOutcome,
   type ReadingFilterSetting,
   type TextFilter,
 } from './reading-filters.ts'
+import { noteFirstLine } from './note-first-line.ts'
 import { emptyMuteSet, readMuteSet, type MuteSet } from './resident-mutes.ts'
 import { readReadingSettings, type ReadingSettings } from './resident-settings.ts'
 
@@ -435,8 +438,70 @@ function stringField(row: Readonly<Record<string, unknown>>, field: string): str
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
-/** The filter for one read, or null when its reader has no reading filters on. */
-export function readFilter(shape: ReaderShape | null, judge: MuteJudge | null): ReadFilter | null {
+type BodiesQuery = (text: string, params: readonly unknown[]) => Promise<Record<string, unknown>[]>
+const defaultBodiesQuery: BodiesQuery = async (text, params) => (
+  await sql.query(text, [...params]) as Record<string, unknown>[]
+)
+
+const NO_BODIES: ReadonlyMap<number, string> = new Map()
+
+/**
+ * The stored bodies of the notes a read sends only a first line of (a walk-to-read note
+ * read remotely, a Gazette headline), so the reader's filters judge the whole body, not a
+ * line cut at 200 characters. A body is kept only when the row's first line is exactly
+ * that body's first line, so a city line in its place (a removal or withdrawal notice) is
+ * never replaced. Empty, with no query, when the reader has no text filters on.
+ */
+export async function firstLineBodies(
+  shape: ReaderShape | null,
+  rows: readonly unknown[],
+  idField = 'id',
+  query: BodiesQuery = defaultBodiesQuery,
+): Promise<ReadonlyMap<number, string>> {
+  if (shape?.filters?.text == null) return NO_BODIES
+  const lines = new Map<number, string>()
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') continue
+    const source = row as Readonly<Record<string, unknown>>
+    if (source.moderated === true || typeof source.body === 'string') continue
+    const id = rowIds([source], idField)[0]
+    if (id !== undefined && typeof source.first_line === 'string' && source.first_line.length > 0) {
+      lines.set(id, source.first_line)
+    }
+  }
+  if (lines.size === 0) return NO_BODIES
+  const found = await query(
+    '/* private:reader-filter-first-line-bodies */ SELECT id, body FROM notes WHERE id = ANY($1::integer[])',
+    [[...lines.keys()]],
+  )
+  return new Map(found.flatMap(row => {
+    const id = Number(row.id)
+    return typeof row.body === 'string' && noteFirstLine(row.body) === lines.get(id) ? [[id, row.body] as const] : []
+  }))
+}
+
+/**
+ * A note's first line through the reader's filters, judged on its whole body: hidden when
+ * the body is hidden, else the first line of the described body.
+ */
+function firstLineThroughFilter(filter: TextFilter, line: string, body: string): FilteredText {
+  const whole = filterText(filter, body)
+  if (whole.outcome === 'hidden') return whole
+  if (whole.outcome === 'shown') return { text: line, outcome: 'shown' }
+  const described = noteFirstLine(whole.text)
+  return described === line ? { text: line, outcome: 'shown' } : { text: described, outcome: 'described' }
+}
+
+/**
+ * The filter for one read, or null when its reader has no reading filters on. A note row
+ * that sends only its first line is judged on the whole body in noteBodies (see
+ * firstLineBodies), or on its own body when the row carries one.
+ */
+export function readFilter(
+  shape: ReaderShape | null,
+  judge: MuteJudge | null,
+  noteBodies: ReadonlyMap<number, string> = NO_BODIES,
+): ReadFilter | null {
   const filters = shape?.filters ?? null
   if (filters === null) return null
   const outcomes = new Map<string, FilterOutcome>()
@@ -454,9 +519,16 @@ export function readFilter(shape: ReaderShape | null, judge: MuteJudge | null): 
     if (source.moderated === true) return row
     const id = rowIds([source], idField)[0]
     if (skips(type, id)) return row
+    const ownBody = stringField(source, 'body')
+    const wholeBody = (id === undefined ? undefined : noteBodies.get(id))
+      ?? (ownBody !== null && noteFirstLine(ownBody) === source.first_line ? ownBody : undefined)
     const results = fields.flatMap(field => {
       const text = stringField(source, field)
-      return text === null ? [] : [{ field, text, result: filterText(filters.text!, text) }]
+      if (text === null) return []
+      const result = type === 'note' && field === 'first_line' && wholeBody !== undefined
+        ? firstLineThroughFilter(filters.text!, text, wholeBody)
+        : filterText(filters.text!, text)
+      return [{ field, text, result }]
     })
     const changed = results.filter(entry => entry.result.outcome !== 'shown')
     if (changed.length === 0) return row
