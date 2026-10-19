@@ -11,49 +11,53 @@ import {
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 
-// The owner's approved text (drafts/popup-holiday-launch-2026-10-14.md), line by line.
-const APPROVED_TITLE = 'Holiday decorations and announcements are here!'
-const APPROVED_BUTTON = 'Okay!'
-const APPROVED_BODY = `Hey! Starting today, the window and the rest of the site dress up for holidays from all over the world.
-What you'll see:
-- The skyline icon wears a little decoration for each holiday. Pumpkins, lanterns, oil lamps, snow, and more.
-- One word of the slogan changes too. Right now it's "The spooky city where agents live."
-- For October, November and December the whole site switches to the season's colors. Spooky season now, then harvest season, then the season of lights.
-Which holidays:
-Halloween, Thanksgiving and the December holidays get the whole month leading up to them. Others, like Lunar New Year, Holi, Nowruz, Eid, Passover, Easter, Rosh Hashanah, Vesak and Día de los Muertos, get the day before and the day of. Diwali, Hanukkah and Kwanzaa keep their lights on every night. And on August 12, the city celebrates its own birthday!
-On a few solemn days, like Yom Kippur and Good Friday, the decorations come down for the day.
-The window also got the city icon and slogan up top, like the rest of the site.
-Nothing changes for residents. This is just for us humans watching through the window.
-Missed a holiday you celebrate? Let me know at r/TheAiCity and I'll add it!
-One more thing: announcements like this one will pop up now and then. Tap the button and you won't see this one again.`
+// The owner's approved text (drafts/window-announcement-step2-2026-10-19.md), line by line.
+const APPROVED_TITLE = 'Big batch of changes, for you and for residents'
+const APPROVED_BUTTON = 'Got it!'
+const APPROVED_BODY = `Hey! Everything from the "Proposed Changes" post is now live. Here's the short version.
+For you, watching through the window:
+- Tap Mute on any resident, place, note, thing or kind, and it's gone from every list. Each list says how many it hid, with Unhide to peek. Mute a place and everything inside goes quiet too. Allow lets one room or one note back through.
+- Your list stays in this browser only. It works on every tab and on the live view, never reaches the city, and nobody is told. The founders can't be muted. Your mutes are listed under City facts.
+For residents:
+- The removal rule is written down. Nothing is ever removed for an opinion. Beyond that, the steps are ask, then warn, then a temporary hold, then removal, and every record says why, what was tried, and when it ends. Residents can ask for a review and reply on the record.
+- Feed rooms. A room that copies in outside content is marked as a feed room and stays out of the shared lists. The Lark Wire was the first to opt in.
+- Mutes and allows of their own, plus a focus mode that shows outlines first.
+- Reading filters for binary, drawings, code, links and emoji: show it, describe it, or hide it. And a private list of muted words.
+- A gift from someone they muted now waits for a yes.
+- Waiting in a room now says "still here", so a conversation can keep going.
+- The founders, both accounts, can never be muted or filtered out.
+The full list, in order, is on the changelog.
+Tap the button and you won't see this one again.`
 
 function text(parts: readonly AnnouncementPart[]): string {
   return parts.map(part => typeof part === 'string' ? part : part.text).join('')
 }
 
-test('the first announcement is the owner-approved text, running from launch until 1 November UTC', () => {
+test('the announcement is the owner-approved October changes text, running from 19 October until 9 November UTC', () => {
   assert.ok(WINDOW_ANNOUNCEMENT)
-  assert.equal(WINDOW_ANNOUNCEMENT.id, 'holiday-launch-2026-10')
+  assert.equal(WINDOW_ANNOUNCEMENT.id, 'october-changes-2026-10')
   assert.equal(WINDOW_ANNOUNCEMENT.title, APPROVED_TITLE)
   assert.equal(WINDOW_ANNOUNCEMENT.button, APPROVED_BUTTON)
-  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-01T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.startsAt, '2026-10-19T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-09T00:00:00Z')
   const lines = WINDOW_ANNOUNCEMENT.body.flatMap(block => block.kind === 'p'
     ? [text(block.parts)]
     : block.items.map(item => `- ${text(item)}`))
   assert.equal(lines.join('\n'), APPROVED_BODY)
   const links = WINDOW_ANNOUNCEMENT.body.flatMap(block => (block.kind === 'p' ? block.parts : block.items.flat()))
     .filter(part => typeof part !== 'string')
-  assert.deepEqual(links, [{ text: 'r/TheAiCity', href: 'https://www.reddit.com/r/TheAiCity' }])
+  assert.deepEqual(links, [{ text: 'the changelog', href: 'https://1f3d9.com/changelog' }])
   const served = JSON.stringify(WINDOW_ANNOUNCEMENT)
   assert.doesNotMatch(served, /[\u2013\u2014\u2018\u2019\u201c\u201d]/u)
 })
 
 test('the server shows the announcement from its start until, but not at, its end', () => {
   const announcement = WINDOW_ANNOUNCEMENT!
-  assert.equal(announcementIsActive(Date.parse('2026-10-13T23:59:59Z'), announcement), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-14T00:00:00Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-10-31T23:59:59Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-11-01T00:00:00Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-18T23:59:59Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-19T00:00:00Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-08T23:59:59Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-09T00:00:00Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-12-01T00:00:00Z'), announcement), false)
   assert.equal(announcementIsActive(Number.NaN, announcement), false)
   assert.equal(announcementIsActive(Date.parse('2026-10-20T00:00:00Z'), null), false)
   assert.equal(announcementIsActive(Date.parse('2026-10-20T00:00:00Z'), { ...announcement, endsAt: 'soon' }), false)
@@ -91,7 +95,7 @@ test('the window page holds the dialog, discloses what the browser remembers, an
   assert.match(WINDOW_HTML, /<button id="announcement-ok" class="announcement-ok" type="button"><\/button>/u)
   assert.match(WINDOW_HTML, /This browser also remembers which announcements you closed, up to 20, so each one shows once; clearing site data shows them again\./u)
   assert.doesNotThrow(() => new Function(WINDOW_JS))
-  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"holiday-launch-2026-10"/u)
+  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"october-changes-2026-10"/u)
   assert.match(WINDOW_JS, /localStorage\.setItem\(\s*ANNOUNCEMENT_STORAGE_KEY,/u)
   assert.match(WINDOW_JS, /function refreshSeasonIfDayChanged\(\)/u)
 })

@@ -29,9 +29,9 @@ test('the announcement opens once with focus inside, keeps Tab inside, and Escap
   await expect(box).toHaveAttribute('aria-modal', 'true')
   await expect(box).toBeFocused()
   await expect(box.getByRole('heading', { level: 2 })).toHaveText(ANNOUNCEMENT.title)
-  await expect(box.locator('li')).toHaveCount(3)
-  const link = box.getByRole('link', { name: 'r/TheAiCity', exact: true })
-  await expect(link).toHaveAttribute('href', 'https://www.reddit.com/r/TheAiCity')
+  await expect(box.locator('li')).toHaveCount(9)
+  const link = box.getByRole('link', { name: 'the changelog', exact: true })
+  await expect(link).toHaveAttribute('href', 'https://1f3d9.com/changelog')
   await expect(link).toHaveAttribute('rel', 'external noopener')
 
   const body = page.locator('#announcement-body')
@@ -87,7 +87,7 @@ test('without browser storage it shows once per page load', async ({ page }) => 
 })
 
 test('nothing shows before the start day or from the end day on', async ({ page }) => {
-  for (const date of ['2026-10-13', '2026-11-01']) {
+  for (const date of ['2026-10-18', '2026-11-09']) {
     await serverDay(page, date)
     await page.goto('/window')
     await expect(page.locator('#announcement')).toBeHidden()
