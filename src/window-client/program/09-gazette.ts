@@ -290,6 +290,9 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
       document.createTextNode(' · ' + gazetteDateLabel(entry.createdAt)),
     )
     item.append(body, attribution)
+    const menu = muteMenu(noteMuteTargets({ id: entry.noteId }, entry.author),
+      'gazette:' + String(entry.noteId))
+    if (menu) item.append(menu)
     return item
   }
 
@@ -443,8 +446,13 @@ export const PART_09_GAZETTE = `  function safeGazetteCount(value) {
     // independently of the entries node below, not only in its absence.
     // Without this, a continuation page silently drops both the notice and
     // the Load more control, looking exactly like the issue simply ended.
+    // Decision #160: printed entries this browser muted are left out and counted.
+    const muted = splitMutedRows('gazette',
+      gazette.entries.map(entry => Object.freeze({ ...entry, placeId: 454 })), null)
     const entriesNode = gazette.entries.length ? element('ol', 'gazette-entries') : null
-    if (entriesNode) entriesNode.append(...gazette.entries.map(gazetteEntryCard))
+    if (entriesNode) entriesNode.append(...muted.shown.map(gazetteEntryCard))
+    const entriesNotice = muteNotice('gazette:' + String(gazette.issue.issueNumber), muted.hidden, 'li')
+    if (entriesNode && entriesNotice) entriesNode.append(entriesNotice)
     const emptyIssueNotice = !gazette.entries.length && !gazette.detailBudgetCut
       ? element('p', 'empty-row', 'This permanent issue printed with no submissions.')
       : null

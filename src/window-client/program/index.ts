@@ -33,6 +33,7 @@ import { PART_45_TALK } from './45-talk.ts'
 import { PART_46_OWNER_NOTICE } from './46-owner-notice.ts'
 import { PART_47_ANNOUNCEMENT } from './47-announcement.ts'
 import { PART_48_SEASON } from './48-season.ts'
+import { PART_49_MUTES } from './49-mutes.ts'
 import { PART_39_WIRING_AND_BOOT } from './39-wiring-and-boot.ts'
 
 export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
@@ -68,5 +69,6 @@ export const WINDOW_CLIENT_PARTS: readonly string[] = Object.freeze([
   PART_46_OWNER_NOTICE,
   PART_47_ANNOUNCEMENT,
   PART_48_SEASON,
+  PART_49_MUTES,
   PART_39_WIRING_AND_BOOT,
 ])

@@ -295,6 +295,13 @@ function buildGazetteRenderFunctions(): (
       'gazetteBudgetCutMessage',
     ),
     extract(/function renderGazetteIssue\(gazette\) \{[\s\S]*?\n  \}/u, 'renderGazetteIssue'),
+    // Decision #160's mute helpers, as a browser with no mutes answers them; the mute
+    // behaviour itself is pinned by test/window-mutes.test.ts and e2e/window-mutes.spec.ts.
+    'function handleIsMuted() { return false }',
+    'function splitMutedRows(kind, rows) { return { shown: rows, hidden: [] } }',
+    'function muteNotice() { return null }',
+    'function muteMenu() { return null }',
+    'function noteMuteTargets() { return [] }',
     'return { renderGazetteIssue, gazetteIssueLink, gazetteBudgetCutMessage }',
   ]
   return new Function('document', 'nodes', 'state', parts.join('\n\n')) as (

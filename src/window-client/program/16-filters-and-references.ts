@@ -1,5 +1,7 @@
 export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapshot) {
-    const places = displayedDirectoryPlaces(snapshot)
+    // Decision #160: the pickers leave out places and residents this browser muted.
+    const allPlaces = displayedDirectoryPlaces(snapshot)
+    const places = allPlaces.filter(place => !isMutedRow('place', place))
     if (nodes.placeFilter) {
       const choices = listWindowDirectoryPlaces(places)
       const visiblePlaceIds = new Set(choices.map(option => option.id))
@@ -12,7 +14,7 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
       })]
       if (state.placeId && !visiblePlaceIds.has(state.placeId)) {
         const selected = focusedPlace(state.placeId) ||
-          places.find(place => place.id === state.placeId)
+          allPlaces.find(place => place.id === state.placeId)
         const focusedRead = state.focusedPlaces[String(state.placeId)]
         const option = element('option', '', selected
           ? selected.name + ' · Place #' + String(selected.id)
@@ -28,10 +30,13 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
       nodes.placeFilter.value = state.placeId ? String(state.placeId) : ''
     }
     if (nodes.residentFilter) {
-      const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
+      const residents = (state.directory.loaded ? state.directory.residents : snapshot.residents)
+        .filter(resident => !isMutedRow('resident', { id: resident.id }))
       const focusedRead = state.resident ? state.focusedResidents[state.resident] : null
       const missingResident = state.resident && !residents.some(resident => resident.handle === state.resident)
-        ? [element('option', '', focusedRead?.notFound
+        ? [element('option', '', handleIsMuted(state.resident)
+          ? state.resident + ' · hidden by your mutes in this browser'
+          : focusedRead?.notFound
           ? state.resident + ' · no public resident was found'
           : focusedRead?.error
             ? state.resident + ' · public resident could not be loaded'

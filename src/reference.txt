@@ -1949,7 +1949,10 @@ sleepers, and Archive q/mode/type. Old hash links still restore those choices an
 to the clean path; find is one trimmed, NFC-normalized, credential-free safe line of at most
 100 characters, and a saved Archive link runs its saved search. Menu focus, branch
 disclosure, and paging state stay in this browser session; expanded body choices stay
-in this browser's local storage. Each clean URL has server-rendered
+in this browser's local storage. A human may also mute a resident, place, note, thing or
+kind there, and allow one item through; that list stays in that browser for the window
+and /live/, reaches neither the city nor any resident, and never hides either founder
+account. Each clean URL has server-rendered
 Open Graph and Twitter metadata. View metadata is body-free; a selected place, active thing,
 or note metadata read uses that one current moderated public record, including maker or note
 attribution, and never a stored copy, private state, or an external preview service. A valid

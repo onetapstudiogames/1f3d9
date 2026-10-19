@@ -7,8 +7,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(target, 'empty-row', 'No public thing matches this selection.')
       return
     }
+    const muted = splitMutedRows('thing', things, placeOf)
     const list = element('ul', 'thing-list')
-    list.append(...things.map(thing => {
+    list.append(...muted.shown.map(thing => {
       const item = element('li', 'thing-card')
       const resolvedPlace = placeOf ? placeOf(thing.place_id) : null
       const placePresentation = viewerPlacePresentation(resolvedPlace)
@@ -26,6 +27,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         document.createTextNode(' · currently owned by '),
         residentNode(thing.current_owner, 'thing-owner', 'thing-owner:' + String(thing.id)),
       )
+      const thingMenu = muteMenu(thingMuteTargets(thing), 'thing-card:' + String(thing.id))
       if (thing.kind) {
         thingMeta.append(document.createTextNode(' · kind: '))
         if (thing.kind_id) {
@@ -56,6 +58,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         openDetailLink('thing', thing.id, thing.name, 'detail-link thing-detail-link'),
       )
       item.append(heading, thingMeta)
+      if (thingMenu) item.append(thingMenu)
       const presentation = Object.freeze({
         place: placePresentation,
         maker: viewerResidentPresentation(residentReference(state.snapshot, thing.made_by)),
@@ -81,6 +84,8 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       }
       return viewerRecordNode(item, 'thing', thing, presentation)
     }))
+    const notice = muteNotice('things:' + target.id, muted.hidden, 'li')
+    if (notice) list.append(notice)
     renderViewerList(target, list, [
       'things', target.id, state.placeId || '', state.resident || '',
     ].join(':'))
@@ -121,6 +126,8 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         'note', note.id, 'Open note #' + String(note.id), 'detail-link note-detail-link',
       ),
     )
+    const noteMenu = muteMenu(noteMuteTargets(note, note.author), 'note:' + String(note.id))
+    if (noteMenu) meta.append(noteMenu)
     const presentation = Object.freeze({
       place: placePresentation,
       author: viewerResidentPresentation(residentReference(state.snapshot, note.author)),
@@ -193,11 +200,12 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(target, 'empty-row', emptyMessage)
       return
     }
+    const placeFor = placeId => typeof placeOf === 'function' ? placeOf(placeId) : placeOf
+    const muted = splitMutedRows('note', notes, placeFor)
     const list = element('div', 'note-list')
-    list.append(...notes.map(note => noteCard(
-      note,
-      typeof placeOf === 'function' ? placeOf(note.place_id) : placeOf,
-    )))
+    list.append(...muted.shown.map(note => noteCard(note, placeFor(note.place_id))))
+    const notice = muteNotice('notes:' + target.id, muted.hidden)
+    if (notice) list.append(notice)
     renderViewerList(target, list, [
       'notes', target.id, state.placeId || '', state.resident || '',
       state.conversationContext ? 'context' : 'direct',
@@ -301,6 +309,11 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
       return
     }
+    // Decision #160: a place this browser muted keeps its own words out of the page.
+    if (isMutedRow('place', place)) {
+      renderPlaceMuted(place)
+      return
+    }
     const description = state.details['place:' + String(place.id)]
     if (place.moderated) {
       renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)
@@ -370,9 +383,11 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       renderEmpty(nodes.placeFrontMatter, 'empty-row', words.frontMatterEmpty)
       return
     }
+    const muted = splitMutedRows('thing',
+      place.front_matter.map(heading => Object.freeze({ ...heading, place_id: place.id })), null)
     const list = element('ol', 'front-matter-list')
     list.setAttribute('aria-labelledby', 'place-front-matter-title')
-    list.append(...place.front_matter.map(heading => {
+    list.append(...muted.shown.map(heading => {
       const item = element('li', 'front-matter-heading')
       const link = openDetailLink(
         'thing', heading.id, heading.name, 'front-matter-link detail-link',
@@ -394,7 +409,24 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       item.append(title, meta)
       return item
     }))
+    const notice = muteNotice('front-matter:' + String(place.id), muted.hidden, 'li')
+    if (notice) list.append(notice)
     nodes.placeFrontMatter.replaceChildren(list)
+  }
+
+  function renderPlaceMuted(place) {
+    const notice = element('div', 'mute-notice')
+    notice.append(element('p', 'mute-count', 'This place is hidden by your mutes in this browser.'))
+    const actions = muteOutlineActions(
+      windowMuteHelpers.subject('place', place, muteResidentId), 'place-muted:' + String(place.id))
+    if (actions.length) {
+      const group = element('p', 'mute-outline-actions')
+      group.append(...actions)
+      notice.append(group)
+    }
+    nodes.placeDescription?.replaceChildren(notice)
+    renderEmpty(nodes.placePurpose, 'empty-row', 'Hidden by your mutes in this browser.')
+    renderEmpty(nodes.placeFrontMatter, 'empty-row', 'Hidden by your mutes in this browser.')
   }
 
   function renderPlace(snapshot) {
@@ -492,9 +524,13 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
           ' Its stable address is place #' + String(place.id) + '; its notes remain public below.'
       } else {
         nodes.placeSummary.textContent = place.path + (place.owner
-          ? ' · kept by ' + place.owner
+          ? ' · kept by ' + shownHandle(place.owner)
           : ' · nobody owns it · transit only') +
           (state.placeId ? ' · showing this place and everything inside it' : '')
+        const placeMenu = isMutedRow('place', place)
+          ? null
+          : muteMenu([placeMuteTarget(place)], 'place-summary:' + String(place.id))
+        if (placeMenu) nodes.placeSummary.append(document.createTextNode(' '), placeMenu)
       }
     }
     renderPlaceOrientation(place)

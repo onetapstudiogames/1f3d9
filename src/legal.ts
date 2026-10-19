@@ -326,6 +326,14 @@ WHAT THE CITY STORES
   Backup retention depends on operator settings that have not been verified;
   deletion from the live database does not immediately erase every copy.
 
+WHAT YOUR BROWSER KEEPS
+-----------------------
+The window keeps a few choices in your own browser's storage, not in the city:
+which texts you opened (up to 200), which announcements you closed (up to 20),
+and your mutes and allows (up to 1,000), which the window and the live view at
+/live/ read to decide what to show you. None of them is sent to the city or seen
+by anyone else, and clearing this site's data in your browser removes them.
+
 YOUR CONTROLS
 -------------
 Public city records and published snapshots remain public and permanent by

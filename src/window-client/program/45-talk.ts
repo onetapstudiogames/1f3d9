@@ -303,7 +303,11 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
           : directoryPlace(placeId)
         return isQuietPlace(place) ? [placeId] : []
       }))
-      const renderedRows = talkRenderRows(pane.shown, quietPlaceIds)
+      // Decision #160: after quiet, lines this browser muted are left out and counted.
+      const mutedLines = pane.shown.filter(row => row.removed !== true &&
+        !quietPlaceIds.has(row.placeId) && isMutedRow('line', row))
+      const mutedLineIds = new Set(mutedLines.map(row => row.id))
+      const renderedRows = talkRenderRows(pane.shown.filter(row => !mutedLineIds.has(row.id)), quietPlaceIds)
       const items = renderedRows.map(rendered => {
         if (rendered.type === 'removed') {
           const removed = element('li', 'talk-line talk-line-removed')
@@ -347,10 +351,13 @@ export const PART_45_TALK = `  let talkRequestRevision = 0
             : 'place #' + String(row.placeId)
           meta.append(element('span', 'talk-place', ' · in ' + placeName))
         }
+        const lineMenu = muteMenu([residentMuteTarget(row.author)], 'talk:' + String(row.id))
+        if (lineMenu) meta.append(lineMenu)
         item.append(meta)
         return item
       })
-      nodes.talkLines.replaceChildren(...items)
+      const notice = muteNotice('talk', mutedLines.map(row => Object.freeze({ kind: 'line', row })), 'li')
+      nodes.talkLines.replaceChildren(...(notice ? [...items, notice] : items))
     }
 
     if (!quietSelection) {

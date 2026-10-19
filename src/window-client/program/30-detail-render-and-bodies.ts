@@ -18,22 +18,31 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
     }
     if (target.kind === 'place' || target.kind === 'resident') {
       const subject = currentDrawingDetailSubject(target)
+      // Decision #160: a place or resident this browser muted shows only that it is hidden.
+      const muted = Boolean(subject && isMutedRow(target.kind, subject.row))
       if (nodes.detailKind) nodes.detailKind.textContent = target.kind === 'place'
         ? 'Public place · live current drawing'
         : 'Public resident · live current drawing'
-      if (nodes.detailTitle) nodes.detailTitle.textContent = subject?.title || (
+      if (nodes.detailTitle) nodes.detailTitle.textContent = (!muted && subject?.title) || (
         target.kind === 'place' ? 'Place #' + String(target.id) : 'Resident #' + String(target.id)
       )
       if (nodes.detailBody) {
-        if (!subject) {
+        if (muted) {
+          scrubMutedShareHead(target.kind, target.id)
+          nodes.detailBody.replaceChildren(mutedDetailNode(target.kind, subject.row))
+        } else if (!subject) {
           nodes.detailBody.replaceChildren(element(
             'p',
             'empty-row',
             'This public ' + target.kind + ' is not available now.',
           ))
         } else {
+          const menu = muteMenu([target.kind === 'place'
+            ? placeMuteTarget(subject.row)
+            : residentMuteTarget(subject.row.handle)], 'detail:' + target.kind + ':' + String(target.id))
           nodes.detailBody.replaceChildren(
             element('p', 'record-detail-meta', subject.meta),
+            ...(menu ? [menu] : []),
             drawingDetailNode(target.kind, target.id, subject.title),
           )
         }
@@ -47,12 +56,14 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
     }
     const key = target.kind + ':' + String(target.id)
     const entry = state.details[key]
+    const recordMuted = Boolean(entry?.record &&
+      isMutedRow(target.kind === 'thing' ? 'thing-detail' : 'note-detail', entry.record))
     if (nodes.detailKind) nodes.detailKind.textContent = target.kind === 'thing'
       ? 'Public thing · live current record'
       : 'Public note · live current record'
     if (nodes.detailTitle) {
       if (target.kind === 'thing') {
-        const title = entry?.record?.name || 'Thing #' + String(target.id)
+        const title = (!recordMuted && entry?.record?.name) || 'Thing #' + String(target.id)
         nodes.detailTitle.replaceChildren(
           portraitNode('thing', target.id, title, entry?.record?.has_drawing === true),
           document.createTextNode(title),
@@ -73,6 +84,9 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         nodes.detailBody.replaceChildren(element(
           'p', 'empty-row', 'This public ' + target.kind + ' is not available now.',
         ))
+      } else if (recordMuted) {
+        scrubMutedShareHead(target.kind, target.id)
+        nodes.detailBody.replaceChildren(mutedDetailNode(target.kind, entry.record))
       } else if (entry.error || !entry.record) {
         const message = element('p', 'error-row', 'This public detail could not be read.')
         const retry = element('button', 'detail-retry', 'Retry reading this detail')
@@ -82,7 +96,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       } else {
         const record = entry.record
         const meta = record.kind === 'thing'
-          ? 'made by ' + record.madeBy + ' · currently owned by ' + record.currentOwner +
+          ? 'made by ' + record.madeBy + ' · currently owned by ' + shownHandle(record.currentOwner) +
             ' · place #' + String(record.placeId) +
             (record.stateVersion ? ' · state box version ' + String(record.stateVersion) : '') +
             (record.copyOf ? ' · copy of thing #' + String(record.copyOf) : '') +
@@ -107,6 +121,10 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           meta,
         )
         const parts = [element('p', 'record-detail-meta', meta), body]
+        const recordMenu = muteMenu(record.kind === 'thing'
+          ? thingMuteTargets(record)
+          : noteMuteTargets(record, record.author), 'detail:' + record.kind + ':' + String(record.id))
+        if (recordMenu) parts.splice(1, 0, recordMenu)
         if (record.kind === 'thing') {
           parts.push(drawingDetailNode('thing', record.id, record.name))
         }
@@ -123,6 +141,17 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       window.queueMicrotask(() => nodes.detailBody?.querySelector(
         '[data-focus-key="' + CSS.escape(previousFocusKey) + '"]')?.focus())
     }
+  }
+
+  // A detail this browser muted: one line and Unhide, which shows its outline (no body, no
+  // name) and the choice that shows it again.
+  function mutedDetailNode(kind, row) {
+    const itemKind = kind === 'thing' ? 'thing-detail' : kind === 'note' ? 'note-detail' : kind
+    const item = Object.freeze({ kind: itemKind, row: kind === 'note'
+      ? Object.freeze({ ...row, created_at: row.createdAt })
+      : row })
+    return muteNotice('detail:' + kind + ':' + String(row.id), [item], 'div',
+      'This ' + kind + ' is hidden by your mutes in this browser.')
   }
 
   function walkToReadDetailNode(record) {

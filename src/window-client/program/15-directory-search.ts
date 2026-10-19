@@ -19,10 +19,16 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
     return [...replaced, ...additions]
   }
 
-  function directorySearchSources(snapshot) {
+  // Decision #160: places and residents this browser muted are left out of the search and
+  // the pickers; the search status counts the matches it left out.
+  function directorySearchSources(snapshot, includeMuted = false) {
+    const places = displayedDirectoryPlaces(snapshot)
+    const residents = state.directory.loaded ? state.directory.residents : snapshot.residents
     return {
-      places: displayedDirectoryPlaces(snapshot),
-      residents: state.directory.loaded ? state.directory.residents : snapshot.residents,
+      places: includeMuted ? places : places.filter(place => !isMutedRow('place', place)),
+      residents: includeMuted
+        ? residents
+        : residents.filter(resident => !isMutedRow('resident', { id: resident.id })),
       complete: state.directory.loaded,
     }
   }
@@ -36,6 +42,7 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
   function thingLookupSearchResults(snapshot) {
     return state.thingLookup.rows
       .filter(thing => !isQuietPlace(placeReference(snapshot, thing.place_id)))
+      .filter(thing => !isMutedRow('thing', thing))
       .map(thing => Object.freeze({
         kind: 'thing',
         id: thing.id,
@@ -63,7 +70,17 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
       ...thingResults.slice(0, 20 - directoryResults.length),
     ]
     const total = directoryPage.total + thingResults.length
+    const unmuted = state.mutes.length ? directorySearchSources(snapshot, true) : null
+    const mutedThings = state.mutes.length && state.thingLookup.query === state.directorySearch.trim()
+      ? state.thingLookup.rows.filter(thing =>
+        !isQuietPlace(placeReference(snapshot, thing.place_id)) && isMutedRow('thing', thing)).length
+      : 0
+    const mutedCount = unmuted
+      ? pageWindowDirectorySearch(unmuted.places, unmuted.residents, state.directorySearch).total -
+        directoryPage.total + mutedThings
+      : 0
     return Object.freeze({
+      mutedCount,
       ...directoryPage,
       results: Object.freeze(combined.slice(0, 20)),
       total,
@@ -117,6 +134,7 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
         : page.thingHasMore
           ? ' Showing the newest matching things; narrow the name or use the Things tab to continue.'
           : ''
+    const muteNoticeText = page.mutedCount ? ' ' + String(page.mutedCount) + MUTE_COUNT_WORDS : ''
     if (!query) {
       nodes.directorySearchStatus.textContent = (sources.complete ? '' : 'Currently loaded fallback: ') +
         String(sources.places.length) +
@@ -136,13 +154,15 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
           (page.placeCount === 1 ? ' place and ' : ' places and ') +
           String(page.residentCount) +
           (page.residentCount === 1 ? ' resident. ' : ' residents. ') +
-          'Narrow this search or use the complete selectors and Things tab to reach more.'
+          'Narrow this search or use the complete selectors and Things tab to reach more.' +
+          muteNoticeText
         : String(page.total) + (page.total === 1 ? ' result: ' : ' results: ') +
           String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
           String(page.residentCount) +
           (page.residentCount === 1 ? ' resident.' : ' residents.') +
           (page.thingCount ? ' ' + String(page.thingCount) +
-            (page.thingCount === 1 ? ' matching thing.' : ' matching things.') : '') + thingNotice
+            (page.thingCount === 1 ? ' matching thing.' : ' matching things.') : '') + thingNotice +
+          muteNoticeText
       : (page.hasMore
           ? 'Showing the first ' + String(results.length) + ' of ' + String(page.total) +
             ' matches in the currently loaded fallback: '
@@ -151,12 +171,13 @@ export const PART_15_DIRECTORY_SEARCH = `  function activeSelectionKey() {
               : ' results in the currently loaded fallback: ')) +
         String(page.placeCount) + (page.placeCount === 1 ? ' place and ' : ' places and ') +
         String(page.residentCount) +
-        (page.residentCount === 1 ? ' resident.' : ' residents.') + fallbackNotice + thingNotice
+        (page.residentCount === 1 ? ' resident.' : ' residents.') + fallbackNotice + thingNotice +
+        muteNoticeText
     if (!results.length) {
       const empty = element('div', 'directory-search-empty', sources.complete
-        ? 'No places, residents, or things match this search.' + thingNotice
+        ? 'No places, residents, or things match this search.' + thingNotice + muteNoticeText
         : 'No places, residents, or things in the currently loaded fallback match this search.' +
-          fallbackNotice + thingNotice)
+          fallbackNotice + thingNotice + muteNoticeText)
       empty.setAttribute('role', 'option')
       empty.setAttribute('aria-disabled', 'true')
       nodes.directorySearchResults.replaceChildren(empty)

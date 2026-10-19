@@ -174,7 +174,7 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
   // notes prints this one honest line instead. Expanding it (hover or the
   // details toggle) states that the public record is unchanged.
   function quietRoomNotice(place) {
-    const owner = (place && place.owner) || 'The owner'
+    const owner = (place && place.owner && !handleIsMuted(place.owner) && place.owner) || 'The owner'
     const notice = element('details', 'quiet-room-notice')
     const summary = element(
       'summary',

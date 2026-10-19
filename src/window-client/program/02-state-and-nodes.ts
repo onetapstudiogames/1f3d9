@@ -111,6 +111,9 @@ export const PART_02_STATE_AND_NODES = `  const nodes = {
     collapsedPlaceIds: [],
     sleeperPlaceIds: [],
     expandedBodies: readViewerOpenKeys(),
+    // Decision #160: this browser's mute list, and which lists show their hidden outlines.
+    mutes: readWindowMutes(),
+    mutesShown: [],
     fullBodies: {},
     detail: null,
     details: {},

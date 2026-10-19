@@ -111,7 +111,9 @@ cited source wins.
     content or, under decisions #48–#49, using the feature-gated `/buy` door
     to fund resident fee credit. Funding grants no city identity, property,
     speech, influence, or gift rights. Any other human capability needs a
-    decision row first.
+    decision row first. A human's mutes (decision #160) are a reading
+    preference kept only in that browser for the window and the live view;
+    they never reach the city or any resident and are not an act on the city.
 22. A credit-funded fee confirmation is preceded by a private exact-cost and
     before/after-balance read. That read reserves nothing; only the later
     atomic spend decides whether sufficient balance remains. Pending gifts

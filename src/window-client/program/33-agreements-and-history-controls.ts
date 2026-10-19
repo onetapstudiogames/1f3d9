@@ -49,13 +49,14 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
         const acceded = agreement.acceded.includes(party)
         const signed = agreement.signatures.includes(party)
         const chip = element('span', 'signature-chip')
-        const resident = residentReference(snapshot, party)
+        // Decision #160: a party this browser muted stays unnamed here.
+        const resident = handleIsMuted(party) ? null : residentReference(snapshot, party)
         if (resident) {
           chip.append(portraitNode(
             'resident', resident.id, party, resident.has_drawing, 'signature-portrait',
           ))
         }
-        chip.append(document.createTextNode((acceded ? '+ ' : signed ? '✓ ' : '○ ') + party))
+        chip.append(document.createTextNode((acceded ? '+ ' : signed ? '✓ ' : '○ ') + shownHandle(party)))
         chip.dataset.signed = String(signed)
         if (acceded) {
           chip.dataset.acceded = 'true'

@@ -52,8 +52,11 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
     }
     autoLoadFilteredHistory('notes', filters, historyEntry('notes', filters))
     const entry = historyEntry('notes', filters)
-    const notes = entry.rows
     const placeOf = placeId => placeReference(snapshot, placeId)
+    // Decision #160: after quiet, notes this browser muted are left out and counted.
+    const muted = splitMutedRows('note', entry.rows, placeOf)
+    const notes = muted.shown
+    const notice = muteNotice('conversations:' + historyKey('notes', filters), muted.hidden)
     if (renderHistoryOutcome(nodes.conversations, entry, Object.freeze({
       loading: 'Fetching this conversation…',
       failure: 'Conversation could not be loaded. Retry below.',
@@ -74,6 +77,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
       const list = element('div', 'note-list')
       list.__viewerListKey = groupKey + ':notes'
       list.append(...notes.map(note => noteCard(note, placeReference(snapshot, note.place_id))))
+      if (notice) list.append(notice)
       const currentGroup = [...nodes.conversations.children].find(node =>
         node.__viewerGroupKey === groupKey)
       if (currentGroup) {
@@ -109,6 +113,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         }
         return card
       }))
+      if (notice) list.append(notice)
       renderViewerList(
         nodes.conversations,
         list,
@@ -150,7 +155,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
   function activitySemantics(event, snapshot) {
     const placeId = eventPlaceId(event, snapshot)
     const place = placeReference(snapshot, placeId)
-    const location = windowPlaceLabel(placeId, place)
+    const location = shownPlaceLabel(placeId, place)
     let description = event.verb
     if (event.kind === 'action' && event.detail.action) {
       const applied = !event.detail.status || event.detail.status === 'applied'
@@ -159,11 +164,11 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         : 'tried to ' + actionAttempt(event.detail.action)
       if ((event.detail.action === 'move' || event.detail.action === 'go_home') &&
           event.detail.from_place_id && event.detail.to_place_id) {
-        const from = windowPlaceLabel(
+        const from = shownPlaceLabel(
           event.detail.from_place_id,
           placeReference(snapshot, event.detail.from_place_id),
         )
-        const to = windowPlaceLabel(
+        const to = shownPlaceLabel(
           event.detail.to_place_id,
           placeReference(snapshot, event.detail.to_place_id),
         )
@@ -183,7 +188,7 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
     } else if (event.kind === 'thing_moved' && event.detail.mode === 'carry' &&
         event.detail.thing_id) {
       description = 'carried Thing #' + String(event.detail.thing_id) + ' with them'
-      const from = windowPlaceLabel(
+      const from = shownPlaceLabel(
         event.detail.from_place_id,
         placeReference(snapshot, event.detail.from_place_id),
       )
@@ -261,7 +266,11 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
     // instead of falsely reporting an empty view.
     autoLoadFilteredHistory('events', filters, historyEntry('events', filters))
     const entry = historyEntry('events', filters)
-    const events = entry.rows
+    // Decision #160: happenings by or about what this browser muted are left out and
+    // counted; one that names no place is judged where its actor stands.
+    const muted = splitMutedRows('event', entry.rows, null,
+      event => residentReference(snapshot, event.actor)?.current_place_id ?? null)
+    const events = muted.shown
     if (renderHistoryOutcome(nodes.activity, entry, Object.freeze({
       loading: 'Fetching happenings that match this view…',
       failure: 'Happenings could not be loaded. Retry below.',
@@ -288,9 +297,18 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         description,
       )
       row.append(copy, timeNode(event.at, 'activity-time'))
+      const actorMenu = SAFE_SYSTEM_EVENT_ACTORS.has(event.actor)
+        ? null
+        : muteMenu([residentMuteTarget(event.actor)], 'activity:' + String(event.id))
+      if (actorMenu) row.append(actorMenu)
       const thingId = activityThingId(event)
-      if (thingId) {
-        const thing = namedThingReference(snapshot, thingId)
+      const namedThing = thingId ? namedThingReference(snapshot, thingId) : null
+      const mutedThing = thingIsMuted(thingId, namedThing)
+      if (thingId && mutedThing) {
+        // Decision #160: the happening stays, but a thing this browser hides is not named.
+        row.append(element('span', 'activity-thing-reference', MUTED_THING_LABEL))
+      } else if (thingId) {
+        const thing = namedThing
         const label = thing?.name || 'Thing #' + String(thingId)
         const reference = element('span', 'activity-thing-reference')
         reference.append(
@@ -311,7 +329,8 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
           ? null
           : viewerResidentPresentation(residentReference(snapshot, event.actor)),
         thing: thingId ? (() => {
-          const thing = namedThingReference(snapshot, thingId)
+          if (mutedThing) return Object.freeze({ id: thingId, muted: true })
+          const thing = namedThing
           return thing ? Object.freeze({
             id: thing.id,
             name: thing.name,
@@ -320,7 +339,9 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
         })() : null,
       }))
     })
-    renderViewerRows(nodes.activity, 'happenings:' + historyKey('events', filters), rows)
+    const notice = muteNotice('happenings:' + historyKey('events', filters), muted.hidden, 'li')
+    renderViewerRows(nodes.activity, 'happenings:' + historyKey('events', filters),
+      notice ? [...rows, notice] : rows)
     renderHistoryControl(nodes.happeningsPage, 'events', 'happenings', filters)
   }
 

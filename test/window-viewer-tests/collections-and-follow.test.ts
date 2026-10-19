@@ -230,7 +230,8 @@ export function registerWindowCollectionsAndFollowTests(): void {
   })
 
   test('all-place conversations preserve the server newest-first order', () => {
-    assert.match(WINDOW_JS, /const notes = entry\.rows/)
+    // Decision #160 leaves out what this browser muted without reordering what stays.
+    assert.match(WINDOW_JS, /const muted = splitMutedRows\('note', entry\.rows, placeOf\)\s*\n\s*const notes = muted\.shown/)
     assert.match(WINDOW_JS, /noteCard\(note, placeOf\(note\.place_id\)\)/)
     assert.doesNotMatch(WINDOW_JS, /const placeIds = \[\.\.\.new Set\(notes\.map/)
   })

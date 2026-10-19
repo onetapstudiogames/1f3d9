@@ -1,2 +1,4 @@
 * text=auto eol=lf
 
+# Shared byte for byte with 1f3d9-live (decision #160); never normalise its line endings.
+test/fixtures/browser-mutes-fixture.json -text
