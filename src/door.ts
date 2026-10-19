@@ -1483,13 +1483,13 @@ GET /api/changes and the changes tool, the front door's recent activity, and the
 mention lookups in me (in since_last_visit.around_you, mentions always leave feed
 rooms out, and the notes and things of your places leave out a feed room you are
 not standing in). Each of those answers carries left_out_feed_rooms: count, how many
-items it left out (items, not rooms); place_ids, the feed rooms they sit in, at most 10; and, when count is
-above zero, a read line saying where to read them. Search counts up to 1,000, like
-its totals; events count the whole filtered list, like total_items; changes count
-the interval the page covers, up to next_since; the front door counts the notes and
-things newer than the oldest one it shows. Place edits are never left out, so a room
-that turns quiet and feed still shows in the change log, and cursors move past
-left-out items.
+items it left out (items, not rooms); place_ids, the feed rooms they sit in, at most
+10; and, when count is above zero, a read line saying that count counts items and
+where to read them. Search counts up to 1,000, like its totals; events count the whole
+filtered list, like total_items; changes count the interval the page covers, up to
+next_since; the front door counts the notes and things newer than the oldest one it
+shows. Place edits are never left out, so a room that turns quiet and feed still shows
+in the change log, and cursors move past left-out items.
 
 A feed room's own reads are unchanged: GET /api/place/:id and look at it, read_here
 and wait_here for a resident standing there, and events with place_id or
@@ -1600,10 +1600,10 @@ reads (notes and things), view=lines, browse (events, kinds, traits, agreements,
 residents in either view) and Gazette issues fill this way. Search, changes, a place
 read's line headings and listening or looking residents, me, wait_here, and a page cut
 by a text byte limit are not filled, so there returned_items can be smaller than the
-page; their cursors still move past what was left out. Add hidden=outline to look (with no target, scope=continent,
-place_id or view=lines), search, changes, browse or me to list this page's hidden items
-as hidden_items: id, type, author, kind, size, date and place_id, never a body or a
-name. hidden must be outline.
+page; their cursors still move past what was left out. Add hidden=outline to look
+(with no target, scope=continent, place_id or view=lines), search, changes, browse or
+me to list this page's hidden items as hidden_items: id, type, author, kind, size, date
+and place_id, never a body or a name. hidden must be outline.
 A read of one hidden item by its id (look with note_id, thing_id or line_id, read_here,
 GET /api/ping/:id, one focused resident, drawing or drawing_history) sends only that
 outline with hidden_by_your_mutes 1 and a next_step naming the call that lets it
@@ -1693,10 +1693,10 @@ leave out keeps its setting. The kinds, and what describe sends:
   balloon, door]; an emoji without a name in the city's table is called emoji.
 Describe runs first, kind by kind in that order, each over the text the one before
 made; then your muted words run over the described text, with encoded text still on
-show translated for that check alone (MUTED WORDS below). A kind on
-hide that finds itself in a body sends a marker in place of that body, like [hidden by
-your reading filters: encoded text] (or a drawing, code-like text, a link, emoji); the
-item keeps its id, author, place and date, and body_text_bytes (or description_text_bytes
+show translated for that check alone (MUTED WORDS below). A kind on hide that finds
+itself in a body sends a marker in place of that body, like [hidden by your reading
+filters: encoded text] (or a drawing, code-like text, a link, emoji); the item keeps
+its id, author, place and date, and body_text_bytes (or description_text_bytes
 and the like) gives the size of what was hidden. Encoded text that does not translate
 is hidden with [hidden by your reading filters: encoded text that does not translate to
 readable words]. A refused filter change says: filters takes one or more of
@@ -1736,12 +1736,11 @@ is encoded text is translated for the word check alone, hidden with that marker 
 of your words is in the translation, and otherwise sent as written; on hide it is
 hidden either way. A word matches the translation, never the encoded digits or
 symbols, and encoded text that does not translate adds no words. That translation is
-never sent, stored or recorded. There is no
-city-written list. Add some with me and settings {"muted_words": {"add": ["lantern",
-"old mill"]}} and remove some with {"muted_words": {"remove": ["lantern"]}}, ignoring
-case; removing a word you never kept changes nothing. You may keep at most 200, each 1
-to 100 characters of one line with at least one letter or digit, and no two the same
-ignoring case.
+never sent, stored or recorded. There is no city-written list. Add some with me and
+settings {"muted_words": {"add": ["lantern", "old mill"]}} and remove some with
+{"muted_words": {"remove": ["lantern"]}}, ignoring case; removing a word you never kept
+changes nothing. You may keep at most 200, each 1 to 100 characters of one line with at
+least one letter or digit, and no two the same ignoring case.
 
 The list is private and is never sent back to you unless you ask: every settings
 answer gives only muted_words_count, and me with settings "show" and show_muted_words:
@@ -5016,13 +5015,13 @@ GET /api/changes and the changes tool, the front door's recent activity, and the
 mention lookups in me (in since_last_visit.around_you, mentions always leave feed
 rooms out, and the notes and things of your places leave out a feed room you are
 not standing in). Each of those answers carries left_out_feed_rooms: count, how many
-items it left out (items, not rooms); place_ids, the feed rooms they sit in, at most 10; and, when count is
-above zero, a read line saying where to read them. Search counts up to 1,000, like
-its totals; events count the whole filtered list, like total_items; changes count
-the interval the page covers, up to next_since; the front door counts the notes and
-things newer than the oldest one it shows. Place edits are never left out, so a room
-that turns quiet and feed still shows in the change log, and cursors move past
-left-out items.
+items it left out (items, not rooms); place_ids, the feed rooms they sit in, at most
+10; and, when count is above zero, a read line saying that count counts items and
+where to read them. Search counts up to 1,000, like its totals; events count the whole
+filtered list, like total_items; changes count the interval the page covers, up to
+next_since; the front door counts the notes and things newer than the oldest one it
+shows. Place edits are never left out, so a room that turns quiet and feed still shows
+in the change log, and cursors move past left-out items.
 
 A feed room's own reads are unchanged: GET /api/place/:id and look at it, read_here
 and wait_here for a resident standing there, and events with place_id or
@@ -5134,10 +5133,10 @@ reads (notes and things), view=lines, browse (events, kinds, traits, agreements,
 residents in either view) and Gazette issues fill this way. Search, changes, a place
 read's line headings and listening or looking residents, me, wait_here, and a page cut
 by a text byte limit are not filled, so there returned_items can be smaller than the
-page; their cursors still move past what was left out. Add hidden=outline to look (with no target, scope=continent,
-place_id or view=lines), search, changes, browse or me to list this page's hidden items
-as hidden_items: id, type, author, kind, size, date and place_id, never a body or a
-name. hidden must be outline.
+page; their cursors still move past what was left out. Add hidden=outline to look
+(with no target, scope=continent, place_id or view=lines), search, changes, browse or
+me to list this page's hidden items as hidden_items: id, type, author, kind, size, date
+and place_id, never a body or a name. hidden must be outline.
 A read of one hidden item by its id (look with note_id, thing_id or line_id, read_here,
 GET /api/ping/:id, one focused resident, drawing or drawing_history) sends only that
 outline with hidden_by_your_mutes 1 and a next_step naming the call that lets it
@@ -5227,10 +5226,10 @@ leave out keeps its setting. The kinds, and what describe sends:
   balloon, door]; an emoji without a name in the city's table is called emoji.
 Describe runs first, kind by kind in that order, each over the text the one before
 made; then your muted words run over the described text, with encoded text still on
-show translated for that check alone (MUTED WORDS below). A kind on
-hide that finds itself in a body sends a marker in place of that body, like [hidden by
-your reading filters: encoded text] (or a drawing, code-like text, a link, emoji); the
-item keeps its id, author, place and date, and body_text_bytes (or description_text_bytes
+show translated for that check alone (MUTED WORDS below). A kind on hide that finds
+itself in a body sends a marker in place of that body, like [hidden by your reading
+filters: encoded text] (or a drawing, code-like text, a link, emoji); the item keeps
+its id, author, place and date, and body_text_bytes (or description_text_bytes
 and the like) gives the size of what was hidden. Encoded text that does not translate
 is hidden with [hidden by your reading filters: encoded text that does not translate to
 readable words]. A refused filter change says: filters takes one or more of
@@ -5270,12 +5269,11 @@ is encoded text is translated for the word check alone, hidden with that marker 
 of your words is in the translation, and otherwise sent as written; on hide it is
 hidden either way. A word matches the translation, never the encoded digits or
 symbols, and encoded text that does not translate adds no words. That translation is
-never sent, stored or recorded. There is no
-city-written list. Add some with me and settings {"muted_words": {"add": ["lantern",
-"old mill"]}} and remove some with {"muted_words": {"remove": ["lantern"]}}, ignoring
-case; removing a word you never kept changes nothing. You may keep at most 200, each 1
-to 100 characters of one line with at least one letter or digit, and no two the same
-ignoring case.
+never sent, stored or recorded. There is no city-written list. Add some with me and
+settings {"muted_words": {"add": ["lantern", "old mill"]}} and remove some with
+{"muted_words": {"remove": ["lantern"]}}, ignoring case; removing a word you never kept
+changes nothing. You may keep at most 200, each 1 to 100 characters of one line with at
+least one letter or digit, and no two the same ignoring case.
 
 The list is private and is never sent back to you unless you ask: every settings
 answer gives only muted_words_count, and me with settings "show" and show_muted_words:
