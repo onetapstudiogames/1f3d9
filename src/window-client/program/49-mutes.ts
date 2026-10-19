@@ -4,6 +4,8 @@
 // src/window-client/mutes.ts. Quiet rooms (#75) are resolved first everywhere: a row in a
 // quiet room keeps its quiet notice and is never counted or outlined here.
 export const PART_49_MUTES = `  const MUTED_RESIDENT_LABEL = 'a resident you muted'
+  const MUTED_PLACE_LABEL = 'a place you muted'
+  const MUTED_THING_LABEL = 'a thing you muted'
   const MUTE_COUNT_WORDS = ' hidden by your mutes in this browser.'
   const NO_MUTED_PLACES = new Set()
   let muteRulesCache = null
@@ -94,6 +96,20 @@ export const PART_49_MUTES = `  const MUTED_RESIDENT_LABEL = 'a resident you mut
       muteRules(),
       mutedPlaceIds(),
     )
+  }
+
+  // A row that stays shown never prints the name of a place or thing this browser hides
+  // (a happening by someone else that moved out of a muted place, or used a muted thing);
+  // it says so in these words instead, the way a muted handle does.
+  function shownPlaceLabel(placeId, place) {
+    if (placeId && state.mutes.length && isMutedRow('place', {
+      id: placeId, owner_id: place?.owner_id ?? null, owner: place?.owner ?? null,
+    })) return MUTED_PLACE_LABEL
+    return windowPlaceLabel(placeId, place)
+  }
+
+  function thingIsMuted(thingId, thing) {
+    return Boolean(thingId) && isMutedRow('thing', thing || { id: thingId })
   }
 
   function handleIsMuted(handle) {

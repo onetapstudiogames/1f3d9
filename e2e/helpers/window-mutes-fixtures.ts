@@ -106,7 +106,23 @@ function event(id: number, actor: string, placeId: number, minutes: number) {
   }
 }
 
+function happening(id: number, actor: string, kind: string, verb: string, detail: Record<string, unknown>, minutes: number) {
+  return { id, actor, kind, verb, at: new Date(Date.parse(AT) - minutes * 60_000).toISOString(), detail }
+}
+
+// Happenings by residents nobody muted that point at a thing or a place the browser hides:
+// the row stays, but the hidden thing or place is never named in it.
+export const POINTING_EVENTS = Object.freeze([
+  happening(7008, ARCHIVIST.handle, 'action', 'moved',
+    { action: 'move', status: 'applied', from_place_id: 403, to_place_id: 402 }, 0.4),
+  happening(7007, KEEPER.handle, 'chance_rolled', 'rolled a chance', { thing_id: 9104 }, 0.5),
+  happening(7006, ARCHIVIST.handle, 'thing_edited', 'edited a thing', { thing_id: 9102 }, 0.6),
+  happening(7005, KEEPER.handle, 'action', 'used',
+    { action: 'use', status: 'applied', thing_id: 9101, place_id: 402 }, 0.7),
+])
+
 export const EVENTS = Object.freeze([
+  ...POINTING_EVENTS,
   event(7004, FOUNDER.handle, MUTED_CELLAR, 1),
   event(7003, CELLAR.handle, MUTED_CELLAR, 2),
   event(7002, KEEPER.handle, LANTERN_ROW, 3),

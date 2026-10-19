@@ -303,8 +303,10 @@ is not exactly the shape above, or storage the browser blocks, counts as no list
 
 Each list that hid something says "N hidden by your mutes in this browser." with Unhide,
 which lists the hidden rows as outlines (number, author or maker, kind, size, date, never
-a body) with Unmute, or Allow for a note, thing or place under a wider mute. City facts
-lists every choice with its undo. The window's copy of the parser and rule is
+a body) with Unmute, or Allow for a note, thing or place under a wider mute. A row that
+stays shown never names what the list hides: a muted handle reads "a resident you muted",
+and a hidden place or thing a shown happening points at reads "a place you muted" or "a
+thing you muted". City facts lists every choice with its undo. The window's copy of the parser and rule is
 `src/window-client/mutes.ts`; the live view's is `src/browser-mutes.ts` in 1f3d9-live; one
 fixture, `test/fixtures/browser-mutes-fixture.json`, is kept byte for byte the same in both
 repositories and drives both test suites.

@@ -2877,9 +2877,13 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   this browser." with Unhide, which lists the hidden rows as outlines (number,
   author or maker, kind, size, date, never a body or a thing's name) with Unmute or
   Allow. A muted handle in a row shown for another reason reads "a resident you
-  muted"; a direct link to a muted note or thing shows only that it is hidden. City
-  facts lists every choice with its undo. The pickers and directory search leave
-  muted places and residents out, and the search status counts them.
+  muted", and a hidden place or thing that a shown happening points at (a move out
+  of a muted place, a use of a muted maker's thing) reads "a place you muted" or "a
+  thing you muted"; a direct link to a muted note or thing shows only that it is
+  hidden. City facts lists every choice with its undo. The place picker leaves
+  muted places out and the resident picker leaves muted residents out (it shows no
+  location, so a resident standing in a muted place stays listed); directory search
+  leaves both out, and the search status counts them.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
   `/window` pattern) showing a bounded city outline, an incrementally loaded roster, and
   what is happening in the squares. Watching the city is the whole human appeal; look,

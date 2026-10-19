@@ -163,6 +163,9 @@ test('a muted resident leaves no handle, note body, line or thing name in the pa
 
   await page.getByRole('tab', { name: 'Happenings', exact: true }).click()
   await expect(page.locator('#activity-list .mute-count')).toHaveText('1 hidden by your mutes in this browser. Unhide')
+  // A shown happening that used the muted resident's thing says "a thing you muted".
+  await expect(page.locator('#activity-list [data-viewer-record-key="event:7005"]')).toContainText('a thing you muted')
+  await expect(page.locator('#activity-list [data-viewer-record-key="event:7006"]')).toContainText('control_lamp')
   await scan('Happenings')
 
   await page.getByRole('tab', { name: 'Agreements', exact: true }).click()
@@ -237,6 +240,17 @@ test('a muted place hides what is inside it, an allowed place inside it shows, a
   await page.getByRole('tab', { name: 'Happenings', exact: true }).click()
   await expect(page.locator('#activity-list .mute-count')).toHaveText('1 hidden by your mutes in this browser. Unhide')
   await expect(page.locator('#activity-list')).toContainText(FOUNDER.handle)
+  // Rows that stay (a move out of the cellar, a chance on a cellar thing, the founder's own
+  // happening there) say "a place you muted" and "a thing you muted", never the names.
+  const activity = page.locator('#activity-list')
+  await expect(activity).toContainText('moved from a place you muted to harbor_district / lantern_row')
+  await expect(activity.locator('[data-viewer-record-key="event:7007"]')).toContainText('a thing you muted')
+  await expect(activity.locator('[data-viewer-record-key="event:7007"]')).toContainText('Observed at a place you muted')
+  const happeningsHtml = await activity.evaluate(node => node.outerHTML)
+  for (const word of ['muted_cellar', SENTINELS.cellarThing, '/window/thing/9104']) {
+    expect(happeningsHtml, 'Happenings carried ' + word).not.toContain(word)
+  }
+  await shot(page, 'happenings-place-muted-' + String(page.viewportSize()?.width))
 
   // Watching the muted place itself: its own words stay out, and the place can be shown again.
   await page.evaluate(id => { window.location.hash = '#view=place&place=' + String(id) }, MUTED_CELLAR)
@@ -311,6 +325,15 @@ test('the window writes the list only when the human chooses, in the shape the l
   await row.getByRole('button', { name: 'Mute kind lamp' }).click()
   expect(await stored(page)).toBe(list([{ type: 'kind', id: 39, choice: 'mute' }]))
   await expect(page.locator('#things-list .mute-count')).toHaveText('2 hidden by your mutes in this browser. Unhide')
+  // Happenings that touched a thing of the muted kind stay, but never name it.
+  await page.getByRole('tab', { name: 'Happenings', exact: true }).click()
+  const edited = page.locator('#activity-list [data-viewer-record-key="event:7006"]')
+  await expect(edited).toContainText('a thing you muted')
+  await expect(page.locator('#activity-list [data-viewer-record-key="event:7005"]')).toContainText('a thing you muted')
+  const happeningsHtml = await page.locator('#activity-list').evaluate(node => node.outerHTML)
+  for (const word of ['control_lamp', SENTINELS.thing, '/window/thing/9102', '/window/thing/9101']) {
+    expect(happeningsHtml, 'Happenings carried ' + word).not.toContain(word)
+  }
   const fixture = JSON.parse(readFileSync(new URL('../test/fixtures/browser-mutes-fixture.json', import.meta.url), 'utf8')) as { key: string }
   expect(fixture.key).toBe(KEY)
 })
