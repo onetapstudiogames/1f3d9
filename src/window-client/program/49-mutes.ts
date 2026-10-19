@@ -378,8 +378,10 @@ export const PART_49_MUTES = `  const MUTED_RESIDENT_LABEL = 'a resident you mut
       : null
   }
 
+  // The world itself (no owner, no parent) offers no Mute: one click would empty the window.
   function placeMuteTarget(place) {
     if (!place || !safeId(place.id)) return null
+    if (!place.owner && (place.parent_id ?? null) === null) return null
     const ownerId = safeId(place.owner_id) || muteResidentId(place.owner)
     if (place.owner && !ownerId) return null
     if (windowMuteHelpers.isFounder(ownerId)) return null
