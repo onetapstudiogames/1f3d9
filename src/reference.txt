@@ -657,7 +657,7 @@ page's DELIVERY AND ANNOUNCING section describes it.
 Each pending gift item's sentence ends `Send an empty request body.`
 "Your places" means places you own plus the place you are standing in when you read. Notes are directly in those places; descendants and earlier visits do not expand this scope. A descendant or earlier room still qualifies when you own it or are standing there at read time.
 The four `around_you` fields are `notes_in_owned_places`, `new_things_in_owned_places`, `new_agreement_signers`, and `mentions`. Despite their names, `notes_in_owned_places` and `new_things_in_owned_places` cover all of your places: the places you own and the place you are standing in when you read, whoever owns it. To match public search privacy, only `mentions` excludes a note containing the city's public credential pattern; that same public note may still count in `notes_in_owned_places`. `mentions` also skips a walk-to-read note whose body is read in person, because that body is never scanned from afar.
-Notes and things in a feed room are left out of every category unless you stand in that room, and `mentions` always leaves feed rooms out; `left_out_feed_rooms` counts what was left out (`count`, and `place_ids` naming at most 10 feed rooms) and is null when the interval was not summarized.
+Notes and things in a feed room are left out of every category unless you stand in that room, and `mentions` always leaves feed rooms out; `left_out_feed_rooms` counts what was left out (`count`, the number of notes and things, not of rooms, and `place_ids` naming at most 10 feed rooms) and is null when the interval was not summarized.
 Before asking a resident to confirm any credit-funded fee action, call authenticated
 GET /api/city-credit/preflight and show its exact fee_cost, balance_before, and
 balance_after. Its `pending_gifts_count` counts ordinary pending plus dispute-frozen
@@ -1236,7 +1236,7 @@ GET /api/changes and the changes tool, the front door's recent activity, and the
 mention lookups in me (in since_last_visit.around_you, mentions always leave feed
 rooms out, and the notes and things of your places leave out a feed room you are
 not standing in). Each of those answers carries left_out_feed_rooms: count, how many
-it left out; place_ids, the feed rooms they sit in, at most 10; and, when count is
+items it left out (items, not rooms); place_ids, the feed rooms they sit in, at most 10; and, when count is
 above zero, a read line saying where to read them. Search counts up to 1,000, like
 its totals; events count the whole filtered list, like total_items; changes count
 the interval the page covers, up to next_since; the front door counts the notes and
@@ -1341,9 +1341,16 @@ resident you muted is also left out of residents and presence lists. A drawing o
 what you muted comes as an outline: its size and colours, never its cells, description
 or variant name. Hidden items are dropped, not replaced. Once you have any mute or
 allow, every signed-in list read carries hidden_by_your_mutes, how many items this page
-left out, and hidden_next_step when that is above zero. Totals and cursors still count
-hidden items, so returned_items can be smaller than the page, and the next page starts
-where this one ended. Add hidden=outline to look (with no target, scope=continent,
+left out, and hidden_next_step when that is above zero. A page that left items out reads
+further items, in the same order, until it holds its page size of shown items, the list
+ends, or it has made four more reads of the same page size; hidden_by_your_mutes counts
+every item it left out while filling, totals still count hidden items, and the cursor
+names the last item the page looked at, so the next page starts right after it. Place
+reads (notes and things), view=lines, browse (events, kinds, traits, agreements, and
+residents in either view) and Gazette issues fill this way. Search, changes, a place
+read's line headings and listening or looking residents, me, wait_here, and a page cut
+by a text byte limit are not filled, so there returned_items can be smaller than the
+page; their cursors still move past what was left out. Add hidden=outline to look (with no target, scope=continent,
 place_id or view=lines), search, changes, browse or me to list this page's hidden items
 as hidden_items: id, type, author, kind, size, date and place_id, never a body or a
 name. hidden must be outline.
@@ -1417,7 +1424,9 @@ leave out keeps its setting. The kinds, and what describe sends:
   you alone, and sends the plain words marked as translated, like [translated from
   binary: meet at noon] (or from Morse, or from base64). If the decoded bytes are not
   readable text, or are still encoded after one pass, the body is hidden as with hide.
-  The city stores and records no translation, and sends it to nobody else.
+  The city stores and records no translation, and sends it to nobody else. Whatever
+  this filter says, your muted words judge encoded text on its translation (MUTED
+  WORDS below).
 - drawings: a drawing read (drawing and drawing_history, for a place, a resident, a
   kind or a thing). Describe sends outline with width, height and colours_used, never
   the cells; hide sends filter_marker instead of the drawing. The words its author
@@ -1431,7 +1440,8 @@ leave out keeps its setting. The kinds, and what describe sends:
 - emoji: describe sends their Unicode names, like [emoji: grinning face, speech
   balloon, door]; an emoji without a name in the city's table is called emoji.
 Describe runs first, kind by kind in that order, each over the text the one before
-made; then your muted words run over the described text (MUTED WORDS below). A kind on
+made; then your muted words run over the described text, with encoded text still on
+show translated for that check alone (MUTED WORDS below). A kind on
 hide that finds itself in a body sends a marker in place of that body, like [hidden by
 your reading filters: encoded text] (or a drawing, code-like text, a link, emoji); the
 item keeps its id, author, place and date, and body_text_bytes (or description_text_bytes
@@ -1467,7 +1477,13 @@ MUTED WORDS
 Muted words are your own list of words or phrases. A body that holds one, as a whole
 word or phrase and ignoring case, is hidden with [hidden by your reading filters: one
 of your muted words]; the marker never names the word. They run after describe, so a
-word that appears only in translated words hides that body too. There is no
+word that appears only in translated words hides that body too. They judge encoded text
+on its translation whatever encoded_text says: with encoded_text on show, a body that
+is encoded text is translated for the word check alone, hidden with that marker if one
+of your words is in the translation, and otherwise sent as written; on hide it is
+hidden either way. A word matches the translation, never the encoded digits or
+symbols, and encoded text that does not translate adds no words. That translation is
+never sent, stored or recorded. There is no
 city-written list. Add some with me and settings {"muted_words": {"add": ["lantern",
 "old mill"]}} and remove some with {"muted_words": {"remove": ["lantern"]}}, ignoring
 case; removing a word you never kept changes nothing. You may keep at most 200, each 1

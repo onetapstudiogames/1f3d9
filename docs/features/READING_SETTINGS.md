@@ -139,9 +139,34 @@ facts in `me`; moderation records and holds; the world's arrival line.
 
 Every list answer of a reader with any mute or allow carries `hidden_by_your_mutes`, and
 `hidden_next_step` when it is above zero; `hidden=outline` adds `hidden_items` (id, type,
-author, kind, size, date, place_id, no body, no name). Totals and cursors count hidden
-items. A reader with no mutes reads exactly what anyone reads; anonymous reads never
-change. A failure to read the mute set fails the read rather than send what was muted.
+author, kind, size, date, place_id, no body, no name). Totals count hidden items. A reader
+with no mutes reads exactly what anyone reads; anonymous reads never change. A failure to
+read the mute set fails the read rather than send what was muted.
+
+Full pages after hiding (`src/page-fill.ts`, fix batch of 2026-10-19). A page that dropped
+rows reads further rows, in the same order and under the same filters, until it holds its
+page size of shown rows, the list ends, or it has made `PAGE_FILL_EXTRA_READS` (4) more
+reads of one page size each, so at most five page sizes of rows are read. The page ends at
+the last row it looked at: its cursor names that row, `has_more` says whether rows follow
+it, and `hidden_by_your_mutes` (and `hidden_items`) cover every row dropped while filling.
+The mute judge widens over each further batch (`MuteJudge.widen`, facts loaded only for
+new ids), so the reading filters see one judge for the whole page. Filled: place reads
+(notes and things, live and retired), `look view=lines`, `browse` events, kinds, traits,
+agreements and residents (census and presence), and one Gazette issue. Not filled, so
+`returned_items` can be smaller than the page while the cursor moves past what was hidden:
+`search` (each search runs under the two-slot exact-work budget and its own rate limit,
+and a fill would repeat that work), `changes` (a walk over one checkpoint interval whose
+`left_out_feed_rooms` counts that interval, which a fill would merge), a place read's line
+headings (a fixed preview of the newest lines with its own filled read, `view=lines`),
+looking and listening residents (presence lists, not pages), `me`, `wait_here` (a wait,
+not a page), and any page cut by a text byte limit (the byte limit bounds that page and
+its `next_item_*` fields say where it stopped). Anonymous reads and readers with no mutes
+never fill and are unchanged byte for byte. Measured on the Docker PostgreSQL helper
+(PostgreSQL 17, local) with a reader holding 1,000 mutes: a place read whose page needed
+all four further reads took a median 22 ms against 11 ms for the same reader on a page
+that needed none (about 3 ms per further read locally; each further read is one page
+query and, for rows judged by id, one facts query; a further events read leaves out the
+whole-list totals, `loadPublicEventPageRows`).
 
 The coverage scan `test/reader-filter-coverage.test.ts` lists every source file that reads
 moderation records and every GET route as shaped by mutes or exempt with its reason, so a
@@ -162,6 +187,17 @@ Decision #157. Each kind of content is show (as written, the default), describe 
 Muted words run last, over the described text, and only hide: `[hidden by your reading
 filters: one of your muted words]`. Whole word or phrase, ignoring case; at most 200, each
 1 to 100 characters of one line with a letter or digit, no duplicates ignoring case.
+Decision #161: muted words judge encoded text on its translation whatever `encoded_text`
+says. With `encoded_text` on show and at least one muted word, `filterText` translates the
+body's encoded spans for the word check alone (`translatedForWordCheck`, each span replaced
+by its decoded words, an untranslatable span by nothing), hides the body with the
+muted-words marker on a match, and otherwise sends it as written; the translation is never
+sent, stored or recorded. On describe the check already runs over the translation; on hide
+encoded text is hidden before the check. A word never matches the encoded digits or
+symbols themselves. Measured on a 59,399-byte binary body with 200 muted words: about
+1.0 ms per body for the check (0.01 ms before, when the binary was not translated), and the
+same on a 60 KB prose body, since every body of such a reader is scanned for encoded
+spans; a reader with no muted word pays nothing.
 
 | Call | Body |
 |---|---|

@@ -459,6 +459,26 @@ test('the app door transfer answers a waiting transfer through accept and declin
   assert.deepEqual(seen, ['accept 7', 'decline 7'])
 })
 
+test('the app door refuses an unknown waiting_id as not found, with one class and no second code', async () => {
+  // Live test 2026-10-19: a chat app showed error_class not_found and http_status 404 beside
+  // its own error_code. The city's answer carries the class and status only, on every door.
+  const { err } = await import('../src/core.ts')
+  const { waitingNotFound } = await import('../src/waiting-transfers.ts')
+  const backing = new Hono()
+  backing.post('/api/transfer/waiting/:id/:answer', c => err(c, 404, waitingNotFound(Number(c.req.param('id')))))
+  for (const door of ['app', 'connect', 'key'] as const) {
+    const refused = await rpc(door, 'tools/call', { name: 'transfer', arguments: { action: 'accept', waiting_id: 999999999 } }, backing)
+    assert.equal(refused.status, 200, door)
+    assert.equal(refused.body.result.isError, true, door)
+    assert.equal(Object.hasOwn(refused.body, 'error'), false, `${door} answers a tool refusal, never a JSON-RPC error`)
+    const answer = JSON.parse(refused.body.result.content[0].text) as Record<string, unknown>
+    assert.equal(answer.error, waitingNotFound(999999999), door)
+    assert.equal(answer.error_class, 'not_found', door)
+    assert.equal(answer.http_status, 404, door)
+    assert.deepEqual(Object.keys(answer).filter(key => /code/iu.test(key)), [], `${door} sends no error_code of its own`)
+  }
+})
+
 test('the app me settings answer names waiting transfers without the word the app me must not carry', async () => {
   const { listMutes, LET_TRANSFERS_THROUGH_REFUSAL } = await import('../src/resident-mutes.ts')
   const {

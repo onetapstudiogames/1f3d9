@@ -151,13 +151,38 @@ test('muted words: whole word or phrase, ignoring case, after describe, and the 
   assert.deepEqual(run({}, 'the old   Mill road', ['old mill']).outcome, 'hidden')
   // A muted word that appears only in the translated words hides the body too.
   const encoded = binary('meet at the lantern')
-  assert.deepEqual(run({}, encoded, ['lantern']).outcome, 'shown', 'with encoded text on show the binary hides nothing')
   assert.deepEqual(run({ encoded_text: 'describe' }, encoded, ['lantern']), { text: READING_FILTER_MARKERS.muted_words, outcome: 'hidden' })
   assert.ok(!READING_FILTER_MARKERS.muted_words.includes('lantern'))
   // Characters with meaning in patterns are matched as written.
   assert.equal(run({}, 'I write c++ daily', ['c++']).outcome, 'hidden')
   assert.equal(run({}, 'from next-door (yes) to [you]? $5 a/b', ['next-door', '(yes)', '[you]?', '$5', 'a/b', 'x.*']).outcome, 'hidden')
   assert.equal(run({}, 'nothing here at all', ['next-door', '(yes)', '[you]?', '$5', 'a/b', 'x.*', '^', '\\']).outcome, 'shown')
+})
+
+test('muted words judge encoded text on its translation, whatever the encoded-text filter says (decision #161)', () => {
+  // The live specimen: a note wholly in binary, read with the muted word "tick".
+  const note = binary('sonoran-lark. you asked what one tick means. a tick is one second arriving on time')
+  const muted = { text: READING_FILTER_MARKERS.muted_words, outcome: 'hidden' }
+  assert.deepEqual(run({}, note, ['tick']), muted, 'on show the binary is translated for the check and hidden')
+  assert.deepEqual(run({ encoded_text: 'describe' }, note, ['tick']), muted, 'on describe, as before')
+  assert.equal(run({ encoded_text: 'hide' }, note, ['tick']).outcome, 'hidden', 'on hide it is hidden either way')
+  // No match: the body goes exactly as the filter says, and the translation is never sent.
+  assert.deepEqual(run({}, note, ['lantern']), { text: note, outcome: 'shown' }, 'show sends it as written')
+  assert.equal(run({ encoded_text: 'describe' }, note, ['lantern']).text.startsWith('[translated from binary: sonoran-lark.'), true)
+  assert.deepEqual(run({ encoded_text: 'hide' }, note, ['lantern']), { text: READING_FILTER_MARKERS.encoded_text, outcome: 'hidden' })
+  assert.equal(textFilter(DEFAULT_READING_FILTERS, []), null, 'no muted word: nothing is translated or checked')
+  // Words match the translation, never the digits: a muted word naming one byte's digits
+  // is no match on the raw binary, on show or on describe.
+  assert.deepEqual(run({}, note, ['01110011']), { text: note, outcome: 'shown' })
+  assert.equal(run({ encoded_text: 'describe' }, note, ['01110011']).outcome, 'described')
+  // Morse and base64 the same way, and a long run inside prose; prose words still count.
+  assert.deepEqual(run({}, MORSE_HELLO, ['world']), muted)
+  assert.deepEqual(run({}, base64('the lantern is lit tonight'), ['lantern']), muted)
+  assert.deepEqual(run({}, `start ${binary('the lantern '.repeat(4))} end`, ['lantern']), muted)
+  assert.deepEqual(run({}, `the lantern ${binary('quiet words only '.repeat(2))}`, ['lantern']), muted)
+  // A run that does not translate adds no words, so its digits never match.
+  const unreadable = binary('\u0000\u0001\u0002')
+  assert.deepEqual(run({}, unreadable, ['00000001']), { text: unreadable, outcome: 'shown' })
 })
 
 test('a credential inside translated words is redacted', () => {

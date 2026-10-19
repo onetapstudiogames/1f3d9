@@ -90,6 +90,7 @@ import {
   extractPublicCollectionRows,
   finalizePublicPage,
   loadPublicEventCollectionRows,
+  loadPublicEventPageRows,
   parsePublicPage,
   parsePublicRangeStart,
   PUBLIC_EVENT_WITHIN_MAX_SECONDS,
@@ -213,6 +214,7 @@ import {
   splitMutedResidents,
   type HiddenOutline,
 } from './reader-filter.ts'
+import { fillPage } from './page-fill.ts'
 import { mountResidentSettingsRoutes } from './resident-settings.ts'
 import { moderatePendingPingRows, pendingPingSummary } from './pending-ping-summary.ts'
 import { residentRefusalGuidance } from './resident-refusal.ts'
@@ -1144,16 +1146,45 @@ app.get('/api/residents', async c => {
   }
   const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, PUBLIC_PAGE_MAX)
   if (!parsed.ok) return err(c, 400, parsed.error)
+  // Mutes (decision #156): residents the reader muted are left out of the directory and
+  // counted, and a page they thinned reads further residents until it is full
+  // (src/page-fill.ts).
+  const listReader = await readerShape(c, false)
+  const listJudge = await judgeRead(listReader, {})
+  const presence = viewValue.value === 'presence'
+  const readListedPage = async (): Promise<Awaited<ReturnType<typeof readPublicResidentPage>>> => {
+    const first = await readPublicResidentPage(parsed, presence)
+    if (listJudge === null) return first
+    const filled = await fillPage({
+      limit: parsed.limit,
+      first: { rows: first.residents, hasMore: first.hasMore },
+      hidden: async rows => rows.map(row => splitMutedResidents(listJudge, [row]).hidden.length > 0),
+      next: async (after, size) => {
+        const more = await readPublicResidentPage(
+          { ok: true, cursor: Number(after.id), limit: size, fetchLimit: size + 1 },
+          presence,
+        )
+        return { rows: more.residents, hasMore: more.hasMore }
+      },
+    })
+    const last = filled.rows.at(-1)
+    return Object.freeze({
+      ...first,
+      residents: filled.rows,
+      hasMore: filled.hasMore,
+      nextBeforeId: filled.hasMore && last !== undefined ? Number(last.id) : null,
+    })
+  }
   let page: Awaited<ReturnType<typeof readPublicResidentPage>>
   let changeMarker: string | null = null
   try {
     if (minimumMarker === null) {
-      page = await readPublicResidentPage(parsed, viewValue.value === 'presence')
+      page = await readListedPage()
     } else {
       const stable = await readAtStablePublicChangeCheckpoint(
         executePublicQuery,
         minimumMarker,
-        () => readPublicResidentPage(parsed, viewValue.value === 'presence'),
+        readListedPage,
       )
       page = stable.value
       changeMarker = stable.changeMarker
@@ -1166,10 +1197,8 @@ app.get('/api/residents', async c => {
     throw error
   }
   if (minimumMarker !== null) c.header('Cache-Control', 'no-store')
-  // Mutes (decision #156): residents the reader muted are left out of the directory and counted.
-  const listReader = await readerShape(c, false)
   markReaderShaped(c, listReader)
-  const listed = splitMutedResidents(await judgeRead(listReader, {}), page.residents)
+  const listed = splitMutedResidents(listJudge, page.residents)
   return c.json({
     ...mutesFields(listReader, listed.hidden, hiddenQuery.outline),
     residents: listed.shown,
@@ -2048,26 +2077,44 @@ app.get('/api/events', async c => {
   if (afterMarkerValue.value !== null && minimumMarker === null) {
     return err(c, 400, 'after_change_marker must be a nonnegative decimal bigint')
   }
+  const eventFilters = {
+    kind: kind ?? null,
+    actor: actorValue.value,
+    placeId,
+    includeDescendants: insidePlaceValue.value !== null,
+    withinSeconds,
+    afterId: rangeStart.value,
+  }
+  type EventRow = Record<string, unknown> & { id: number }
+  // Each event with its moderated form, so the mutes judge what is sent.
+  const moderatedEventPairs = async (rows: readonly EventRow[]) => {
+    const moderated = await moderatePublicEvents(rows)
+    return rows.map((stored, index) => ({ stored, moderated: moderated[index]! }))
+  }
   const readEvents = async () => {
-    const collection = await loadPublicEventCollectionRows(
-      executeBudgetedExactQuery,
-      {
-        kind: kind ?? null,
-        actor: actorValue.value,
-        placeId,
-        includeDescendants: insidePlaceValue.value !== null,
-        withinSeconds,
-        afterId: rangeStart.value,
-      },
-      parsed,
-    )
-    const page = finalizePublicPage(
-      collection.rows as Array<Record<string, unknown> & { id: number }>,
-      parsed.limit,
-    )
-    const moderated = await moderatePublicEvents(page.items)
-    const events = splitMutedEvents(eventsJudge, moderated)
-    const sentItems = page.items.filter((_row, index) => events.shown.includes(moderated[index]!))
+    const collection = await loadPublicEventCollectionRows(executeBudgetedExactQuery, eventFilters, parsed)
+    const page = finalizePublicPage(collection.rows as EventRow[], parsed.limit)
+    const firstPairs = await moderatedEventPairs(page.items)
+    // A page the reader's mutes thinned reads further events until it is full
+    // (src/page-fill.ts); totals and left_out_feed_rooms stay those of the whole list.
+    const filled = eventsJudge === null
+      ? { rows: firstPairs, hasMore: page.hasMore }
+      : await fillPage({
+          limit: parsed.limit,
+          first: { rows: firstPairs, hasMore: page.hasMore },
+          hidden: async pairs => pairs.map(pair => eventsJudge.hidesEvent(pair.moderated)),
+          next: async (after, size) => {
+            const more = await loadPublicEventPageRows(
+              executeBudgetedExactQuery,
+              eventFilters,
+              { ok: true, cursor: after.stored.id, limit: size, fetchLimit: size + 1 },
+            )
+            const morePage = finalizePublicPage(more as EventRow[], size)
+            return { rows: await moderatedEventPairs(morePage.items), hasMore: morePage.hasMore }
+          },
+        })
+    const events = splitMutedEvents(eventsJudge, filled.rows.map(pair => pair.moderated))
+    const sentItems = filled.rows.filter(pair => events.shown.includes(pair.moderated)).map(pair => pair.stored)
     return Object.freeze({
       ...mutesFields(eventsReader, events.hidden, hiddenQuery.outline),
       events: events.shown,
@@ -2075,8 +2122,8 @@ app.get('/api/events', async c => {
       total_text_bytes: collection.total.textBytes,
       returned_items: sentItems.length,
       returned_text_bytes: eventDetailTextBytes(sentItems),
-      has_more: page.hasMore,
-      next_before_id: page.nextCursor,
+      has_more: filled.hasMore,
+      next_before_id: filled.hasMore ? filled.rows.at(-1)?.stored.id ?? null : null,
       left_out_feed_rooms: collection.leftOutFeedRooms,
     })
   }

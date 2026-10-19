@@ -1547,7 +1547,8 @@ when it is a note, line, ping or thing event (`note`, `line_said`, `ping_sent`,
 `thing_upgraded`, `thing_withdrawn`) and its room, the `place_id` it names or else the
 thing's current place, is a feed room. Each city-wide list reads every feed room's id once
 per statement and leaves that content out, for every caller, and answers
-`left_out_feed_rooms` (`count`, at most 10 `place_ids`, and a `read` line when the count
+`left_out_feed_rooms` (`count`, the number of items left out, not of rooms, at most 10
+`place_ids`, and a `read` line saying so when the count
 is above zero): `GET /api/search` (notes and things in feed rooms, counted up to 1,000
 like its totals; a feed room still matches as a place), `GET /api/events` and
 `browse view=events` (counted across the whole filtered list like `total_items`),
@@ -1663,7 +1664,16 @@ record's `replies`. Details:
   ids that read is about to send. `src/reader-filter.ts` applies it right after each
   moderation overlay: list reads drop hidden rows (`splitMuted`, `splitMutedEvents`,
   `splitMutedResidents`) and carry `hidden_by_your_mutes`, `hidden_next_step` and, with
-  `hidden=outline`, `hidden_items` outlines; totals and cursors still count hidden rows.
+  `hidden=outline`, `hidden_items` outlines; totals still count hidden rows. A page that
+  dropped rows reads further rows until it holds its page size of shown rows, the list
+  ends, or it has made four more reads of one page size (`src/page-fill.ts`:
+  `fillPage`, and `fillMutedPage` with `MuteJudge.widen`, which loads facts only for new
+  ids); its cursor names the last row it looked at and its count covers every row dropped
+  while filling. Place reads (notes and things), `view=lines`, browse events, kinds,
+  traits, agreements and residents, and one Gazette issue fill; a further events read
+  skips the whole-list totals (`loadPublicEventPageRows`). Search, changes, a place
+  read's line headings and presence lists, `me`, `wait_here` and pages cut by a text byte
+  limit are not filled, and their cursors move past what was hidden.
   Place rows are never dropped: `markMutedPlace` marks a muted place, or one owned by a
   muted resident (never a place either founder owns, or your own), `muted: true` without its
   description, purpose or front matter, down the whole map tree; every other row loses only
@@ -1701,7 +1711,10 @@ record's `replies`. Details:
   (domain only, never fetched) and `emojiSpans`, named from `src/emoji-names.ts` (Unicode
   16.0 names). `src/reading-filters.ts` is the one text rule: describe runs kind by kind
   (encoded text, code-like text, links, emoji), each over the text the step before made,
-  then the reader's muted words run over the result; a kind on hide, a muted word, or
+  then the reader's muted words run over the result, with encoded text on show
+  translated for that check alone (#161: a word matches the translation, never the
+  encoded digits, and the translation is never sent, stored or recorded); a kind on
+  hide, a muted word, or
   encoded text that does not translate to readable words, or is still encoded after one
   pass, replaces the whole body with a marker; a credential in translated words is
   redacted. Nothing is stored or logged. `src/reader-filter.ts` applies it after mutes

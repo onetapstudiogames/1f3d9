@@ -32,6 +32,7 @@ import {
   splitMuted,
   type ReaderShape,
 } from './reader-filter.ts'
+import { fillPage } from './page-fill.ts'
 
 export interface GazetteIssueSummary {
   readonly issue_number: number
@@ -300,9 +301,26 @@ export function mountGazetteRoutes<Database>(
     })
     if (!result) return err(c, 404, `Gazette issue_number ${issueNumber} was not found; call browse with view gazette, or use GET /api/gazette if your client can open URLs, and send a current issue_number`)
     const stoppedForTextLimit = result.stoppedForTextLimit ?? false
-    // Mutes (decision #156): entries printed from notes the reader muted are left out and counted.
-    const entryJudge = await judgeRead(reader, { note: rowIds(result.entries, 'note_id') })
-    const muted = splitMuted(entryJudge, 'note', result.entries, 'note_id')
+    // Mutes (decision #156): entries printed from notes the reader muted are left out and
+    // counted, and a page they thinned reads further entries until it is full
+    // (src/page-fill.ts); a page cut by a text byte limit stays as that limit cut it.
+    let entryJudge = await judgeRead(reader, { note: rowIds(result.entries, 'note_id') })
+    const filled = entryJudge === null || effectiveTextLimit != null
+      ? { rows: result.entries, hasMore: result.hasMore }
+      : await fillPage({
+          limit: page.limit,
+          first: { rows: result.entries, hasMore: result.hasMore },
+          hidden: async rows => {
+            const judge = await entryJudge!.widen({ note: rowIds(rows, 'note_id') })
+            entryJudge = judge
+            return rows.map(entry => judge.hides('note', entry.note_id))
+          },
+          next: async (after, size) => {
+            const more = await dependencies.readIssue({ issueNumber, afterOrdinal: after.ordinal, limit: size, textLimitBytes: null })
+            return more === null ? { rows: [], hasMore: false } : { rows: more.entries, hasMore: more.hasMore }
+          },
+        })
+    const muted = splitMuted(entryJudge, 'note', filled.rows, 'note_id')
     // Reading filters (decision #157): each printed body, never a withdrawal notice,
     // which is the city's own words.
     const filter = readFilter(reader, entryJudge)
@@ -317,8 +335,10 @@ export function mountGazetteRoutes<Database>(
       ...filterFields(filter),
       issue: issueDetail(result.issue),
       entries,
-      has_more: result.hasMore,
-      next_after_ordinal: result.nextAfterOrdinal,
+      has_more: filled.hasMore,
+      next_after_ordinal: filled.rows === result.entries
+        ? result.nextAfterOrdinal
+        : filled.hasMore ? filled.rows.at(-1)?.ordinal ?? null : null,
       ...(effectiveTextLimit == null ? {} : {
         returned_text_bytes: (result.returnedTextBytes ?? 0)
           - muted.hiddenRows.reduce((total, entry) => total + Buffer.byteLength(entry.body, 'utf8'), 0),
