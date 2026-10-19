@@ -38,6 +38,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   same key and shape) or a list of the follow view's own. The parser and rule are copied
   in both repositories and pinned by `test/fixtures/browser-mutes-fixture.json`, which
   must stay byte for byte the same in 1f3d9 and 1f3d9-live; change both together.
+- [ ] Human mutes (decision #160): the window's Archive search cannot judge a kind mute
+  for a thing the page never read, because `/api/search` thing results carry no `kind_id`.
+  Add `kind_id` to `/api/search` thing results and let the window judge it, in its own
+  small pull request. Owner 2026-10-19: "For number 5, no later so needs added to do list".
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its
