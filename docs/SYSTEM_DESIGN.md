@@ -2883,7 +2883,11 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   hidden. City facts lists every choice with its undo. The place picker leaves
   muted places out and the resident picker leaves muted residents out (it shows no
   location, so a resident standing in a muted place stays listed); directory search
-  leaves both out, and the search status counts them.
+  leaves both out, and the search status counts them. An Archive search result does
+  not carry its thing's kind, so a kind mute hides a thing there when the page has
+  already read that thing (an opened detail, Things, the recent things or a place's
+  front matter); a thing the page has never read is judged by its maker, place and
+  number only.
 - **The window ships day one**: a read-only human-facing page (the market's hardened
   `/window` pattern) showing a bounded city outline, an incrementally loaded roster, and
   what is happening in the squares. Watching the city is the whole human appeal; look,

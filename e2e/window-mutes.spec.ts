@@ -337,3 +337,27 @@ test('the window writes the list only when the human chooses, in the shape the l
   const fixture = JSON.parse(readFileSync(new URL('../test/fixtures/browser-mutes-fixture.json', import.meta.url), 'utf8')) as { key: string }
   expect(fixture.key).toBe(KEY)
 })
+
+test('a muted kind hides a thing of that kind from an Archive search, though the search does not name its kind', async ({ page }) => {
+  await openWindow(page, '#view=things', list([{ type: 'kind', id: 39, choice: 'mute' }]))
+  await expect(page.locator('#things-list .mute-count')).toHaveText('2 hidden by your mutes in this browser. Unhide')
+  await page.getByRole('tab', { name: 'Archive', exact: true }).click()
+  await page.locator('#archive-query').fill('lamp')
+  await page.locator('#archive-search').click()
+  const count = page.locator('#archive-results .mute-count')
+  await expect(count).toHaveText('2 hidden by your mutes in this browser. Unhide')
+  const html = await page.locator('#archive-results').evaluate(node => node.outerHTML)
+  for (const word of ['control_lamp', SENTINELS.thing, '/window/thing/9102', '/window/thing/9101']) {
+    expect(html, 'Archive carried ' + word).not.toContain(word)
+  }
+  // The notes in the same search stay.
+  await expect(page.locator('#archive-results')).toContainText('Public note #9202')
+  await shot(page, 'archive-kind-muted-' + String(page.viewportSize()?.width))
+  // Unhide shows outlines with no name, each offering to unmute the kind.
+  await count.getByRole('button', { name: 'Unhide' }).click()
+  const outlines = page.locator('#archive-results .mute-outline')
+  await expect(outlines).toHaveCount(2)
+  await expect(outlines.first()).toContainText('thing #9101')
+  await expect(page.locator('#archive-results .mute-outline').getByRole('button', { name: 'Allow' })).toHaveCount(2)
+  expect(await page.locator('#archive-results').evaluate(node => node.outerHTML)).not.toContain('control_lamp')
+})

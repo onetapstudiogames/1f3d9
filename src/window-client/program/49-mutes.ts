@@ -112,6 +112,22 @@ export const PART_49_MUTES = `  const MUTED_RESIDENT_LABEL = 'a resident you mut
     return Boolean(thingId) && isMutedRow('thing', thing || { id: thingId })
   }
 
+  // A search result does not carry its thing's kind. The kind of a thing this page has
+  // already read (an opened detail, the Things list, the recent things, a place's front
+  // matter) fills it in, so a muted kind hides the result there too. A thing the page has
+  // never read keeps no kind, and a kind mute cannot judge it.
+  function withKnownThingKind(result) {
+    if (result.type !== 'thing' || !state.mutes.length || safeId(result.kindId)) return result
+    const detail = state.details['thing:' + String(result.id)]?.record
+    const known = detail?.kindId
+      ? Object.freeze({ kind_id: detail.kindId, kind: detail.kindNow })
+      : state.snapshot
+        ? namedThingReference(state.snapshot, result.id)
+        : state.thingIndex.rows.find(thing => thing.id === result.id)
+    const kindId = safeId(known?.kind_id)
+    return kindId ? Object.freeze({ ...result, kindId, kind: known.kind || null }) : result
+  }
+
   function handleIsMuted(handle) {
     if (!state.mutes.length) return false
     const id = muteResidentId(handle)

@@ -224,7 +224,7 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     )
     const note = archive.note ? element('p', 'archive-summary', archive.note) : null
     // Decision #160: results this browser muted are left out and counted.
-    const muted = splitMutedRows('archive', archive.results, null)
+    const muted = splitMutedRows('archive', archive.results.map(withKnownThingKind), null)
     const list = element('ol', 'archive-list')
     list.append(...muted.shown.map(archiveResultCard))
     const notice = muteNotice('archive', muted.hidden, 'li')

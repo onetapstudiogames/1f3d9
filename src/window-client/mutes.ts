@@ -239,7 +239,7 @@ export function createWindowMuteHelpers(founderIds: readonly number[]): WindowMu
         ? Object.freeze({ type: 'thing', id,
           author_id: positive(row['makerId']) ?? residentId(row['madeBy']),
           owner_id: positive(row['currentOwnerId']) ?? residentId(row['currentOwner']),
-          kind_id: null, place_id: positive(row['placeId']) })
+          kind_id: positive(row['kindId']) ?? positive(row['kind_id']), place_id: positive(row['placeId']) })
         : Object.freeze({ type: 'note', id, author_id: residentId(row['actor']), place_id: positive(row['placeId']) })
     }
     if (kind === 'gazette') {

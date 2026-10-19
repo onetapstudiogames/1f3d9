@@ -132,6 +132,13 @@ test('the adapter reads every place the window keeps an id under', () => {
   assert.deepEqual(helpers.subject('archive', {
     type: 'note', id: 5, placeId: 3, actor: 'resident-12',
   }, residentId), { type: 'note', id: 5, author_id: 12, place_id: 3 })
+  // A search result carries no kind; the window fills kindId from a thing it already read.
+  assert.deepEqual(helpers.subject('archive', {
+    type: 'thing', id: 9, placeId: 3, makerId: 12, madeBy: 'resident-12', currentOwnerId: 13, kindId: 39,
+  }, residentId), { type: 'thing', id: 9, author_id: 12, owner_id: 13, kind_id: 39, place_id: 3 })
+  assert.deepEqual(helpers.subject('archive', {
+    type: 'thing', id: 9, placeId: 3, makerId: 12, currentOwnerId: 13,
+  }, residentId), { type: 'thing', id: 9, author_id: 12, owner_id: 13, kind_id: null, place_id: 3 })
   assert.deepEqual(helpers.subject('gazette', { noteId: 5, author: 'resident-12', placeId: 454 }, residentId),
     { type: 'note', id: 5, author_id: 12, place_id: 454 })
   assert.deepEqual(helpers.subject('event', {

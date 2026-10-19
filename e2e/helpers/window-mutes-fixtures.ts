@@ -83,6 +83,12 @@ function thing(id: number, name: string, maker: Readonly<{ id: number; handle: s
   }
 }
 
+// The live search reads a thing with no kind (no kind_id and no kind name).
+function searchThing(row: ReturnType<typeof thing>) {
+  const { kind_id: _kindId, kind: _kind, ...rest } = row
+  return { ...rest, type: 'thing' }
+}
+
 export const LAMP = Object.freeze({ id: 39, name: 'lamp' })
 export const THINGS = Object.freeze([
   thing(9104, SENTINELS.cellarThing, CELLAR, CELLAR, MUTED_CELLAR, null),
@@ -265,8 +271,8 @@ export async function routeMutesCity(target: Page): Promise<string[]> {
       results: [
         { type: 'note', id: 9201, created_at: AT, place_id: LANTERN_ROW, author: MUTED.handle, body_text_bytes: 40 },
         { type: 'note', id: 9202, created_at: AT, place_id: LANTERN_ROW, author: KEEPER.handle, body_text_bytes: 40 },
-        { ...THINGS[3], type: 'thing' },
-        { ...THINGS[2], type: 'thing' },
+        searchThing(THINGS[3]),
+        searchThing(THINGS[2]),
       ],
       returned_items: 4, total_items: 4, total_text_bytes: 160, totals_capped: false,
       has_more: false, next_before: null,
