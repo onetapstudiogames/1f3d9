@@ -4,16 +4,15 @@ import { registerPublicWindowSetup } from './helpers/public-window-setup.ts'
 import { contrastRatio } from './helpers/public-window-snapshot-fixtures.ts'
 import { MINUTE_MS, routeTalk } from './helpers/window-talk-fixtures.ts'
 
-const WAITLIST = OWNER_NOTICE.waitlistText
-const LAUNCHED = OWNER_NOTICE.launchedText
-const LAUNCH_AT_MS = Date.parse(OWNER_NOTICE.launchAt)
+const TEXT = OWNER_NOTICE.text
+const SHOW_AT_MS = Date.parse(OWNER_NOTICE.showAt)
 const HIDE_AT_MS = Date.parse(OWNER_NOTICE.hideAt)
 const OPENED_AT_HIDE = 'a window opened at the hide instant renders no notice'
 
 // The page clock is installed before the shared setup loads the window, then paused, so no
 // timer runs until a test jumps the clock with fastForward (never stepped).
 test.beforeEach(async ({ page }, testInfo) => {
-  const start = testInfo.title === OPENED_AT_HIDE ? HIDE_AT_MS : LAUNCH_AT_MS - 2 * MINUTE_MS
+  const start = testInfo.title === OPENED_AT_HIDE ? HIDE_AT_MS : SHOW_AT_MS - 2 * MINUTE_MS
   await page.clock.install({ time: start })
   await page.clock.pauseAt(start + 1)
 })
@@ -24,12 +23,20 @@ function noticeText(page: Page) {
   return page.locator('#owner-notice-text').evaluate(element => element.textContent)
 }
 
-test('the notice shows the waitlist text on every tab, switches to the launch text without a reload, and is gone after two weeks', async ({ page }) => {
+async function showNotice(page: Page) {
+  await page.clock.fastForward(3 * MINUTE_MS)
+  await expect(page.locator('#owner-notice')).toBeVisible()
+}
+
+test('the notice is absent before its day, shows on every tab with one link to the thread without a reload, and is gone after a month', async ({ page }) => {
   await routeTalk(page)
   const notice = page.locator('#owner-notice')
-  await expect(notice).toBeVisible()
-  expect(await noticeText(page)).toBe(WAITLIST)
-  const link = notice.getByRole('link', { name: OWNER_NOTICE.url, exact: true })
+  await expect(notice).toBeHidden()
+  expect(await noticeText(page)).toBe('')
+
+  await showNotice(page)
+  await expect.poll(() => noticeText(page)).toBe(TEXT)
+  const link = notice.getByRole('link', { name: OWNER_NOTICE.linkText, exact: true })
   await expect(link).toHaveAttribute('href', OWNER_NOTICE.url)
   await expect(link).toHaveAttribute('rel', 'noopener')
   await expect(link).toHaveAttribute('target', '_blank')
@@ -39,31 +46,29 @@ test('the notice shows the waitlist text on every tab, switches to the launch te
     await tab.click()
     await expect(tab).toHaveAttribute('aria-selected', 'true')
     await expect(notice).toBeVisible()
-    expect(await noticeText(page)).toBe(WAITLIST)
+    expect(await noticeText(page)).toBe(TEXT)
   }
 
-  await page.clock.fastForward(3 * MINUTE_MS)
-  await expect.poll(() => noticeText(page)).toBe(LAUNCHED)
+  // A month is past the clock's single-jump limit (about 24.8 days), so jump twice.
+  const toHide = HIDE_AT_MS - SHOW_AT_MS
+  await page.clock.fastForward(Math.floor(toHide / 2))
   await expect(notice).toBeVisible()
-  await expect(notice.getByRole('link', { name: OWNER_NOTICE.url, exact: true }))
-    .toHaveAttribute('href', OWNER_NOTICE.url)
-
-  await page.clock.fastForward(HIDE_AT_MS - LAUNCH_AT_MS)
+  await page.clock.fastForward(toHide - Math.floor(toHide / 2))
   await expect(notice).toBeHidden()
   await expect.poll(() => noticeText(page)).toBe('')
-  await expect(page.locator('a[href="https://ofstory.net"]')).toHaveCount(0)
+  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(0)
 })
 
 test(OPENED_AT_HIDE, async ({ page }) => {
   await expect(page.locator('#owner-notice')).toBeHidden()
   expect(await noticeText(page)).toBe('')
-  await expect(page.locator('a[href="https://ofstory.net"]')).toHaveCount(0)
-  await expect(page.getByText('The Story of the Internet')).toHaveCount(0)
+  await expect(page.locator('a[href="' + OWNER_NOTICE.url + '"]')).toHaveCount(0)
+  await expect(page.getByText('the OpenAI forum thread')).toHaveCount(0)
 })
 
-test('Hide removes the notice for this page on every tab, and the launch text still shows once it is new', async ({ page }) => {
+test('Hide removes the notice for this page on every tab', async ({ page }) => {
   const notice = page.locator('#owner-notice')
-  await expect(notice).toBeVisible()
+  await showNotice(page)
   await page.getByRole('button', { name: 'Hide this notice', exact: true }).click()
   await expect(notice).toBeHidden()
   await expect(page.getByRole('tab', { name: 'Map', exact: true })).toBeFocused()
@@ -71,15 +76,14 @@ test('Hide removes the notice for this page on every tab, and the launch text st
   await expect(notice).toBeHidden()
 
   await page.clock.fastForward(3 * MINUTE_MS)
-  await expect.poll(() => noticeText(page)).toBe(LAUNCHED)
-  await expect(notice).toBeVisible()
+  await expect(notice).toBeHidden()
 })
 
 for (const width of [320, 375, 1440]) {
   test(`the notice sits between the sign and the tab bar at ${width} with no sideways scroll`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     const notice = page.locator('#owner-notice')
-    await expect(notice).toBeVisible()
+    await showNotice(page)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     const [noticeBox, signBox, tabsBox, hideBox] = await Promise.all([
       notice.boundingBox(),
@@ -100,7 +104,7 @@ for (const width of [320, 375, 1440]) {
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`the notice text and link read clearly on both ends of its band with a ${colorScheme} preference`, async ({ page }) => {
     await page.emulateMedia({ colorScheme })
-    await expect(page.locator('#owner-notice')).toBeVisible()
+    await showNotice(page)
     const colors = await page.evaluate(() => {
       const probe = document.createElement('span')
       document.getElementById('owner-notice')?.append(probe)
@@ -121,5 +125,17 @@ for (const colorScheme of ['light', 'dark'] as const) {
       expect(contrastRatio(colors.text, surface)).toBeGreaterThanOrEqual(4.5)
       expect(contrastRatio(colors.link, surface)).toBeGreaterThanOrEqual(4.5)
     }
+  })
+}
+
+for (const width of [1280, 1440]) {
+  test(`the notice text fits on one line at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await showNotice(page)
+    const lines = await page.locator('#owner-notice-text').evaluate(element => {
+      const lineHeight = parseFloat(getComputedStyle(element).lineHeight)
+      return Math.round(element.getBoundingClientRect().height / lineHeight)
+    })
+    expect(lines).toBe(1)
   })
 }

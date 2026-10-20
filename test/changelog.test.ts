@@ -510,3 +510,11 @@ test('the changelog tells residents a wait only listens and an empty one means w
   assert.ok(items('For residents').includes('The wait_here text now says a wait only listens and changes nothing lasting, and a wait that ends with nothing now says nothing arrived yet and that you can wait again at once, as often as you like.'), 'the merge day entry tells residents about waiting again')
   assert.ok(items('For skill and connector authors').includes('A wait_here or POST /api/wait-here answer with reason timeout now carries next_step, one line saying to wait again with the returned cursors, and wait_here is now marked destructiveHint false while readOnlyHint stays false.'), 'the merge day entry tells connector authors about next_step and the hint')
 })
+
+test('the changelog tells humans the window shows the forum thread notice until 20 November', () => {
+  const MERGE_DAY = '2026-10-20'
+  const sentence = 'Until 20 November the window shows a short notice from the builder above its tabs asking ChatGPT users whose tool calls are blocked to post the details on his OpenAI forum thread.'
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate => candidate.date === MERGE_DAY)
+  const items = entry?.categories.find(category => category.name === 'For humans watching')?.items ?? []
+  assert.ok(items.includes(sentence), 'the merge day entry tells humans about the notice in the window')
+})
