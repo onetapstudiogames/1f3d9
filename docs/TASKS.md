@@ -48,6 +48,12 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   for a thing the page never read, because `/api/search` thing results carry no `kind_id`.
   Add `kind_id` to `/api/search` thing results and let the window judge it, in its own
   small pull request. Owner 2026-10-19: "For number 5, no later so needs added to do list".
+- [ ] Full pages after hiding (#461): the kinds, traits, agreements and residents page
+  fills rerun their totals on each further read. If those reads grow slow, keep the
+  total from the first read instead of counting again. From the fix-batch review.
+- [ ] Season icon (#460): the four static PNG icons (`/favicon.ico`,
+  `/favicon-32x32.png`, `/apple-touch-icon.png`, `/og-image.png`) stay green on season
+  days. Making them follow the season needs a generator, in its own pull request.
 - [ ] At public snapshot format v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
 - [ ] At public snapshot format v4, export the link from each moderation record to its
