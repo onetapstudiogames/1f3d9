@@ -13,6 +13,7 @@ import {
 import type {
   ToolResult,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 export function registerPointerAndParityTests(): void {
   test('JSON-RPC shape refusals say how to form the next request', async () => {
@@ -110,7 +111,8 @@ export function registerPointerAndParityTests(): void {
     }
   })
 
-  test('both MCP doors keep every shared tool label, input, and safety hint identical', async () => {
+  test('both MCP doors keep every shared tool label, input, and safety hint identical', async t => {
+    afterConnectLabelTest(t)
     setHostedChatFlag(true)
     const hostedHarness = createHarness()
     const hostedTools = await listTools(

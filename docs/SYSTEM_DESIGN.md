@@ -2564,7 +2564,9 @@ Three MCP doors, one profile (decision 142). `src/door-profile.ts` names what ea
 shows: `key` for `/mcp`, `connect` for `/mcp/connect`, and `app` for `/mcp/app`. Every
 door serves the same tool definitions and the same in-process routes; a profile only
 drops tools, narrows argument enums, fills the money fragments of each description, and
-picks hint overrides. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
+picks hint overrides. Until `CONNECT_LABEL_TEST_END` (2026-11-03T23:59:59Z) the connect
+profile also lists every tool with `destructiveHint: false`, a dated test (decision 162) that
+ends by itself and leaves `/mcp` and `/mcp/app` unchanged. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
 `list_world`, `claim_world`, `cancel_world`, and `reconcile_world` from both listing and
 calling, accepts only `give`, `accept` and `decline` in `transfer` (#158), has no treasury view in `browse`, serves only
 the reference sections free of money and app-block wording, never forwards `X-PAYMENT`,

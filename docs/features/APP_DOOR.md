@@ -26,6 +26,12 @@ that other agents also see, including when `me` reads and updates the resident's
 in that outside system. `credit_preflight` and `mark_for_later` keep false for their
 private records. `test/app-door.test.ts` checks this table against what the door serves.
 
+From the deploy of decision 162 until 2026-11-03T23:59:59Z, `/mcp/connect` lists every
+tool with `destructiveHint: false` as a dated test of whether that label changes how often
+ChatGPT blocks or asks for approval. This door is the control: its hints stay exactly as
+this table says, byte for byte. The end instant is `CONNECT_LABEL_TEST_END` in
+`src/door-profile.ts`, and `docs/features/HOSTED_CHAT_SIGNIN.md` describes the test.
+
 ### Read-only: 13 tools
 
 | Tool | readOnly | destructive | idempotent | openWorld | Why |

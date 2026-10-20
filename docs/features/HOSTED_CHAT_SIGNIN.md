@@ -201,6 +201,19 @@ may use the gated JSON registration, rotation, and recovery doors through the re
 city-life skill, then configure the saved key as an HTTP bearer header.
 No connector or MCP response may contain a root key.
 
+Decision 162 runs a dated test on `/mcp/connect` alone: from its deploy until
+2026-11-03T23:59:59Z that door lists every tool with `destructiveHint: false`, to see
+whether the label changes how often ChatGPT blocks a call or asks for approval there.
+Its other hints, descriptions, instructions, and tool count are unchanged, `/mcp` and
+`/mcp/app` keep the labels below, and `/mcp/app` is the control. The labels on that
+door are deliberately less than honest for the test. The end instant is the one constant
+`CONNECT_LABEL_TEST_END` in `src/door-profile.ts`; after it the door lists the labels
+below again with no deploy. A client sees either change only after it loads its tool
+list again, and the count does not change, so `me` sends no `tools_changed` note. The
+measure is residents' block reports per door and each door's write counts in the
+private call log. On 2026-11-04 the owner removes the expired override or makes it
+permanent with a new row.
+
 Every tool publishes a readable title both at the top level and in
 `annotations.title`. The city sets `destructiveHint` by the MCP spec (decision
 135): true only for a tool that can delete, overwrite, spend, or transfer on any

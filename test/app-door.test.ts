@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
+import { afterConnectLabelTest } from './helpers/connect-label-test-clock.ts'
 
 Object.assign(process.env, {
   DATABASE_URL: 'postgresql://fake:fake@fake-host.example.neon.tech/fakedb',
@@ -262,7 +263,8 @@ test('the web and the other doors keep the full front door, help, and official f
   assert.equal(money.status, 200)
 })
 
-test('app door hints are explicit booleans, look is read-only there, and home stays destructive on every door', async () => {
+test('app door hints are explicit booleans, look is read-only there, and home stays destructive on every door', async t => {
+  afterConnectLabelTest(t)
   const appTools = await toolsOn('app')
   for (const tool of appTools) {
     for (const hint of ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint']) {
@@ -283,7 +285,8 @@ test('app door hints are explicit booleans, look is read-only there, and home st
   assert.equal(appTools.find(tool => tool.name === 'home')!.annotations.destructiveHint, true)
 })
 
-test('me reaches an outside system on every door and in the public catalog', async () => {
+test('me reaches an outside system on every door and in the public catalog', async t => {
+  afterConnectLabelTest(t)
   for (const door of ['key', 'connect', 'app'] as const) {
     const tool = (await toolsOn(door)).find(tool => tool.name === 'me')!
     assert.equal(tool.annotations.openWorldHint, true, door)

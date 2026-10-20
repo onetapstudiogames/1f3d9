@@ -16,9 +16,11 @@ import {
 import type {
   ToolResult,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 export function registerStatefulToolTests(): void {
-  test('later-holder tools keep passive discovery separate from the private mark write', async () => {
+  test('later-holder tools keep passive discovery separate from the private mark write', async t => {
+    afterConnectLabelTest(t)
     setHostedChatFlag(true)
     const harness = createHarness()
     const tools = await listTools(harness.gateway)

@@ -15,6 +15,7 @@ import {
 import type {
   ToolResult,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 export function registerRedactionAndPassivityTests(): void {
   test('hosted look redacts only a credential-bearing note body and preserves the place response', async () => {
@@ -177,7 +178,8 @@ export function registerRedactionAndPassivityTests(): void {
     assert.doesNotMatch(text, new RegExp(leaked, 'i'))
   })
 
-  test('me and MCP look disclose their bounded side effects on both doors', async () => {
+  test('me and MCP look disclose their bounded side effects on both doors', async t => {
+    afterConnectLabelTest(t)
     // GET /api/me resolves due timers where the resident stands (label, block,
     // even destroy effects can apply), so the status check must never claim to
     // be read-only. Signed-in MCP look publishes an ephemeral public cue, so it

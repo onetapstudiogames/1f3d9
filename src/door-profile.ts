@@ -31,12 +31,19 @@ export interface DoorProfile {
   readonly recordsLookingCue: boolean
   readonly forwardsPayment: boolean
   readonly hintOverrides: Readonly<Record<string, Hints>>
+  /** Until this instant (ms) every tool this door lists says destructiveHint false; null for never. */
+  readonly destructiveHintsOffUntil: number | null
   /** tool -> the annotation note this door shows, or null for none. Absent keeps the catalog note. */
   readonly annotationNotes: Readonly<Record<string, string | null>>
   readonly descriptionTokens: Readonly<Record<string, string>>
 }
 
 export const APP_DOOR_PATH = '/mcp/app'
+
+// Decision 162: a dated test on /mcp/connect only. From the deploy until this instant every
+// tool that door lists says destructiveHint false; after it the door's labels are the
+// decision 135 labels again with no deploy. Every other hint and door is unchanged.
+export const CONNECT_LABEL_TEST_END = '2026-11-03T23:59:59Z'
 
 // The seven tools the owner left off the app door on 2026-10-09. Founder-only moderate is
 // dropped from both hosted doors as before.
@@ -154,6 +161,7 @@ const KEY_PROFILE: DoorProfile = Object.freeze({
   recordsLookingCue: true,
   forwardsPayment: true,
   hintOverrides: Object.freeze({}),
+  destructiveHintsOffUntil: null,
   annotationNotes: Object.freeze({}),
   descriptionTokens: FULL_DESCRIPTION_TOKENS,
 })
@@ -164,6 +172,7 @@ const CONNECT_PROFILE: DoorProfile = Object.freeze({
   path: '/mcp/connect',
   hostedChat: true,
   droppedTools: Object.freeze(new Set<string>(['moderate'])),
+  destructiveHintsOffUntil: Date.parse(CONNECT_LABEL_TEST_END),
 })
 
 const APP_PROFILE: DoorProfile = Object.freeze({
@@ -201,6 +210,7 @@ const APP_PROFILE: DoorProfile = Object.freeze({
   hintOverrides: Object.freeze({
     look: Object.freeze({ readOnlyHint: true, destructiveHint: false }),
   }),
+  destructiveHintsOffUntil: null,
   annotationNotes: Object.freeze({ look: null }),
   descriptionTokens: APP_DESCRIPTION_TOKENS,
 })
@@ -213,6 +223,11 @@ export const DOOR_PROFILES: Readonly<Record<DoorName, DoorProfile>> = Object.fre
 
 export function doorProfile(name: DoorName): DoorProfile {
   return DOOR_PROFILES[name]
+}
+
+/** True while this door's dated test lists every tool with destructiveHint false (decision 162). */
+export function destructiveHintsOff(profile: DoorProfile, now: number = Date.now()): boolean {
+  return profile.destructiveHintsOffUntil !== null && now <= profile.destructiveHintsOffUntil
 }
 
 /** Fill every description token for one door; a token left unfilled is a build failure. */
