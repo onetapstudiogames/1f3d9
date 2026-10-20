@@ -1,5 +1,5 @@
 // The temporary owner notice above the tab bar (holder in src/window-page.ts,
-// texts and instants in src/window-client/owner-notice.ts). It renders at start
+// text, link and instants in src/window-client/owner-notice.ts). It renders at start
 // and after every city refresh; Hide lasts for this page load and stores nothing.
 export const PART_46_OWNER_NOTICE = `  const ownerNoticeBox = document.getElementById('owner-notice')
   const ownerNoticeText = document.getElementById('owner-notice-text')
@@ -15,7 +15,7 @@ export const PART_46_OWNER_NOTICE = `  const ownerNoticeBox = document.getElemen
       return
     }
     if (!ownerNoticeBox.hidden && ownerNoticeText.textContent === text) return
-    const linkAt = text.indexOf(OWNER_NOTICE.url)
+    const linkAt = text.indexOf(OWNER_NOTICE.linkText)
     if (linkAt < 0) {
       ownerNoticeText.replaceChildren(text)
     } else {
@@ -23,11 +23,11 @@ export const PART_46_OWNER_NOTICE = `  const ownerNoticeBox = document.getElemen
       link.href = OWNER_NOTICE.url
       link.target = '_blank'
       link.rel = 'noopener'
-      link.textContent = OWNER_NOTICE.url
+      link.textContent = OWNER_NOTICE.linkText
       ownerNoticeText.replaceChildren(
         text.slice(0, linkAt),
         link,
-        text.slice(linkAt + OWNER_NOTICE.url.length),
+        text.slice(linkAt + OWNER_NOTICE.linkText.length),
       )
     }
     ownerNoticeBox.hidden = false
