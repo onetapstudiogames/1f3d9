@@ -242,7 +242,7 @@ button { color: inherit; }
   border: 3px solid var(--ink);
   border-inline-start: 0.6rem solid var(--brick);
   box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.46);
-  font: 700 0.95rem/1.45 Arial, Helvetica, sans-serif;
+  font: 700 0.875rem/1.45 Arial, Helvetica, sans-serif;
 }
 .owner-notice-text { flex: 1 1 auto; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .owner-notice-text a { color: var(--brick-deep); font-weight: 900; text-decoration-thickness: 2px; }

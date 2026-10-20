@@ -127,3 +127,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
     }
   })
 }
+
+for (const width of [1280, 1440]) {
+  test(`the notice text fits on one line at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    await showNotice(page)
+    const lines = await page.locator('#owner-notice-text').evaluate(element => {
+      const lineHeight = parseFloat(getComputedStyle(element).lineHeight)
+      return Math.round(element.getBoundingClientRect().height / lineHeight)
+    })
+    expect(lines).toBe(1)
+  })
+}
