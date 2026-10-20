@@ -98,6 +98,7 @@ import {
   SHOW_EVERYTHING_REFUSAL,
   splitMuted,
 } from './reader-filter.ts'
+import { fillMutedPage } from './page-fill.ts'
 import { loadPublicNoteRecord } from './public-records.ts'
 import { safeReadingCostMeter } from './reading-cost.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
@@ -532,7 +533,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (openValue != null && openValue !== 'true' && openValue !== 'false')
       return err(c, 400, 'open must be true or false')
     const open = openValue == null ? null : openValue === 'true'
-    const rows = await executeBudgetedExactQuery(`
+    const readAgreementRows = (cursor: number | null, fetchLimit: number) => executeBudgetedExactQuery(`
       /* public:agreements */
       WITH totals AS (
         SELECT count(*)::integer AS total_items,
@@ -585,20 +586,33 @@ export function mountSocietyRoutes(app: Hono): void {
         ORDER BY id DESC LIMIT $4::integer
       ) page ON TRUE
       ORDER BY page.id DESC NULLS LAST
-    `, [party ?? null, open, parsed.cursor, parsed.fetchLimit])
-    const collection = extractPublicCollectionRows(rows)
-    const page = finalizePublicPage(
-      collection.rows as Array<Record<string, unknown> & { id: number }>, parsed.limit,
-    )
-    const agreements = page.items.map(agreementState)
-    const moderated = await moderatePublicRows('agreement', agreements)
+    `, [party ?? null, open, cursor, fetchLimit])
+    type AgreementRow = Record<string, unknown> & { id: number }
+    const collection = extractPublicCollectionRows(await readAgreementRows(parsed.cursor, parsed.fetchLimit))
     // Focus mode (decision #155): a signed-in reader who chose it gets each agreement's
     // outline, its body as a size, unless this read asks for show_everything.
     const reader = await readerShape(c, showEverything.value)
     markReaderShaped(c, reader)
     // Mutes (decision #156): an agreement written by a muted resident is left out and
-    // counted, unless the reader is one of its parties.
-    const agreementJudge = await judgeRead(reader, { agreement: rowIds(moderated) })
+    // counted, unless the reader is one of its parties, and a page they thinned reads
+    // further agreements until it is full (src/page-fill.ts).
+    const filled = await fillMutedPage({
+      judge: await judgeRead(reader, { agreement: rowIds(collection.rows) }),
+      type: 'agreement',
+      limit: parsed.limit,
+      page: finalizePublicPage(collection.rows as AgreementRow[], parsed.limit),
+      next: async (afterId, size) => {
+        const more = finalizePublicPage(
+          extractPublicCollectionRows(await readAgreementRows(afterId, size + 1)).rows as AgreementRow[],
+          size,
+        )
+        return { rows: more.items, hasMore: more.hasMore }
+      },
+    })
+    const page = filled.page
+    const agreements = page.items.map(agreementState)
+    const moderated = await moderatePublicRows('agreement', agreements)
+    const agreementJudge = filled.judge
     const muted = splitMuted(agreementJudge, 'agreement', moderated)
     const sentAgreements = agreements.filter((_row, index) => muted.shown.includes(moderated[index]!))
     // Reading filters (decision #157): each body still sent, after focus mode and mutes.

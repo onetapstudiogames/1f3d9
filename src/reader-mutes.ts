@@ -230,6 +230,11 @@ export interface MuteJudge {
   hidesEvent(row: Readonly<Record<string, unknown>>): boolean
   outline(type: MuteItemType, id: number): HiddenOutline
   eventOutline(row: Readonly<Record<string, unknown>>): HiddenOutline
+  /**
+   * The same judge over more ids, for a page that reads further rows after hiding some
+   * (src/page-fill.ts): facts are loaded only for ids it does not know yet.
+   */
+  widen(refs: MuteRefs): Promise<MuteJudge>
 }
 
 /** The judge for one read, or null when the reader has no mutes or allows. */
@@ -239,9 +244,12 @@ export async function judgeMutes(
   query: FactsQuery = defaultFactsQuery,
 ): Promise<MuteJudge | null> {
   if (set === null) return null
-  const facts = await loadFacts(set, refs, query)
+  return judgeOverFacts(set, await loadFacts(set, refs, query), query)
+}
+
+function judgeOverFacts(set: MuteSet, facts: ReadonlyMap<string, Facts>, query: FactsQuery): MuteJudge {
   const factsOf = (type: MuteItemType, id: number) => facts.get(factKey(type, id))
-  return Object.freeze({
+  const judge: MuteJudge = Object.freeze({
     hides(type: MuteItemType, id: number): boolean {
       const known = factsOf(type, id)
       return known !== undefined && hiddenByFacts(set, type, id, known)
@@ -281,5 +289,13 @@ export async function judgeMutes(
       })
     },
     eventOutline,
+    async widen(refs: MuteRefs): Promise<MuteJudge> {
+      const unknown = Object.fromEntries(MUTE_ITEM_TYPES.map(type => [
+        type, (refs[type] ?? []).filter(id => !facts.has(factKey(type, id))),
+      ])) as MuteRefs
+      const more = await loadFacts(set, unknown, query)
+      return more.size === 0 ? judge : judgeOverFacts(set, new Map([...facts, ...more]), query)
+    },
   })
+  return judge
 }

@@ -46,7 +46,8 @@ test('left_out_feed_rooms counts, names at most ten rooms lowest first, and says
   )
   assert.equal(
     FEED_ROOMS_READ_LINE,
-    'Feed rooms keep their notes, lines, things and pings out of city-wide lists and mention lookups. '
+    'count is how many items this answer left out, not how many rooms; place_ids names the rooms they sit in, at most 10. '
+      + 'Feed rooms keep their notes, lines, things and pings out of city-wide lists and mention lookups. '
       + 'Read one in the room: look with its place_id, or read events with that place_id.',
   )
   for (const [count, ids] of [[-1, []], [1.5, [2]], [2, []], [0, [3]], [1, ['x']], [1, [0]], [1, 'not a list']] as const) {

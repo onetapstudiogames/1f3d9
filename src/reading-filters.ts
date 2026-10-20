@@ -2,8 +2,11 @@
 // bodies it reads are sent. show sends them as written (the default), describe sends a
 // short plain description in place of that kind, and hide sends a marker instead of the
 // body. The kinds are encoded text, drawings, code-like text, links and emoji; the
-// resident's own muted words run last, over the described text, and hide only. There is
-// no city-written word list. This module is the one rule for a body's text; it reads and
+// resident's own muted words run last, over the described text, and hide only. Encoded
+// text is judged on its translation whatever its filter says (decision #161): with
+// encoded text on show, a reader with muted words has it translated for the word check
+// alone, and that translation is never sent, stored or recorded. There is no
+// city-written word list. This module is the one rule for a body's text; it reads and
 // writes nothing. src/reader-filter.ts applies it to every signed-in read, never to
 // either founder's items (#159), the reader's own, or what always shows.
 import { redactResidentCredentialText, containsPublicCredential } from './credential-safety.ts'
@@ -143,10 +146,26 @@ function spansStep<T extends TextSpan>(
 }
 
 /**
+ * The text a reader's muted words are checked against (decision #161): encoded text as
+ * its translation, so a word is matched on what the encoded text says and never on its
+ * digits or symbols. A run that does not translate to readable words adds no words.
+ * Used for the check only; the result is never sent.
+ */
+function translatedForWordCheck(text: string): string {
+  const spans = encodedSpans(text)
+  if (spans.length === 0) return text
+  return replaceSpans(text, spans, span => {
+    const words = decodeEncodedSpan(text, span)
+    return words === null || looksEncoded(words) ? ' ' : ` ${words} `
+  })
+}
+
+/**
  * One body through one reader's filters: describe first (encoded text, then code-like
  * text, links and emoji, each over the text the step before made), then the reader's
- * muted words over the described text. The first kind set to hide that finds itself, or
- * a muted word, hides the whole body. A credential inside translated words is redacted.
+ * muted words over the described text, with encoded text still on show translated for
+ * that check alone. The first kind set to hide that finds itself, or a muted word,
+ * hides the whole body. A credential inside translated words is redacted.
  */
 export function filterText(filter: TextFilter, text: string): FilteredText {
   if (typeof text !== 'string' || text.length === 0) return { text, outcome: 'shown' }
@@ -169,7 +188,11 @@ export function filterText(filter: TextFilter, text: string): FilteredText {
     current = result.text
     described ||= result.described
   }
-  if (filter.mutedWords?.(current) === true) return { text: READING_FILTER_MARKERS.muted_words, outcome: 'hidden' }
+  if (filter.mutedWords !== null) {
+    // On describe the text is already translated, and on hide encoded text never gets here.
+    const checked = filters.encoded_text === 'show' ? translatedForWordCheck(current) : current
+    if (filter.mutedWords(checked)) return { text: READING_FILTER_MARKERS.muted_words, outcome: 'hidden' }
+  }
   if (!described) return { text, outcome: 'shown' }
   return { text: redactResidentCredentialText(current) ?? current, outcome: 'described' }
 }

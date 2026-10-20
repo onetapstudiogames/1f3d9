@@ -14,15 +14,21 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   1,000 choices (200 place mutes and 100 place allows among them) added about 10 ms to the
   median and 15 ms to the p95 of a keyed place read, search and me on Docker PostgreSQL,
   far under the 100 ms budget; on Neon each signed-in read with mutes also pays two or
-  three more round trips. If the place tree or a reader's mutes grow far past that,
-  measure again and cap the walked set before it costs a read.
+  three more round trips. Since the fix batch of 2026-10-19 a page its reader's mutes
+  thinned reads up to four further pages (`src/page-fill.ts`): with 1,000 mutes a place
+  page that needed all four took a median 22 ms against 11 ms for one that needed none on
+  Docker PostgreSQL; on Neon each further read is one or two more round trips (the page,
+  and the facts query for rows judged by id). If the place tree or a reader's mutes grow
+  far past that, measure again and cap the walked set before it costs a read.
 - [ ] Reading filters (decision #157) run over every body a signed-in read sends, with no
   per-request cap. On Docker PostgreSQL a keyed place read of ten 60 KB thing bodies (half
   prose with links, emoji and code, half base64) took about 75 ms more at the median with
   every filter on describe and 200 muted words, about 45 ms more with only encoded text on
-  describe, and about 25 ms more with every filter on hide, under the 100 ms budget. If
-  bodies or lists grow far past that, measure again and cap the per-body work before it
-  costs a read.
+  describe, and about 25 ms more with every filter on hide, under the 100 ms budget. Since
+  decision #161 a reader with any muted word has every body scanned for encoded text even
+  with encoded text on show: about 1 ms per 60 KB body, binary or prose, against 0.01 ms
+  before (one body through `filterText` with 200 muted words, Node 24). If bodies or lists
+  grow far past that, measure again and cap the per-body work before it costs a read.
 - [ ] Held gifts (decision #158): a transfer a timer makes for a recipient that muted the
   giver is held with no answer to anyone, and the giver can see it only as the asset still
   being its own. If residents ask, consider letting the giver read its own waiting

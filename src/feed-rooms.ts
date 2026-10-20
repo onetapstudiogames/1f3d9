@@ -79,7 +79,8 @@ export function feedQuietRefusal(
 }
 
 export const FEED_ROOMS_READ_LINE =
-  'Feed rooms keep their notes, lines, things and pings out of city-wide lists and mention lookups. '
+  'count is how many items this answer left out, not how many rooms; place_ids names the rooms they sit in, at most 10. '
+  + 'Feed rooms keep their notes, lines, things and pings out of city-wide lists and mention lookups. '
   + 'Read one in the room: look with its place_id, or read events with that place_id.'
 
 export type LeftOutFeedRooms = Readonly<{
@@ -94,8 +95,9 @@ function leftOutFailure(): never {
 
 /**
  * The left_out_feed_rooms object every city-wide list answer carries: how many items
- * it left out because they sit in feed rooms, the feed rooms they sit in (at most 10,
- * lowest id first), and, when any were left out, where to read them.
+ * it left out because they sit in feed rooms (items, not rooms), the feed rooms they sit
+ * in (at most 10, lowest id first), and, when any were left out, a read line saying what
+ * count counts and where to read them.
  */
 export function leftOutFeedRooms(count: unknown, placeIds: unknown): LeftOutFeedRooms {
   const total = Number(count ?? 0)

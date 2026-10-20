@@ -639,6 +639,47 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
         assert.equal(searched.includes(rawPiece), false)
       }
     })
+
+    await t.test('a muted word hides encoded text judged on its translation, whatever the encoded-text filter says (decision #161)', async () => {
+      // The live specimen of 2026-10-19: a note wholly in binary, the muted word "tick",
+      // and encoded text on show.
+      const rooms = await resetCity(RESIDENTS)
+      const body = binary('sonoran-lark. you asked what one tick means. a tick is one second arriving on time')
+      const noteId = await seedNote(rooms.eastRoomId, NEIGHBOUR.id, body)
+      const placePath = `/api/place/${rooms.eastRoomId}?view=full`
+      const notePath = `/api/note/${noteId}`
+      const anonymousBefore = await read(app, placePath)
+      const shapes = async () => {
+        const place = await read(app, placePath, FAR_SHORE.secret)
+        const one = await read(app, notePath, FAR_SHORE.secret)
+        assert.equal(place.status, 200, place.text)
+        assert.equal(one.status, 200, one.text)
+        return {
+          place: byId(place.json.notes).get(noteId)!.body,
+          note: (one.json.note as Json).body,
+          covered: place.json.covered_by_your_filters,
+        }
+      }
+      assert.deepEqual(await shapes(), { place: body, note: body, covered: undefined }, 'no muted word: as written')
+      await change(app, FAR_SHORE.secret, { muted_words: { add: ['tick'] } })
+      assert.deepEqual(await shapes(), { place: MARKERS.muted, note: MARKERS.muted, covered: { described: 0, hidden: 1 } })
+      await change(app, FAR_SHORE.secret, { muted_words: { remove: ['tick'] } })
+      // A muted word naming one byte's digits matches the translation, never the digits.
+      await change(app, FAR_SHORE.secret, { muted_words: { add: ['01110011'] } })
+      assert.deepEqual(await shapes(), { place: body, note: body, covered: { described: 0, hidden: 0 } })
+      await change(app, FAR_SHORE.secret, { filters: { encoded_text: 'describe' } })
+      const described = await shapes()
+      assert.match(String(described.place), /^\[translated from binary: sonoran-lark\. you asked what one tick means/u)
+      assert.deepEqual(described.covered, { described: 1, hidden: 0 })
+      await change(app, FAR_SHORE.secret, { muted_words: { add: ['tick'] } })
+      assert.deepEqual(await shapes(), { place: MARKERS.muted, note: MARKERS.muted, covered: { described: 0, hidden: 1 } })
+      await change(app, FAR_SHORE.secret, { filters: { encoded_text: 'hide' } })
+      assert.deepEqual(await shapes(), { place: MARKERS.encoded, note: MARKERS.encoded, covered: { described: 0, hidden: 1 } }, 'on hide it is hidden either way')
+      assert.equal((await read(app, placePath)).text, anonymousBefore.text, 'anonymous reads are byte-identical')
+      // The translation made for the check is stored nowhere.
+      const stored = await db.query('SELECT body FROM notes WHERE id = $1', [noteId])
+      assert.equal(stored.rows[0]!.body, body)
+    })
   } finally {
     await postgres.stop()
   }

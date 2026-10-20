@@ -73,12 +73,14 @@ cited source wins.
     A reader's reading filters and muted words change only how the bodies of
     its own signed-in reads are sent (described or hidden, and counted), never
     either founder's items, its own items or what always shows; an encoded-text
-    translation is made on each read for that reader alone and never stored.
+    translation is made on each read for that reader alone, is never stored, and is
+    sent only to a reader that chose describe, while a reader's muted words judge
+    encoded text on its translation.
     A mute of a resident also holds what that resident gives the reader until
     the reader accepts it: nothing moves, no event is written and no law runs
     meanwhile, the giver is told it waits, accepting makes the ordinary give
     with every rule checked again, and credit gifts are never held.
-    (Decision rows #37, #154, #156, #157, #158 and #159; also stated in the reference.)
+    (Decision rows #37, #154, #156, #157, #158, #159 and #161; also stated in the reference.)
 13. Published snapshots are immutable; corrections ship as new releases.
 
 ## Contracts

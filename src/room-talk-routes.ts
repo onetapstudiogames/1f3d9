@@ -39,6 +39,7 @@ import {
   type HiddenOutline,
   type ReaderShape,
 } from './reader-filter.ts'
+import { fillMutedPage } from './page-fill.ts'
 import { openWait, readListening, readWaitChanges, releaseWait } from './room-wait-store.ts'
 import {
   LINE_FIELDS_REFUSAL,
@@ -375,12 +376,27 @@ export function mountRoomTalkRoutes(app: Hono): void {
       limit: parsed.limit,
     })
     if (!result.placeExists) return talkRefusalResponse(c, placeLinesNotFoundRefusal(placeId))
-    const moderated = await moderatePublicRows('line', result.lines)
-    // Mutes (decision #156): muted lines are left out and counted; the cursor still
-    // moves past them, so the next page starts where this one ended.
+    // Mutes (decision #156): muted lines are left out and counted, and a page they thinned
+    // reads further lines until it is full (src/page-fill.ts); the cursor moves past them,
+    // so the next page starts where this one ended.
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const linesJudge = await judgeRead(reader, { line: rowIds(moderated) })
+    const filled = await fillMutedPage({
+      judge: await judgeRead(reader, { line: rowIds(result.lines) }),
+      type: 'line',
+      limit: parsed.limit,
+      page: {
+        items: result.lines,
+        hasMore: result.hasMore,
+        nextCursor: result.hasMore ? result.lines.at(-1)?.id ?? null : null,
+      },
+      next: async (afterId, size) => {
+        const more = await readPlaceLines({ placeId, beforeLineId: afterId, afterLineId: rangeStart.value, limit: size })
+        return { rows: more.lines, hasMore: more.hasMore }
+      },
+    })
+    const linesJudge = filled.judge
+    const moderated = await moderatePublicRows('line', filled.page.items)
     const muted = splitMuted(linesJudge, 'line', moderated)
     const lines = muted.shown
     // Reading filters (decision #157): each line's words; the byte counts stay the stored ones.
@@ -397,8 +413,8 @@ export function mountRoomTalkRoutes(app: Hono): void {
         total_text_bytes: result.totalTextBytes,
         returned_items: lines.length,
         returned_text_bytes: utf8TextBytes(lines, 'body'),
-        has_more: result.hasMore,
-        next_before_line_id: result.hasMore ? result.lines.at(-1)?.id ?? null : null,
+        has_more: filled.page.hasMore,
+        next_before_line_id: filled.page.nextCursor,
       },
     })
   })

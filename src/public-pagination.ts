@@ -305,6 +305,32 @@ export async function loadPublicEventCollectionRows(
   filters: PublicEventFilters,
   page: PublicPage,
 ): Promise<Readonly<PublicEventCollectionRows>> {
+  return loadEventRows(query, filters, page, true)
+}
+
+/**
+ * One further page of events in the same list, without its totals: a page that its
+ * reader's mutes thinned reads more rows this way (src/page-fill.ts), so it never counts
+ * the whole list again.
+ */
+export async function loadPublicEventPageRows(
+  query: PublicQueryExecutor,
+  filters: PublicEventFilters,
+  page: PublicPage,
+): Promise<readonly Record<string, unknown>[]> {
+  return (await loadEventRows(query, filters, page, false)).rows
+}
+
+// The totals a further page leaves uncounted: the list's own totals came with its first page.
+const UNCOUNTED_EVENT_TOTALS = `SELECT 0::integer AS total_items, 0::bigint AS total_text_bytes,
+         0::integer AS left_out_feed_rooms, NULL::integer[] AS left_out_feed_room_ids`
+
+async function loadEventRows(
+  query: PublicQueryExecutor,
+  filters: PublicEventFilters,
+  page: PublicPage,
+  counted: boolean,
+): Promise<Readonly<PublicEventCollectionRows>> {
   const includeDescendants = filters.includeDescendants === true
   const eventFilter = includeDescendants ? publicEventFilter(true) : PUBLIC_EVENT_FILTER
   const withClause = includeDescendants
@@ -315,10 +341,7 @@ export async function loadPublicEventCollectionRows(
        JOIN selected_places selected ON child.parent_id = selected.id
      ), totals AS (`
     : 'WITH totals AS ('
-  const rows = await query(
-    `/* public:events */
-     ${withClause}
-       SELECT count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
+  const totals = counted ? `SELECT count(*) FILTER (WHERE feed.feed_room_id IS NULL)::integer AS total_items,
          coalesce(sum(
            octet_length(coalesce(event.detail->>'body', ''))
            + octet_length(coalesce(event.detail->>'description', ''))
@@ -332,7 +355,11 @@ export async function loadPublicEventCollectionRows(
        ${PUBLIC_EVENT_FEED_ROOM_JOIN}
        /* These totals count the whole filtered list, so neither end of the page
           bounds them: not before_id, and not after_id either. */
-       WHERE ${eventFilter}
+       WHERE ${eventFilter}` : UNCOUNTED_EVENT_TOTALS
+  const rows = await query(
+    `/* public:events */
+     ${withClause}
+       ${totals}
      )
      SELECT page.id, page.change_id, page.at, page.kind, page.actor, page.detail,
        page.thing_has_drawing,

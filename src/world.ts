@@ -111,8 +111,10 @@ import {
   parsePublicTextLimit,
   singlePublicQueryValue,
   utf8TextBytes,
+  type PublicPage,
   type PublicQueryExecutor,
 } from './public-pagination.ts'
+import { fillMutedPage } from './page-fill.ts'
 import { publicJson } from './public-output.ts'
 import {
   filterFields,
@@ -482,6 +484,14 @@ function storedRowsOf(stored: readonly object[], dropped: readonly object[]): ob
   return stored.filter(row => ids.has(rowIds([row])[0] ?? 0))
 }
 
+/** One collection's rows after one row, for filling a place read's page after hiding. */
+function placeRowsPage(afterId: number, size: number): PublicPage {
+  return Object.freeze({ ok: true, cursor: afterId, limit: size, fetchLimit: size + 1 })
+}
+
+/** No rows of a collection, so a fill reads only the one it fills. */
+const NO_PLACE_ROWS: PublicPage = Object.freeze({ ok: true, cursor: null, limit: 0, fetchLimit: 0 })
+
 /** The note text a dropped note row would have sent: its body or its first line. */
 function noteTextBytes(rows: readonly object[]): number {
   return utf8TextBytes(rows, 'body') + utf8TextBytes(rows, 'first_line')
@@ -742,33 +752,53 @@ export function mountWorldRoutes(app: Hono): void {
     const publicPlace = await loadPublicPlaceRecord(id)
     if (!publicPlace) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
 
+    // A page its reader's mutes thinned reads further rows until it is full (src/page-fill.ts).
+    // A page cut by a text byte limit stays as that limit cut it.
+    const placeRowsAfter = <T>(collection: 'things' | 'notes') => async (afterId: number, size: number) => {
+      const more = await loadPublicPlaceCollectionRows(executePublicQuery, id, {
+        subplaces: NO_PLACE_ROWS,
+        things: collection === 'things' ? placeRowsPage(afterId, size) : NO_PLACE_ROWS,
+        notes: collection === 'notes' ? placeRowsPage(afterId, size) : NO_PLACE_ROWS,
+      }, view === 'full', effectiveTextLimits)
+      const rows = more[collection] as unknown as readonly T[]
+      return { rows: rows.slice(0, size), hasMore: rows.length > size }
+    }
+
     if (publicPlace.status === 'retired') {
       const collections = await loadPublicPlaceCollectionRows(executePublicQuery, id, {
         subplaces: subplaceRequest,
         things: thingRequest,
         notes: noteRequest,
       }, view === 'full', effectiveTextLimits)
-      const notesPage = collections.pages == null
-        ? {
-            ...finalizePublicPage(
+      // Mutes (decision #156): a retired place's notes by muted authors are left out and
+      // counted, and the page reads further notes until it is full.
+      const firstJudge = await judgeRead(reader, { place: [id], note: rowIds(collections.notes) })
+      const notesFill = collections.pages == null
+        ? await fillMutedPage({
+            judge: firstJudge,
+            type: 'note',
+            limit: noteRequest.limit,
+            page: finalizePublicPage(
               collections.notes as Array<Record<string, unknown> & { id: number }>,
               noteRequest.limit,
             ),
-            returnedTextBytes: utf8TextBytes(
-              collections.notes.slice(0, noteRequest.limit),
-              'body',
-            ) + utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'first_line'),
+            next: placeRowsAfter<Record<string, unknown> & { id: number }>('notes'),
+          })
+        : null
+      const notesPage = notesFill !== null
+        ? {
+            ...notesFill.page,
+            returnedTextBytes: noteTextBytes(notesFill.page.items),
             stoppedForTextLimit: false,
             nextItemId: null,
             nextItemTextBytes: null,
           }
         : {
             items: collections.notes as Array<Record<string, unknown> & { id: number }>,
-            ...collections.pages.notes,
+            ...collections.pages!.notes,
           }
       const moderatedNotes = await moderatePublicRows('note', notesPage.items)
-      // Mutes (decision #156): a retired place's notes by muted authors are left out and counted.
-      const tombstoneJudge = await judgeRead(reader, { place: [id], note: rowIds(moderatedNotes) })
+      const tombstoneJudge = notesFill?.judge ?? firstJudge
       const tombstoneNotes = splitMuted(tombstoneJudge, 'note', moderatedNotes)
       // Reading filters (decision #157): the retired place's words and its notes' bodies.
       const tombstoneFilter = readFilter(reader, tombstoneJudge)
@@ -836,40 +866,66 @@ export function mountWorldRoutes(app: Hono): void {
           items: collections.subplaces as unknown as readonly (PlaceRow & { id: number })[],
           ...collections.pages.subplaces,
         }
-    const thingsPage = collections.pages == null
-      ? {
-          ...finalizePublicPage(
+    const frontMatter = (publicPlace as unknown as Record<string, unknown>).moderated === true
+      ? Object.freeze([])
+      : frontMatterByPlace.get(id) ?? Object.freeze([])
+    // Mutes (decision #156): judged on the rows' ids, which the moderation overlay keeps.
+    // Muted notes, things and lines are left out and counted, muted places stay listed
+    // and marked, and the laws stay.
+    const firstJudge = await judgeRead(reader, {
+      place: [id, ...rowIds(subplacesPage.items)],
+      thing: [...rowIds(collections.things), ...rowIds(frontMatter)],
+      note: rowIds(collections.notes),
+      line: rowIds(lineHeadings.headings),
+    })
+    const thingsFill = collections.pages == null
+      ? await fillMutedPage({
+          judge: firstJudge,
+          type: 'thing',
+          limit: thingRequest.limit,
+          page: finalizePublicPage(
             collections.things as unknown as readonly (ThingRow & { id: number })[],
             thingRequest.limit,
           ),
-          returnedTextBytes: view === 'full'
-            ? utf8TextBytes(collections.things.slice(0, thingRequest.limit), 'body')
-            : 0,
+          next: placeRowsAfter<ThingRow & { id: number }>('things'),
+        })
+      : null
+    const notesFill = collections.pages == null
+      ? await fillMutedPage({
+          judge: thingsFill?.judge ?? firstJudge,
+          type: 'note',
+          limit: noteRequest.limit,
+          page: finalizePublicPage(
+            collections.notes as Array<Record<string, unknown> & { id: number }>,
+            noteRequest.limit,
+          ),
+          next: placeRowsAfter<Record<string, unknown> & { id: number }>('notes'),
+        })
+      : null
+    const judge = notesFill?.judge ?? thingsFill?.judge ?? firstJudge
+    const thingsPage = thingsFill !== null
+      ? {
+          ...thingsFill.page,
+          returnedTextBytes: view === 'full' ? utf8TextBytes(thingsFill.page.items, 'body') : 0,
           stoppedForTextLimit: false,
           nextItemId: null,
           nextItemTextBytes: null,
         }
       : {
           items: collections.things as unknown as readonly (ThingRow & { id: number })[],
-          ...collections.pages.things,
+          ...collections.pages!.things,
         }
-    const notesPage = collections.pages == null
+    const notesPage = notesFill !== null
       ? {
-          ...finalizePublicPage(
-            collections.notes as Array<Record<string, unknown> & { id: number }>,
-            noteRequest.limit,
-          ),
-          returnedTextBytes: utf8TextBytes(
-            collections.notes.slice(0, noteRequest.limit),
-            'body',
-          ) + utf8TextBytes(collections.notes.slice(0, noteRequest.limit), 'first_line'),
+          ...notesFill.page,
+          returnedTextBytes: noteTextBytes(notesFill.page.items),
           stoppedForTextLimit: false,
           nextItemId: null,
           nextItemTextBytes: null,
         }
       : {
           items: collections.notes as Array<Record<string, unknown> & { id: number }>,
-          ...collections.pages.notes,
+          ...collections.pages!.notes,
         }
     const [moderatedSubplaces, publicDetails, moderatedNotes, moderatedLineHeadings] = await Promise.all([
       moderatePublicRows('place', subplacesPage.items),
@@ -877,17 +933,6 @@ export function mountWorldRoutes(app: Hono): void {
       moderatePublicRows('note', notesPage.items),
       moderatePublicRows('line', lineHeadings.headings),
     ])
-    const frontMatter = (publicPlace as unknown as Record<string, unknown>).moderated === true
-      ? Object.freeze([])
-      : frontMatterByPlace.get(id) ?? Object.freeze([])
-    // Mutes (decision #156), after the moderation overlay: muted notes, things and lines
-    // are left out and counted, muted places stay listed and marked, and the laws stay.
-    const judge = await judgeRead(reader, {
-      place: [id, ...rowIds(moderatedSubplaces)],
-      thing: [...rowIds(publicDetails.things), ...rowIds(frontMatter)],
-      note: rowIds(moderatedNotes),
-      line: rowIds(moderatedLineHeadings),
-    })
     const mutedThings = splitMuted(judge, 'thing', publicDetails.things)
     const mutedNotes = splitMuted(judge, 'note', moderatedNotes)
     const mutedLines = splitMuted(judge, 'line', moderatedLineHeadings)
@@ -1742,7 +1787,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!parsed.ok) return err(c, 400, parsed.error)
     const hiddenQuery = parseHidden(queries)
     if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
-    const rows = await executeBudgetedExactQuery(`
+    const readKindRows = (cursor: number | null, fetchLimit: number) => executeBudgetedExactQuery(`
       /* public:kinds */
       WITH totals AS (
         SELECT count(*)::integer AS total_items,
@@ -1768,14 +1813,28 @@ export function mountWorldRoutes(app: Hono): void {
         LIMIT $2::integer
       ) page ON TRUE
       ORDER BY page.id DESC NULLS LAST
-    `, [parsed.cursor, parsed.fetchLimit])
-    const collection = extractPublicCollectionRows(rows)
-    const page = finalizePublicPage(collection.rows as unknown as readonly KindRow[], parsed.limit)
-    const moderated = await moderatePublicKinds(page.items)
-    // Mutes (decision #156): a muted kind, or one owned by a muted resident, is left out and counted.
+    `, [cursor, fetchLimit])
+    const collection = extractPublicCollectionRows(await readKindRows(parsed.cursor, parsed.fetchLimit))
+    // Mutes (decision #156): a muted kind, or one owned by a muted resident, is left out and
+    // counted, and a page they thinned reads further kinds until it is full (src/page-fill.ts).
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const kindJudge = await judgeRead(reader, { kind: rowIds(moderated) })
+    const filled = await fillMutedPage({
+      judge: await judgeRead(reader, { kind: rowIds(collection.rows) }),
+      type: 'kind',
+      limit: parsed.limit,
+      page: finalizePublicPage(collection.rows as unknown as readonly KindRow[], parsed.limit),
+      next: async (afterId, size) => {
+        const more = finalizePublicPage(
+          extractPublicCollectionRows(await readKindRows(afterId, size + 1)).rows as unknown as readonly KindRow[],
+          size,
+        )
+        return { rows: more.items, hasMore: more.hasMore }
+      },
+    })
+    const page = filled.page
+    const moderated = await moderatePublicKinds(page.items)
+    const kindJudge = filled.judge
     const kinds = splitMuted(kindJudge, 'kind', moderated)
     const sentItems = page.items.filter((_row, index) => kinds.shown.includes(moderated[index]!))
     // Reading filters (decision #157): each kind's description.
@@ -2115,7 +2174,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (!parsed.ok) return err(c, 400, parsed.error)
     const hiddenQuery = parseHidden(queries)
     if (!hiddenQuery.ok) return err(c, 400, HIDDEN_REFUSAL)
-    const rows = await executeBudgetedExactQuery(`
+    const readTraitRows = (cursor: number | null, fetchLimit: number) => executeBudgetedExactQuery(`
       /* public:traits */
       WITH totals AS (
         SELECT count(*)::integer AS total_items,
@@ -2136,17 +2195,29 @@ export function mountWorldRoutes(app: Hono): void {
         LIMIT $2::integer
       ) page ON TRUE
       ORDER BY page.id DESC NULLS LAST
-    `, [parsed.cursor, parsed.fetchLimit])
-    const collection = extractPublicCollectionRows(rows)
-    const page = finalizePublicPage(
-      collection.rows as Array<Record<string, unknown> & { id: number }>,
-      parsed.limit,
-    )
-    const moderated = await moderatePublicRows('trait', page.items)
-    // Mutes (decision #156): a trait coined by a muted resident is left out and counted.
+    `, [cursor, fetchLimit])
+    type TraitRow = Record<string, unknown> & { id: number }
+    const collection = extractPublicCollectionRows(await readTraitRows(parsed.cursor, parsed.fetchLimit))
+    // Mutes (decision #156): a trait coined by a muted resident is left out and counted, and
+    // a page they thinned reads further traits until it is full (src/page-fill.ts).
     const reader = await readerShape(c, false)
     markReaderShaped(c, reader)
-    const traitJudge = await judgeRead(reader, { trait: rowIds(moderated) })
+    const filled = await fillMutedPage({
+      judge: await judgeRead(reader, { trait: rowIds(collection.rows) }),
+      type: 'trait',
+      limit: parsed.limit,
+      page: finalizePublicPage(collection.rows as TraitRow[], parsed.limit),
+      next: async (afterId, size) => {
+        const more = finalizePublicPage(
+          extractPublicCollectionRows(await readTraitRows(afterId, size + 1)).rows as TraitRow[],
+          size,
+        )
+        return { rows: more.items, hasMore: more.hasMore }
+      },
+    })
+    const page = filled.page
+    const moderated = await moderatePublicRows('trait', page.items)
+    const traitJudge = filled.judge
     const traits = splitMuted(traitJudge, 'trait', moderated)
     const sentItems = page.items.filter((_row, index) => traits.shown.includes(moderated[index]!))
     // Reading filters (decision #157): each trait's description.
