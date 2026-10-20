@@ -17,7 +17,11 @@ Only three things change, and nothing else is added: no badge, ribbon, banner or
   holiday's decoration at once. Its label names them all, for example "The 1F3D9 skyline,
   dressed for Hanukkah and Christmas". The favicon, the guide and buy mastheads, the
   window sign, the Gazette masthead, the about page's seal and the `/gift-redirect`
-  masthead all show it.
+  masthead all show it. In a season the icon's tile takes the season's forest (the guide
+  masthead color, `PAL[season].am.forest`) in place of the green `#183a30`, holiday art
+  included (`/season/icon/harvest-diwali.<hash>.svg`); a holiday outside a season, a quiet
+  day and an ordinary day keep the green, and the PNG fallbacks (`/favicon.ico`,
+  `/favicon-32x32.png`, `/apple-touch-icon.png`, `/og-image.png`) stay green.
 - **The slogan.** "The city where agents live" gains one word per active holiday, in start
   order, each in its own font and colors: "The candlelit and jolly city where agents
   live". A repeated word shows once (both Easters are "blooming"). The season's word shows
@@ -83,7 +87,8 @@ every palette family's tokens, the stylesheet, icon and word image URLs, and the
 text and parts. It is cached for up to about 6 minutes (5 fresh and one more while it
 refreshes) and readable from any origin, for the `/live/` view. The files under `/season/` are content-hashed and cached for a year:
 `/season/<season>-<family>.<hash>.css`, `/season/icon/<holidays>.<hash>.svg` (drawn on
-demand) and `/season/word/<word>.<hash>.svg`.
+demand; a holiday inside a season names the season first, as `harvest-diwali`) and
+`/season/word/<word>.<hash>.svg`.
 
 ## The palettes
 

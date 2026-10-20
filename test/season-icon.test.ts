@@ -6,14 +6,22 @@ import {
   artRect,
   BASE_ICON,
   composeIcon,
+  groundColor,
+  iconGround,
   iconKey,
   iconSpec,
+  iconUrl,
+  parseIconFileKey,
   parseIconKey,
+  PLAIN_GROUND,
+  renderedIcon,
+  type Ground,
   placeParts,
   WINDOW_RECTS,
   ZONES,
   type IconSpec,
 } from '../src/season/icon.ts'
+import { PAL } from '../src/season/palettes.ts'
 import { resolveDay } from '../src/season/resolve.ts'
 
 type Box = readonly [number, number, number, number]
@@ -27,25 +35,30 @@ function overlaps(a: Box, b: Box): boolean {
   return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
-function everySpec(): ReadonlyMap<string, IconSpec> {
-  const specs = new Map<string, IconSpec>()
+type Dress = Readonly<{ spec: IconSpec; ground: Ground }>
+
+function everySpec(): ReadonlyMap<string, Dress> {
+  const specs = new Map<string, Dress>()
   for (let date = '2026-01-01'; date <= '2035-12-31'; date = addDays(date, 1)) {
-    const spec = iconSpec(resolveDay(date))
-    if (spec.length > 0) specs.set(iconKey(spec), spec)
+    const day = resolveDay(date)
+    const spec = iconSpec(day)
+    if (spec.length > 0) specs.set(iconKey(spec, iconGround(day)), { spec, ground: iconGround(day) })
   }
   return specs
 }
 
 const SPECS = everySpec()
 
-test(`every dressed icon from 2026 to 2035 renders, keeps its art apart, and leaves the real icon untouched (${SPECS.size} icons)`, () => {
+test(`every dressed icon from 2026 to 2035 renders, keeps its art apart, and leaves the real icon untouched but for its tile (${SPECS.size} icons)`, () => {
   const background = '<rect width="512" height="512" rx="112" ry="112" fill="#183a30"/>\n'
   const lineGroup = '  <g id="line">'
   const [head, rest] = [BASE_ICON.slice(0, BASE_ICON.indexOf(background) + background.length), BASE_ICON.slice(BASE_ICON.indexOf(background) + background.length)]
   const [middle, tail] = [rest.slice(0, rest.indexOf(lineGroup)), rest.slice(rest.indexOf(lineGroup), rest.lastIndexOf('</svg>'))]
-  for (const [key, spec] of SPECS) {
-    const svg = composeIcon(spec)
-    assert.ok(svg.startsWith(head), key)
+  for (const [key, { spec, ground }] of SPECS) {
+    const svg = composeIcon(spec, ground)
+    assert.equal(parseIconFileKey(key)?.ground, ground, key)
+    assert.ok(svg.startsWith(head.replace('fill="#183a30"', `fill="${groundColor(ground)}"`)), key)
+    if (ground !== null) assert.ok(!svg.includes('#183a30'), `${key}: no old green left on a season ground`)
     assert.ok(svg.includes(middle), key)
     assert.ok(svg.includes(tail), key)
     assert.ok(svg.endsWith('</svg>\n'), key)
@@ -118,6 +131,49 @@ test('the 16 window lights sit exactly in the real icon window frames', () => {
   ])
   assert.match(composeIcon(parseIconKey('spooky')!), /<g id="season-glow" fill="#f7a33a">(?:<rect [^>]+\/>){16}<\/g>/u)
   assert.doesNotMatch(composeIcon(parseIconKey('holi')!), /season-glow/u)
+})
+
+test('the icon tile takes the season frame color on a season day and keeps the green otherwise', () => {
+  const tile = (svg: string) => /<rect width="512" height="512" rx="112" ry="112" fill="(#[0-9a-f]{6})"\/>/u.exec(svg)?.[1]
+  // 2026-10-19 is spooky season with no holiday: the day the owner saw the green tile on the purple header.
+  for (const [date, season] of [['2026-10-19', 'spooky'], ['2026-11-20', 'harvest'], ['2026-12-10', 'winter']] as const) {
+    const day = resolveDay(date)
+    assert.equal(day.season?.key, season, date)
+    assert.equal(iconGround(day), season, date)
+    const svg = renderedIcon(iconSpec(day), iconGround(day)).svg
+    assert.equal(tile(svg), PAL[season].am.forest, date)
+    assert.equal(groundColor(season), PAL[season].am.forest, date)
+  }
+  // Diwali 2026 (8 November) falls inside harvest season: holiday art on the harvest tile.
+  const diwali = resolveDay('2026-11-08')
+  assert.deepEqual(iconSpec(diwali).map(item => item.key), ['diwali'])
+  assert.match(iconUrl(iconSpec(diwali), iconGround(diwali)), /^\/season\/icon\/harvest-diwali\.[0-9a-f]{10}\.svg$/u)
+  assert.equal(tile(composeIcon(iconSpec(diwali), iconGround(diwali))), PAL.harvest.am.forest)
+  // A holiday outside the seasons, an ordinary day and a quiet day keep the real green.
+  const valentine = resolveDay('2027-02-14')
+  assert.equal(iconGround(valentine), null)
+  assert.equal(tile(composeIcon(iconSpec(valentine), iconGround(valentine))), PLAIN_GROUND)
+  assert.match(iconUrl(iconSpec(valentine), iconGround(valentine)), /^\/season\/icon\/valentine\.[0-9a-f]{10}\.svg$/u)
+  for (const date of ['2026-07-08', '2027-10-11']) {
+    const day = resolveDay(date)
+    assert.equal(iconGround(day), null, date)
+    assert.equal(iconUrl(iconSpec(day), iconGround(day)), '/favicon.svg', date)
+  }
+  assert.equal(PLAIN_GROUND, '#183a30')
+  assert.equal(tile(BASE_ICON), PLAIN_GROUND)
+})
+
+test('icon file keys name a season ground only before holidays', () => {
+  assert.deepEqual(parseIconFileKey('spooky'), { spec: [{ key: 'spooky', n: null }], ground: 'spooky' })
+  assert.deepEqual(parseIconFileKey('holi'), { spec: [{ key: 'holi', n: null }], ground: null })
+  assert.deepEqual(parseIconFileKey('winter-hanukkah2+christmas'), {
+    spec: [{ key: 'hanukkah', n: 2 }, { key: 'christmas', n: null }],
+    ground: 'winter',
+  })
+  for (const bad of ['', '-', 'winter-', '-diwali', 'spooky-spooky', 'spooky-harvest', 'diwali-holi', 'winter-hanukkah9',
+    'Winter-diwali', 'harvest-diwali-holi', 'harvest--diwali']) {
+    assert.equal(parseIconFileKey(bad), null, bad)
+  }
 })
 
 test('icon keys name only known holidays, counted where they count, without repeats', () => {

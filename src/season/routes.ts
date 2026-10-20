@@ -4,7 +4,7 @@ import { allowedPublicQuery } from '../public-pagination.ts'
 import { seasonDateNow } from './clock.ts'
 import { addDays } from './dates.ts'
 import type { QuietKey } from './events.ts'
-import { dressName, iconLabel, iconSpec, iconUrl, parseIconKey, renderedIcon } from './icon.ts'
+import { dressName, iconGround, iconLabel, iconSpec, iconUrl, parseIconFileKey, renderedIcon } from './icon.ts'
 import {
   formTokens,
   gazetteDarkTokens,
@@ -34,7 +34,7 @@ const QUIET_NAMES: Readonly<Record<QuietKey, string>> = Object.freeze({
 const SEASON_CACHE = 'public, max-age=60, s-maxage=300, stale-while-revalidate=60'
 const ASSET_CACHE = 'public, max-age=31536000, immutable'
 const SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'"
-const HASHED_FILE = /^([a-z0-9+]+)\.([0-9a-f]{10})\.svg$/u
+const HASHED_FILE = /^([a-z0-9+-]+)\.([0-9a-f]{10})\.svg$/u
 
 function seasonPayload(day: SeasonDay) {
   const spec = iconSpec(day)
@@ -68,7 +68,7 @@ function seasonPayload(day: SeasonDay) {
     stylesheets: dressed
       ? { paper: stylesheetFor('paper', season?.key ?? 'plain').url, window: stylesheetFor('window', season?.key ?? 'plain').url }
       : null,
-    icon: { url: iconUrl(spec), label: iconLabel(spec), dressed },
+    icon: { url: iconUrl(spec, iconGround(day)), label: iconLabel(spec), dressed },
     slogan: {
       text: sloganText(day),
       parts: sloganParts(day).map(part => typeof part === 'string' ? part : {
@@ -100,9 +100,9 @@ export function mountSeasonRoutes(app: Hono): void {
   })
   app.get('/season/icon/:file', c => {
     const match = HASHED_FILE.exec(c.req.param('file'))
-    const spec = match ? parseIconKey(match[1]!) : null
-    if (!match || !spec || spec.length === 0) return c.notFound()
-    const icon = renderedIcon(spec)
+    const dress = match ? parseIconFileKey(match[1]!) : null
+    if (!match || !dress) return c.notFound()
+    const icon = renderedIcon(dress.spec, dress.ground)
     if (icon.hash !== match[2]) return c.notFound()
     assetHeaders(c, 'image/svg+xml')
     return c.body(icon.svg)

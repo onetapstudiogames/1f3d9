@@ -1,5 +1,5 @@
 import { seasonDateNow } from './clock.ts'
-import { iconLabel, iconSpec, iconUrl } from './icon.ts'
+import { iconGround, iconLabel, iconSpec, iconUrl } from './icon.ts'
 import { paletteCss, stylesheetFor, windowThemeColor, type PageFamily } from './palettes.ts'
 import { isDressed, resolveDay, type SeasonDay } from './resolve.ts'
 import { escapeHtml, sloganHtml } from './slogan.ts'
@@ -53,7 +53,7 @@ export function stampSeason(html: string, family: PageFamily, day: SeasonDay = r
     .replace(THEME_COLOR, tag => themeColorHtml(day, family, tag))
   if (!isDressed(day)) return stamped
   const spec = iconSpec(day)
-  const url = iconUrl(spec)
+  const url = iconUrl(spec, iconGround(day))
   const label = iconLabel(spec)
   const slogan = sloganHtml(day)
   return stamped

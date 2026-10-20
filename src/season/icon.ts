@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { HOLIDAY_KEYS, SEASON_KEYS, type HolidayKey, type SeasonKey } from './events.ts'
 import { motifParts, type ArtKey, type Part, type ZoneId } from './motifs.ts'
+import { PAL } from './palettes.ts'
 import type { SeasonDay } from './resolve.ts'
 
 // The real skyline icon (src/assets/1f3d9-icon.svg) dressed for a day. Every
@@ -15,6 +16,8 @@ export const PLAIN_ICON_LABEL = 'The 1F3D9 skyline'
 
 type DressKey = SeasonKey | HolidayKey
 export type IconSpec = readonly Readonly<{ key: DressKey; n: number | null }>[]
+// The season whose colors the icon's tile takes, or null for the real green.
+export type Ground = SeasonKey | null
 type Box = readonly [number, number, number, number]
 
 // Zones in the icon's 512-unit space, clear of the buildings' outlines.
@@ -61,6 +64,31 @@ function artKey(key: DressKey): ArtKey {
   return key
 }
 
+// The tile behind the skyline. On a season day it takes the season's forest,
+// the color of the guide masthead it sits on, so the old green never shows
+// against a season header. A holiday outside the seasons, a quiet day and an
+// ordinary day keep the real icon's green.
+export const PLAIN_GROUND = '#183a30'
+
+export function groundColor(ground: Ground): string {
+  return ground === null ? PLAIN_GROUND : PAL[ground].am.forest
+}
+
+export function iconGround(day: SeasonDay): Ground {
+  return day.season?.key ?? null
+}
+
+function isSeason(key: string): key is SeasonKey {
+  return (SEASON_KEYS as readonly string[]).includes(key)
+}
+
+// A season's own icon stands on that season's ground; holidays alone stand on
+// the real green unless a ground is named.
+function ownGround(spec: IconSpec): Ground {
+  const only = spec.length === 1 ? spec[0]!.key : null
+  return only !== null && isSeason(only) ? only : null
+}
+
 export function iconSpec(day: SeasonDay): IconSpec {
   if (day.holidays.length > 0) return day.holidays.map(holiday => ({ key: holiday.key, n: holiday.count?.n ?? null }))
   return day.season ? [{ key: day.season.key, n: null }] : []
@@ -74,8 +102,10 @@ export function iconLabel(spec: IconSpec): string {
   return spec.length === 0 ? PLAIN_ICON_LABEL : `${PLAIN_ICON_LABEL}, dressed for ${joinNames(spec.map(item => NAMES[item.key]))}`
 }
 
-export function iconKey(spec: IconSpec): string {
-  return spec.map(item => `${item.key}${item.n ?? ''}`).join('+')
+// A holiday inside a season names the season's ground first: "harvest-diwali".
+export function iconKey(spec: IconSpec, ground: Ground = ownGround(spec)): string {
+  const dress = spec.map(item => `${item.key}${item.n ?? ''}`).join('+')
+  return ground !== null && ground !== ownGround(spec) ? `${ground}-${dress}` : dress
 }
 
 const MAX_PARTS = 6
@@ -101,6 +131,19 @@ export function parseIconKey(key: string): IconSpec | null {
     spec.push({ key: name, n })
   }
   return spec
+}
+
+// The spec and ground a /season/icon/<key>.<hash>.svg key names, or null.
+export function parseIconFileKey(key: string): Readonly<{ spec: IconSpec; ground: Ground }> | null {
+  const dash = key.indexOf('-')
+  if (dash === -1) {
+    const spec = parseIconKey(key)
+    return spec && spec.length > 0 ? Object.freeze({ spec, ground: ownGround(spec) }) : null
+  }
+  const ground = key.slice(0, dash)
+  const spec = parseIconKey(key.slice(dash + 1))
+  if (!isSeason(ground) || !spec || spec.length === 0 || ownGround(spec) !== null) return null
+  return Object.freeze({ spec, ground })
 }
 
 type Placed = Readonly<{ key: DressKey; part: Part; zone: ZoneId; box: Box }>
@@ -201,7 +244,10 @@ const BACKGROUND = '<rect width="512" height="512" rx="112" ry="112" fill="#183a
 const LINE_GROUP = '  <g id="line">'
 const CLOSE = '</svg>'
 
-export function composeIcon(spec: IconSpec): string {
+// The real icon's green, as the tile and as the see-through holes (TILE) in motifs.ts.
+const PLAIN_TILE_FILL = `fill="${PLAIN_GROUND}"`
+
+export function composeIcon(spec: IconSpec, ground: Ground = ownGround(spec)): string {
   const placed = placeParts(spec)
   const glow = spec.map(item => GLOW[item.key]).find(color => color !== undefined)
   const windows = glow
@@ -216,27 +262,28 @@ export function composeIcon(spec: IconSpec): string {
     .replace(BACKGROUND, `${BACKGROUND}  ${back}`)
     .replace(LINE_GROUP, `  ${windows}${LINE_GROUP}`)
     .replace(CLOSE, `${front}${CLOSE}`)
+    .replaceAll(PLAIN_TILE_FILL, `fill="${groundColor(ground)}"`)
 }
 
 type Rendered = Readonly<{ svg: string; hash: string }>
 const LRU_SIZE = 64
 const rendered = new Map<string, Rendered>()
 
-export function renderedIcon(spec: IconSpec): Rendered {
-  const key = iconKey(spec)
+export function renderedIcon(spec: IconSpec, ground: Ground = ownGround(spec)): Rendered {
+  const key = iconKey(spec, ground)
   const cached = rendered.get(key)
   if (cached) {
     rendered.delete(key)
     rendered.set(key, cached)
     return cached
   }
-  const svg = composeIcon(spec)
+  const svg = composeIcon(spec, ground)
   const value = Object.freeze({ svg, hash: createHash('sha256').update(svg, 'utf8').digest('hex').slice(0, 10) })
   rendered.set(key, value)
   if (rendered.size > LRU_SIZE) rendered.delete(rendered.keys().next().value!)
   return value
 }
 
-export function iconUrl(spec: IconSpec): string {
-  return spec.length === 0 ? PLAIN_ICON_URL : `/season/icon/${iconKey(spec)}.${renderedIcon(spec).hash}.svg`
+export function iconUrl(spec: IconSpec, ground: Ground = ownGround(spec)): string {
+  return spec.length === 0 ? PLAIN_ICON_URL : `/season/icon/${iconKey(spec, ground)}.${renderedIcon(spec, ground).hash}.svg`
 }
