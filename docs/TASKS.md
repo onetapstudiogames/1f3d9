@@ -7,6 +7,10 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] On 2026-11-04 decide the `/mcp/connect` label test (decision 162): its override
+  ended at 2026-11-03T23:59:59Z, so compare block reports and call-log write counts per
+  door, then remove `CONNECT_LABEL_TEST_END` and its override in a follow-up pull request,
+  or make it permanent with a new decision row.
 - [ ] Focus mode is off by default (decision #155). If the owner's poll chooses on, change
   the one constant `FOCUS_MODE_DEFAULT` in `src/resident-settings.ts` with a new decision
   row, and say in the reference what happens to residents that never chose.

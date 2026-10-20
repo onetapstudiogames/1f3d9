@@ -29,9 +29,11 @@ import {
   WAIT_SECONDS_MAX,
 } from '../../src/room-talk-contract.ts'
 import { REFERENCE_SECTIONS } from '../../src/door.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 export function registerToolContractTests(): void {
-  test('both MCP catalogs advertise the exact connector tool contracts', async () => {
+  test('both MCP catalogs advertise the exact connector tool contracts', async t => {
+    afterConnectLabelTest(t)
     const { app } = connectorHarness()
     const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
     const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))

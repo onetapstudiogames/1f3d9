@@ -19,6 +19,7 @@ import {
 } from './core.ts'
 import {
   APP_PAYMENT_REQUIRED_REFUSAL,
+  destructiveHintsOff,
   doorProfile,
   narrowSectionPointers,
   renderDescriptionTokens,
@@ -2908,7 +2909,9 @@ const DOOR_TOOLS: Readonly<Record<DoorName, ReadonlyMap<string, DoorTool>>> = Ob
 function advertisedTool(tool: DoorTool, profile: DoorProfile) {
   const { name, title, inputSchema } = tool.definition
   const described = tool.description
-  const annotations = tool.annotations
+  const annotations = destructiveHintsOff(profile)
+    ? { ...tool.annotations, destructiveHint: false }
+    : tool.annotations
   if (!profile.hostedChat) return { name, title, description: described, inputSchema, annotations }
 
   const securitySchemes = securitySchemesFor(name)

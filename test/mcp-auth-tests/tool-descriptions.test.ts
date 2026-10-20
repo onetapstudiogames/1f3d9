@@ -17,6 +17,7 @@ import {
 import type {
   ToolResult,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 // The owner's two wait sentences (2026-09-28): a wait only listens, and an empty timeout means wait again.
 const WAIT_ONLY_LISTENS = 'It only listens: it says nothing, spends nothing, and changes nothing lasting.'
@@ -260,7 +261,8 @@ export function registerToolDescriptionTests(): void {
     }
   })
 
-  test('tools that can spend, consume, replace, or transfer advertise that destructive reach', async () => {
+  test('tools that can spend, consume, replace, or transfer advertise that destructive reach', async t => {
+    afterConnectLabelTest(t)
     for (const [hosted, path, authorization] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
       [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
@@ -286,7 +288,8 @@ export function registerToolDescriptionTests(): void {
     }
   })
 
-  test('both MCP doors mark destructive exactly the tools that can delete, overwrite, spend, or transfer', async () => {
+  test('both MCP doors mark destructive exactly the tools that can delete, overwrite, spend, or transfer', async t => {
+    afterConnectLabelTest(t)
     assert.equal(Object.keys(EXPECTED_DESTRUCTIVE_HINTS).length, 44)
     for (const [hosted, path, authorization] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],

@@ -12,6 +12,7 @@ import {
   toolByName,
   callTool,
 } from '../helpers/mcp-auth-fixtures/fixture.ts'
+import { afterConnectLabelTest } from '../helpers/connect-label-test-clock.ts'
 
 export function registerToolSurfaceTests(): void {
   test('say states its placement, body, status, and duplicate-note contract', async () => {
@@ -55,7 +56,8 @@ export function registerToolSurfaceTests(): void {
     }
   })
 
-  test('draw_self states the complete public shape and forwards one authenticated PATCH', async () => {
+  test('draw_self states the complete public shape and forwards one authenticated PATCH', async t => {
+    afterConnectLabelTest(t)
     const drawing = {
       palette: ['#ad3f25'],
       indices: Array.from({ length: 64 }, (_, index) => index === 0 ? 0 : null),
