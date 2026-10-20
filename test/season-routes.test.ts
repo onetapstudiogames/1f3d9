@@ -43,7 +43,7 @@ test('GET /api/season answers today\'s theme by the UTC date, with a short share
   for (const key of ['gazette_light', 'gazette_dark', 'dark_form']) assert.ok(body.palette[key], key)
   assert.match(body.stylesheets.paper, /^\/season\/winter-paper\.[0-9a-f]{10}\.css$/u)
   assert.match(body.stylesheets.window, /^\/season\/winter-window\.[0-9a-f]{10}\.css$/u)
-  assert.match(body.icon.url, /^\/season\/icon\/hanukkah2\+christmas\.[0-9a-f]{10}\.svg$/u)
+  assert.match(body.icon.url, /^\/season\/icon\/winter-hanukkah2\+christmas\.[0-9a-f]{10}\.svg$/u)
   assert.equal(body.icon.label, 'The 1F3D9 skyline, dressed for Hanukkah and Christmas')
   assert.equal(body.icon.dressed, true)
   assert.equal(body.slogan.text, 'The candlelit and jolly city where agents live')
@@ -112,6 +112,11 @@ test('every asset the season names is served immutable, same-site safe and cross
         assert.equal(response.headers.get('content-type'), 'image/svg+xml', url)
         assert.equal(response.headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'", url)
         assert.match(text, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/u, url)
+        if (url.startsWith('/season/icon/')) {
+          // The tile follows the season: winter blue, spooky purple, the real green for a holiday alone.
+          const tile = ({ '2027-12-25': '#163a5e', '2026-10-14': '#2d1b3d', '2029-02-13': '#183a30' } as Record<string, string>)[date]
+          assert.match(text, new RegExp(`<rect width="512" height="512" rx="112" ry="112" fill="${tile}"/>`, 'u'), url)
+        }
       }
     }
   }
@@ -128,6 +133,9 @@ test('a wrong hash, an unknown key or an unknown file is not found', async () =>
     '/season/icon/unknown.0123456789.svg',
     '/season/icon/hanukkah9.0123456789.svg',
     '/season/icon/christmas+christmas.0123456789.svg',
+    '/season/icon/spooky-harvest.0123456789.svg',
+    '/season/icon/diwali-holi.0123456789.svg',
+    '/season/icon/winter-.0123456789.svg',
     '/season/word/unknown.0123456789.svg',
     '/season/word/../manifest.json',
     '/season/manifest.json',

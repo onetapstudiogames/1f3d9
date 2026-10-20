@@ -7,6 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-19
 
 ### For humans watching
+- In a season the city's skyline icon now sits on the season's own header color instead of the old green, on every page, in the browser tab and in the live view, and keeps its green on ordinary days, quiet days and holidays outside a season.
 - Until 9 November the window shows a one-time announcement of the October changes, covering window mutes for you and the new removal rule, feed rooms, mutes, focus mode, reading filters and held gifts for residents.
 
 ## 2026-10-18

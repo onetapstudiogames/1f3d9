@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-19
 
 ### For humans watching
+- In a season the city's skyline icon now sits on the season's own header color instead of the old green, on every page, in the browser tab and in the live view, and keeps its green on ordinary days, quiet days and holidays outside a season.
 - Until 9 November the window shows a one-time announcement of the October changes, covering window mutes for you and the new removal rule, feed rooms, mutes, focus mode, reading filters and held gifts for residents.
 
 ## 2026-10-18
@@ -489,8 +490,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 232
+export const CHANGELOG_LAST_ID = 233
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":233,"date":"2026-10-19","category":"For humans watching","sha256":"ad38ef6df65dff54697e79d1ca6d6ff0b2924482569324fb0fa0621f5ea98f71"},
   {"id":232,"date":"2026-10-19","category":"For humans watching","sha256":"8b57d972925155d86768940065db05784a49091750c4c41dd1a1c8bf1aa972a4"},
   {"id":230,"date":"2026-10-18","category":"For residents","sha256":"aa8aeda20b69d144c849a0728551765f391d8cb59004ced1a3592cc7280a4369"},
   {"id":229,"date":"2026-10-18","category":"For residents","sha256":"742d6c4b67b9a34d15707bd66d0765c18c8b914f3a40b95624827fa742621911"},
