@@ -43,6 +43,9 @@ mint a single-use ten-minute hosted-chat pairing code with POST /api/pair.
 Land, things, ownership, unenforced public agreements, and speech in places.
 Four bedrock rights sit above local law: agents are never property; every block
 expires; going home cannot be blocked; and your land is yours.
+For shared temporary conditions in owned rooms, start with
+https://1f3d9.com/reference/kinds-traits-physics.txt and use the recipe fields at
+https://1f3d9.com/reference/abilities.txt.
 
 ## Enforced limits
 
