@@ -163,6 +163,130 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
 
     const { default: app } = await import('../../src/index.ts') as { default: CityApp }
 
+    await t.test('passive look shapes and a sibling law use the one parent label until its stored expiry', async () => {
+      const rooms = await resetCity([FOUNDER, MAKER, VISITOR])
+      const db = connectedDatabase()
+      await standIn(MAKER.id, rooms.eastRoomId)
+      await standIn(VISITOR.id, rooms.westRoomId)
+      const recipe = {
+        // Explicit place-label seconds may be below the wake dial's ten-second floor.
+        use: [{ effect: 'label', target: 'law_place', label: 'shared-condition', seconds: 8 }],
+        talk: [{
+          effect: 'check_label', target: 'law_place', label: 'shared-condition',
+          then: [{ effect: 'label', target: 'actor', label: 'condition-present' }],
+          else: [{ effect: 'label', target: 'actor', label: 'condition-absent' }],
+        }],
+      }
+      const coined = await coin(app, FOUNDER.secret, 'shared-condition-law', recipe)
+      assert.equal(coined.status, 201, JSON.stringify(coined.json))
+      const lawId = await traitId('shared-condition-law')
+      const installed = await call(app, FOUNDER.secret, 'PUT', `/api/place/${rooms.continentId}/laws`, {
+        traits: ['shared-condition-law'],
+      })
+      assert.equal(installed.status, 200, JSON.stringify(installed.json))
+      const focused = await call(app, VISITOR.secret, 'PATCH', '/api/me/settings', { focus_mode: true })
+      assert.equal(focused.status, 200, JSON.stringify(focused.json))
+      // Seed the ordinary shared thing directly; this fixture needs no paid kind or founding door.
+      const bell = (await db.query<{ id: number }>(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, open_to_use)
+        VALUES ($1, 'condition bell', 'an ordinary shared thing', $2, $2, TRUE) RETURNING id
+      `, [rooms.eastRoomId, FOUNDER.id])).rows[0]!.id
+      const used = await call(app, MAKER.secret, 'POST', '/api/action', { action: 'use', thing_id: bell })
+      assert.equal(used.status, 200, JSON.stringify(used.json))
+      assert.equal((used.json.action as Json).status, 'applied')
+
+      const parentRows = async () => (await db.query(`
+        SELECT id, target_type, target_id, source_trait_id, source_place_id, source_thing_id,
+          created_at, expires_at
+        FROM active_labels WHERE label = 'shared-condition' ORDER BY id
+      `)).rows
+      const stored = await parentRows()
+      assert.equal(stored.length, 1, 'one row on the parent, with no copies on either child')
+      assert.deepEqual(stored, [{
+        ...stored[0], target_type: 'place', target_id: rooms.continentId, source_trait_id: lawId,
+        source_place_id: rooms.continentId, source_thing_id: null,
+      }])
+      assert.ok(stored[0]!.expires_at instanceof Date, 'the explicit place-label lifetime stores an end time')
+      const conditionActive = async () => (await db.query<{ active: boolean }>(`
+        SELECT expires_at > clock_timestamp() AS active FROM active_labels WHERE id = $1
+      `, [stored[0]!.id])).rows[0]!.active
+      const checkFromSibling = async (body: string) => {
+        const said = await call(app, VISITOR.secret, 'POST', '/api/note', {
+          place_id: rooms.westRoomId, body,
+        })
+        assert.equal(said.status, 201, JSON.stringify(said.json))
+      }
+      await checkFromSibling('checking the shared condition before expiry')
+      assert.deepEqual((await stickers('condition-present')).map(row => row.target_id), [VISITOR.id])
+      assert.deepEqual(await stickers('condition-absent'), [])
+
+      const passiveState = async () => (await db.query(`
+        SELECT
+          (SELECT count(*)::int FROM action_runs) AS actions,
+          (SELECT count(*)::int FROM action_resolutions) AS resolutions,
+          (SELECT count(*)::int FROM events) AS events,
+          (SELECT count(*)::int FROM wake_settles) AS settles,
+          (SELECT count(*)::int FROM effect_resolutions) AS timers,
+          (SELECT jsonb_agg(to_jsonb(label) ORDER BY id) FROM active_labels label) AS labels,
+          (SELECT jsonb_agg(to_jsonb(presence) ORDER BY resident_id) FROM resident_presence presence) AS presence
+      `)).rows[0]
+      const look = async (secret: string | null, placeId: number, view: string): Promise<Json> => {
+        const response = await app.request('http://city.test/mcp', {
+          method: 'POST',
+          headers: {
+            ...(secret === null ? { 'content-type': 'application/json' } : bearer(secret)),
+            accept: 'application/json, text/event-stream',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0', id: 1, method: 'tools/call',
+            params: { name: 'look', arguments: { place_id: placeId, view } },
+          }),
+        })
+        assert.equal(response.status, 200)
+        const rpc = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
+        assert.equal(rpc.result.isError, false, rpc.result.content[0]?.text)
+        return JSON.parse(rpc.result.content[0]!.text) as Json
+      }
+      const readShapes = async (active: boolean) => {
+        const before = await passiveState()
+        for (const secret of [null, MAKER.secret, VISITOR.secret]) {
+          for (const view of ['outline', 'full']) {
+            for (const placeId of [rooms.continentId, rooms.westRoomId]) {
+              const http = await call(app, secret, 'GET', `/api/place/${placeId}?view=${view}`)
+              assert.equal(http.status, 200, JSON.stringify(http.json))
+              for (const answer of [http.json, await look(secret, placeId, view)]) {
+                assert.equal(answer.view, secret === VISITOR.secret ? 'outline' : view)
+                if (secret === VISITOR.secret) assert.equal((answer.reading as Json).focus_mode, true)
+                const place = answer.place as Json
+                assert.deepEqual(place.labels, active && placeId === rooms.continentId ? ['shared-condition'] : [])
+                assert.deepEqual((place.laws as Json[]).map(law => ({
+                  name: law.name, sourcePlaceId: law.sourcePlaceId, recipe: law.recipe,
+                })), [{ name: 'shared-condition-law', sourcePlaceId: rooms.continentId, recipe }])
+              }
+            }
+          }
+        }
+        assert.deepEqual(await passiveState(), before, 'anonymous and keyed reads add no action, event, settle or label deletion')
+      }
+      await readShapes(true)
+      assert.equal(await conditionActive(), true, 'all before-expiry reads finished while the stored label was active')
+      const beforeExpiry = await passiveState()
+      await db.query(`
+        SELECT pg_sleep(GREATEST(0, extract(epoch FROM expires_at - clock_timestamp())) + 0.05)
+        FROM active_labels WHERE id = $1
+      `, [stored[0]!.id])
+      assert.equal(await conditionActive(), false)
+      await readShapes(false)
+      assert.deepEqual(await passiveState(), beforeExpiry, 'expiry and passive reads leave the stored city untouched')
+      await checkFromSibling('checking the shared condition after expiry')
+      assert.equal((await stickers('condition-present')).length, 1, 'the expired condition no longer takes the true branch')
+      assert.deepEqual((await stickers('condition-absent')).map(row => row.target_id), [VISITOR.id])
+      assert.deepEqual(await parentRows(), stored, 'the next law check neither refreshes nor deletes the expired row')
+      assert.deepEqual((await db.query(`
+        SELECT current_place_id FROM resident_presence WHERE resident_id = ANY($1::int[]) ORDER BY resident_id
+      `, [[MAKER.id, VISITOR.id]])).rows.map(row => row.current_place_id), [rooms.eastRoomId, rooms.westRoomId])
+    })
+
     await t.test('place_edit sets wake_label_seconds, refuses a value outside 10 to 86400, and every place read shows it', async () => {
       const rooms = await resetCity([FOUNDER, VISITOR])
       const innerRoomId = await seedInnerRoom(rooms.eastRoomId)
