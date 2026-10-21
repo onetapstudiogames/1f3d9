@@ -9,13 +9,17 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
     let nextDelay = BASE_REFRESH_MS
     try {
       // A confirmed unchanged marker lets the window avoid downloading the
-      // same authored text. Presence is refreshed separately because asleep is
-      // time-derived and can change without a database event. If the marker or
-      // presence read is unavailable, the complete bounded snapshot remains the
-      // safe fallback.
+      // same authored text. Presence and the selected place's labels are
+      // time-derived and can change without a database event. Their focused
+      // reads refresh on this path too; a failed label read marks its facts
+      // unavailable while keeping readable prose. A failed presence read falls
+      // back to the complete bounded snapshot.
       const changeState = await checkPublicChanges()
       if (state.hasSnapshot && changeState.status === 'unchanged' &&
           state.changeMarker === changeState.marker) {
+        const place = state.view === 'place'
+          ? placePanelPlace(state.snapshot) : selectedPlace(state.snapshot)
+        if (place) await ensureDetail(true, place.id, true)
         try {
           const residents = await refreshUnchangedPresence(
             controller.signal,

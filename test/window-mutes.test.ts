@@ -40,6 +40,30 @@ const helpers = createWindowMuteHelpers(FOUNDER_RESIDENT_IDS)
 const injected = new Function('return (' + createWindowMuteHelpers.toString() + ')')()(
   [...FOUNDER_RESIDENT_IDS]) as typeof helpers
 
+test('defining-law sources require a known public room before showing resident text', () => {
+  const program = WINDOW_JS.slice(WINDOW_JS.indexOf('  function placeLawSource('),
+    WINDOW_JS.indexOf('  function renderPlaceConditions('))
+  const sourceFor = (place: Record<string, unknown> | null, muted = false, detail?: Record<string, unknown>) =>
+    new Function('state', 'placeReference', 'isQuietPlace', 'isMutedRow', program +
+      '\nreturn placeLawSource(12)')({ snapshot: {}, details: { 'place:12': detail } }, () => place,
+      (row: Record<string, unknown> | null) => row?.quiet === true, () => muted)
+  const publicPlace = { id: 12, name: 'defining_room', quiet: false, moderated: false }
+  assert.deepEqual(sourceFor(publicPlace), { id: 12, name: 'defining_room', public: true, unavailable: false })
+  for (const place of [null, { id: 12, name: 'directory_only', quiet: false }]) {
+    assert.deepEqual(sourceFor(place), { id: 12, name: null, public: false, unavailable: false })
+  }
+  for (const place of [
+    { ...publicPlace, quiet: true }, { ...publicPlace, moderated: true },
+    { ...publicPlace, status: 'retired' },
+  ]) assert.deepEqual(sourceFor(place), { id: 12, name: null, public: false, unavailable: true })
+  assert.deepEqual(sourceFor(publicPlace, true), { id: 12, name: null, public: false, unavailable: true })
+  for (const detail of [
+    { record: { moderated: true } }, { record: { quiet: true } },
+    { notFound: true }, { error: true },
+  ]) assert.deepEqual(sourceFor(publicPlace, false, detail),
+    { id: 12, name: null, public: false, unavailable: true })
+})
+
 test('the shared fixture is byte for byte the live view copy', () => {
   assert.equal(createHash('sha256').update(FIXTURE_BYTES).digest('hex'), LIVE_FIXTURE_SHA256)
 })
