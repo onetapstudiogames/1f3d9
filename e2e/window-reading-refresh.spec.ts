@@ -346,6 +346,37 @@ test('place conditions ignore a background reply after navigation', async ({ pag
   }
 })
 
+test('place conditions become unavailable after leaving and returning before a background reply', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/11')
+  const panel = page.locator('#place-description')
+  await expect(panel).toContainText('rain_now')
+  const release = fixture.delay()
+  const read = page.waitForRequest(request => new URL(request.url()).pathname === '/api/place/11')
+  try {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await read
+    await page.locator('#place-filter').selectOption('12')
+    await expect(panel).toContainText('child_only')
+    await page.locator('#place-filter').selectOption('11')
+    fixture.expire()
+    const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/place/11')
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/residents')
+    release()
+    await completed
+    await refreshed
+    await expect(panel).toContainText('Current labels and laws are unavailable')
+    await expect(panel).not.toContainText('rain_now')
+    await expect(panel).not.toContainText('Checking current labels and laws')
+    await expect(panel.locator('.place-description-text')).toContainText('brass observatory')
+    await fixture.refresh()
+    await expect(panel).toContainText('No current labels here.')
+    await expect(panel).not.toContainText('unavailable')
+  } finally {
+    release()
+  }
+})
+
 test('reading notice stays inside the closed City facts drop-down until opened', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL)
   violationsByPage.set(page, fixture.networkViolations)

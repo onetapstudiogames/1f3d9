@@ -39,6 +39,41 @@ test('selected-place background reads retain prose and release cancelled pending
   assert.equal(harness.state().details['place:11'].record, record)
 })
 
+test('cancelled background reads render unavailable facts after leaving and returning before reply', async () => {
+  const loader = WINDOW_JS.slice(WINDOW_JS.indexOf('  async function ensureDetail('),
+    WINDOW_JS.indexOf('  function detailDrawingKey('))
+  const record = { description: 'kept prose', labels: ['rain_now'], laws: [] }
+  let complete: (response: unknown) => void = () => {}
+  let responseReads = 0
+  const harness = new Function('fetch', 'record', `
+    let state = { placeId: 11, view: 'place', details: { 'place:11': { record } } }
+    let authoredRevision = 0, navigationRevision = 0, detailRequestRevision = 0
+    const activeSelectionKey = () => String(state.placeId) + '|resident:'
+    const window = { location: { origin: 'https://127.0.0.1' }, setTimeout, clearTimeout }
+    const REQUEST_TIMEOUT_MS = 5000
+    let rendered = null
+    const renderSelectedPlaceDetail = () => { rendered = state.details['place:' + state.placeId] }
+    const renderAll = renderSelectedPlaceDetail, renderDetail = () => {}
+    const normalizeDetailRecord = (_kind, _id, payload) => payload.place
+    ${loader}
+    return { read: () => ensureDetail(true, 11, true), state: () => state, rendered: () => rendered,
+      navigate: id => { detailRequestRevision += 1; state = { ...state, placeId: id }; renderAll() } }
+  `)(() => new Promise(resolve => { complete = resolve }), record)
+  const pending = harness.read()
+  harness.navigate(12)
+  harness.navigate(11)
+  complete({ ok: true, status: 200, json: async () => {
+    responseReads += 1
+    return { place: { ...record, labels: [] } }
+  } })
+  await pending
+  assert.equal(harness.state().details['place:11'].error, true, 'discarded read marks the cache unavailable')
+  assert.equal(harness.rendered().error, true, 'visible facts must reflect unavailable cache after cancelled refresh')
+  assert.equal(harness.rendered().loading, false, 'completed refresh must not leave checking status')
+  assert.equal(harness.rendered().record, record, 'the original prose is retained')
+  assert.equal(responseReads, 0, 'the stale response is never read or applied')
+})
+
 test('a focused read is overtaken when its reply is newer or the city view moved during the read', () => {
   // The live case: the first city view is an edge copy at 20 and the room read answers 21.
   assert.equal(focusedReadOvertaken({ requestMarker: '20', replyMarker: '21', viewMarker: '20' }), true)

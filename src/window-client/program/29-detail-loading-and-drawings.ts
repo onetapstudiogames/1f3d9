@@ -82,13 +82,15 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
     } finally {
       window.clearTimeout(timeout)
       // A cancelled refresh must not leave a cached room permanently loading.
-      if (background && state.details[key] === pending) {
+      const discardedBackgroundRead = background && state.details[key] === pending
+      if (discardedBackgroundRead) {
         state = { ...state, details: { ...state.details,
           [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord }),
         } }
       }
       if (background && placeId) {
-        if (requestViewIsCurrent()) renderSelectedPlaceDetail()
+        // The reader may have returned while the discarded request was pending.
+        if (requestViewIsCurrent() || discardedBackgroundRead) renderSelectedPlaceDetail()
       } else if (placeId) {
         if (authoredRevision === requestAuthoredRevision) renderAll()
       } else if (requestIsCurrent()) renderDetail()

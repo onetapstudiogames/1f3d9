@@ -254,7 +254,7 @@ test('the app front door, its sections, help, and official facts carry no money 
   const help = await appText('help')
   hits.push(...bannedHits('help', help))
   assert.doesNotMatch(help, /buy_credit|credit_gift|1f3ea|\/api\/tools|\/window|abilities\.txt/u)
-  const pointer = "A law can share a temporary label through law_place inside one owner's parent chain; physics gives the fields and limits."
+  const pointer = "A law can share a temporary label through law_place inside the parent chain of one owner; physics gives the fields and limits."
   const helpDoors = JSON.parse(help) as { doors: string[] }
   const lawsLine = helpDoors.doors.find(line => line.startsWith('Laws:'))!
   assert.ok(lawsLine.includes(pointer))

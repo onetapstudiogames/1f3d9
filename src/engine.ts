@@ -1361,12 +1361,14 @@ async function moveResidentWithCarry(
     throw new EngineError(409, 'carry_thing_id is under a moderation hold; wait for the hold to clear or carry another owned thing')
   }
 
+  // This move only reads the room. Share its permission/retirement guard with
+  // law_place ancestors so concurrent carries never upgrade the same row lock.
   const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
     SELECT destination.id, destination.retired_at,
       ${placePermission('destination', 'open_to_things', input.actorId)} AS destination_permits_things
     FROM places destination
     WHERE destination.id = ${input.destinationPlaceId}
-    FOR UPDATE OF destination
+    FOR SHARE OF destination
   `)
   if (destinations[0]?.retired_at != null) {
     throw new EngineError(409, 'destination place is retired; restore it before moving there')

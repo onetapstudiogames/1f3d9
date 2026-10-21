@@ -616,6 +616,26 @@ test('law_place shares one timed condition through the current owner chain', asy
       }
     })
 
+    for (const mutation of ['intermediate-owner', 'intermediate-retired', 'source-retired'] as const) {
+      await t.test(`delayed law_place refuses ${mutation}`, async () => {
+        await execute([{ effect: 'wait', seconds: 1, then: [write(mutation)] }], {
+          ...context, placeId: deep,
+        })
+        const changedId = mutation === 'source-retired' ? a : middle
+        if (mutation === 'intermediate-owner') {
+          await client.query('UPDATE places SET owner_id = 3 WHERE id = $1', [changedId])
+        } else await client.query('UPDATE places SET retired_at = clock_timestamp() WHERE id = $1', [changedId])
+        try {
+          assert.deepEqual(await resolveDueEffects(deep, db), { resolved: 0, failed: 1, capped: false })
+          assert.equal(await present(mutation), false)
+        } finally {
+          if (mutation === 'intermediate-owner') {
+            await client.query('UPDATE places SET owner_id = 1 WHERE id = $1', [changedId])
+          } else await client.query('UPDATE places SET retired_at = NULL WHERE id = $1', [changedId])
+        }
+      })
+    }
+
     await t.test('parent and child movement actions do not deadlock on the chain guard', async () => {
       await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
         JSON.stringify({ move: [write('concurrent-move', 5)] }),
@@ -640,6 +660,56 @@ test('law_place shares one timed condition through the current owner chain', asy
         paused.release()
       }
     })
+
+    for (const target of ['place', 'law_place'] as const) {
+      await t.test(`simultaneous sibling carries into the law source do not deadlock with ${target}`, async () => {
+        await client.query('UPDATE places SET open_to_things = true WHERE id = $1', [a])
+        await client.query(`
+          UPDATE resident_presence
+          SET current_place_id = CASE resident_id WHEN 2 THEN $1::int ELSE $2::int END
+          WHERE resident_id IN (2, 3)
+        `, [b, c])
+        const label = `carry-race-${target}`
+        await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
+          JSON.stringify({ move: [{ ...write(label, 5), target }] }),
+        ])
+        const carried = (await client.query(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'visitor-two-luggage', 'carry race', 2, 2),
+                 ($2, 'visitor-three-luggage', 'carry race', 3, 3)
+          RETURNING id
+        `, [b, c])).rows.map(row => row.id)
+        const paused = barrier()
+        let readers = 0
+        beforeQuery = async text => {
+          if (!/FOR (?:UPDATE|SHARE) OF destination/.test(text)) return
+          readers += 1
+          if (readers === 2) paused.release()
+          await paused.gate
+        }
+        try {
+          const outcomes = await Promise.all([
+            runAction({ actorId: 2, actorHandle: 'chain-visitor', action: 'move', placeId: b,
+              destinationPlaceId: a, carryThingId: carried[0] }, db),
+            runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move', placeId: c,
+              destinationPlaceId: a, carryThingId: carried[1] }, db),
+          ])
+          assert.deepEqual(outcomes.map(result => ({ status: result.status, error: result.error })),
+            [{ status: 'applied', error: null }, { status: 'applied', error: null }])
+          assert.deepEqual((await client.query(`
+            SELECT current_place_id FROM resident_presence WHERE resident_id IN (2, 3) ORDER BY resident_id
+          `)).rows.map(row => row.current_place_id), [a, a])
+          assert.deepEqual((await client.query(`
+            SELECT place_id, held_by FROM things WHERE id = ANY($1::int[]) ORDER BY id
+          `, [carried])).rows, [{ place_id: a, held_by: null }, { place_id: a, held_by: null }])
+          assert.deepEqual((await rows(label)).map(row => row.target_id).sort((left, right) => left - right),
+            target === 'law_place' ? [a, a] : [b, c])
+        } finally {
+          beforeQuery = undefined
+          paused.release()
+        }
+      })
+    }
   } finally {
     setEngineTransactionRunnerForTests(null)
     await client.end().catch(() => undefined)
