@@ -12,6 +12,7 @@ import {
 } from './physics.ts'
 import {
   executeEffectsWithOutcome,
+  lockLawPlaceEffects,
   newAbilityLog,
   SHARED_SOURCE_DESTROY_CLOSED_ERROR,
   SHARED_SOURCE_MUTATION_ERROR,
@@ -250,6 +251,8 @@ export interface SymbolicContext {
   readonly placeId: number | null
   readonly sourceThingId: number | null
   readonly target: RuntimeTarget | null
+  readonly originThingId?: number | null
+  readonly originPlaceId?: number | null
 }
 
 interface RequiredActionInput {
@@ -355,7 +358,13 @@ export function resolveSymbolicTarget(
     return context.sourceThingId === null ? null : { type: 'thing', id: context.sourceThingId }
   }
   if (symbolic === 'target') return context.target
-  return context.placeId === null ? null : { type: 'place', id: context.placeId }
+  if (symbolic === 'law_place') {
+    return context.originThingId == null && context.originPlaceId != null
+      ? { type: 'place', id: context.originPlaceId }
+      : null
+  }
+  if (symbolic === 'place') return context.placeId === null ? null : { type: 'place', id: context.placeId }
+  return null
 }
 
 export async function effectiveLaws(
@@ -1524,7 +1533,7 @@ export async function runAction(
     return await withEngineTransaction(db, async transaction => {
       if (input.action === 'go_home') await ensurePresence(input.actorId, transaction)
       const lockedPresence = await lockPresence(input.actorId, transaction)
-      if (input.action === 'move' || input.action === 'go_home') {
+      if (input.action === 'go_home') {
         await lockCurrentPlace(lockedPresence, transaction)
       }
       const heldAtStart = input.action === 'move' || input.action === 'go_home'
@@ -1581,6 +1590,10 @@ export async function runAction(
 
       const source = await sourceReady(input, transaction)
       const programs = await loadPrograms(input, transaction)
+      await lockLawPlaceEffects(programs.flatMap(program => (
+        program.lawSourcePlaceId === null ? [] : program.effects
+      )), input, transaction)
+      if (input.action === 'move') await lockCurrentPlace(lockedPresence, transaction)
       const sharedSourceThingId = input.action === 'use'
         && source
         && source.ownerId !== input.actorId

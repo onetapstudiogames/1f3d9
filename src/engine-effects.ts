@@ -281,16 +281,103 @@ async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promi
   return target
 }
 
+async function lockLawPlaceChain(placeId: number, db: TaggedSql): Promise<Array<{ id: number }>> {
+  // Include all parents regardless of owner: a waiting statement may have seen
+  // an older owner. Shared locks are compatible with movement's room locks.
+  return queryRows(db`
+    WITH RECURSIVE law_place_chain AS (
+      SELECT id, parent_id FROM places WHERE id = ${placeId}
+      UNION ALL
+      SELECT parent.id, parent.parent_id FROM places parent
+      JOIN law_place_chain child ON parent.id = child.parent_id
+      WHERE parent.place_kind <> 'world'
+    )
+    SELECT place.id FROM places place JOIN law_place_chain chain ON chain.id = place.id
+    ORDER BY place.id FOR SHARE OF place
+  `)
+}
+
+function hasLawPlace(effects: readonly Effect[]): boolean {
+  return effects.some(effect => (
+    ('target' in effect && effect.target === 'law_place')
+    || ('then' in effect && hasLawPlace(effect.then))
+    || ('else' in effect && hasLawPlace(effect.else ?? []))
+  ))
+}
+
+/** Acquire ancestors before earlier moves can lock children; permission is checked at each brick. */
+export async function lockLawPlaceEffects(
+  effects: readonly Effect[],
+  context: Pick<EffectExecutionContext, 'actorId' | 'sourceThingId' | 'placeId'>,
+  db: TaggedSql,
+): Promise<void> {
+  if (context.placeId === null || !hasLawPlace(effects)) return
+  // Match actions' presence, source, then place order, including stored programs.
+  // This is only a lock: a timer does not require its actor still to stand here.
+  await queryRows(db`
+    SELECT resident_id FROM resident_presence WHERE resident_id = ${context.actorId} FOR UPDATE
+  `)
+  if (context.sourceThingId !== null) {
+    await queryRows(db`SELECT id FROM things WHERE id = ${context.sourceThingId} FOR UPDATE`)
+  }
+  await lockLawPlaceChain(context.placeId, db)
+}
+
 async function requireScopedBrickTarget(
   symbol: SymbolicTarget,
   context: EffectExecutionContext,
   db: TaggedSql,
 ): Promise<RuntimeTarget> {
-  const target = await requireTarget(resolveSymbolicTarget(symbol, context), db)
+  const origin = effectOrigin(context)
+  if (symbol === 'law_place' && (origin.placeId === null || origin.thingId !== null
+    || context.sourceTraitId === null || context.placeId === null)) {
+    throw new EngineError(403, 'law_place is available only to a place law; put this trait on a place you own as a law')
+  }
+  const target = await requireTarget(resolveSymbolicTarget(symbol, {
+    ...context, originThingId: origin.thingId, originPlaceId: origin.placeId,
+  }), db)
+  if (symbol === 'law_place') {
+    await requireNonWorldPlace(target.id, db)
+    const locked = await lockLawPlaceChain(context.placeId!, db)
+    // A new statement sees the committed owner and retirement state after waiting.
+    const places = await queryRows<{
+      id: number; parent_id: number | null; owner_id: number | null; retired_at: unknown
+      place_kind: string
+    }>(db`
+      SELECT id, parent_id, owner_id, retired_at, place_kind
+      FROM places WHERE id = ANY(${locked.map(place => place.id)}::int[])
+    `)
+    const acting = places.find(place => place.id === context.placeId)
+    let current = acting
+    const visited = new Set<number>()
+    while (current && !visited.has(current.id) && current.owner_id !== null
+      && current.owner_id === acting?.owner_id && current.retired_at === null
+      && current.place_kind !== 'world') {
+      if (current.id === origin.placeId) break
+      visited.add(current.id)
+      const parentId = current.parent_id
+      current = places.find(place => place.id === parentId)
+    }
+    if (!current || current.id !== origin.placeId || current.owner_id === null
+      || current.owner_id !== acting?.owner_id || current.retired_at !== null
+      || current.place_kind === 'world'
+      || !(await effectiveLaws(context.placeId!, db)).some(law => (
+        law.traitId === context.sourceTraitId && law.sourcePlaceId === origin.placeId
+      ))) {
+      throw new EngineError(403, "this law no longer applies from its defining place through this room's current owner chain; read the room's laws before trying again")
+    }
+  }
   if (symbol === 'target') {
     await requireCallerTargetScope(target, context.actorId, context.placeId, db)
   }
   return target
+}
+
+async function requireNonWorldPlace(placeId: number, db: TaggedSql): Promise<void> {
+  const places = await queryRows<Record<string, unknown>>(db`
+    SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${placeId}
+  `)
+  if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
 }
 
 export async function thingState(
@@ -344,7 +431,8 @@ async function activeLabel(target: RuntimeTarget, label: string, db: TaggedSql):
     SELECT EXISTS (
       SELECT 1 FROM active_labels
       WHERE target_type = ${target.type} AND target_id = ${target.id}
-        AND label = ${label} AND (expires_at IS NULL OR expires_at > now())
+        AND label = ${label} AND (expires_at IS NULL OR expires_at >
+          CASE WHEN ${target.type} = 'place' THEN clock_timestamp() ELSE now() END)
     ) AS present
   `)
   return rows[0]?.present === true
@@ -425,6 +513,9 @@ export async function executeEffectsWithOutcome(
   context: EffectExecutionContext,
   db: TaggedSql,
 ): Promise<EffectExecutionOutcome> {
+  if (effectOrigin(context).placeId !== null) {
+    await lockLawPlaceEffects(effects, context, db)
+  }
   let effectsApplied = 0
   let emittedTypedPublicEvent = false
   let destroyedThingIds = context.sameUseDestroySkip === true
@@ -472,10 +563,7 @@ async function executeEffectWithOutcome(
     const target = await requireScopedBrickTarget(effect.target, context, db)
     const origin = effectOrigin(context)
     if (target.type === 'place') {
-      const places = await queryRows<Record<string, unknown>>(db`
-        SELECT id, parent_id, place_kind, owner_id FROM places WHERE id = ${target.id}
-      `)
-      if (isWorldRootRow(places[0])) throw new EngineError(403, WORLD_TRANSIT_ONLY_ERROR)
+      await requireNonWorldPlace(target.id, db)
     }
     // A sticker a waking thing or a reach puts on a resident expires after a day. One a wake
     // try puts on, directly or through a reach, expires after its room's wake_label_seconds
@@ -492,7 +580,9 @@ async function executeEffectWithOutcome(
       ) VALUES (
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
         ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId},
-        CASE WHEN ${expiresInSeconds}::int IS NULL THEN NULL
+        CASE WHEN ${target.type === 'place' ? (effect.seconds ?? null) : null}::int IS NOT NULL
+          THEN clock_timestamp() + make_interval(secs => ${target.type === 'place' ? (effect.seconds ?? null) : null}::int)
+          WHEN ${expiresInSeconds}::int IS NULL THEN NULL
           ELSE now() + make_interval(secs => LEAST(${expiresInSeconds}::int, coalesce((
             SELECT room.wake_label_seconds FROM places room WHERE room.id = ${wakeRoomId}::int
           ), ${expiresInSeconds}::int))) END
@@ -597,7 +687,7 @@ async function executeEffectWithOutcome(
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
-  const law = await matchingLaw(target, effect.label, db)
+  const law = effect.target === 'law_place' ? null : await matchingLaw(target, effect.label, db)
   const matched = law !== null || await activeLabel(target, effect.label, db)
   const branch = matched ? effect.then : (effect.else ?? [])
   const origin = effectOrigin(context)

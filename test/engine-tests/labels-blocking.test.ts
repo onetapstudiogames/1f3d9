@@ -217,6 +217,44 @@ export function registerLabelsBlockingTests(): void {
     assert.equal(calls.some(call => /INSERT INTO active_blocks/.test(call.text)), true)
   })
 
+  test('law_place checks only labels and keeps both branches original source and authority', async () => {
+    for (const present of [true, false]) {
+      const { db, calls } = fakeSql(({ text }) => {
+        if (/WITH RECURSIVE ancestry/.test(text)) return [
+          { trait_id: 21, name: 'condition', recipe: null, source_place_id: 2, position: 0 },
+          { trait_id: 22, name: 'other-law', recipe: null, source_place_id: 3, position: 0 },
+        ]
+        if (/SELECT EXISTS/.test(text) && /FROM places/.test(text)) return [{ exists: true }]
+        if (/FROM places/.test(text)) return [
+          { id: 2, parent_id: 1, owner_id: 8, place_kind: 'place', retired_at: null },
+          { id: 3, parent_id: 2, owner_id: 8, place_kind: 'place', retired_at: null },
+        ]
+        if (/FROM active_labels/.test(text)) return [{ present }]
+        if (/AS place_pending/.test(text)) return [{ place_pending: 0, actor_pending: 0 }]
+        if (/INSERT INTO pending_effects/.test(text)) return [{ id: 901 }]
+        return []
+      })
+      const context: EffectExecutionContext = {
+        actionId: null, actorId: 7, actorHandle: 'visitor', placeId: 3,
+        sourceThingId: 41, sharedSourceThingId: 41, target: null,
+        destinationPlaceId: null, recipientId: null, sourceTraitId: 21,
+        originThingId: null, originPlaceId: 2, lawAuthority: { traitId: 22, sourcePlaceId: 3 },
+        parentEffectId: null, generation: 0, logicalAt: new Date(),
+      }
+      const wait = (label: string) => ({ effect: 'wait' as const, seconds: 1,
+        then: [{ effect: 'label' as const, target: 'law_place' as const, label, seconds: 1 }] })
+      await executeEffects([{ effect: 'check_label', target: 'law_place', label: 'condition',
+        then: [wait('yes')], else: [wait('no')] }], context, db)
+      const pending = calls.find(call => /INSERT INTO pending_effects/.test(call.text))
+      assert.ok(pending)
+      const payload = JSON.parse(String(pending.values[10]))
+      assert.equal(payload.effects[0].label, present ? 'yes' : 'no')
+      assert.deepEqual(payload.effect_origin, { source_thing_id: null, source_place_id: 2 })
+      assert.deepEqual(payload.law_authority, { trait_id: 22, source_place_id: 3 })
+      assert.equal(calls.filter(call => /WITH RECURSIVE ancestry/.test(call.text)).length, 1)
+    }
+  })
+
   test('check_label freezes a thing origin before adopting a matched law authority', async () => {
     const { db, calls } = fakeSql(({ text }) => {
       if (/WITH RECURSIVE ancestry/.test(text)) return [{
