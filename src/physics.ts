@@ -771,9 +771,12 @@ export function recipeUsesKindOnlyAbility(recipe: TraitRecipe): boolean {
   ))
 }
 
-/** A convert that names into_kind turns things into another kind, which only a law may do. */
-export function recipeConvertsIntoNamedKind(recipe: TraitRecipe): boolean {
-  return recipeIntoKinds(recipe).length > 0
+/** Only laws may use law_place or convert into a named kind. */
+export function recipeUsesLawOnlyAbility(recipe: TraitRecipe): boolean {
+  return recipeHasEffect(recipe, effect => (
+    (effect.effect === 'convert' && effect.into_kind !== undefined)
+    || ((effect.effect === 'label' || effect.effect === 'check_label') && effect.target === 'law_place')
+  ))
 }
 
 /** Every kind a law's converts name, so its adoption can check who owns them. */

@@ -15,7 +15,7 @@ import {
   loadTraitRecipe,
   parseKindRecipe,
   parseTraitRecipe,
-  recipeConvertsIntoNamedKind,
+  recipeUsesLawOnlyAbility,
   traitRecipeFault,
 } from './physics.ts'
 import { recipeRefusalWords } from './recipe-refusal.ts'
@@ -353,7 +353,7 @@ async function traitRecipes(names: readonly string[]): Promise<ReadonlyMap<strin
 
 /**
  * A kind revision may list only one trait with a wake key, so a thing has one
- * clock, and no trait whose convert names into_kind, which only a law may do.
+ * clock, and no trait using law_place or convert with into_kind, which are law-only.
  * It reads recipes already loaded, so the refusal census can follow each sentence
  * from the caller's err().
  */
@@ -363,10 +363,10 @@ function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string,
   if (waking.length > 1) {
     return `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
   }
-  const lawOnly = names.find(name => recipeConvertsIntoNamedKind(recipeOf(name)))
+  const lawOnly = names.find(name => recipeUsesLawOnlyAbility(recipeOf(name)))
   return lawOnly === undefined
     ? null
-    : `trait ${lawOnly} converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself`
+    : `trait ${lawOnly} uses a law-only step, law_place or convert with into_kind; put it on a place as a law, or choose a trait without those steps`
 }
 
 /**

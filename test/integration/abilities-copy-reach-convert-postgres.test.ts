@@ -11,11 +11,13 @@ import {
   type CityApp, type Json,
 } from '../helpers/abilities-fixtures.ts'
 import {
+  bearer,
   connectedDatabase,
   resetCity,
   standIn,
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
+import { issueCredit } from '../helpers/city-credit-postgres-fixtures/ledger.ts'
 // Loaded only after the fixture points src/db.ts at the test container.
 const { rollValue } = await import('../../src/engine-chance.ts')
 
@@ -249,7 +251,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         name: 'ash-maker', description: 'would convert into ash', traits: ['ash-fall'],
       })
       assert.equal(invented.status, 400, 'refused before any fee')
-      assert.equal(invented.json.error, "trait ash-fall converts into a named kind, which only a law may do; a kind's convert always turns things into that kind itself")
+      assert.equal(invented.json.error, 'trait ash-fall uses a law-only step, law_place or convert with into_kind; put it on a place as a law, or choose a trait without those steps')
       const oak = await seedKind(GROWER.id, 'oak', [await traitId('sprout')])
       const revised = await call(app, GROWER.secret, 'POST', `/api/kind/${oak}/revise`, {
         description: 'oak that burns', traits: ['sprout', 'ash-fall'],
@@ -258,6 +260,89 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(revised.json.error, invented.json.error)
       const fees = (await connectedDatabase().query('SELECT count(*)::int AS count FROM kind_revisions WHERE kind_id = $1', [oak])).rows[0]!.count
       assert.equal(fees, 1, 'no revision was made')
+      assert.deepEqual((await connectedDatabase().query(`
+        SELECT (SELECT count(*)::int FROM fees) AS fees,
+          (SELECT count(*)::int FROM payment_attempts) AS attempts,
+          (SELECT count(*)::int FROM payment_uses) AS uses,
+          (SELECT count(*)::int FROM city_credit_entries) AS credit_entries,
+          (SELECT count(*)::int FROM city_credit_accounts) AS credit_accounts
+      `)).rows[0], { fees: 0, attempts: 0, uses: 0, credit_entries: 0, credit_accounts: 0 })
+    })
+
+    await t.test('law_place traits coin and install freely but kinds refuse them before fees or credit writes', async t => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      const db = connectedDatabase()
+      await standIn(GROWER.id, rooms.eastRoomId)
+      await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
+      const oak = await seedKind(GROWER.id, 'oak', [])
+      await issueCredit(db, GROWER.id, 'law-place-refusal-credit')
+      const paymentState = async () => (await db.query(`
+        SELECT (SELECT count(*)::int FROM fees) AS fees,
+          (SELECT count(*)::int FROM payment_attempts) AS attempts,
+          (SELECT count(*)::int FROM payment_uses) AS uses,
+          (SELECT count(*)::int FROM city_credit_entries) AS credit_entries,
+          (SELECT jsonb_agg(account) FROM city_credit_accounts account) AS credit_accounts
+      `)).rows[0]
+      const before = await paymentState()
+      const fetch = t.mock.method(globalThis, 'fetch', async () => {
+        throw new Error('law-only trait validation must not contact a payment service')
+      })
+      for (const step of [
+        { effect: 'label', target: 'law_place', label: 'rain', seconds: 60 },
+        { effect: 'check_label', target: 'law_place', label: 'rain', then: [] },
+      ]) {
+        const checkThen = { effect: 'check_label', target: 'place', label: 'gate', then: [step] }
+        const checkElse = { effect: 'check_label', target: 'place', label: 'gate', then: [], else: [step] }
+        const recipes = [
+          { talk: [step] },
+          { talk: [{ effect: 'chance', percent: 50, then: [step] }] },
+          { talk: [{ effect: 'chance', percent: 50, then: [], else: [step] }] },
+          { talk: [{ effect: 'wait', seconds: 1, then: [step] }] },
+          { talk: [{ effect: 'reach', then: [step] }] },
+          { talk: [checkThen] },
+          { talk: [checkElse] },
+          { talk: [{ effect: 'chance', percent: 50, then: [{ effect: 'wait', seconds: 1, then: [
+            { effect: 'reach', then: [{ ...checkThen, then: [checkElse] }] },
+          ] }] }] },
+          { wake: { then: [{ effect: 'chance', percent: 50, then: [step] }] } },
+        ]
+        for (const [index, recipe] of recipes.entries()) {
+          const name = `law-place-${step.effect}-${index}`
+          const coined = await coin(app, GROWER.secret, name, recipe)
+          assert.equal(coined.status, 201, JSON.stringify(coined.json))
+          assert.deepEqual(await paymentState(), before, 'coining a law trait is free')
+          const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
+          if ('wake' in recipe) {
+            assert.equal(law.status, 400, 'a mixed wake and law_place trait cannot be a law')
+            assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+          } else {
+            assert.equal(law.status, 200, JSON.stringify(law.json))
+          }
+          assert.deepEqual(await paymentState(), before, 'installing laws is free')
+          for (const credit of [false, true]) {
+            for (const path of ['/api/kind', `/api/kind/${oak}/revise`]) {
+              const response = await app.request(`http://city.test${path}`, {
+                method: 'POST',
+                headers: {
+                  ...bearer(GROWER.secret),
+                  ...(credit ? { 'x-1f3d9-fee-credit': `${name}-${path.endsWith('revise') ? 'revise' : 'invent'}` } : {}),
+                },
+                body: JSON.stringify({
+                  ...(path === '/api/kind' ? { name: `${name}-kind` } : {}),
+                  description: 'must refuse before payment', traits: [name],
+                }),
+              })
+              const refused = await response.json() as Json
+              assert.equal(response.status, 400, `${path}: ${JSON.stringify(refused)}`)
+              assert.equal(refused.error, `trait ${name} uses a law-only step, law_place or convert with into_kind; put it on a place as a law, or choose a trait without those steps`)
+              assert.deepEqual(await paymentState(), before, 'refusal writes no fees, payment attempts, or credit changes')
+              assert.equal(fetch.mock.callCount(), 0, 'refusal never contacts a payment service')
+            }
+          }
+        }
+      }
+      assert.equal((await db.query('SELECT count(*)::int AS count FROM kinds')).rows[0]!.count, 1)
+      assert.equal((await db.query('SELECT count(*)::int AS count FROM kind_revisions WHERE kind_id = $1', [oak])).rows[0]!.count, 1)
     })
 
     await t.test('a copy is born one generation down, at the parent revision, owned and made by its owner', async () => {
