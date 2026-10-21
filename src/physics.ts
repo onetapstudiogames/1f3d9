@@ -61,6 +61,7 @@ export const SYMBOLIC_TARGETS = Object.freeze([
   'source',
   'target',
   'place',
+  'law_place',
 ] as const)
 
 export const MOVE_DESTINATIONS = Object.freeze(['destination', 'home'] as const)
@@ -77,6 +78,7 @@ export const MAX_EFFECT_DEPTH = 8
 export const MAX_BLOCK_SECONDS = 24 * 60 * 60
 export const MIN_TIMER_SECONDS = 1
 export const MAX_TIMER_SECONDS = 24 * 60 * 60
+export const MAX_PLACE_LABEL_SECONDS = MAX_BLOCK_SECONDS
 export const MAX_EFFECT_GENERATIONS = 8
 export const MAX_KIND_INGREDIENTS = 64
 export const MAX_CRAFT_INGREDIENTS = 1_024
@@ -145,6 +147,7 @@ export interface LabelEffect {
   readonly effect: 'label'
   readonly target: SymbolicTarget
   readonly label: string
+  readonly seconds?: number
 }
 
 export interface BlockEffect {
@@ -529,10 +532,16 @@ function parseEffect(value: unknown, depth: number, state: ParseState, where: st
   }
 
   if (discriminator === 'label') {
-    if (!hasExactKeys(value, ['effect', 'target', 'label'])) return null
+    if (!hasExactKeys(value, ['effect', 'target', 'label'], ['seconds'])) return null
     const target = symbolicTarget(value.target)
     const label = canonicalName(value.label)
-    return target && label ? Object.freeze({ effect: 'label', target, label }) : null
+    if (!target || !label) return null
+    if (!Object.hasOwn(value, 'seconds')) {
+      return target === 'law_place' ? null : Object.freeze({ effect: 'label', target, label })
+    }
+    if (target !== 'place' && target !== 'law_place') return null
+    const seconds = boundedInteger(value.seconds, MIN_TIMER_SECONDS, MAX_PLACE_LABEL_SECONDS)
+    return seconds === null ? null : Object.freeze({ effect: 'label', target, label, seconds })
   }
 
   if (discriminator === 'block') {

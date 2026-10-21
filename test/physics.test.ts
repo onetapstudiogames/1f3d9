@@ -35,7 +35,7 @@ test('the frozen action, block, brick, and target vocabularies match bedrock phy
     'destroy', 'move', 'transfer', 'label', 'block', 'wait', 'check_label', 'chance', 'write',
     'copy', 'reach', 'convert',
   ])
-  assert.deepEqual(SYMBOLIC_TARGETS, ['actor', 'source', 'target', 'place'])
+  assert.deepEqual(SYMBOLIC_TARGETS, ['actor', 'source', 'target', 'place', 'law_place'])
   assert.deepEqual(MOVE_DESTINATIONS, ['destination', 'home'])
   assert.deepEqual(TRANSFER_RECIPIENTS, ['recipient', 'actor'])
   assert.equal(Object.isFrozen(BASIC_ACTIONS), true)
@@ -88,6 +88,112 @@ test('an action map is parsed into a normalized, deeply frozen trait recipe', ()
     parsed.use?.[4]?.effect === 'check_label' && Object.isFrozen(parsed.use[4].then),
     true,
   )
+})
+
+for (const target of ['place', 'law_place']) {
+  for (const seconds of [1, 86400]) {
+    test(`${target} labels accept and freeze a normalized duration of ${seconds} seconds`, () => {
+      const parsed = parseTraitRecipe({
+        use: [{ effect: ' LABEL ', target: ` ${target.toUpperCase()} `, label: ' Shared_Condition ', seconds }],
+      })
+      assert.deepEqual(parsed, {
+        use: [{ effect: 'label', target, label: 'shared_condition', seconds }],
+      })
+      assert.equal(Object.isFrozen(parsed), true)
+      assert.equal(Object.isFrozen(parsed?.use), true)
+      assert.equal(Object.isFrozen(parsed?.use?.[0]), true)
+    })
+  }
+}
+
+test('law_place checks and labels remain deeply frozen at the nesting limit', () => {
+  const steps = Array.from({ length: MAX_EFFECT_DEPTH - 1 }).reduce<unknown[]>(then => [{
+    effect: ' CHECK_LABEL ', target: ' LAW_PLACE ', label: ' Shared_Condition ', then,
+  }], [{ effect: 'label', target: 'law_place', label: ' Shared_Condition ', seconds: 86400 }])
+  const parsed = parseTraitRecipe({ use: steps })
+  assert.ok(parsed?.use)
+  assert.equal(Object.isFrozen(parsed), true)
+  assert.equal(Object.isFrozen(parsed.use), true)
+  let step = parsed.use[0]
+  for (let depth = 1; depth < MAX_EFFECT_DEPTH; depth += 1) {
+    assert.ok(step)
+    assert.equal(step.effect, 'check_label')
+    assert.ok(step.effect === 'check_label')
+    assert.equal(step.target, 'law_place')
+    assert.equal(step.label, 'shared_condition')
+    assert.equal(Object.hasOwn(step, 'seconds'), false)
+    assert.equal(Object.hasOwn(step, 'else'), false)
+    assert.equal(Object.isFrozen(step), true)
+    assert.equal(Object.isFrozen(step.then), true)
+    step = step.then[0]
+  }
+  assert.deepEqual(step, { effect: 'label', target: 'law_place', label: 'shared_condition', seconds: 86400 })
+  assert.equal(Object.isFrozen(step), true)
+})
+
+test('a legacy place label keeps its exact permanent shape without seconds', () => {
+  const parsed = parseTraitRecipe({ use: [{ effect: 'label', target: 'place', label: ' Permanent ' }] })
+  assert.deepEqual(parsed, { use: [{ effect: 'label', target: 'place', label: 'permanent' }] })
+  assert.ok(parsed?.use?.[0])
+  assert.equal(Object.hasOwn(parsed.use[0], 'seconds'), false)
+  assert.equal(Object.isFrozen(parsed.use[0]), true)
+})
+
+test('place label durations are required on law_place and otherwise strictly bounded', () => {
+  assert.equal(parseTraitRecipe({ use: [{ effect: 'label', target: 'law_place', label: 'shared' }] }), null)
+  for (const target of ['place', 'law_place']) {
+    for (const seconds of [0, -1, 1.5, '1', null, 86401, undefined, Number.NaN, Infinity]) {
+      assert.equal(parseTraitRecipe({
+        use: [{ effect: 'label', target, label: 'shared', seconds }],
+      }), null, `${target} seconds ${String(seconds)}`)
+    }
+    assert.equal(parseTraitRecipe({
+      use: [{ effect: 'label', target, label: 'shared', seconds: 1, extra: true }],
+    }), null)
+  }
+  for (const target of ['actor', 'source', 'target']) {
+    assert.equal(parseTraitRecipe({
+      use: [{ effect: 'label', target, label: 'shared', seconds: 1 }],
+    }), null, target)
+  }
+  for (const target of ['actor', 'source', 'target', 'place', 'law_place']) {
+    assert.equal(parseTraitRecipe({
+      use: [{ effect: 'check_label', target, label: 'shared', then: [], seconds: 1 }],
+    }), null, target)
+  }
+  assert.equal(parseTraitRecipe({
+    use: [{ effect: 'check_label', target: 'law_place', label: 'shared', then: [], extra: true }],
+  }), null)
+})
+
+test('law_place does not broaden other bricks closed target lists', () => {
+  const steps = [
+    { effect: 'destroy', target: 'law_place' },
+    { effect: 'move', target: 'law_place', to: 'destination' },
+    { effect: 'transfer', target: 'law_place', to: 'recipient' },
+    { effect: 'block', target: 'law_place', action: 'talk', seconds: 1 },
+    { effect: 'convert', target: 'law_place', into_kind: 'stone' },
+  ]
+  for (const step of steps) assert.equal(parseTraitRecipe({ use: [step] }), null, step.effect)
+})
+
+test('an invalid nested place duration rejects the whole recipe without a partial program', () => {
+  const recipe = {
+    talk: [{ effect: 'label', target: 'actor', label: 'ready' }],
+    use: [
+      { effect: 'label', target: 'place', label: 'permanent' },
+      { effect: 'label', target: 'law_place', label: 'shared', seconds: 1 },
+      {
+        effect: 'check_label', target: 'law_place', label: 'shared',
+        then: [{ effect: 'label', target: 'law_place', label: 'shared', seconds: 86400 }],
+        else: [{ effect: 'label', target: 'law_place', label: 'shared', seconds: 0 }],
+      },
+    ],
+  }
+  assert.equal(parseTraitRecipe(recipe), null)
+  assert.equal(loadTraitRecipe(recipe), EMPTY_TRAIT_RECIPE)
+  assert.deepEqual(effectsForAction(recipe, 'talk'), [])
+  assert.deepEqual(effectsForAction(recipe, 'use'), [])
 })
 
 test('a legacy effect array canonicalizes to the use action', () => {

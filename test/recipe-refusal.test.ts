@@ -15,7 +15,8 @@ import { recipeGrammarWords, recipeRefusalWords } from '../src/recipe-refusal.ts
 
 const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, and wake'
 const LIST_RULE = 'steps must be a list'
-const LABEL_RULE = 'label takes target (actor, source, target, or place) and label (a world name)'
+const LABEL_RULE = 'label takes target (actor, source, target, place, or law_place) and label (a world name); only place and law_place take seconds (1 to 86400), optional on place and required on law_place'
+const CHECK_LABEL_RULE = 'check_label takes target (actor, source, target, place, or law_place), label (a world name), required then, and optional else; it takes no seconds'
 const BAD_BRICK_CASES: readonly Readonly<{ step: unknown; rule: string }>[] = [
   { step: { effect: 'destroy', target: 'actor' }, rule: 'destroy takes target (source or target)' },
   { step: { effect: 'move', target: 'actor', to: 'there' }, rule: 'move takes target (actor, source, or target) and to (destination or home)' },
@@ -23,12 +24,24 @@ const BAD_BRICK_CASES: readonly Readonly<{ step: unknown; rule: string }>[] = [
   { step: { effect: 'label', target: 'actor', label: 'Bad Name!' }, rule: LABEL_RULE },
   { step: { effect: 'block', target: 'actor', action: 'go_home', seconds: 1 }, rule: 'block takes target (actor or target), action (talk, move, use, give, consume, or make), and seconds (1 to 86400)' },
   { step: { effect: 'wait', seconds: 0, then: [] }, rule: 'wait takes seconds (1 to 86400), then, and an optional repeat (1 to 8)' },
-  { step: { effect: 'check_label', target: 'room', label: 'x', then: [] }, rule: 'check_label takes target (actor, source, target, or place), label (a world name), then, and an optional else' },
+  { step: { effect: 'check_label', target: 'room', label: 'x', then: [] }, rule: CHECK_LABEL_RULE },
   { step: { effect: 'chance', percent: 100, then: [] }, rule: 'chance takes percent (1 to 99), then, and an optional else' },
   { step: { effect: 'write', key: 'k', op: 'set' }, rule: 'write takes key (a world name), an optional op (set, add, or append), and value, which set and append need' },
   { step: { effect: 'copy', generations: 9 }, rule: 'copy takes optional generations (1 to 8), copies (1 to 10000 or unlimited), to (here or adjacent), and inherit (a list of body and state)' },
   { step: { effect: 'reach', over: 'residents', kind: 'apple', then: [] }, rule: 'reach takes then and optional over (things or residents), max (1 to 64), and kind (a world name, only with over things)' },
   { step: { effect: 'convert', target: 'source' }, rule: 'convert takes target (which must be target) and an optional into_kind (a world name)' },
+  { step: { effect: 'label', target: 'law_place', label: 'shared' }, rule: LABEL_RULE },
+  ...['place', 'law_place'].flatMap(target => (
+    [0, -1, 1.5, '1', null, 86401, undefined].map(seconds => ({
+      step: { effect: 'label', target, label: 'shared', seconds }, rule: LABEL_RULE,
+    }))
+  )),
+  ...['actor', 'source', 'target'].map(target => ({
+    step: { effect: 'label', target, label: 'shared', seconds: 1 }, rule: LABEL_RULE,
+  })),
+  ...['actor', 'source', 'target', 'place', 'law_place'].map(target => ({
+    step: { effect: 'check_label', target, label: 'shared', then: [], seconds: 1 }, rule: CHECK_LABEL_RULE,
+  })),
 ]
 
 function expectRefusal(value: unknown, where: string, rule: string): void {
@@ -123,6 +136,18 @@ test('recipe refusals name the first failing location and rule', () => {
 
 test('each brick refusal names its invalid field with the physics rule', () => {
   for (const { step, rule } of BAD_BRICK_CASES) expectRefusal({ use: [step] }, 'use, step 1', rule)
+})
+
+test('place duration refusals retain the exact nested location', () => {
+  expectRefusal({ use: [{
+    effect: 'check_label', target: 'law_place', label: 'shared', then: [],
+    else: [{ effect: 'label', target: 'law_place', label: 'shared' }],
+  }] }, 'use, step 1, else step 1', LABEL_RULE)
+  expectRefusal({ use: [{
+    effect: 'wait', seconds: 1, then: [{
+      effect: 'check_label', target: 'law_place', label: 'shared', then: [], seconds: 1,
+    }],
+  }] }, 'use, step 1, then step 1', CHECK_LABEL_RULE)
 })
 
 test('shape refusal words match the public branch rules for every brick', () => {
