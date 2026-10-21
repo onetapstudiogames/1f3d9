@@ -260,6 +260,8 @@ test('physics lists the fields of every brick and where then and else may sit, a
     effect_bricks: readonly string[]
     brick_fields: Readonly<Record<string, BrickFields>>
     wake: { then: string }
+    law_only: readonly string[]
+    law_place: Record<string, string>
   }
   assert.deepEqual(Object.keys(physics.brick_fields), [...physics.effect_bricks])
   for (const brick of ['destroy', 'move', 'transfer', 'label', 'block', 'write', 'copy', 'convert']) {
@@ -272,7 +274,31 @@ test('physics lists the fields of every brick and where then and else may sit, a
     assert.deepEqual([physics.brick_fields[brick]!.then, physics.brick_fields[brick]!.else], ['required', 'optional'], brick)
   }
   assert.equal(physics.wake.then, 'required')
-  assert.deepEqual(physics.brick_fields.label!.target, ['actor', 'source', 'target', 'place'])
+  assert.deepEqual(physics.brick_fields.label!.target, ['actor', 'source', 'target', 'place', 'law_place'])
+  assert.deepEqual(physics.brick_fields.label!.required, ['target', 'label'])
+  assert.deepEqual(physics.brick_fields.label!.optional, ['seconds'])
+  assert.deepEqual(physics.brick_fields.label!.seconds, {
+    min: 1,
+    max: 86400,
+    targets: ['place', 'law_place'],
+    required_on: ['law_place'],
+    omitted_on_place: 'permanent',
+    other_targets: 'not allowed',
+  })
+  assert.deepEqual(physics.brick_fields.check_label!.target, ['actor', 'source', 'target', 'place', 'law_place'])
+  assert.deepEqual(physics.brick_fields.check_label!.required, ['target', 'label', 'then'])
+  assert.deepEqual(physics.brick_fields.check_label!.optional, ['else'])
+  assert.deepEqual(physics.brick_fields.check_label!.matches, {
+    law_place: 'active labels only',
+    other_targets: 'active labels or a law name',
+  })
+  assert.deepEqual(physics.law_only, ['convert with into_kind', 'label with law_place', 'check_label with law_place'])
+  assert.deepEqual(physics.law_place, {
+    source: "the law's original defining place, never a law named by a later check",
+    scope: 'the exact source law must still apply through the current unbroken same-owner parent chain; source, acting, and intervening places must not be retired',
+    delayed: 'checked again after a wait',
+    hinges: 'never followed',
+  })
   assert.deepEqual(physics.brick_fields.move!.to, ['destination', 'home'])
   assert.deepEqual(physics.brick_fields.block!.action, ['talk', 'move', 'use', 'give', 'consume', 'make'])
 
@@ -440,6 +466,9 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
   const physics = await physicsResponse.json() as Record<string, unknown>
   assert.deepEqual(physics.act_actions, ACT_TOOL_ACTIONS)
   assert.deepEqual(physics.other_basic_actions, OTHER_BASIC_ACTION_TOOLS)
+  for (const [key, value] of Object.entries(publicPhysicsFacts())) {
+    assert.deepEqual(physics[key], value, `anonymous physics: ${key}`)
+  }
 
   const list = async (gateway: Hono, path: string, authorization?: string) => {
     const response = await gateway.request(path, {
@@ -467,6 +496,46 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
     const tools = await list(hosted, '/mcp/connect')
     assert.equal(tools.length, 43)
     assert.equal(tools.some(tool => tool.name === 'moderate'), false)
+  } finally {
+    if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous
+  }
+})
+
+test('shared-condition facts and generated help are served through the key and connect doors', async () => {
+  const pointer = "A law can share a temporary label through law_place inside one owner's parent chain; physics gives the fields and limits."
+  const expectedPhysics = publicPhysicsFacts()
+  const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+  process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+  try {
+    for (const door of ['key', 'connect'] as const) {
+      const path = door === 'key' ? '/mcp' : '/mcp/connect'
+      const gateway = new Hono()
+      gateway.post(path, c => mcp(c, app, { door, authenticateLegacyCatalog: async () => true }))
+      for (const [name, args] of [
+        ['physics', {}], ['help', {}], ['front_door', {}], ['front_door', { section: 'city-doors' }],
+      ] as const) {
+        const response = await gateway.request(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-only' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+        })
+        assert.equal(response.status, 200)
+        const { result } = await response.json() as { result: { isError: boolean; content: { text: string }[] } }
+        assert.equal(result.isError, false, `${path}: ${name}`)
+        const text = result.content[0]!.text
+        if (name === 'physics') {
+          const served = JSON.parse(text)
+          for (const [key, value] of Object.entries(expectedPhysics)) assert.deepEqual(served[key], value, `${path}: ${key}`)
+        } else if (name === 'front_door' && !('section' in args)) {
+          assert.ok(Buffer.byteLength(text, 'utf8') < FRONT_DOOR_MAX_BYTES, path)
+        } else {
+          assert.ok(text.includes(pointer), `${path}: ${name} shared-condition pointer`)
+        }
+      }
+    }
+    const help = await (await app.request('/api/help')).json() as { doors: string[] }
+    assert.ok(help.doors.some(line => line.includes(pointer)))
   } finally {
     if (previous === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
     else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previous

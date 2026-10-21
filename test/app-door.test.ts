@@ -115,6 +115,24 @@ async function appText(name: string, args: Record<string, unknown> = {}): Promis
 
 const count = (text: string, part: string) => text.split(part).length - 1
 
+for (const name of ['invent_kind', 'revise_kind']) {
+  test(`/mcp/app ${name} states the law_place refusal before any fee`, async () => {
+    const response = await app.request('/mcp/app', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    assert.equal(response.status, 200)
+    const { result } = await response.json() as { result: { tools: Tool[] } }
+    const tool = result.tools.find(tool => tool.name === name)!
+    assert.ok(tool.description.includes(
+      'Before any fee, it refuses a trait using law_place or convert with into_kind; those steps are for laws.',
+    ), `/mcp/app: ${name} law-only refusal before fees`)
+    assert.ok(tool.description.includes('A kind may list only one trait with a wake key.'))
+    assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS)
+  })
+}
+
 test('the app door lists exactly the 36 tools the owner kept', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
@@ -126,6 +144,13 @@ test('the app door lists exactly the 36 tools the owner kept', async () => {
   })
   const routeTools = (await viaRoute.json() as { result: { tools: Tool[] } }).result.tools
   assert.deepEqual(routeTools.map(tool => tool.name), APP_TOOLS, 'anonymous callers see the same list')
+  const coin = routeTools.find(tool => tool.name === 'coin_trait')!.description
+  assert.ok(coin.includes('Only a law may name into_kind or use law_place; a law_place label requires seconds from 1 to 86400, and its check reads active labels only.'))
+  assert.ok(coin.includes('A place label may also take seconds; without it that old label stays permanent.'))
+  const laws = routeTools.find(tool => tool.name === 'laws')!.description
+  assert.match(laws, /law_place names this law's original defining place while the same owner chain still holds, checked again after a wait; it never follows a hinge/u)
+  assert.match(laws, /A law_place label requires seconds from 1 to 86400, and its check reads active labels only/u)
+  assert.match(laws, /Repeated labels last while any matching row remains active; inspect the defining place with look/u)
 })
 
 test('the other doors keep their counts, and no door carries the app-block sentence (decision 147)', async () => {
@@ -229,6 +254,16 @@ test('the app front door, its sections, help, and official facts carry no money 
   const help = await appText('help')
   hits.push(...bannedHits('help', help))
   assert.doesNotMatch(help, /buy_credit|credit_gift|1f3ea|\/api\/tools|\/window|abilities\.txt/u)
+  const pointer = "A law can share a temporary label through law_place inside one owner's parent chain; physics gives the fields and limits."
+  const helpDoors = JSON.parse(help) as { doors: string[] }
+  const lawsLine = helpDoors.doors.find(line => line.startsWith('Laws:'))!
+  assert.ok(lawsLine.includes(pointer))
+  assert.doesNotMatch(lawsLine, /https?:\/\//u)
+  const physicsText = await appText('physics')
+  hits.push(...bannedHits('physics', physicsText))
+  const physics = JSON.parse(physicsText)
+  const anonymousPhysics = await (await app.request('/api/physics')).json()
+  assert.deepEqual(physics, anonymousPhysics)
   const official = await appText('official_facts')
   hits.push(...bannedHits('official_facts', official))
   const facts = JSON.parse(official) as Record<string, unknown>

@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { mcp } from '../../src/mcp.ts'
 import { PUBLIC_EVENT_KINDS } from '../../src/public-events.ts'
 import { REFERENCE_SECTIONS } from '../../src/door.ts'
+import { TOOL_DESCRIPTION_MAX_CHARACTERS } from '../../src/city-facts.ts'
 import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
@@ -35,6 +36,24 @@ const EXPECTED_DESTRUCTIVE_HINTS: Readonly<Record<string, boolean>> = Object.fre
 })
 
 export function registerToolDescriptionTests(): void {
+  for (const [hosted, path, authorization] of [
+    [false, '/mcp', `Bearer ${LEGACY_SECRET}`],
+    [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
+  ] as const) {
+    for (const name of ['invent_kind', 'revise_kind']) {
+      test(`${path} ${name} states the law_place refusal before any fee`, async () => {
+        setHostedChatFlag(hosted)
+        const { gateway } = createHarness()
+        const tool = toolByName(await listTools(gateway, path, authorization), name)
+        assert.ok(tool.description.includes(
+          'Before any fee, it refuses a trait using law_place or convert with into_kind; those steps are for laws.',
+        ), `${path}: ${name} law-only refusal before fees`)
+        assert.ok(tool.description.includes('A kind may list only one trait with a wake key.'))
+        assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS)
+      })
+    }
+  }
+
   test('browse states where to read the live Gazette submission and withdrawal gates', async () => {
     setHostedChatFlag(true)
     const { gateway } = createHarness()
@@ -186,6 +205,12 @@ export function registerToolDescriptionTests(): void {
         coinTrait.description.includes("A step's then is required on check_label, chance, wait, and reach, its else is allowed only on check_label and chance, and every other brick takes neither."),
         `${path}: coin_trait lists where then and else may sit`,
       )
+      assert.ok(coinTrait.description.includes('Only a law may name into_kind or use law_place; a law_place label requires seconds from 1 to 86400, and its check reads active labels only.'), path)
+      assert.ok(coinTrait.description.includes('A place label may also take seconds; without it that old label stays permanent.'), path)
+      assert.match(laws.description, /law_place names this law's original defining place while the same owner chain still holds, checked again after a wait; it never follows a hinge/u, path)
+      assert.match(laws.description, /A law_place label requires seconds from 1 to 86400, and its check reads active labels only/u, path)
+      assert.match(laws.description, /Repeated labels last while any matching row remains active; inspect the defining place with look/u, path)
+      for (const tool of tools) assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, `${path}: ${tool.name}`)
       assert.deepEqual(
         { readOnlyHint: waitHere.annotations?.readOnlyHint, destructiveHint: waitHere.annotations?.destructiveHint },
         { readOnlyHint: false, destructiveHint: false },
