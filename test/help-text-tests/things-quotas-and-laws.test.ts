@@ -6,6 +6,60 @@ import { parseTraitRecipe } from '../../src/physics.ts'
 import { GENERATED_LLMS, REFERENCE_SECTIONS, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerThingsQuotasAndLawsTests(): void {
+  const decision163 = decisions.match(/^\| 163 \|.*$/mu)?.[0] ?? ''
+  const placeDesign = specification.match(/## Laws of places[^\n]*\n([\s\S]*?)(?=\n## )/u)?.[1] ?? ''
+  for (const [name, text] of [
+    ['reference source', referenceSource],
+    ['system design', placeDesign],
+    ['decision 163', decision163],
+  ] as const) {
+    const prose = text.replace(/`/gu, '').replace(/\s+/gu, ' ')
+    for (const [contract, pattern] of [
+      ['original source identity', /original defining place[\s\S]*never a law named by a later check/u],
+      ['law-only label and check target', /only for label and check_label/u],
+      ['required defining-place duration', /label on law_place requires seconds, a whole number from 1 to 86400/u],
+      ['optional local-place duration', /label on literal place may use the same (?:field|range)[\s\S]*omission keeps its existing permanent label behavior|label on literal place may use the same range; omitting seconds keeps its permanent label/u],
+      ['current source law and delayed guard', /exact source law (?:must still be|is still) effective[\s\S]*(?:checked again when delayed work runs|check again when a delayed step runs)/u],
+      ['no hinge reach', /[Aa] hinge[^.]*grants no (?:shared state|reach)/u],
+      ['label-only new check', /check_label on law_place reads active labels only, (?:never an adopted law's name|not adopted law names), and grants no (?:named-law|further) authority/u],
+      ['unchanged existing checks', /[Ee]xisting check_label targets keep (?:their meaning|matching active labels or a law name)/u],
+      ['append-only repeated labels', /[Ll]abel (?:writes|rows) append/u],
+      ['permanent label collision', /permanent (?:same-name )?row keeps (?:the|that) name present/u],
+      ['passive expiry', /Expired names are absent without a write|Expiry is tested against the stored end time on reads and checks, with no background action and no deletion/u],
+    ] as const) {
+      test(`${name}: shared place contract preserves ${contract}`, () => {
+        assert.ok(pattern.test(prose), `${name}: ${contract}`)
+      })
+    }
+  }
+
+  for (const [contract, pattern] of [
+    ['stable origin through nested checks and timers', /originPlaceId[\s\S]*lawAuthority.sourcePlaceId[\s\S]*nested check[\s\S]*timers preserve/u],
+    ['accepted targets and duration refusals', /label and check_label accept actor, source, target, place, or law_place[\s\S]*actor, source, and target refuse seconds, even when target names a place[\s\S]*check_label takes no seconds/u],
+    ['current chain and retirement guard', /source, room, and connecting parent places must still form an unbroken same-owner chain and none may be retired/u],
+    ['current room and visitors', /place still names the run's current room[\s\S]*visitors can trigger an installed law through a permitted action; they need not own the place/u],
+    ['execution-time lifetime', /duration starts when the label is written, including after a wait/u],
+    ['no new tool or migration', /no new action, tool, or brick[\s\S]*No migration is needed/u],
+    ['unchanged public shape', /labels: string\[\][\s\S]*sourcePlaceId[\s\S]*No expiry timestamp is added to the place response/u],
+    ['human views refresh current local facts', /window and separate live view[\s\S]*local label names[\s\S]*links to defining places[\s\S]*refresh[\s\S]*selected[\s\S]*even when no new event[\s\S]*ancestor labels are not copied/u],
+    ['existing storage and frozen snapshots', /nullable expires_at[\s\S]*pending effects[\s\S]*snapshot format v3[\s\S]*frozen time/u],
+  ] as const) {
+    test(`system design: shared place contract preserves ${contract}`, () => {
+      assert.ok(pattern.test(placeDesign.replace(/`/gu, '').replace(/\s+/gu, ' ')), contract)
+    })
+  }
+
+  test('shared place delivery stays open and things ending remain a separate future phase', () => {
+    const tasks = read('../docs/TASKS.md')
+    const proof = (tasks.match(/^- \[ \] [^\n]*decision 163[^\n]*(?:\n {2}[^\n]*)*/mu)?.[0] ?? '').replace(/\s+/gu, ' ')
+    assert.match(proof, /31649[\s\S]*20523/u, 'one open proof task names both resident requests')
+    assert.match(proof, /exact deployed commits[\s\S]*citylife[\s\S]*live/u)
+    assert.match(proof, /production[\s\S]*expiry[\s\S]*unchanged event marker/u)
+    const potentials = read('../docs/POTENTIALS.md')
+    assert.match(potentials, /Serein's two requests[\s\S]*source-place target and expiring place labels[\s\S]*#163/u)
+    assert.match(potentials, /\*\*Expiry for things\.\*\* Expiry for things remains the next separate phase after the shared place-label work of decision 163; this pull request does not add it, and it never applies to residents\./u)
+  })
+
   for (const [name, text] of [
     ['reference source', referenceSource],
     ['generated reference', generatedReference],

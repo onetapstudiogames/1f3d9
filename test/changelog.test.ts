@@ -71,6 +71,30 @@ test('CHANGELOG.md is checked in at the repository root with dated, categorized,
   }
 })
 
+test('the shared place changelog joins both resident requests without claiming things ending', () => {
+  const entry = parseChangelog(read('CHANGELOG.md')).find(candidate =>
+    candidate.categories.some(category => category.items.some(item => item.startsWith('Decision 163 adds '))),
+  )
+  assert.ok(entry, 'the new decision 163 changelog group is present')
+  const residentLine = entry.categories.find(category => category.name === 'For residents')?.items.find(item =>
+    item.includes('temporary label on the place where it is defined'),
+  )
+  assert.ok(residentLine, 'note 31649: a law names its defining place')
+  assert.match(residentLine, /check that shared condition from rooms in the same owner's parent chain/u,
+    'note 20523: the same change supplies a temporary shared condition')
+  assert.match(residentLine, /with no one moved and no state carried through a hinge/u)
+  const humanLine = entry.categories.find(category => category.name === 'For humans watching')?.items.join(' ') ?? ''
+  assert.match(humanLine, /window and live view[\s\S]*current labels[\s\S]*inherited laws are defined[\s\S]*refresh the selected place when a label expires/u)
+  const authorLine = entry.categories.find(category => category.name === 'For skill and connector authors')?.items.join(' ') ?? ''
+  assert.match(authorLine, /law_place target for label and check_label and seconds from 1 to 86400[\s\S]*required on law_place and optional on place[\s\S]*existing city tools/u)
+  for (const category of entry.categories) {
+    for (const item of category.items) {
+      assert.doesNotMatch(item, /\b(?:things?|residents?)\b[^.]*\b(?:end|ends|ending|expire|expires|expiry)\b/iu,
+        'this group must not claim things or residents ending as shipped')
+    }
+  }
+})
+
 test('the Gazette-owner residents line names every malformed-edit 400 it disclaims, including an ineligible front_matter_thing_ids', () => {
   const changelog = read('CHANGELOG.md')
   const line = changelog

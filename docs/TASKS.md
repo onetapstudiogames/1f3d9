@@ -7,6 +7,17 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Record production proof of decision 163 for Serein's notes 31649 and 20523,
+  including the exact deployed commits for the city and matching citylife and live
+  releases, their pull requests, released plugin version, checks, and screenshots.
+  Use dedicated owned fixture rooms to prove one parent label, a second child's
+  inherited check, unchanged resident locations, and passive expiry with an unchanged
+  event marker in both /window and /live/, including defining-place links. Record
+  UTC times and fixture/action ids, verify the served recipe contract and plugin
+  recommendation, and restore the prior ordered laws without deleting history.
+  Keep this open until actual live evidence exists; the draft human changelog claim
+  must not reach production before the citylife release and the live view's full
+  gate, deployment, and verification are recorded.
 - [ ] On 2026-11-04 decide the `/mcp/connect` label test (decision 162): its override
   ended at 2026-11-03T23:59:59Z, so compare block reports and call-log write counts per
   door, then remove `CONNECT_LABEL_TEST_END` and its override in a follow-up pull request,

@@ -931,6 +931,32 @@ The server hardcodes **meanings never, mechanisms only**:
   a continent reaches nested places through that unbroken ownership chain; it never
   crosses another owner's land to reach the original owner's land beyond it.
   Building, thing, and note permissions stay per-place; they do not inherit.
+- `law_place` names the original defining place of the law being run, never a law
+  named by a later check (decision #163). The stable `originPlaceId`, not mutable
+  `lawAuthority.sourcePlaceId`, supplies that identity: a nested check can change
+  the latter, while timers preserve the original source. `place` still names the
+  run's current room. `label` and `check_label` accept `actor`, `source`, `target`,
+  `place`, or `law_place`; `law_place` works only for `label` and `check_label` in a
+  place law. A kind or waking thing cannot use it; kind invention and revision refuse
+  a trait using it, including nested branches and a `convert` naming a kind, before
+  any fee. A label on `law_place` requires `seconds`, a whole number from 1 to 86400
+  inclusive. A label on literal `place` may use the same range; omitting `seconds`
+  keeps its permanent label. `actor`, `source`, and `target` refuse `seconds`, even
+  when `target` names a place; `check_label` takes no `seconds`. Missing required
+  seconds, fractions, out-of-range values, and seconds on other targets refuse the
+  recipe. The duration starts when the label is written, including after a wait.
+  The source, room, and connecting parent places must still form an unbroken
+  same-owner chain and none may be retired; the exact source law must still be
+  effective in the room. These conditions are checked again when delayed work runs,
+  and the action is refused if they no longer hold. Ordinary visitors can trigger an
+  installed law through a permitted action; they need not own the place. A hinge,
+  even with one owner at both ends, grants no shared state. `check_label` on
+  `law_place` reads active labels only, never an adopted law's name, and grants no
+  named-law authority. Existing `check_label` targets keep matching active labels or
+  a law name. One child's action can write one parent label and another child's next
+  applicable action can check it; no resident moves and no condition is broadcast
+  or copied to descendants. Labels do not rewrite descriptions or edges. This adds
+  no new action, tool, or brick, payment, daily cap, or ownership right.
 - A move runs the laws of the place being left; arrival alone does not run the
   destination's laws. Arriving may wake things there under their owners' and the room
   owner's wake switches; that is a wake try, not a law (decision #105).
@@ -959,6 +985,23 @@ The server hardcodes **meanings never, mechanisms only**:
   labels and how many more there are. Every exported thing in the dated public snapshots
   carries the same `labels` and `labels_total`, added to the base snapshot view by the
   `public-snapshot-thing-labels` migration; resident labels appear in no snapshot class.
+- Labels on a place keep the existing public shape `labels: string[]`, listing
+  only current names local to that place, beside effective laws with `sourcePlaceId`.
+  Follow an inherited law's source to inspect the condition at its defining place.
+  No expiry timestamp is added to the place response; public law recipes show the
+  chosen duration. Repeated label rows append; a name remains present until its
+  final matching row expires. A permanent same-name row keeps the name present,
+  so use a fresh condition name. There is no overwrite, early clear, toggle, or
+  owner reset. Expiry is tested against the stored end time on reads and checks,
+  with no background action and no deletion. Place reads remain passive, including
+  authenticated reads, and existing moderation and reading rules still apply.
+  The window and separate live view show current local label names and links to
+  defining places for inherited laws. Their existing refreshes update selected
+  current place facts even when no new event appears, so expired names disappear;
+  ancestor labels are not copied onto the child's display. No migration is needed:
+  place labels already have nullable `expires_at`, pending effects already store the
+  stable source in JSON, and snapshot format v3 already exports active place label
+  names at its frozen time. Those storage and public shapes stay unchanged.
 - The world has no owner and accepts no laws. Law ancestry stops at the owner boundary,
   so neither world laws nor world permissions can govern child continents.
 - There is no universal physics and no way to legislate the whole world. Residents
