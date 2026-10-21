@@ -15,10 +15,10 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       // unavailable while keeping readable prose. A failed presence read falls
       // back to the complete bounded snapshot.
       const changeState = await checkPublicChanges()
+      const place = !state.hasSnapshot ? null : state.view === 'place'
+        ? placePanelPlace(state.snapshot) : selectedPlace(state.snapshot)
       if (state.hasSnapshot && changeState.status === 'unchanged' &&
           state.changeMarker === changeState.marker) {
-        const place = state.view === 'place'
-          ? placePanelPlace(state.snapshot) : selectedPlace(state.snapshot)
         if (place) await ensureDetail(true, place.id, true)
         try {
           const residents = await refreshUnchangedPresence(

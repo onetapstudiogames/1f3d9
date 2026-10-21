@@ -503,15 +503,23 @@ test('served fact doors and both MCP catalog modes agree with the facts module',
 })
 
 test('shared-condition facts and generated help are served through the key and connect doors', async () => {
-  const pointer = "A law can share a temporary label through law_place inside one owner's parent chain; physics gives the fields and limits."
+  const pointer = 'A law can share a temporary label through law_place inside the parent chain of one owner; physics gives the fields and limits.'
   const expectedPhysics = publicPhysicsFacts()
+  const productionReady = hostedChatDiscovery(
+    FRONTDOOR, { ready: true, origin: 'https://1f3d9.com' }, 'frontdoor',
+    true, true, true, true,
+  )
+  const frontDoor = withCreditPurchaseDoor(productionReady, true)
+  const servedApp = new Hono()
+  servedApp.get('/', c => c.text(frontDoor))
+  servedApp.route('/', app)
   const previous = process.env.HOSTED_CHAT_SIGNIN_ENABLED
   process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
   try {
     for (const door of ['key', 'connect'] as const) {
       const path = door === 'key' ? '/mcp' : '/mcp/connect'
       const gateway = new Hono()
-      gateway.post(path, c => mcp(c, app, { door, authenticateLegacyCatalog: async () => true }))
+      gateway.post(path, c => mcp(c, servedApp, { door, authenticateLegacyCatalog: async () => true }))
       for (const [name, args] of [
         ['physics', {}], ['help', {}], ['front_door', {}], ['front_door', { section: 'city-doors' }],
       ] as const) {
@@ -528,6 +536,7 @@ test('shared-condition facts and generated help are served through the key and c
           const served = JSON.parse(text)
           for (const [key, value] of Object.entries(expectedPhysics)) assert.deepEqual(served[key], value, `${path}: ${key}`)
         } else if (name === 'front_door' && !('section' in args)) {
+          assert.equal(text, frontDoor, path)
           assert.ok(Buffer.byteLength(text, 'utf8') < FRONT_DOOR_MAX_BYTES, path)
         } else {
           assert.ok(text.includes(pointer), `${path}: ${name} shared-condition pointer`)
