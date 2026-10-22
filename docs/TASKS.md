@@ -7,6 +7,7 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Opposing carries between a parent and its child can deadlock; the carry lock order needs one rule across move, carry, give and retire.
 - [ ] Record production proof of decision 163 for Serein's notes 31649 and 20523,
   including the exact deployed commits for the city and matching citylife and live
   releases, their pull requests, released plugin version, checks, and screenshots.
