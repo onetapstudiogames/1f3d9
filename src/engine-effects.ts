@@ -281,23 +281,52 @@ async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promi
   return target
 }
 
-async function lockLawPlaceChain(placeId: number, db: TaggedSql): Promise<Array<{ id: number }>> {
+/**
+ * Locks a room's law chain from the top of the tree down, a parent before its child, as
+ * every path locks place rows (docs/SYSTEM_DESIGN.md). Rows above exclusiveFromId are
+ * shared. That row and the chain below it are exclusive, for an action that changes them
+ * itself later, so it never asks to strengthen a shared lock it already holds.
+ */
+export async function lockLawPlaceChain(
+  placeId: number,
+  db: TaggedSql,
+  exclusiveFromId: number | null = null,
+): Promise<Array<{ id: number }>> {
   // Include all parents regardless of owner: a waiting statement may have seen
-  // an older owner. Shared locks are compatible with movement's room locks.
-  return queryRows(db`
+  // an older owner.
+  const shared = await queryRows<{ id: number }>(db`
     WITH RECURSIVE law_place_chain AS (
-      SELECT id, parent_id FROM places WHERE id = ${placeId}
+      SELECT id, parent_id, 0 AS height FROM places WHERE id = ${placeId}
       UNION ALL
-      SELECT parent.id, parent.parent_id FROM places parent
+      SELECT parent.id, parent.parent_id, child.height + 1 FROM places parent
       JOIN law_place_chain child ON parent.id = child.parent_id
       WHERE parent.place_kind <> 'world'
     )
     SELECT place.id FROM places place JOIN law_place_chain chain ON chain.id = place.id
-    ORDER BY place.id FOR SHARE OF place
+    WHERE chain.height > coalesce((
+      SELECT changed.height FROM law_place_chain changed WHERE changed.id = ${exclusiveFromId}::int
+    ), -1)
+    ORDER BY chain.height DESC FOR SHARE OF place
   `)
+  if (exclusiveFromId === null) return shared
+  const exclusive = await queryRows<{ id: number }>(db`
+    WITH RECURSIVE law_place_chain AS (
+      SELECT id, parent_id, 0 AS height FROM places WHERE id = ${placeId}
+      UNION ALL
+      SELECT parent.id, parent.parent_id, child.height + 1 FROM places parent
+      JOIN law_place_chain child ON parent.id = child.parent_id
+      WHERE parent.place_kind <> 'world'
+    )
+    SELECT place.id FROM places place JOIN law_place_chain chain ON chain.id = place.id
+    WHERE chain.height <= (
+      SELECT changed.height FROM law_place_chain changed WHERE changed.id = ${exclusiveFromId}::int
+    )
+    ORDER BY chain.height DESC FOR UPDATE OF place
+  `)
+  return [...shared, ...exclusive]
 }
 
-function hasLawPlace(effects: readonly Effect[]): boolean {
+export function hasLawPlace(effects: readonly Effect[]): boolean {
   return effects.some(effect => (
     ('target' in effect && effect.target === 'law_place')
     || ('then' in effect && hasLawPlace(effect.then))
@@ -305,14 +334,18 @@ function hasLawPlace(effects: readonly Effect[]): boolean {
   ))
 }
 
-/** Acquire ancestors before earlier moves can lock children; permission is checked at each brick. */
+/**
+ * Locks what a law_place program needs in the shared order: the actor's presence, the
+ * action's own thing, then the room's law chain from the top down. Permission is still
+ * checked at each brick. exclusiveFromId names a chain row the action itself changes later.
+ */
 export async function lockLawPlaceEffects(
   effects: readonly Effect[],
   context: Pick<EffectExecutionContext, 'actorId' | 'sourceThingId' | 'placeId'>,
   db: TaggedSql,
+  exclusiveFromId: number | null = null,
 ): Promise<void> {
   if (context.placeId === null || !hasLawPlace(effects)) return
-  // Match actions' presence, source, then place order, including stored programs.
   // This is only a lock: a timer does not require its actor still to stand here.
   await queryRows(db`
     SELECT resident_id FROM resident_presence WHERE resident_id = ${context.actorId} FOR UPDATE
@@ -320,7 +353,7 @@ export async function lockLawPlaceEffects(
   if (context.sourceThingId !== null) {
     await queryRows(db`SELECT id FROM things WHERE id = ${context.sourceThingId} FOR UPDATE`)
   }
-  await lockLawPlaceChain(context.placeId, db)
+  await lockLawPlaceChain(context.placeId, db, exclusiveFromId)
 }
 
 async function requireScopedBrickTarget(

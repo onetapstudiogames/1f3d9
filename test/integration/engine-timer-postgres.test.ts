@@ -1,21 +1,30 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import { Client, type ClientConfig } from 'pg'
 
-import {
-  executeEffects,
-  resolveDueEffects,
-  type EffectExecutionContext,
-} from '../../src/engine-effects.ts'
-import {
-  EngineError, runAction, setEngineTransactionRunnerForTests, type TaggedSql,
-} from '../../src/engine.ts'
+import type { EffectExecutionContext } from '../../src/engine-effects.ts'
+import type { TaggedSql } from '../../src/engine.ts'
 import type { Effect } from '../../src/physics.ts'
-import { ensureChanceDays } from '../../src/engine-chance.ts'
+
+let routeDb: TaggedSql | null = null
+const routeSql = (async (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+  assert.ok(routeDb, 'the route must use the disposable PostgreSQL connection')
+  return routeDb(strings, ...values)
+}) as TaggedSql
+routeSql.query = async (text, values = []) => {
+  assert.ok(routeDb?.query, 'the route must use the disposable PostgreSQL connection')
+  return routeDb.query(text, values)
+}
+mock.module(new URL('../../src/db.ts', import.meta.url).href, {
+  namedExports: { sql: routeSql, runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/timer' },
+})
+const { executeEffects, resolveDueEffects } = await import('../../src/engine-effects.ts')
+const { EngineError, runAction, setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+const { ensureChanceDays } = await import('../../src/engine-chance.ts')
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'engine_timer_integration'
@@ -80,15 +89,20 @@ async function startPostgres(): Promise<{
 function taggedSql(
   client: Client,
   beforeQuery?: (text: string) => Promise<void>,
+  afterQuery?: (text: string, client: Client) => Promise<void>,
 ): TaggedSql {
-  return (async (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
+  const sql = (async (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
     const text = strings.reduce(
       (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
       '',
     )
     await beforeQuery?.(text)
-    return (await client.query(text, [...values])).rows
+    const result = await client.query(text, [...values])
+    await afterQuery?.(text, client)
+    return result.rows
   }) as TaggedSql
+  sql.query = async (text, values = []) => (await client.query(text, [...values])).rows
+  return sql
 }
 
 test('law_place shares one timed condition through the current owner chain', async t => {
@@ -96,16 +110,19 @@ test('law_place shares one timed condition through the current owner chain', asy
   const client = postgres.client
   const db = taggedSql(client)
   let beforeQuery: ((text: string) => Promise<void>) | undefined
+  let afterQuery: ((text: string, client: Client) => Promise<void>) | undefined
+  let sqlstates: string[] = []
   const transaction = async <T>(work: (sql: TaggedSql) => Promise<T>): Promise<T> => {
     const connection = new Client(postgres.clientConfig)
     await connection.connect()
     try {
       await connection.query("SET statement_timeout = '8s'")
       await connection.query('BEGIN')
-      const result = await work(taggedSql(connection, beforeQuery))
+      const result = await work(taggedSql(connection, beforeQuery, afterQuery))
       await connection.query('COMMIT')
       return result
     } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error) sqlstates.push(String(error.code))
       await connection.query('ROLLBACK')
       throw error
     } finally {
@@ -710,7 +727,427 @@ test('law_place shares one timed condition through the current owner chain', asy
         }
       })
     }
+    routeDb = db
+    const { Hono } = await import('hono')
+    const { mountSocietyRoutes } = await import('../../src/society.ts')
+    const app = new Hono()
+    mountSocietyRoutes(app)
+    const ownerSecret = `1f3d9_sk_${randomBytes(24).toString('hex')}`
+    await client.query('UPDATE residents SET secret_hash = $1 WHERE id = 1', [
+      createHash('sha256').update(ownerSecret, 'utf8').digest('hex'),
+    ])
+    for (const concurrent of [false, true]) {
+      await t.test(`${concurrent ? 'concurrent' : 'serial'} carry and subtree gift both apply`, async () => {
+        const parent = await place(`gift-parent-${concurrent}`, a)
+        const child = await place(`gift-child-${concurrent}`, parent)
+        await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[parent, child]])
+        await client.query('UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 3', [parent])
+        const luggage = (await client.query(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'gift-race-luggage', 'intact', 3, 3) RETURNING id
+        `, [parent])).rows[0].id
+        const paused = barrier()
+        let carryPid = 0
+        sqlstates = []
+        afterQuery = async (text, connection) => {
+          if (!concurrent || !/FOR UPDATE OF destination/.test(text) || carryPid !== 0) return
+          carryPid = Number((await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid)
+          paused.reached()
+          await paused.gate
+        }
+        const gift = () => app.request('/api/transfer', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${ownerSecret}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'place', id: parent, to_handle: 'chain-visitor' }),
+        })
+        const moved = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move',
+          placeId: parent, destinationPlaceId: child, carryThingId: luggage }, db)
+        let given: ReturnType<typeof gift> | undefined
+        try {
+          if (concurrent) {
+            await atBarrier(paused.ready, moved)
+            given = gift()
+            let waiting: { query: string; blockers: number[] } | undefined
+            const deadline = Date.now() + 3_000
+            while (Date.now() < deadline) {
+              waiting = (await client.query(`
+                SELECT query, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+                WHERE wait_event_type = 'Lock' AND query LIKE '%society:place-gift-lock-%'
+              `)).rows.find(row => row.blockers.includes(carryPid))
+              if (waiting) break
+              await delay(20)
+            }
+            assert.ok(waiting, 'the actual gift route must wait on a row held by the carry')
+            t.diagnostic(`gift waits on ${waiting.query.includes('lock-root') ? 'parent' : 'child'}; releasing carry`)
+            paused.release()
+          } else {
+            await moved
+            given = gift()
+          }
+          const [carry, response] = await Promise.all([moved, given])
+          const body = await response.json() as { error?: string }
+          t.diagnostic(`carry=${carry.status}; gift HTTP=${response.status}; sqlstates=${JSON.stringify(sqlstates)}`)
+          assert.equal(carry.status, 'applied', carry.error ?? '')
+          assert.equal(response.status, 200, body.error)
+          assert.deepEqual(sqlstates, [], 'neither action may deadlock')
+          assert.deepEqual((await client.query(
+            'SELECT owner_id FROM places WHERE id = ANY($1::int[]) ORDER BY id', [[parent, child]],
+          )).rows, [{ owner_id: 2 }, { owner_id: 2 }])
+          assert.deepEqual((await client.query(
+            'SELECT place_id, held_by, owner_id, maker_id, body FROM things WHERE id = $1', [luggage],
+          )).rows, [{ place_id: child, held_by: null, owner_id: 3, maker_id: 3, body: 'intact' }])
+        } finally {
+          paused.release()
+          await Promise.allSettled([moved, given])
+          afterQuery = undefined
+        }
+      })
+    }
+
+    // An order that lets each carry hold its own destination first deadlocks the pairs
+    // below. Each exclusive destination lock waits until both carries hold one, or a short
+    // while when the one lock order makes the second carry wait before it holds anything.
+    const holdBothDestinations = () => {
+      const both = barrier()
+      let holders = 0
+      afterQuery = async text => {
+        if (!/FROM places AS destination/.test(text)) return
+        holders += 1
+        if (holders === 2) both.release()
+        await Promise.race([both.gate, delay(1_500)])
+      }
+      return both
+    }
+
+    await t.test('opposite carries between a parent and its child both apply', async () => {
+      await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
+        JSON.stringify({ move: [write('opposite-carry', 5)] }),
+      ])
+      const upper = await place('opposite-upper', a)
+      const lower = await place('opposite-lower', upper)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[upper, lower]])
+      await client.query(`
+        UPDATE resident_presence SET home_place_id = NULL,
+          current_place_id = CASE resident_id WHEN 2 THEN $1::int ELSE $2::int END
+        WHERE resident_id IN (2, 3)
+      `, [lower, upper])
+      const luggage = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'rising-luggage', 'goes up', 2, 2), ($2, 'falling-luggage', 'goes down', 3, 3)
+        RETURNING id
+      `, [lower, upper])).rows.map(row => row.id)
+      sqlstates = []
+      const both = holdBothDestinations()
+      try {
+        const outcomes = await Promise.all([
+          runAction({ actorId: 2, actorHandle: 'chain-visitor', action: 'move', placeId: lower,
+            destinationPlaceId: upper, carryThingId: luggage[0] }, db),
+          runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move', placeId: upper,
+            destinationPlaceId: lower, carryThingId: luggage[1] }, db),
+        ])
+        assert.deepEqual(outcomes.map(result => ({ status: result.status, error: result.error })),
+          [{ status: 'applied', error: null }, { status: 'applied', error: null }])
+        assert.deepEqual(sqlstates, [], 'neither carry may deadlock')
+        assert.deepEqual((await client.query(`
+          SELECT current_place_id FROM resident_presence WHERE resident_id IN (2, 3) ORDER BY resident_id
+        `)).rows.map(row => row.current_place_id), [upper, lower])
+        assert.deepEqual((await client.query(`
+          SELECT place_id, held_by FROM things WHERE id = ANY($1::int[]) ORDER BY id
+        `, [luggage])).rows, [{ place_id: upper, held_by: null }, { place_id: lower, held_by: null }])
+        assert.deepEqual((await rows('opposite-carry')).map(row => row.target_id), [a, a])
+      } finally {
+        afterQuery = undefined
+        both.release()
+      }
+    })
+
+    await t.test('a carry below the mover home and a carry into that home both apply', async () => {
+      // No law here: the presence update re-reads the mover's home, so the home itself must
+      // take its place in the order, above the room the mover carries into.
+      const land = await place('home-land', world)
+      const home = await place('mover-home', land)
+      const upper = await place('home-upper', home)
+      const lower = await place('home-lower', upper)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[home, upper, lower]])
+      await client.query(`
+        UPDATE resident_presence SET
+          current_place_id = CASE resident_id WHEN 2 THEN $1::int ELSE $2::int END,
+          home_place_id = CASE resident_id WHEN 2 THEN $3::int ELSE NULL END
+        WHERE resident_id IN (2, 3)
+      `, [lower, upper, home])
+      const luggage = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'homeward-luggage', 'goes up', 2, 2), ($2, 'home-bound-luggage', 'goes home', 3, 3)
+        RETURNING id
+      `, [lower, upper])).rows.map(row => row.id)
+      sqlstates = []
+      const both = holdBothDestinations()
+      try {
+        const outcomes = await Promise.all([
+          runAction({ actorId: 2, actorHandle: 'chain-visitor', action: 'move', placeId: lower,
+            destinationPlaceId: upper, carryThingId: luggage[0] }, db),
+          runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move', placeId: upper,
+            destinationPlaceId: home, carryThingId: luggage[1] }, db),
+        ])
+        assert.deepEqual(outcomes.map(result => ({ status: result.status, error: result.error })),
+          [{ status: 'applied', error: null }, { status: 'applied', error: null }])
+        assert.deepEqual(sqlstates, [], 'neither carry may deadlock')
+        assert.deepEqual((await client.query(`
+          SELECT current_place_id FROM resident_presence WHERE resident_id IN (2, 3) ORDER BY resident_id
+        `)).rows.map(row => row.current_place_id), [upper, home])
+        assert.deepEqual((await client.query(`
+          SELECT place_id FROM things WHERE id = ANY($1::int[]) ORDER BY id
+        `, [luggage])).rows.map(row => row.place_id), [upper, home])
+      } finally {
+        afterQuery = undefined
+        both.release()
+        await client.query('UPDATE resident_presence SET home_place_id = NULL WHERE resident_id = 2')
+      }
+    })
+
+    // Pause one action after its exclusive destination lock, start another, and release
+    // the first once the second waits on a row the first holds.
+    const pauseAfterDestination = () => {
+      const paused = barrier()
+      let pid = 0
+      afterQuery = async (text, connection) => {
+        if (!/FROM places AS destination/.test(text) || pid !== 0) return
+        pid = Number((await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid)
+        paused.reached()
+        await paused.gate
+      }
+      const waitsOnPaused = async () => {
+        const deadline = Date.now() + 3_000
+        while (Date.now() < deadline) {
+          const waiting = await client.query(`
+            SELECT 1 FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
+          `, [pid])
+          if (waiting.rows.length > 0) return
+          await delay(20)
+        }
+        assert.fail('the second action must wait on a row the paused carry holds')
+      }
+      return { paused, waitsOnPaused }
+    }
+
+    await t.test(`a carry into the giver's room and a gift clearing the giver's home both apply`, async () => {
+      await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
+        JSON.stringify({ move: [write('home-gift-carry', 5)] }),
+      ])
+      const room = await place('giver-room', a)
+      const estate = await place('given-estate', room)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[room, estate]])
+      // The gift clears the giver's home, and that presence update re-reads the giver's room.
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = $2 WHERE resident_id = 1
+      `, [room, estate])
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id = 3
+      `, [estate])
+      const luggage = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'home-gift-luggage', 'intact', 3, 3) RETURNING id
+      `, [estate])).rows[0].id
+      sqlstates = []
+      // The gift reads its laws holding only the giver's presence and waits there. The
+      // carry then takes the giver's room for its destination and waits. The gift goes on
+      // and must wait on the carry without holding the place the carry still has to read.
+      const giftPaused = barrier()
+      let giftWaiting = false
+      const { paused, waitsOnPaused } = pauseAfterDestination()
+      const carryHook = afterQuery
+      afterQuery = async (text, connection) => {
+        if (!giftWaiting && /WITH RECURSIVE ancestry/.test(text)) {
+          giftWaiting = true
+          giftPaused.reached()
+          await giftPaused.gate
+          return
+        }
+        await carryHook?.(text, connection)
+      }
+      const given = Promise.resolve(app.request('/api/transfer', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${ownerSecret}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'place', id: estate, to_handle: 'chain-visitor' }),
+      }))
+      let moved: ReturnType<typeof runAction> | undefined
+      try {
+        await atBarrier(giftPaused.ready, given)
+        moved = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move',
+          placeId: estate, destinationPlaceId: room, carryThingId: luggage }, db)
+        await atBarrier(paused.ready, moved)
+        giftPaused.release()
+        await waitsOnPaused()
+        paused.release()
+        const [carry, response] = await Promise.all([moved, given])
+        const body = await response.json() as { error?: string }
+        assert.equal(carry.status, 'applied', carry.error ?? '')
+        assert.equal(response.status, 200, body.error)
+        assert.deepEqual(sqlstates, [], 'neither action may deadlock')
+        assert.deepEqual((await client.query('SELECT owner_id FROM places WHERE id = $1', [estate])).rows,
+          [{ owner_id: 2 }])
+        assert.deepEqual((await client.query(`
+          SELECT current_place_id, home_place_id FROM resident_presence WHERE resident_id = 1
+        `)).rows, [{ current_place_id: room, home_place_id: null }])
+        assert.deepEqual((await client.query('SELECT place_id, held_by FROM things WHERE id = $1', [luggage])).rows,
+          [{ place_id: room, held_by: null }])
+      } finally {
+        giftPaused.release()
+        paused.release()
+        await Promise.allSettled([moved, given])
+        afterQuery = undefined
+      }
+    })
+
+    await t.test('two makers in one room under a law_place make law both apply', async () => {
+      const workshop = await place('shared-workshop', a)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = $1', [workshop])
+      await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
+        JSON.stringify({ make: [write('make-race', 5)] }),
+      ])
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id IN (2, 3)
+      `, [workshop])
+      const { makeThingThroughEngine } = await import('../../src/thing-making.ts')
+      const make = (id: number, handle: string) => makeThingThroughEngine({
+        actor: {
+          id, handle, model: 'test', joined_at: '2026-10-21T00:00:00.000Z', quota_day: '2026-10-21',
+          things_today: 0, notes_today: 0, agreement_actions_today: 0,
+        },
+        placeId: workshop, name: `${handle} work`, body: 'made in the same room at once',
+        kindId: null, ingredientIds: [],
+      })
+      // Both makers reach the chain lock before either takes it. A shared lock on the room
+      // that making then strengthens would leave each maker waiting on the other.
+      const paused = barrier()
+      let readers = 0
+      sqlstates = []
+      beforeQuery = async text => {
+        if (!lockQuery(text)) return
+        readers += 1
+        if (readers === 2) paused.release()
+        await paused.gate
+      }
+      try {
+        const made = await Promise.all([make(2, 'chain-visitor'), make(3, 'sibling-visitor')])
+        assert.deepEqual(made.map(result => result.ok), [true, true], JSON.stringify(made))
+        assert.deepEqual(sqlstates, [], 'neither maker may deadlock')
+        assert.deepEqual((await rows('make-race')).map(row => row.target_id), [a, a])
+      } finally {
+        beforeQuery = undefined
+        paused.release()
+      }
+    })
+
+    await t.test('a shared use of a thing and its owner carrying it up into the law source both finish', async () => {
+      await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 1', [
+        JSON.stringify({ use: [write('use-carry', 5)], move: [write('use-carry-move', 5)] }),
+      ])
+      const room = await place('shared-use-room', a)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[room, a]])
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id IN (2, 3)
+      `, [room])
+      const shared = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, open_to_use)
+        VALUES ($1, 'shared-lamp', 'used and carried at once', 2, 2, true) RETURNING id
+      `, [room])).rows[0].id
+      sqlstates = []
+      // The carry takes its own thing before any place, as the use does, so the use waits
+      // on the thing and never holds it while it waits for the carry's destination.
+      const { paused, waitsOnPaused } = pauseAfterDestination()
+      const moved = runAction({ actorId: 2, actorHandle: 'chain-visitor', action: 'move',
+        placeId: room, destinationPlaceId: a, carryThingId: shared }, db)
+      let used: ReturnType<typeof runAction> | undefined
+      // The use records its action on its own connection: that insert names the thing,
+      // so it waits on the carry's lock, and the polling client must stay free.
+      const useClient = new Client(postgres.clientConfig)
+      await useClient.connect()
+      try {
+        await atBarrier(paused.ready, moved)
+        used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use',
+          placeId: room, sourceThingId: shared }, taggedSql(useClient))
+        await waitsOnPaused()
+        paused.release()
+        const [carry, use] = await Promise.all([moved, used])
+        assert.equal(carry.status, 'applied', carry.error ?? '')
+        assert.deepEqual(sqlstates, [], 'neither the use nor the carry may deadlock')
+        assert.deepEqual({ status: use.status, httpStatus: use.httpStatus, error: use.error }, {
+          status: 'failed', httpStatus: 403,
+          error: `thing_id ${shared} must be in place_id ${room}; its current place_id is ${a}`,
+        })
+        assert.deepEqual((await client.query('SELECT place_id FROM things WHERE id = $1', [shared])).rows,
+          [{ place_id: a }])
+      } finally {
+        paused.release()
+        await Promise.allSettled([moved, used])
+        afterQuery = undefined
+        await useClient.end()
+      }
+    })
+
+    await t.test('a carry out of a room and the retirement of that room both finish', async () => {
+      const { beginCityCreditSpend, issueCityFeeCredit } = await import('../../src/city-credit.ts')
+      const { completePlaceLifecycleOperation } = await import('../../src/place-lifecycle-operation.ts')
+      const credit = {
+        query: async (text: string, params: readonly unknown[] = []) => (
+          await client.query(text, [...params])
+        ).rows as Record<string, unknown>[],
+      }
+      const parent = await place('retire-parent', a)
+      const room = await place('retiring-room', parent)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[parent, room]])
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id = 3
+      `, [room])
+      const luggage = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'leaving-luggage', 'intact', 3, 3) RETURNING id
+      `, [room])).rows[0].id
+      await issueCityFeeCredit(credit, {
+        founderId: 1, residentId: 1, sourceKey: 'retire-race-credit', reason: 'fund the retirement race regression',
+      })
+      const requestId = 'retire-race-request'
+      const spend = await beginCityCreditSpend(credit, {
+        actorId: 1, operation: 'place_retire', targetKey: `place:${room}:retire:${requestId}`,
+        request: { place_id: room }, requestId, assetType: 'place', assetId: room,
+      })
+      if (spend.state !== 'ready') assert.fail(`the retirement credit must be ready: ${spend.state}`)
+      sqlstates = []
+      // The carry holds the parent exclusively; the retirement must not hold the room
+      // while it waits for that parent.
+      const { paused, waitsOnPaused } = pauseAfterDestination()
+      const moved = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move',
+        placeId: room, destinationPlaceId: parent, carryThingId: luggage }, db)
+      let retiring: ReturnType<typeof completePlaceLifecycleOperation> | undefined
+      try {
+        await atBarrier(paused.ready, moved)
+        retiring = completePlaceLifecycleOperation({
+          query: credit.query,
+          transaction: work => transaction(sql => work({
+            query: async (text, params = []) => await sql.query!(text, [...params]) as Record<string, unknown>[],
+          })),
+        }, { attemptId: spend.attempt_id, leaseOwner: spend.lease_owner })
+        await waitsOnPaused()
+        paused.release()
+        const [carry, completion] = await Promise.all([moved, retiring])
+        assert.equal(carry.status, 'applied', carry.error ?? '')
+        assert.equal(completion.state, 'completed', JSON.stringify(completion))
+        assert.deepEqual(sqlstates, [], 'neither the carry nor the retirement may deadlock')
+        assert.deepEqual((await client.query(`
+          SELECT retired_at IS NOT NULL AS retired FROM places WHERE id = $1
+        `, [room])).rows, [{ retired: true }])
+        assert.deepEqual((await client.query('SELECT place_id FROM things WHERE id = $1', [luggage])).rows,
+          [{ place_id: parent }])
+      } finally {
+        paused.release()
+        await Promise.allSettled([moved, retiring])
+        afterQuery = undefined
+      }
+    })
   } finally {
+    routeDb = null
     setEngineTransactionRunnerForTests(null)
     await client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })

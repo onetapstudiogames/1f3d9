@@ -238,6 +238,31 @@ export async function completePlaceLifecycleOperation(
   input: Readonly<{ attemptId: string; leaseOwner: string }>,
 ): Promise<PlaceLifecycleOperationResult> {
   const complete = async (transaction: PlaceLifecycleOperationDatabase) => {
+    // The shared lock order (docs/SYSTEM_DESIGN.md): the owner's presence row, whose home
+    // a retirement clears, then the parent shared before the place itself exclusively.
+    await transaction.query(`
+      /* place-lifecycle:lock-owner-presence */
+      SELECT presence.resident_id
+      FROM payment_attempts attempt
+      JOIN resident_presence presence ON presence.resident_id = attempt.actor_id
+      WHERE attempt.public_id = $1::text
+        AND attempt.lease_owner = $2::text
+        AND attempt.status = 'payment_pending'
+        AND attempt.operation IN ('place_rename', 'place_retire', 'place_restore')
+      FOR UPDATE OF presence
+    `, [input.attemptId, input.leaseOwner])
+    await transaction.query(`
+      /* place-lifecycle:lock-parent */
+      SELECT parent.id
+      FROM payment_attempts attempt
+      JOIN places place ON place.id = attempt.asset_id
+      JOIN places parent ON parent.id = place.parent_id
+      WHERE attempt.public_id = $1::text
+        AND attempt.lease_owner = $2::text
+        AND attempt.status = 'payment_pending'
+        AND attempt.operation IN ('place_rename', 'place_retire', 'place_restore')
+      FOR SHARE OF parent
+    `, [input.attemptId, input.leaseOwner])
     await transaction.query(`
       /* place-lifecycle:lock-before-recheck */
       SELECT place.id
