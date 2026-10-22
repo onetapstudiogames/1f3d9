@@ -219,11 +219,14 @@ export type ActionInput = BaseActionInput & (
     readonly primitiveHandledByCaller: true
     /** Server-only: the callback guarantees a typed event in the same transaction. */
     readonly primitiveEmitsTypedEvent?: true
+    /** Server-only: things the callback uses up, locked with the action's own things by id. */
+    readonly primitiveThingIds?: readonly number[]
     readonly performPrimitive: (transaction: TaggedSql) => Promise<void>
   }
   | {
     readonly primitiveHandledByCaller?: false
     readonly primitiveEmitsTypedEvent?: never
+    readonly primitiveThingIds?: never
     readonly performPrimitive?: never
   }
 )
@@ -269,6 +272,7 @@ interface RequiredActionInput {
   readonly payload: Readonly<Record<string, unknown>>
   readonly primitiveHandledByCaller: boolean
   readonly primitiveEmitsTypedEvent: boolean
+  readonly primitiveThingIds: readonly number[]
   readonly performPrimitive: ((transaction: TaggedSql) => Promise<void>) | null
 }
 
@@ -929,6 +933,9 @@ function normalizeActionInput(input: ActionInput): RequiredActionInput {
     primitiveHandledByCaller: input.primitiveHandledByCaller === true,
     primitiveEmitsTypedEvent: input.primitiveHandledByCaller === true
       && input.primitiveEmitsTypedEvent === true,
+    primitiveThingIds: input.primitiveHandledByCaller === true
+      ? (input.primitiveThingIds ?? []).filter(id => Number.isSafeInteger(id) && id > 0)
+      : [],
     performPrimitive: input.primitiveHandledByCaller === true ? input.performPrimitive : null,
   }
 }
@@ -1412,15 +1419,17 @@ async function lockGivenPlace(
 
 /**
  * The action's own things, locked by id before any place row: the used or named thing, a
- * thing the caller chose as target, and a carried thing. A recipe aimed at the source or
- * the target then only re-takes a row it holds. Held luggage is skipped here; it waits for
- * the rooms, as opening a room locks the room before releasing its held things.
+ * thing the caller chose as target, a carried thing, and the things a make step uses up.
+ * A recipe aimed at the source or the target then only re-takes a row it holds. Held
+ * luggage is skipped here; it waits for the rooms, as opening a room locks the room before
+ * releasing its held things.
  */
 async function lockActionThings(input: RequiredActionInput, db: TaggedSql): Promise<void> {
   const thingIds = [...new Set([
     input.carryThingId,
     input.sourceThingId,
     input.target?.type === 'thing' ? input.target.id : null,
+    ...input.primitiveThingIds,
   ].filter((id): id is number => id !== null))]
   if (thingIds.length === 0) return
   await queryRows(db`

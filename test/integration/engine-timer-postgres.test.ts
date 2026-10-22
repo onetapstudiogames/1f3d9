@@ -1443,6 +1443,126 @@ test('law_place shares one timed condition through the current owner chain', asy
         afterQuery = undefined
       }
     })
+
+    const bakeryLand = await place('bakery-land', world)
+    const bakery = await place('bakery', bakeryLand)
+    await client.query('UPDATE places SET open_to_things = true WHERE id = $1', [bakery])
+    await client.query(`
+      UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id IN (1, 3)
+    `, [bakery])
+    const kind = async (name: string, owner: number, recipe: readonly unknown[]): Promise<number> => {
+      const id = (await client.query(`
+        INSERT INTO kinds (name, owner_id) VALUES ($1, $2) RETURNING id
+      `, [name, owner])).rows[0].id
+      await client.query(`
+        INSERT INTO kind_revisions (kind_id, revision, description, traits, recipe)
+        VALUES ($1, 1, '', '{}', $2::jsonb)
+      `, [id, JSON.stringify(recipe)])
+      return id
+    }
+    const flour = await kind('bakery-flour', 1, [])
+    // The visitor owns the loaf kind, so a use may aim at it; the room owner crafts it.
+    const loaf = await kind('bakery-loaf', 3, [{ kind: 'bakery-flour', quantity: 1 }])
+    const bakeryUse = [
+      { effect: 'label', target: 'law_place', label: 'bakery-busy', seconds: 60 },
+      { effect: 'label', target: 'target', label: 'bakery-dusted' },
+    ]
+    await client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES (14, 'bakery-rule', 'marks the bakery and what a use aims at', $1::jsonb, 1)
+    `, [JSON.stringify({ use: bakeryUse })])
+    await client.query(`
+      INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+      VALUES ($1, 14, 1, 'add', 0)
+    `, [bakery])
+    const bakeryThings = async (openToUse = false) => {
+      const sack = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, kind_id, birth_revision, current_revision,
+          open_to_use)
+        VALUES ($1, 'flour-sack', 'one measure', 1, 1, $2, 1, 1, $3) RETURNING id
+      `, [bakery, flour, openToUse])).rows[0].id
+      const sieve = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'sieve', 'the visitor tool', 3, 3) RETURNING id
+      `, [bakery])).rows[0].id
+      return { sack, sieve }
+    }
+    const craftLoaf = async (sack: number) => {
+      const { makeThingThroughEngine } = await import('../../src/thing-making.ts')
+      return makeThingThroughEngine({
+        actor: {
+          id: 1, handle: 'chain-owner', model: 'test', joined_at: '2026-10-22T00:00:00.000Z',
+          quota_day: '2026-10-22', things_today: 0, notes_today: 0, agreement_actions_today: 0,
+        },
+        placeId: bakery, name: 'bakery loaf', body: 'baked from one sack', kindId: loaf, ingredientIds: [sack],
+      })
+    }
+
+    for (const [makeLaw, shared] of [[false, false], [true, false], [false, true], [true, true]] as const) {
+      const law = makeLaw ? 'under a law_place make law' : 'with no make law'
+      const use = shared ? 'a shared use of it under a law_place use law' : 'a law_place use aimed at it'
+      await t.test(`crafting from an ingredient and ${use}, ${law}, both finish`, async () => {
+        await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 14', [JSON.stringify(makeLaw
+          ? { use: bakeryUse, make: [{ effect: 'label', target: 'law_place', label: 'bakery-baking', seconds: 60 }] }
+          : { use: bakeryUse })])
+        const { sack, sieve } = await bakeryThings(shared)
+        sqlstates = []
+        // The use holds the sack with its own things, before its room chain. The crafting
+        // takes its ingredients before the room, so it waits for the sack holding no room.
+        const usePause = pauseAfterFirst(text => /FROM things WHERE id = ANY/.test(text) && /FOR UPDATE/.test(text))
+        afterQuery = async (text, connection) => { await usePause.hook(text, connection) }
+        const used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use', placeId: bakery,
+          sourceThingId: shared ? sack : sieve, target: { type: 'thing', id: shared ? sieve : sack } }, db)
+        let crafted: ReturnType<typeof craftLoaf> | undefined
+        try {
+          await atBarrier(usePause.paused.ready, used)
+          crafted = craftLoaf(sack)
+          assert.ok(await waitsOnPid(usePause.pid()), 'the crafting must wait on the use')
+          usePause.paused.release()
+          const [use, craft] = await Promise.all([used, crafted])
+          assert.deepEqual(deadlocks(), [], 'neither may deadlock')
+          assert.equal(use.status, 'applied', use.error ?? '')
+          assert.equal(craft.ok, true, JSON.stringify(craft))
+          assert.deepEqual((await client.query(`
+            SELECT withdrawn_at IS NOT NULL AS used_up FROM things WHERE id = $1
+          `, [sack])).rows, [{ used_up: true }])
+        } finally {
+          usePause.paused.release()
+          await Promise.allSettled([used, crafted])
+          afterQuery = undefined
+        }
+      })
+    }
+
+    await t.test('crafting a kind and a law_place use aimed at that kind both finish', async () => {
+      await client.query('UPDATE traits SET recipe = $1::jsonb WHERE id = 14', [JSON.stringify({ use: bakeryUse })])
+      const { sack, sieve } = await bakeryThings()
+      sqlstates = []
+      // The use takes its room chain, then the kind its recipe labels. The crafting takes the
+      // room before the kind, so it waits for the room holding no kind.
+      const usePause = pauseAfterFirst(text => /law_place_chain/.test(text) && /FOR SHARE OF place/.test(text))
+      afterQuery = async (text, connection) => { await usePause.hook(text, connection) }
+      const used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use', placeId: bakery,
+        sourceThingId: sieve, target: { type: 'kind', id: loaf } }, db)
+      let crafted: ReturnType<typeof craftLoaf> | undefined
+      try {
+        await atBarrier(usePause.paused.ready, used)
+        crafted = craftLoaf(sack)
+        assert.ok(await waitsOnPid(usePause.pid()), 'the crafting must wait on the use')
+        usePause.paused.release()
+        const [use, craft] = await Promise.all([used, crafted])
+        assert.deepEqual(deadlocks(), [], 'neither may deadlock')
+        assert.equal(use.status, 'applied', use.error ?? '')
+        assert.equal(craft.ok, true, JSON.stringify(craft))
+        assert.deepEqual((await client.query(`
+          SELECT target_type, target_id FROM active_labels WHERE label = 'bakery-dusted' ORDER BY id DESC LIMIT 1
+        `)).rows, [{ target_type: 'kind', target_id: loaf }])
+      } finally {
+        usePause.paused.release()
+        await Promise.allSettled([used, crafted])
+        afterQuery = undefined
+      }
+    })
   } finally {
     routeDb = null
     setEngineTransactionRunnerForTests(null)
