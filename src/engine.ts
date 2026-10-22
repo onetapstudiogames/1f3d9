@@ -1361,14 +1361,13 @@ async function moveResidentWithCarry(
     throw new EngineError(409, 'carry_thing_id is under a moderation hold; wait for the hold to clear or carry another owned thing')
   }
 
-  // This move only reads the room. Share its permission/retirement guard with
-  // law_place ancestors so concurrent carries never upgrade the same row lock.
+  // runAction locks this destination before any shared law_place chain locks.
   const destinations = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
     SELECT destination.id, destination.retired_at,
       ${placePermission('destination', 'open_to_things', input.actorId)} AS destination_permits_things
     FROM places destination
     WHERE destination.id = ${input.destinationPlaceId}
-    FOR SHARE OF destination
+    FOR UPDATE OF destination
   `)
   if (destinations[0]?.retired_at != null) {
     throw new EngineError(409, 'destination place is retired; restore it before moving there')
@@ -1538,8 +1537,6 @@ export async function runAction(
       if (input.action === 'go_home') {
         await lockCurrentPlace(lockedPresence, transaction)
       }
-      const heldAtStart = input.action === 'move' || input.action === 'go_home'
-        ? await heldThingForResident(input.actorId, transaction) : null
       if (input.action !== 'go_home') {
         if (lockedPresence.currentPlaceId !== input.placeId) {
           const message = lockedPresence.currentPlaceId === null
@@ -1569,6 +1566,7 @@ export async function runAction(
         }
       }
       if (input.action === 'go_home') {
+        const heldAtStart = await heldThingForResident(input.actorId, transaction)
         const home = await goHome(input.actorId, transaction, actionId)
         await recordActionResolution(
           actionId,
@@ -1592,10 +1590,21 @@ export async function runAction(
 
       const source = await sourceReady(input, transaction)
       const programs = await loadPrograms(input, transaction)
+      if (input.action === 'move' && input.carryThingId !== null && input.destinationPlaceId !== null) {
+        // Serialize carries before either can hold a shared ancestor lock to upgrade.
+        await queryRows(transaction`
+          SELECT destination.id FROM places AS destination
+          WHERE destination.id = ${input.destinationPlaceId}
+          FOR UPDATE OF destination
+        `)
+      }
       await lockLawPlaceEffects(programs.flatMap(program => (
         program.lawSourcePlaceId === null ? [] : program.effects
       )), input, transaction)
       if (input.action === 'move') await lockCurrentPlace(lockedPresence, transaction)
+      // Opening a room locks the room before releasing its held things.
+      const heldAtStart = input.action === 'move'
+        ? await heldThingForResident(input.actorId, transaction) : null
       const sharedSourceThingId = input.action === 'use'
         && source
         && source.ownerId !== input.actorId
