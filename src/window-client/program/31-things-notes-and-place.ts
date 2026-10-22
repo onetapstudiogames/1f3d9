@@ -295,6 +295,24 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     if (node && node.textContent !== text) node.textContent = text
   }
 
+  function placeDescriptionTarget(reset = false) {
+    const container = nodes.placeDescription
+    if (!container) return null
+    // Keep prose separate from facts while preserving the shared mute cleanup target.
+    container.removeAttribute('id')
+    let prose = container.querySelector('#place-description')
+    if (!prose) {
+      prose = element('div', 'place-prose')
+      prose.id = 'place-description'
+      container.replaceChildren(prose)
+    }
+    if (reset) {
+      prose.__proseKey = null
+      container.querySelector('.place-conditions')?.remove()
+    }
+    return prose
+  }
+
   function placeLawSource(id) {
     const source = placeReference(state.snapshot, id)
     const detail = state.details['place:' + String(id)]
@@ -395,7 +413,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     setOrientationLabel(nodes.placeFrontMatterEyebrow, words.frontMatterEyebrow)
     setOrientationLabel(nodes.placeFrontMatterLabel, words.frontMatterLabel)
     if (!place) {
-      renderEmpty(nodes.placeDescription, 'empty-row', 'No loaded place description is available.')
+      renderEmpty(placeDescriptionTarget(true), 'empty-row', 'No loaded place description is available.')
       renderEmpty(nodes.placePurpose, 'empty-row', 'No loaded place purpose is available.')
       renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
       return
@@ -407,12 +425,12 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     }
     const description = state.details['place:' + String(place.id)]
     if (place.moderated) {
-      renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)
+      renderEmpty(placeDescriptionTarget(true), 'place-description-text', MODERATED_TEXT)
     } else if (!description || (description.loading && !description.record)) {
-      renderEmpty(nodes.placeDescription, 'loading-row', words.descriptionLoading)
+      renderEmpty(placeDescriptionTarget(true), 'loading-row', words.descriptionLoading)
       if (!description) window.queueMicrotask(() => void ensureDetail(false, place.id))
     } else if (description.notFound) {
-      renderEmpty(nodes.placeDescription, 'empty-row', 'This public place is not available now.')
+      renderEmpty(placeDescriptionTarget(true), 'empty-row', 'This public place is not available now.')
     } else if (!description.record) {
       const message = element('p', 'error-row', 'The place description could not be read.')
       const retry = element('button', 'detail-retry', 'Retry reading this description')
@@ -420,13 +438,12 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       retry.dataset.focusKey = 'place-description-retry:' + String(place.id)
       retry.dataset.focusFallbackId = 'place-description-title'
       retry.addEventListener('click', () => void ensureDetail(true, place.id))
-      nodes.placeDescription?.replaceChildren(message, retry)
+      placeDescriptionTarget(true)?.replaceChildren(message, retry)
     } else {
       const proseKey = JSON.stringify([place.id, description.record.description,
         description.record.rough_room, description.record.feed, description.record.hinge])
-      const previous = nodes.placeDescription?.querySelector('.place-prose')
-      if (!previous || previous.__proseKey !== proseKey) {
-        const prose = element('div', 'place-prose')
+      const prose = placeDescriptionTarget()
+      if (prose && prose.__proseKey !== proseKey) {
         prose.__proseKey = proseKey
         renderEmpty(prose,
           description.record.description ? 'place-description-text' : 'empty-row',
@@ -457,8 +474,6 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
           )
           prose.append(hingeLine)
         }
-        if (previous) previous.replaceWith(prose)
-        else nodes.placeDescription?.replaceChildren(prose)
       }
       renderPlaceConditions(place, description)
     }
@@ -526,7 +541,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       group.append(...actions)
       notice.append(group)
     }
-    nodes.placeDescription?.replaceChildren(notice)
+    placeDescriptionTarget(true)?.replaceChildren(notice)
     renderEmpty(nodes.placePurpose, 'empty-row', 'Hidden by your mutes in this browser.')
     renderEmpty(nodes.placeFrontMatter, 'empty-row', 'Hidden by your mutes in this browser.')
   }
@@ -561,7 +576,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         if (nodes.placePurpose) {
           renderSelectionIssue(nodes.placePurpose, issue, null, 'place-focus-title')
         }
-        renderEmpty(nodes.placeDescription, issue.status === 'error' ? 'error-row' :
+        renderEmpty(placeDescriptionTarget(true), issue.status === 'error' ? 'error-row' :
           issue.status === 'not-found' ? 'empty-row' : 'loading-row',
         issue.status === 'not-found'
           ? issueTitle + ' for this selection.'
