@@ -4,6 +4,7 @@ import {
   READING_NOTE,
   READING_OLDER_NOTE,
 } from '../test/helpers/window-reading-fixture.ts'
+import { publicWindowFixture } from './helpers/oauth-test-server/public-window-fixtures.ts'
 
 const violationsByPage = new WeakMap<Page, readonly string[]>()
 
@@ -105,6 +106,278 @@ async function loadOlderNote(page: Page) {
     .toContainText(READING_OLDER_NOTE.trim())
   return selector
 }
+
+async function installPlaceConditions(page: Page, baseURL: string | undefined,
+  sourceState: 'public' | 'quiet' | 'moderated' | 'muted' | 'unknown' = 'public') {
+  const fixture = await installReadingFixture(page, baseURL)
+  violationsByPage.set(page, fixture.networkViolations)
+  const child = { ...publicWindowFixture.places[1], parent_id: 11, owner: 'browser-resident',
+    quiet: false, labels: ['child_only'], laws: [
+      { traitId: 71, name: 'shared_rain', sourcePlaceId: 11 },
+      { traitId: 72, name: 'shared_wind', sourcePlaceId: 11 },
+      { traitId: 73, name: 'old_secret_name', sourcePlaceId: 11, moderated: true,
+        recipe: { use: ['old_secret_recipe'] } },
+    ] }
+  const parent = { ...publicWindowFixture.places[0], quiet: sourceState === 'quiet',
+    moderated: sourceState === 'moderated', places: 1, children: [child] }
+  if (sourceState === 'muted') await page.addInitScript(() => {
+    localStorage.setItem('1f3d9:mutes:v1', JSON.stringify({ version: 1, items: [
+      { type: 'place', id: 11, choice: 'mute' }, { type: 'place', id: 12, choice: 'allow' },
+    ] }))
+  })
+  let now = 0
+  const expiresAt = 1_000
+  let laws = child.laws
+  let fail = false
+  let presenceUnavailable = false
+  let delayed: Promise<void> | null = null
+  const requests: string[] = []
+  page.on('request', request => {
+    const url = new URL(request.url())
+    if (url.pathname.startsWith('/api/')) requests.push(url.pathname + url.search)
+  })
+  await page.route('**/api/window**', route => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.has('collection')) return route.fallback()
+    return route.fulfill({ json: url.searchParams.get('view') === 'directory'
+      ? { view: 'directory', places: [parent, child], residents: publicWindowFixture.residents }
+      : { ...publicWindowFixture, places: sourceState === 'unknown' ? [child] : [parent],
+        notes: publicWindowFixture.notes.map(note => note.id === 301
+          ? { ...note, body: READING_NOTE, truncated: false } : note) } })
+  })
+  await page.route('**/api/residents**', route => route.fulfill(presenceUnavailable
+    ? { status: 503, json: { error: 'presence unavailable' } } : { json: {
+    residents: publicWindowFixture.residents, change_marker: '9', has_more: false,
+  } }))
+  await page.route('**/api/place/*', async route => {
+    const id = Number(new URL(route.request().url()).pathname.split('/').at(-1))
+    const place = id === 11
+      ? { ...parent, labels: now < expiresAt ? ['rain_now'] : [], laws: [] } : { ...child, laws }
+    const waiting = delayed
+    delayed = null
+    if (waiting) await waiting
+    await route.fulfill(fail ? { status: 503, json: { error: 'unavailable' } }
+      : { json: { place, subplaces: id === 11 ? [child] : [], change_marker: '9' } })
+  })
+  return {
+    requests,
+    expire() { now = expiresAt },
+    clearLaws() { laws = [] },
+    fail() { fail = true },
+    failPresence() { presenceUnavailable = true },
+    delay() {
+      let release = () => {}
+      delayed = new Promise<void>(resolve => { release = resolve })
+      return release
+    },
+    async refresh(waitForDetail = true) {
+      const presence = page.waitForResponse(response =>
+        new URL(response.url()).pathname === '/api/residents')
+      const detail = waitForDetail ? page.waitForResponse(response =>
+        new URL(response.url()).pathname.startsWith('/api/place/')) : Promise.resolve()
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+      await presence
+      await detail
+      if (waitForDetail) await page.evaluate(() => new Promise<void>(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    },
+  }
+}
+
+test('place conditions expire on an unchanged marker without disturbing reading', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/12')
+  await page.locator('#place-panel .place-conditions').getByRole('link',
+    { name: 'Defining place: test_square (place 11)', exact: true }).click()
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('rain_now')
+  await expect(page.locator('#place-description')).toHaveText(publicWindowFixture.places[0].description)
+  const description = '#place-description .place-description-text'
+  await expect(page.locator(description)).toContainText('brass observatory')
+  const body = '#place-conversation [data-body-key="note:301"]'
+  await openBody(page.locator(body))
+  await page.locator(description).scrollIntoViewIfNeeded()
+  await holdNodes(page, [description, body, '#place-conversation .note-list'])
+  const selected = await page.locator(description).evaluate(node => {
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    return window.getSelection()?.toString()
+  })
+  await page.locator(body).scrollIntoViewIfNeeded()
+  const beforeTop = await visibleTop(page, body, 'open note before expiry')
+  const before = fixture.requests.length
+  fixture.expire()
+  await fixture.refresh()
+  await expect.poll(() => fixture.requests.slice(before).filter(path => path.startsWith('/api/place/')))
+    .toEqual(['/api/place/11?view=outline&limit=1'])
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('Labels here')
+  await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+  await expect(page.locator('#place-description')).toHaveText(publicWindowFixture.places[0].description)
+  await expectHeldNodes(page, [description, body, '#place-conversation .note-list'])
+  await expectTopUnchanged(page, body, beforeTop, 'open note after expiry')
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(selected)
+  await expect(page.locator(body)).toHaveAttribute('data-expanded', 'true')
+  expect(fixture.requests.slice(before).map(path => path.split('?')[0]).sort())
+    .toEqual(['/api/changes', '/api/place/11', '/api/residents'])
+})
+
+test('place conditions retain unchanged facts and replace laws after a fresh read', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/12')
+  const selectors = ['#place-description .place-description-text',
+    '#place-panel .place-labels', '#place-panel .place-laws a']
+  await expect(page.locator(selectors[2]!)).toHaveCount(1)
+  await holdNodes(page, selectors)
+  await fixture.refresh()
+  await expectHeldNodes(page, selectors)
+  await holdNodes(page, selectors.slice(0, 2))
+  fixture.clearLaws()
+  await fixture.refresh()
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('No current laws here.')
+  await expect(page.locator('#place-panel .place-conditions')).not.toContainText('shared_rain')
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('child_only')
+  await expectHeldNodes(page, selectors.slice(0, 2))
+})
+
+test('place conditions refresh the room shown while following a resident', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place?resident=browser-resident')
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('rain_now')
+  fixture.expire()
+  await fixture.refresh()
+  await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+})
+
+for (const fallback of ['default room', 'failed presence'] as const) {
+  test(`place conditions expire with a ${fallback}`, async ({ page, baseURL }) => {
+    const fixture = await installPlaceConditions(page, baseURL)
+    await ready(page, fallback === 'default room' ? '/window/place' : '/window/place/11')
+    await expect(page.locator('#place-panel .place-conditions')).toContainText('rain_now')
+    const before = fixture.requests.length
+    if (fallback === 'failed presence') fixture.failPresence()
+    fixture.expire()
+    await fixture.refresh(false)
+    await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+    expect(fixture.requests.slice(before).filter(path => path.startsWith('/api/place/')))
+      .toEqual(['/api/place/11?view=outline&limit=1'])
+  })
+}
+
+test('place conditions link inherited laws to their defining place by keyboard on a narrow screen', async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/12')
+  const panel = page.locator('#place-panel .place-conditions')
+  await expect(panel).toContainText('Labels here')
+  await expect(panel).toContainText('child_only')
+  await expect(panel).not.toContainText('rain_now')
+  await expect(panel).toContainText('Laws and defining places')
+  await expect(panel).toContainText('[removed by maintainer]')
+  await expect(panel).not.toContainText('old_secret')
+  const links = panel.getByRole('link', { name: 'Defining place: test_square (place 11)', exact: true })
+  await expect(links).toHaveCount(1)
+  await links.focus()
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(/\/window\/place\/11$/u)
+  await expect(panel).toContainText('rain_now')
+  await expect(panel).not.toContainText('child_only')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect(fixture.requests.filter(path => path.startsWith('/api/place/')).map(path => path.split('?')[0]))
+    .toEqual(['/api/place/12', '/api/place/11'])
+})
+
+test('place conditions show unavailable after a failed background read and keep prose', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/11')
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('rain_now')
+  const description = '#place-description .place-description-text'
+  await holdNodes(page, [description])
+  fixture.fail()
+  await fixture.refresh()
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('Current labels and laws are unavailable')
+  await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+  await expectHeldNodes(page, [description])
+})
+
+for (const sourceState of ['quiet', 'moderated', 'muted', 'unknown'] as const) {
+  test(`place conditions hide resident law text for a ${sourceState} defining source`, async ({ page, baseURL }) => {
+    const fixture = await installPlaceConditions(page, baseURL, sourceState)
+    await ready(page, '/window/place/12')
+    const panel = page.locator('#place-panel .place-conditions')
+    await expect(panel).toContainText('child_only')
+    await expect(panel).not.toContainText('shared_rain')
+    await expect(panel).not.toContainText('shared_wind')
+    await expect(panel).not.toContainText('old_secret')
+    await expect(panel).not.toContainText('test_square')
+    if (sourceState === 'unknown') {
+      await expect(panel.getByRole('link', { name: 'Defining place: place 11', exact: true })).toHaveCount(1)
+    } else {
+      await expect(panel).toContainText('This public place is not available now.')
+      await expect(panel.locator('a[href="/window/place/11"]')).toHaveCount(0)
+    }
+    expect(fixture.requests.filter(path => path.startsWith('/api/place/')).map(path => path.split('?')[0]))
+      .toEqual(['/api/place/12'])
+  })
+}
+
+test('place conditions ignore a background reply after navigation', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/11')
+  await expect(page.locator('#place-panel .place-conditions')).toContainText('rain_now')
+  const release = fixture.delay()
+  const read = page.waitForRequest(request => new URL(request.url()).pathname === '/api/place/11')
+  try {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await read
+    await page.locator('#place-filter').selectOption('12')
+    await expect(page.locator('#place-panel .place-conditions')).toContainText('child_only')
+    const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/place/11')
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/residents')
+    release()
+    await completed
+    await refreshed
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+    await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+    await page.locator('#place-filter').selectOption('11')
+    fixture.expire()
+    await fixture.refresh()
+    await expect(page.locator('#place-panel .place-conditions')).not.toContainText('rain_now')
+  } finally {
+    release()
+  }
+})
+
+test('place conditions become unavailable after leaving and returning before a background reply', async ({ page, baseURL }) => {
+  const fixture = await installPlaceConditions(page, baseURL)
+  await ready(page, '/window/place/11')
+  const panel = page.locator('#place-panel .place-conditions')
+  await expect(panel).toContainText('rain_now')
+  const release = fixture.delay()
+  const read = page.waitForRequest(request => new URL(request.url()).pathname === '/api/place/11')
+  try {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await read
+    await page.locator('#place-filter').selectOption('12')
+    await expect(panel).toContainText('child_only')
+    await page.locator('#place-filter').selectOption('11')
+    fixture.expire()
+    const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/place/11')
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/residents')
+    release()
+    await completed
+    await refreshed
+    await expect(panel).toContainText('Current labels and laws are unavailable')
+    await expect(panel).not.toContainText('rain_now')
+    await expect(panel).not.toContainText('Checking current labels and laws')
+    await expect(page.locator('#place-description .place-description-text')).toContainText('brass observatory')
+    await fixture.refresh()
+    await expect(panel).toContainText('No current labels here.')
+    await expect(panel).not.toContainText('unavailable')
+  } finally {
+    release()
+  }
+})
 
 test('reading notice stays inside the closed City facts drop-down until opened', async ({ page, baseURL }) => {
   const fixture = await installReadingFixture(page, baseURL)

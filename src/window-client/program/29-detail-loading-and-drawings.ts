@@ -1,4 +1,4 @@
-export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetail(force, placeId = null) {
+export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetail(force, placeId = null, background = false) {
     const target = placeId ? Object.freeze({ kind: 'place', id: placeId }) : state.detail
     if (!target || (target.kind === 'place' && !placeId) || target.kind === 'resident') return
     const key = target.kind + ':' + String(target.id)
@@ -6,10 +6,16 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
     if (current?.loading || (!force && (current?.record || current?.notFound ||
         (placeId && current?.error)))) return
     const requestAuthoredRevision = authoredRevision
-    const requestDetailRevision = placeId ? null : ++detailRequestRevision
-    const pending = Object.freeze({ loading: true, error: false, notFound: false, record: null })
+    const requestDetailRevision = placeId ? detailRequestRevision : ++detailRequestRevision
+    const requestNavigationRevision = navigationRevision
+    const requestSelection = activeSelectionKey()
+    const retainedRecord = background && placeId ? current?.record || null : null
+    const pending = Object.freeze({ loading: true, error: false, notFound: false, record: retainedRecord })
+    const requestViewIsCurrent = () => authoredRevision === requestAuthoredRevision &&
+      (!background || (navigationRevision === requestNavigationRevision &&
+        detailRequestRevision === requestDetailRevision && activeSelectionKey() === requestSelection))
     const requestIsCurrent = () => (
-      authoredRevision === requestAuthoredRevision &&
+      requestViewIsCurrent() &&
       (placeId ? state.details[key] === pending : (
         detailRequestRevision === requestDetailRevision &&
         state.detail?.kind === target.kind &&
@@ -23,7 +29,8 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         [key]: pending,
       },
     }
-    if (placeId) renderAll()
+    if (background && placeId) renderSelectedPlaceDetail()
+    else if (placeId) renderAll()
     else renderDetail()
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -69,12 +76,22 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         ...state,
         details: {
           ...state.details,
-          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: null }),
+          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord }),
         },
       }
     } finally {
       window.clearTimeout(timeout)
-      if (placeId) {
+      // A cancelled refresh must not leave a cached room permanently loading.
+      const discardedBackgroundRead = background && state.details[key] === pending
+      if (discardedBackgroundRead) {
+        state = { ...state, details: { ...state.details,
+          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord }),
+        } }
+      }
+      if (background && placeId) {
+        // The reader may have returned while the discarded request was pending.
+        if (requestViewIsCurrent() || discardedBackgroundRead) renderSelectedPlaceDetail()
+      } else if (placeId) {
         if (authoredRevision === requestAuthoredRevision) renderAll()
       } else if (requestIsCurrent()) renderDetail()
     }

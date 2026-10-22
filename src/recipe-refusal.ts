@@ -5,6 +5,7 @@ import {
   MAX_EFFECT_COUNT,
   MAX_EFFECT_DEPTH,
   MAX_EFFECT_GENERATIONS,
+  MAX_PLACE_LABEL_SECONDS,
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
@@ -30,10 +31,10 @@ function grammarRule(fault: RecipeGrammarFault): string {
     if (fault.brick === 'destroy') return 'destroy takes target (source or target)'
     if (fault.brick === 'move') return 'move takes target (actor, source, or target) and to (destination or home)'
     if (fault.brick === 'transfer') return 'transfer takes target (source or target) and to (recipient or actor)'
-    if (fault.brick === 'label') return 'label takes target (actor, source, target, or place) and label (a world name)'
+    if (fault.brick === 'label') return `label takes target (actor, source, target, place, or law_place) and label (a world name); only place and law_place take seconds (${MIN_TIMER_SECONDS} to ${MAX_PLACE_LABEL_SECONDS}), optional on place and required on law_place`
     if (fault.brick === 'block') return `block takes target (actor or target), action (talk, move, use, give, consume, or make), and seconds (1 to ${MAX_BLOCK_SECONDS})`
     if (fault.brick === 'wait') return `wait takes seconds (${MIN_TIMER_SECONDS} to ${MAX_TIMER_SECONDS}), then, and an optional repeat (1 to ${MAX_EFFECT_GENERATIONS})`
-    if (fault.brick === 'check_label') return 'check_label takes target (actor, source, target, or place), label (a world name), then, and an optional else'
+    if (fault.brick === 'check_label') return 'check_label takes target (actor, source, target, place, or law_place), label (a world name), required then, and optional else; it takes no seconds'
     if (fault.brick === 'chance') return 'chance takes percent (1 to 99), then, and an optional else'
     if (fault.brick === 'write') return 'write takes key (a world name), an optional op (set, add, or append), and value, which set and append need'
     if (fault.brick === 'copy') return `copy takes optional generations (1 to ${MAX_EFFECT_GENERATIONS}), copies (1 to 10000 or unlimited), to (here or adjacent), and inherit (a list of body and state)`

@@ -7,6 +7,18 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Lock order exceptions the top-down rule in docs/SYSTEM_DESIGN.md does not yet reach. Older than the shared place-condition work (main has them too): moving a room's front-matter thing strengthens the room lock through a database trigger; go_home locks the world root before presence; recipe effects lock another resident's presence late; a carry's destination is fully exclusive, which can meet the carrier's own timer in that room queueing another step while a waiting law runs on the room left; a place gift or retirement that clears another resident's stale home locks that presence after the place rows, which can meet that resident's move. New with the shared place-condition work: a recipe transfer of a place in the law chain strengthens that row's shared lock; a reach, a copy or an effect move locks the places or things it picks while it runs (reach members, a copy family's first thing, effect moves) after the action's rooms, including under a plain move law with no law_place, which this branch's crafting order newly lets meet a craft that holds those things as ingredients while it waits for its room, so one of the two gets "another action changed the same records; retry" (the candidate fix, NOWAIT on those late thing locks mapped to the existing per-member refusal, changes what a reach reaches and waits for the owner's word); making a thing under a law_place make law, and a place gift under a law_place give law with the giver inside, strengthen their up-front locks in the make or gift step, which can meet an action that named the room by foreign key and then waits on them; a place gift whose giver stands in another branch, when a law_place law runs or the gift clears the giver's home, can meet a carry from the given place across a hinge into that branch. Each needs its own regression and fix.
+- [ ] Record production proof of decision 163 for Serein's notes 31649 and 20523,
+  including the exact deployed commits for the city and matching citylife and live
+  releases, their pull requests, released plugin version, checks, and screenshots.
+  Use dedicated owned fixture rooms to prove one parent label, a second child's
+  inherited check, unchanged resident locations, and passive expiry with an unchanged
+  event marker in both /window and /live/, including defining-place links. Record
+  UTC times and fixture/action ids, verify the served recipe contract and plugin
+  recommendation, and restore the prior ordered laws without deleting history.
+  Keep this open until actual live evidence exists; the draft human changelog claim
+  must not reach production before the citylife release and the live view's full
+  gate, deployment, and verification are recorded.
 - [ ] On 2026-11-04 decide the `/mcp/connect` label test (decision 162): its override
   ended at 2026-11-03T23:59:59Z, so compare block reports and call-log write counts per
   door, then remove `CONNECT_LABEL_TEST_END` and its override in a follow-up pull request,

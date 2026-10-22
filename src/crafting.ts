@@ -135,7 +135,8 @@ function optionalBoolean(value: unknown): boolean | null {
   return value === undefined ? false : typeof value === 'boolean' ? value : null
 }
 
-function ingredientIdList(value: unknown): readonly number[] | null {
+/** The valid, distinct ingredient ids of a craft request, or null when the list is invalid. */
+export function ingredientIdList(value: unknown): readonly number[] | null {
   if (!Array.isArray(value) || value.length > MAX_CRAFT_INGREDIENTS) return null
   const ids: number[] = []
   const seen = new Set<number>()
@@ -341,31 +342,13 @@ export async function craftKindThing(
   }
 
   const recipeJson = JSON.stringify(recipe)
+  // Locks follow the shared order (docs/SYSTEM_DESIGN.md): the ingredients by id, as an
+  // action's own things, then the room, then the kind. Each locked set gates the next, so
+  // this statement never holds the room or the kind while it waits for an ingredient.
   const outputRows = await withPlacePermission(sql)`
     /* crafting:commit */
     WITH utc_day AS (
       SELECT (now() AT TIME ZONE 'utc')::date AS day
-    ), locked_kind AS MATERIALIZED (
-      SELECT kind.id, kind.name, kind.current_revision
-      FROM kinds AS kind
-      JOIN kind_revisions AS revision
-        ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
-      WHERE kind.id = ${input.kindId}
-        AND kind.current_revision = ${kind.current_revision}
-      FOR UPDATE OF kind
-      FOR SHARE OF revision
-    ), locked_place AS MATERIALIZED (
-      SELECT place.id
-      FROM places AS place
-      WHERE place.id = ${input.placeId}
-        AND place.retired_at IS NULL
-        AND ${placePermission('place', 'open_to_things', input.actorId)}
-        AND place.owner_id IS NOT NULL
-      FOR UPDATE OF place
-    ), required AS MATERIALIZED (
-      SELECT requirement.kind, requirement.quantity
-      FROM jsonb_to_recordset(${recipeJson}::jsonb)
-        AS requirement(kind text, quantity integer)
     ), locked_ingredients AS MATERIALIZED (
       SELECT ingredient.id, lower(definition.name) AS kind
       FROM things AS ingredient
@@ -382,7 +365,31 @@ export async function craftKindThing(
             AND offer.asset_id = ingredient.id
             AND offer.status = 'open'
         )
+      ORDER BY ingredient.id
       FOR UPDATE OF ingredient
+    ), locked_place AS MATERIALIZED (
+      SELECT place.id
+      FROM places AS place
+      WHERE place.id = ${input.placeId}
+        AND place.retired_at IS NULL
+        AND ${placePermission('place', 'open_to_things', input.actorId)}
+        AND place.owner_id IS NOT NULL
+        AND (SELECT count(*) FROM locked_ingredients) = ${input.ingredientIds.length}
+      FOR UPDATE OF place
+    ), locked_kind AS MATERIALIZED (
+      SELECT kind.id, kind.name, kind.current_revision
+      FROM kinds AS kind
+      JOIN kind_revisions AS revision
+        ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
+      WHERE kind.id = ${input.kindId}
+        AND kind.current_revision = ${kind.current_revision}
+        AND EXISTS (SELECT 1 FROM locked_place)
+      FOR UPDATE OF kind
+      FOR SHARE OF revision
+    ), required AS MATERIALIZED (
+      SELECT requirement.kind, requirement.quantity
+      FROM jsonb_to_recordset(${recipeJson}::jsonb)
+        AS requirement(kind text, quantity integer)
     ), actual AS MATERIALIZED (
       SELECT kind, count(*)::integer AS quantity
       FROM locked_ingredients

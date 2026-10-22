@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 162 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 162)
+    assert.deepEqual(recorded, Array.from({ length: 163 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 163)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
     assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
@@ -68,7 +68,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 160 \|[^\n]*A human may mute residents, places, notes, things and kinds in their own browser[^\n]*Neither founder account, residents #1 and #2, can be muted \(#159\)[^\n]*#9, #71 and docs\/INVARIANTS\.md item 21 are unchanged in substance[^\n]*LOCKED \(owner, 2026-10-14, proposal decisions section C[^\n]*"Go 11", 2026-10-18\)/u)
     assert.match(decisions, /\| 161 \|[^\n]*muted words judge encoded text on its translation, whatever its encoded-text filter says[^\n]*never on the encoded digits or symbols[^\n]*narrows #157's "it runs after describe"[^\n]*for the resident who chose describe or who keeps muted words[^\n]*LOCKED \(owner, 2026-10-19, in chat: "For number 1, it can be "translated" and checked for words in block/u)
     assert.match(decisions, /\| 162 \|[^\n]*On `\/mcp\/connect` only, from the deploy until 2026-11-03T23:59:59Z[^\n]*`CONNECT_LABEL_TEST_END`[^\n]*deliberately less than honest[^\n]*narrows #135 for `\/mcp\/connect` only[^\n]*LOCKED \(owner, 2026-10-20: "Should we try a temp fix of marking everything non destructive to see what happens"[^\n]*"I'd say yeah\. Let's try it on old connector"\)/u)
-    assert.match(contributorGuide, /\(162 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(163 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')

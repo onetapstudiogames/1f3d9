@@ -92,10 +92,23 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       const description = raw.moderated === true
         ? MODERATED_TEXT
         : safeExactText(raw.description, null, 8000, true)
+      const labels = Object.freeze((raw.moderated !== true && Array.isArray(raw.labels) ? raw.labels : [])
+        .map(label => safeExactText(label, null, 64, false)).filter(label => label !== null))
+      const laws = Object.freeze((raw.moderated !== true && Array.isArray(raw.laws) ? raw.laws : [])
+        .flatMap(law => {
+          if (!law || typeof law !== 'object') return []
+          const traitId = typeof law.traitId === 'number' ? safeId(law.traitId) : null
+          const sourcePlaceId = typeof law.sourcePlaceId === 'number' ? safeId(law.sourcePlaceId) : null
+          const moderated = law.moderated === true
+          const name = moderated ? MODERATED_TEXT : safeExactText(law.name, null, 64, false)
+          return traitId && sourcePlaceId && name
+            ? [Object.freeze({ traitId, name, sourcePlaceId, moderated })] : []
+        }))
       return description !== null && Array.from(description).length <= 4000
         ? Object.freeze({
           kind, id, description, rough_room: raw.rough_room === true, feed: raw.feed === true,
           hinge: normalizeHinge(raw.hinge),
+          moderated: raw.moderated === true, quiet: raw.quiet === true, labels, laws,
         })
         : null
     }

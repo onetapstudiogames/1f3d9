@@ -2,8 +2,157 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { generatedReference, decisions, referenceSource, mcpSource, openQuestions, read, renderCityHelpText, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 import { STALE_TOOLS_FIX } from '../../src/tool-list-change.ts'
+import { parseTraitRecipe } from '../../src/physics.ts'
+import { GENERATED_LLMS, REFERENCE_SECTIONS, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerThingsQuotasAndLawsTests(): void {
+  const decision163 = decisions.match(/^\| 163 \|.*$/mu)?.[0] ?? ''
+  const placeDesign = specification.match(/## Laws of places[^\n]*\n([\s\S]*?)(?=\n## )/u)?.[1] ?? ''
+  for (const [name, text] of [
+    ['reference source', referenceSource],
+    ['system design', placeDesign],
+    ['decision 163', decision163],
+  ] as const) {
+    const prose = text.replace(/`/gu, '').replace(/\s+/gu, ' ')
+    for (const [contract, pattern] of [
+      ['original source identity', /original defining place[\s\S]*never a law named by a later check/u],
+      ['law-only label and check target', /only for label and check_label/u],
+      ['required defining-place duration', /label on law_place requires seconds, a whole number from 1 to 86400/u],
+      ['optional local-place duration', /label on literal place may use the same (?:field|range)[\s\S]*omission keeps its existing permanent label behavior|label on literal place may use the same range; omitting seconds keeps its permanent label/u],
+      ['current source law and delayed guard', /exact source law (?:must still be|is still) effective[\s\S]*(?:checked again when delayed work runs|check again when a delayed step runs)/u],
+      ['no hinge reach', /[Aa] hinge[^.]*grants no (?:shared state|reach)/u],
+      ['label-only new check', /check_label on law_place reads active labels only, (?:never an adopted law's name|not adopted law names), and grants no (?:named-law|further) authority/u],
+      ['unchanged existing checks', /[Ee]xisting check_label targets keep (?:their meaning|matching active labels or a law name)/u],
+      ['append-only repeated labels', /[Ll]abel (?:writes|rows) append/u],
+      ['permanent label collision', /permanent (?:same-name )?row keeps (?:the|that) name present/u],
+      ['passive expiry', /Expired names are absent without a write|Expiry is tested against the stored end time on reads and checks, with no background action and no deletion/u],
+    ] as const) {
+      test(`${name}: shared place contract preserves ${contract}`, () => {
+        assert.ok(pattern.test(prose), `${name}: ${contract}`)
+      })
+    }
+  }
+
+  for (const [contract, pattern] of [
+    ['stable origin through nested checks and timers', /originPlaceId[\s\S]*lawAuthority.sourcePlaceId[\s\S]*nested check[\s\S]*timers preserve/u],
+    ['accepted targets and duration refusals', /label and check_label accept actor, source, target, place, or law_place[\s\S]*actor, source, and target refuse seconds, even when target names a place[\s\S]*check_label takes no seconds/u],
+    ['current chain and retirement guard', /source, room, and connecting parent places must still form an unbroken same-owner chain and none may be retired/u],
+    ['current room and visitors', /place still names the run's current room[\s\S]*visitors can trigger an installed law through a permitted action; they need not own the place/u],
+    ['execution-time lifetime', /duration starts when the label is written, including after a wait/u],
+    ['no new tool or migration', /no new action, tool, or brick[\s\S]*No migration is needed/u],
+    ['unchanged public shape', /labels: string\[\][\s\S]*sourcePlaceId[\s\S]*No expiry timestamp is added to the place response/u],
+    ['human views refresh current local facts', /window and separate live view[\s\S]*local label names[\s\S]*links to defining places[\s\S]*refresh[\s\S]*selected[\s\S]*even when no new event[\s\S]*ancestor labels are not copied/u],
+    ['existing storage and frozen snapshots', /nullable expires_at[\s\S]*pending effects[\s\S]*snapshot format v3[\s\S]*frozen time/u],
+  ] as const) {
+    test(`system design: shared place contract preserves ${contract}`, () => {
+      assert.ok(pattern.test(placeDesign.replace(/`/gu, '').replace(/\s+/gu, ' ')), contract)
+    })
+  }
+
+  test('shared place delivery stays open and things ending remain a separate future phase', () => {
+    const tasks = read('../docs/TASKS.md')
+    const proof = (tasks.match(/^- \[ \] [^\n]*decision 163[^\n]*(?:\n {2}[^\n]*)*/mu)?.[0] ?? '').replace(/\s+/gu, ' ')
+    assert.match(proof, /31649[\s\S]*20523/u, 'one open proof task names both resident requests')
+    assert.match(proof, /exact deployed commits[\s\S]*citylife[\s\S]*live/u)
+    assert.match(proof, /production[\s\S]*expiry[\s\S]*unchanged event marker/u)
+    const potentials = read('../docs/POTENTIALS.md')
+    assert.match(potentials, /Serein's two requests[\s\S]*source-place target and expiring place labels[\s\S]*#163/u)
+    assert.match(potentials, /\*\*Expiry for things\.\*\* Expiry for things remains the next separate phase after the shared place-label work of decision 163; this pull request does not add it, and it never applies to residents\./u)
+  })
+
+  for (const [name, text] of [
+    ['reference source', referenceSource],
+    ['generated reference', generatedReference],
+    ['kinds-traits-physics section', REFERENCE_SECTIONS['kinds-traits-physics']],
+  ] as const) {
+    const prose = text.replace(/\s+/gu, ' ')
+    for (const [contract, pattern] of [
+      ['original defining source', /law_place names the original defining place of the law being run, never a law named by a later check/u],
+      ['unchanged current-room target', /place still names the run's current room/u],
+      ['live ownership rechecked after delays', /source, room, and connecting parent places must still form an unbroken same-owner chain and none may be retired[\s\S]*exact source law must still be effective[\s\S]*checked again when delayed work runs[\s\S]*action is refused if they no longer hold/u],
+      ['visitors may trigger the law', /Ordinary visitors can trigger an installed law through a permitted action; they need not own the place/u],
+      ['hinges grant no shared state', /A hinge, even with one owner at both ends, grants no shared state/u],
+      ['local names and source inspection', /place read lists only label names local to that place[\s\S]*sourcePlaceId to inspect the shared label at its defining place/u],
+      ['passive expiry and repeated rows', /Expired names are absent without a write[\s\S]*Repeated label rows append[\s\S]*final matching row expires[\s\S]*permanent same-name row keeps the name present[\s\S]*fresh condition name/u],
+      ['human views keep labels local', /window and live-view handoff show current local names and source links, not copied ancestor labels[\s\S]*No expiry timestamp is added to the place response/u],
+    ] as const) {
+      test(`${name}: shared place condition explains ${contract}`, () => {
+        assert.ok(pattern.test(prose), `${name}: ${contract}`)
+      })
+    }
+    test(`${name}: shared place condition preserves owner boundaries and passive reads`, () => {
+      assert.ok(/Laws inherit down a same-owner chain/u.test(prose))
+      assert.ok(/never crosses another owner's land, even to reach your land beyond it/u.test(prose))
+      assert.ok(/Building, thing, and note permissions stay per-place; they do not inherit/u.test(prose))
+      assert.ok(/Every place read is passive/u.test(prose))
+      assert.ok(/Resident labels are private to their bearer/u.test(prose))
+    })
+  }
+
+  for (const [name, text] of [
+    ['reference source', referenceSource],
+    ['generated reference', generatedReference],
+    ['abilities section', REFERENCE_SECTIONS.abilities],
+  ] as const) {
+    const prose = text.replace(/\s+/gu, ' ')
+    for (const [contract, pattern] of [
+      ['law-only target and accepted label targets', /a kind refuses a trait using law_place or whose convert names one[\s\S]*label and check_label accept actor, source, target, place, or law_place[\s\S]*law_place works only for label and check_label in a place law/u],
+      ['required and optional duration', /label on law_place requires seconds, a whole number from 1 to 86400 inclusive[\s\S]*label on literal place may use the same range; omitting seconds keeps its permanent label/u],
+      ['duration refusals', /actor, source, and target refuse seconds, even when target names a place[\s\S]*Missing required seconds, fractions, out-of-range values, and seconds on other targets refuse the recipe[\s\S]*only place and law_place take seconds \(1 to 86400\), optional on place and required on law_place[\s\S]*check_label takes no seconds/u],
+      ['label-only check and unchanged old checks', /check_label on law_place reads active labels only, never an adopted law's name, and grants no named-law authority[\s\S]*Existing check_label targets keep matching active labels or a law name/u],
+      ['execution-time duration', /duration starts when the label is written, including after a wait/u],
+      ['ordinary parent-law example sequence', /Own a parent and two nested rooms[\s\S]*Coin an ordinary free trait[\s\S]*install it as a law on the parent[\s\S]*use an ordinary usable thing in one child[\s\S]*later note in the other child's room runs the inherited talk law and writes the local witness label/u],
+      ['no broadcast or description change', /No bystander moves, no room is eagerly updated[\s\S]*line-only talk mode that does not run note laws is not the test trigger[\s\S]*witness labels can overlap from separate past actions[\s\S]*only test evidence, not an exclusive weather state[\s\S]*fresh condition name and fresh fixture rooms[\s\S]*Labels do not change written room descriptions or edges by themselves/u],
+    ] as const) {
+      test(`${name}: shared place condition explains ${contract}`, () => {
+        assert.ok(pattern.test(prose), `${name}: ${contract}`)
+      })
+    }
+    test(`${name}: shared place condition example parses with the public grammar`, () => {
+      const example = text.match(/Example: a shared temporary condition\s+```json\s+([\s\S]*?)\s+```/u)
+      assert.ok(example, `${name}: shared condition JSON example`)
+      const parsed = parseTraitRecipe(JSON.parse(example[1]!))
+      assert.deepEqual(parsed, {
+        use: [{ effect: 'label', target: 'law_place', label: 'shared_rain_223', seconds: 600 }],
+        talk: [{
+          effect: 'check_label', target: 'law_place', label: 'shared_rain_223',
+          then: [{ effect: 'label', target: 'place', label: 'rain_seen_223', seconds: 60 }],
+          else: [{ effect: 'label', target: 'place', label: 'clear_seen_223', seconds: 60 }],
+        }],
+      }, `${name}: the published example must parse to the pinned recipe`)
+    })
+  }
+
+  for (const [name, text] of [
+    ['reference source', referenceSource],
+    ['generated reference', generatedReference],
+    ['mcp section', REFERENCE_SECTIONS.mcp],
+  ] as const) {
+    test(`${name}: TRAITS AND KINDS states law-only refusal before either fee`, () => {
+      const paragraph = text.match(/(?:^|\n)TRAITS AND KINDS\r?\n~+\r?\n([\s\S]*?)\r?\nBUY CREDIT\r?\n/u)
+      assert.ok(paragraph, `${name}: bounded TRAITS AND KINDS API paragraph`)
+      assert.ok(
+        /invent_kind and revise_kind refuse a trait using law_place or convert with into_kind before any fee, including inside nested branches; those steps are for laws\. physics lists every field and limit\./u.test(paragraph[1]!.replace(/\s+/gu, ' ')),
+        `${name}: both kind calls refuse nested law-only traits before any fee in their own API paragraph`,
+      )
+      if (name !== 'reference source') {
+        assert.match(paragraph[1]!, /^cite: mcp#mcp-kinds-and-traits\r?\n/u)
+      }
+    })
+  }
+
+  test('shared place condition discovery points to the existing law and abilities explanation', () => {
+    for (const [name, text] of [
+      ['llms source', starterLlmsSource],
+      ['generated llms', GENERATED_LLMS],
+    ] as const) {
+      assert.ok(
+        /For shared temporary conditions in owned rooms, start with https:\/\/1f3d9\.com\/reference\/kinds-traits-physics\.txt and use the recipe fields at https:\/\/1f3d9\.com\/reference\/abilities\.txt\./u.test(text.replace(/\s+/gu, ' ')),
+        `${name}: shared condition links the same two explanations`,
+      )
+    }
+  })
+
   test('public help explains shared use without promising shared consumption or owner damage', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],

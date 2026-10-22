@@ -17,7 +17,7 @@ import {
   loadTraitRecipe,
   parseTraitRecipe,
   programWeight,
-  recipeConvertsIntoNamedKind,
+  recipeUsesLawOnlyAbility,
   recipeUsesKindOnlyAbility,
   traitRecipeFault,
 } from '../src/physics.ts'
@@ -198,16 +198,44 @@ test('copy and a convert without into_kind are kind-only; a convert naming into_
     const parsed = parseTraitRecipe(recipe)
     assert.ok(parsed, JSON.stringify(recipe))
     assert.equal(recipeUsesKindOnlyAbility(parsed), true, JSON.stringify(recipe))
-    assert.equal(recipeConvertsIntoNamedKind(parsed), false, JSON.stringify(recipe))
+    assert.equal(recipeUsesLawOnlyAbility(parsed), false, JSON.stringify(recipe))
   }
   const lawOnly = parseTraitRecipe({
     talk: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target', into_kind: 'ash' }] }],
   })!
   assert.equal(recipeUsesKindOnlyAbility(lawOnly), false)
-  assert.equal(recipeConvertsIntoNamedKind(lawOnly), true)
+  assert.equal(recipeUsesLawOnlyAbility(lawOnly), true)
   const shared = parseTraitRecipe({ use: [{ effect: 'reach', then: [soak] }] })!
   assert.equal(recipeUsesKindOnlyAbility(shared), false, 'reach works in both')
-  assert.equal(recipeConvertsIntoNamedKind(shared), false)
+  assert.equal(recipeUsesLawOnlyAbility(shared), false)
+  for (const step of [
+    { effect: 'label', target: 'law_place', label: 'rain', seconds: 60 },
+    { effect: 'check_label', target: 'law_place', label: 'rain', then: [] },
+  ]) {
+    const checkThen = { effect: 'check_label', target: 'place', label: 'gate', then: [step] }
+    const checkElse = { effect: 'check_label', target: 'place', label: 'gate', then: [], else: [step] }
+    for (const nested of [
+      step,
+      { effect: 'chance', percent: 50, then: [step] },
+      { effect: 'chance', percent: 50, then: [], else: [step] },
+      { effect: 'wait', seconds: 1, then: [step] },
+      { effect: 'reach', then: [step] },
+      checkThen,
+      checkElse,
+      { effect: 'chance', percent: 50, then: [{ effect: 'wait', seconds: 1, then: [
+        { effect: 'reach', then: [{ ...checkThen, then: [checkElse] }] },
+      ] }] },
+    ]) {
+      const parsed = parseTraitRecipe({ talk: [nested] })
+      assert.ok(parsed, JSON.stringify(nested))
+      assert.equal(recipeUsesKindOnlyAbility(parsed), false, JSON.stringify(nested))
+      assert.equal(recipeUsesLawOnlyAbility(parsed), true, JSON.stringify(nested))
+    }
+    const mixed = parseTraitRecipe({ wake: { then: [{ effect: 'chance', percent: 50, then: [step] }] } })
+    assert.ok(mixed)
+    assert.equal(recipeUsesKindOnlyAbility(mixed), true, 'wake stays kind-only')
+    assert.equal(recipeUsesLawOnlyAbility(mixed), true, 'law_place stays law-only inside wake')
+  }
 })
 
 test('malformed stored copy, reach, and convert recipes load inert', () => {

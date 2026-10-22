@@ -603,4 +603,80 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
   } finally {
     await deniedReader.end()
   }
+
+  await t.test('v3 freezes active place label names at transaction start and omits them in the next snapshot after expiry', async () => {
+    const labels = (await administrator!.query<{ id: string; expires_at: Date | null }>(`
+      INSERT INTO active_labels (target_type, target_id, label, actor_id, expires_at)
+      VALUES
+        ('place', $1, 'snapshot-shared-condition', 1, clock_timestamp() + interval '2 seconds'),
+        ('place', $1, 'snapshot-permanent', 1, NULL),
+        ('resident', 2, 'snapshot-private-resident', 1, NULL)
+      RETURNING id, expires_at
+    `, [room.id])).rows
+    const timed = labels[0]!
+    assert.ok(timed.expires_at instanceof Date)
+    const storedLabels = async () => (await administrator!.query(
+      'SELECT * FROM active_labels WHERE id = ANY($1::bigint[]) ORDER BY id', [labels.map(label => label.id)],
+    )).rows
+    const stored = await storedLabels()
+    const eventsBefore = (await administrator!.query('SELECT count(*)::int AS count FROM events')).rows
+    const activeNames = ['snapshot-permanent', 'snapshot-shared-condition']
+    const frozenDirectory = join(outputRoot, 'active-labels')
+    const nextDirectory = join(outputRoot, 'expired-labels')
+    const frozenClient = new Client({ connectionString: snapshotUrl, ssl: false })
+    const placeLabelsSql = `
+      SELECT payload->'labels' AS labels, transaction_timestamp() AS frozen_at
+      FROM city_snapshot.public_records_v3 WHERE class_name = 'places' AND record_id = $1
+    `
+    let crossedExpiry = false
+    const frozenClientWrapper: SnapshotDatabaseClient = {
+      connect: () => frozenClient.connect(),
+      end: () => frozenClient.end(),
+      query: async (text, values) => {
+        if (text.includes('snapshot-export:records')) {
+          const before = (await frozenClient.query(placeLabelsSql, [String(room.id)])).rows[0]!
+          assert.deepEqual(before.labels, activeNames)
+          assert.ok(before.frozen_at < timed.expires_at!, 'the export transaction began before the stored expiry')
+          await administrator!.query(`
+            SELECT pg_sleep(GREATEST(0, extract(epoch FROM expires_at - clock_timestamp())) + 0.05)
+            FROM active_labels WHERE id = $1
+          `, [timed.id])
+          const expired = (await administrator!.query(`
+            SELECT expires_at <= clock_timestamp() AS expired FROM active_labels WHERE id = $1
+          `, [timed.id])).rows[0]!
+          assert.equal(expired.expired, true, 'real database time passed the stored expiry without another write')
+          const after = (await frozenClient.query(placeLabelsSql, [String(room.id)])).rows[0]!
+          assert.deepEqual(after, before, 'the already-open snapshot keeps its original time and labels')
+          crossedExpiry = true
+        }
+        return frozenClient.query(text, values ? [...values] : undefined)
+      },
+    }
+    const frozen = await exportPublicSnapshot({
+      outputDirectory: frozenDirectory, databaseUrl: snapshotUrl,
+      sourceCommit: 'b'.repeat(40), client: frozenClientWrapper,
+    })
+    assert.equal(crossedExpiry, true)
+    const next = await exportPublicSnapshot({
+      outputDirectory: nextDirectory, databaseUrl: snapshotUrl,
+      sourceCommit: 'b'.repeat(40), client: new Client({ connectionString: snapshotUrl, ssl: false }),
+    })
+    for (const [directory, bundle, expected] of [
+      [frozenDirectory, frozen, activeNames],
+      [nextDirectory, next, ['snapshot-permanent']],
+    ] as const) {
+      const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')) as { format_version: number }
+      assert.equal(manifest.format_version, 3)
+      const places = (await readFile(join(directory, 'places.ndjson'), 'utf8'))
+        .trimEnd().split('\n').map(line => JSON.parse(line) as { record: Record<string, unknown> })
+      assert.deepEqual(places.find(line => line.record.id === room.id)?.record.labels, expected,
+        'v3 keeps an array of names, with no expiry objects')
+      const publicBytes = (await Promise.all(bundle.files.map(file =>
+        readFile(join(directory, file.path), 'utf8'),
+      ))).join('')
+      assert.doesNotMatch(publicBytes, /snapshot-private-resident/u, 'resident labels stay private in every exported class')
+    }
+    assert.deepEqual(await storedLabels(), stored, 'neither export deletes or rewrites an expired label')
+    assert.deepEqual((await administrator!.query('SELECT count(*)::int AS count FROM events')).rows, eventsBefore)
+  })
 })

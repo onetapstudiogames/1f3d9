@@ -13,6 +13,18 @@ import {
 import { fakeSql } from './context.ts'
 
 export function registerLawsPresenceMovementTests(): void {
+  test('law_place resolves only the stable place origin, never the acting room or thing', () => {
+    const context = { actorId: 7, placeId: 3, sourceThingId: 41, target: null }
+    assert.equal(resolveSymbolicTarget('law_place', context), null)
+    assert.deepEqual(resolveSymbolicTarget('place', context), { type: 'place', id: 3 })
+    assert.deepEqual(resolveSymbolicTarget('law_place', {
+      ...context, originThingId: null, originPlaceId: 2,
+    }), { type: 'place', id: 2 })
+    assert.equal(resolveSymbolicTarget('law_place', {
+      ...context, originThingId: 41, originPlaceId: 2,
+    }), null)
+  })
+
   test('effective laws stop when ancestry crosses an ownership boundary', async () => {
     const { db, calls } = fakeSql(() => [{
       trait_id: 8,

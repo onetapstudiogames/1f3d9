@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { runAction } from '../../src/engine.ts'
+import { EngineError, runAction } from '../../src/engine.ts'
+import { executeEffects, type EffectExecutionContext } from '../../src/engine-effects.ts'
 import { fakeSql } from './context.ts'
 
 export function registerLawAuthorityTests(): void {
@@ -251,6 +252,58 @@ export function registerLawAuthorityTests(): void {
     assert.equal(result.status, 'failed')
     assert.equal(result.httpStatus, 409)
     assert.equal(result.error, 'thing changed before it could be destroyed; re-read the thing before retrying')
+  })
+
+  test('law_place rejects kind, wake and borrowed authority origins without a write', async () => {
+    const base: EffectExecutionContext = {
+      actionId: null, actorId: 7, actorHandle: 'visitor', placeId: 3,
+      sourceThingId: 41, sharedSourceThingId: null, target: null,
+      destinationPlaceId: null, recipientId: null, sourceTraitId: 21,
+      lawAuthority: null, parentEffectId: null, generation: 0, logicalAt: new Date(),
+    }
+    for (const context of [
+      base,
+      { ...base, fromWake: true },
+      { ...base, lawAuthority: { traitId: 22, sourcePlaceId: 2 } },
+      { ...base, originThingId: 41, originPlaceId: 2,
+        lawAuthority: { traitId: 21, sourcePlaceId: 2 } },
+      { ...base, sourceThingId: null, sourceTraitId: null, originPlaceId: 2 },
+      { ...base, placeId: null, originThingId: null, originPlaceId: 2 },
+    ]) {
+      for (const effect of [
+        { effect: 'label', target: 'law_place', label: 'rain', seconds: 1 },
+        { effect: 'check_label', target: 'law_place', label: 'rain', then: [] },
+      ] as const) {
+        const { db, calls } = fakeSql(() => [{ exists: true }])
+        await assert.rejects(executeEffects([effect], context, db), (error: unknown) => (
+          error instanceof EngineError && error.status === 403
+          && error.message === 'law_place is available only to a place law; put this trait on a place you own as a law'
+        ))
+        assert.equal(calls.some(call => /INSERT INTO active_labels/.test(call.text)), false)
+      }
+    }
+  })
+
+  test('a thing check that borrows a named law still cannot write law_place', async () => {
+    const { db, calls } = fakeSql(({ text }) => {
+      if (/WITH RECURSIVE ancestry/.test(text)) return [{
+        trait_id: 22, name: 'gate-law', recipe: null, source_place_id: 2, position: 0,
+      }]
+      if (/SELECT EXISTS/.test(text)) return [{ exists: true }]
+      return []
+    })
+    await assert.rejects(executeEffects([{
+      effect: 'check_label', target: 'place', label: 'gate-law', then: [
+        { effect: 'label', target: 'law_place', label: 'borrowed', seconds: 1 },
+      ],
+    }], {
+      actionId: null, actorId: 7, actorHandle: 'visitor', placeId: 2,
+      sourceThingId: 41, sharedSourceThingId: null, target: null,
+      destinationPlaceId: null, recipientId: null, sourceTraitId: 21,
+      lawAuthority: null, parentEffectId: null, generation: 0, logicalAt: new Date(),
+    }, db), (error: unknown) => error instanceof EngineError && error.status === 403
+      && error.message === 'law_place is available only to a place law; put this trait on a place you own as a law')
+    assert.equal(calls.some(call => /INSERT INTO active_labels/.test(call.text)), false)
   })
 
   test('law-authorized damage is rechecked at execution time and stays local', async () => {

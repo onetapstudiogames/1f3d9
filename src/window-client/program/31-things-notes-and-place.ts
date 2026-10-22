@@ -292,10 +292,119 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   }
 
   function setOrientationLabel(node, text) {
-    if (node) node.textContent = text
+    if (node && node.textContent !== text) node.textContent = text
   }
 
-  function renderPlaceOrientation(place) {
+  function placeDescriptionTarget(reset = false) {
+    const container = nodes.placeDescription
+    if (!container) return null
+    // Keep prose separate from facts while preserving the shared mute cleanup target.
+    container.removeAttribute('id')
+    let prose = container.querySelector('#place-description')
+    if (!prose) {
+      prose = element('div', 'place-prose')
+      prose.id = 'place-description'
+      container.replaceChildren(prose)
+    }
+    if (reset) {
+      prose.__proseKey = null
+      container.querySelector('.place-conditions')?.remove()
+    }
+    return prose
+  }
+
+  function placeLawSource(id) {
+    const source = placeReference(state.snapshot, id)
+    const detail = state.details['place:' + String(id)]
+    const unavailable = isQuietPlace(source) || source?.moderated === true ||
+      source?.status === 'retired' || isMutedRow('place', source || { id }) ||
+      isQuietPlace(detail?.record) || detail?.record?.moderated === true ||
+      detail?.notFound === true || detail?.error === true
+    const isPublic = !unavailable && source?.moderated === false && typeof source.quiet === 'boolean'
+    return Object.freeze({ id, name: isPublic ? source.name : null, public: isPublic, unavailable })
+  }
+
+  function renderPlaceConditions(place, description) {
+    const target = nodes.placeDescription
+    if (!target) return
+    const record = description.record
+    const hidden = place.moderated || record.moderated || isQuietPlace(place) ||
+      isQuietPlace(record) || isMutedRow('place', place)
+    const sources = hidden ? [] : [...new Set(record.laws.map(law => law.sourcePlaceId))]
+      .map(id => ({ ...placeLawSource(id), laws: record.laws.filter(law => law.sourcePlaceId === id)
+        .map(law => law.moderated ? MODERATED_TEXT : law.name) }))
+    const key = JSON.stringify([place.id, hidden, description.error, record.labels, sources])
+    const previous = target.querySelector('.place-conditions')
+    if (previous?.__conditionsKey === key) {
+      const status = previous.querySelector('.place-conditions-status')
+      if (status) status.hidden = !description.loading
+      return
+    }
+    const section = element('section', 'place-conditions')
+    section.__conditionsKey = key
+    if (!hidden) {
+      if (description.error) {
+        section.append(element('p', 'error-row', 'Current labels and laws are unavailable. Refresh to try again.'))
+      } else {
+        const status = element('p', 'place-conditions-status loading-row', 'Checking current labels and laws...')
+        status.hidden = !description.loading
+        section.append(status)
+        section.append(element('h4', '', 'Labels here'))
+        if (!record.labels.length) section.append(element('p', 'empty-row', 'No current labels here.'))
+        else {
+          const labels = element('ul', 'place-labels')
+          labels.append(...record.labels.map(label => element('li', '', label)))
+          section.append(labels)
+        }
+        section.append(element('h4', '', 'Laws and defining places'))
+        if (!sources.length) section.append(element('p', 'empty-row', 'No current laws here.'))
+        const laws = element('ul', 'place-laws')
+        for (const source of sources) {
+          const row = element('li', '')
+          if (source.public) row.append(document.createTextNode(source.laws.join(', ') + '. '))
+          else if (source.laws.includes(MODERATED_TEXT)) row.append(document.createTextNode(MODERATED_TEXT + ' '))
+          if (source.unavailable) {
+            row.append(document.createTextNode('Defining place: This public place is not available now.'))
+          } else {
+            const link = element('a', 'detail-link', 'Defining place: ' +
+              (source.name ? source.name + ' (place ' + String(source.id) + ')' : 'place ' + String(source.id)))
+            link.href = '/window/place/' + String(source.id)
+            link.dataset.focusKey = 'law-source:' + String(source.id)
+            link.addEventListener('click', event => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey ||
+                  !placeReference(state.snapshot, source.id)) return
+              event.preventDefault()
+              choosePlace(source.id, true)
+            })
+            row.append(link)
+          }
+          laws.append(row)
+        }
+        if (sources.length) section.append(laws)
+      }
+    }
+    if (previous) {
+      const children = [...section.children].map((incoming, index) => {
+        const current = previous.children[index]
+        return current?.outerHTML === incoming.outerHTML ? current : incoming
+      })
+      replaceViewerChildrenWithoutDetaching(previous, children)
+      previous.__conditionsKey = key
+    } else target.append(section)
+  }
+
+  function placePanelPlace(snapshot) {
+    return selectedPlace(snapshot) ||
+      (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
+  }
+
+  function renderSelectedPlaceDetail() {
+    if (state.view !== 'place' || !state.snapshot) return
+    const place = placePanelPlace(state.snapshot)
+    if (place) renderPlaceOrientation(place, true)
+  }
+
+  function renderPlaceOrientation(place, factsOnly = false) {
     const words = placeOrientationWords(place)
     setOrientationLabel(nodes.placeDescriptionEyebrow, words.descriptionEyebrow)
     setOrientationLabel(nodes.placeDescriptionLabel, words.descriptionLabel)
@@ -304,7 +413,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     setOrientationLabel(nodes.placeFrontMatterEyebrow, words.frontMatterEyebrow)
     setOrientationLabel(nodes.placeFrontMatterLabel, words.frontMatterLabel)
     if (!place) {
-      renderEmpty(nodes.placeDescription, 'empty-row', 'No loaded place description is available.')
+      renderEmpty(placeDescriptionTarget(true), 'empty-row', 'No loaded place description is available.')
       renderEmpty(nodes.placePurpose, 'empty-row', 'No loaded place purpose is available.')
       renderEmpty(nodes.placeFrontMatter, 'empty-row', 'No loaded front matter is available.')
       return
@@ -316,51 +425,59 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
     }
     const description = state.details['place:' + String(place.id)]
     if (place.moderated) {
-      renderEmpty(nodes.placeDescription, 'place-description-text', MODERATED_TEXT)
-    } else if (!description || description.loading) {
-      renderEmpty(nodes.placeDescription, 'loading-row', words.descriptionLoading)
+      renderEmpty(placeDescriptionTarget(true), 'place-description-text', MODERATED_TEXT)
+    } else if (!description || (description.loading && !description.record)) {
+      renderEmpty(placeDescriptionTarget(true), 'loading-row', words.descriptionLoading)
       if (!description) window.queueMicrotask(() => void ensureDetail(false, place.id))
     } else if (description.notFound) {
-      renderEmpty(nodes.placeDescription, 'empty-row', 'This public place is not available now.')
-    } else if (description.error || !description.record) {
+      renderEmpty(placeDescriptionTarget(true), 'empty-row', 'This public place is not available now.')
+    } else if (!description.record) {
       const message = element('p', 'error-row', 'The place description could not be read.')
       const retry = element('button', 'detail-retry', 'Retry reading this description')
       retry.type = 'button'
       retry.dataset.focusKey = 'place-description-retry:' + String(place.id)
       retry.dataset.focusFallbackId = 'place-description-title'
       retry.addEventListener('click', () => void ensureDetail(true, place.id))
-      nodes.placeDescription?.replaceChildren(message, retry)
+      placeDescriptionTarget(true)?.replaceChildren(message, retry)
     } else {
-      renderEmpty(nodes.placeDescription,
-        description.record.description ? 'place-description-text' : 'empty-row',
-        description.record.description || words.descriptionEmpty)
-      // Decision #109: a rough room says so before anyone walks in.
-      if (description.record.rough_room === true) {
-        nodes.placeDescription?.append(element('p', 'place-rough-room', ROUGH_ROOM_LINE))
+      const proseKey = JSON.stringify([place.id, description.record.description,
+        description.record.rough_room, description.record.feed, description.record.hinge])
+      const prose = placeDescriptionTarget()
+      if (prose && prose.__proseKey !== proseKey) {
+        prose.__proseKey = proseKey
+        renderEmpty(prose,
+          description.record.description ? 'place-description-text' : 'empty-row',
+          description.record.description || words.descriptionEmpty)
+        // Decision #109: a rough room says so before anyone walks in.
+        if (description.record.rough_room === true) {
+          prose.append(element('p', 'place-rough-room', ROUGH_ROOM_LINE))
+        }
+        // Decision #153: a feed room says so beside its quiet line.
+        if (description.record.feed === true) {
+          prose.append(element('p', 'place-feed-room', FEED_ROOM_LINE))
+        }
+        // Decision #132: an open hinge is one more step from here.
+        if (description.record.hinge) {
+          const hinge = description.record.hinge
+          const hingeLine = element('p', 'place-hinge')
+          const hingeLink = element(
+            'button',
+            'place-hinge-link resident-follow-inline',
+            hinge.name + ' (place ' + String(hinge.placeId) + ')',
+          )
+          hingeLink.type = 'button'
+          hingeLink.addEventListener('click', () => choosePlace(hinge.placeId, true))
+          hingeLine.append(
+            document.createTextNode('Hinge: one step to '),
+            hingeLink,
+            document.createTextNode(', a door open while both places name each other.'),
+          )
+          prose.append(hingeLine)
+        }
       }
-      // Decision #153: a feed room says so beside its quiet line.
-      if (description.record.feed === true) {
-        nodes.placeDescription?.append(element('p', 'place-feed-room', FEED_ROOM_LINE))
-      }
-      // Decision #132: an open hinge is one more step from here.
-      if (description.record.hinge) {
-        const hinge = description.record.hinge
-        const hingeLine = element('p', 'place-hinge')
-        const hingeLink = element(
-          'button',
-          'place-hinge-link resident-follow-inline',
-          hinge.name + ' (place ' + String(hinge.placeId) + ')',
-        )
-        hingeLink.type = 'button'
-        hingeLink.addEventListener('click', () => choosePlace(hinge.placeId, true))
-        hingeLine.append(
-          document.createTextNode('Hinge: one step to '),
-          hingeLink,
-          document.createTextNode(', a door open while both places name each other.'),
-        )
-        nodes.placeDescription?.append(hingeLine)
-      }
+      renderPlaceConditions(place, description)
     }
+    if (factsOnly) return
     if (nodes.placePurpose) {
       nodes.placePurpose.replaceChildren(element(
         'p',
@@ -424,15 +541,14 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       group.append(...actions)
       notice.append(group)
     }
-    nodes.placeDescription?.replaceChildren(notice)
+    placeDescriptionTarget(true)?.replaceChildren(notice)
     renderEmpty(nodes.placePurpose, 'empty-row', 'Hidden by your mutes in this browser.')
     renderEmpty(nodes.placeFrontMatter, 'empty-row', 'Hidden by your mutes in this browser.')
   }
 
   function renderPlace(snapshot) {
     const followed = selectedResident(snapshot)
-    const place = selectedPlace(snapshot) ||
-      (!state.resident && !state.placeId ? snapshot.flatPlaces[0] || null : null)
+    const place = placePanelPlace(snapshot)
     if (nodes.placeWatchLive) {
       const watchable = Boolean(place && !place.moderated &&
         place.status !== 'retired' && !isQuietPlace(place))
@@ -460,7 +576,7 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         if (nodes.placePurpose) {
           renderSelectionIssue(nodes.placePurpose, issue, null, 'place-focus-title')
         }
-        renderEmpty(nodes.placeDescription, issue.status === 'error' ? 'error-row' :
+        renderEmpty(placeDescriptionTarget(true), issue.status === 'error' ? 'error-row' :
           issue.status === 'not-found' ? 'empty-row' : 'loading-row',
         issue.status === 'not-found'
           ? issueTitle + ' for this selection.'

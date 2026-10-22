@@ -5,8 +5,39 @@ import * as windowClientModule from '../../src/window-client.ts'
 import { WINDOW_JS } from '../../src/window-client.ts'
 import { WINDOW_HTML } from '../../src/window-page.ts'
 import { WINDOW_CSS } from '../../src/window-style.ts'
+import { WINDOW_CLIENT_SAFETY_JS } from '../../src/window-client-safety.ts'
 
 export function registerWindowDirectoryAndPlaceTests(): void {
+  test('place details keep only local text labels and validated defining-law ids', () => {
+    const normalize = new Function('MODERATED_TEXT', 'normalizeHinge', WINDOW_CLIENT_SAFETY_JS +
+      WINDOW_JS.slice(WINDOW_JS.indexOf('  function normalizeDetailRecord('),
+        WINDOW_JS.indexOf('  async function loadDrawingHistory(')) +
+      '\nreturn normalizeDetailRecord')('Removed by the maintainer.', () => null)
+    const read = (extra: Record<string, unknown>) => normalize('place', 11,
+      { place: { id: 11, description: 'Readable prose.', ...extra } })
+    assert.deepEqual(read({}).labels, [])
+    assert.deepEqual(read({}).laws, [])
+    const record = read({ labels: ['rain_now', '<b>plain text</b>', null, 7], laws: [
+      { traitId: 71, name: 'rain_law', sourcePlaceId: 12, recipe: { use: [] } },
+      { traitId: 72, name: 'secret_title', sourcePlaceId: 12, moderated: true, recipe: 'secret_recipe' },
+      ...[0, -1, 1.5, true, [], {}, '12x', '1e2', 2147483648].map(sourcePlaceId =>
+        ({ traitId: 73, name: 'bad_source', sourcePlaceId })),
+      { traitId: false, name: 'bad_trait', sourcePlaceId: 12 },
+      { traitId: 74, name: 'wrong_field', source_place_id: 12 },
+    ] })
+    assert.deepEqual(record.labels, ['rain_now', '<b>plain text</b>'])
+    assert.deepEqual(record.laws, [
+      { traitId: 71, name: 'rain_law', sourcePlaceId: 12, moderated: false },
+      { traitId: 72, name: 'Removed by the maintainer.', sourcePlaceId: 12, moderated: true },
+    ])
+    assert.equal(JSON.stringify(record).includes('secret'), false)
+    assert.equal(JSON.stringify(record).includes('recipe'), false)
+    assert.ok(Object.isFrozen(record.labels) && Object.isFrozen(record.laws) &&
+      record.laws.every(Object.isFrozen))
+    assert.deepEqual(read({ moderated: true, labels: ['hidden'], laws: record.laws }).labels, [])
+    assert.deepEqual(read({ moderated: true, labels: ['hidden'], laws: record.laws }).laws, [])
+  })
+
   test('directory search keeps a bounded menu and reports its exact total', () => {
     const exports = windowClientModule as unknown as Record<string, unknown>
     assert.equal(typeof exports.pageWindowDirectorySearch, 'function')

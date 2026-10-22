@@ -1,5 +1,5 @@
 import { QUOTAS, type Resident } from './core.ts'
-import { craftKindThing, type CraftedThing, type CraftSql } from './crafting.ts'
+import { craftKindThing, ingredientIdList, type CraftedThing, type CraftSql } from './crafting.ts'
 import { EngineError, runAction, type ActionExecution, type TaggedSql } from './engine.ts'
 import type { ThingRow } from './world-support.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
@@ -82,6 +82,8 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
     placeId: input.placeId,
     primitiveHandledByCaller: true,
     primitiveEmitsTypedEvent: true,
+    // The ingredients are this make's own things: locked by id before any room.
+    primitiveThingIds: ingredientIdList(input.ingredientIds) ?? [],
     performPrimitive: async transaction => {
       const things = await thingsLimit(input, transaction)
       const result = await craftKindThing(transaction as unknown as CraftSql, {

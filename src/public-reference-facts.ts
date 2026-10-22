@@ -32,6 +32,7 @@ import {
   MAX_EFFECT_COUNT,
   MAX_EFFECT_DEPTH,
   MAX_EFFECT_GENERATIONS,
+  MAX_PLACE_LABEL_SECONDS,
   MAX_RECIPE_BYTES,
   MIN_TIMER_SECONDS,
   MOVE_DESTINATIONS,
@@ -269,9 +270,17 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       }),
       label: Object.freeze({
         required: Object.freeze(['target', 'label'] as const),
-        optional: Object.freeze([] as const),
+        optional: Object.freeze(['seconds'] as const),
         target: SYMBOLIC_TARGETS,
         label: WORLD_NAME_RULE,
+        seconds: Object.freeze({
+          min: MIN_TIMER_SECONDS,
+          max: MAX_PLACE_LABEL_SECONDS,
+          targets: Object.freeze(['place', 'law_place'] as const),
+          required_on: Object.freeze(['law_place'] as const),
+          omitted_on_place: 'permanent',
+          other_targets: 'not allowed',
+        }),
         ...branches('label'),
       }),
       block: Object.freeze({
@@ -294,6 +303,10 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
         optional: Object.freeze(['else'] as const),
         target: SYMBOLIC_TARGETS,
         label: WORLD_NAME_RULE,
+        matches: Object.freeze({
+          law_place: 'active labels only',
+          other_targets: 'active labels or a law name',
+        }),
         ...branches('check_label'),
       }),
       chance: Object.freeze({
@@ -361,7 +374,13 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       }),
     }),
     kind_only: Object.freeze(['copy', 'write', 'wake', 'convert without into_kind']),
-    law_only: Object.freeze(['convert with into_kind']),
+    law_only: Object.freeze(['convert with into_kind', 'label with law_place', 'check_label with law_place']),
+    law_place: Object.freeze({
+      source: "the law's original defining place, never a law named by a later check",
+      scope: 'the exact source law must still apply through the current unbroken same-owner parent chain; source, acting, and intervening places must not be retired',
+      delayed: 'checked again after a wait',
+      hinges: 'never followed',
+    }),
     place_dials: Object.freeze({
       growth_cap_per_day: Object.freeze({ min: 0, default: GROWTH_CAP_DEFAULT, max: GROWTH_CAP_MAX }),
       growth_share_per_family: Object.freeze({ min: 1, default: GROWTH_SHARE_DEFAULT, max: GROWTH_CAP_MAX }),
