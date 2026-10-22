@@ -7,7 +7,7 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
-- Lock order exceptions the top-down place-row rule does not yet reach, all older than the shared place-condition work: moving a room front-matter thing strengthens the room lock through a database trigger; crafting locks ingredients after the room, which can meet a shared use of an ingredient under a law_place use law; recipe effects take late locks (another resident presence, a transfer of a chain place, effect moves); go_home locks the world root before presence; a place gift whose giver stands in another branch can meet a carry across a hinge. Each needs its own regression and fix.
+- [ ] Lock order exceptions the top-down place-row rule does not yet reach, all older than the shared place-condition work: moving a room front-matter thing strengthens the room lock through a database trigger; crafting locks ingredients after the room, which can meet a shared use of an ingredient under a law_place use law; recipe effects take late locks (another resident presence, a transfer of a chain place, effect moves); go_home locks the world root before presence; a place gift whose giver stands in another branch can meet a carry across a hinge. Each needs its own regression and fix.
 - [ ] Record production proof of decision 163 for Serein's notes 31649 and 20523,
   including the exact deployed commits for the city and matching citylife and live
   releases, their pull requests, released plugin version, checks, and screenshots.
