@@ -101,7 +101,13 @@ function taggedSql(
     await afterQuery?.(text, client)
     return result.rows
   }) as TaggedSql
-  sql.query = async (text, values = []) => (await client.query(text, [...values])).rows
+  // Text queries, as the gift route and place lifecycle send them, pass the same hooks.
+  sql.query = async (text, values = []) => {
+    await beforeQuery?.(text)
+    const result = await client.query(text, [...values])
+    await afterQuery?.(text, client)
+    return result.rows
+  }
   return sql
 }
 
@@ -1143,6 +1149,297 @@ test('law_place shares one timed condition through the current owner chain', asy
       } finally {
         paused.release()
         await Promise.allSettled([moved, retiring])
+        afterQuery = undefined
+      }
+    })
+
+    // Pause the first statement that matches, after it ran, and remember its backend.
+    const pauseAfterFirst = (match: (text: string) => boolean) => {
+      const paused = barrier()
+      let pid = 0
+      const hook = async (text: string, connection: Client): Promise<boolean> => {
+        if (pid !== 0 || !match(text)) return false
+        pid = Number((await connection.query('SELECT pg_backend_pid() AS pid')).rows[0].pid)
+        paused.reached()
+        await paused.gate
+        return true
+      }
+      return { paused, hook, pid: () => pid }
+    }
+    const waitsOnPid = async (pid: number): Promise<boolean> => {
+      const deadline = Date.now() + 3_000
+      while (Date.now() < deadline) {
+        const waiting = await client.query(`
+          SELECT 1 FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
+        `, [pid])
+        if (waiting.rows.length > 0) return true
+        await delay(20)
+      }
+      return false
+    }
+    const presenceLock = (text: string) => /FROM resident_presence WHERE resident_id = \$1 FOR UPDATE/.test(text)
+    const deadlocks = () => sqlstates.filter(code => code === '40P01')
+
+    const targetLand = await place('target-land', world)
+    const hall = await place('target-hall', targetLand)
+    const alcove = await place('target-alcove', hall)
+    await client.query('UPDATE places SET open_to_things = true WHERE id = ANY($1::int[])', [[hall, alcove]])
+    await client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES (11, 'hall-tagging', 'marks the hall and the thing used upon', $1::jsonb, 1)
+    `, [JSON.stringify({ use: [
+      { effect: 'label', target: 'law_place', label: 'hall-busy', seconds: 60 },
+      { effect: 'label', target: 'target', label: 'hall-tagged' },
+    ] })])
+    await client.query(`
+      INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+      VALUES ($1, 11, 1, 'add', 0)
+    `, [hall])
+    for (const schedule of ['the carry holds the parcel first', 'the use holds the chain first'] as const) {
+      await t.test(`a carry up into the law source and a use that targets the carried thing, ${schedule}`, async () => {
+        await client.query(`
+          UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id IN (2, 3)
+        `, [alcove])
+        const [tool, parcel] = (await client.query(`
+          INSERT INTO things (place_id, name, body, owner_id, maker_id)
+          VALUES ($1, 'stamp', 'the user tool', 2, 2), ($1, 'parcel', 'carried up', 3, 3) RETURNING id
+        `, [alcove])).rows.map(row => row.id)
+        sqlstates = []
+        // The target thing is locked with the use's own things, before its room chain, so
+        // neither action holds a row the other needs while it waits.
+        const carryPause = pauseAfterFirst(schedule === 'the carry holds the parcel first'
+          ? text => /FROM things WHERE id = ANY/.test(text) && /FOR UPDATE/.test(text)
+          : presenceLock)
+        const usePause = pauseAfterFirst(text => /law_place_chain/.test(text) && /FOR SHARE OF place/.test(text))
+        afterQuery = async (text, connection) => {
+          if (await carryPause.hook(text, connection)) return
+          if (schedule === 'the use holds the chain first') await usePause.hook(text, connection)
+        }
+        const carry = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move', placeId: alcove,
+          destinationPlaceId: hall, carryThingId: parcel }, db)
+        let use: ReturnType<typeof runAction> | undefined
+        try {
+          await atBarrier(carryPause.paused.ready, carry)
+          use = runAction({ actorId: 2, actorHandle: 'chain-visitor', action: 'use', placeId: alcove,
+            sourceThingId: tool, target: { type: 'thing', id: parcel } }, db)
+          if (schedule === 'the carry holds the parcel first') {
+            assert.ok(await waitsOnPid(carryPause.pid()), 'the use must wait on the carry')
+            carryPause.paused.release()
+          } else {
+            await atBarrier(usePause.paused.ready, use)
+            carryPause.paused.release()
+            assert.ok(await waitsOnPid(usePause.pid()), 'the carry must wait on the use')
+            usePause.paused.release()
+          }
+          const [moved, used] = await Promise.all([carry, use])
+          assert.deepEqual(deadlocks(), [], 'neither action may deadlock')
+          assert.equal(moved.status, 'applied', moved.error ?? '')
+          if (schedule === 'the carry holds the parcel first') {
+            assert.deepEqual({ status: used.status, httpStatus: used.httpStatus, error: used.error }, {
+              status: 'failed', httpStatus: 403,
+              error: `target thing must be in place_id ${alcove}; target current place_id is ${hall}`,
+            })
+          } else {
+            assert.equal(used.status, 'applied', used.error ?? '')
+            assert.deepEqual((await client.query(`
+              SELECT label, target_type, target_id FROM active_labels
+              WHERE label IN ('hall-busy', 'hall-tagged') ORDER BY id DESC LIMIT 2
+            `)).rows.reverse(), [
+              { label: 'hall-busy', target_type: 'place', target_id: hall },
+              { label: 'hall-tagged', target_type: 'thing', target_id: parcel },
+            ])
+          }
+          assert.deepEqual((await client.query('SELECT place_id FROM things WHERE id = $1', [parcel])).rows,
+            [{ place_id: hall }])
+        } finally {
+          carryPause.paused.release()
+          usePause.paused.release()
+          await Promise.allSettled([carry, use])
+          afterQuery = undefined
+        }
+      })
+    }
+
+    await t.test('a make under a law_place make law that waits and a waiting use in that room both finish', async () => {
+      const land = await place('workshop-land', world)
+      const workshop = await place('timer-workshop', land)
+      await client.query('UPDATE places SET open_to_things = true WHERE id = $1', [workshop])
+      const later = { effect: 'wait', seconds: 600, then: [{ effect: 'label', target: 'actor', label: 'workshop-later' }] }
+      await client.query(`
+        INSERT INTO traits (id, name, description, recipe, coiner_id)
+        VALUES (12, 'workshop-rule', 'a room law that waits', $1::jsonb, 1)
+      `, [JSON.stringify({
+        make: [{ effect: 'label', target: 'law_place', label: 'workshop-busy', seconds: 60 }, later],
+        use: [later],
+      })])
+      await client.query(`
+        INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+        VALUES ($1, 12, 1, 'add', 0)
+      `, [workshop])
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id IN (1, 3)
+      `, [workshop])
+      const tool = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'workshop-tool', 'used at once', 3, 3) RETURNING id
+      `, [workshop])).rows[0].id
+      const { makeThingThroughEngine } = await import('../../src/thing-making.ts')
+      sqlstates = []
+      // The use holds the room's timer queue; the make's exclusive room lock must still let
+      // the use's queued effect name the room by foreign key.
+      const usePause = pauseAfterFirst(text => /pg_advisory_xact_lock/.test(text))
+      afterQuery = async (text, connection) => { await usePause.hook(text, connection) }
+      const used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use', placeId: workshop,
+        sourceThingId: tool }, db)
+      let made: ReturnType<typeof makeThingThroughEngine> | undefined
+      try {
+        await atBarrier(usePause.paused.ready, used)
+        made = makeThingThroughEngine({
+          actor: {
+            id: 1, handle: 'chain-owner', model: 'test', joined_at: '2026-10-22T00:00:00.000Z',
+            quota_day: '2026-10-22', things_today: 0, notes_today: 0, agreement_actions_today: 0,
+          },
+          placeId: workshop, name: 'made while a use waits', body: 'one room, two queues',
+          kindId: null, ingredientIds: [],
+        })
+        assert.ok(await waitsOnPid(usePause.pid()), 'the make must wait on the use timer queue')
+        usePause.paused.release()
+        const [use, make] = await Promise.all([used, made])
+        assert.deepEqual(deadlocks(), [], 'neither action may deadlock')
+        assert.equal(use.status, 'applied', use.error ?? '')
+        assert.equal(make.ok, true, JSON.stringify(make))
+        assert.deepEqual((await client.query(`
+          SELECT count(*)::int AS pending FROM pending_effects WHERE place_id = $1
+        `, [workshop])).rows, [{ pending: 2 }])
+      } finally {
+        usePause.paused.release()
+        await Promise.allSettled([used, made])
+        afterQuery = undefined
+      }
+    })
+
+    for (const [from, to, giveLaw] of [['west', 'east', false], ['east', 'west', false], ['west', 'east', true]] as const) {
+      const named = giveLaw ? ' under a law_place give law' : ''
+      await t.test(`a hinge walk ${from} to ${to} and a gift of the estate by its owner standing inside${named} both finish`, async () => {
+        const tag = `${from}${giveLaw ? '-law' : ''}`
+        const land = await place(`estate-land-${tag}`, world)
+        const estate = await place(`hinge-estate-${tag}`, land)
+        const rooms = {
+          west: await place(`estate-west-${tag}`, estate),
+          east: await place(`estate-east-${tag}`, estate),
+        }
+        if (giveLaw) {
+          await client.query(`
+            INSERT INTO traits (id, name, description, recipe, coiner_id)
+            VALUES (13, 'estate-given', 'marks the estate when it is given', $1::jsonb, 1)
+          `, [JSON.stringify({ give: [{ effect: 'label', target: 'law_place', label: 'estate-given', seconds: 60 }] })])
+          await client.query(`
+            INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+            VALUES ($1, 13, 1, 'add', 0)
+          `, [estate])
+        }
+        await client.query('UPDATE places SET hinge_to = $1 WHERE id = $2', [rooms.east, rooms.west])
+        await client.query('UPDATE places SET hinge_to = $1 WHERE id = $2', [rooms.west, rooms.east])
+        await client.query(`
+          UPDATE resident_presence SET home_place_id = NULL,
+            current_place_id = CASE resident_id WHEN 1 THEN $1::int ELSE $2::int END
+          WHERE resident_id IN (1, 3)
+        `, [rooms.east, rooms[from]])
+        sqlstates = []
+        // The walk holds only its presence when the gift takes its first exclusive lock in
+        // the estate. The gift then takes the estate's rooms by depth and id, never the
+        // giver's own room ahead of a lower-id neighbour the walk may already hold.
+        const walkPause = pauseAfterFirst(presenceLock)
+        const giftPause = pauseAfterFirst(text => /FOR UPDATE OF place|society:place-gift-lock-root/.test(text))
+        afterQuery = async (text, connection) => {
+          if (!(await walkPause.hook(text, connection))) await giftPause.hook(text, connection)
+        }
+        const walked = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move',
+          placeId: rooms[from], destinationPlaceId: rooms[to] }, db)
+        let given: Promise<Response> | undefined
+        try {
+          await atBarrier(walkPause.paused.ready, walked)
+          given = Promise.resolve(app.request('/api/transfer', {
+            method: 'POST',
+            headers: { authorization: `Bearer ${ownerSecret}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'place', id: estate, to_handle: 'chain-visitor' }),
+          }))
+          await atBarrier(giftPause.paused.ready, given)
+          walkPause.paused.release()
+          // The walk either finishes or waits on the gift before the gift goes on.
+          let walkSettled = false
+          void walked.then(() => { walkSettled = true }, () => { walkSettled = true })
+          const deadline = Date.now() + 3_000
+          while (!walkSettled && Date.now() < deadline) {
+            const waiting = await client.query(`
+              SELECT 1 FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
+            `, [giftPause.pid()])
+            if (waiting.rows.length > 0) break
+            await delay(20)
+          }
+          giftPause.paused.release()
+          const [walk, response] = await Promise.all([walked, given])
+          const body = await response.json() as { error?: string }
+          assert.deepEqual(deadlocks(), [], 'neither the walk nor the gift may deadlock')
+          assert.equal(response.status, 200, body.error)
+          if (giveLaw) {
+            // A law_place give law makes the gift take the whole estate before the law runs, so
+            // the walk waits, and the gift's owner change closes both sides of the hinge.
+            assert.deepEqual({ status: walk.status, httpStatus: walk.httpStatus, error: walk.error }, {
+              status: 'failed', httpStatus: 403,
+              error: `place_id ${rooms[to]} exists, but entry is closed from your current place_id ${rooms[from]}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
+            })
+          } else assert.equal(walk.status, 'applied', walk.error ?? '')
+          assert.deepEqual((await client.query(`
+            SELECT owner_id FROM places WHERE id = ANY($1::int[]) ORDER BY id
+          `, [[estate, rooms.west, rooms.east]])).rows.map(row => row.owner_id), [2, 2, 2])
+          assert.deepEqual((await client.query(`
+            SELECT current_place_id FROM resident_presence WHERE resident_id = 3
+          `)).rows, [{ current_place_id: giveLaw ? rooms[from] : rooms[to] }])
+        } finally {
+          walkPause.paused.release()
+          giftPause.paused.release()
+          await Promise.allSettled([walked, given])
+          afterQuery = undefined
+        }
+      })
+    }
+
+    await t.test('setting home in a room and moving out of it at once both finish', async () => {
+      const { setHomeAndRecordEvent } = await import('../../src/actions.ts')
+      const land = await place('home-race-land', world)
+      const room = await place('home-race-room', land)
+      const below = await place('home-race-below', room)
+      await client.query(`
+        UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id = 1
+      `, [room])
+      sqlstates = []
+      // Setting home takes the presence row before the room, as every action does.
+      const movePause = pauseAfterFirst(presenceLock)
+      afterQuery = async (text, connection) => { await movePause.hook(text, connection) }
+      const moved = runAction({ actorId: 1, actorHandle: 'chain-owner', action: 'move', placeId: room,
+        destinationPlaceId: below }, db)
+      let homed: Promise<{ ok: boolean; error?: unknown }> | undefined
+      try {
+        await atBarrier(movePause.paused.ready, moved)
+        homed = setHomeAndRecordEvent({ id: 1, handle: 'chain-owner' }, room, db).then(
+          () => ({ ok: true }), (error: unknown) => ({ ok: false, error }))
+        assert.ok(await waitsOnPid(movePause.pid()), 'setting home must wait on the move')
+        movePause.paused.release()
+        const [move, home] = await Promise.all([moved, homed])
+        assert.deepEqual(deadlocks(), [], 'neither may deadlock')
+        assert.equal(move.status, 'applied', move.error ?? '')
+        assert.equal(home.ok, false)
+        assert.ok(home.error instanceof EngineError && home.error.status === 403
+          && home.error.message === 'home must be the owned place where you are standing', String(home.error))
+        assert.deepEqual((await client.query(`
+          SELECT current_place_id, home_place_id FROM resident_presence WHERE resident_id = 1
+        `)).rows, [{ current_place_id: below, home_place_id: null }])
+      } finally {
+        movePause.paused.release()
+        await Promise.allSettled([moved, homed])
         afterQuery = undefined
       }
     })

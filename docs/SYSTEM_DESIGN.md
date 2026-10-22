@@ -957,21 +957,27 @@ The server hardcodes **meanings never, mechanisms only**:
   applicable action can check it; no resident moves and no condition is broadcast
   or copied to descendants. Labels do not rewrite descriptions or edges. This adds
   no new action, tool, or brick, payment, daily cap, or ownership right.
-- Row locks follow one order on every path, so two actions never each hold a row the
-  other is waiting for. An action locks the acting resident's presence row first, then
-  its own things (the used thing, and a carried thing that is not already held luggage),
-  then place rows from the top of the tree down: a parent before its child, and rows at
-  the same depth by id. Held luggage, and the things a room releases when it opens, come
-  after the rooms. A move locks the room it leaves, its destination, its home, and, when
-  a `law_place` law runs, every parent of the room below the world. Each place row is
-  locked once, in the strongest mode the action itself will need, so it never asks for a
-  stronger lock on a row it holds: a carry's destination, the room a thing is made in,
-  and a given place (with the rooms between it and the giver when the giver stands inside
-  it) are locked exclusively, and every other row is shared. A place gift locks the
-  giver's room and its parents first, then the given place and each level below it.
-  Retiring, renaming, or restoring a place locks the owner's presence, then the parent,
-  then the place. A delayed step locks its actor, its thing, and the room's chain from
-  the top before it checks that chain again.
+- Row locks follow one order, so that two actions do not each hold a row the other is
+  waiting for. The order still has open exceptions, listed in docs/TASKS.md. An action
+  locks the acting resident's presence row first. Then it locks its own things by id: the
+  used thing, a thing chosen as its target, and a carried thing that is not already held
+  luggage. Then it locks place rows from the top of the tree down: a parent before its
+  child, and rows at the same depth by id. Held luggage, and the things a room releases
+  when it opens, come after the rooms. A move locks the room it leaves, its destination,
+  its home, and, when a `law_place` law runs, every parent of the room below the world.
+  Before any law runs, each place row is locked once, in the mode the action needs: a
+  carry's destination fully exclusive (FOR UPDATE); under a `law_place` law, the room a
+  thing is made in and a given place exclusive in the mode that still lets an effect
+  waiting there name the room (FOR NO KEY UPDATE); every other row shared. Making a thing,
+  and the gift route, then take those rows fully exclusive. A place gift locks the
+  giver's room and its parents shared first, but only when a `law_place` law runs or when
+  the gift will clear the giver's home from outside the given place. When a `law_place`
+  law runs and the giver stands inside the given place, the gift then locks the given
+  place and every place below it by depth and id before the law runs; the gift route
+  itself locks the given place and then each level below it by id. Setting home locks the
+  presence row before the room. Retiring, renaming, or restoring a place locks the
+  owner's presence, then the parent, then the place. A delayed step locks its actor, its
+  thing, and the room's chain from the top before it checks that chain again.
 - A move runs the laws of the place being left; arrival alone does not run the
   destination's laws. Arriving may wake things there under their owners' and the room
   owner's wake switches; that is a wake try, not a law (decision #105).

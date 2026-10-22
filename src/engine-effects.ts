@@ -285,9 +285,11 @@ async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promi
  * Locks a room's law chain from the top of the tree down, a parent before its child, as
  * every path locks place rows (docs/SYSTEM_DESIGN.md). Rows above exclusiveFromId are
  * shared. That row and the chain below it are exclusive, for an action that changes them
- * itself later, so it never asks to strengthen a shared lock it already holds.
+ * itself later, so it never asks to strengthen a shared lock it already holds. Exclusive
+ * here is FOR NO KEY UPDATE: it still keeps out shared readers and writers, but lets a
+ * row that names the place by foreign key through, such as a waiting effect queued there.
  */
-export async function lockLawPlaceChain(
+async function lockLawPlaceChain(
   placeId: number,
   db: TaggedSql,
   exclusiveFromId: number | null = null,
@@ -321,7 +323,7 @@ export async function lockLawPlaceChain(
     WHERE chain.height <= (
       SELECT changed.height FROM law_place_chain changed WHERE changed.id = ${exclusiveFromId}::int
     )
-    ORDER BY chain.height DESC FOR UPDATE OF place
+    ORDER BY chain.height DESC FOR NO KEY UPDATE OF place
   `)
   return [...shared, ...exclusive]
 }

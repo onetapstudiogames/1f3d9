@@ -13,7 +13,6 @@ import {
 import {
   executeEffectsWithOutcome,
   hasLawPlace,
-  lockLawPlaceChain,
   lockLawPlaceEffects,
   newAbilityLog,
   SHARED_SOURCE_DESTROY_CLOSED_ERROR,
@@ -682,16 +681,22 @@ export async function setHome(
 ): Promise<Presence> {
   const actorId = positiveId(residentId, 'resident id')
   const homeId = positiveId(placeId, 'place id')
+  // The resident's presence row is locked first, as every action takes it, then the room:
+  // the room's lock sits above the join, so it is taken only after the presence lock.
   const rows = await queryRows<Record<string, unknown>>(db`
-    WITH eligible_home AS MATERIALIZED (
-      SELECT ${actorId}::integer AS resident_id, owned.id AS place_id
+    WITH locked_presence AS MATERIALIZED (
+      SELECT presence.resident_id, presence.current_place_id
+      FROM resident_presence presence
+      WHERE presence.resident_id = ${actorId}
+      FOR UPDATE OF presence
+    ), eligible_home AS MATERIALIZED (
+      SELECT presence.resident_id, owned.id AS place_id
       FROM places owned
-      JOIN resident_presence presence ON presence.current_place_id = owned.id
+      JOIN locked_presence presence ON presence.current_place_id = owned.id
       WHERE owned.id = ${homeId}
         AND owned.owner_id = ${actorId}
         AND owned.retired_at IS NULL
-        AND presence.resident_id = ${actorId}
-      FOR UPDATE OF owned, presence
+      FOR UPDATE OF owned
     )
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
     SELECT resident_id, place_id, place_id FROM eligible_home
@@ -1359,23 +1364,82 @@ function placeChangedByAction(input: RequiredActionInput): number | null {
 }
 
 /**
- * A move's locks in the shared order: the carried or named thing first unless it is held
- * luggage, then the rooms, the home the presence update re-reads, and the law chain when a
- * law_place law runs, from the top of the tree down. Held luggage comes after the rooms.
+ * A place gift's locks before any law runs. The giver's room chain outside the given place
+ * is locked shared, top down, when a law_place law runs or when the gift will clear the
+ * giver's home from outside (that presence update re-reads the giver's room). When a
+ * law_place law runs and the giver stands inside the given place, the given place and
+ * every place below it are then locked by depth and id, so the giver's own rooms are never
+ * taken ahead of their neighbours. Otherwise the gift route takes them, level by level.
+ */
+async function lockGivenPlace(
+  givenPlaceId: number,
+  giverPlaceId: number,
+  giverHomeId: number | null,
+  lawPlace: boolean,
+  db: TaggedSql,
+): Promise<void> {
+  await queryRows(db`
+    WITH RECURSIVE given_place AS (
+      SELECT id FROM places WHERE id = ${givenPlaceId}
+      UNION ALL
+      SELECT child.id FROM places child JOIN given_place parent ON child.parent_id = parent.id
+    ), law_place_chain AS (
+      SELECT id, parent_id, 0 AS height FROM places WHERE id = ${giverPlaceId}
+      UNION ALL
+      SELECT parent.id, parent.parent_id, child.height + 1 FROM places parent
+      JOIN law_place_chain child ON parent.id = child.parent_id
+      WHERE parent.place_kind <> 'world'
+    )
+    SELECT place.id FROM places place JOIN law_place_chain chain ON chain.id = place.id
+    WHERE place.id NOT IN (SELECT id FROM given_place)
+      AND (${lawPlace}::boolean OR (${giverHomeId}::int IN (SELECT id FROM given_place)
+        AND ${giverPlaceId}::int NOT IN (SELECT id FROM given_place)))
+    ORDER BY chain.height DESC FOR SHARE OF place
+  `)
+  if (!lawPlace) return
+  await queryRows(db`
+    WITH RECURSIVE given_place AS (
+      SELECT id, 0 AS depth FROM places WHERE id = ${givenPlaceId}
+      UNION ALL
+      SELECT child.id, parent.depth + 1 FROM places child
+      JOIN given_place parent ON child.parent_id = parent.id
+    )
+    SELECT place.id FROM places place JOIN given_place ON given_place.id = place.id
+    WHERE ${giverPlaceId}::int IN (SELECT id FROM given_place)
+    ORDER BY given_place.depth, place.id FOR NO KEY UPDATE OF place
+  `)
+}
+
+/**
+ * The action's own things, locked by id before any place row: the used or named thing, a
+ * thing the caller chose as target, and a carried thing. A recipe aimed at the source or
+ * the target then only re-takes a row it holds. Held luggage is skipped here; it waits for
+ * the rooms, as opening a room locks the room before releasing its held things.
+ */
+async function lockActionThings(input: RequiredActionInput, db: TaggedSql): Promise<void> {
+  const thingIds = [...new Set([
+    input.carryThingId,
+    input.sourceThingId,
+    input.target?.type === 'thing' ? input.target.id : null,
+  ].filter((id): id is number => id !== null))]
+  if (thingIds.length === 0) return
+  await queryRows(db`
+    SELECT id FROM things WHERE id = ANY(${thingIds}::int[]) AND held_by IS NULL
+    ORDER BY id FOR UPDATE
+  `)
+}
+
+/**
+ * A move's locks in the shared order: its own things first unless held luggage, then the
+ * rooms, the home the presence update re-reads, and the law chain when a law_place law
+ * runs, from the top of the tree down. Held luggage comes after the rooms.
  */
 async function lockMoveRows(
   input: RequiredActionInput,
   presence: Presence,
   db: TaggedSql,
 ): Promise<StoredProgram[]> {
-  const thingIds = [input.carryThingId, input.sourceThingId]
-    .filter((id): id is number => id !== null)
-  if (thingIds.length > 0) {
-    await queryRows(db`
-      SELECT id FROM things WHERE id = ANY(${thingIds}::int[]) AND held_by IS NULL
-      ORDER BY id FOR UPDATE
-    `)
-  }
+  await lockActionThings(input, db)
   const programs = await loadPrograms(input, db)
   await lockPlaceRowsTopDown(db, {
     placeIds: [presence.currentPlaceId, input.destinationPlaceId, presence.homePlaceId],
@@ -1697,6 +1761,7 @@ export async function runAction(
 
       const movePrograms = input.action === 'move'
         ? await lockMoveRows(input, lockedPresence, transaction) : null
+      if (movePrograms === null) await lockActionThings(input, transaction)
       // Opening a room locks the room before releasing its held things.
       const heldAtStart = input.action === 'move'
         ? await heldThingForResident(input.actorId, transaction) : null
@@ -1704,12 +1769,12 @@ export async function runAction(
       const programs = movePrograms ?? await loadPrograms(input, transaction)
       if (movePrograms === null) {
         const changedPlaceId = placeChangedByAction(input)
-        if (input.action === 'give' && changedPlaceId !== null && input.placeId !== null) {
-          // A place gift can clear the giver's home, and that presence update re-reads
-          // the giver's room, so the room's chain is locked here in the shared order.
-          await lockLawPlaceChain(input.placeId, transaction, changedPlaceId)
+        const lawEffects = lawProgramEffects(programs)
+        if (input.action === 'give' && input.target?.type === 'place' && input.placeId !== null) {
+          await lockGivenPlace(input.target.id, input.placeId, lockedPresence.homePlaceId,
+            hasLawPlace(lawEffects), transaction)
         }
-        await lockLawPlaceEffects(lawProgramEffects(programs), input, transaction, changedPlaceId)
+        await lockLawPlaceEffects(lawEffects, input, transaction, changedPlaceId)
       }
       const sharedSourceThingId = input.action === 'use'
         && source
