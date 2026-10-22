@@ -1419,21 +1419,25 @@ async function lockGivenPlace(
 
 /**
  * The action's own things, locked by id before any place row: the used or named thing, a
- * thing the caller chose as target, a carried thing, and the things a make step uses up.
+ * thing the caller chose as target, a carried thing, and the things a make step uses up
+ * that the actor owns in the action's room. A make step's id that fails that test is left
+ * unlocked; the make step reads it and refuses it under its own checks.
  * A recipe aimed at the source or the target then only re-takes a row it holds. Held
  * luggage is skipped here; it waits for the rooms, as opening a room locks the room before
  * releasing its held things.
  */
 async function lockActionThings(input: RequiredActionInput, db: TaggedSql): Promise<void> {
-  const thingIds = [...new Set([
+  const ownIds = [...new Set([
     input.carryThingId,
     input.sourceThingId,
     input.target?.type === 'thing' ? input.target.id : null,
-    ...input.primitiveThingIds,
   ].filter((id): id is number => id !== null))]
+  const thingIds = [...new Set([...ownIds, ...input.primitiveThingIds])]
   if (thingIds.length === 0) return
   await queryRows(db`
     SELECT id FROM things WHERE id = ANY(${thingIds}::int[]) AND held_by IS NULL
+      AND (id = ANY(${ownIds}::int[])
+        OR (owner_id = ${input.actorId} AND place_id = ${input.placeId}))
     ORDER BY id FOR UPDATE
   `)
 }

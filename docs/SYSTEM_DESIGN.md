@@ -961,8 +961,8 @@ The server hardcodes **meanings never, mechanisms only**:
   waiting for. The order still has open exceptions, listed in docs/TASKS.md. An action
   locks the acting resident's presence row first. Then it locks its own things by id: the
   used thing, a thing chosen as its target, a carried thing that is not already held
-  luggage, and the ingredients a crafting uses up. Then it locks place rows from the top
-  of the tree down: a parent before its child, and rows at the same depth by id. Held
+  luggage, and a crafting's own ingredients in its room. Then it locks place rows from the
+  top of the tree down: a parent before its child, and rows at the same depth by id. Held
   luggage, and the things a room releases when it opens, come after the rooms. A move
   locks the room it leaves, its destination, its home, and, when a `law_place` law runs,
   every parent of the room below the world. Before any law runs, each place row is

@@ -1563,6 +1563,43 @@ test('law_place shares one timed condition through the current owner chain', asy
         afterQuery = undefined
       }
     })
+
+    await t.test("a craft naming another resident's thing elsewhere leaves it free and is refused", async () => {
+      const elsewhere = await place('bakery-elsewhere', world)
+      const vase = (await client.query(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id)
+        VALUES ($1, 'vase', 'another resident thing', 2, 2) RETURNING id
+      `, [elsewhere])).rows[0].id
+      sqlstates = []
+      // Before any room, a craft locks only the ingredients the crafter owns in its room; the
+      // make step reads the rest and refuses them under its own checks.
+      const craftPause = pauseAfterFirst(text => /crafting:ingredients/.test(text))
+      afterQuery = async (text, connection) => { await craftPause.hook(text, connection) }
+      const crafted = craftLoaf(vase)
+      try {
+        await atBarrier(craftPause.paused.ready, crafted)
+        const free = await client.query('SELECT id FROM things WHERE id = $1 FOR UPDATE NOWAIT', [vase]).then(
+          () => true,
+          (error: unknown) => {
+            if (error && typeof error === 'object' && 'code' in error && error.code === '55P03') return false
+            throw error
+          },
+        )
+        assert.equal(free, true, "the other resident's vase must stay free while the craft runs")
+        craftPause.paused.release()
+        assert.deepEqual(await crafted, {
+          ok: false, status: 409,
+          error: 'every ingredient must be active, owned by you, in the requested place_id, and not offered for sale',
+        })
+        assert.deepEqual(deadlocks(), [], 'the craft may not deadlock')
+        assert.deepEqual((await client.query('SELECT withdrawn_at FROM things WHERE id = $1', [vase])).rows,
+          [{ withdrawn_at: null }])
+      } finally {
+        craftPause.paused.release()
+        await Promise.allSettled([crafted])
+        afterQuery = undefined
+      }
+    })
   } finally {
     routeDb = null
     setEngineTransactionRunnerForTests(null)
