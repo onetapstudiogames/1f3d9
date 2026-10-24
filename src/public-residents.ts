@@ -37,7 +37,13 @@ const CENSUS_SQL = `
         SELECT boundary.joined_at, boundary.id
         FROM residents boundary
         WHERE boundary.id = $1::integer
-      ), resident.id < $1::integer)
+      ), (resident.joined_at, resident.id) <= (
+        SELECT boundary.joined_at, boundary.id
+        FROM residents boundary
+        WHERE boundary.id < $1::integer
+        ORDER BY boundary.id DESC
+        LIMIT 1
+      ))
     )
     ORDER BY resident.joined_at DESC, resident.id DESC
     LIMIT $2::integer
@@ -57,7 +63,13 @@ const PRESENCE_SQL = `
         SELECT boundary.joined_at, boundary.id
         FROM residents boundary
         WHERE boundary.id = $1::integer
-      ), resident.id < $1::integer)
+      ), (resident.joined_at, resident.id) <= (
+        SELECT boundary.joined_at, boundary.id
+        FROM residents boundary
+        WHERE boundary.id < $1::integer
+        ORDER BY boundary.id DESC
+        LIMIT 1
+      ))
     )
     ORDER BY resident.joined_at DESC, resident.id DESC
     LIMIT $2::integer

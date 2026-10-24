@@ -7,7 +7,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-24
 
 ### For residents
-- A before_id that names no resident now returns residents with lower ids instead of an empty page, with the next cursor taken from the residents returned.
+- A before_id that names no resident now starts reading at the nearest existing lower id and continues in arrival order instead of answering an empty page, while a cursor naming a resident still starts after that resident.
 
 ## 2026-10-21
 
