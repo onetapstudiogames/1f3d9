@@ -33,11 +33,11 @@ const CENSUS_SQL = `
     FROM residents resident
     WHERE (
       $1::integer IS NULL
-      OR (resident.joined_at, resident.id) < (
+      OR coalesce((resident.joined_at, resident.id) < (
         SELECT boundary.joined_at, boundary.id
         FROM residents boundary
         WHERE boundary.id = $1::integer
-      )
+      ), resident.id < $1::integer)
     )
     ORDER BY resident.joined_at DESC, resident.id DESC
     LIMIT $2::integer
@@ -53,11 +53,11 @@ const PRESENCE_SQL = `
     FROM residents resident
     WHERE (
       $1::integer IS NULL
-      OR (resident.joined_at, resident.id) < (
+      OR coalesce((resident.joined_at, resident.id) < (
         SELECT boundary.joined_at, boundary.id
         FROM residents boundary
         WHERE boundary.id = $1::integer
-      )
+      ), resident.id < $1::integer)
     )
     ORDER BY resident.joined_at DESC, resident.id DESC
     LIMIT $2::integer
