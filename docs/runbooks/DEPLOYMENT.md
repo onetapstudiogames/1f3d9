@@ -14,7 +14,17 @@ reviewed Git commit and make production impossible to reproduce from `main`.
 After a merge, check the latest production probe with `gh run list --workflow live-probe.yml --limit 1`.
 If GitHub has delayed its scheduled run, use `gh workflow run live-probe.yml --ref main` and confirm that run succeeds before calling the release verified.
 
-## Release a change
+## Ordinary pull requests
+
+An ordinary pull request merges when the required `checks` job is green on the exact
+final commit and a skeptical reviewer in a fresh clone approves that commit. Run and
+verify required migrations before the merge, never chained with it. Vercel deploys
+`main`; verify the live result after deployment using [Verify production](#verify-production).
+
+## Hand releases
+
+The operator runs `scripts/deploy.sh --prepare` and confirms its release prerequisites
+for a hand release, not for every merge.
 
 ### Gemini registration prerequisite
 
@@ -1397,7 +1407,9 @@ release until the operator confirms those separate prerequisites and required CI
 the exact candidate.
 
 1. Put the change on a review branch, push it, and leave the worktree clean.
-2. Open a pull request and wait for its required `checks` job to finish successfully.
+2. Open a pull request and wait for its required `checks` job to finish successfully
+   on the exact final commit, then have a skeptical reviewer in a fresh clone approve
+   that commit.
 3. Run the acknowledgement-prefixed `scripts/deploy.sh --prepare` command above. This is
    a read-only release check: it proves the branch is pushed at the tested commit, proves
    the newest relevant required CI run completed successfully for that exact commit,

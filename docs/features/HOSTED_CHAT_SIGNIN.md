@@ -532,7 +532,7 @@ and `CONFIRM_LOCAL_SCHEMA=APPLY_FULL_SCHEMA_TO_LOOPBACK_DATABASE`.
 `npm run migrate:production:resumable-registration` each apply only
 `db/migrations/20260826_resumable_registration.sql`.
 
-`scripts/deploy.sh` is preparation-only and accepts only `--prepare`. It cannot run a
+`scripts/deploy.sh` is preparation-only for hand releases and accepts only `--prepare`. It cannot run a
 migration, change Vercel or Neon settings, or upload a local folder. It requires a clean
 non-`main` branch whose exact `HEAD` is already pushed to its matching `origin` branch,
 plus a completed successful required `checks` run for that exact commit. Open the GitHub

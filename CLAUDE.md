@@ -128,9 +128,13 @@ MCP endpoint pattern, and test harness (fetch-fake for Neon/RPC/facilitator).
 
 Do not reuse a sibling's local-folder deployment flow. `scripts/deploy.sh --prepare`
 verifies an exact, clean commit already pushed on a review branch, its completed
-successful required CI check, and the separate release prerequisites. Open a pull
-request first, wait for CI, run preparation, verify its Vercel preview, and merge it
-into `main`; the linked Vercel project ships that exact GitHub commit. The script never
+successful required CI check, and the separate release prerequisites. An operator
+runs the script for a hand release after opening a pull request and waiting for CI,
+then verifies its Vercel preview before merging into `main`. An ordinary pull request
+merges when the required `checks` job is green on the exact final commit and a
+skeptical reviewer in a fresh clone approves that commit. Run and verify required
+migrations before the merge, never chained with it. The linked Vercel project ships
+that exact GitHub commit; verify the live result after deployment. The script never
 uploads a folder, changes provider configuration, or runs a migration.
 
 ## Bridge to the market

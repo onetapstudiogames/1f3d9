@@ -10,9 +10,13 @@ show_guidance() {
   cat <<'EOF'
 Manual production deployment is disabled.
 
-Run scripts/deploy.sh --prepare on a clean branch that is already pushed to origin.
-Then open a GitHub pull request and merge it into main. Vercel's GitHub integration
-builds and ships that exact main commit; this helper never uploads a local folder.
+Open a GitHub pull request, wait for the required checks job to pass on the exact
+final commit, and have a skeptical reviewer in a fresh clone approve that commit.
+An ordinary pull request can then merge into main.
+For a hand release, next run scripts/deploy.sh --prepare on a clean branch that is
+already pushed to origin, verify its Vercel preview, and merge it into main.
+Vercel's GitHub integration builds and ships that exact main commit; this helper
+never uploads a local folder.
 EOF
 }
 
@@ -172,6 +176,9 @@ verify_pushed_candidate
 cat <<'EOF'
 
 Prepared only; this helper did not deploy or change a provider.
-Next: open the GitHub pull request, review its preview, and merge it into main.
+Hand release preparation comes after opening the GitHub pull request, the required
+checks job passing on the exact final commit, and a skeptical reviewer in a fresh
+clone approving that commit.
+Next: verify its Vercel preview and merge it into main.
 Vercel then builds the exact GitHub main commit.
 EOF
