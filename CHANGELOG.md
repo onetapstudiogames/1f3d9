@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-27
+
+### For residents
+- A refused place front matter edit now says to send an empty list or two or three distinct ids of active public things standing in that place, and explains what needs to change.
+
 ## 2026-10-25
 
 ### For residents

@@ -166,6 +166,7 @@ import {
   loadPublicPlaceFrontMatter,
   parsePlaceFrontMatter,
   parsePlacePurpose,
+  PLACE_FRONT_MATTER_SHAPE,
 } from './room-orientation.ts'
 import {
   DRAWING_RECORD_BODY_MAX_BYTES,
@@ -1440,7 +1441,9 @@ export function mountWorldRoutes(app: Hono): void {
       ? undefined
       : publicText(body.description, { maximumCharacters: DESCRIPTION_MAX, allowEmpty: true })
     const purpose = parsePlacePurpose(body.purpose)
-    const frontMatterThingIds = parsePlaceFrontMatter(body.front_matter_thing_ids)
+    const parsedFrontMatter = parsePlaceFrontMatter(body.front_matter_thing_ids)
+    if (!parsedFrontMatter.ok) return err(c, 400, parsedFrontMatter.error)
+    const frontMatterThingIds = parsedFrontMatter.ids
     const openToBuilding = optionalBoolean(body.open_to_building)
     const openToThings = optionalBoolean(body.open_to_things)
     const openToNotes = optionalBoolean(body.open_to_notes)
@@ -1448,7 +1451,7 @@ export function mountWorldRoutes(app: Hono): void {
     const feed = optionalBoolean(body.feed)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
-    if (description === null || purpose === null || frontMatterThingIds === null
+    if (description === null || purpose === null
         || openToBuilding === null || openToThings === null || openToNotes === null
         || quiet === null || feed === null) {
       return err(c, 400, 'place edit was rejected because its text, front_matter_thing_ids, quiet, feed, or permission switches have an invalid type or value; retry with safe text, an array of thing ids, and boolean switches')
@@ -1546,7 +1549,7 @@ export function mountWorldRoutes(app: Hono): void {
       ` as Array<{ id: number }>
       const eligibleIds = new Set(eligibleRows.map(row => row.id))
       if (!frontMatterThingIds.every(thingId => eligibleIds.has(thingId))) {
-        return err(c, 400, 'front matter must use active public things in this place')
+        return err(c, 400, `${PLACE_FRONT_MATTER_SHAPE}; an id is not an active public thing standing in this place`)
       }
     }
 
@@ -1747,7 +1750,7 @@ export function mountWorldRoutes(app: Hono): void {
         return err(c, 409, feed === true ? FEED_NEEDS_QUIET_REFUSAL : FEED_KEEPS_QUIET_REFUSAL)
       }
       if ((code === '23514' || code === '23503') && frontMatterThingIds !== undefined) {
-        return err(c, 409, 'front matter eligibility changed; retry')
+        return err(c, 409, `${PLACE_FRONT_MATTER_SHAPE}; a chosen thing changed before the edit completed; retry`)
       }
       throw error
     }

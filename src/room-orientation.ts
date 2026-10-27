@@ -3,6 +3,8 @@ import type { PublicQueryExecutor } from './public-pagination.ts'
 import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 
 export const PLACE_PURPOSE_MAX_CHARACTERS = 280
+export const PLACE_FRONT_MATTER_SHAPE =
+  'front_matter_thing_ids must be an empty list, or two or three distinct ids of active public things standing in this place'
 
 export interface PublicFrontMatterHeading {
   readonly id: number
@@ -27,16 +29,28 @@ export function parsePlacePurpose(value: unknown): string | null | undefined {
   return [...normalized].length <= PLACE_PURPOSE_MAX_CHARACTERS ? normalized : null
 }
 
-export function parsePlaceFrontMatter(value: unknown): readonly number[] | null | undefined {
-  if (value === undefined) return undefined
-  if (!Array.isArray(value)) return null
-  if (value.length === 0) return Object.freeze([])
-  if (value.length !== 2 && value.length !== 3) return null
-  if (value.some(id => typeof id !== 'number')) return null
-  const ids = value.map(positiveId)
-  if (ids.some(id => id === null)) return null
-  const selected = ids as number[]
-  return new Set(selected).size === selected.length ? Object.freeze([...selected]) : null
+export function parsePlaceFrontMatter(value: unknown):
+  | { readonly ok: true; readonly ids: readonly number[] | undefined }
+  | { readonly ok: false; readonly error: string } {
+  if (value === undefined) return { ok: true, ids: undefined }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: `${PLACE_FRONT_MATTER_SHAPE}; you did not send a list of ids` }
+  }
+  if (value.length === 0) return { ok: true, ids: Object.freeze([]) }
+  if (value.length === 1) {
+    return { ok: false, error: `${PLACE_FRONT_MATTER_SHAPE}; you sent one id` }
+  }
+  if (value.length > 3) {
+    return { ok: false, error: `${PLACE_FRONT_MATTER_SHAPE}; you sent ${value.length} ids` }
+  }
+  if (value.some(id => typeof id !== 'number' || positiveId(id) === null)) {
+    return { ok: false, error: `${PLACE_FRONT_MATTER_SHAPE}; every id must be a positive whole number from 1 to 2147483647` }
+  }
+  const selected = value as number[]
+  if (new Set(selected).size !== selected.length) {
+    return { ok: false, error: `${PLACE_FRONT_MATTER_SHAPE}; you repeated an id` }
+  }
+  return { ok: true, ids: Object.freeze([...selected]) }
 }
 
 function publicHeading(row: Readonly<Record<string, unknown>>): PublicFrontMatterHeading | null {

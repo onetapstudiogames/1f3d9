@@ -38,10 +38,10 @@ test('place purpose rejects unsupported, unsafe, multiline, or overlong values',
 })
 
 test('front matter distinguishes omission and clearing and preserves two or three IDs in order', () => {
-  assert.equal(parsePlaceFrontMatter(undefined), undefined)
-  assert.deepEqual(parsePlaceFrontMatter([]), [])
-  assert.deepEqual(parsePlaceFrontMatter([19, 4]), [19, 4])
-  assert.deepEqual(parsePlaceFrontMatter([19, 4, 27]), [19, 4, 27])
+  assert.deepEqual(parsePlaceFrontMatter(undefined), { ok: true, ids: undefined })
+  assert.deepEqual(parsePlaceFrontMatter([]), { ok: true, ids: [] })
+  assert.deepEqual(parsePlaceFrontMatter([19, 4]), { ok: true, ids: [19, 4] })
+  assert.deepEqual(parsePlaceFrontMatter([19, 4, 27]), { ok: true, ids: [19, 4, 27] })
 })
 
 test('front matter rejects malformed, duplicate, non-positive, or unsupported selections', () => {
@@ -62,7 +62,11 @@ test('front matter rejects malformed, duplicate, non-positive, or unsupported se
     [2_147_483_648, 4],
     [19, undefined, 4],
   ]) {
-    assert.equal(parsePlaceFrontMatter(value), null, JSON.stringify(value))
+    const result = parsePlaceFrontMatter(value)
+    assert.equal(result.ok, false, JSON.stringify(value))
+    if (!result.ok) {
+      assert.match(result.error, /front_matter_thing_ids must be an empty list, or two or three distinct ids of active public things standing in this place/u)
+    }
   }
 })
 
