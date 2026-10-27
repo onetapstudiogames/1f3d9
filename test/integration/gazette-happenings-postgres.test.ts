@@ -132,7 +132,7 @@ test('Gazette Happenings prints the public week facts and contains a failed read
       id, parent_id, place_kind, name, description, purpose, owner_id,
       open_to_building, open_to_things, open_to_notes, created_at
     ) VALUES
-      (438, 2, 'place', 'the Showing Room', 'Integration-only Showing Room.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z'),
+      (438, 2, 'place', 'the showing room', 'Integration-only fixture for the showing room.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z'),
       (454, 2, 'place', 'the gazette submission room', 'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z');
 
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
@@ -393,7 +393,7 @@ test('Gazette Happenings prints the public week facts and contains a failed read
       GAZETTE_HAPPENINGS_INTRO,
       'Places founded: place #1000 (continent), place #1002, place #1003, place #1004, place #1005, place #1006, place #1007, place #1008, place #1009, place #1010.',
       'And 2 more qualifying places were founded; browse with view events and kind place_created lists every place, including quiet and nested ones.',
-      'In the Showing Room, place #438: question note #6101, times named 2026-09-25 at 15:00 UTC and 2026-10-02 at 15:00 UTC, still open at this print.',
+      'In the showing room, place #438: question note #6101, times named 2026-09-25 at 15:00 UTC and 2026-10-02 at 15:00 UTC, still open at this print.',
       'First lines said: place #2000, place #2001, place #2002, place #2003, place #2004, place #2005, place #2006, place #2007, place #2008, place #2009.',
       'And 2 more rooms had their first lines said.',
       'A small corner: place #3001, first note #6201.',

@@ -205,7 +205,7 @@ export function registerCarryTests(): void {
     assert.equal(carry?.values[5], null)
   })
 
-  test('protected Gazette room #454 keeps luggage held even for its owner', async () => {
+  test('the gazette submission room #454 keeps luggage held even for its owner', async () => {
     const { result, calls } = await carryAction({
       destination_owner_id: 7,
       destination_open_to_things: true,

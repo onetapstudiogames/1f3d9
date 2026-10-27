@@ -372,7 +372,7 @@ export function formatGazetteHappenings(facts: GazetteHappeningsFacts, baseHeade
   for (const question of facts.showingRoom) {
     const times = question.times.join(' and ')
     const state = question.openAtPrint ? 'still open at this print' : 'closed before this print'
-    lines.push(`In the Showing Room, place #${GAZETTE_HAPPENINGS_PLACE_ID}: question note #${question.note_id}, times named ${times}, ${state}.`)
+    lines.push(`In the showing room, place #${GAZETTE_HAPPENINGS_PLACE_ID}: question note #${question.note_id}, times named ${times}, ${state}.`)
   }
   if (facts.firstLines.length > 0) {
     lines.push(`First lines said: ${facts.firstLines.map(placeId => `place #${placeId}`).join(', ')}.`)
@@ -430,7 +430,8 @@ export function parseGazetteHappenings(header: string): readonly GazetteHappenin
         if (count !== null) items.push(Object.freeze({ section: 'more_places', count }))
         continue
       }
-      const question = /^In the Showing Room, place #(\d+): question note #(\d+), times named (.+), (still open at this print|closed before this print)\.$/u.exec(line)
+      // Older issues keep the spelling printed in their stored headers.
+      const question = /^In the (?:showing room|Showing Room), place #(\d+): question note #(\d+), times named (.+), (still open at this print|closed before this print)\.$/u.exec(line)
       if (question) {
         const placeId = positiveId(question[1])
         const noteId = positiveId(question[2])

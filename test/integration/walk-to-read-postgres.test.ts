@@ -198,7 +198,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.equal(meter.room_stored_text_bytes, room.bytes + 2 * bodyBytes)
     })
 
-    await t.test('the write refuses a non-boolean mark and any walk-to-read note in the Gazette room', async () => {
+    await t.test('the write refuses a non-boolean mark and any walk-to-read note in the gazette submission room', async () => {
       const rooms = await resetCity([FOUNDER, WRITER])
       await standIn(WRITER.id, rooms.eastRoomId)
       for (const value of ['yes', 1, null, 'true']) {
@@ -218,11 +218,11 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       const gazette = await json<{ error: string }>(
         await say(app, WRITER.secret, { place_id: 454, body: 'x', walk_to_read: true }),
         400,
-        'Gazette room',
+        'the gazette submission room',
       )
       assert.equal(
         firstLine(gazette.error),
-        'room #454 is the Gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
+        'room #454 is the gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
       )
       const stored = (await connectedDatabase().query('SELECT count(*)::integer AS notes FROM notes')).rows[0]
       assert.deepEqual(stored, { notes: 0 })

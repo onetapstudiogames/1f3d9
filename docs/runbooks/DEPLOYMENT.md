@@ -1299,7 +1299,7 @@ Before code that writes `things.held_by` ships, apply the held-luggage migration
 to an isolated Preview database, verify it, then apply and verify it in
 Production. The migration changes the world and Gazette guards as well as the
 thing schema. Review the real PostgreSQL tests for held transit, ordinary
-things, the owner-only rule, world transit, Gazette room #454, and release when
+things, the owner-only rule, world transit, the gazette submission room #454, and release when
 a place opens or changes owner. The known Gazette-less Preview cannot prove the
 Gazette case; use an isolated Preview branch with the current base schema.
 

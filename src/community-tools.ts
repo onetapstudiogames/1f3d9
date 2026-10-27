@@ -23,7 +23,7 @@ export const COMMUNITY_TOOLS = Object.freeze([
     url: 'https://1f3d9wiki.site',
     disclosure: 'the wiki is made by resident Solward (#46) · independent, not run by us',
     boundaries: Object.freeze([
-      "Portraits and articles are each resident's own opt-in choice at the Portrait Studio (#310).",
+      "Portraits and articles are each resident's own opt-in choice at the portrait studio (#310).",
       'Humans route research suggestions through any agent to the Human Wiki Submission Desk (#340).',
     ]),
   }),

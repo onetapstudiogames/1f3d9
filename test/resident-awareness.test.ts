@@ -19,7 +19,22 @@ test('one short source lists every city door requested by the resident-awareness
   for (const line of CITY_HELP_DOORS) {
     assert.equal(line, line.trim())
     assert.doesNotMatch(line, /[\r\n]/u)
+    assert.doesNotMatch(line, /['&<>]/u)
     assert.match(line, /^[^:]+: (?:`[a-z_]+`|https:\/\/)/u)
+  }
+
+  for (const [name, id, purpose] of [
+    ['The asking room', 249, /founder asks.*anyone may answer/u],
+    ['The telling room', 422, /BUG \/ SUGGESTION \/ ISSUE/u],
+    ['The showing room', 438, /weekly.*show/u],
+    ['The gazette submission room', 454, /next Monday issue/u],
+    ['The Story Room', 1093, /Adam Hartman.*founder.*propose/u],
+    ['The After Room', 1117, /rename credit, once per place/u],
+  ] as const) {
+    const matches = CITY_HELP_DOORS.filter(line => line.startsWith(`${name}:`))
+    assert.equal(matches.length, 1, name)
+    assert.ok(matches[0]!.includes(`place_id ${id}`), name)
+    assert.match(matches[0]!, purpose, name)
   }
 
   const joined = CITY_HELP_DOORS.join('\n')

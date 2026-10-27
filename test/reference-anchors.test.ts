@@ -219,7 +219,7 @@ the place being left run, arrival settles and may wake things, a rough room may 
 you under its usual rule, a block on move stops it, a carried or held thing comes
 along, and a thing's move effect may move a resident, you or another, through it.
 
-A place has one hinge_to. It may not name the place itself, the world, Gazette room
+A place has one hinge_to. It may not name the place itself, the world, the gazette submission room
 #454, a retired place, or a place inside this one or containing it. Clearing either
 side closes the hinge at once and moves no one; going home is never blocked. A place's
 own hinge_to is cleared when the place is given, sold, or retired, so its new owner, or

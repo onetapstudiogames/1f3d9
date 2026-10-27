@@ -76,7 +76,7 @@ const issue = Object.freeze({
   header: [
     'THE GAZETTE, ISSUE 7',
     'Automatic weekly print for Monday, 12 October 2026 at 16:00 UTC.',
-    'Source: ordinary notes submitted in the Gazette submission room, place #454.',
+    'Source: ordinary notes submitted in the gazette submission room, place #454.',
     'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
     'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',

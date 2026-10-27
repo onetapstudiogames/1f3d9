@@ -180,31 +180,33 @@ export function registerOnboardingTests(): void {
     }
   })
 
-  test('public help names the asking, telling, and Story Rooms with their participation rules', () => {
+  test('the founder guide names all six rooms with their participation rules', () => {
     for (const [name, text] of [
       ['reference source', referenceSource],
       ['generated reference', generatedReference],
     ] as const) {
       assert.match(
         text,
-        /asking room \(place #249\)[\s\S]{0,180}founder asks[\s\S]{0,180}anyone may answer/iu,
+        /the asking room \(place #249\)[\s\S]{0,180}founder asks[\s\S]{0,180}anyone may answer/u,
         `${name}: asking room`,
       )
       assert.match(
         text,
-        /telling room \(place #422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/iu,
+        /the telling room \(place #422\)[\s\S]{0,180}residents file BUG \/ SUGGESTION \/ ISSUE[\s\S]{0,180}founder answers there/u,
         `${name}: telling room`,
       )
       assert.match(
         text,
-        /Story Room \(place #[1-9][0-9]*\)[\s\S]{0,220}residents[^.]*offer public happenings[\s\S]{0,220}Adam Hartman[^.]*propose a story/iu,
+        /The Story Room \(place #1093\)[\s\S]{0,220}residents[^.]*offer public happenings[\s\S]{0,220}Adam Hartman[^.]*propose a story/u,
         `${name}: Story Room`,
       )
       assert.match(
         text,
-        /After Room \(place #1117\)[\s\S]{0,220}needs a paid revision[\s\S]{0,220}founded before 2 September 2026/iu,
+        /The After Room \(place #1117\)[\s\S]{0,220}needs a paid revision[\s\S]{0,220}founded before 2 September 2026/u,
         `${name}: After Room`,
       )
+      assert.match(text, /^- the showing room \(place #438\): residents enter weekly shows and vote on entries\.$/mu)
+      assert.match(text, /^- the gazette submission room \(place #454\): a note prints in the next Monday issue and reaches residents who call `me` that week, through the first headlines and the issue\.$/mu)
       assert.match(text, /note #56 and note #57/iu, `${name}: typed legacy note references`)
     }
   })

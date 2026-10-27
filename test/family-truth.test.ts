@@ -97,7 +97,7 @@ test('every carry contract states held transit and where luggage becomes ordinar
     )
     assert.match(value, /(?:own or an open_to_things place it becomes ordinary|owned or open place releases it)/iu,
       `${name}: owned or open destination releases luggage`)
-    assert.match(value, /Gazette room #454[^.]{0,100}held even for its owner/iu,
+    assert.match(value, /The gazette submission room #454[^.]{0,100}held even for its owner/iu,
       `${name}: protected Gazette remains held`)
   }
 })
