@@ -61,6 +61,67 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
     }
   }
 
+  for (const door of ['HTTP', 'MCP']) {
+    await t.test(`${door}: chosen thing changes before the atomic edit without throwing`, async () => {
+      reset({
+        scenario: 'room orientation', placeOwnerId: 7,
+        frontMatterThingIds: [41, 42], frontMatterRaceLost: true,
+      })
+      const patch = { front_matter_thing_ids: [43, 42] }
+      const response = await app.request(door === 'HTTP' ? '/api/place/2' : '/mcp', {
+        method: door === 'HTTP' ? 'PATCH' : 'POST', headers,
+        body: JSON.stringify(door === 'HTTP' ? patch : {
+          jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'place_edit', arguments: { place_id: 2, ...patch } },
+        }),
+      })
+      assert.equal(response.status, door === 'HTTP' ? 409 : 200)
+      const body = await response.json()
+      if (door === 'MCP') assert.equal(body.result.isError, true)
+      const refusal = door === 'HTTP' ? body : JSON.parse(body.result.content[0].text)
+      if (door === 'MCP') assert.equal(refusal.http_status, 409)
+      assert.equal(refusal.error, 'front_matter_thing_ids must be an empty list, or two or three distinct ids of active public things standing in this place; a chosen thing changed before the edit completed; retry')
+      assert.deepEqual(fixtureState.current.frontMatterThingIds, [41, 42])
+    })
+  }
+
+  for (const door of ['HTTP', 'MCP']) {
+    await t.test(`${door}: eligible selection keeps the place or sale conflict refusal`, async () => {
+      reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterThingIds: [41, 42] })
+      const fakeFetch = globalThis.fetch
+      globalThis.fetch = async (input, init) => {
+        if (String(input).includes('/sql') && typeof init?.body === 'string'
+            && init.body.includes('WITH candidate_locks AS MATERIALIZED')) {
+          return Response.json({
+            command: 'SELECT', rowCount: 1,
+            fields: [{ name: 'id', dataTypeID: 23 }, { name: 'front_matter_eligible', dataTypeID: 16 }],
+            rows: [[null, 't']],
+          })
+        }
+        return fakeFetch(input, init)
+      }
+      try {
+        const patch = { front_matter_thing_ids: [43, 42] }
+        const response = await app.request(door === 'HTTP' ? '/api/place/2' : '/mcp', {
+          method: door === 'HTTP' ? 'PATCH' : 'POST', headers,
+          body: JSON.stringify(door === 'HTTP' ? patch : {
+            jsonrpc: '2.0', id: 1, method: 'tools/call',
+            params: { name: 'place_edit', arguments: { place_id: 2, ...patch } },
+          }),
+        })
+        assert.equal(response.status, door === 'HTTP' ? 409 : 200)
+        const body = await response.json()
+        if (door === 'MCP') assert.equal(body.result.isError, true)
+        const refusal = door === 'HTTP' ? body : JSON.parse(body.result.content[0].text)
+        if (door === 'MCP') assert.equal(refusal.http_status, 409)
+        assert.equal(refusal.error, 'place changed or received an open sale offer; retry')
+        assert.deepEqual(fixtureState.current.frontMatterThingIds, [41, 42])
+      } finally {
+        globalThis.fetch = fakeFetch
+      }
+    })
+  }
+
   for (const code of ['23514', '23503']) {
     await t.test(`eligibility changed during the edit: ${code}`, async () => {
       reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterThingIds: [41, 42] })
@@ -92,6 +153,7 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
         method: 'PATCH', headers, body: JSON.stringify({ front_matter_thing_ids: ids }),
       })
       assert.equal(response.status, 200, await response.clone().text())
+      assert.equal(Object.hasOwn((await response.json()).place, 'front_matter_eligible'), false)
       assert.deepEqual(fixtureState.current.frontMatterThingIds, ids)
     })
   }
