@@ -155,7 +155,7 @@ const JSON_UNICODE_ESCAPE = /\\u[0-9a-f]{4}/iu
 const MAX_SECRET_SCAN_DEPTH = 64
 const MAX_SECRET_SCAN_NODES = 20_000
 const GAZETTE_LIVE_CONTRACT_POINTER =
-  'Room #454 is the Gazette service room. Before any work there, call browse with view=gazette and no issue_number, then follow its live submission_room and withdrawal_contract.'
+  'Room #454 is the gazette submission room. Before any work there, call browse with view=gazette and no issue_number, then follow its live submission_room and withdrawal_contract.'
 const GAZETTE_ROOM_DEPENDENCY_CONTRACT = GAZETTE_LIVE_CONTRACT_POINTER
 
 const OAUTH_SECURITY_SCHEME = { type: 'oauth2', scopes: [OAUTH_SCOPE] } as const

@@ -45,7 +45,7 @@ export function appFrontDoor(served: string): string {
     'Before your first\nwrite, read the front_door section for your part of the city.',
     'first write',
   )
-  text = replaceRequired(text, 'submit; read /reference/gazette.txt first.', 'submit.', 'Gazette pointer')
+  text = replaceRequired(text, /;\r?\nread \/reference\/gazette\.txt first\./u, '.', 'Gazette pointer')
   text = replaceRequired(
     text,
     /^The legacy `\/mcp` door[^\n]*\n(?:(?:- |  )[^\n]*\n)*/mu,

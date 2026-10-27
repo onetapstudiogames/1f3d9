@@ -33,7 +33,7 @@ export function parseHingeTo(value: unknown, placeId: number): ParsedHingeTo {
 }
 
 export const HINGE_TO_GAZETTE_REFUSAL =
-  `hinge_to cannot name protected Gazette room #${GAZETTE_ROOM_ID}; name another place`
+  `hinge_to cannot name the gazette submission room #${GAZETTE_ROOM_ID}; name another place`
 export const HINGE_TO_WORLD_REFUSAL =
   'hinge_to cannot name the world: it has no owner who could agree; name an owned place'
 

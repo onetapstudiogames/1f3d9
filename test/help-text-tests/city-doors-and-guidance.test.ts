@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 163 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 163)
+    assert.deepEqual(recorded, Array.from({ length: 164 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 164)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
     assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
@@ -68,13 +68,13 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 160 \|[^\n]*A human may mute residents, places, notes, things and kinds in their own browser[^\n]*Neither founder account, residents #1 and #2, can be muted \(#159\)[^\n]*#9, #71 and docs\/INVARIANTS\.md item 21 are unchanged in substance[^\n]*LOCKED \(owner, 2026-10-14, proposal decisions section C[^\n]*"Go 11", 2026-10-18\)/u)
     assert.match(decisions, /\| 161 \|[^\n]*muted words judge encoded text on its translation, whatever its encoded-text filter says[^\n]*never on the encoded digits or symbols[^\n]*narrows #157's "it runs after describe"[^\n]*for the resident who chose describe or who keeps muted words[^\n]*LOCKED \(owner, 2026-10-19, in chat: "For number 1, it can be "translated" and checked for words in block/u)
     assert.match(decisions, /\| 162 \|[^\n]*On `\/mcp\/connect` only, from the deploy until 2026-11-03T23:59:59Z[^\n]*`CONNECT_LABEL_TEST_END`[^\n]*deliberately less than honest[^\n]*narrows #135 for `\/mcp\/connect` only[^\n]*LOCKED \(owner, 2026-10-20: "Should we try a temp fix of marking everything non destructive to see what happens"[^\n]*"I'd say yeah\. Let's try it on old connector"\)/u)
-    assert.match(contributorGuide, /\(163 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(164 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
     assert.ok(normalizedReference.includes('If you own a place founded before 2 September 2026, when renaming arrived, you may ask in The After Room, inside first town, for one fee credit to rename it, once per place.'))
-    assert.ok(normalizedReference.includes('The owner of a place founded before 2 September 2026, when renaming arrived, may also ask there for one credit to rename it, once per place.'))
-    assert.ok(read('../src/city-help.ts').includes('`look` with place_id 1117 opens the room where a resident may ask for the fee credit when a kind or place made before an update needs a paid revision, and the owner of a place founded before 2 September 2026 may ask once for a rename credit.'))
+    assert.ok(normalizedReference.includes('the owner of a place founded before 2 September 2026 may also ask for one rename credit, once per place'))
+    assert.ok(read('../src/city-help.ts').includes('`look` with place_id 1117 opens the room where a resident may ask for the fee credit when a kind or place made before an update needs a paid revision, and the owner of a place founded before 2 September 2026 may ask for a rename credit, once per place.'))
     assert.match(decisions, /\| 104 \|[^\n]*chance, write, and a wake key[^\n]*supersedes only #17's brick list/iu)
     assert.match(decisions, /\| 106 \|[^\n]*Nothing runs while nobody is there[^\n]*Place reads never settle/iu)
     assert.match(decisions, /\| 109 \|[^\n]*mark a room rough[^\n]*Going home is never blocked anywhere/iu)
@@ -333,20 +333,20 @@ export function registerCityDoorsAndGuidanceTests(): void {
       /signpost thing #1949[\s\S]{0,500}Square #3[\s\S]{0,180}front matter[^\n]*\[1949, 1\]/iu,
     )
     for (const [room, id] of [
-      ['portrait studio', 310],
-      ['showing room', 438],
-      ['asking room', 249],
-      ['telling room', 422],
-      ['Story Room', 1093],
-      ['After Room', 1117],
-      ['gazette submission room', 454],
+      ['the portrait studio', 310],
+      ['the showing room', 438],
+      ['the asking room', 249],
+      ['the telling room', 422],
+      ['The Story Room', 1093],
+      ['The After Room', 1117],
+      ['the gazette submission room', 454],
     ] as const) {
       assert.match(specification, new RegExp(`${room}[^\\n]{0,120}#${id}`, 'iu'))
     }
-    assert.match(specification, /Gazette submission room #454[^\n]*(?:closed shell|starts closed)/iu)
+    assert.match(specification, /The gazette submission room #454 is open for notes/u)
     assert.match(
       specification,
-      /Gazette submission room #454[\s\S]{0,180}things and building (?:stay )?closed/iu,
+      /The gazette submission room #454[^\n]*things and building stay closed/u,
     )
     assert.match(
       specification,

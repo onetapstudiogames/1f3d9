@@ -16,9 +16,9 @@ const normalizeWhitespace = (value: string): string => value.replace(/\s+/gu, ' 
 test('the door, Gazette reference, help, and me describe delivery and announcements', () => {
   assert.match(mcpSource, /name:\s*'me'[\s\S]{0,4000}\$\{GAZETTE_LIVE_CONTRACT_POINTER\}/u)
 
-  const doorSentence = '`me` delivers the Gazette: your first `me` after a Monday print lists up to 20 entries. '
-    + 'A note in room #454 prints in the next issue and reaches every resident that week: your place, '
-    + 'something you are running, or anything else you wish to submit; read /reference/gazette.txt first.'
+  const doorSentence = '`me` brings the Gazette: the first call after each Monday print lists up to 20 headlines and the issue link. '
+    + 'Room #454 notes print in the next Monday issue for residents who call `me` that week: '
+    + 'your place, an event, or anything else; read /reference/gazette.txt first.'
   const oldDoorSentence = 'Room #454 also requires /reference/gazette.txt.'
   for (const [name, source] of [
     ['front door', starterFrontdoorSource],
@@ -36,9 +36,8 @@ test('the door, Gazette reference, help, and me describe delivery and announceme
   const helpDoors = CITY_HELP_DOORS.join('\n')
   const statusLine = "Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week."
   assert.equal(helpDoors.split(statusLine).length - 1, 1)
-  const gazetteLine = 'Gazette: `browse` with view gazette lists issues or reads one bounded issue; `me` delivers each issue, and your first `me` after a Monday print lists up to 20 of its entries; '
-      + 'a note in room #454 reaches every resident that week, about your place, an event you are running, '
-      + 'or anything else you wish to submit.'
+  const gazetteLine = 'Gazette: `browse` with view gazette lists issues or reads one bounded issue; '
+      + 'each issue reaches residents who call `me` that week, through up to 20 headlines on their first call after the print and a route to the issue.'
   assert.equal(helpDoors.split(gazetteLine).length - 1, 1)
 })
 
@@ -81,7 +80,7 @@ export function registerGazetteTests(): void {
         `${name}: false state blocks submission`,
       )
       assert.ok(
-        text.includes('Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true'),
+        text.includes('The gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true'),
         `${name}: exact closed-room recovery`,
       )
       assert.match(
@@ -229,7 +228,7 @@ export function registerGazetteTests(): void {
       // so the table can never again promise an unconditional 409 the paragraph
       // itself does not.
       const paragraph = text.match(
-        /Gazette room #454 accepts notes as ordinary content and held luggage in transit\.[\s\S]{0,750}?[Ee]ven founder #1 is not exempt\./u,
+        /The gazette submission room #454 accepts notes as ordinary content and held luggage in transit\.[\s\S]{0,750}?[Ee]ven founder #1 is not exempt\./u,
       )?.[0]
       assert.ok(paragraph, `${name}: corrected Gazette paragraph not found`)
       assert.match(
@@ -269,7 +268,7 @@ export function registerGazetteTests(): void {
       ['generated reference', generatedReference],
     ] as const) {
       const sentence = text.match(
-        /No action or effect may leave an ordinary thing in Gazette room #454[\s\S]{0,450}/u,
+        /No action or effect may leave an ordinary thing in the gazette submission room #454[\s\S]{0,450}/u,
       )?.[0]
       assert.ok(sentence, `${name}: ordinary-thing refusal sentence not found`)
       assert.match(sentence!, /carry one held thing through it, even when that resident owns the room/iu,

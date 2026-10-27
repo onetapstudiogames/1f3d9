@@ -43,7 +43,7 @@ test('the served sentences are exact and plain', () => {
   assert.equal(WALK_TO_READ_TYPE_REFUSAL, 'walk_to_read must be true or false')
   assert.equal(
     WALK_TO_READ_GAZETTE_REFUSAL,
-    'room #454 is the Gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
+    'room #454 is the gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
   )
   assert.equal(
     WALK_TO_READ_WINDOW_LINE,

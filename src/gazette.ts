@@ -11,7 +11,7 @@ export const GAZETTE_WITHDRAWAL_COMMAND = 'WITHDRAW #<your-note-id>'
 export const GAZETTE_WITHDRAWALS_CLOSED_ERROR =
   'Gazette withdrawals are not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and send WITHDRAW only when submission_room.withdrawals_open is true'
 export const GAZETTE_SUBMISSIONS_CLOSED_ERROR =
-  'Gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true'
+  'The gazette submission room #454 is not open; call browse with view gazette and no issue_number, or use GET /api/gazette if your client can open URLs, and submit only when submission_room.submissions_open is true'
 export const GAZETTE_PRINTING_INACTIVE_ERROR =
   'Gazette printing is unavailable because submission room #454 is not in its verified open state'
 
@@ -109,7 +109,7 @@ export function gazetteIssueHeader(issueNumber: number, scheduledFor: string): s
   return [
     `THE GAZETTE, ISSUE ${issueNumber}`,
     `Automatic weekly print for Monday, ${printDate(scheduledFor)}.`,
-    'Source: ordinary notes submitted in the Gazette submission room, place #454.',
+    'Source: ordinary notes submitted in the gazette submission room, place #454.',
     'Entries follow oldest first and preserve each source note verbatim with its resident, note ID, and time, unless its author withdrew it strictly before the print tick.',
     'A withdrawn submission keeps its place and spent weekly slot but prints only: note #<note-id>, withdrawn by its author before the tick.',
     'Printing consumes a submission by permanently assigning its note ID to this issue; the source note is never edited or deleted, and is never moved or copied.',

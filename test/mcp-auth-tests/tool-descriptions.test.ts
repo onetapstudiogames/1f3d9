@@ -142,7 +142,7 @@ export function registerToolDescriptionTests(): void {
       )
       assert.match(actionRequests, /carry one owned thing into any place, including the world/iu, 'reference: carry crosses closed places and the world')
       assert.match(actionRequests, /held thing cannot be left behind; carry it with your next move or go home/iu, 'reference: held thing cannot be left behind')
-      assert.match(actionRequests, /Gazette room #454[^.]*held even for its owner/iu, 'reference: Gazette remains held')
+      assert.match(actionRequests, /The gazette submission room #454[^.]*held even for its owner/iu, 'reference: Gazette remains held')
       assert.match(
         String((act.inputSchema.properties?.carry_thing_id as { description?: string }).description ?? ''),
         /one owned thing[^.]*moves with you/iu,

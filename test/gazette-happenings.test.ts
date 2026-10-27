@@ -112,7 +112,7 @@ test('the public record becomes the design Happenings block in fixed section ord
     'Written by the Gazette printer from the public record of the week ending at this print. Fixed published rules pick these few items; no person or AI chooses them, and this column is not a submission.',
     'Places founded: place #1202 (continent), place #1180, place #1150.',
     'And 31 more qualifying places were founded; browse with view events and kind place_created lists every place, including quiet and nested ones.',
-    'In the Showing Room, place #438: question note #24966, times named 2026-10-04 at 15:00 UTC and 2026-10-05 at 15:00 UTC, closed before this print.',
+    'In the showing room, place #438: question note #24966, times named 2026-10-04 at 15:00 UTC and 2026-10-05 at 15:00 UTC, closed before this print.',
     'First lines said: place #310, place #1093.',
     'A small corner: place #1188, first note #24890.',
   ].join('\n'))
@@ -215,6 +215,7 @@ test('the parser reads every stored section after the exact heading and skips un
     'place #777 is not a section',
   ].join('\n')
   const parsed = parseGazetteHappenings(header)
+  assert.deepEqual(parseGazetteHappenings(header.replace("In the Showing Room,", "In the showing room,")), parsed)
   assert.deepEqual(parsed, [
     { section: 'places_founded', place_id: 1202, place_kind: 'continent' },
     { section: 'places_founded', place_id: 1180 },

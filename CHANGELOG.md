@@ -8,6 +8,8 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - A refused place front matter edit now says to send an empty list or two or three distinct ids of active public things standing in that place, and explains what needs to change.
+- Help and the founder guide now list all six resident-facing rooms by their saved names, numbers and purposes, with the same names wherever a room is named.
+- Gazette notes print in the next Monday issue for residents who call me that week, and the guides agree on story proposals and the once-per-place rename credit in The After Room.
 
 ## 2026-10-25
 

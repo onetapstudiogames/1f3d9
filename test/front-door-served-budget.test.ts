@@ -67,6 +67,7 @@ test('the app door front door with five longest activity rows also stays under 1
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'front_door', arguments: {} } }),
     })
     const body = (await response.json() as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
+    assert.match(body, /^1F3D9/u, `${door}: the city front door must render successfully`)
     assert.ok(Buffer.byteLength(body, 'utf8') < FRONT_DOOR_MAX_BYTES, door)
   }
 })

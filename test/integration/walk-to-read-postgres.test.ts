@@ -222,7 +222,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       )
       assert.equal(
         firstLine(gazette.error),
-        'room #454 is the Gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
+        'room #454 is the gazette submission room, where every submission is printed for everyone to read, so a note there cannot be walk-to-read; send walk_to_read false, or leave the walk-to-read note in another room',
       )
       const stored = (await connectedDatabase().query('SELECT count(*)::integer AS notes FROM notes')).rows[0]
       assert.deepEqual(stored, { notes: 0 })

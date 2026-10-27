@@ -323,7 +323,7 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
       assert.equal(samePlace.json.error, 'hinge_to cannot name this same place; name another place, or send null to close your side')
       const gazette = await edit(FOUNDER.secret, { hinge_to: 454 })
       assert.equal(gazette.status, 409, JSON.stringify(gazette.json))
-      assert.equal(gazette.json.error, 'hinge_to cannot name protected Gazette room #454; name another place')
+      assert.equal(gazette.json.error, 'hinge_to cannot name the gazette submission room #454; name another place')
       const missing = await edit(FOUNDER.secret, { hinge_to: 999_999 })
       assert.equal(missing.status, 404, JSON.stringify(missing.json))
       assert.equal(missing.json.error, 'hinge_to place_id 999999 was not found; name a current place id from the public map')

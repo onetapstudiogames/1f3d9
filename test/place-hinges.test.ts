@@ -32,7 +32,7 @@ test('parseHingeTo distinguishes omission, clearing, valid ids, and exact refusa
 })
 
 test('hinge target refusals use caller-facing place facts', () => {
-  assert.equal(HINGE_TO_GAZETTE_REFUSAL, 'hinge_to cannot name protected Gazette room #454; name another place')
+  assert.equal(HINGE_TO_GAZETTE_REFUSAL, 'hinge_to cannot name the gazette submission room #454; name another place')
   assert.equal(HINGE_TO_WORLD_REFUSAL, 'hinge_to cannot name the world: it has no owner who could agree; name an owned place')
   assert.equal(hingeTargetMissingRefusal(12), 'hinge_to place_id 12 was not found; name a current place id from the public map')
   assert.equal(hingeTargetRetiredRefusal(12), 'hinge_to place_id 12 is retired; its owner must restore it first, or name another place')

@@ -147,7 +147,7 @@ export function registerFrontDoorAndPhysicsTests(): void {
 
   test('all Gazette room dependency writes return one protected-service refusal', async () => {
     const expected = {
-      error: 'Gazette room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things',
+      error: 'The gazette submission room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things',
     }
     const requests = [
       ['/api/place/454/laws', 'PUT', { traits: ['war-zone'] }],
