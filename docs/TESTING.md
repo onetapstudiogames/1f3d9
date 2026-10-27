@@ -64,8 +64,8 @@ workflow, test, unknown, and mixed changes. A pull request that modifies only
 same required `checks` job. Added, deleted, renamed, empty, or unknown paths
 fail closed to the full gate, and every push to `main` runs the full gate.
 
-Release candidates additionally run `bash scripts/deploy.sh --prepare` after
-required CI succeeds. Preparation does not repeat the suites. It verifies the
+For a hand release, the operator additionally runs `bash scripts/deploy.sh --prepare`
+after required CI succeeds. Preparation does not repeat the suites. It verifies the
 newest relevant required `checks` run is completed and successful for the exact
 pushed commit, enforces the separate release and migration prerequisites, and
 then proves the commit did not move. Read its explicit `GATE_EXIT` line; piping

@@ -24,6 +24,9 @@ A change is done when ALL of these are true, and not before:
    GitHub Actions app for the exact pushed commit, then rechecks that the commit
    did not move. Read its explicit `GATE_EXIT` line; never claim an unrun check
    passed.
+   The script and its release prerequisites are for hand releases only; an ordinary
+   pull request merges when the required `checks` job is green on the exact final
+   commit and a skeptical reviewer in a fresh clone approves that commit.
 3. **A feature touching an external service has one real run recorded.** A
    green suite against fakes has repeatedly failed here on first contact with
    the live service. Until a real run happened, say so plainly.
