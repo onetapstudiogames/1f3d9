@@ -2908,12 +2908,19 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   empty states are distinct. A delayed reply cannot replace another selected
   resident. Quiet and unknown rooms are omitted before browser mute counts or
   rendering: their membership creates no row, count, label or link, including
-  retained and hidden markup after a quiet-room change. Browser mute counts and
+  retained and hidden markup after a quiet-room change. A constant Check public
+  notes action is available even for an empty or exhausted list, independent of
+  concealed matches, continuation flags and gap markers. Each press reads one
+  page: a pending gap first, then older pages, or newest again when complete.
+  Its generic gap notice never names a concealed range. Browser mute counts and
   outlines reuse the existing controls, and muting the selected resident clears
   this section. A selection uses existing directory and focused presence reads,
-  with no census or automatic history walk. The list shares the existing 3,000
-  retained-row limit plus held-open rows and the 300-row gap-fill budget across
-  one refresh. Failed change checks drop older retained rows. The independent
+  with no census or automatic history walk. Across a changed refresh, the list
+  shares the existing 3,000 retained-row limit plus held-open rows and the 300-row
+  gap-fill budget across one refresh.
+  Requested older pages can exceed this retention bound until the next changed refresh.
+  A newest-page recheck uses the same retention rule and preserves unread gaps.
+  Failed change checks drop older retained rows. The independent
   live view and terminal follow renderer are unchanged.
 - The window stands nowhere, so a walk-to-read note (decision #102) shows its author,
   place, time, and first line under the label "Walk to read, first line only", then one

@@ -2,6 +2,60 @@ import { expect, test } from '@playwright/test'
 import { publicWindowFixture } from './helpers/oauth-test-server/public-window-fixtures.ts'
 import { installMentionsFixture, mentionCard, mentionNote, mentionResidents, readyMentions } from './helpers/window-mentions.ts'
 
+test('Named in quiet membership alone creates no paging label or control', async ({ page }) => {
+  const fixture = await installMentionsFixture(page, { notes: Array.from({ length: 26 }, (_, index) =>
+    mentionNote(700 - index, 'ONLY_QUIET selene', { place_id: 12 })) })
+  fixture.setQuiet(12)
+  await readyMentions(page, '/window/conversations?resident=selene')
+  await expect(page.locator('#mentions-summary')).toHaveText('No public notes are shown for this resident.')
+  await expect(page.locator('#mentions-list [data-viewer-record-key]')).toHaveCount(0)
+  await expect(page.locator('#mentions-page')).toBeHidden()
+  const check = page.getByRole('button', { name: 'Check public notes', exact: true })
+  await expect(check).toBeEnabled()
+  const emptyMarkup = await page.locator('#resident-mentions').evaluate(node => node.outerHTML)
+  expect(emptyMarkup).not.toMatch(/ONLY_QUIET|note:|note\/|Load older|missing here/)
+  expect(fixture.requests.filter(path => path.includes('mentions='))).toHaveLength(1)
+  await check.click()
+  await expect(check).toBeEnabled()
+  await expect(page.locator('#mentions-page')).toBeHidden()
+  await expect.poll(() => page.locator('#resident-mentions').evaluate(node => node.outerHTML)).toBe(emptyMarkup)
+  expect(fixture.requests.filter(path => path.includes('mentions='))).toHaveLength(2)
+  fixture.setNotes([])
+  await fixture.refresh()
+  await expect.poll(() => page.locator('#resident-mentions').evaluate(node => node.outerHTML)).toBe(emptyMarkup)
+  const before = fixture.requests.filter(path => path.includes('mentions=')).length
+  await check.click()
+  await expect.poll(() => fixture.requests.filter(path => path.includes('mentions=')).length).toBe(before + 1)
+  await expect.poll(() => page.locator('#resident-mentions').evaluate(node => node.outerHTML)).toBe(emptyMarkup)
+})
+
+test('Named in can reach public notes behind a quiet-only page with one read per click', async ({ page }) => {
+  const fixture = await installMentionsFixture(page, { notes: [
+    ...Array.from({ length: 26 }, (_, index) => mentionNote(700 - index, 'ONLY_QUIET selene', { place_id: 12 })),
+    mentionNote(674, 'OLDER_PUBLIC selene'),
+  ] })
+  fixture.setQuiet(12)
+  await readyMentions(page, '/window/conversations?resident=selene')
+  await expect(page.locator('#mentions-summary')).toHaveText('No public notes are shown for this resident.')
+  await expect(page.locator('#mentions-page')).toBeHidden()
+  expect(fixture.requests.filter(path => path.includes('mentions='))).toHaveLength(1)
+  const release = fixture.delayMentions()
+  await page.getByRole('button', { name: 'Check public notes', exact: true }).click()
+  const checking = page.getByRole('button', { name: 'Checking public notes...', exact: true })
+  await expect(checking).toBeFocused()
+  await expect(checking).toBeEnabled()
+  await checking.click()
+  expect(fixture.requests.filter(path => path.includes('mentions='))).toHaveLength(2)
+  release()
+  await expect(page.locator('#mentions-list [data-viewer-record-key]')).toHaveCount(1)
+  await expect(page.locator('#mentions-list')).toContainText('OLDER_PUBLIC')
+  await expect(page.getByRole('button', { name: 'Check public notes', exact: true })).toBeFocused()
+  const reads = fixture.requests.filter(path => path.includes('mentions='))
+  expect(reads).toHaveLength(2)
+  expect(new URL(reads[1]!, 'http://localhost').searchParams.get('before_id')).toBe('676')
+  expect(new URL(reads[1]!, 'http://localhost').searchParams.get('limit')).toBe('25')
+})
+
 test('archive first lines wait for muted names and keep other handles plain', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('1f3d9:mutes:v1', JSON.stringify({
     version: 1, items: [{ type: 'resident', id: 901, choice: 'mute' }],

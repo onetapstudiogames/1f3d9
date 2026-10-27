@@ -325,13 +325,17 @@ export function olderHistoryPager(
 ) {
   const source = functionSource(
     PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE, 'loadHistory', 'function loadedHistoryRows')
+  const kindSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
+    '  function historyViewerRecordKind', '  function historyOrderedRows')
+  const retainedSource = sourceBetween(PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES,
+    '  function freshHistoryEntry', '  function failedOwnNewestEntry')
   let stored = initial
   const run = new Function(
     'historyEntry', 'setHistoryEntry', 'renderAll', 'historyRequestUrl', 'fetch',
     'requireCurrentReadMarker', 'normalizeHistoryRows', 'safeId', 'mergeWindowRows',
-    'window', 'REQUEST_TIMEOUT_MS', 'WINDOW_HISTORY_KEEP_ROWS',
+    'window', 'REQUEST_TIMEOUT_MS', 'WINDOW_HISTORY_KEEP_ROWS', 'viewerHeldRecordKeys',
     `let state = { changeMarker: '8' }; let authoredRevision = 1;
-     ${GAP_SOURCE} ${FILL_SOURCE} ${source} return loadHistory`,
+     ${GAP_SOURCE} ${FILL_SOURCE} ${kindSource} ${retainedSource} ${source} return loadHistory`,
   )(
     () => stored,
     (_collection: string, _filters: unknown, entry: HistoryEntry) => { stored = entry },
@@ -340,7 +344,7 @@ export function olderHistoryPager(
     fetchFake,
     () => {}, (collection: string, payload: Record<string, Row[]>) => payload[collection],
     (value: unknown) => Number(value) || null, mergeWindowRows,
-    { setTimeout: () => 1, clearTimeout: () => {} }, 10_000, WINDOW_HISTORY_KEEP_ROWS,
+    { setTimeout: () => 1, clearTimeout: () => {} }, 10_000, WINDOW_HISTORY_KEEP_ROWS, () => new Set(),
   ) as (collection: string, filters: unknown) => Promise<void>
   return { run, read: () => stored }
 }

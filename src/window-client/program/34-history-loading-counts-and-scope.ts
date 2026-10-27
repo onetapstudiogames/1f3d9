@@ -4,7 +4,12 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
     if (automatic) return
     const current = historyEntry(collection, filters)
     const waiting = Boolean(namedHistoryGap(current)) || current.newestReadFailed === true
-    if (current.loading || (current.initialized && !current.hasMore && !waiting && !current.error)) {
+    // The membership-neutral mentions action also works on a finished list.
+    // Reconcile its newest page so new arrivals cannot strand an unread gap.
+    const checkNewest = filters.mentions && current.initialized && !current.hasMore &&
+      !waiting
+    if (current.loading || (current.initialized && !current.hasMore && !waiting &&
+        !current.error && !checkNewest)) {
       return
     }
     const requestAuthoredRevision = authoredRevision
@@ -22,7 +27,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
     let overtakenByRefresh = false
     try {
       const requestEntry = historyEntry(collection, filters)
-      const retryNewest = requestEntry.newestReadFailed === true
+      const retryNewest = checkNewest || requestEntry.newestReadFailed === true
       // A named gap is read as the range it is, so the control never asks for
       // records below the gap it is trying to close. With no gap named, load
       // older simply continues from the lowest loaded record.

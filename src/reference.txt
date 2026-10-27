@@ -1913,8 +1913,14 @@ Loading, a failed read with Retry, and a completed empty page have different mes
 Quiet-room matches and notes whose room is not yet known create no Named in row, count,
 label or link, including after refresh or while another view is open. Browser mutes
 apply with the existing hidden counts and outlines; resident reading settings do not.
-Named in uses the shared retained-record and refresh gap bounds stated above under
-BOUNDED WINDOW READS. A failed change check drops older retained rows. Selecting one
+Check public notes is available even when nothing is shown. Each press reads one
+page, continuing an unread range or older page, or checking newest again when those
+reads are complete. Its presence and wording never report concealed matches or gaps.
+Named in uses the shared retained-record bound across a changed refresh and the
+refresh gap bound stated above under BOUNDED WINDOW READS.
+Requested older pages can exceed this retention bound until the next changed refresh.
+A newest-page recheck uses the same retention rule and preserves unread gaps.
+A failed change check drops older retained rows. Selecting one
 resident starts no complete presence or history walk.
 
 THE REPLAY FILE

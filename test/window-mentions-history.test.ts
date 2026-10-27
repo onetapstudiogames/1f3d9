@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES } from '../src/window-client/program/13-branch-cache-and-history-entries.ts'
 import { PART_33_AGREEMENTS_AND_HISTORY_CONTROLS } from '../src/window-client/program/33-agreements-and-history-controls.ts'
@@ -6,8 +7,9 @@ import { mergeWindowRows } from '../src/window-client/rows.ts'
 import { WINDOW_HISTORY_FILL_ROWS, WINDOW_HISTORY_KEEP_ROWS } from '../src/window-history-limits.ts'
 import {
   cityList, drawnHistoryEntry, historyGapFiller, ids, loadedEntry, refreshedHistories,
-  rowsFrom, snapshotOf, sourceBetween, type Histories, type Request,
+  olderHistoryPager, rowsFrom, snapshotOf, sourceBetween, type Histories, type Request,
 } from './window-reading-client-tests/harness.ts'
+import { mentionsRenderer } from './window-reading-client-tests/mentions-renderer.ts'
 
 const filters = Object.freeze({ placeId: null, resident: null, mentions: 'selene', context: false })
 const key = 'mentions:selene'
@@ -83,6 +85,82 @@ test('mentions refresh uses its own newest page and the shared 3000 retained row
   assert.equal(refreshed.rows.at(-1)!.id, 1026)
   assert.equal(ids(refreshed.rows).includes(9999), false)
   assert.equal(refreshed.hasMore, true)
+})
+
+test('ordinary mentions paging can exceed the changed-refresh retention bound as documented', async () => {
+  const pagingFilters = { placeId: null, resident: null, mentions: 'ann', context: false }
+  const pager = olderHistoryPager(loadedEntry(rowsFrom(4000, 3000), { filters: pagingFilters }),
+    cityList({ newestId: () => 4000, pageSize: 25 }))
+  await pager.run('notes', pagingFilters)
+  assert.equal(pager.read().error, false)
+  assert.equal(pager.read().rows.length, 3025)
+  assert.deepEqual(ids(pager.read().rows), ids(rowsFrom(4000, 3025)))
+  const refreshed = refreshedHistories({ notes: { 'mentions:ann': pager.read() } },
+    snapshotOf({}), { ownNewestPages: { notes: { 'mentions:ann': {
+      failed: false, rows: rowsFrom(4000, 25), page: { hasMore: true, nextBeforeId: 3976 },
+    } } } }).notes!['mentions:ann']!
+  assert.equal(refreshed.rows.length, WINDOW_HISTORY_KEEP_ROWS)
+  for (const path of ['src/reference.txt', 'docs/SYSTEM_DESIGN.md']) {
+    const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8')
+    assert.match(source, /Requested older pages can exceed this retention bound until the next changed refresh\./u,
+      path + ' must distinguish ordinary paging from changed-refresh retention (3025 then 3000 rows)')
+  }
+})
+
+test('mentions renderer hides quiet-only paging and keeps empty controls independent of concealed matches', () => {
+  const empty = mentionsRenderer(loadedEntry([], { hasMore: false }))
+  const quiet = mentionsRenderer(loadedEntry(rowsFrom(700, 25).map(row => ({ ...row, place_id: 12 }))))
+  assert.equal(quiet.node('mentions-page')?.hidden, true)
+  assert.equal(quiet.node('mentions-summary')?.textContent, 'No public notes are shown for this resident.')
+  assert.deepEqual(quiet.markup(), empty.markup())
+  assert.equal(quiet.node('mentions-check')?.children.at(-1)?.textContent, 'Check public notes')
+  for (const place_id of [12, 99]) {
+    const concealedGap = mentionsRenderer(loadedEntry([{ id: 700, place_id }], {
+      gapAfterIds: [700], hasMore: true,
+    }))
+    assert.deepEqual(concealedGap.markup(), empty.markup())
+  }
+})
+
+test('mentions renderer controls do not disclose quiet matches beside one public note', () => {
+  const publicRow = { id: 701, place_id: 11 }
+  const onlyPublic = mentionsRenderer(loadedEntry([publicRow], { hasMore: false }))
+  const mixed = mentionsRenderer(loadedEntry([publicRow, ...rowsFrom(700, 24)
+    .map(row => ({ ...row, place_id: 12 }))], { gapAfterIds: [700] }))
+  assert.deepEqual(mixed.markup(), onlyPublic.markup())
+})
+
+test('checking exhausted mentions keeps the unread range between newest and retained rows reachable', async () => {
+  const requests: Request[] = []
+  const pager = olderHistoryPager(loadedEntry(rowsFrom(10, 10), { filters, hasMore: false, error: false }),
+    cityList({ newestId: () => 50, pageSize: 25, requests }))
+  await pager.run('notes', filters)
+  assert.equal(pager.read().error, false)
+  assert.deepEqual(ids(pager.read().rows), [...ids(rowsFrom(50, 25)), ...ids(rowsFrom(10, 10))])
+  await pager.run('notes', filters)
+  assert.equal(pager.read().error, false)
+  assert.deepEqual(ids(pager.read().rows), ids(rowsFrom(50, 50)))
+  assert.deepEqual(requests, [
+    { beforeId: null, afterId: null, marker: '8' },
+    { beforeId: 26, afterId: 10, marker: '8' },
+  ])
+})
+
+test('a failed exhausted mentions check retries newest instead of reading below the last row', async () => {
+  const reads: string[] = []
+  const city = cityList({ newestId: () => 50, pageSize: 25 })
+  const pager = olderHistoryPager(loadedEntry(rowsFrom(10, 10), { filters, hasMore: false }),
+    async input => {
+      reads.push(input)
+      return reads.length === 1 ? { ok: false } : city(input)
+    })
+  await pager.run('notes', filters)
+  assert.equal(pager.read().error, true)
+  await pager.run('notes', filters)
+  assert.equal(pager.read().error, false)
+  assert.equal(reads.length, 2)
+  assert.equal(reads[1], reads[0])
+  assert.deepEqual(ids(pager.read().rows), [...ids(rowsFrom(50, 25)), ...ids(rowsFrom(10, 10))])
 })
 
 test('a failed change check drops retained mentions even when their newest read fails', () => {
