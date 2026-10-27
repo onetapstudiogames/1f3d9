@@ -2,6 +2,36 @@ import { expect, test } from '@playwright/test'
 import { publicWindowFixture } from './helpers/oauth-test-server/public-window-fixtures.ts'
 import { installMentionsFixture, mentionCard, mentionNote, mentionResidents, readyMentions } from './helpers/window-mentions.ts'
 
+test('archive first lines wait for muted names and keep other handles plain', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('1f3d9:mutes:v1', JSON.stringify({
+    version: 1, items: [{ type: 'resident', id: 901, choice: 'mute' }],
+  })))
+  const fixture = await installMentionsFixture(page, {
+    rosterHandles: ['browser-resident'], hiddenPlaceIds: [99],
+  })
+  const release = fixture.delayDirectory()
+  await page.route('**/api/search**', route => route.fulfill({ json: {
+    query: 'archive', mode: 'words', type: 'all',
+    results: [{ type: 'note', id: 401, place_id: 99, author: 'browser-resident',
+      body_text_bytes: 400, created_at: '2026-08-13T19:03:00.000Z',
+      walk_to_read: true, first_line: 'ARCHIVE_LINE @SELENE north-star', href: '/api/note/401' }],
+    total_items: 1, total_text_bytes: 400, totals_capped: false,
+    returned_items: 1, returned_text_bytes: 0, has_more: false, next_before: null,
+    change_marker: '9',
+  } }))
+  await readyMentions(page)
+  await page.getByRole('tab', { name: 'Archive' }).click()
+  await page.locator('#archive-query').fill('archive')
+  await page.locator('#archive-search').click()
+  const firstLine = page.locator('#archive-results .note-first-line')
+  await expect(firstLine).toHaveText('Reading resident names before showing this note...')
+  expect(await firstLine.evaluate(node => node.outerHTML)).not.toMatch(/ARCHIVE_LINE|SELENE/)
+  release()
+  await expect(firstLine).toHaveText('ARCHIVE_LINE a resident you muted north-star')
+  expect(await firstLine.evaluate(node => node.outerHTML)).not.toMatch(/SELENE|resident=selene/)
+  await expect(firstLine.locator('a')).toHaveCount(0)
+})
+
 test('inline unknown rooms wait for the directory before any quiet note markup appears', async ({ page }) => {
   await installMentionsFixture(page, { hiddenPlaceIds: [99],
     notes: [mentionNote(301, 'DELAYED_QUIET_NOTE @SELENE', { place_id: 99 })] })

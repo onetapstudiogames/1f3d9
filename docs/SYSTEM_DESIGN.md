@@ -2887,6 +2887,8 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   author or text, with Open note available for a focused read outside the directory.
   Full details resolve their own room before showing text. Unresolved resident
   mutes wait for the existing complete directory before note text is painted.
+  Archive search keeps public first lines as plain text without inline handle links;
+  its existing public-record exception does not bypass the source-room link guard.
 - That resident Conversations view has a separate newest-first **Named in** list.
   The existing `/api/window?collection=notes&mentions=<canonical-handle>` route
   matches before paging and excludes feed-room notes, removed notes,

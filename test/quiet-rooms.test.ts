@@ -185,8 +185,16 @@ test('every path that lists a resident, thing, or note resolves quiet through is
       pattern: /function renderThings\(target, things, placeOf\) \{[\s\S]{0,700}if \(isQuietPlace\(resolvedPlace\)\) \{\s*\n\s*item\.classList\.add\('thing-card-quiet'\)/u,
     },
     {
-      name: 'noteCard: every note list — Rooms, Conversations (filtered or not), city-wide',
+      name: 'noteCard: every note list, Rooms, Conversations (filtered or not), city-wide',
       pattern: /function noteCard\(note, place\) \{\s*\n\s*if \(isQuietPlace\(place\)\) \{/u,
+    },
+    {
+      name: 'renderMentions: Named in omits quiet and unknown rooms before counting or rendering',
+      pattern: /const publicRows = entry\.rows\.filter\(note => \{\s*const place = placeOf\(note\.place_id\)\s*return place && !isQuietPlace\(place\)/u,
+    },
+    {
+      name: 'publicNoteBody: inline handles check the source note room before writing text',
+      pattern: /function publicNoteBody\(className, text, place, truncated = false\) \{\s*if \(isQuietPlace\(place\)\)/u,
     },
     {
       name: 'renderPeople: the Rooms Occupants panel, recursive across descendants',
@@ -234,6 +242,26 @@ test('every path that lists a resident, thing, or note resolves quiet through is
       allowedBespokeChecks.has(check),
       'unexpected bespoke quiet check outside isQuietPlace: ' + check,
     )
+  }
+})
+
+test('inline note bodies withhold words and links for quiet or unresolved source rooms', () => {
+  const bodySource = /function publicNoteBody\([^]*?\n  \}/u.exec(WINDOW_JS)?.[0]
+  assert.ok(bodySource)
+  const renderBody = new Function('isQuietPlace', 'quietRoomNotice', 'element',
+    `const state = { directory: { loaded: true } };
+     const appendWindowNoteMentions = (body, text) => { body.textContent = text };
+     const HANDLE_MENTION_TOKEN_SOURCE = '';
+     const handleIsMuted = () => false;
+     const MUTED_RESIDENT_LABEL = 'Muted resident';
+     return ` + bodySource)(
+    (place: { quiet?: boolean } | null) => place?.quiet === true,
+    () => ({ textContent: 'Quiet room' }),
+    (_tag: string, _className: string, text = '') => ({ textContent: text }),
+  )
+  for (const place of [{ quiet: true }, null, undefined]) {
+    const body = renderBody('note-body', 'WITHHELD_NOTE @selene', place)
+    assert.doesNotMatch(body.textContent, /WITHHELD_NOTE|selene/u)
   }
 })
 

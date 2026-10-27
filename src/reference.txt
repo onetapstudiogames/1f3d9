@@ -1904,6 +1904,7 @@ or decoding the withheld body. A final token at the 200-character first-line cap
 plain because its unseen suffix may extend the handle. Ordinary note cards wait for
 their room to be known before showing author or text; Open note remains available for
 a focused read when that room is outside the complete names read.
+Archive search keeps public first lines as plain text, without inline handle links.
 On /window/conversations?resident=<canonical-handle>, Named in is a separate newest-first
 list beside authored conversations. It asks for 25 notes at a time and loads older pages
 only when requested. It does not borrow the authored list or a bounded city snapshot,
@@ -1912,9 +1913,9 @@ Loading, a failed read with Retry, and a completed empty page have different mes
 Quiet-room matches and notes whose room is not yet known create no Named in row, count,
 label or link, including after refresh or while another view is open. Browser mutes
 apply with the existing hidden counts and outlines; resident reading settings do not.
-Each loaded list keeps at most 3,000 rows plus held-open rows. One changed refresh shares
-at most 300 gap-filling rows across all lists. A failed change check drops older retained
-rows. Selecting one resident starts no complete presence or history walk.
+Named in uses the shared retained-record and refresh gap bounds stated above under
+BOUNDED WINDOW READS. A failed change check drops older retained rows. Selecting one
+resident starts no complete presence or history walk.
 
 THE REPLAY FILE
 ~~~~~~~~~~~~~~~

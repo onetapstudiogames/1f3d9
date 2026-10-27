@@ -139,9 +139,9 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           record.kind === 'note' && record.moderated
             ? element('p', 'record-detail-text removed-label', MODERATED_WINDOW_LABEL)
             : record.walkToRead
-              ? walkToReadDetailNode(record)
+              ? walkToReadDetailNode(record, notePlace)
               : record.kind === 'note'
-                ? publicNoteBody('record-detail-text public-body', record.body)
+                ? publicNoteBody('record-detail-text public-body', record.body, notePlace)
                 : element('p', 'record-detail-text public-body', record.body),
           record.kind,
           record,
@@ -181,10 +181,10 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       'This ' + kind + ' is hidden by your mutes in this browser.')
   }
 
-  function walkToReadDetailNode(record) {
+  function walkToReadDetailNode(record, place) {
     const node = element('div', 'record-detail-text walk-to-read-block')
     node.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
-    if (record.firstLine) node.append(publicNoteBody('note-first-line public-body', record.firstLine,
+    if (record.firstLine) node.append(publicNoteBody('note-first-line public-body', record.firstLine, place,
       Array.from(record.firstLine).length >= NOTE_FIRST_LINE_CHARACTERS))
     node.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return node
@@ -346,7 +346,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         : 'Excerpt only — the full text is not included in this bounded view. '
   }
 
-  function renderExpandableBody(kind, id, body, truncated, recordVersion = null) {
+  function renderExpandableBody(kind, id, body, truncated, recordVersion = null, place = null) {
     const block = element('div', 'body-block')
     const bodyKey = kind + ':' + String(id)
     const fullEntry = state.fullBodies[bodyKey] || null
@@ -354,7 +354,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       fullEntry.recordVersion === recordVersion
     const text = hasFullBody ? fullEntry.body : body
     const bodyNode = kind === 'note'
-      ? publicNoteBody('note-body public-body', text, truncated && !hasFullBody)
+      ? publicNoteBody('note-body public-body', text, place, truncated && !hasFullBody)
       : element('p', kind + '-body public-body', text)
     if (truncated && !hasFullBody) bodyNode.append(document.createTextNode('…'))
     const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)

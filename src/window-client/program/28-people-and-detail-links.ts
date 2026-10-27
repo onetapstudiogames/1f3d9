@@ -83,15 +83,22 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     return link
   }
 
-  function publicNoteBody(className, text, truncated = false) {
-    const body = element('p', className)
+  function noteTextWaitingMessage() {
     const unresolvedMute = !state.directory.loaded && [...muteRules().residents]
       .some(id => !residentHandleById(id) && !Object.values(state.focusedResidents)
         .some(entry => entry?.resident?.id === id))
-    if (unresolvedMute) {
-      body.textContent = state.directory.error
-        ? 'Resident names could not be read. Retry the city directory to show this note.'
-        : 'Reading resident names before showing this note...'
+    return !unresolvedMute ? null : state.directory.error
+      ? 'Resident names could not be read. Retry the city directory to show this note.'
+      : 'Reading resident names before showing this note...'
+  }
+
+  function publicNoteBody(className, text, place, truncated = false) {
+    if (isQuietPlace(place)) return quietRoomNotice(place)
+    if (!place) return element('p', className, 'Reading the room for this note...')
+    const body = element('p', className)
+    const waiting = noteTextWaitingMessage()
+    if (waiting) {
+      body.textContent = waiting
       return body
     }
     appendWindowNoteMentions(body, text, truncated, HANDLE_MENTION_TOKEN_SOURCE,

@@ -97,6 +97,14 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   // Rooms tab, the Conversations tab (with or without a resident filter),
   // and any place-scoped or city-wide feed — inherits it for free.
   function noteCard(note, place) {
+    if (isQuietPlace(place)) {
+      const card = element('article', 'note-card note-card-quiet')
+      card.append(
+        element('p', 'quiet-room-context', 'A note in ' + quietRoomName(place, note.place_id) + '.'),
+        quietRoomNotice(place),
+      )
+      return viewerRecordNode(card, 'note', note, viewerPlacePresentation(place))
+    }
     if (!place) {
       const card = element('article', 'note-card')
       card.append(element('p', state.directory.loaded || state.directory.error ? 'empty-row' : 'loading-row',
@@ -105,14 +113,6 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
           : 'Reading the room names before showing this note...'),
       openDetailLink('note', note.id, 'Open note #' + String(note.id), 'detail-link note-detail-link'))
       return viewerRecordNode(card, 'note', note, null)
-    }
-    if (isQuietPlace(place)) {
-      const card = element('article', 'note-card note-card-quiet')
-      card.append(
-        element('p', 'quiet-room-context', 'A note in ' + quietRoomName(place, note.place_id) + '.'),
-        quietRoomNotice(place),
-      )
-      return viewerRecordNode(card, 'note', note, viewerPlacePresentation(place))
     }
     const placePresentation = viewerPlacePresentation(place)
     const card = element('article', 'note-card')
@@ -146,12 +146,15 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       return viewerRecordNode(card, 'note', note, presentation)
     }
     if (note.walk_to_read) {
-      card.append(meta, walkToReadNoteBlock(note))
+      card.append(meta, walkToReadNoteBlock(note.first_line
+        ? publicNoteBody('note-body note-first-line public-body', note.first_line, place,
+          Array.from(note.first_line).length >= NOTE_FIRST_LINE_CHARACTERS)
+        : null))
       return viewerRecordNode(card, 'note', note, presentation)
     }
     const bodyBlock = renderExpandableBody(
       'note', note.id, note.body, note.truncated,
-      viewerRecordDataVersion(note),
+      viewerRecordDataVersion(note), place,
     )
     addNoteReadingTools(bodyBlock, note)
     card.append(meta, bodyBlock)
@@ -160,11 +163,10 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
 
   // Decision #102: the window stands nowhere, so a walk-to-read note shows only its
   // first line and says the rest is read in person. There is nothing to expand.
-  function walkToReadNoteBlock(note) {
+  function walkToReadNoteBlock(firstLineNode) {
     const block = element('div', 'walk-to-read-block')
     block.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
-    if (note.first_line) block.append(publicNoteBody('note-body note-first-line public-body', note.first_line,
-      Array.from(note.first_line).length >= NOTE_FIRST_LINE_CHARACTERS))
+    if (firstLineNode) block.append(firstLineNode)
     block.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return block
   }

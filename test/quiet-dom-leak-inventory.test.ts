@@ -171,9 +171,6 @@ const ALLOW_LIST: ReadonlyMap<string, string> = new Map([
     'Renders one record addressed directly by its stable public id; decision #75 states a quiet ' +
     'room\'s notes and things "stay readable at their addresses, because the city keeps public books" ' +
     '— this is that direct address, not ambient room-content discovery.'],
-  ['renderExpandableBody',
-    'Shared body-expansion helper used by renderThings (already isQuietPlace-gated per row) and by the ' +
-    'direct-address detail/archive flows; never the entry point for an ambient quiet-room listing.'],
   ['renderPlace',
     'followed.handle here names the viewer\'s own already-selected resident, shown only when they hold ' +
     'no current place at all; not ambient discovery of a location.'],
