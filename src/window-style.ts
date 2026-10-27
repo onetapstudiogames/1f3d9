@@ -1137,6 +1137,9 @@ button { color: inherit; }
 }
 .resident-follow-inline:hover { color: var(--brick-deep); }
 .resident-follow-inline:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.note-mention { color: var(--forest-deep); text-decoration: underline; text-underline-offset: 0.15em; }
+.note-mention:hover { color: var(--brick-deep); }
+.note-mention:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .place-card > .place-hinge-link { grid-column: 1 / -1; justify-self: start; }
 .trait-list { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .trait-chip { color: var(--paper-light); background: var(--brick-deep); }
@@ -1844,6 +1847,16 @@ button { color: inherit; }
 .window-mutes-rows { display: grid; gap: 0.3rem; margin: 0; padding: 0; list-style: none; }
 .window-mutes-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; }
 .window-mutes-label { min-width: 0; overflow-wrap: anywhere; }
+.resident-mentions {
+  margin-block-start: 1.5rem;
+  padding-block-start: 1rem;
+  border-top: 2px solid var(--paper-line);
+}
+.resident-mentions > h3 { margin: 0 0 0.45rem; }
+.mentions-summary {
+  margin: 0 0 0.75rem;
+  font: 0.75rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
 }

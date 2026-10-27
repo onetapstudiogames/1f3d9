@@ -43,7 +43,9 @@ import {
   readPublicResidentPage,
 } from './public-residents.ts'
 import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
-import { executeBudgetedExactQuery } from './public-exact-query.ts'
+import { executeBudgetedExactQuery, isPublicExactReadBusy } from './public-exact-query.ts'
+import { wholeHandleMentionSql } from './handle-mentions.ts'
+import { feedRoomIdsSql } from './feed-rooms.ts'
 import { takePublicSearchToken } from './public-search-rate-limit.ts'
 import {
   PublicChangeFutureError,
@@ -836,7 +838,7 @@ export function mergeWindowThingTraits(
 
 const WINDOW_HISTORY_KEYS = new Set([
   'collection', 'before_id', 'after_id', 'limit', 'place_id', 'within_place_id', 'resident',
-  'context', 'presentation', 'find',
+  'context', 'presentation', 'find', 'mentions',
 ])
 const WINDOW_HISTORY_COLLECTIONS = new Set(['notes', 'things', 'agreements', 'lines'])
 
@@ -863,6 +865,7 @@ export interface WindowHistoryQuery {
   readonly placeId: number | null
   readonly includeDescendants?: boolean
   readonly resident: string | null
+  readonly mentions?: string | null
   readonly context: boolean
   readonly presentation?: 'headings'
   readonly find?: string | null
@@ -905,6 +908,14 @@ export function parseWindowHistoryQuery(
     ? null
     : typeof residentValue === 'string' && HANDLE_RE.test(residentValue) ? residentValue : null
   if (residentValue !== undefined && resident === null) return null
+  const mentionsValue = oneWindowQueryValue(queries, 'mentions')
+  const mentions = mentionsValue === undefined
+    ? null
+    : typeof mentionsValue === 'string' && HANDLE_RE.test(mentionsValue) ? mentionsValue : null
+  if (mentionsValue !== undefined && (
+    mentions === null || collection !== 'notes' ||
+    ['resident', 'context', 'find', 'presentation'].some(key => queries[key] !== undefined)
+  )) return null
   if (collection === 'agreements' && placeId !== null) return null
   const includeDescendants = insidePlaceValue !== undefined
 
@@ -951,6 +962,7 @@ export function parseWindowHistoryQuery(
     placeId,
     includeDescendants,
     resident,
+    ...(mentions === null ? {} : { mentions }),
     context,
     ...headingOptions,
   })
@@ -1038,6 +1050,17 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
     })
   }
   if (options.collection === 'notes') {
+    const mentionsPredicate = options.mentions == null ? '' : `
+          AND EXISTS (SELECT 1 FROM residents mentioned WHERE mentioned.handle = $6::text)
+          AND NOT note.walk_to_read
+          AND note.place_id <> ALL(${feedRoomIdsSql()})
+          AND CASE WHEN ${wholeHandleMentionSql('note.body', '$6::text')}
+            THEN note.body !~* $7::text ELSE false END
+          AND coalesce((
+            SELECT moderation.action FROM moderation_actions moderation
+            WHERE moderation.target_type = 'note' AND moderation.target_id = note.id
+            ORDER BY moderation.created_at DESC, moderation.id DESC LIMIT 1
+          ), 'restore') <> 'remove'`
     return Object.freeze({
       text: `${includeDescendants ? `WITH RECURSIVE ${selectedPlacesCte}\n` : ''}SELECT note.id, note.place_id, author.handle AS author, note.body, note.created_at,
           note.walk_to_read, ${noteBodyWithheldSql('note')} AS body_withheld
@@ -1045,11 +1068,12 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
         WHERE ($1::integer IS NULL OR note.id < $1::integer)
           AND ($5::integer IS NULL OR note.id > $5::integer)
           AND ${placePredicate('note.place_id')}
-          AND ($3::text IS NULL OR author.handle = $3::text)
+          AND ($3::text IS NULL OR author.handle = $3::text)${mentionsPredicate}
         ORDER BY note.id DESC
         LIMIT $4::integer`,
       values: Object.freeze([
         options.beforeId, options.placeId, options.resident, fetchLimit, options.afterId ?? null,
+        ...(options.mentions == null ? [] : [options.mentions, PUBLIC_CREDENTIAL_PATTERN_SOURCE]),
       ]),
     })
   }
@@ -1743,7 +1767,7 @@ export async function windowSnapshot(c: Context) {
       if (minimumMarker === null) {
         page = await readWindowCollectionPage(
           request,
-          request.find == null
+          request.find == null && request.mentions == null
             ? executePublicQuery
             : (text, params) => executeBudgetedExactQuery(text, params),
         )
@@ -1753,7 +1777,7 @@ export async function windowSnapshot(c: Context) {
           minimumMarker,
           () => readWindowCollectionPage(
             request,
-            request.find == null
+            request.find == null && request.mentions == null
               ? executePublicQuery
               : (text, params) => executeBudgetedExactQuery(text, params),
           ),
@@ -1762,6 +1786,11 @@ export async function windowSnapshot(c: Context) {
         changeMarker = stable.changeMarker
       }
     } catch (error) {
+      if (request.mentions != null && isPublicExactReadBusy(error)) {
+        c.header('Cache-Control', 'no-store')
+        c.header('Retry-After', '1')
+        return c.json({ error: 'public notes naming this resident are temporarily busy; retry' }, 503)
+      }
       if (error instanceof PublicChangeFutureError ||
           error instanceof PublicChangeReadConflictError) {
         return c.json({ error: error.message }, 409)

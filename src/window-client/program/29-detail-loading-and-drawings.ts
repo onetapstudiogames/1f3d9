@@ -63,6 +63,11 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
       const record = normalizeDetailRecord(target.kind, target.id, await response.json())
       if (!requestIsCurrent()) return
       if (!record) throw new Error('invalid public detail')
+      if (record.kind === 'note' && state.snapshot &&
+          !placeReference(state.snapshot, record.placeId)) {
+        await loadFocusedPlace(record.placeId, false)
+        if (!requestIsCurrent()) return
+      }
       state = {
         ...state,
         details: {

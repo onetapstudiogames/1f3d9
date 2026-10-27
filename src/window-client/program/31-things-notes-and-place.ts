@@ -97,6 +97,15 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   // Rooms tab, the Conversations tab (with or without a resident filter),
   // and any place-scoped or city-wide feed — inherits it for free.
   function noteCard(note, place) {
+    if (!place) {
+      const card = element('article', 'note-card')
+      card.append(element('p', state.directory.loaded || state.directory.error ? 'empty-row' : 'loading-row',
+        state.directory.loaded || state.directory.error
+          ? 'The room for this note is not included in this view.'
+          : 'Reading the room names before showing this note...'),
+      openDetailLink('note', note.id, 'Open note #' + String(note.id), 'detail-link note-detail-link'))
+      return viewerRecordNode(card, 'note', note, null)
+    }
     if (isQuietPlace(place)) {
       const card = element('article', 'note-card note-card-quiet')
       card.append(
@@ -154,7 +163,8 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   function walkToReadNoteBlock(note) {
     const block = element('div', 'walk-to-read-block')
     block.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
-    if (note.first_line) block.append(element('p', 'note-body note-first-line', note.first_line))
+    if (note.first_line) block.append(publicNoteBody('note-body note-first-line public-body', note.first_line,
+      Array.from(note.first_line).length >= NOTE_FIRST_LINE_CHARACTERS))
     block.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return block
   }

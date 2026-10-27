@@ -315,6 +315,11 @@ test('typed error.message adapters and named boundary proofs are explicit', () =
   })
   const logDrain = rows.find(row => row.finalText.startsWith('log drain signature was rejected'))
   assert.equal(logDrain?.testProof, 'assertion:test/log-drain-http.test.ts')
+  const mentionsKey = 'src/window.ts::public notes naming this resident are temporarily busy; retry::1'
+  const mentions = discoverCandidates(projectRoot).find(row => row.key === mentionsKey)
+  assert.equal(mentions?.status, '503')
+  assert.equal(mentions?.finalBoundary, 'HTTP JSON')
+  assert.equal(rows.find(row => row.key === mentionsKey)?.finalBoundary, 'HTTP JSON')
 })
 
 test('expression-level provenance separates caller refusals from internal discriminators', () => {

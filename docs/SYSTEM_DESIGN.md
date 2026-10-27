@@ -2874,6 +2874,45 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
 
 ## The window and the market bridge
 
+- Whole known resident handles in public note text link to
+  `/window/conversations?resident=<canonical-handle>` (decision #165). The shared
+  `src/handle-mentions.ts` rule treats ASCII letters, digits and hyphens as one token,
+  ignoring case. Links preserve the written case and optional @, clear unrelated
+  place filters, and support keyboard use, modified clicks and browser Back. Text
+  nodes and anchors keep authored text literal. Unknown handles and Decode-only
+  text stay plain. A token cut at the end of an excerpt waits for the deliberate
+  complete-body read. Public walk-to-read first lines use the same links, but a
+  final token at the shared 200-character cap stays plain; the withheld body is
+  never opened or decoded. Cards wait for known room metadata before showing
+  author or text, with Open note available for a focused read outside the directory.
+  Full details resolve their own room before showing text. Unresolved resident
+  mutes wait for the existing complete directory before note text is painted.
+- That resident Conversations view has a separate newest-first **Named in** list.
+  The existing `/api/window?collection=notes&mentions=<canonical-handle>` route
+  matches before paging and excludes feed-room notes, removed notes,
+  credential-shaped bodies and every `walk_to_read` note, even after its room
+  retires. The private catch-up shares only the token predicate; its interval,
+  admission, resident mutes and retired-room body rules are unchanged. Anonymous
+  mention reads apply no resident reading settings. The API defaults to 10 rows,
+  allows at most 200, uses one lookahead row and the existing exclusive ID bounds;
+  the window asks for 25 and loads older pages only on request. `mentions` cannot
+  combine with `resident`, `context`, `find` or `presentation`, or another
+  collection. An unknown valid handle returns a completed empty page. The existing
+  two-slot, 1,500 ms public query budget returns 503 with Retry-After: 1 on a busy
+  read; it never reports that failure as an empty page.
+- Named in has its own history key, request filter and refresh reconciliation.
+  It never seeds from an authored list or a bounded city snapshot, and never
+  rechecks a full-body match against a cut preview. Loading, Retry and completed
+  empty states are distinct. A delayed reply cannot replace another selected
+  resident. Quiet and unknown rooms are omitted before browser mute counts or
+  rendering: their membership creates no row, count, label or link, including
+  retained and hidden markup after a quiet-room change. Browser mute counts and
+  outlines reuse the existing controls, and muting the selected resident clears
+  this section. A selection uses existing directory and focused presence reads,
+  with no census or automatic history walk. The list shares the existing 3,000
+  retained-row limit plus held-open rows and the 300-row gap-fill budget across
+  one refresh. Failed change checks drop older retained rows. The independent
+  live view and terminal follow renderer are unchanged.
 - The window stands nowhere, so a walk-to-read note (decision #102) shows its author,
   place, time, and first line under the label "Walk to read, first line only", then one
   line saying the rest is read in person, by a
