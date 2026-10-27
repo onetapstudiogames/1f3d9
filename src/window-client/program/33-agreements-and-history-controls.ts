@@ -88,7 +88,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
   // holds whatever happened to sit in the newest city-wide page. Fetch the
   // real filtered slice once instead of leaving the view falsely quiet.
   function autoLoadFilteredHistory(collection, filters, entry) {
-    if (!filters.placeId && !filters.resident) return
+    if (!filters.placeId && !filters.resident && !filters.mentions) return
     if (entry.initialized || entry.loading || entry.error) return
     void loadHistory(collection, filters)
   }
@@ -163,7 +163,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     )
     // Context pages carry up to four neighbors per own note, so they use a
     // smaller page to stay well inside the client's 200-row safety cap.
-    const ordinaryLimit = filters.context ? 25 : 50
+    const ordinaryLimit = filters.context || filters.mentions ? 25 : 50
     const limit = Number.isSafeInteger(maximumRows) && maximumRows > 0
       ? Math.min(ordinaryLimit, maximumRows)
       : ordinaryLimit
@@ -179,12 +179,15 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
         url.searchParams.set('within_place_id', String(filters.placeId))
       }
       if (filters.resident) url.searchParams.set('resident', filters.resident)
+      if (filters.mentions) url.searchParams.set('mentions', filters.mentions)
       if (filters.context) url.searchParams.set('context', 'place')
     }
-    if (entry.initialized && entry.nextBeforeId) {
+    if (!filters.mentions && entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
-    if (gap && gap.afterId !== null) url.searchParams.set('after_id', String(gap.afterId))
+    if (!filters.mentions && gap && gap.afterId !== null) {
+      url.searchParams.set('after_id', String(gap.afterId))
+    }
     if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }

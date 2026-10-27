@@ -83,6 +83,35 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     return link
   }
 
+  function noteTextWaitingMessage() {
+    const unresolvedMute = !state.directory.loaded && [...muteRules().residents]
+      .some(id => !residentHandleById(id) && !Object.values(state.focusedResidents)
+        .some(entry => entry?.resident?.id === id))
+    return !unresolvedMute ? null : state.directory.error
+      ? 'Resident names could not be read. Retry the city directory to show this note.'
+      : 'Reading resident names before showing this note...'
+  }
+
+  function publicNoteBody(className, text, place, truncated = false) {
+    if (isQuietPlace(place)) return quietRoomNotice(place)
+    if (!place) return element('p', className, 'Reading the room for this note...')
+    const body = element('p', className)
+    const waiting = noteTextWaitingMessage()
+    if (waiting) {
+      body.textContent = waiting
+      return body
+    }
+    appendWindowNoteMentions(body, text, truncated, HANDLE_MENTION_TOKEN_SOURCE,
+      handle => Boolean(state.snapshot && residentReference(state.snapshot, handle)),
+      handleIsMuted, MUTED_RESIDENT_LABEL, handle => {
+        if (nodes.directorySearch) nodes.directorySearch.value = ''
+        closeDirectorySearchResults()
+        navigate({ view: 'conversations', resident: handle, placeId: null,
+          conversationContext: false, directorySearch: '', directorySearchIndex: -1, detail: null })
+      })
+    return body
+  }
+
   function normalizeDetailRecord(kind, id, payload) {
     const raw = payload && typeof payload === 'object'
       ? kind === 'place' ? payload.place || payload.tombstone : payload[kind]

@@ -39,6 +39,12 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
   function viewerRecordNode(node, kind, record, presentation = null) {
     const key = kind + ':' + String(record.id)
     node.dataset.viewerRecordKey = key
+    if (kind === 'note') {
+      node.dataset.notePlaceId = String(record.place_id || record.placeId)
+      for (const link of node.querySelectorAll('.note-mention')) {
+        link.dataset.focusKey = 'note-mention:' + String(record.id) + ':' + link.dataset.mentionOffset
+      }
+    }
     Object.defineProperty(node, '__viewerRecordVersion', {
       configurable: true,
       value: viewerRecordVersion(record, presentation),
@@ -48,6 +54,16 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
       value: viewerRecordDataVersion(record),
     })
     return node
+  }
+
+  function scrubQuietViewerNotes() {
+    if (!state.snapshot) return
+    for (const node of document.querySelectorAll('[data-note-place-id]')) {
+      const place = placeReference(state.snapshot, safeId(node.dataset.notePlaceId))
+      if (!isQuietPlace(place) || node.querySelector('.quiet-room-notice')) continue
+      if (node.closest('#resident-mentions')) node.remove()
+      else node.replaceChildren(quietRoomNotice(place))
+    }
   }
 
   function viewerPlacePresentation(place) {
@@ -136,6 +152,12 @@ export const PART_44_VIEWER_READING_STATE = `  const viewerInvalidatedRecordKeys
   }
 
   function viewerRenderedBodiesMatch(current, incoming) {
+    const noteText = node => {
+      const bodies = node.matches('.public-body') ? [node] : [...node.querySelectorAll('.public-body')]
+      return JSON.stringify(bodies.map(body => [body.textContent,
+        [...body.querySelectorAll('.note-mention')].map(link => [link.textContent, link.getAttribute('href')])]))
+    }
+    if (noteText(current) !== noteText(incoming)) return false
     const currentBodies = [...current.querySelectorAll('[data-body-key]')]
     const incomingBodies = [...incoming.querySelectorAll('[data-body-key]')]
     if (currentBodies.length !== incomingBodies.length) return false

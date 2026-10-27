@@ -67,7 +67,9 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     syncTalkTimer()
     renderDirectoryStatus()
     writeLocation(false)
+    scrubQuietViewerNotes()
     renderDetail()
+    renderMentions(snapshot)
     if (state.view === 'archive') renderArchive()
     if (state.view === 'gazette') renderGazette()
     if (!snapshot) {

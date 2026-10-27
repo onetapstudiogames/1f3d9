@@ -20,6 +20,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   }
 
   function historyKey(collection, filters) {
+    if (collection === 'notes' && filters.mentions) return 'mentions:' + filters.mentions
     const place = collection === 'agreements' ? '' : String(filters.placeId || '')
     if (!place && !filters.resident) return 'all'
     return (filters.context ? 'context|' : '') +
@@ -49,6 +50,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
   // complete directory is deliberately outside the outline, so the honest
   // answer for it is that the window does not know, never zero.
   function historyTotal(collection, filters, fromSnapshot) {
+    if (filters.mentions) return null
     const snapshot = fromSnapshot || state.snapshot
     if (!snapshot) return null
     const citywide = collection === 'notes' ? snapshot.totals.conversations
@@ -98,8 +100,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     if (stored) return stored
     const global = state.histories[collection]?.all
     const snapshotRows = state.snapshot?.[collection] || []
-    const rows = filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
-    const inherited = inheritedHistoryGaps(global, rows)
+    const rows = filters.mentions ? []
+      : filterHistoryRows(collection, global?.rows || snapshotRows, filters, state.snapshot)
+    const inherited = inheritedHistoryGaps(filters.mentions ? null : global, rows)
     // A count the window cannot prove for this list never says the list is
     // finished: it offers the older records and lets the read answer.
     const total = historyTotal(collection, filters)
@@ -130,6 +133,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
             filters: Object.freeze({
               placeId: filters.placeId,
               resident: filters.resident,
+              mentions: filters.mentions || null,
               context: filters.context === true,
             }),
           }),
@@ -352,6 +356,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // A changed record below every record still kept comes back by simply
     // reading older, so the list must still offer that.
     const staleBelowAll = held.staleIds.some(id => !rows.some(row => row.id < id))
+    // Only an older retained interval can carry the previous exhaustion proof.
+    const hasOlderInterval = held.freshOldestId !== null &&
+      historyOrderedRows(rows, filters).some(row => row.id < held.freshOldestId)
     return Object.freeze({
       ...entry,
       rows,
@@ -361,7 +368,8 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       beyondFillRanges: (entry.beyondFillRanges || []).filter(key =>
         gapRanges.some(gap => gapRangeKey(gap) === key)),
       hasMore: rows.length
-        ? entry.hasMore === true || bottomTrimmed || staleBelowAll
+        ? entry.hasMore === true || bottomTrimmed || staleBelowAll ||
+          Boolean(page && page.hasMore && !hasOlderInterval)
         : Boolean(page && page.hasMore),
       nextBeforeId: rows.length
         ? historyPagingCursor(rows, filters, entry.nextBeforeId ?? null)
@@ -445,6 +453,12 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
             : freshHistoryEntry(entry, snapshot[collection], page)]]
         }
         const ownPage = ownNewestPages[collection]?.[key]
+        if (filters.mentions) {
+          return [[key, ownPage && ownPage.failed !== true
+            ? freshHistoryEntry(entry, ownPage.rows, ownPage.page)
+            : Object.freeze({ ...freshHistoryEntry(entry, [], null),
+                refreshError: true, newestReadFailed: true })]]
+        }
         if (!ownPage || ownPage.failed === true) {
           return [[key, keepLoadedRows
             ? failedOwnNewestEntry(entry, kind, filters, keys)
@@ -488,7 +502,10 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
         resident: state.resident,
         context: Boolean(state.resident && state.conversationContext),
       })
-      return new Set(['notes|' + historyKey('notes', filters)])
+      return new Set([
+        'notes|' + historyKey('notes', filters),
+        ...(state.resident ? ['notes|' + historyKey('notes', { mentions: state.resident })] : []),
+      ])
     }
     if (state.view === 'agreements') {
       const filters = Object.freeze({ placeId: null, resident: state.resident })
@@ -718,6 +735,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     for (const request of requests) {
         const { collection, key } = request
         const entry = rejoined[collection][key]
+        if (entry.filters?.mentions) continue
         const gap = namedHistoryGap(entry)
         if (!gap || (entry.beyondFillRanges || []).includes(gapRangeKey(gap)) ||
             (gap.afterId !== null && (entry.beyondFillIds || []).includes(gap.afterId))) continue
@@ -739,7 +757,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     for (const collection of ['notes', 'things', 'agreements', 'events']) {
       const existing = histories[collection] || {}
       const refreshed = Object.fromEntries(Object.entries(existing).map(([key, entry]) => {
-        if (key === 'all' || !entry?.filters) return [key, entry]
+        if (key === 'all' || !entry?.filters || entry.filters.mentions) return [key, entry]
         const freshRows = filterHistoryRows(collection, snapshot[collection], entry.filters, snapshot)
         return [key, Object.freeze({ ...entry, rows: mergeWindowRows(entry.rows, freshRows) })]
       }))

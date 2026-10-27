@@ -12,8 +12,8 @@ test('the two labels the founder promised in note 23132 are exact and reach the 
 })
 
 test('a walk-to-read card, archive result, and detail put the label above the first line', () => {
-  assert.match(WINDOW_JS, /function walkToReadNoteBlock\(note\) \{\s*const block = element\('div', 'walk-to-read-block'\)\s*block\.append\(element\('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL\)\)/u)
-  assert.match(WINDOW_JS, /function walkToReadDetailNode\(record\) \{[\s\S]{0,200}'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL/u)
+  assert.match(WINDOW_JS, /function walkToReadNoteBlock\(firstLineNode\) \{\s*const block = element\('div', 'walk-to-read-block'\)\s*block\.append\(element\('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL\)\)\s*if \(firstLineNode\) block\.append\(firstLineNode\)/u)
+  assert.match(WINDOW_JS, /function walkToReadDetailNode\(record, place\) \{[\s\S]{0,200}'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL\)\)\s*if \(record\.firstLine\) node\.append\(publicNoteBody\('note-first-line public-body', record\.firstLine, place,/u)
 })
 
 test('a removed note card shows the removed label and never its placeholder text or the tombstone words', () => {

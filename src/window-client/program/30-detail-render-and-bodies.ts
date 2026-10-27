@@ -14,6 +14,7 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
     if (!nodes.detail) return
     if (!target) {
       if (nodes.detail.open) nodes.detail.close()
+      if (nodes.detailBody?.querySelector('[data-note-place-id]')) nodes.detailBody.replaceChildren()
       return
     }
     if (target.kind === 'place' || target.kind === 'resident') {
@@ -75,7 +76,31 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
     if (nodes.detailBody) {
       const heldRecord = nodes.detailBody.querySelector(
         ':scope > [data-viewer-record-key="' + CSS.escape(key) + '"]')
-      if (viewerReadingViewIsActive() && (!entry || entry.loading) && heldRecord &&
+      const notePlaceId = target.kind === 'note'
+        ? entry?.record?.placeId || safeId(heldRecord?.dataset.notePlaceId) : null
+      const notePlace = notePlaceId && state.snapshot
+        ? placeReference(state.snapshot, notePlaceId) : null
+      if (notePlaceId && isQuietPlace(notePlace)) {
+        const quiet = element('div', 'record-detail-quiet')
+        quiet.dataset.viewerRecordKey = key
+        quiet.dataset.notePlaceId = String(notePlaceId)
+        quiet.append(quietRoomNotice(notePlace))
+        nodes.detailBody.replaceChildren(quiet)
+      } else if (notePlaceId && !notePlace && !recordMuted) {
+        const roomRead = state.focusedPlaces[String(notePlaceId)]
+        const failed = roomRead?.error || roomRead?.notFound
+        const message = element('p', failed ? 'error-row' : 'loading-row', failed
+          ? 'The room for this note could not be read.' : 'Reading the room for this note...')
+        nodes.detailBody.replaceChildren(message)
+        if (failed) {
+          const retry = element('button', 'detail-retry', 'Retry reading this room')
+          retry.type = 'button'
+          retry.addEventListener('click', () => void loadFocusedPlace(notePlaceId, true))
+          nodes.detailBody.append(retry)
+        } else if (state.snapshot && !roomRead) {
+          window.queueMicrotask(() => void loadFocusedPlace(notePlaceId, false))
+        }
+      } else if (viewerReadingViewIsActive() && (!entry || entry.loading) && heldRecord &&
           !heldRecord.closest('[hidden]') && !viewerInvalidatedRecordKeys.has(key)) {
         // Keep the completed record connected while its current form is revalidated.
       } else if (!entry || entry.loading) {
@@ -114,8 +139,10 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           record.kind === 'note' && record.moderated
             ? element('p', 'record-detail-text removed-label', MODERATED_WINDOW_LABEL)
             : record.walkToRead
-              ? walkToReadDetailNode(record)
-              : element('p', 'record-detail-text public-body', record.body),
+              ? walkToReadDetailNode(record, notePlace)
+              : record.kind === 'note'
+                ? publicNoteBody('record-detail-text public-body', record.body, notePlace)
+                : element('p', 'record-detail-text public-body', record.body),
           record.kind,
           record,
           meta,
@@ -154,10 +181,11 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
       'This ' + kind + ' is hidden by your mutes in this browser.')
   }
 
-  function walkToReadDetailNode(record) {
+  function walkToReadDetailNode(record, place) {
     const node = element('div', 'record-detail-text walk-to-read-block')
     node.append(element('p', 'walk-to-read-label', WALK_TO_READ_WINDOW_LABEL))
-    if (record.firstLine) node.append(element('p', 'note-first-line', record.firstLine))
+    if (record.firstLine) node.append(publicNoteBody('note-first-line public-body', record.firstLine, place,
+      Array.from(record.firstLine).length >= NOTE_FIRST_LINE_CHARACTERS))
     node.append(element('p', 'walk-to-read-line', WALK_TO_READ_WINDOW_LINE))
     return node
   }
@@ -318,14 +346,17 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         : 'Excerpt only — the full text is not included in this bounded view. '
   }
 
-  function renderExpandableBody(kind, id, body, truncated, recordVersion = null) {
+  function renderExpandableBody(kind, id, body, truncated, recordVersion = null, place = null) {
     const block = element('div', 'body-block')
     const bodyKey = kind + ':' + String(id)
     const fullEntry = state.fullBodies[bodyKey] || null
     const hasFullBody = typeof fullEntry?.body === 'string' &&
       fullEntry.recordVersion === recordVersion
-    const bodyNode = element('p', kind + '-body public-body',
-      hasFullBody ? fullEntry.body : body + (truncated ? '…' : ''))
+    const text = hasFullBody ? fullEntry.body : body
+    const bodyNode = kind === 'note'
+      ? publicNoteBody('note-body public-body', text, place, truncated && !hasFullBody)
+      : element('p', kind + '-body public-body', text)
+    if (truncated && !hasFullBody) bodyNode.append(document.createTextNode('…'))
     const bodyId = 'public-body-' + kind + '-' + String(id) + '-' + String(++bodyIdSequence)
     const startExpanded = state.expandedBodies.includes(bodyKey)
     bodyNode.id = bodyId

@@ -237,6 +237,11 @@ const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
   ] as const),
 ])
 const CALLER_EXPRESSION_ADAPTERS = new Map<string, { status: string; adapter: string; boundary: string }>([
+  // The anonymous window route is web-only; no MCP tool forwards this refusal.
+  [
+    'src/window.ts::public notes naming this resident are temporarily busy; retry',
+    { status: '503', adapter: 'typed result/JSON error adapter', boundary: 'HTTP JSON' },
+  ],
   [
     'src/paypal-credit-dispute.ts::stored PayPal dispute ${label} is invalid; re-read the dispute, then ask the city operator to repair its stored record',
     { status: '400', adapter: 'founder PayPal dispute TypeError adapter', boundary: 'HTTP 400 JSON' },

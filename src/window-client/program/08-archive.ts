@@ -143,7 +143,19 @@ export const PART_08_ARCHIVE = `  function safeArchiveChoice(value, choices, fal
     const meta = element('p', 'archive-result-meta', details.join(' · '))
     const link = openDetailLink(result.type, result.id, 'Open detail', 'archive-open')
     card.append(heading, meta)
-    if (result.walkToRead) card.append(walkToReadNoteBlock({ first_line: result.firstLine }))
+    // Archive records keep their plain public first line without room-based mention links.
+    if (result.walkToRead) {
+      const firstLine = result.firstLine ? element('p', 'note-body note-first-line public-body') : null
+      if (firstLine) {
+        const waiting = noteTextWaitingMessage()
+        if (waiting) firstLine.textContent = waiting
+        // Only muted tokens match, so other words stay plain and no link is created.
+        else appendWindowNoteMentions(firstLine, result.firstLine,
+          Array.from(result.firstLine).length >= NOTE_FIRST_LINE_CHARACTERS,
+          HANDLE_MENTION_TOKEN_SOURCE, handleIsMuted, handleIsMuted, MUTED_RESIDENT_LABEL, () => {})
+      }
+      card.append(walkToReadNoteBlock(firstLine))
+    }
     card.append(link)
     const menu = muteMenu(result.type === 'thing'
       ? thingMuteTargets(result)

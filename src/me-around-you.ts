@@ -1,4 +1,5 @@
 import { HANDLE_RE } from './core-primitives.ts'
+import { wholeHandleMentionSql } from './handle-mentions.ts'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
 import { PUBLIC_CHANGE_PAGE_MAX, parsePublicChangeMarker } from './public-changes.ts'
 import { AROUND_YOU_ADMISSION_CHANGE_THRESHOLD, AROUND_YOU_CHANGE_LIMIT, AROUND_YOU_STATEMENT_TIMEOUT_MS } from './me-around-you-limit.ts'
@@ -122,7 +123,7 @@ export const AROUND_YOU_SQL = `(
     -- PostgreSQL case-folding and token-boundary semantics.
     -- A withheld walk-to-read body is read in person, never scanned remotely.
     WHERE NOT ${noteBodyWithheldSql('content')} AND CASE
-      WHEN content.body ~* ('(^|[^a-z0-9-])' || reader.handle || '([^a-z0-9-]|$)')
+      WHEN ${wholeHandleMentionSql('content.body', 'reader.handle')}
       THEN content.body !~* '${PUBLIC_CREDENTIAL_PATTERN_SOURCE.replace(/'/gu, "''")}'
       ELSE false
     END
