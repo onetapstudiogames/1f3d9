@@ -135,7 +135,7 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
     // loadHistory already ignores clicks while a fetch is in flight.
     button.setAttribute('aria-busy', String(entry.loading))
     button.dataset.focusKey = 'load:' + collection + ':' + historyKey(collection, filters)
-    button.dataset.focusFallbackId = filters.mentions ? 'mentions-list' : collection === 'events'
+    button.dataset.focusFallbackId = collection === 'events'
       ? 'activity-list'
       : collection === 'agreements'
         ? 'agreement-list'
@@ -182,10 +182,12 @@ export const PART_33_AGREEMENTS_AND_HISTORY_CONTROLS = `  function renderAgreeme
       if (filters.mentions) url.searchParams.set('mentions', filters.mentions)
       if (filters.context) url.searchParams.set('context', 'place')
     }
-    if (entry.initialized && entry.nextBeforeId) {
+    if (!filters.mentions && entry.initialized && entry.nextBeforeId) {
       url.searchParams.set('before_id', String(entry.nextBeforeId))
     }
-    if (gap && gap.afterId !== null) url.searchParams.set('after_id', String(gap.afterId))
+    if (!filters.mentions && gap && gap.afterId !== null) {
+      url.searchParams.set('after_id', String(gap.afterId))
+    }
     if (minimumMarker) url.searchParams.set('after_change_marker', minimumMarker)
     return url
   }

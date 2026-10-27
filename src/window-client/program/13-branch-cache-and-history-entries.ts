@@ -356,6 +356,9 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     // A changed record below every record still kept comes back by simply
     // reading older, so the list must still offer that.
     const staleBelowAll = held.staleIds.some(id => !rows.some(row => row.id < id))
+    // Only an older retained interval can carry the previous exhaustion proof.
+    const hasOlderInterval = held.freshOldestId !== null &&
+      historyOrderedRows(rows, filters).some(row => row.id < held.freshOldestId)
     return Object.freeze({
       ...entry,
       rows,
@@ -365,7 +368,8 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
       beyondFillRanges: (entry.beyondFillRanges || []).filter(key =>
         gapRanges.some(gap => gapRangeKey(gap) === key)),
       hasMore: rows.length
-        ? entry.hasMore === true || bottomTrimmed || staleBelowAll
+        ? entry.hasMore === true || bottomTrimmed || staleBelowAll ||
+          Boolean(page && page.hasMore && !hasOlderInterval)
         : Boolean(page && page.hasMore),
       nextBeforeId: rows.length
         ? historyPagingCursor(rows, filters, entry.nextBeforeId ?? null)
@@ -449,6 +453,12 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
             : freshHistoryEntry(entry, snapshot[collection], page)]]
         }
         const ownPage = ownNewestPages[collection]?.[key]
+        if (filters.mentions) {
+          return [[key, ownPage && ownPage.failed !== true
+            ? freshHistoryEntry(entry, ownPage.rows, ownPage.page)
+            : Object.freeze({ ...freshHistoryEntry(entry, [], null),
+                refreshError: true, newestReadFailed: true })]]
+        }
         if (!ownPage || ownPage.failed === true) {
           return [[key, keepLoadedRows
             ? failedOwnNewestEntry(entry, kind, filters, keys)
@@ -725,6 +735,7 @@ export const PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES = `  function replaceBranc
     for (const request of requests) {
         const { collection, key } = request
         const entry = rejoined[collection][key]
+        if (entry.filters?.mentions) continue
         const gap = namedHistoryGap(entry)
         if (!gap || (entry.beyondFillRanges || []).includes(gapRangeKey(gap)) ||
             (gap.afterId !== null && (entry.beyondFillIds || []).includes(gap.afterId))) continue

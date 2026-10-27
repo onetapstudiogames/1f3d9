@@ -4,12 +4,9 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
     if (automatic) return
     const current = historyEntry(collection, filters)
     const waiting = Boolean(namedHistoryGap(current)) || current.newestReadFailed === true
-    // The membership-neutral mentions action also works on a finished list.
-    // Reconcile its newest page so new arrivals cannot strand an unread gap.
-    const checkNewest = filters.mentions && current.initialized && !current.hasMore &&
-      !waiting
-    if (current.loading || (current.initialized && !current.hasMore && !waiting &&
-        !current.error && !checkNewest)) {
+    if (current.loading || (filters.mentions
+        ? current.initialized && !current.error && !current.refreshError
+        : current.initialized && !current.hasMore && !waiting && !current.error)) {
       return
     }
     const requestAuthoredRevision = authoredRevision
@@ -27,7 +24,7 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
     let overtakenByRefresh = false
     try {
       const requestEntry = historyEntry(collection, filters)
-      const retryNewest = checkNewest || requestEntry.newestReadFailed === true
+      const retryNewest = requestEntry.newestReadFailed === true
       // A named gap is read as the range it is, so the control never asks for
       // records below the gap it is trying to close. With no gap named, load
       // older simply continues from the lowest loaded record.
@@ -60,6 +57,11 @@ export const PART_34_HISTORY_LOADING_COUNTS_AND_SCOPE = `  async function loadHi
       const hasMore = payload.has_more === true
       const nextBeforeId = hasMore ? safeId(payload.next_before_id) : null
       const latest = historyEntry(collection, filters)
+      if (filters.mentions) {
+        setHistoryEntry(collection, filters, freshHistoryEntry(latest, incoming,
+          Object.freeze({ hasMore, nextBeforeId })))
+        return
+      }
       const rows = mergeWindowRows(latest.rows, incoming)
       if (retryNewest) {
         const kind = historyViewerRecordKind(collection)

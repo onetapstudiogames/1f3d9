@@ -28,6 +28,7 @@ type Options = Readonly<{
   fullBodies?: Readonly<Record<number, string>>
   rosterHandles?: readonly string[]
   hiddenPlaceIds?: readonly number[]
+  feedPlaceIds?: readonly number[]
 }>
 
 export async function installMentionsFixture(page: Page, options: Options = {}) {
@@ -87,6 +88,7 @@ export async function installMentionsFixture(page: Page, options: Options = {}) 
       const place = Number(url.searchParams.get('within_place_id') || url.searchParams.get('place_id'))
       const rows = orderedNotes().filter(note => (!resident || note.author === resident) &&
         (!place || note.place_id === place) && (!mentions || (!note.walk_to_read &&
+          !options.feedPlaceIds?.includes(note.place_id) &&
           !note.moderated && new RegExp('(^|[^a-z0-9-])' + mentions + '([^a-z0-9-]|$)', 'i')
             .test(options.fullBodies?.[note.id] ?? note.body))))
       const payload = pageRows(rows, url)
@@ -154,9 +156,9 @@ export async function installMentionsFixture(page: Page, options: Options = {}) 
         detail: { target_type: 'note', target_id: id, action: 'remove' } }]
     },
     setNotes(next: readonly MentionNote[]) { notes = next; marker += 1 },
-    setQuiet(id: number) {
+    setQuiet(id: number, quiet = true) {
       marker += 1
-      places = places.map(place => place.id === id ? { ...place, quiet: true } : place)
+      places = places.map(place => place.id === id ? { ...place, quiet } : place)
       changes = [...changes, { change_id: String(marker), kind: 'place_edited', actor: 'browser-resident',
         created_at: '2026-08-13T19:04:00.000Z', detail: { place_id: id } }]
     },

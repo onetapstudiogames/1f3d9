@@ -22,25 +22,26 @@ export const PART_50_MENTIONS = `  function renderMentions(snapshot) {
       summary.setAttribute('aria-live', 'polite')
       const list = element('div', 'conversation-stream')
       list.id = 'mentions-list'
-      const page = element('div', 'history-page')
-      page.id = 'mentions-page'
-      page.setAttribute('aria-live', 'polite')
-      const check = element('div', 'history-page')
-      check.id = 'mentions-check'
-      check.setAttribute('aria-live', 'polite')
-      section.append(heading, summary, list, page, check)
+      const retry = element('div', 'history-page')
+      retry.id = 'mentions-retry'
+      const scope = element('p', 'mentions-summary',
+        'Newest page only, up to 25 matches. Older notes are not shown here.')
+      section.append(heading, scope, summary, list, retry)
     }
     section.hidden = false
     const summary = document.getElementById('mentions-summary')
     const target = document.getElementById('mentions-list')
-    const page = document.getElementById('mentions-page')
-    const check = document.getElementById('mentions-check')
+    const retryControl = document.getElementById('mentions-retry')
+    hideHistoryControl(retryControl)
     const issue = selectionIssue(snapshot, false)
     if (issue?.kind === 'resident') {
       summary.textContent = 'Fetching public notes naming this resident...'
       renderSelectionIssue(target, issue)
-      hideHistoryControl(page)
-      hideHistoryControl(check)
+      const retry = target.querySelector('.selection-retry')
+      if (retry) {
+        retry.textContent = 'Retry loading named notes'
+        retry.dataset.focusKey = 'mentions:resident-retry'
+      }
       return
     }
     const filters = Object.freeze({
@@ -78,26 +79,14 @@ export const PART_50_MENTIONS = `  function renderMentions(snapshot) {
           ? 'No public notes are shown for this resident.'
           : 'Public notes naming ' + shownHandle(state.resident) + '. ' +
             String(muted.shown.length) + ' shown, newest first.'
-    // Neither continuation nor gap markers prove that another public row exists.
-    // Keep the same neutral action even for a completed empty read; concealed
-    // matches cannot create a control, label or disabled state.
-    const control = muted.shown.length ? page : check
-    hideHistoryControl(muted.shown.length ? check : page)
-    const failed = entry.error || entry.refreshError || entry.newestReadFailed
-    const message = element('p', failed ? 'navigation-error' : 'seam-row', failed
-      ? 'Public notes could not be checked. Try again.'
-      : 'Shown notes may have gaps. Each check reads one page and may find no additional public notes.')
-    if (failed) message.setAttribute('role', 'alert')
-    const button = element('button', 'history-load', entry.loading
-      ? 'Checking public notes...'
-      : failed ? 'Retry checking public notes' : 'Check public notes')
+    if (entry.loading || (!entry.error && !entry.refreshError)) return
+    const button = element('button', 'history-load', 'Retry loading named notes')
     button.type = 'button'
-    button.setAttribute('aria-busy', String(Boolean(entry.loading)))
-    button.dataset.focusKey = 'load:notes:' + historyKey('notes', filters)
+    button.dataset.focusKey = 'mentions:retry'
     button.dataset.focusFallbackId = 'mentions-list'
     button.addEventListener('click', () => void loadHistory('notes', filters))
-    control.hidden = false
-    control.replaceChildren(message, button)
+    retryControl.hidden = false
+    retryControl.replaceChildren(button)
   }
 
 `

@@ -60,6 +60,11 @@ export function registerPublicWindowSelectionReconciliation() {
     await page.goto('/window#view=conversations&resident=far-walker')
     const stream = page.locator('#conversation-stream')
     const retry = page.getByRole('button', { name: 'Retry loading this resident' })
+    await expect(retry).toHaveCount(1)
+    const namedRetry = page.getByRole('button', { name: 'Retry loading named notes', exact: true })
+    await expect(namedRetry).toHaveCount(1)
+    expect(await namedRetry.evaluate(node => [...node.attributes].map(attribute => attribute.value).join(' ')))
+      .not.toContain('far-walker')
     await expect(retry).toBeVisible()
     const recovered = page.waitForResponse(response => {
       const url = new URL(response.url())

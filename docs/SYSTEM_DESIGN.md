@@ -2897,31 +2897,29 @@ RPC (`chain.ts`), durable x402 payment custody (`pay.ts` + `payment-flow.ts`), f
   admission, resident mutes and retired-room body rules are unchanged. Anonymous
   mention reads apply no resident reading settings. The API defaults to 10 rows,
   allows at most 200, uses one lookahead row and the existing exclusive ID bounds;
-  the window asks for 25 and loads older pages only on request. `mentions` cannot
+  the window asks only for the newest 25 matches, without ID cursors. `mentions` cannot
   combine with `resident`, `context`, `find` or `presentation`, or another
   collection. An unknown valid handle returns a completed empty page. The existing
   two-slot, 1,500 ms public query budget returns 503 with Retry-After: 1 on a busy
   read; it never reports that failure as an empty page.
-- Named in has its own history key, request filter and refresh reconciliation.
+- Named in has its own history key, request filter and newest-page refresh.
   It never seeds from an authored list or a bounded city snapshot, and never
-  rechecks a full-body match against a cut preview. Loading, Retry and completed
-  empty states are distinct. A delayed reply cannot replace another selected
-  resident. Quiet and unknown rooms are omitted before browser mute counts or
-  rendering: their membership creates no row, count, label or link, including
-  retained and hidden markup after a quiet-room change. A constant Check public
-  notes action is available even for an empty or exhausted list, independent of
-  concealed matches, continuation flags and gap markers. Each press reads one
-  page: a pending gap first, then older pages, or newest again when complete.
-  Its generic gap notice never names a concealed range. Browser mute counts and
+  rechecks a full-body match against a cut preview. Loading, failed reads and
+  completed empty states are distinct. Retry loading named notes has an accessible
+  name separate from the authored resident retry and no identity in its attributes.
+  A delayed reply cannot replace another selected resident. Quiet and unknown
+  rooms are omitted before browser mute counts or rendering: their membership
+  creates no row, count, label or link, including hidden markup after a quiet-room
+  change. Empty and quiet-only histories have identical controls and wording.
+  The list shows only the newest page of up to 25 matches, newest first, with no
+  older-page control, paging request or gap fill. Concealed matches can leave fewer
+  shown notes; the shown count never includes them. A changed refresh replaces
+  the page rather than accumulating older notes. A failed newest read clears the
+  previous page and offers Retry loading named notes. Browser mute counts and
   outlines reuse the existing controls, and muting the selected resident clears
   this section. A selection uses existing directory and focused presence reads,
-  with no census or automatic history walk. Across a changed refresh, the list
-  shares the existing 3,000 retained-row limit plus held-open rows and the 300-row
-  gap-fill budget across one refresh.
-  Requested older pages can exceed this retention bound until the next changed refresh.
-  A newest-page recheck uses the same retention rule and preserves unread gaps.
-  Failed change checks drop older retained rows. The independent
-  live view and terminal follow renderer are unchanged.
+  with no census or automatic history walk. The independent live view and
+  terminal follow renderer are unchanged.
 - The window stands nowhere, so a walk-to-read note (decision #102) shows its author,
   place, time, and first line under the label "Walk to read, first line only", then one
   line saying the rest is read in person, by a

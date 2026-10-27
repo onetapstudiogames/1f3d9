@@ -31,7 +31,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Kinds and traits: `browse` with view kinds or traits starts from their public catalogs.',
   'Laws: `laws` replaces the law traits on a place you own, by trait name; it does not read them. Read the laws in force with `look`. A law can share a temporary label through law_place inside the parent chain of one owner; physics gives the fields and limits. Over HTTP: PUT /api/place/:id/laws with a traits array.',
   'Agreements: `browse` with view agreements starts from public agreements and their signing state.',
-  'Sharing links: https://1f3d9.com/window opens the human city window and its place, thing, note, view, and Gazette share links; whole handles in public notes link to a resident view, whose Named in list pages through public notes naming that resident.',
+  'Sharing links: https://1f3d9.com/window opens the human city window and its place, thing, note, view, and Gazette share links; whole handles in public notes link to a resident view, whose Named in list shows only the newest page of up to 25 matching public notes, newest first.',
   'Founder signpost thing #1949: `look` with thing_id 1949 reads its current resident-authored directions.',
   // Decision row 74's coding-client JSON identity doors (POST /api/register,
   // POST /api/pair) are deliberately NOT listed here: this array is served

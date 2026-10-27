@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { PART_13_BRANCH_CACHE_AND_HISTORY_ENTRIES } from '../src/window-client/program/13-branch-cache-and-history-entries.ts'
 import { PART_33_AGREEMENTS_AND_HISTORY_CONTROLS } from '../src/window-client/program/33-agreements-and-history-controls.ts'
 import { mergeWindowRows } from '../src/window-client/rows.ts'
-import { WINDOW_HISTORY_FILL_ROWS, WINDOW_HISTORY_KEEP_ROWS } from '../src/window-history-limits.ts'
 import {
   cityList, drawnHistoryEntry, historyGapFiller, ids, loadedEntry, refreshedHistories,
-  olderHistoryPager, rowsFrom, snapshotOf, sourceBetween, type Histories, type Request,
+  rowsFrom, snapshotOf, sourceBetween, type Histories, type Request,
 } from './window-reading-client-tests/harness.ts'
 import { mentionsRenderer } from './window-reading-client-tests/mentions-renderer.ts'
 
@@ -35,15 +33,15 @@ test('mentions histories have independent keys for each handle and authored ques
   assert.notEqual(historyKey('notes', { placeId: null, resident: 'selene', context: true }), key)
 })
 
-test('mentions request 25 rows with their own filter and unchanged exclusive cursors', () => {
+test('mentions request only the newest 25 rows without history cursors', () => {
   const historyRequestUrl = new Function('window', `${requestSource}; return historyRequestUrl`)(
     { location: { origin: 'https://city.test' } })
   const url = historyRequestUrl('notes', { initialized: true, nextBeforeId: 81 },
     filters, '12', { afterId: 30 }) as URL
   assert.equal(url.searchParams.get('mentions'), 'selene')
   assert.equal(url.searchParams.get('limit'), '25')
-  assert.equal(url.searchParams.get('before_id'), '81')
-  assert.equal(url.searchParams.get('after_id'), '30')
+  assert.equal(url.searchParams.has('before_id'), false)
+  assert.equal(url.searchParams.has('after_id'), false)
   assert.equal(url.searchParams.get('after_change_marker'), '12')
   assert.equal(url.searchParams.has('resident'), false)
   assert.equal(url.searchParams.has('context'), false)
@@ -72,57 +70,30 @@ test('server-selected mentions keep other authors and previews cut before the ma
   assert.equal(entry.nextBeforeId, 40)
 })
 
-test('mentions refresh uses its own newest page and the shared 3000 retained row bound', () => {
-  assert.equal(WINDOW_HISTORY_KEEP_ROWS, 3000)
-  const previous = loadedEntry(rowsFrom(4000, 3020), { filters })
+test('mentions refresh replaces prior rows with only its own newest page and no gaps', () => {
+  const previous = loadedEntry(rowsFrom(4000, 25), { filters, gapAfterIds: [3990] })
   const newest = rowsFrom(4025, 25)
   const ownNewestPages = { notes: { [key]: { failed: false, rows: newest,
     page: { hasMore: true, nextBeforeId: 4001 } } } }
   const refreshed = refreshedHistories({ notes: { [key]: previous } },
     snapshotOf({ notes: [{ id: 9999 }] }), { ownNewestPages }).notes![key]!
-  assert.equal(refreshed.rows.length, WINDOW_HISTORY_KEEP_ROWS)
-  assert.equal(refreshed.rows[0]!.id, 4025)
-  assert.equal(refreshed.rows.at(-1)!.id, 1026)
-  assert.equal(ids(refreshed.rows).includes(9999), false)
-  assert.equal(refreshed.hasMore, true)
+  assert.deepEqual(refreshed.rows, newest)
+  assert.deepEqual(refreshed.gapAfterIds, [])
+  assert.deepEqual(refreshed.gapRanges, [])
 })
 
-test('ordinary mentions paging can exceed the changed-refresh retention bound as documented', async () => {
-  const pagingFilters = { placeId: null, resident: null, mentions: 'ann', context: false }
-  const pager = olderHistoryPager(loadedEntry(rowsFrom(4000, 3000), { filters: pagingFilters }),
-    cityList({ newestId: () => 4000, pageSize: 25 }))
-  await pager.run('notes', pagingFilters)
-  assert.equal(pager.read().error, false)
-  assert.equal(pager.read().rows.length, 3025)
-  assert.deepEqual(ids(pager.read().rows), ids(rowsFrom(4000, 3025)))
-  const refreshed = refreshedHistories({ notes: { 'mentions:ann': pager.read() } },
-    snapshotOf({}), { ownNewestPages: { notes: { 'mentions:ann': {
-      failed: false, rows: rowsFrom(4000, 25), page: { hasMore: true, nextBeforeId: 3976 },
-    } } } }).notes!['mentions:ann']!
-  assert.equal(refreshed.rows.length, WINDOW_HISTORY_KEEP_ROWS)
-  for (const path of ['src/reference.txt', 'docs/SYSTEM_DESIGN.md']) {
-    const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8')
-    assert.match(source, /Requested older pages can exceed this retention bound until the next changed refresh\./u,
-      path + ' must distinguish ordinary paging from changed-refresh retention (3025 then 3000 rows)')
-  }
-})
-
-test('mentions renderer hides quiet-only paging and keeps empty controls independent of concealed matches', () => {
+test('mentions renderer makes quiet-only and unknown-room results identical to empty', () => {
   const empty = mentionsRenderer(loadedEntry([], { hasMore: false }))
-  const quiet = mentionsRenderer(loadedEntry(rowsFrom(700, 25).map(row => ({ ...row, place_id: 12 }))))
-  assert.equal(quiet.node('mentions-page')?.hidden, true)
-  assert.equal(quiet.node('mentions-summary')?.textContent, 'No public notes are shown for this resident.')
-  assert.deepEqual(quiet.markup(), empty.markup())
-  assert.equal(quiet.node('mentions-check')?.children.at(-1)?.textContent, 'Check public notes')
   for (const place_id of [12, 99]) {
-    const concealedGap = mentionsRenderer(loadedEntry([{ id: 700, place_id }], {
-      gapAfterIds: [700], hasMore: true,
-    }))
-    assert.deepEqual(concealedGap.markup(), empty.markup())
+    const concealed = mentionsRenderer(loadedEntry(rowsFrom(700, 25)
+      .map(row => ({ ...row, place_id })), { gapAfterIds: [700], hasMore: true }))
+    assert.equal(concealed.node('mentions-summary')?.textContent, 'No public notes are shown for this resident.')
+    assert.deepEqual(concealed.markup(), empty.markup())
+    assert.equal(concealed.node('mentions-retry')?.hidden, true)
   }
 })
 
-test('mentions renderer controls do not disclose quiet matches beside one public note', () => {
+test('mentions renderer does not disclose quiet matches beside one public note', () => {
   const publicRow = { id: 701, place_id: 11 }
   const onlyPublic = mentionsRenderer(loadedEntry([publicRow], { hasMore: false }))
   const mixed = mentionsRenderer(loadedEntry([publicRow, ...rowsFrom(700, 24)
@@ -130,37 +101,26 @@ test('mentions renderer controls do not disclose quiet matches beside one public
   assert.deepEqual(mixed.markup(), onlyPublic.markup())
 })
 
-test('checking exhausted mentions keeps the unread range between newest and retained rows reachable', async () => {
-  const requests: Request[] = []
-  const pager = olderHistoryPager(loadedEntry(rowsFrom(10, 10), { filters, hasMore: false, error: false }),
-    cityList({ newestId: () => 50, pageSize: 25, requests }))
-  await pager.run('notes', filters)
-  assert.equal(pager.read().error, false)
-  assert.deepEqual(ids(pager.read().rows), [...ids(rowsFrom(50, 25)), ...ids(rowsFrom(10, 10))])
-  await pager.run('notes', filters)
-  assert.equal(pager.read().error, false)
-  assert.deepEqual(ids(pager.read().rows), ids(rowsFrom(50, 50)))
-  assert.deepEqual(requests, [
-    { beforeId: null, afterId: null, marker: '8' },
-    { beforeId: 26, afterId: 10, marker: '8' },
-  ])
+test('an empty mentions list receives only its newest page after a changed refresh', () => {
+  const previous = loadedEntry([], { filters, hasMore: false })
+  const newest = rowsFrom(50, 25)
+  const refreshed = refreshedHistories({ notes: { [key]: previous } }, snapshotOf({}), {
+    ownNewestPages: { notes: { [key]: { failed: false, rows: newest,
+      page: { hasMore: true, nextBeforeId: 26 } } } },
+  }).notes![key]!
+  assert.deepEqual(refreshed.rows, newest)
+  assert.deepEqual(refreshed.gapAfterIds, [])
 })
 
-test('a failed exhausted mentions check retries newest instead of reading below the last row', async () => {
-  const reads: string[] = []
-  const city = cityList({ newestId: () => 50, pageSize: 25 })
-  const pager = olderHistoryPager(loadedEntry(rowsFrom(10, 10), { filters, hasMore: false }),
-    async input => {
-      reads.push(input)
-      return reads.length === 1 ? { ok: false } : city(input)
-    })
-  await pager.run('notes', filters)
-  assert.equal(pager.read().error, true)
-  await pager.run('notes', filters)
-  assert.equal(pager.read().error, false)
-  assert.equal(reads.length, 2)
-  assert.equal(reads[1], reads[0])
-  assert.deepEqual(ids(pager.read().rows), [...ids(rowsFrom(50, 25)), ...ids(rowsFrom(10, 10))])
+test('a fresh page keeps continuation when prior rows provide no older interval', () => {
+  for (const previousRows of [[], rowsFrom(50, 10)]) {
+    const previous = loadedEntry(previousRows, { hasMore: false })
+    const refreshed = refreshedHistories({ notes: { all: previous } },
+      snapshotOf({ notes: rowsFrom(50, 25) }))
+      .notes!.all!
+    assert.equal(refreshed.hasMore, true)
+    assert.equal(refreshed.nextBeforeId, 26)
+  }
 })
 
 test('a failed change check drops retained mentions even when their newest read fails', () => {
@@ -173,20 +133,22 @@ test('a failed change check drops retained mentions even when their newest read 
   assert.equal(refreshed.refreshError, true)
 })
 
-test('mentions gap filling shares the 300 row refresh budget with authored histories', async () => {
-  assert.equal(WINDOW_HISTORY_FILL_ROWS, 300)
+test('a failed newest mentions read clears the previous page even with checked changes', () => {
+  const previous = loadedEntry([{ id: 40 }], { filters })
+  const refreshed = refreshedHistories({ notes: { [key]: previous } }, snapshotOf({}), {
+    ownNewestPages: { notes: { [key]: { failed: true } } },
+  }).notes![key]!
+  assert.deepEqual(refreshed.rows, [])
+  assert.equal(refreshed.refreshError, true)
+})
+
+test('mentions never request older ranges during refresh gap filling', async () => {
   const requests: Request[] = []
   const rejoin = historyGapFiller(cityList({ newestId: () => 1000, pageSize: 25, requests }),
     () => 'notes|' + key)
   const mentions = loadedEntry([{ id: 1000 }, { id: 1 }], { filters, gapAfterIds: [1] })
-  const authored = loadedEntry([{ id: 600 }, { id: 1 }], {
-    filters: { resident: 'tinker' }, gapAfterIds: [1],
-  })
-  const histories = await rejoin({ notes: { authored, [key]: mentions } },
+  const histories = await rejoin({ notes: { [key]: mentions } },
     '8', new AbortController().signal)
-  assert.equal(histories.notes![key]!.rows.length, 2 + WINDOW_HISTORY_FILL_ROWS)
-  assert.equal(requests.length, WINDOW_HISTORY_FILL_ROWS / 25)
-  assert.deepEqual(histories.notes![key]!.beyondFillIds, [1])
-  assert.deepEqual(histories.notes!.authored!.rows, authored.rows)
-  assert.equal(requests.every(request => request.afterId === 1), true)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(histories.notes![key]!.rows, mentions.rows)
 })

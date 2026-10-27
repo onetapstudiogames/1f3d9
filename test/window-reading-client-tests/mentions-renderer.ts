@@ -1,6 +1,5 @@
-import { PART_33_AGREEMENTS_AND_HISTORY_CONTROLS } from '../../src/window-client/program/33-agreements-and-history-controls.ts'
 import { PART_50_MENTIONS } from '../../src/window-client/program/50-mentions.ts'
-import { sourceBetween, type HistoryEntry } from './harness.ts'
+import { type HistoryEntry } from './harness.ts'
 
 class RenderNode {
   id = ''
@@ -17,15 +16,12 @@ class RenderNode {
   addEventListener() {}
 }
 
-// Run the real renderer and its old shared control so the quiet-only regression
-// fails on the leaked control, not on a mocked replacement for it.
+// Run the real renderer so concealment is checked against its actual markup.
 export function mentionsRenderer(entry: HistoryEntry) {
   const root = new RenderNode()
   const find = (id: string, node = root): RenderNode | null =>
     node.id === id ? node : node.children.map(child => find(id, child)).find(Boolean) ?? null
   const hideHistoryControl = (node: RenderNode) => { node.hidden = true; node.replaceChildren() }
-  const control = sourceBetween(PART_33_AGREEMENTS_AND_HISTORY_CONTROLS,
-    '  function renderHistoryControl', '  // One read shape')
   new Function('document', 'nodes', 'element', 'historyEntry', 'placeReference',
     'isQuietPlace', 'hideHistoryControl', 'renderViewerList', 'noteCard', `
     const state = { view: 'conversations', resident: 'selene' };
@@ -36,8 +32,6 @@ export function mentionsRenderer(entry: HistoryEntry) {
     const historyKey = () => 'mentions:selene';
     const muteNotice = () => null;
     const shownHandle = handle => handle;
-    const namedHistoryGap = entry => entry.gapAfterIds?.length ? {} : null;
-    ${control}
     ${PART_50_MENTIONS}
     renderMentions({});
   `)(
