@@ -145,7 +145,7 @@ export function registerFrontDoorAndPhysicsTests(): void {
     assert.deepEqual(await rejected.json(), { error: 'only the place owner may change its laws' })
   })
 
-  test('all Gazette room dependency writes return one protected-service refusal', async () => {
+  test('all dependency writes for the gazette submission room return one protected-service refusal', async () => {
     const expected = {
       error: 'The gazette submission room #454 is a protected city service; it cannot be edited, transferred, traded, deleted, repurposed, given local laws, contain child places, or store ordinary things',
     }

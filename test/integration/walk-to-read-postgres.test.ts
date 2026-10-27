@@ -198,7 +198,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       assert.equal(meter.room_stored_text_bytes, room.bytes + 2 * bodyBytes)
     })
 
-    await t.test('the write refuses a non-boolean mark and any walk-to-read note in the Gazette room', async () => {
+    await t.test('the write refuses a non-boolean mark and any walk-to-read note in the gazette submission room', async () => {
       const rooms = await resetCity([FOUNDER, WRITER])
       await standIn(WRITER.id, rooms.eastRoomId)
       for (const value of ['yes', 1, null, 'true']) {
@@ -218,7 +218,7 @@ test('walk-to-read notes withhold their body remotely and open where the reader 
       const gazette = await json<{ error: string }>(
         await say(app, WRITER.secret, { place_id: 454, body: 'x', walk_to_read: true }),
         400,
-        'Gazette room',
+        'the gazette submission room',
       )
       assert.equal(
         firstLine(gazette.error),

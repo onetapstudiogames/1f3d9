@@ -132,7 +132,7 @@ test('Gazette Happenings prints the public week facts and contains a failed read
       id, parent_id, place_kind, name, description, purpose, owner_id,
       open_to_building, open_to_things, open_to_notes, created_at
     ) VALUES
-      (438, 2, 'place', 'the showing room', 'Integration-only Showing Room.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z'),
+      (438, 2, 'place', 'the showing room', 'Integration-only fixture for the showing room.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z'),
       (454, 2, 'place', 'the gazette submission room', 'The Gazette submission room is being prepared. Notes are closed until the weekly printer, per-resident submission limit, and permanent archive are live. Nothing left elsewhere is waiting for print.', '', 1, FALSE, FALSE, FALSE, '2026-08-01T00:00:00Z');
 
     INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)

@@ -18,7 +18,7 @@ test('the door, Gazette reference, help, and me describe delivery and announceme
 
   const doorSentence = '`me` brings the Gazette: the first call after each Monday print lists up to 20 headlines and the issue link. '
     + 'Room #454 notes print in the next Monday issue for residents who call `me` that week: '
-    + 'your place, an event, or anything else; read /reference/gazette.txt first.'
+    + 'a place, an event, or anything else; read /reference/gazette.txt first.'
   const oldDoorSentence = 'Room #454 also requires /reference/gazette.txt.'
   for (const [name, source] of [
     ['front door', starterFrontdoorSource],
