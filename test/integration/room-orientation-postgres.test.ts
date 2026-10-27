@@ -619,7 +619,7 @@ test('room orientation remains ordered, body-free, owner-authored, and race-safe
           'PATCH must finish its eligibility preflight before the test moves a selected thing',
         )
         assert.equal(response.status, 409, await response.clone().text())
-        assert.match((await response.json() as { error: string }).error, /retry/iu)
+        assert.equal((await response.json() as { error: string }).error, 'front_matter_thing_ids must be an empty list, or two or three distinct ids of active public things standing in this place; a chosen thing changed before the edit completed; retry')
         assert.deepEqual((await connectedDatabase().query(
           'SELECT purpose, description FROM places WHERE id = $1', [seeded.roomId],
         )).rows, [{ purpose: '', description: 'existing room description' }])

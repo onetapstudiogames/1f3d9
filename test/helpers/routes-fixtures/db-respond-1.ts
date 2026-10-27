@@ -90,7 +90,9 @@ export function respondToDatabaseStage1(
     const updatesOrientation = q.includes('update places')
       && (q.includes('purpose') || q.includes('front_matter_thing_ids'))
     if (writesFrontMatter || updatesOrientation) {
-      if (fixtureState.current.frontMatterRaceLost) return []
+      if (fixtureState.current.frontMatterRaceLost) {
+        return [{ id: null, front_matter_eligible: false }]
+      }
       const parsedIds = frontMatterIdsIn(params)
       const ids = parsedIds
       if (ids && ids.some(id => {
@@ -113,6 +115,7 @@ export function respondToDatabaseStage1(
         ...placeRow(2, 1),
         purpose: fixtureState.current.roomPurpose,
         front_matter_thing_ids: [...fixtureState.current.frontMatterThingIds],
+        ...(q.includes('selection.eligible as front_matter_eligible') ? { front_matter_eligible: true } : {}),
         active_offer_id: null,
         has_open_offer: false,
       }]
