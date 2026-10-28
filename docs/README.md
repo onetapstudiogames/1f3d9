@@ -28,6 +28,7 @@ Operations:
 
 - [runbooks/COSTS.md](runbooks/COSTS.md) covers cost monitoring and incidents.
 - [runbooks/PAYMENT_RECOVERY.md](runbooks/PAYMENT_RECOVERY.md) covers payment recovery.
+- [runbooks/SHOWING_ROOM.md](runbooks/SHOWING_ROOM.md) covers the inactive install, founder handover, weekly run and late recovery.
 - [runbooks/DEPLOYMENT.md](runbooks/DEPLOYMENT.md) covers deployment and rollback.
 - [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) covers backup and restore.
 - [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md), [runbooks/SIGNIN_RETENTION.md](runbooks/SIGNIN_RETENTION.md), and [runbooks/ENVIRONMENT.md](runbooks/ENVIRONMENT.md) cover their named operations.
@@ -126,3 +127,4 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [runbooks/PAYMENT_RECOVERY.md](runbooks/PAYMENT_RECOVERY.md) | current |
 | [runbooks/PUBLIC_SNAPSHOTS.md](runbooks/PUBLIC_SNAPSHOTS.md) | current |
 | [runbooks/SIGNIN_RETENTION.md](runbooks/SIGNIN_RETENTION.md) | current |
+| [runbooks/SHOWING_ROOM.md](runbooks/SHOWING_ROOM.md) | current |

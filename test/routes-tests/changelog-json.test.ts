@@ -68,10 +68,11 @@ export function registerChangelogJsonTests(): void {
   test('GET /api/changelog?after_id returns only the entries added since a saved newest_id', async () => {
     reset({ scenario: 'public books' })
     const first = await (await app.request('/api/changelog')).json() as ChangelogJsonPage
-    const response = await app.request(`/api/changelog?after_id=${first.newest_id - 2}`)
+    const savedNewestId = first.entries[2]!.id
+    const response = await app.request(`/api/changelog?after_id=${savedNewestId}`)
     assert.equal(response.status, 200)
     const page = await response.json() as ChangelogJsonPage
-    assert.deepEqual(page.entries.map(entry => entry.id), [first.newest_id, first.newest_id - 1])
+    assert.deepEqual(page.entries, first.entries.slice(0, 2), 'entry ids need not be consecutive')
     assert.equal(page.has_more, false)
     assert.equal(page.next_before_id, null)
 

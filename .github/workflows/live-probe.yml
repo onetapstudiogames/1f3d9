@@ -249,3 +249,23 @@ jobs:
             200|401) ;;
             *) echo "/mcp answered $CODE"; exit 1 ;;
           esac
+
+      - name: showing room private doors refuse anonymous reads without exposing the backlog
+        run: |
+          BODY_FILE=$(mktemp)
+          HEADER_FILE=$(mktemp)
+          trap 'rm -f "$BODY_FILE" "$HEADER_FILE"' EXIT
+          for PATH_PART in /api/founder/showing-room /api/internal/showing-room-close; do
+            CODE=$(curl -s --max-time 20 -D "$HEADER_FILE" -o "$BODY_FILE" \
+              -w '%{http_code}' "https://1f3d9.com$PATH_PART")
+            [ "$CODE" = "401" ] \
+              || { echo "$PATH_PART answered $CODE, expected 401"; exit 1; }
+            tr -d '\r' < "$HEADER_FILE" | grep -qi '^cache-control:.*no-store' \
+              || { echo "$PATH_PART omitted no-store"; exit 1; }
+            jq -e '(keys - ["error","request_id","error_class","http_status","front_door_tool","front_door"] | length == 0)
+              and (.error | type == "string" and length > 0)' "$BODY_FILE" >/dev/null \
+              || { echo "$PATH_PART returned more than its refusal"; exit 1; }
+          done
+          curl -sf --max-time 20 https://1f3d9.com/api/help | jq -e '
+            .doors | any(.[]; contains("The showing room:") and contains("15:00 UTC") and contains("question ten stays manual"))
+          ' >/dev/null || { echo "showing room participation help is missing"; exit 1; }

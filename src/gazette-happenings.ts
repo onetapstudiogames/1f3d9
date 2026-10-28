@@ -158,7 +158,7 @@ export async function readGazetteHappeningsRows(
       AND note.walk_to_read = FALSE
       AND note.created_at >= $2::timestamptz - interval '30 days'
       AND note.created_at < $2::timestamptz
-      AND note.body ~ '^THE [A-Z]+ QUESTION:'
+      AND note.body ~ '^THE [A-Z]+(-[A-Z]+)* QUESTION:'
       AND latest_moderation.action IS DISTINCT FROM 'remove'
       AND $1::timestamptz < $2::timestamptz
     ORDER BY note.created_at, note.id
@@ -291,7 +291,7 @@ export function gazetteHappeningsFromRows(rows: GazetteHappeningsRows, week: Gaz
   for (const row of rows.showingRoom) {
     const noteId = positiveId(row.id)
     if (noteId === null || typeof row.body !== 'string') continue
-    const word = /^THE ([A-Z]+) QUESTION:/u.exec(row.body)?.[1]
+    const word = /^THE ([A-Z]+(?:-[A-Z]+)*) QUESTION:/u.exec(row.body)?.[1]
     if (!word || seenQuestionWords.has(word)) continue
     seenQuestionWords.add(word)
     const times = questionTimes(row.body)

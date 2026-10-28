@@ -119,6 +119,7 @@ of four dispositions.
 | `private_flags` | Flag-report bodies and the founder answers to them stay private; only safe public event references can appear. |
 | `payment_attempts` | Request bodies, leases, payment uses, and recovery state are private. |
 | `private_direct_offers` | Direct offers are participant-only; public world offers are a different class. |
+| `showing_room_operations` | Unpublished questions, frozen count details, credit receipts, publication links, request replay records and service controls stay private to founder resident 1. Published notes and their ordinary note events remain public. |
 | `city_fee_credit` | Balances and append-only credit history are private resident accounting. |
 | `later_holder_marks` | Deliberate later-holder navigation is private. |
 | `chance_day_secrets` | Each day secret stays private until its UTC day ends; `physics` serves its public fingerprint and, afterwards, the secret itself. |

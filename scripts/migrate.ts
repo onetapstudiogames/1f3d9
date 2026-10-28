@@ -99,6 +99,8 @@ type RemoteMigration =
   | 'reading-filters'
   | 'waiting-transfers'
   | 'stored-public-activity'
+  | 'showing-room'
+  | 'showing-room-activation'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -175,6 +177,8 @@ export type MigrationFile =
   | 'db/migrations/20260907_resident_looking.sql'
   | 'db/migrations/20260913_held_luggage.sql'
   | 'db/migrations/20260915_flag_review.sql'
+  | 'db/migrations/20261027_showing_room.sql'
+  | 'db/migrations/20261027_showing_room_activation.sql'
 
 export type MigrationExecutionMode = 'transactional' | 'nontransactional'
 
@@ -188,6 +192,7 @@ export type MigrationRun = Readonly<{
   liveDeployment?: Readonly<{
     origin: string
     commit: string
+    service?: 'showing-room'
   }>
   preview?: Readonly<{
     projectId: string
@@ -218,6 +223,8 @@ const GAZETTE_WITHDRAWAL_ACKNOWLEDGEMENT =
   'INSTALL_DORMANT_GAZETTE_WITHDRAWAL_LEDGER'
 const GAZETTE_WITHDRAWAL_ACTIVATION_ACKNOWLEDGEMENT =
   'OPEN_GAZETTE_WITHDRAWALS_AFTER_MATCHING_APP_DEPLOYMENT'
+const SHOWING_ROOM_ACKNOWLEDGEMENT = 'INSTALL_DORMANT_SHOWING_ROOM_SERVICE'
+const SHOWING_ROOM_ACTIVATION_ACKNOWLEDGEMENT = 'PREPARE_SHOWING_ROOM_AFTER_MATCHING_APP_DEPLOYMENT'
 const CITY_CREDIT = Object.freeze({ 'city-credit': '20260822_city_credit.sql' } as const)
 const SNAPSHOT_NAME = /^[a-z0-9][a-z0-9-]{2,62}$/
 const GIT_COMMIT = /^[0-9a-f]{40}$/u
@@ -313,6 +320,8 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'reading-filters': 'db/migrations/20261017_reading_filters.sql',
   'waiting-transfers': 'db/migrations/20261018_waiting_transfers.sql',
   'stored-public-activity': 'db/migrations/20261028_stored_public_activity.sql',
+  'showing-room': 'db/migrations/20261027_showing_room.sql',
+  'showing-room-activation': 'db/migrations/20261027_showing_room_activation.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'
@@ -328,6 +337,21 @@ function gazetteLiveDeployment(
   target: MigrationTarget,
   environment: MigrationEnvironment,
 ): MigrationRun['liveDeployment'] {
+  if (migration === 'showing-room-activation') {
+    const commit = environment.SHOWING_ROOM_DEPLOYMENT_COMMIT ?? ''
+    if (!GIT_COMMIT.test(commit)) throw new Error('showing room activation requires SHOWING_ROOM_DEPLOYMENT_COMMIT as 40 lowercase hexadecimal characters')
+    if (target === 'production') return Object.freeze({ origin: 'https://1f3d9.com', commit, service: 'showing-room' })
+    const rawOrigin = environment.SHOWING_ROOM_PREVIEW_ORIGIN ?? ''
+    let origin: URL
+    try { origin = new URL(rawOrigin) } catch {
+      throw new Error('showing room activation requires SHOWING_ROOM_PREVIEW_ORIGIN as the immutable HTTPS deployment origin for this city project')
+    }
+    if (rawOrigin !== origin.origin || origin.protocol !== 'https:' || origin.username || origin.password
+      || origin.port || origin.pathname !== '/' || origin.search || origin.hash || !GAZETTE_PREVIEW_HOST.test(origin.hostname)) {
+      throw new Error('showing room activation requires SHOWING_ROOM_PREVIEW_ORIGIN as the immutable HTTPS deployment origin for this city project')
+    }
+    return Object.freeze({ origin: origin.origin, commit, service: 'showing-room' })
+  }
   if (
     migration !== 'gazette-room-activation'
     && migration !== 'gazette-withdrawal-activation'
@@ -492,6 +516,13 @@ export function resolveMigrationRun(
       GAZETTE_WITHDRAWAL_ACTIVATION_ACKNOWLEDGEMENT,
     )
   }
+  if (migration === 'showing-room' && environment.CONFIRM_SHOWING_ROOM !== SHOWING_ROOM_ACKNOWLEDGEMENT) {
+    throw new Error('showing room migration requires CONFIRM_SHOWING_ROOM=' + SHOWING_ROOM_ACKNOWLEDGEMENT)
+  }
+  if (migration === 'showing-room-activation'
+    && environment.CONFIRM_SHOWING_ROOM_ACTIVATION !== SHOWING_ROOM_ACTIVATION_ACKNOWLEDGEMENT) {
+    throw new Error('showing room activation requires CONFIRM_SHOWING_ROOM_ACTIVATION=' + SHOWING_ROOM_ACTIVATION_ACKNOWLEDGEMENT)
+  }
   const liveDeployment = gazetteLiveDeployment(migration, target, environment)
 
   if (target === 'preview') {
@@ -604,6 +635,8 @@ export async function verifyGazetteDeployment(
   expected: NonNullable<MigrationRun['liveDeployment']>,
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
+  const service = expected.service === 'showing-room' ? 'showing room' : 'Gazette'
+  const commitName = expected.service === 'showing-room' ? 'SHOWING_ROOM_DEPLOYMENT_COMMIT' : 'GAZETTE_DEPLOYMENT_COMMIT'
   const response = await fetcher(`${expected.origin}/api/official`, {
     method: 'GET',
     redirect: 'error',
@@ -617,23 +650,23 @@ export async function verifyGazetteDeployment(
     !/^application\/json(?:;|$)/iu.test(response.headers.get('content-type') ?? '') ||
     !cacheControl.split(',').some(value => value.trim().toLowerCase() === 'no-store')
   ) {
-    throw new Error('Gazette deployment proof was not an exact no-store JSON response')
+    throw new Error(`${service} deployment proof was not an exact no-store JSON response`)
   }
   const text = await response.text()
   if (Buffer.byteLength(text, 'utf8') > 65_536) {
-    throw new Error('Gazette deployment proof response was too large')
+    throw new Error(`${service} deployment proof response was too large`)
   }
   let body: unknown
   try {
     body = JSON.parse(text)
   } catch {
-    throw new Error('Gazette deployment proof was not valid JSON')
+    throw new Error(`${service} deployment proof was not valid JSON`)
   }
   const deployedCommit = body && typeof body === 'object' && !Array.isArray(body)
     ? (body as Record<string, unknown>).deployment_commit
     : null
   if (deployedCommit !== expected.commit) {
-    throw new Error('Gazette deployed commit did not match GAZETTE_DEPLOYMENT_COMMIT; activation remains unapplied')
+    throw new Error(`${service} deployed commit did not match ${commitName}; activation remains unapplied`)
   }
 }
 
@@ -1169,7 +1202,14 @@ export async function executeMigrationRun(
   operations: MigrationOperations = DEFAULT_MIGRATION_OPERATIONS,
 ): Promise<Readonly<{ statementCount: number; snapshotId?: string }>> {
   if (run.liveDeployment) {
-    await operations.verifyGazetteLocalCandidate(run.liveDeployment.commit)
+    try {
+      await operations.verifyGazetteLocalCandidate(run.liveDeployment.commit)
+    } catch (error) {
+      if (run.liveDeployment.service === 'showing-room' && error instanceof Error) {
+        throw new Error(error.message.replaceAll('Gazette', 'showing room').replaceAll('GAZETTE_DEPLOYMENT_COMMIT', 'SHOWING_ROOM_DEPLOYMENT_COMMIT'))
+      }
+      throw error
+    }
     await operations.verifyGazetteDeployment(run.liveDeployment)
   }
 
@@ -1187,10 +1227,18 @@ export async function executeMigrationRun(
   if (run.liveDeployment) {
     await operations.verifyGazetteDeployment(run.liveDeployment)
   }
+  const deploymentCommit = run.liveDeployment?.service === 'showing-room' ? run.liveDeployment.commit : null
+  if (run.migrationFile === 'db/migrations/20261027_showing_room_activation.sql'
+    && (!deploymentCommit || !GIT_COMMIT.test(deploymentCommit) || !/^BEGIN;/u.test(ddl))) {
+    throw new Error('showing room activation requires its verified deployment and reviewed transaction file')
+  }
+  const reviewedDdl = deploymentCommit
+    ? ddl.replace(/^BEGIN;/u, `BEGIN;\nSELECT set_config('showing_room.verified_commit', '${deploymentCommit}', true);`)
+    : ddl
   const statementCount = await operations.applyMigration(
     run.databaseUrl,
     run.migrationFile,
-    ddl,
+    reviewedDdl,
   )
   return snapshotId === undefined
     ? Object.freeze({ statementCount })
@@ -1207,7 +1255,7 @@ async function main(): Promise<void> {
   )
   if (run.liveDeployment) {
     console.log(
-      `verified clean local Gazette candidate and live application commit ${run.liveDeployment.commit} before and after database preparation`,
+      `verified clean local ${run.liveDeployment.service === 'showing-room' ? 'showing room' : 'Gazette'} candidate and live application commit ${run.liveDeployment.commit} before and after database preparation`,
     )
   }
   if (run.target === 'preview') {

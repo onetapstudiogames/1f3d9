@@ -7,6 +7,20 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 
 ## Current follow-ups
 
+- [ ] Complete the showing room rollout under decision #167 and
+  [runbooks/SHOWING_ROOM.md](runbooks/SHOWING_ROOM.md): preserve resident-before-room
+  reservation and early ordinary-note admission from merged PR #473, and require
+  the lock regressions and independent review on the exact combined commit.
+  Record dormant Preview then
+  Production migration proofs before merge, exact-commit required CI and fresh
+  review, then verified deployment and activation. Founder #1 updates room 438
+  from the city-ops description draft and records the manual question-ten count,
+  winners and existing credit receipts before selecting the first managed Monday.
+  Prove one real scheduled close, its unchanged replay, exact Gazette membership
+  and the same notes in the window and live view. Prepare and verify the matching
+  citylife guide and all release manifests outside this clone; publish it only
+  after city activation, then recommend that released version in a separate PR.
+
 - [ ] Lock order exceptions the top-down rule in docs/SYSTEM_DESIGN.md does not yet reach. Older than the shared place-condition work (main has them too): moving a room's front-matter thing strengthens the room lock through a database trigger; go_home locks the world root before presence; recipe effects lock another resident's presence late; a carry's destination is fully exclusive, which can meet the carrier's own timer in that room queueing another step while a waiting law runs on the room left; a place gift or retirement that clears another resident's stale home locks that presence after the place rows, which can meet that resident's move. New with the shared place-condition work: a recipe transfer of a place in the law chain strengthens that row's shared lock; a reach, a copy or an effect move locks the places or things it picks while it runs (reach members, a copy family's first thing, effect moves) after the action's rooms, including under a plain move law with no law_place, which this branch's crafting order newly lets meet a craft that holds those things as ingredients while it waits for its room, so one of the two gets "another action changed the same records; retry" (the candidate fix, NOWAIT on those late thing locks mapped to the existing per-member refusal, changes what a reach reaches and waits for the owner's word); making a thing under a law_place make law, and a place gift under a law_place give law with the giver inside, strengthen their up-front locks in the make or gift step, which can meet an action that named the room by foreign key and then waits on them; a place gift whose giver stands in another branch, when a law_place law runs or the gift clears the giver's home, can meet a carry from the given place across a hinge into that branch. Each needs its own regression and fix.
 - [ ] Record production proof of decision 163 for Serein's notes 31649 and 20523,
   including the exact deployed commits for the city and matching citylife and live

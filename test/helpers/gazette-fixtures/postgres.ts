@@ -37,8 +37,12 @@ assert.ok(
   sameRoomTalkSchemaOffset > postGazetteSchemaOffset,
   'schema must carry the same-room-talk migration after the Gazette section',
 )
-const postGazetteSchemaDdl = schemaBeforeActivity.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
-  + schemaBeforeActivity.slice(sameRoomTalkSchemaOffset + normalizedTalkMigration.length)
+const showingRoomMigrationDdl = (await readFile(
+  new URL('../../../db/migrations/20261027_showing_room.sql', import.meta.url), 'utf8',
+)).replaceAll('\r\n', '\n')
+const postGazetteSchemaDdl = (schemaBeforeActivity.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
+  + schemaBeforeActivity.slice(sameRoomTalkSchemaOffset + normalizedTalkMigration.length))
+  .replace(showingRoomMigrationDdl, '')
 export const preGazetteSchemaDdl = schemaBeforeActivity.slice(0, gazetteSchemaOffset)
   + postGazetteSchemaDdl
 assert.doesNotMatch(preGazetteSchemaDdl, /gazette_/iu)

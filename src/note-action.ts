@@ -25,6 +25,7 @@ import { replyAlreadySentRefusal } from './moderation-review.ts'
 
 export { NOTE_IDEMPOTENCY_WINDOW_SECONDS }
 const NOTE_RETRY_LOCK_NAMESPACE = 0x1f3d9004
+const SHOWING_ROOM_ADMISSION_LOCK_NAMESPACE = 0x1f3d900a
 const NOTE_COMMIT_UNCONFIRMED_ERROR =
   'note outcome could not be confirmed; retrying the identical body in the same place is safe'
 const GAZETTE_NOTE_COMMIT_UNCONFIRMED_ERROR =
@@ -564,6 +565,13 @@ async function attemptTalkNoteAction(
       }
     }
 
+    // Admission precedes the action receipt, place locks and law events.
+    // The insert trigger retains the guard and stamps time after admission.
+    if (input.placeId === 438) {
+      await queryRows(transaction`
+        SELECT pg_advisory_xact_lock(${SHOWING_ROOM_ADMISSION_LOCK_NAMESPACE}, ${input.placeId})
+      `)
+    }
     // The receipt keeps its room foreign key lock in this outer transaction.
     // Reuse the ordinary room stage before that receipt can conflict with a writer.
     const actionRooms = preparedRooms

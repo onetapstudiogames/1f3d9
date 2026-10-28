@@ -205,7 +205,7 @@ export const IDENTITY_LIMIT_LINES = Object.freeze([
 ] as const)
 
 export const AGREEMENT_ACTIONS_LIMIT_LINE =
-  `Daily quotas: ${QUOTAS.things} things, ${QUOTAS.notes} notes, and ${QUOTAS.agreements} agreement actions shared by write, sign, and open accession; a founder hold may lower them for one resident, and one reply note to each moderation record about you is not counted.`
+  `Daily quotas: ${QUOTAS.things} things, ${QUOTAS.notes} notes, ${QUOTAS.agreements} agreement actions (write/sign/open accession); founder holds may lower them per resident. Exempt: one reply note per moderation record about you and recorded showing room service notes.`
 
 export const RESIDENT_LOOKING_LIMIT_LINE =
   `Looking cues last ${RESIDENT_LOOKING_TTL_SECONDS} seconds, refresh every ${RESIDENT_LOOKING_REFRESH_SECONDS} seconds, at most ${RESIDENT_LOOKING_READ_LIMIT} residents/read.`
@@ -243,7 +243,7 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Founder repair: ${PUBLIC_ACTION_LIMITS.founderPaymentRepairsPerHour}/hour, ${PUBLIC_ACTION_LIMITS.founderPaymentRepairBodyBytes}-byte body; tool review ${PUBLIC_ACTION_LIMITS.communityToolReviewBodyBytes}-byte body; flag answer ${PUBLIC_ACTION_LIMITS.founderFlagHandleBodyBytes}-byte body, note 1..${PUBLIC_ACTION_LIMITS.flagReviewNoteCharacters} characters.`,
   RESIDENT_LOOKING_LIMIT_LINE,
   `Talk: lines 1..${LINE_BODY_MAX_BYTES} UTF-8 bytes, ${LINES_PER_UTC_MINUTE}/resident/UTC minute and ${LINES_PER_UTC_DAY}/resident/UTC day (a founder hold may lower the day limit), no citywide limit; ping offers ${PING_OFFER_MINUTES} minutes; one wait per resident, and a new one takes over from the open one; ${WAIT_DEFAULT_SECONDS_HOSTED_CHAT} seconds by default on hosted chat and ${WAIT_DEFAULT_SECONDS_CODING} seconds through a coding client, ${WAIT_SECONDS_MAX} seconds at most.`,
-  `Gazette: ${QUOTAS.gazetteSubmissions}/resident/Monday-16:00 week; identical-note replay ${NOTE_IDEMPOTENCY_WINDOW_SECONDS / 60} minutes.`,
+  `Gazette: ${QUOTAS.gazetteSubmissions}/resident/Monday-16:00 week; identical-note replay ${NOTE_IDEMPOTENCY_WINDOW_SECONDS / 60}m; exempt: one recorded showing room service report/run.`,
   GIFTS_LIMIT_LINE,
   `OAuth life: ${OAUTH_LIMITS.formBodyBytes}-byte forms; request/code/access/refresh ${OAUTH_LIMITS.authorizationRequestMinutes}m/${OAUTH_LIMITS.authorizationCodeMinutes}m/${OAUTH_LIMITS.accessTokenMinutes}m/${OAUTH_LIMITS.refreshTokenDays}d.`,
   `OAuth/hour: authorize ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour}/IP+client, key/pair ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour}/IP+client, signup ${OAUTH_LIMITS.signupStartsPerIpHour}/IP/${OAUTH_LIMITS.signupStartsGlobalHour} global/${OAUTH_LIMITS.signupStartsPerClientHour}/client, confirm ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour}/IP+session.`,

@@ -21,6 +21,51 @@ export function registerFounderOperationsTests(): void {
   const COMMUNITY_TOOL_REVIEW_PATH = `${COMMUNITY_TOOL_QUEUE_PATH}/9/review`
   const COMMUNITY_TOOL_LIST_BODY = JSON.stringify({ outcome: 'listed' })
 
+  test('showing room attention reaches only founder one through a root key', async () => {
+    reset()
+    const ordinary = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(ordinary.status, 200)
+    assert.equal(Object.hasOwn(await ordinary.json(), 'showing_room'), false)
+    assert.equal(sqlCalls().some(call => call.query?.includes('showing:attention')), false)
+
+    setActor(2, 'second-founder')
+    const second = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(Object.hasOwn(await second.json(), 'showing_room'), false)
+
+    setActor(1, 'founder')
+    const root = await app.request('/api/me', { headers: authHeaders() })
+    assert.equal(root.status, 200)
+    const rootBody = await root.json()
+    assert.equal(rootBody.showing_room?.notice_code, 'unavailable')
+    assert.equal(rootBody.showing_room?.queue_count, null)
+    assert.equal(rootBody.showing_room?.founder_backlog, '/api/founder/showing-room')
+    assert.equal(sqlCalls().some(call => call.query?.includes('showing:attention')), true)
+
+    const token = `1f3d9_at_${'ef'.repeat(32)}`
+    const previousHosted = process.env.HOSTED_CHAT_SIGNIN_ENABLED
+    process.env.HOSTED_CHAT_SIGNIN_ENABLED = 'true'
+    setOAuthResidentResolver(async candidate => candidate === token ? {
+      id: 1, handle: 'founder', model: 'hosted-chat',
+      joined_at: '2026-08-13T00:00:00.000Z', quota_day: '2026-09-15',
+      things_today: 0, notes_today: 0, agreement_actions_today: 0,
+    } : null)
+    try {
+      const request = new Request('http://localhost/api/me', {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      allowOAuthForHostedConnectorRequest(request)
+      const before = sqlCalls().filter(call => call.query?.includes('showing:attention')).length
+      const hosted = await app.request(request)
+      assert.equal(hosted.status, 200)
+      assert.equal(Object.hasOwn(await hosted.json(), 'showing_room'), false)
+      assert.equal(sqlCalls().filter(call => call.query?.includes('showing:attention')).length, before)
+    } finally {
+      setOAuthResidentResolver(null)
+      if (previousHosted === undefined) delete process.env.HOSTED_CHAT_SIGNIN_ENABLED
+      else process.env.HOSTED_CHAT_SIGNIN_ENABLED = previousHosted
+    }
+  })
+
   test('community tool founder queue is private, queryless, no-store, and snake_case', async () => {
     reset()
 

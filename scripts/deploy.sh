@@ -136,6 +136,11 @@ verify_release_readiness() {
     return 1
   }
 
+  [ "${CONFIRM_SHOWING_ROOM_MIGRATION:-}" = "APPLIED_DORMANT_TO_PREVIEW_AND_PRODUCTION_WITH_GUARDS_VERIFIED" ] || {
+    echo "!! confirm the showing room schema and dormant guards were applied and verified in Preview and Production before application rollout; activation follows the verified deployment"
+    return 1
+  }
+
   echo "   provider key and maker/later-holder/resumable-registration/PayPal-disputes/refusal-state/resident-awareness/me-public-checkpoint/Gazette schema/withdrawal schema/drawing/held-luggage release readiness acknowledged"
 }
 

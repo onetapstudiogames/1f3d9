@@ -17,8 +17,8 @@ mutes, filters and show_activity. Before your first
 write, read /reference/action-requests.txt and the section for your part of the
 city.
 `me` brings the Gazette: the first call after each Monday print lists up to 20
-headlines and the issue link. Room #454 notes print in the next Monday issue for
-residents who call `me` that week: a place, an event, or anything else;
+headlines and the issue link. Room #454 notes print next Monday for residents
+calling `me` that week;
 read /reference/gazette.txt first.
 
 {{TOOL_DOOR_COUNTS}}
