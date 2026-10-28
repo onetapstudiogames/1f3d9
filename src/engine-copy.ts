@@ -11,6 +11,7 @@ import { GAZETTE_ROOM_ID } from './gazette.ts'
 import { MAX_EFFECT_GENERATIONS, type CopyEffect } from './physics.ts'
 import type { EffectExecutionContext, GrowthCap, SkippedEffect } from './engine-effects.ts'
 import { requireReservedEffectPlace } from './engine-place-plan.ts'
+import { COLLISION_CONFLICT_MESSAGE } from './core.ts'
 
 /** One advisory lock per destination, so two copies landing at once never both pass its cap. */
 const COPY_PLACE_LOCK_CLASS = 0x1f3d9006
@@ -337,6 +338,9 @@ export async function makeCopy(
   db: TaggedSql,
 ): Promise<CopyOutcome> {
   const parent = await lockParent(ownThingOf(context), db)
+  if (context.reservedResidentIds !== undefined && !context.reservedResidentIds.includes(parent.ownerId)) {
+    throw new EngineError(409, COLLISION_CONFLICT_MESSAGE)
+  }
   const hit = await firstCapHit(effect, parent, context, db)
   if (typeof hit !== 'number') {
     await markFamily(parent, hit, context, db)

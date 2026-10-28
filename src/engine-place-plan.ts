@@ -18,6 +18,31 @@ function placeIds(values: readonly unknown[]): number[] {
   return [...new Set(values.map(Number).filter(value => Number.isSafeInteger(value) && value > 0))]
 }
 
+/** Reserve every possible activity author together, before any room lock. */
+export async function lockEffectResidents(
+  effects: readonly Effect[],
+  context: Pick<EffectExecutionContext, 'actorId' | 'sourceThingId' | 'recipientId'>
+    & Readonly<{ originThingId?: number | null | undefined }>,
+  db: TaggedSql,
+): Promise<readonly number[]> {
+  const copies = immediateEffects(effects).some(effect => effect.effect === 'copy')
+  const things = copies ? placeIds([context.sourceThingId, context.originThingId]) : []
+  if (things.length === 0) {
+    await db`SELECT id FROM residents WHERE id = ${context.actorId} FOR NO KEY UPDATE`
+    return [context.actorId]
+  }
+  const owners = await db`
+    SELECT owner_id FROM things WHERE id = ANY(${things}::int[])
+  ` as Array<{ owner_id: number }>
+  // A give or transfer can change the source owner before its copy runs.
+  const residents = placeIds([context.actorId, context.recipientId,
+    ...owners.map(row => row.owner_id)]).sort((left, right) => left - right)
+  await db`
+    SELECT id FROM residents WHERE id = ANY(${residents}::int[]) ORDER BY id FOR NO KEY UPDATE
+  `
+  return residents
+}
+
 /** Resolve possible rooms before a writer takes a thing, a presence, or an event lock. */
 export async function effectPlaceIds(
   effects: readonly Effect[], context: PlaceContext, db: TaggedSql,

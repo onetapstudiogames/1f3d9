@@ -47,7 +47,7 @@ import { writeStateBox } from './engine-state.ts'
 import { makeCopy } from './engine-copy.ts'
 import { reachMemberStillConsents, REACH_MEMBER_REFUSED, runReach } from './engine-reach.ts'
 import { CONVERT_ONLY_THINGS_ERROR, convertThing } from './engine-convert.ts'
-import { effectPlaceIds, lockEffectThings, requireReservedEffectPlace } from './engine-place-plan.ts'
+import { effectPlaceIds, lockEffectResidents, lockEffectThings, requireReservedEffectPlace } from './engine-place-plan.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -63,6 +63,8 @@ export interface LawAuthority {
   readonly sourcePlaceId: number
 }
 export interface EffectExecutionContext {
+  /** Activity authors reserved by id before rooms, including possible copy owners. */
+  readonly reservedResidentIds?: readonly number[]
   /** Rooms reserved before any public effect, including possible copy destinations and homes. */
   readonly reservedPlaceIds?: readonly number[]
   readonly actionId: number | null
@@ -1534,10 +1536,12 @@ async function resolveOne(
     }, db)
     return 'resolved'
   }
+  const reservedResidentIds = await lockEffectResidents(row.effects, row, db)
   const actors = await queryRows<{ handle: string }>(db`
-    SELECT handle FROM residents WHERE id = ${row.actorId} FOR NO KEY UPDATE
+    SELECT handle FROM residents WHERE id = ${row.actorId}
   `)
   const context: EffectExecutionContext = {
+    reservedResidentIds,
     actionId: row.actionId,
     actorId: row.actorId,
     actorHandle: actors[0]?.handle ?? '',

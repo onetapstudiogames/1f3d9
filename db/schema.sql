@@ -12946,7 +12946,8 @@ END $f$;
 
 CREATE OR REPLACE FUNCTION guard_public_activity_time() RETURNS trigger LANGUAGE plpgsql AS $f$
 BEGIN
-  IF (NOT isfinite(NEW.at) OR NEW.at > clock_timestamp()) AND public_activity_potential_kind(NEW.kind) THEN RAISE EXCEPTION 'public activity event time is future or non-finite'; END IF;
+  -- Allow small clock retreats; readers omit a stamp until their database time reaches it.
+  IF (NOT isfinite(NEW.at) OR NEW.at > clock_timestamp() + interval '5 seconds') AND public_activity_potential_kind(NEW.kind) THEN RAISE EXCEPTION 'public activity event time is future or non-finite'; END IF;
   RETURN NEW;
 END $f$;
 
@@ -13012,7 +13013,7 @@ BEGIN
     RETURN;
   END IF;
   IF EXISTS (SELECT 1 FROM events WHERE public_activity_potential_kind(kind)
-    AND (NOT isfinite(at) OR at>clock_timestamp())) THEN
+    AND (NOT isfinite(at) OR at>clock_timestamp() + interval '5 seconds')) THEN
     RAISE EXCEPTION 'public activity backfill has future or non-finite history';
   END IF;
   counts := recompute_public_activity(NULL,NULL,NULL);

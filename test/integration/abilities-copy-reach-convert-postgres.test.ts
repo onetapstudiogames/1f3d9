@@ -44,6 +44,20 @@ const feedDdl = await readFile(
   new URL('../../db/migrations/20261016_place_feed.sql', import.meta.url),
   'utf8',
 )
+// Stored activity adds a places column and depends on reading settings and room talk.
+// Replay those migrations before comparing the upgraded and fresh catalogs.
+const residentSettingsDdl = await readFile(
+  new URL('../../db/migrations/20261017_resident_settings.sql', import.meta.url),
+  'utf8',
+)
+const sameRoomTalkDdl = await readFile(
+  new URL('../../db/migrations/20260924_same_room_talk.sql', import.meta.url),
+  'utf8',
+)
+const storedPublicActivityDdl = await readFile(
+  new URL('../../db/migrations/20261028_stored_public_activity.sql', import.meta.url),
+  'utf8',
+)
 // db/schema.sql ends with this change's statements; everything before them is the
 // database exactly as production holds it once abilities-wake-chance-write has run.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
@@ -196,6 +210,9 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query(laterPlacesDdl)
       await db.query(hingesDdl)
       await db.query(feedDdl)
+      await db.query(residentSettingsDdl)
+      await db.query(sameRoomTalkDdl)
+      await db.query(storedPublicActivityDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })

@@ -31,7 +31,7 @@ import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
-import { effectPlaceIds, lockEffectThings } from './engine-place-plan.ts'
+import { effectPlaceIds, lockEffectResidents, lockEffectThings } from './engine-place-plan.ts'
 import type { WaitingNote } from './waiting-transfers.ts'
 import {
   newRollLog,
@@ -1733,9 +1733,10 @@ export async function runAction(
   const abilityLog = newAbilityLog()
   try {
     return await withEngineTransaction(db, async transaction => {
-      await queryRows(transaction`
-        SELECT id FROM residents WHERE id = ${input.actorId} FOR NO KEY UPDATE
-      `)
+      const possibleThingPrograms = input.sourceThingId === null ? []
+        : await thingProgramsForAction(input.sourceThingId, input.action, transaction)
+      const reservedResidentIds = await lockEffectResidents(
+        possibleThingPrograms.flatMap(program => program.effects), input, transaction)
       const observedPresence = await readPresence(input.actorId, transaction)
       if (input.action === 'go_home') {
         // The room being left and the home, from the top of the tree down, before luggage.
@@ -1853,7 +1854,8 @@ export async function runAction(
         input.primitiveHandledByCaller,
         async () => {
           const intrinsic = await intrinsicAction(input, actionId, transaction, abilityLog)
-          const base = { ...actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog), reservedPlaceIds }
+          const base = { ...actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog),
+            reservedPlaceIds, reservedResidentIds }
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
           let destroyedThingIds: readonly number[] = []

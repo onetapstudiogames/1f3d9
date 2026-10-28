@@ -90,7 +90,7 @@ async function startPostgres(): Promise<{
 
 function taggedSql(
   client: Client,
-  beforeQuery?: (text: string) => Promise<void>,
+  beforeQuery?: (text: string, values: readonly unknown[]) => Promise<string | void>,
   afterQuery?: (text: string, client: Client) => Promise<void>,
 ): TaggedSql {
   const sql = (async (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
@@ -98,15 +98,15 @@ function taggedSql(
       (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
       '',
     )
-    await beforeQuery?.(text)
-    const result = await client.query(text, [...values])
+    const statement = await beforeQuery?.(text, values) ?? text
+    const result = await client.query(statement, [...values])
     await afterQuery?.(text, client)
     return result.rows
   }) as TaggedSql
   // Text queries, as the gift route and place lifecycle send them, pass the same hooks.
   sql.query = async (text, values = []) => {
-    await beforeQuery?.(text)
-    const result = await client.query(text, [...values])
+    const statement = await beforeQuery?.(text, values) ?? text
+    const result = await client.query(statement, [...values])
     await afterQuery?.(text, client)
     return result.rows
   }
@@ -419,7 +419,7 @@ test('law_place shares one timed condition through the current owner chain', asy
   const client = postgres.client
   const observer = new Client(postgres.clientConfig)
   const db = taggedSql(client)
-  let beforeQuery: ((text: string) => Promise<void>) | undefined
+  let beforeQuery: ((text: string, values: readonly unknown[]) => Promise<string | void>) | undefined
   let afterQuery: ((text: string, client: Client) => Promise<void>) | undefined
   let sqlstates: string[] = []
   const transaction = async <T>(work: (sql: TaggedSql) => Promise<T>): Promise<T> => {
@@ -909,52 +909,102 @@ test('law_place shares one timed condition through the current owner chain', asy
       })
     }
 
-    await t.test('a timer reserves ancestry before actor presence like a concurrent action', async () => {
-      const destination = await place('presence-race-destination', b)
-      await execute([{ effect: 'wait', seconds: 1, then: [
-        { effect: 'move', target: 'actor', to: 'destination' }, write('presence-race'),
-      ] }], { ...context, destinationPlaceId: destination })
-      const paused = barrier()
-      beforeQuery = async text => {
-        if (lockQuery(text)) {
-          paused.reached(); await paused.gate
+    for (const clockStep of [false, true]) {
+      await t.test(clockStep
+        ? 'a timer remains due when the clock moves back before recording its refusal'
+        : 'a timer reserves ancestry before actor presence like a concurrent action', async () => {
+        const destination = await place(`presence-race-destination-${clockStep}`, b)
+        // This lock fixture is already due even if the disposable database clock steps back.
+        const pending = (await client.query(`
+          INSERT INTO pending_effects (place_id, actor_id, source_trait_id, source_thing_id,
+            destination_place_id, payload, due_at, created_at, generation)
+          VALUES ($1, 2, 1, $2, $3, $4::jsonb,
+            now() - interval '1 minute', now() - interval '1 minute', 0)
+          RETURNING id, due_at <= now() AS due
+        `, [b, thing, destination, JSON.stringify({
+          effects: [{ effect: 'move', target: 'actor', to: 'destination' }, write('presence-race')],
+          law_authority: { trait_id: 1, source_place_id: a },
+          shared_source_thing_id: thing,
+          effect_origin: { source_thing_id: null, source_place_id: a },
+        })])).rows[0]
+        assert.equal(pending.due, true)
+        const paused = barrier()
+        let pendingReads = 0
+        beforeQuery = async (text, values) => {
+          if (/FOR UPDATE OF pending/.test(text) && String(values[0]) === pending.id) {
+            pendingReads += 1
+            // Only the refusal-record retry observes a clock 500 ms before this effect was due.
+            if (clockStep && pendingReads === 2) return text.replace(
+              'pending.due_at <= now()',
+              "pending.due_at <= pending.due_at - interval '500 milliseconds'",
+            )
+          }
+          if (lockQuery(text)) {
+            paused.reached(); await paused.gate
+          }
         }
-      }
-      const operation = resolveDueEffects(b, db)
-      const changer = new Client(postgres.clientConfig)
-      const presenceLocked = barrier()
-      await changer.connect()
-      let changed: Promise<void> | undefined
-      try {
-        await atBarrier(paused.ready, operation)
-        changed = (async () => {
-          await changer.query('BEGIN')
-          await changer.query('SELECT id FROM places WHERE id = $1 FOR NO KEY UPDATE', [a])
-          await changer.query('SELECT resident_id FROM resident_presence WHERE resident_id = 2 FOR UPDATE')
-          presenceLocked.reached()
-          await changer.query('UPDATE places SET owner_id = 3 WHERE id = $1', [a])
-          await changer.query('COMMIT')
-        })()
-        const settledChange = changed.then(() => null, (error: unknown) => error)
-        await atBarrier(presenceLocked.ready, changed)
-        paused.release()
-        assert.deepEqual(await operation, { resolved: 0, failed: 1, capped: false })
-        assert.equal(await settledChange, null, 'actor presence and ancestor locks must not invert')
-        assert.equal(await present('presence-race'), false)
-        const failure = (await client.query('SELECT detail FROM effect_resolutions ORDER BY id DESC LIMIT 1')).rows[0]
-        assert.equal(failure.detail.error,
-          "this law no longer applies from its defining place through this room's current owner chain; read the room's laws before trying again")
-      } finally {
-        paused.release()
-        beforeQuery = undefined
-        await operation.catch(() => undefined)
-        await changed?.catch(() => undefined)
-        await changer.query('ROLLBACK')
-        await changer.end()
-        await client.query('UPDATE places SET owner_id = 1 WHERE id = $1', [a])
-        await client.query('UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 2', [b])
-      }
-    })
+        const operation = resolveDueEffects(b, db)
+        const changer = new Client(postgres.clientConfig)
+        const presenceLocked = barrier()
+        await changer.connect()
+        let changed: Promise<void> | undefined
+        try {
+          await atBarrier(paused.ready, operation)
+          changed = (async () => {
+            await changer.query('BEGIN')
+            await changer.query('SELECT id FROM places WHERE id = $1 FOR NO KEY UPDATE', [a])
+            await changer.query('SELECT resident_id FROM resident_presence WHERE resident_id = 2 FOR UPDATE')
+            presenceLocked.reached()
+            await changer.query('UPDATE places SET owner_id = 3 WHERE id = $1', [a])
+            await changer.query('COMMIT')
+          })()
+          const settledChange = changed.then(() => null, (error: unknown) => error)
+          await atBarrier(presenceLocked.ready, changed)
+          paused.release()
+          assert.deepEqual(await operation, { resolved: 0, failed: clockStep ? 0 : 1, capped: false })
+          assert.equal(await settledChange, null, 'actor presence and ancestor locks must not invert')
+          assert.equal(await present('presence-race'), false)
+          assert.equal(pendingReads, 2, 'the refusal must recheck the same pending effect')
+          if (clockStep) {
+            assert.deepEqual((await client.query(`
+              SELECT pending.due_at <= now() AS due, resolution.id AS resolution_id
+              FROM pending_effects pending
+              LEFT JOIN effect_resolutions resolution ON resolution.pending_effect_id = pending.id
+              WHERE pending.id = $1
+            `, [pending.id])).rows, [{ due: true, resolution_id: null }])
+            assert.equal((await client.query(`
+              SELECT count(*)::int AS count FROM events
+              WHERE kind = 'effect_resolved' AND detail->>'effect_id' = $1::text
+            `, [pending.id])).rows[0].count, 0)
+            beforeQuery = undefined
+            assert.deepEqual(await resolveDueEffects(b, db), { resolved: 0, failed: 1, capped: false })
+            assert.equal(await present('presence-race'), false)
+          }
+          const failures = (await client.query(
+            'SELECT status, detail FROM effect_resolutions WHERE pending_effect_id = $1', [pending.id],
+          )).rows
+          assert.equal(failures.length, 1)
+          const failure = failures[0]
+          assert.equal(failure.status, 'failed')
+          assert.equal(failure.detail.error,
+            "this law no longer applies from its defining place through this room's current owner chain; read the room's laws before trying again")
+          assert.deepEqual(await resolveDueEffects(b, db), { resolved: 0, failed: 0, capped: false })
+          assert.equal((await client.query(`
+            SELECT count(*)::int AS count FROM events
+            WHERE kind = 'effect_resolved' AND detail->>'effect_id' = $1::text
+          `, [pending.id])).rows[0].count, 1)
+        } finally {
+          paused.release()
+          beforeQuery = undefined
+          await operation.catch(() => undefined)
+          await changed?.catch(() => undefined)
+          await changer.query('ROLLBACK')
+          await changer.end()
+          await client.query('UPDATE places SET owner_id = 1 WHERE id = $1', [a])
+          await client.query('UPDATE resident_presence SET current_place_id = $1 WHERE resident_id = 2', [b])
+        }
+      })
+    }
 
     for (const mutation of ['intermediate-owner', 'intermediate-retired', 'source-retired'] as const) {
       await t.test(`delayed law_place refuses ${mutation}`, async () => {

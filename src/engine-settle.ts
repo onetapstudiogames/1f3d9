@@ -34,7 +34,7 @@ import {
   WAKE_SETTLE_MIN_INTERVAL_SECONDS,
 } from './engine-limits.ts'
 import { wakeProgramOf, type WakeProgram } from './physics.ts'
-import { effectPlaceIds } from './engine-place-plan.ts'
+import { effectPlaceIds, lockEffectResidents } from './engine-place-plan.ts'
 
 const WAKE_SETTLE_LOCK_CLASS = 0x1f3d9003
 const NO_LONGER_ELIGIBLE = 'no longer eligible'
@@ -426,7 +426,9 @@ async function runTry(
         SELECT owner_id FROM things WHERE id = ${candidate.thingId}
       ` as Array<{ owner_id: number }>
       const ownerId = owners[0]?.owner_id ?? candidate.ownerId
-      await transaction`SELECT id FROM residents WHERE id = ${ownerId} FOR NO KEY UPDATE`
+      const reservedResidentIds = await lockEffectResidents(candidate.program.then, {
+        actorId: ownerId, sourceThingId: candidate.thingId, recipientId: null,
+      }, transaction)
       const reservedPlaceIds = await effectPlaceIds(candidate.program.then, {
         actorId: ownerId, actorSymbolId: unit.reason === 'clock' ? null : residentId,
         placeId, sourceThingId: candidate.thingId, target: null,
@@ -441,6 +443,7 @@ async function runTry(
         return 'quiet' as const
       }
       const context: EffectExecutionContext = {
+        reservedResidentIds,
         reservedPlaceIds,
         actionId: null,
         actorId: owner.ownerId,

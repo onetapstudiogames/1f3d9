@@ -954,7 +954,11 @@ The server hardcodes **meanings never, mechanisms only**:
   The source, room, and connecting parent places must still form an unbroken
   same-owner chain and none may be retired; the exact source law must still be
   effective in the room. These conditions are checked again when delayed work runs,
-  and the action is refused if they no longer hold. Ordinary visitors can trigger an
+  and the action is refused if they no longer hold. A delayed effect stays pending
+  until its resolution commits. The refusal recorder checks again that the effect
+  is due in its own transaction. If a backwards database clock step makes it
+  temporarily not due, that pass records no resolution and a later pass retries it.
+  Once due, a broken owner chain still produces the same refusal. Ordinary visitors can trigger an
   installed law through a permitted action; they need not own the place. A hinge,
   even with one owner at both ends, grants no shared state. `check_label` on
   `law_place` reads active labels only, never an adopted law's name, and grants no
@@ -965,8 +969,8 @@ The server hardcodes **meanings never, mechanisms only**:
   no new action, tool, or brick, payment, daily cap, or ownership right.
 - Row locks follow one order, so that two actions do not each hold a row the other is
   waiting for. The order still has open exceptions, listed in docs/TASKS.md. An action
-  first reserves its responsible resident row, then the rooms it can affect, then its
-  presence and thing rows. Rooms follow the tree from the top down: a parent before its
+  first reserves every possible activity author by resident id, then the rooms it can
+  affect, then its presence and thing rows. Rooms follow the tree from the top down: a parent before its
   child, and rows at one depth by id. Each planned room takes FOR NO KEY UPDATE before
   any event is written; a carried move takes its destination FOR UPDATE in that same
   order. This reserves the stored activity update before the public change checkpoint.
@@ -999,7 +1003,18 @@ The server hardcodes **meanings never, mechanisms only**:
   initialization keeps its candidate room locks before the presence write. Its retired
   place check locks only changed targets on an update, so a retained current room or
   home never creates a late room lock; inserts still check both targets. The deferred
-  activity writer reuses the action locks in the same transaction.
+  activity writer reuses the action locks in the same transaction. The resident plan
+  includes the actor and, when an immediate branch can copy, the current source thing
+  owner and any recipient that can own that source after a give or transfer.
+  Wait payloads reserve their copy owners when they run. Shared copies and delayed copies record the
+  copy owner; delayed work plans its source and original thing owners anew before
+  rooms. Under the thing lock, a copy refuses a changed owner outside the reserved
+  resident set before any copy write or draw. Wake tries reserve the current owner
+  before rooms and recheck ownership when claiming the thing. Other effect changes
+  belong to the responsible actor, including movement of another resident or held
+  thing; target residents and reach members are not additional activity authors.
+  Gifts and transfers record the giver, including accepted waiting gifts. Agreement
+  creation, opening and signatures record only the acting resident, not named parties.
 - A move runs the laws of the place being left; arrival alone does not run the
   destination's laws. Arriving may wake things there under their owners' and the room
   owner's wake switches; that is a wake try, not a law (decision #105).
@@ -1876,8 +1891,14 @@ the existing event-write exclusion. A private singleton receipt records the cut 
 identity. Reruns verify rather than replace saved choices or newer timestamps.
 Historical inference uses immutable linked records and event-time locations, never
 current locations as history; unproved results are omitted. Moderation or a feed
-change recomputes affected summaries in its write transaction. Future or non-finite
-qualifying event times are refused before stamping. Exact snapshot format lists and
+change recomputes affected summaries in its write transaction. The insertion and
+first-backfill guards allow a qualifying event time up to five seconds ahead of the
+database clock, so a small backwards clock step does not refuse an otherwise valid
+change. Non-finite times and larger future differences still refuse. Event times and
+summary stamps stay equal; public reads omit a stamp ahead of their statement time
+until the database clock reaches it, so no band is computed from a future time.
+Rerunning the migration replaces the guard function while preserving the existing
+receipt, saved choices and newer stamps. Exact snapshot format lists and
 export grants exclude the summary columns, choice, derived band and wake carrier.
 
 Current census, presence, focused presence and direct public place reads compute

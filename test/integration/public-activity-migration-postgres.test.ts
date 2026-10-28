@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { FOUNDER, GROWER, NEIGHBOUR } from '../helpers/abilities-fixtures.ts'
 import { resetCity, startNoteSuiteDatabase } from '../helpers/note-suite-fixtures/postgres.ts'
+import { publicActivitySql } from '../../src/public-activity.ts'
 
 const migrationUrl = new URL('../../db/migrations/20261028_stored_public_activity.sql', import.meta.url)
 
@@ -28,6 +30,50 @@ test('stored public activity migration preserves choices, proof, transactions an
       ])
     })
     const migration = await readFile(migrationUrl, 'utf8')
+    await t.test('the earlier applied migration upgrades in place with its receipt and saved state intact', async () => {
+      const earlier = migration
+        .replace('  -- Allow small clock retreats; readers omit a stamp until their database time reaches it.\n', '')
+        .replaceAll(" + interval '5 seconds'", '')
+      assert.equal(createHash('sha256').update(earlier).digest('hex'),
+        'bec56c98de5740f41b80077ad4472679043809327cd3423b16770913e3f43e6d')
+      await db.query(earlier)
+      await db.query(`INSERT INTO events(kind,actor,detail,at)
+        VALUES ('register',$1,'{}',clock_timestamp()-interval '1 hour')`, [GROWER.handle])
+      await db.query('UPDATE residents SET show_activity=false WHERE id=$1', [GROWER.id])
+      const saved = (await db.query('SELECT last_public_action_at,show_activity FROM residents WHERE id=$1', [GROWER.id])).rows
+      const receipt = (await db.query('SELECT * FROM public_activity_schema_state')).rows
+      await assert.rejects(db.query(`INSERT INTO events(kind,actor,detail,at)
+        VALUES ('register',$1,'{}',clock_timestamp()+interval '400 milliseconds')`, [GROWER.handle]), /event time/u)
+      await db.query(migration)
+      await db.query(migration)
+      assert.deepEqual((await db.query('SELECT last_public_action_at,show_activity FROM residents WHERE id=$1', [GROWER.id])).rows, saved)
+      assert.deepEqual((await db.query('SELECT * FROM public_activity_schema_state')).rows, receipt)
+      await db.query(`INSERT INTO events(kind,actor,detail,at)
+        VALUES ('register',$1,'{}',clock_timestamp()+interval '400 milliseconds')`, [GROWER.handle])
+      await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+    })
+    await t.test('a small clock retreat preserves event time and never computes a band from future time', async () => {
+      const event = (await db.query(`INSERT INTO events(kind,actor,detail,at)
+        VALUES ('note',$1,$2::jsonb,clock_timestamp()+interval '400 milliseconds') RETURNING id,at::text`,
+      [GROWER.handle, JSON.stringify({ applied_public_activity: [
+        { actor: GROWER.handle, operation: 'note', place_id: rooms.eastRoomId },
+      ] })])).rows[0]!
+      const check = async () => {
+        const row = (await db.query(`SELECT event.at=$3::timestamptz AS event_unchanged,
+          resident.last_public_action_at=place.last_public_action_at AS same_stamp,
+          resident.last_public_action_at=event.at AS exact_stamp,
+          ${publicActivitySql('resident', true).replaceAll('statement_timestamp()', "event.at-interval '1 millisecond'")} AS before_event,
+          ${publicActivitySql('resident', true).replaceAll('statement_timestamp()', 'event.at')} AS at_event
+          FROM events event CROSS JOIN residents resident CROSS JOIN places place
+          WHERE event.id=$1 AND resident.id=$2 AND place.id=$4`,
+        [event.id, GROWER.id, event.at, rooms.eastRoomId])).rows[0]!
+        assert.deepEqual(row, { event_unchanged: true, same_stamp: true, exact_stamp: true, before_event: null, at_event: 'active now' })
+      }
+      await check()
+      await db.query('SELECT recompute_public_activity(NULL,NULL,NULL)')
+      await check()
+      await resetCity([FOUNDER, GROWER, NEIGHBOUR])
+    })
     await t.test('explicit outcomes advance the actor and destination, and empty outcomes do not', async () => {
       await db.query(`INSERT INTO events(kind,actor,detail,at) VALUES ('action',$1,$2::jsonb,now()-interval '2 hours')`,
         [GROWER.handle, JSON.stringify({ status: 'applied', applied_public_activity: [{ actor: GROWER.handle, operation: 'move', place_id: rooms.westRoomId }] })])
@@ -71,8 +117,10 @@ test('stored public activity migration preserves choices, proof, transactions an
         await connection.query('COMMIT')
       } finally { connection.release() }
       assert.deepEqual((await db.query('SELECT id,last_public_action_at FROM residents ORDER BY id')).rows, before)
-      await assert.rejects(db.query(`INSERT INTO events(kind,actor,detail,at) VALUES ('note',$1,$2::jsonb,now()+interval '1 hour')`,
-        [GROWER.handle, JSON.stringify({ applied_public_activity: [{ actor: GROWER.handle, operation: 'note', place_id: rooms.eastRoomId }] })]), /event time/u)
+      for (const at of ["clock_timestamp()+interval '1 hour'", "'infinity'::timestamptz", "'-infinity'::timestamptz"]) {
+        await assert.rejects(db.query(`INSERT INTO events(kind,actor,detail,at) VALUES ('note',$1,$2::jsonb,${at})`,
+          [GROWER.handle, JSON.stringify({ applied_public_activity: [{ actor: GROWER.handle, operation: 'note', place_id: rooms.eastRoomId }] })]), /event time/u)
+      }
     })
     await t.test('same-statement resident and place creation stamp with deferred and early immediate constraints', async () => {
       for (const [index, immediate] of [false, true].entries()) {
@@ -228,6 +276,29 @@ test('stored public activity migration preserves choices, proof, transactions an
       await db.query('DROP FUNCTION public_activity_id(text)')
       await db.query(migration)
       assert.deepEqual(await verify(), { verified: true, target: 'preview' })
+    })
+    await t.test('upgrade accepts a small clock retreat without changing event time or its receipt on rerun', async () => {
+      const schema = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+      await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+      await db.query(schema.split('-- Stored public activity summaries, decision #166.')[0]!)
+      await db.query(`INSERT INTO residents(id,handle,model,secret_hash)
+        VALUES (1,'founder','test',repeat('1',64))`)
+      await db.query(`INSERT INTO places(id,parent_id,place_kind,name,owner_id)
+        VALUES (2,1,'continent','clock test',1),(3,2,'place','clock room',1)`)
+      await db.query(`INSERT INTO events(kind,actor,detail,at) VALUES ('note','founder',
+        '{"applied_public_activity":[{"actor":"founder","operation":"note","place_id":3}]}',
+        clock_timestamp()+interval '3 seconds')`)
+      await db.query(migration)
+      const row = (await db.query(`SELECT resident.last_public_action_at=place.last_public_action_at AS same_stamp,
+        resident.last_public_action_at=event.at AS exact_stamp,
+        ${publicActivitySql('resident', true).replaceAll('statement_timestamp()', "event.at-interval '1 millisecond'")} AS before_event,
+        ${publicActivitySql('resident', true).replaceAll('statement_timestamp()', 'event.at')} AS at_event
+        FROM residents resident CROSS JOIN places place CROSS JOIN events event
+        WHERE resident.id=1 AND place.id=3 AND event.kind='note'`)).rows[0]!
+      assert.deepEqual(row, { same_stamp: true, exact_stamp: true, before_event: null, at_event: 'active now' })
+      const receipt = (await db.query('SELECT * FROM public_activity_schema_state')).rows
+      await db.query(migration)
+      assert.deepEqual((await db.query('SELECT * FROM public_activity_schema_state')).rows, receipt)
     })
     await t.test('upgrade rejects hidden future history and rolls back every added column', async () => {
       const schema = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
