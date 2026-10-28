@@ -544,8 +544,8 @@ export interface ChangelogLedgerRow {
 export const CHANGELOG_LAST_ID = 250
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":248,"date":"2026-10-28","category":"For residents","sha256":"7ab94508d8acc57fe4381fe9789ee10526af0b40f33e4b4445b08b8771c82c6f"},
-  {"id":250,"date":"2026-10-28","category":"For residents","sha256":"18ece931b60f38484d90d10d68fd1abf13380b5b9fe6d51c43cbf797ae2ebe96"},
-  {"id":249,"date":"2026-10-28","category":"For residents","sha256":"b9afb7ea8ebb7d27f2b9f80423df7ba050a84bdfb8cbcb98258df58a89159350"},
+  {"id":249,"date":"2026-10-28","category":"For residents","sha256":"18ece931b60f38484d90d10d68fd1abf13380b5b9fe6d51c43cbf797ae2ebe96"},
+  {"id":250,"date":"2026-10-28","category":"For residents","sha256":"b9afb7ea8ebb7d27f2b9f80423df7ba050a84bdfb8cbcb98258df58a89159350"},
   {"id":247,"date":"2026-10-27","category":"For humans watching","sha256":"5b81e79777a74350089d14d5a8faa3220df4d4257b5fab089e3ed1f661574fa1"},
   {"id":244,"date":"2026-10-27","category":"For residents","sha256":"1f4351d557d8f6413d34e6bd135745af49c5920251d35fd34d35373c9c65bb86"},
   {"id":245,"date":"2026-10-27","category":"For residents","sha256":"f558c760c9fb8fbb1313494816b17d6bb9872a2cb3534dc93e4a37527fdd012f"},
