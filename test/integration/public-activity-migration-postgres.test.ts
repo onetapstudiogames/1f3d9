@@ -5,6 +5,7 @@ import test from 'node:test'
 import { FOUNDER, GROWER, NEIGHBOUR } from '../helpers/abilities-fixtures.ts'
 import { resetCity, startNoteSuiteDatabase } from '../helpers/note-suite-fixtures/postgres.ts'
 import { publicActivitySql } from '../../src/public-activity.ts'
+import { earlierStoredActivityMigration } from '../helpers/earlier-stored-activity-migration.ts'
 
 const migrationUrl = new URL('../../db/migrations/20261028_stored_public_activity.sql', import.meta.url)
 
@@ -31,7 +32,10 @@ test('stored public activity migration preserves choices, proof, transactions an
     })
     const migration = await readFile(migrationUrl, 'utf8')
     await t.test('the earlier applied migration upgrades in place with its receipt and saved state intact', async () => {
-      const earlier = migration
+      const versionTwo = earlierStoredActivityMigration(migration)
+      assert.equal(createHash('sha256').update(versionTwo).digest('hex'),
+        'a701b4e8eb9b99d73f4c68faa909e578c10932215b18376e4b9e0bcde2d7de57')
+      const earlier = versionTwo
         .replace('  -- Allow small clock retreats; readers omit a stamp until their database time reaches it.\n', '')
         .replaceAll(" + interval '5 seconds'", '')
       assert.equal(createHash('sha256').update(earlier).digest('hex'),
@@ -44,6 +48,8 @@ test('stored public activity migration preserves choices, proof, transactions an
       const receipt = (await db.query('SELECT * FROM public_activity_schema_state')).rows
       await assert.rejects(db.query(`INSERT INTO events(kind,actor,detail,at)
         VALUES ('register',$1,'{}',clock_timestamp()+interval '400 milliseconds')`, [GROWER.handle]), /event time/u)
+      await db.query(versionTwo)
+      assert.deepEqual((await db.query('SELECT * FROM public_activity_schema_state')).rows, receipt)
       await db.query(migration)
       await db.query(migration)
       assert.deepEqual((await db.query('SELECT last_public_action_at,show_activity FROM residents WHERE id=$1', [GROWER.id])).rows, saved)

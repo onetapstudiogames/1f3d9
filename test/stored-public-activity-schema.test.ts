@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { resolveMigrationRun } from '../scripts/migrate.ts'
+import { earlierStoredActivityMigration } from './helpers/earlier-stored-activity-migration.ts'
 
 test('stored public activity selects the reviewed additive migration', () => {
   const run = resolveMigrationRun(['--target', 'preview', '--migration', 'stored-public-activity'], {
@@ -30,4 +31,19 @@ test('migration and full schema carry identical stored activity bodies after pre
   assert.equal(migration.match(presenceGuard)?.[0], schema.match(presenceGuard)?.[0])
   assert.ok(migration.indexOf('FUNCTION reject_retired_place_target') < migration.indexOf('ADD COLUMN IF NOT EXISTS last_public_action_at'))
   assert.doesNotMatch(migration, /ALTER TABLE resident_settings ADD COLUMN.*show_activity/u)
+})
+
+test('backfill computes history before resident/place locks and writes only the saved summaries', () => {
+  const migration = readFileSync(new URL('../db/migrations/20261028_stored_public_activity.sql', import.meta.url), 'utf8')
+  const computesFirst = (sql: string) => {
+    const computed = sql.indexOf('CREATE TEMP TABLE public_activity_backfill ON COMMIT DROP AS')
+    const altered = sql.indexOf('ALTER TABLE residents ADD COLUMN')
+    return computed >= 0 && computed < altered
+  }
+  assert.equal(computesFirst(earlierStoredActivityMigration(migration)), false, 'the earlier migration held locks while computing')
+  assert.equal(computesFirst(migration), true)
+  const updates = migration.slice(migration.indexOf('-- The expensive work is complete;'), migration.indexOf('REVOKE ALL ON FUNCTION'))
+  assert.doesNotMatch(updates, /public_activity_(?:history|summaries|candidates)\(/u)
+  assert.match(updates, /UPDATE residents[\s\S]*FROM public_activity_backfill/u)
+  assert.match(updates, /UPDATE places[\s\S]*FROM public_activity_backfill/u)
 })

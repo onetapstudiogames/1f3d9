@@ -15,7 +15,47 @@ test('stored activity maintenance proves historical rooms and changed outcomes',
   )).rows[0]!.id)
   const candidates = async (id: number) => (await db.query(`SELECT activity.* FROM events event
     CROSS JOIN LATERAL public_activity_candidates(event.id,event.kind,event.actor,event.detail) activity WHERE event.id=$1`, [id])).rows
+  t.afterEach(async () => {
+    const difference = await db.query(`WITH original AS MATERIALIZED (
+      SELECT event.at AS event_at,activity.* FROM events event
+      CROSS JOIN LATERAL public_activity_candidates(event.id,event.kind,event.actor,event.detail) activity
+    ), batched AS MATERIALIZED (SELECT * FROM public_activity_history())
+    (SELECT * FROM original EXCEPT ALL SELECT * FROM batched)
+    UNION ALL (SELECT * FROM batched EXCEPT ALL SELECT * FROM original)`)
+    assert.deepEqual(difference.rows, [], 'batched history equals the individual-event proof, including duplicate candidates')
+  })
   try {
+    await t.test('batched history preserves bigint action links, text identity and mixed legacy proof', async () => {
+      const rooms = await resetCity([FOUNDER, GROWER])
+      await db.query(`INSERT INTO action_runs(id,actor_id,action_name,place_id,destination_place_id)
+        VALUES (2147483648,2,'move',$1,$2),(2147483649,2,'move',$1,$1),(2147483650,2,'go_home',$1,NULL)`,
+      [rooms.eastRoomId, rooms.westRoomId])
+      await db.query(`INSERT INTO action_resolutions(action_run_id,status,detail)
+        SELECT id,'applied','{}'::jsonb FROM action_runs`)
+      for (const actionId of ['2147483648', '02147483648', '2147483649', '2147483650', '9223372036854775808']) {
+        await event('action', { action_id: actionId, action: actionId === '2147483650' ? 'go_home' : 'move',
+          status: 'applied', to_place_id: rooms.westRoomId, effects_applied: 0 })
+      }
+      await event('action', { action: 'use', status: 'applied', effects_applied: 0 })
+      await event('effect_resolved', { status: 'applied', place_id: rooms.eastRoomId, effects_applied: 2 })
+      await event('thing_created', { thing_id: 42, place_id: rooms.eastRoomId })
+      await event('thing_edited', { thing_id: 42 })
+      await event('thing_moved', { thing_id: 42, from_place_id: rooms.eastRoomId, place_id: rooms.westRoomId })
+      await event('thing_edited', { thing_id: 42 })
+      await event('thing_edited', { thing_id: 42, target_type: 'place', target_id: null })
+      await event('home_set', { place_id: rooms.eastRoomId })
+      await event('home_set', { place_id: rooms.westRoomId })
+      await event('home_set', { place_id: rooms.eastRoomId, applied_public_activity: [] })
+      await event('home_set', { place_id: rooms.westRoomId })
+      await event('laws_changed', { place_id: rooms.eastRoomId, traits: [] })
+      await event('laws_changed', { place_id: rooms.eastRoomId, traits: ['new'] })
+      await event('laws_changed', { place_id: rooms.eastRoomId, traits: ['hidden'], applied_public_activity: [] })
+      await event('laws_changed', { place_id: rooms.eastRoomId, traits: ['hidden'] })
+      await event('laws_changed', { place_id: null, traits: ['unknown'] })
+      await event('laws_changed', { traits: [] })
+      const outcome = { actor: GROWER.handle, operation: 'label', place_id: rooms.westRoomId }
+      await event('action', { status: 'noop', applied_public_activity: [outcome, outcome] })
+    })
     await t.test('a changed historical move with zero extra effects counts, while a same-room move does not', async () => {
       const rooms = await resetCity([FOUNDER, GROWER])
       for (const destination of [rooms.westRoomId, rooms.eastRoomId]) {

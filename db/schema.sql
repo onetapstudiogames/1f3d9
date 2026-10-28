@@ -12591,28 +12591,6 @@ BEGIN
   END IF;
 END $shape$;
 
-ALTER TABLE residents ADD COLUMN IF NOT EXISTS last_public_action_at timestamptz;
-ALTER TABLE residents ADD COLUMN IF NOT EXISTS show_activity boolean NOT NULL DEFAULT true;
-ALTER TABLE places ADD COLUMN IF NOT EXISTS last_public_action_at timestamptz;
-
-DO $types$
-BEGIN
-  IF (SELECT count(*) FROM pg_attribute a LEFT JOIN pg_attrdef d ON
-      d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE NOT a.attisdropped AND (
-    a.attrelid IN ('residents'::regclass,'places'::regclass)
-      AND a.attname='last_public_action_at' AND a.atttypid='timestamptz'::regtype
-      AND NOT a.attnotnull AND d.oid IS NULL
-    OR a.attrelid='residents'::regclass AND a.attname='show_activity'
-      AND a.atttypid='boolean'::regtype AND a.attnotnull
-      AND pg_get_expr(d.adbin,d.adrelid)='true')) <> 3 THEN
-    RAISE EXCEPTION 'stored activity column type/default mismatch';
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='resident_settings'::regclass
-    AND attname='show_activity' AND NOT attisdropped) THEN
-    RAISE EXCEPTION 'duplicate stored activity choice';
-  END IF;
-END $types$;
-
 CREATE TABLE IF NOT EXISTS public_activity_schema_state (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   migration_identity text NOT NULL CHECK (migration_identity='stored-public-activity'),
@@ -12799,7 +12777,100 @@ END $f$;
 CREATE OR REPLACE FUNCTION public_activity_history()
 RETURNS TABLE(event_at timestamptz, actor_handle text, place_id integer, proved boolean)
 LANGUAGE sql STABLE AS $f$
-  SELECT event.at,activity.actor_handle,activity.place_id,activity.proved FROM events event
+  -- Resolve the large legacy action and speech sets once. Unusual historical
+  -- records retain the same candidate proof used by individual event writes.
+  WITH RECURSIVE feed_rooms(id) AS (
+    SELECT id FROM places WHERE feed
+    UNION SELECT child.id FROM places child JOIN feed_rooms parent ON child.parent_id=parent.id
+  ), removed AS MATERIALIZED (
+    SELECT target_type,target_id FROM (
+      SELECT DISTINCT ON (target_type,target_id) target_type,target_id,action
+      FROM moderation_actions ORDER BY target_type,target_id,created_at DESC,id DESC
+    ) latest WHERE action='remove'
+  ), applied_actions AS MATERIALIZED (
+    SELECT action.id::text AS id,actor.handle,action.action_name,action.place_id,action.destination_place_id
+    FROM action_runs action JOIN residents actor ON actor.id=action.actor_id
+    JOIN action_resolutions resolution ON resolution.action_run_id=action.id AND resolution.status='applied'
+  ), previous_choices AS MATERIALIZED (
+    SELECT history.id,CASE WHEN history.kind='home_set' OR history.detail->>'place_id' IS NOT NULL
+      THEN lag(history.detail) OVER (PARTITION BY history.kind,
+        CASE WHEN history.kind='home_set' THEN history.actor ELSE history.detail->>'place_id' END
+        ORDER BY change.change_id) END AS detail
+    FROM events history JOIN public_change_log change ON change.event_id=history.id
+    WHERE history.kind IN ('home_set','laws_changed')
+  ), thing_steps AS (
+    SELECT history.detail->>'thing_id' AS thing,history.kind,change.change_id,
+      public_activity_id(history.detail->>'place_id') AS destination,
+      public_activity_id(history.detail->>'from_place_id') AS origin,
+      row_number() OVER chain AS position,
+      lag(public_activity_id(history.detail->>'place_id')) OVER chain AS previous_destination
+    FROM events history JOIN public_change_log change ON change.event_id=history.id
+    WHERE history.kind IN ('thing_created','thing_crafted','thing_moved')
+    WINDOW chain AS (PARTITION BY history.detail->>'thing_id' ORDER BY change.change_id)
+  ), thing_chains AS MATERIALIZED (
+    SELECT thing,destination,change_id,lead(change_id) OVER chain AS next_change_id,
+      count(*) FILTER (WHERE kind IN ('thing_created','thing_crafted')) OVER chain AS creations,
+      bool_and(destination IS NOT NULL AND CASE WHEN position=1 THEN kind IN ('thing_created','thing_crafted')
+        ELSE kind='thing_moved' AND origin IS NOT NULL AND origin=previous_destination END) OVER chain AS valid
+    FROM thing_steps WINDOW chain AS (PARTITION BY thing ORDER BY change_id)
+  ), eligible AS MATERIALIZED (
+    SELECT * FROM events WHERE public_activity_potential_kind(kind)
+      AND (detail ? 'applied_public_activity' OR kind NOT IN ('action','effect_resolved') OR detail->>'status'='applied')
+      AND (detail ? 'applied_public_activity' OR kind NOT IN ('action','effect_resolved','room_reached','wake_try_applied')
+        OR kind='action' AND detail->>'action' IN ('move','go_home') OR detail->>'effects_applied' IS DISTINCT FROM '0')
+  ), common AS MATERIALIZED (
+    SELECT event.*,CASE WHEN event.kind='action' AND event.detail->>'action' IN ('move','go_home')
+      THEN coalesce(public_activity_id(event.detail->>'to_place_id'),action.destination_place_id)
+      ELSE coalesce(public_activity_id(event.detail->>'place_id'),note.place_id,line.place_id,ping.place_id,action.place_id) END AS room,
+      CASE WHEN event.kind='home_set' THEN CASE WHEN public_activity_id(previous.detail->>'place_id') IS NOT NULL
+        THEN public_activity_id(event.detail->>'place_id') IS NOT NULL
+          AND public_activity_id(event.detail->>'place_id') IS DISTINCT FROM public_activity_id(previous.detail->>'place_id') END
+        WHEN event.kind='laws_changed' THEN CASE WHEN jsonb_typeof(event.detail->'traits')='array'
+          THEN event.detail->'traits' IS DISTINCT FROM coalesce(previous.detail->'traits','[]'::jsonb) END
+        WHEN event.kind NOT IN ('action','effect_resolved','room_reached','wake_try_applied') THEN true
+        WHEN event.detail->>'action' IN ('move','go_home') AND action.destination_place_id IS NOT NULL
+        THEN action.place_id IS DISTINCT FROM action.destination_place_id END AS changed
+    FROM eligible event
+    LEFT JOIN applied_actions action ON event.kind='action' AND action.id=event.detail->>'action_id'
+      AND action.handle=event.actor AND action.action_name=event.detail->>'action'
+    LEFT JOIN notes note ON event.kind='note' AND note.id=public_activity_id(event.detail->>'note_id')
+    LEFT JOIN room_lines line ON event.kind='line_said' AND line.id=public_activity_id(event.detail->>'line_id')
+    LEFT JOIN pings ping ON event.kind IN ('ping_sent','ping_answered') AND ping.id=public_activity_id(event.detail->>'ping_id')
+    LEFT JOIN previous_choices previous ON previous.id=event.id
+    WHERE event.kind IN ('action','note','line_said','ping_sent','ping_answered','thing_created','thing_crafted',
+      'thing_edited','thing_moved','thing_upgraded','thing_withdrawn','place_created','place_edited','place_renamed',
+      'place_retired','place_restored','effect_scheduled','effect_resolved','room_reached','wake_try_applied','gazette_printed',
+      'world_listed','world_sale','world_cancel','home_set','laws_changed')
+      AND NOT event.detail ? 'applied_public_activity'
+  ), proved_rooms AS MATERIALIZED (
+    SELECT id,at,kind,actor,detail,room,changed FROM common WHERE room IS NOT NULL
+    UNION ALL
+    SELECT event.id,event.at,event.kind,event.actor,event.detail,chain.destination,event.changed
+    FROM common event JOIN public_change_log change ON change.event_id=event.id
+    JOIN thing_chains chain ON chain.thing=public_activity_id(event.detail->>'thing_id')::text
+      AND chain.change_id<=change.change_id AND (chain.next_change_id IS NULL OR change.change_id<chain.next_change_id)
+    WHERE event.room IS NULL AND event.kind NOT IN ('effect_scheduled','home_set','laws_changed') AND chain.valid AND chain.creations=1
+      AND NOT event.detail ?| ARRAY['asset_type','type','asset_id','id','offer_id','target_type']
+  ), remaining AS MATERIALIZED (
+    SELECT event.* FROM eligible event
+    WHERE NOT EXISTS (SELECT 1 FROM proved_rooms common WHERE common.id=event.id)
+  )
+  SELECT event.at,CASE WHEN event.kind IN ('note','line_said','ping_sent','ping_answered','thing_created','thing_crafted',
+    'thing_edited','thing_moved','thing_upgraded','thing_withdrawn') AND feed.id IS NOT NULL THEN NULL ELSE event.actor END,
+    event.room,event.changed IS TRUE
+  FROM proved_rooms event LEFT JOIN feed_rooms feed ON feed.id=event.room
+  WHERE event.changed IS DISTINCT FROM false
+    AND NOT EXISTS (
+      SELECT 1 FROM removed WHERE removed.target_id=CASE removed.target_type
+        WHEN 'resident' THEN public_activity_id(event.detail->>'resident_id') WHEN 'place' THEN event.room
+        WHEN 'thing' THEN public_activity_id(event.detail->>'thing_id') WHEN 'kind' THEN public_activity_id(event.detail->>'kind_id')
+        WHEN 'trait' THEN public_activity_id(event.detail->>'trait_id') WHEN 'note' THEN public_activity_id(event.detail->>'note_id')
+        WHEN 'agreement' THEN public_activity_id(event.detail->>'agreement_id') WHEN 'line' THEN public_activity_id(event.detail->>'line_id')
+        WHEN 'ping' THEN public_activity_id(event.detail->>'ping_id') END
+        OR removed.target_type=event.detail->>'target_type' AND removed.target_id=public_activity_id(event.detail->>'target_id')
+    )
+  UNION ALL
+  SELECT event.at,activity.actor_handle,activity.place_id,activity.proved FROM remaining event
   CROSS JOIN LATERAL public_activity_candidates(event.id,event.kind,event.actor,event.detail) activity
 $f$;
 
@@ -12991,6 +13062,46 @@ BEGIN
   RETURN NEW;
 END $f$;
 
+DO $backfill$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public_activity_schema_state) THEN
+    IF (SELECT count(*) FROM public_activity_schema_state WHERE singleton AND schema_version=1
+      AND migration_identity='stored-public-activity')<>1 THEN RAISE EXCEPTION 'stored activity receipt mismatch'; END IF;
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM events WHERE public_activity_potential_kind(kind)
+    AND (NOT isfinite(at) OR at>clock_timestamp() + interval '5 seconds')) THEN
+    RAISE EXCEPTION 'public activity backfill has future or non-finite history';
+  END IF;
+END $backfill$;
+
+-- Compute history before taking resident/place DDL or update locks.
+CREATE TEMP TABLE public_activity_backfill ON COMMIT DROP AS
+  SELECT summary.* FROM public_activity_summaries() summary
+  WHERE NOT EXISTS (SELECT 1 FROM public_activity_schema_state);
+
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS last_public_action_at timestamptz;
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS show_activity boolean NOT NULL DEFAULT true;
+ALTER TABLE places ADD COLUMN IF NOT EXISTS last_public_action_at timestamptz;
+
+DO $types$
+BEGIN
+  IF (SELECT count(*) FROM pg_attribute a LEFT JOIN pg_attrdef d ON
+      d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE NOT a.attisdropped AND (
+    a.attrelid IN ('residents'::regclass,'places'::regclass)
+      AND a.attname='last_public_action_at' AND a.atttypid='timestamptz'::regtype
+      AND NOT a.attnotnull AND d.oid IS NULL
+    OR a.attrelid='residents'::regclass AND a.attname='show_activity'
+      AND a.atttypid='boolean'::regtype AND a.attnotnull
+      AND pg_get_expr(d.adbin,d.adrelid)='true')) <> 3 THEN
+    RAISE EXCEPTION 'stored activity column type/default mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid='resident_settings'::regclass
+    AND attname='show_activity' AND NOT attisdropped) THEN
+    RAISE EXCEPTION 'duplicate stored activity choice';
+  END IF;
+END $types$;
+
 DROP TRIGGER IF EXISTS events_guard_public_activity_time ON events;
 CREATE TRIGGER events_guard_public_activity_time BEFORE INSERT ON events
 FOR EACH ROW EXECUTE FUNCTION guard_public_activity_time();
@@ -13004,28 +13115,28 @@ DROP TRIGGER IF EXISTS places_invalidate_public_activity ON places;
 CREATE TRIGGER places_invalidate_public_activity AFTER UPDATE OF feed ON places
 FOR EACH ROW WHEN (OLD.feed IS DISTINCT FROM NEW.feed) EXECUTE FUNCTION invalidate_public_activity();
 
-DO $backfill$
-DECLARE counts jsonb;
-BEGIN
-  IF EXISTS (SELECT 1 FROM public_activity_schema_state) THEN
-    IF (SELECT count(*) FROM public_activity_schema_state WHERE singleton AND schema_version=1
-      AND migration_identity='stored-public-activity')<>1 THEN RAISE EXCEPTION 'stored activity receipt mismatch'; END IF;
-    RETURN;
-  END IF;
-  IF EXISTS (SELECT 1 FROM events WHERE public_activity_potential_kind(kind)
-    AND (NOT isfinite(at) OR at>clock_timestamp() + interval '5 seconds')) THEN
-    RAISE EXCEPTION 'public activity backfill has future or non-finite history';
-  END IF;
-  counts := recompute_public_activity(NULL,NULL,NULL);
-  INSERT INTO public_activity_schema_state
-  SELECT true,'stored-public-activity',1,(SELECT current_change_id FROM public_change_state WHERE singleton),
-    statement_timestamp(),(SELECT count(*) FROM events),
-    (counts->>'known_residents')::bigint,(counts->>'known_places')::bigint,
-    (counts->>'no_history_residents')::bigint,(counts->>'no_history_places')::bigint,
-    (counts->>'unproved_residents')::bigint,(counts->>'unproved_places')::bigint,
-    (counts->>'unproved_candidates')::bigint,
-    jsonb_build_object('missing_changed_or_room_evidence',(counts->>'unproved_candidates')::bigint);
-END $backfill$;
+-- The expensive work is complete; only the stored rows and receipt remain.
+UPDATE residents resident SET last_public_action_at=summary.last_at
+FROM public_activity_backfill summary
+WHERE resident.id=summary.resident_id AND resident.last_public_action_at IS DISTINCT FROM summary.last_at;
+
+UPDATE places place SET last_public_action_at=summary.last_at
+FROM public_activity_backfill summary
+WHERE place.id=summary.place_id AND place.last_public_action_at IS DISTINCT FROM summary.last_at;
+
+INSERT INTO public_activity_schema_state
+SELECT true,'stored-public-activity',1,(SELECT current_change_id FROM public_change_state WHERE singleton),
+  statement_timestamp(),(SELECT count(*) FROM events),
+  count(*) FILTER (WHERE resident_id IS NOT NULL AND last_at IS NOT NULL),
+  count(*) FILTER (WHERE place_id IS NOT NULL AND last_at IS NOT NULL),
+  count(*) FILTER (WHERE resident_id IS NOT NULL AND last_at IS NULL AND NOT uncertain),
+  count(*) FILTER (WHERE place_id IS NOT NULL AND last_at IS NULL AND NOT uncertain),
+  count(*) FILTER (WHERE resident_id IS NOT NULL AND uncertain),
+  count(*) FILTER (WHERE place_id IS NOT NULL AND uncertain),
+  coalesce(sum(unproved_count),0),
+  jsonb_build_object('missing_changed_or_room_evidence',coalesce(sum(unproved_count),0))
+FROM public_activity_backfill
+HAVING NOT EXISTS (SELECT 1 FROM public_activity_schema_state);
 
 REVOKE ALL ON FUNCTION public_activity_potential_kind(text),public_activity_id(text),public_activity_room(bigint,text,text,jsonb),
   public_activity_visible(text,jsonb,integer),public_activity_feed_room(integer),
