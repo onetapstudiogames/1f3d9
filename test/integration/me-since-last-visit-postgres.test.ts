@@ -178,6 +178,7 @@ async function startPostgres(): Promise<{ client: Pool; containerName: string }>
       database: POSTGRES_DATABASE,
       ssl: false,
       max: 8,
+      lock_timeout: 30_000,
     })
     const deadline = Date.now() + 30_000
     let lastError: unknown = null
@@ -344,6 +345,14 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       ))
     `, [historicalNote.rows[0]!.id, ownedPlaceId])
 
+    // Older late arrivals keep their new change ids without refreshing the reader row.
+    // That row is deliberately locked by the paused me read below.
+    await postgres.client.query(`
+      INSERT INTO events (kind, actor, detail, at)
+      VALUES ('register', 'visit-reader', jsonb_build_object('resident_id', 7),
+        now() - interval '1 minute')
+    `)
+
     const firstVisit = await readMe()
     assert.equal(firstVisit.around_you.available, true)
     assert.equal(firstVisit.last_visit_at, '2026-09-01T12:00:00.000Z')
@@ -427,13 +436,13 @@ test('the prior visit marker and received-credit counts use one PostgreSQL snaps
       VALUES ($1, 'reader-made compass', 7, 7) RETURNING id
     `, [ownedPlaceId])
     await postgres.client.query(`
-      INSERT INTO events (kind, actor, detail) VALUES
+      INSERT INTO events (kind, actor, detail, at) VALUES
         ('note', 'visit-reader', jsonb_build_object(
           'note_id', $1::integer, 'place_id', $3::integer
-        )),
+        ), '2020-01-01T00:00:00Z'),
         ('thing_created', 'visit-reader', jsonb_build_object(
           'thing_id', $2::integer, 'place_id', $3::integer
-        ))
+        ), '2020-01-01T00:00:00Z')
     `, [selfNote.rows[0]!.id, selfMadeThing.rows[0]!.id, ownedPlaceId])
     const agreement = await postgres.client.query<{ id: number }>(`
       INSERT INTO agreements (created_by_id, body)

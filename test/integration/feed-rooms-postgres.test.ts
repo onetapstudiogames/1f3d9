@@ -31,6 +31,7 @@ const migration = await readFile(
 )
 
 const PRE_FEED_DDL = `
+  DROP TRIGGER places_invalidate_public_activity ON places;
   ALTER TABLE places DROP CONSTRAINT places_feed_needs_quiet;
   ALTER TABLE places DROP COLUMN feed;
 `

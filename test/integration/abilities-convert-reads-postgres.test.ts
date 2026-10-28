@@ -198,7 +198,7 @@ test('converted things read true, reaches stay within 512, and families copy wit
       const event = (await connectedDatabase().query(`
         SELECT detail FROM events WHERE kind = 'thing_upgraded' ORDER BY id DESC LIMIT 1
       `)).rows[0]!.detail as Json
-      assert.deepEqual(event, { thing_id: oakId, kind_id: ash, current_revision: 2 }, 'the upgrade event describes one kind')
+      assert.deepEqual(event, { thing_id: oakId, kind_id: ash, place_id: rooms.eastRoomId, current_revision: 2 }, 'the upgrade event describes one kind')
     })
 
     await t.test("a conversion clears the old family's open growth marks", async () => {

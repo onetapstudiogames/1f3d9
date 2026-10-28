@@ -21,7 +21,7 @@ stable key: source path, final text or runtime template, and same-expression ord
 are display information only and never identity. Set equality means a refusal discovered by those
 rules cannot be added, removed, or changed without updating this manifest.
 
-There are **1637 resolved source refusal producers**: **1213 caller-visible** and **424 internal-only**.
+There are **1644 resolved source refusal producers**: **1220 caller-visible** and **424 internal-only**.
 
 The 40 caller-visible rows produced by src/room-talk-contract.ts are same-room talk refusals (decisions #119 to #127). src/room-talk-routes.ts serves them over HTTP, GET /api/me serves the pending-page refusal, and the say, look, ping, and wait_here tools forward them.
 

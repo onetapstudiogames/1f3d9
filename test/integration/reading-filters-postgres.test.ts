@@ -22,6 +22,7 @@ import {
   resetCity,
   standIn,
   startNoteSuiteDatabase,
+  withNoteSuiteQueryObserver,
 } from '../helpers/note-suite-fixtures/postgres.ts'
 
 // GROWER is the reader; NEIGHBOUR writes what it reads; FAR_SHORE chooses every filter on show.
@@ -105,7 +106,15 @@ async function seedThing(placeId: number, makerId: number, name: string, body: s
 }
 
 async function say(app: CityApp, secret: string, placeId: number, body: string): Promise<number> {
-  const said = await call(app, secret, 'POST', '/api/line', { place_id: placeId, body, request_id: randomUUID() })
+  // Keep fixture activity in the past when comparing reads across private changes.
+  let clockSamples = 0
+  const said = await withNoteSuiteQueryObserver(text => {
+    const sample = 'SELECT presence.current_place_id, clock_timestamp() AS now'
+    if (!text.includes(sample)) return text
+    clockSamples += 1
+    return text.replace(sample, "SELECT presence.current_place_id, clock_timestamp() - interval '1 minute' AS now")
+  }, () => call(app, secret, 'POST', '/api/line', { place_id: placeId, body, request_id: randomUUID() }))
+  assert.equal(clockSamples, 1, 'the line uses the fixture database clock')
   assert.equal(said.status, 201, JSON.stringify(said.json))
   return Number((said.json.line as Json).id)
 }
@@ -456,10 +465,19 @@ test('reading filters against real PostgreSQL', { timeout: 900_000 }, async t =>
 
       // Anonymous reads never change, whatever any reader chose: the world moved during this
       // test (a look, a wait, a line), so compare anonymous reads around one more change.
+      const publicActivity = async () => ({
+        residents: (await db.query('SELECT id, last_public_action_at::text, show_activity FROM residents ORDER BY id')).rows,
+        places: (await db.query('SELECT id, last_public_action_at::text FROM places ORDER BY id')).rows,
+        events: (await db.query('SELECT to_jsonb(event) AS event FROM events event ORDER BY id')).rows,
+      })
+      const activityBefore = await publicActivity()
       const settled = new Map<string, Read>()
       for (const path of paths) settled.set(path, await read(app, path))
-      await change(app, GROWER.secret, { filters: EVERY_DESCRIBE })
-      await change(app, GROWER.secret, { muted_words: { add: ['square'] } })
+      assert.equal((settled.get(`/api/place/${rooms.eastRoomId}`)!.json.place as Json).last_active, 'active now')
+      assert.equal((await change(app, GROWER.secret, { filters: EVERY_DESCRIBE })).changed, true)
+      assert.deepEqual(await publicActivity(), activityBefore, 'filters leave all stored activity and public events unchanged')
+      assert.equal((await change(app, GROWER.secret, { muted_words: { add: ['square'] } })).changed, true)
+      assert.deepEqual(await publicActivity(), activityBefore, 'muted words leave all stored activity and public events unchanged')
       for (const path of paths) {
         const after = await read(app, path)
         assert.equal(after.text, settled.get(path)!.text, `anonymous ${path}`)

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { call, FOUNDER, GROWER, NEIGHBOUR, type CityApp, type Json } from '../helpers/abilities-fixtures.ts'
-import { bearer, connectedDatabase, resetCity, standIn, startNoteSuiteDatabase } from '../helpers/note-suite-fixtures/postgres.ts'
+import { bearer, connectedDatabase, resetCity, standIn, startNoteSuiteDatabase, withNoteSuiteQueryObserver } from '../helpers/note-suite-fixtures/postgres.ts'
 
 const OTHER = Object.freeze({ id: 5, handle: 'quiet-reader', secret: `1f3d9_sk_${'4'.repeat(48)}` })
 const QUIET = Object.freeze({ id: 6, handle: 'long-quiet', secret: `1f3d9_sk_${'6'.repeat(48)}` })
@@ -296,7 +296,16 @@ test('public activity routes and MCP use fresh applied facts with a whole privat
         FROM residents resident, places place WHERE resident.id = $1 AND place.id = $2
       `, [NEIGHBOUR.id, rooms.eastRoomId])).rows[0]!
       assert.deepEqual(await stamps(), { resident_at: null, place_at: null })
-      const note = await call(app, NEIGHBOUR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'An applied public note.' })
+      // Keep the note and its derived stamps behind the database read clock.
+      let clockSamples = 0
+      const note = await withNoteSuiteQueryObserver(text => {
+        if (!text.includes('/* note-action:create */')) return text
+        return text.replaceAll('statement_timestamp()', () => {
+          clockSamples += 1
+          return "(statement_timestamp() - interval '1 minute')"
+        })
+      }, () => call(app, NEIGHBOUR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'An applied public note.' }))
+      assert.equal(clockSamples, 1, 'the note uses the fixture database clock')
       assert.equal(note.status, 201, JSON.stringify(note.json))
       assertNoActivity(note.json)
       const after = await stamps()

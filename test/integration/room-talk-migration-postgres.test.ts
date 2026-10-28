@@ -38,6 +38,7 @@ type Json = Record<string, unknown>
 type SeededRooms = Awaited<ReturnType<typeof resetCity>>
 
 const PRE_TALK_DDL = `
+  DROP TRIGGER moderation_invalidate_public_activity ON moderation_actions;
   DROP VIEW city_snapshot.public_records_v3;
   DROP TABLE wait_leases, ping_operations, ping_receipts, pings, line_minute_quota, line_quota, room_lines;
   DROP FUNCTION pings_answer_once();

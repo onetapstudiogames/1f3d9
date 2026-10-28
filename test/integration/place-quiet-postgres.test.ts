@@ -10,7 +10,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'place_quiet_integration'
@@ -28,21 +28,30 @@ function connectedDatabase(): Pool {
   return database
 }
 
-const sql = (async (
-  strings: TemplateStringsArray,
-  ...values: readonly unknown[]
-): Promise<Record<string, unknown>[]> => {
-  const text = strings.reduce(
-    (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
-    '',
+function taggedFor(queryable: Pool | PoolClient) {
+  const tagged = async (
+    strings: TemplateStringsArray,
+    ...values: readonly unknown[]
+  ): Promise<Record<string, unknown>[]> => {
+    const text = strings.reduce(
+      (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
+      '',
+    )
+    return (await queryable.query(text, [...values])).rows as Record<string, unknown>[]
+  }
+  tagged.query = async (text: string, values: readonly unknown[] = []) => (
+    (await queryable.query(text, [...values])).rows as Record<string, unknown>[]
   )
-  return (await connectedDatabase().query(text, [...values])).rows as Record<string, unknown>[]
-}) as unknown as {
-  (strings: TemplateStringsArray, ...values: readonly unknown[]): Promise<Record<string, unknown>[]>
-  query: (text: string, values?: readonly unknown[]) => Promise<Record<string, unknown>[]>
+  return tagged
 }
-sql.query = async (text, values = []) => (
-  (await connectedDatabase().query(text, [...values])).rows as Record<string, unknown>[]
+
+const sql = Object.assign(
+  (strings: TemplateStringsArray, ...values: readonly unknown[]) => (
+    taggedFor(connectedDatabase())(strings, ...values)
+  ),
+  { query: (text: string, values: readonly unknown[] = []) => (
+    taggedFor(connectedDatabase()).query(text, values)
+  ) },
 )
 
 mock.module(new URL('../../src/db.ts', import.meta.url).href, {
@@ -51,6 +60,8 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
     runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/place-quiet',
   },
 })
+
+const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
 
 function runDocker(args: readonly string[]): string {
   const result = spawnSync('docker', [...args], { encoding: 'utf8' })
@@ -186,6 +197,20 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
 }, async t => {
   const postgres = await startPostgres()
   database = postgres.client
+  setEngineTransactionRunnerForTests(async (_db, work) => {
+    const client = await connectedDatabase().connect()
+    try {
+      await client.query('BEGIN')
+      const result = await work(taggedFor(client), true)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  })
   try {
     const { Hono } = await import('hono')
     const { mountWorldRoutes } = await import('../../src/world.ts')
@@ -337,7 +362,9 @@ test('place quiet marks apply, refuse, and disclose correctly in PostgreSQL', {
       }
     })
   } finally {
-    await database?.end().catch(() => undefined)
+    setEngineTransactionRunnerForTests(null)
+    database = null
+    await postgres.client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
   }
 })
