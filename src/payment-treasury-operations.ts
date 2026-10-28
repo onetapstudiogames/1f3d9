@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { NETWORK, USDC } from './chain.ts'
 import { CLAIM_FEE_USDC, TREASURY } from './pay.ts'
 import { WORLD_ROOT_NAME } from './world-root.ts'
+import { publicPlaceWriteJsonSql } from './public-place-write.ts'
+import { PAYMENT_ACTIVITY_LOCK_CTES, PAYMENT_ACTIVITY_LOCK_CHECK } from './payment-activity-locks.ts'
 
 const PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]+$/u
 const LEASE_OWNER_RE = /^[\u0021-\u007E]+$/u
@@ -54,11 +56,12 @@ export class TreasuryPaymentOperationConflictError extends Error {
 
 const COMPLETE_TREASURY_PAYMENT_SQL = `
   /* payment-treasury-operations:complete */
-  WITH owned_attempt AS MATERIALIZED (
+  WITH ${PAYMENT_ACTIVITY_LOCK_CTES}, owned_attempt AS MATERIALIZED (
     SELECT attempt.*, resident.handle AS actor_handle
     FROM payment_attempts attempt
     JOIN residents resident ON resident.id = attempt.actor_id
     WHERE attempt.public_id = $1::text
+      AND ${PAYMENT_ACTIVITY_LOCK_CHECK}
       AND attempt.lease_owner = $2::text
       AND attempt.status = 'payment_pending'
       AND attempt.operation IN ('frontier', 'kind_invention', 'kind_revision')
@@ -206,8 +209,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       jsonb_build_object('kind', 'place', 'id', place.id) AS result_json,
       201::smallint AS response_status,
       jsonb_build_object(
-        'place', (to_jsonb(place) - 'front_matter_thing_ids')
-          || jsonb_build_object('owner', request.actor_handle)
+        'place', ${publicPlaceWriteJsonSql('place', 'request.actor_handle')}
       ) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
         ELSE jsonb_build_object('city_fee_credit', jsonb_build_object(

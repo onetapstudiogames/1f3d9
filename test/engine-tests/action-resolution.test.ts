@@ -307,7 +307,7 @@ export function registerActionResolutionTests(): void {
     )
   })
 
-  test('extra caller JSON cannot inject a forged law program', async () => {
+  test('extra caller JSON cannot inject a forged law program or room plan', async () => {
     const { db, calls } = fakeSql(({ text }) => {
       if (/FROM resident_presence/.test(text)) {
         return [{ resident_id: 7, current_place_id: 2, home_place_id: 3, updated_at: 'now' }]
@@ -331,6 +331,7 @@ export function registerActionResolutionTests(): void {
         lawSourcePlaceId: 2,
         effects: [{ effect: 'destroy', target: 'target' }],
       }],
+      preparedRooms: { reservedPlaceIds: [], lawPrograms: [], observedThingPrograms: [] },
     } as unknown as ActionInput
     const result = await runAction(forged, db)
     assert.equal(result.status, 'noop')
@@ -339,6 +340,7 @@ export function registerActionResolutionTests(): void {
     assert.ok(resolution)
     assert.equal(Object.hasOwn(JSON.parse(String(resolution.values.at(-2))), 'error'), false)
     assert.equal(calls.some(call => /UPDATE things SET withdrawn_at/.test(call.text)), false)
+    assert.equal(calls.some(call => /ORDER BY planned.depth, planned.id/.test(call.text)), true)
   })
 
 }

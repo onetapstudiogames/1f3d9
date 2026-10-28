@@ -110,6 +110,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
   events: Object.freeze([
     'acceded',
     'accession_open',
+    'applied_public_activity',
     'attempt_id',
     'birth_revision',
     'budget',
@@ -175,6 +176,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'tried',
     'trimmed',
     'tx_hash',
+    'unit_index',
     'version',
     'woke',
   ]),

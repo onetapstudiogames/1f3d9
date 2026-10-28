@@ -3,9 +3,11 @@
 // src/db.ts is mocked to this container before the app loads, the same seam the
 // small-reader suite uses, so every read and write below is real SQL.
 import assert from 'node:assert/strict'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { mock } from 'node:test'
 import { Pool, type PoolClient } from 'pg'
@@ -14,6 +16,38 @@ const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1f
 const schemaDdl = await readFile(new URL('../../../db/schema.sql', import.meta.url), 'utf8')
 
 let database: Pool | null = null
+
+type QueryObserver = (text: string, values: readonly unknown[]) => string
+type QueryFailureObserver = (error: unknown, text: string, values: readonly unknown[]) => void
+type QueryObservation = Readonly<{
+  before: QueryObserver; after?: (milliseconds: number) => void; failed?: QueryFailureObserver
+}>
+const queryObserver = new AsyncLocalStorage<QueryObservation>()
+
+/** Observe this request only. Nested replacements retain its failure observer. */
+export function withNoteSuiteQueryObserver<T>(
+  observer: QueryObserver, work: () => Promise<T>, completed?: (milliseconds: number) => void,
+  failed?: QueryFailureObserver,
+): Promise<T> {
+  const failureObserver = failed ?? queryObserver.getStore()?.failed
+  return queryObserver.run({ before: observer, ...(completed ? { after: completed } : {}),
+    ...(failureObserver ? { failed: failureObserver } : {}) }, work)
+}
+
+async function observedQuery(queryable: Pool | PoolClient, text: string, values: readonly unknown[]) {
+  const observer = queryObserver.getStore()
+  if (!observer) return queryable.query(text, [...values])
+  const statement = observer.before(text, values)
+  const start = performance.now()
+  try {
+    return await queryable.query(statement, [...values])
+  } catch (error) {
+    observer.failed?.(error, statement, values)
+    throw error
+  } finally {
+    observer?.after?.(performance.now() - start)
+  }
+}
 
 export function connectedDatabase(): Pool {
   assert.ok(database, 'the note suite database must be connected')
@@ -32,13 +66,13 @@ function taggedFor(queryable: Pool | PoolClient) {
     strings: TemplateStringsArray,
     ...values: unknown[]
   ): Promise<Record<string, unknown>[]> => (
-    await queryable.query(sqlText(strings, values), values)
+    await observedQuery(queryable, sqlText(strings, values), values)
   ).rows as Record<string, unknown>[]
   tagged.query = async (
     text: string,
     values: readonly unknown[] = [],
   ): Promise<Record<string, unknown>[]> => (
-    await queryable.query(text, [...values])
+    await observedQuery(queryable, text, values)
   ).rows as Record<string, unknown>[]
   return tagged
 }
@@ -54,15 +88,15 @@ async function batchedTransaction(
   const statements = build({ query: (text, values = []) => ({ text, values }) })
   const client = await connectedDatabase().connect()
   try {
-    await client.query(options.readOnly ? 'BEGIN READ ONLY' : 'BEGIN')
+    await observedQuery(client, options.readOnly ? 'BEGIN READ ONLY' : 'BEGIN', [])
     const results: Record<string, unknown>[][] = []
     for (const statement of statements) {
-      results.push((await client.query(statement.text, [...statement.values])).rows as Record<string, unknown>[])
+      results.push((await observedQuery(client, statement.text, statement.values)).rows as Record<string, unknown>[])
     }
-    await client.query('COMMIT')
+    await observedQuery(client, 'COMMIT', [])
     return results
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
+    await observedQuery(client, 'ROLLBACK', []).catch(() => undefined)
     throw error
   } finally {
     client.release()
@@ -104,12 +138,12 @@ async function useEngineTransactions(client: Pool): Promise<void> {
   setEngineTransactionRunnerForTests(async (_db, work) => {
     const connection = await client.connect()
     try {
-      await connection.query('BEGIN')
+      await observedQuery(connection, 'BEGIN', [])
       const result = await work(taggedFor(connection), true)
-      await connection.query('COMMIT')
+      await observedQuery(connection, 'COMMIT', [])
       return result
     } catch (error) {
-      await connection.query('ROLLBACK').catch(() => undefined)
+      await observedQuery(connection, 'ROLLBACK', []).catch(() => undefined)
       throw error
     } finally {
       connection.release()

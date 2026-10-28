@@ -10,6 +10,7 @@ import { ownThingOf } from './engine-state.ts'
 import { GAZETTE_ROOM_ID } from './gazette.ts'
 import { MAX_EFFECT_GENERATIONS, type CopyEffect } from './physics.ts'
 import type { EffectExecutionContext, GrowthCap, SkippedEffect } from './engine-effects.ts'
+import { requireReservedEffectPlace } from './engine-place-plan.ts'
 
 /** One advisory lock per destination, so two copies landing at once never both pass its cap. */
 const COPY_PLACE_LOCK_CLASS = 0x1f3d9006
@@ -130,6 +131,7 @@ async function adjacentDestination(
     ORDER BY neighbour.id
   ` as Array<{ id?: unknown }>
   const ids = rows.map(row => Number(row.id))
+  for (const id of ids) requireReservedEffectPlace(id, context)
   if (ids.length <= 1) return ids[0] ?? null
   const drawn = await drawCopyPlaceRoll(ids.length, {
     placeId: parent.placeId,
@@ -245,6 +247,7 @@ async function firstCapHit(
   if (destinationId === null) {
     return { cap: 'no_arrivals', limit: 0, overBy: 1, placeId: parent.placeId }
   }
+  requireReservedEffectPlace(destinationId, context)
   return await placeCapHit(destinationId, parent.familyId, db) ?? destinationId
 }
 

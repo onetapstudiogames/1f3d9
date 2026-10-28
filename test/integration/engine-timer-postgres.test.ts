@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -23,7 +24,8 @@ mock.module(new URL('../../src/db.ts', import.meta.url).href, {
   namedExports: { sql: routeSql, runtimeDatabaseUrl: () => 'postgresql://integration-test.invalid/timer' },
 })
 const { executeEffects, resolveDueEffects } = await import('../../src/engine-effects.ts')
-const { EngineError, runAction, setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+const { EngineError, ensurePresence, lockPlaceRowsTopDown, moveResident, runAction,
+  setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
 const { ensureChanceDays } = await import('../../src/engine-chance.ts')
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
@@ -111,9 +113,311 @@ function taggedSql(
   return sql
 }
 
+for (const contender of ['same resident', 'another resident movement effect'] as const) {
+test(`public activity concurrent actions and their observations both apply without deadlock: ${contender}`, async t => {
+  const postgres = await startPostgres()
+  const client = postgres.client
+  const requests = new AsyncLocalStorage<number>()
+  const sqlstates: string[] = []
+  const observationErrors: unknown[][] = []
+  const barrier = () => {
+    let reached!: () => void
+    let release!: () => void
+    const ready = new Promise<void>(resolve => { reached = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    return { ready, gate, reached, release }
+  }
+  const observing = barrier()
+  const roomLocked = barrier()
+  let firstApplied = false
+  let observationStarted = false
+  let contenderPaused = false
+  let firstFinished = false
+  let first: Promise<Response> | undefined
+  let second: Promise<Response> | undefined
+  const captureSqlstate = (error: unknown) => {
+    if (error && typeof error === 'object' && 'code' in error) sqlstates.push(String(error.code))
+  }
+  const atBarrier = async (ready: Promise<void>, operation: Promise<unknown>) => {
+    await Promise.race([ready, operation.then(() => {
+      throw new Error('the action completed before reaching its planned pause')
+    }), delay(5_000, undefined, { ref: false }).then(() => {
+      throw new Error('the action did not reach its planned pause')
+    })])
+  }
+  const routeQuery = async (text: string, values: readonly unknown[] = []) => {
+    const connection = new Client({
+      ...postgres.clientConfig, application_name: `activity-request-${requests.getStore()}`,
+    })
+    await connection.connect()
+    try {
+      await connection.query("SET statement_timeout = '8s'")
+      if (requests.getStore() === 1 && firstApplied && !observationStarted
+        && /resident_presence/.test(text)) {
+        observationStarted = true
+        observing.reached()
+        await observing.gate
+      }
+      return (await connection.query(text, [...values])).rows
+    } catch (error) {
+      captureSqlstate(error)
+      throw error
+    } finally {
+      await connection.end()
+    }
+  }
+  routeDb = (async (strings: TemplateStringsArray, ...values: readonly unknown[]) => (
+    routeQuery(strings.reduce((text, part, index) => text + part
+      + (index < values.length ? `$${index + 1}` : ''), ''), values)
+  )) as TaggedSql
+  routeDb.query = routeQuery
+  setEngineTransactionRunnerForTests(async (_ignored, work) => {
+    const request = requests.getStore()
+    const connection = new Client({ ...postgres.clientConfig, application_name: `activity-action-${request}` })
+    await connection.connect()
+    let resolvedAction = false
+    try {
+      await connection.query("SET statement_timeout = '8s'")
+      await connection.query('BEGIN')
+      const transaction = taggedSql(connection, undefined, async text => {
+        if (/INSERT INTO action_resolutions/.test(text)) resolvedAction = true
+        if (request === 2 && !contenderPaused && /WITH RECURSIVE/.test(text)
+          && /FOR NO KEY UPDATE OF place/.test(text)) {
+          contenderPaused = true
+          roomLocked.reached()
+          await roomLocked.gate
+        }
+      })
+      const result = await work(transaction, true)
+      await connection.query('COMMIT')
+      if (request === 1 && resolvedAction) firstApplied = true
+      return result
+    } catch (error) {
+      captureSqlstate(error)
+      await connection.query('ROLLBACK')
+      throw error
+    } finally {
+      await connection.end()
+    }
+  })
+  t.mock.method(console, 'error', (...args: unknown[]) => { observationErrors.push(args) })
+  try {
+    await client.query(schemaDdl)
+    const secret = `1f3d9_sk_${randomBytes(24).toString('hex')}`
+    await client.query(`
+      INSERT INTO residents (id, handle, model, secret_hash)
+      VALUES (1, 'activity-actor', 'test', $1)
+    `, [createHash('sha256').update(secret, 'utf8').digest('hex')])
+    const moverSecret = `1f3d9_sk_${randomBytes(24).toString('hex')}`
+    await client.query(`
+      INSERT INTO residents (id, handle, model, secret_hash)
+      VALUES (2, 'activity-mover', 'test', $1)
+    `, [createHash('sha256').update(moverSecret, 'utf8').digest('hex')])
+    const room = (await client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      SELECT id, 'continent', 'activity-room', 'concurrent public actions', 1
+      FROM places WHERE place_kind = 'world' RETURNING id
+    `)).rows[0].id
+    const destination = (await client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'activity-destination', 'a movement effect ends here', 1) RETURNING id
+    `, [room])).rows[0].id
+    await client.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, NULL), (2, $1, NULL)
+    `, [room])
+    await client.query(`
+      INSERT INTO traits (id, name, description, recipe, coiner_id)
+      VALUES (1, 'activity-law', 'records each use',
+        '{"use":[{"effect":"label","target":"place","label":"activity-mark"}]}'::jsonb, 1)
+    `)
+    await client.query(`
+      INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
+      VALUES ($1, 1, 1, 'add', 0)
+    `, [room])
+    const thing = (await client.query(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, open_to_use)
+      VALUES ($1, 'activity-bell', 'used twice', 1, 1, true) RETURNING id
+    `, [room])).rows[0].id
+    const { Hono } = await import('hono')
+    const { mountActionRoutes } = await import('../../src/actions.ts')
+    const app = new Hono()
+    mountActionRoutes(app)
+    const act = (request: number) => requests.run(request, async () => app.request('/api/action', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${request === 2 && contender !== 'same resident' ? moverSecret : secret}`,
+        'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'use', thing_id: thing,
+        ...(request === 2 && contender !== 'same resident'
+          ? { target_type: 'resident', target_id: 1, to_place_id: destination } : {}) }),
+    }))
+    first = act(1).then(response => { firstFinished = true; return response })
+    await atBarrier(observing.ready, first)
+    if (contender !== 'same resident') {
+      await client.query(`
+        UPDATE traits SET recipe = '{"use":[{"effect":"move","target":"target","to":"destination"}]}'::jsonb
+        WHERE id = 1
+      `)
+    }
+    second = act(2)
+    await atBarrier(roomLocked.ready, second)
+    // The old observation holds presence then waits on the room. The fixed read
+    // completes while the other action holds its ordinary room lock.
+    observing.release()
+    const deadline = Date.now() + 3_000
+    let observationWaiting = false
+    while (!firstFinished && Date.now() < deadline) {
+      observationWaiting = (await client.query(`
+        SELECT 1 FROM pg_stat_activity waiting
+        JOIN pg_stat_activity holder ON holder.pid = ANY(pg_blocking_pids(waiting.pid))
+        WHERE waiting.application_name = 'activity-request-1'
+          AND holder.application_name = 'activity-action-2' AND waiting.wait_event_type = 'Lock'
+      `)).rows.length > 0
+      if (observationWaiting) break
+      await delay(20)
+    }
+    assert.ok(firstFinished || observationWaiting, 'the observation must complete or wait on the locked room')
+    roomLocked.release()
+    const responses = await Promise.all([first, second])
+    const bodies = await Promise.all(responses.map(response => response.json()))
+    assert.deepEqual(sqlstates, [], 'neither action nor its observation may deadlock or retry')
+    assert.deepEqual(observationErrors, [], 'post-action observation must complete without a swallowed error')
+    assert.deepEqual(responses.map(response => response.status), [200, 200], JSON.stringify(bodies))
+    assert.deepEqual(bodies.map(body => body.action.status), ['applied', 'applied'])
+    assert.deepEqual((await client.query(`
+      SELECT current_place_id FROM resident_presence WHERE resident_id IN (1, 2) ORDER BY resident_id
+    `)).rows.map(row => row.current_place_id), [contender === 'same resident' ? room : destination, room])
+    assert.deepEqual((await client.query(`
+      SELECT resident.last_public_action_at IS NOT NULL AS resident_stamped,
+        place.last_public_action_at IS NOT NULL AS room_stamped
+      FROM residents resident JOIN places place ON place.id = $1 WHERE resident.id = 1
+    `, [room])).rows, [{ resident_stamped: true, room_stamped: true }])
+  } finally {
+    observing.release()
+    roomLocked.release()
+    await Promise.allSettled([first, second])
+    routeDb = null
+    setEngineTransactionRunnerForTests(null)
+    await client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+}
+
+test('public activity presence initialization preserves room order and retired target checks', async t => {
+  const postgres = await startPostgres()
+  const client = postgres.client
+  try {
+    await client.query(schemaDdl)
+    await client.query(`
+      INSERT INTO residents (id, handle, model, secret_hash) VALUES
+        (1, 'presence-owner', 'test', repeat('1', 64)),
+        (2, 'presence-returning', 'test', repeat('2', 64)),
+        (3, 'presence-moving', 'test', repeat('3', 64)),
+        (100, 'presence-new', 'test', repeat('4', 64));
+    `)
+    const world = (await client.query("SELECT id FROM places WHERE place_kind = 'world'")).rows[0].id
+    const room = (await client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'continent', 'presence-room', 'a current room', 1) RETURNING id
+    `, [world])).rows[0].id
+    const home = (await client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id)
+      VALUES ($1, 'place', 'presence-home', 'a retained home', 1) RETURNING id
+    `, [room])).rows[0].id
+    const retired = (await client.query(`
+      INSERT INTO places (parent_id, place_kind, name, description, owner_id, retired_at)
+      VALUES ($1, 'place', 'presence-retired', 'cannot receive new presence', 1, now()) RETURNING id
+    `, [room])).rows[0].id
+    await client.query(`
+      INSERT INTO resident_presence (resident_id, current_place_id, home_place_id)
+      VALUES (1, $1, NULL), (2, NULL, $2), (3, NULL, NULL)
+    `, [room, home])
+    await t.test('initialized presence is a read-only query', async () => {
+      await client.query('BEGIN READ ONLY')
+      try {
+        const presence = await ensurePresence(1, taggedSql(client))
+        assert.equal(presence.currentPlaceId, room)
+        assert.equal(presence.homePlaceId, null)
+      } finally {
+        await client.query('ROLLBACK')
+      }
+    })
+    await t.test('initialization does not lock the unchanged retained home', async () => {
+      const holder = new Client(postgres.clientConfig)
+      const initializer = new Client(postgres.clientConfig)
+      await Promise.all([holder.connect(), initializer.connect()])
+      try {
+        await holder.query('BEGIN')
+        await holder.query('SELECT id FROM places WHERE id = $1 FOR NO KEY UPDATE', [home])
+        await initializer.query("SET statement_timeout = '1s'")
+        const presence = await ensurePresence(2, taggedSql(initializer))
+        assert.equal(presence.currentPlaceId, world)
+        assert.equal(presence.homePlaceId, home)
+      } finally {
+        await holder.query('ROLLBACK')
+        await Promise.all([holder.end(), initializer.end()])
+      }
+    })
+    await t.test('initialization preserves a move committed after its first read', async () => {
+      const initializer = new Client(postgres.clientConfig)
+      const mover = new Client(postgres.clientConfig)
+      await Promise.all([initializer.connect(), mover.connect()])
+      let reached!: () => void
+      let release!: () => void
+      const ready = new Promise<void>(resolve => { reached = resolve })
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const initializing = ensurePresence(3, taggedSql(initializer, async text => {
+        if (/WITH first_owned/.test(text)) { reached(); await gate }
+      }))
+      try {
+        await Promise.race([ready, initializing.then(() => {
+          throw new Error('initialization completed before its guarded write')
+        }), delay(5_000, undefined, { ref: false }).then(() => {
+          throw new Error('initialization did not reach its guarded write')
+        })])
+        await mover.query('BEGIN')
+        await mover.query('SELECT id FROM residents WHERE id = 3 FOR NO KEY UPDATE')
+        const transaction = taggedSql(mover)
+        await lockPlaceRowsTopDown(transaction, {
+          placeIds: [world, room], lawChainFrom: null, carryDestinationId: null,
+        })
+        assert.equal((await moveResident(3, room, transaction)).currentPlaceId, room)
+        await mover.query('COMMIT')
+        release()
+        assert.equal((await initializing).currentPlaceId, room)
+        assert.deepEqual((await client.query(`
+          SELECT current_place_id, home_place_id FROM resident_presence WHERE resident_id = 3
+        `)).rows, [{ current_place_id: room, home_place_id: null }])
+      } finally {
+        release()
+        await initializing.catch(() => undefined)
+        await mover.query('ROLLBACK')
+        await Promise.all([initializer.end(), mover.end()])
+      }
+    })
+    await t.test('inserted and changed current or home targets still refuse a retired room', async () => {
+      const rejected = (error: unknown) => error instanceof Error && 'code' in error
+        && error.code === '23514' && /retired place cannot receive resident/.test(error.message)
+      for (const column of ['current_place_id', 'home_place_id'] as const) {
+        await assert.rejects(client.query(`
+          UPDATE resident_presence SET ${column} = $1 WHERE resident_id = 1
+        `, [retired]), rejected)
+        await assert.rejects(client.query(`
+          INSERT INTO resident_presence (resident_id, ${column}) VALUES (100, $1)
+        `, [retired]), rejected)
+      }
+    })
+  } finally {
+    await client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
 test('law_place shares one timed condition through the current owner chain', async t => {
   const postgres = await startPostgres()
   const client = postgres.client
+  const observer = new Client(postgres.clientConfig)
   const db = taggedSql(client)
   let beforeQuery: ((text: string) => Promise<void>) | undefined
   let afterQuery: ((text: string, client: Client) => Promise<void>) | undefined
@@ -137,6 +441,7 @@ test('law_place shares one timed condition through the current owner chain', asy
   }
   setEngineTransactionRunnerForTests((_ignored, work) => transaction(sql => work(sql, true)))
   try {
+    await observer.connect()
     await client.query(schemaDdl)
     await client.query(`
       INSERT INTO residents (id, handle, model, secret_hash) VALUES
@@ -263,8 +568,18 @@ test('law_place shares one timed condition through the current owner chain', asy
     })
 
     await t.test('expiry is label-only, append-only and fresh in a later transaction', async () => {
+      const waitForExpiry = async (label: string) => {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          const labels = await rows(label)
+          assert.ok(labels.length > 0, 'the timed label must exist before waiting for its expiry')
+          if (labels.every(row => row.active === false)) return
+          await delay(25)
+        }
+        assert.fail(`the database clock did not reach the expiry of ${label}`)
+      }
       await execute([write('shared-rain', 1)])
-      await delay(1_100)
+      await waitForExpiry('shared-rain')
       await execute([check('shared-rain', 'expired'), check('shared-rain', 'named-law', 'place')])
       assert.equal(await present('expired-no'), true)
       assert.equal(await present('named-law-yes'), true)
@@ -272,7 +587,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       await execute([{ effect: 'label', target: 'place', label: 'literal-second', seconds: 1 }])
       await execute([{ effect: 'label', target: 'place', label: 'permanent-collision' }], { ...context, placeId: a })
       await execute([write('permanent-collision')])
-      await delay(1_100)
+      await waitForExpiry('literal-second')
       await execute([check('one-second', 'one-second'), check('repeated', 'repeated'),
         check('permanent-collision', 'permanent'), check('literal-second', 'literal', 'place')])
       assert.equal(await present('one-second-no'), true)
@@ -282,9 +597,10 @@ test('law_place shares one timed condition through the current owner chain', asy
       assert.equal((await rows('one-second')).length, 1)
       assert.equal((await rows('repeated')).length, 2)
       assert.equal((await rows('permanent-collision')).length, 2)
-      await delay(3_000)
+      await waitForExpiry('repeated')
       await execute([check('repeated', 'all-expired')])
-      assert.equal(await present('all-expired-no'), true)
+      assert.equal(await present('all-expired-no'), true,
+        `the repeated labels must have expired: ${JSON.stringify(await rows('repeated'))}`)
       assert.equal((await rows('repeated')).length, 2)
     })
 
@@ -371,12 +687,12 @@ test('law_place shares one timed condition through the current owner chain', asy
       await Promise.race([ready, operation.then(() => { throw new Error('operation missed its lock barrier') }),
         delay(5_000, undefined, { ref: false }).then(() => { throw new Error('lock barrier timed out') })])
     }
-    const lockQuery = (text: string) => /WITH RECURSIVE/.test(text) && /FOR SHARE OF place/.test(text)
+    const lockQuery = (text: string) => /WITH RECURSIVE/.test(text) && /FOR NO KEY UPDATE OF place/.test(text)
     const waitForLock = async () => {
       const end = Date.now() + 5_000
       while (Date.now() < end) {
-        await client.query('SELECT pg_stat_clear_snapshot()')
-        const waiting = await client.query(`
+        await observer.query('SELECT pg_stat_clear_snapshot()')
+        const waiting = await observer.query(`
           SELECT EXISTS (SELECT 1 FROM pg_stat_activity
             WHERE datname = current_database() AND wait_event_type = 'Lock') AS waiting
         `)
@@ -593,14 +909,14 @@ test('law_place shares one timed condition through the current owner chain', asy
       })
     }
 
-    await t.test('a timer locks actor presence before ancestry like a concurrent action', async () => {
+    await t.test('a timer reserves ancestry before actor presence like a concurrent action', async () => {
       const destination = await place('presence-race-destination', b)
       await execute([{ effect: 'wait', seconds: 1, then: [
         { effect: 'move', target: 'actor', to: 'destination' }, write('presence-race'),
       ] }], { ...context, destinationPlaceId: destination })
       const paused = barrier()
       beforeQuery = async text => {
-        if (/FROM resident_presence/.test(text) && /FOR UPDATE/.test(text)) {
+        if (lockQuery(text)) {
           paused.reached(); await paused.gate
         }
       }
@@ -613,6 +929,7 @@ test('law_place shares one timed condition through the current owner chain', asy
         await atBarrier(paused.ready, operation)
         changed = (async () => {
           await changer.query('BEGIN')
+          await changer.query('SELECT id FROM places WHERE id = $1 FOR NO KEY UPDATE', [a])
           await changer.query('SELECT resident_id FROM resident_presence WHERE resident_id = 2 FOR UPDATE')
           presenceLocked.reached()
           await changer.query('UPDATE places SET owner_id = 3 WHERE id = $1', [a])
@@ -776,15 +1093,15 @@ test('law_place shares one timed condition through the current owner chain', asy
             let waiting: { query: string; blockers: number[] } | undefined
             const deadline = Date.now() + 3_000
             while (Date.now() < deadline) {
-              waiting = (await client.query(`
+              waiting = (await observer.query(`
                 SELECT query, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
-                WHERE wait_event_type = 'Lock' AND query LIKE '%society:place-gift-lock-%'
-              `)).rows.find(row => row.blockers.includes(carryPid))
+                WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
+              `, [carryPid])).rows.find(row => row.blockers.includes(carryPid))
               if (waiting) break
               await delay(20)
             }
             assert.ok(waiting, 'the actual gift route must wait on a row held by the carry')
-            t.diagnostic(`gift waits on ${waiting.query.includes('lock-root') ? 'parent' : 'child'}; releasing carry`)
+            t.diagnostic(`gift waits on its room preparation; releasing carry`)
             paused.release()
           } else {
             await moved
@@ -925,7 +1242,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       const waitsOnPaused = async () => {
         const deadline = Date.now() + 3_000
         while (Date.now() < deadline) {
-          const waiting = await client.query(`
+          const waiting = await observer.query(`
             SELECT 1 FROM pg_stat_activity
             WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
           `, [pid])
@@ -1169,7 +1486,7 @@ test('law_place shares one timed condition through the current owner chain', asy
     const waitsOnPid = async (pid: number): Promise<boolean> => {
       const deadline = Date.now() + 3_000
       while (Date.now() < deadline) {
-        const waiting = await client.query(`
+        const waiting = await observer.query(`
           SELECT 1 FROM pg_stat_activity
           WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
         `, [pid])
@@ -1178,7 +1495,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       }
       return false
     }
-    const presenceLock = (text: string) => /FROM resident_presence WHERE resident_id = \$1 FOR UPDATE/.test(text)
+    const residentLock = (text: string) => /SELECT id FROM residents WHERE id = \$1 FOR NO KEY UPDATE/.test(text)
     const deadlocks = () => sqlstates.filter(code => code === '40P01')
 
     const targetLand = await place('target-land', world)
@@ -1206,12 +1523,12 @@ test('law_place shares one timed condition through the current owner chain', asy
           VALUES ($1, 'stamp', 'the user tool', 2, 2), ($1, 'parcel', 'carried up', 3, 3) RETURNING id
         `, [alcove])).rows.map(row => row.id)
         sqlstates = []
-        // The target thing is locked with the use's own things, before its room chain, so
-        // neither action holds a row the other needs while it waits.
+        // Each action reserves its room chain before the parcel. The contender waits
+        // without holding a resource the first action still needs.
         const carryPause = pauseAfterFirst(schedule === 'the carry holds the parcel first'
           ? text => /FROM things WHERE id = ANY/.test(text) && /FOR UPDATE/.test(text)
-          : presenceLock)
-        const usePause = pauseAfterFirst(text => /law_place_chain/.test(text) && /FOR SHARE OF place/.test(text))
+          : residentLock)
+        const usePause = pauseAfterFirst(lockQuery)
         afterQuery = async (text, connection) => {
           if (await carryPause.hook(text, connection)) return
           if (schedule === 'the use holds the chain first') await usePause.hook(text, connection)
@@ -1319,10 +1636,15 @@ test('law_place shares one timed condition through the current owner chain', asy
       }
     })
 
-    for (const [from, to, giveLaw] of [['west', 'east', false], ['east', 'west', false], ['west', 'east', true]] as const) {
+    for (const [from, to, giveLaw, giftFirst] of [
+      ['west', 'east', false, false], ['east', 'west', false, false],
+      ['west', 'east', false, true], ['east', 'west', false, true],
+      ['west', 'east', true, true],
+    ] as const) {
       const named = giveLaw ? ' under a law_place give law' : ''
-      await t.test(`a hinge walk ${from} to ${to} and a gift of the estate by its owner standing inside${named} both finish`, async () => {
-        const tag = `${from}${giveLaw ? '-law' : ''}`
+      const order = giftFirst ? 'gift first' : 'walk first'
+      await t.test(`a hinge walk ${from} to ${to} and a gift of the estate by its owner standing inside${named}, ${order}, both finish`, async () => {
+        const tag = `${from}${giveLaw ? '-law' : ''}-${giftFirst ? 'gift' : 'walk'}`
         const land = await place(`estate-land-${tag}`, world)
         const estate = await place(`hinge-estate-${tag}`, land)
         const rooms = {
@@ -1347,13 +1669,12 @@ test('law_place shares one timed condition through the current owner chain', asy
           WHERE resident_id IN (1, 3)
         `, [rooms.east, rooms[from]])
         sqlstates = []
-        // The walk holds only its presence when the gift takes its first exclusive lock in
-        // the estate. The gift then takes the estate's rooms by depth and id, never the
-        // giver's own room ahead of a lower-id neighbour the walk may already hold.
-        const walkPause = pauseAfterFirst(presenceLock)
-        const giftPause = pauseAfterFirst(text => /FOR UPDATE OF place|society:place-gift-lock-root/.test(text))
+        // The winner reserves the rooms before the other request reaches them. A gift
+        // reserves its whole subtree in depth and id order, with or without a give law.
+        const walkPause = pauseAfterFirst(giftFirst ? residentLock : lockQuery)
+        const giftPause = giftFirst ? pauseAfterFirst(lockQuery) : null
         afterQuery = async (text, connection) => {
-          if (!(await walkPause.hook(text, connection))) await giftPause.hook(text, connection)
+          if (!(await walkPause.hook(text, connection))) await giftPause?.hook(text, connection)
         }
         const walked = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'move',
           placeId: rooms[from], destinationPlaceId: rooms[to] }, db)
@@ -1365,28 +1686,21 @@ test('law_place shares one timed condition through the current owner chain', asy
             headers: { authorization: `Bearer ${ownerSecret}`, 'content-type': 'application/json' },
             body: JSON.stringify({ type: 'place', id: estate, to_handle: 'chain-visitor' }),
           }))
-          await atBarrier(giftPause.paused.ready, given)
-          walkPause.paused.release()
-          // The walk either finishes or waits on the gift before the gift goes on.
-          let walkSettled = false
-          void walked.then(() => { walkSettled = true }, () => { walkSettled = true })
-          const deadline = Date.now() + 3_000
-          while (!walkSettled && Date.now() < deadline) {
-            const waiting = await client.query(`
-              SELECT 1 FROM pg_stat_activity
-              WHERE wait_event_type = 'Lock' AND $1::int = ANY(pg_blocking_pids(pid))
-            `, [giftPause.pid()])
-            if (waiting.rows.length > 0) break
-            await delay(20)
+          if (giftPause) {
+            await atBarrier(giftPause.paused.ready, given)
+            walkPause.paused.release()
+            assert.ok(await waitsOnPid(giftPause.pid()), 'the walk must wait on the gift rooms')
+            giftPause.paused.release()
+          } else {
+            assert.ok(await waitsOnPid(walkPause.pid()), 'the gift must wait on the walk rooms')
+            walkPause.paused.release()
           }
-          giftPause.paused.release()
           const [walk, response] = await Promise.all([walked, given])
           const body = await response.json() as { error?: string }
           assert.deepEqual(deadlocks(), [], 'neither the walk nor the gift may deadlock')
           assert.equal(response.status, 200, body.error)
-          if (giveLaw) {
-            // A law_place give law makes the gift take the whole estate before the law runs, so
-            // the walk waits, and the gift's owner change closes both sides of the hinge.
+          if (giftFirst) {
+            // The gift completes its owner change before the walk can check the hinge.
             assert.deepEqual({ status: walk.status, httpStatus: walk.httpStatus, error: walk.error }, {
               status: 'failed', httpStatus: 403,
               error: `place_id ${rooms[to]} exists, but entry is closed from your current place_id ${rooms[from]}; entry opens when you stand in its parent, one of its direct children, or a place with an open hinge to it, so use the public map outline to move one edge at a time`,
@@ -1397,10 +1711,10 @@ test('law_place shares one timed condition through the current owner chain', asy
           `, [[estate, rooms.west, rooms.east]])).rows.map(row => row.owner_id), [2, 2, 2])
           assert.deepEqual((await client.query(`
             SELECT current_place_id FROM resident_presence WHERE resident_id = 3
-          `)).rows, [{ current_place_id: giveLaw ? rooms[from] : rooms[to] }])
+          `)).rows, [{ current_place_id: giftFirst ? rooms[from] : rooms[to] }])
         } finally {
           walkPause.paused.release()
-          giftPause.paused.release()
+          giftPause?.paused.release()
           await Promise.allSettled([walked, given])
           afterQuery = undefined
         }
@@ -1416,8 +1730,8 @@ test('law_place shares one timed condition through the current owner chain', asy
         UPDATE resident_presence SET current_place_id = $1, home_place_id = NULL WHERE resident_id = 1
       `, [room])
       sqlstates = []
-      // Setting home takes the presence row before the room, as every action does.
-      const movePause = pauseAfterFirst(presenceLock)
+      // Both requests reserve the responsible resident before rooms or presence.
+      const movePause = pauseAfterFirst(residentLock)
       afterQuery = async (text, connection) => { await movePause.hook(text, connection) }
       const moved = runAction({ actorId: 1, actorHandle: 'chain-owner', action: 'move', placeId: room,
         destinationPlaceId: below }, db)
@@ -1507,8 +1821,8 @@ test('law_place shares one timed condition through the current owner chain', asy
           : { use: bakeryUse })])
         const { sack, sieve } = await bakeryThings(shared)
         sqlstates = []
-        // The use holds the sack with its own things, before its room chain. The crafting
-        // takes its ingredients before the room, so it waits for the sack holding no room.
+        // The use holds the room and then the sack. Crafting waits for the room
+        // before taking any ingredient the use might still need.
         const usePause = pauseAfterFirst(text => /FROM things WHERE id = ANY/.test(text) && /FOR UPDATE/.test(text))
         afterQuery = async (text, connection) => { await usePause.hook(text, connection) }
         const used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use', placeId: bakery,
@@ -1540,7 +1854,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       sqlstates = []
       // The use takes its room chain, then the kind its recipe labels. The crafting takes the
       // room before the kind, so it waits for the room holding no kind.
-      const usePause = pauseAfterFirst(text => /law_place_chain/.test(text) && /FOR SHARE OF place/.test(text))
+      const usePause = pauseAfterFirst(lockQuery)
       afterQuery = async (text, connection) => { await usePause.hook(text, connection) }
       const used = runAction({ actorId: 3, actorHandle: 'sibling-visitor', action: 'use', placeId: bakery,
         sourceThingId: sieve, target: { type: 'kind', id: loaf } }, db)
@@ -1571,7 +1885,7 @@ test('law_place shares one timed condition through the current owner chain', asy
         VALUES ($1, 'vase', 'another resident thing', 2, 2) RETURNING id
       `, [elsewhere])).rows[0].id
       sqlstates = []
-      // Before any room, a craft locks only the ingredients the crafter owns in its room; the
+      // After its room, a craft locks only the ingredients the crafter owns in its room; the
       // make step reads the rest and refuses them under its own checks.
       const craftPause = pauseAfterFirst(text => /crafting:ingredients/.test(text))
       afterQuery = async (text, connection) => { await craftPause.hook(text, connection) }
@@ -1603,6 +1917,7 @@ test('law_place shares one timed condition through the current owner chain', asy
   } finally {
     routeDb = null
     setEngineTransactionRunnerForTests(null)
+    await observer.end().catch(() => undefined)
     await client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
   }
@@ -1611,6 +1926,7 @@ test('law_place shares one timed condition through the current owner chain', asy
 test('shared use and wait effects execute against PostgreSQL', async () => {
   const postgres = await startPostgres()
   try {
+    const { COLLISION_CONFLICT_MESSAGE } = await import('../../src/core.ts')
     await postgres.client.query(schemaDdl)
     await postgres.client.query(`
       INSERT INTO residents (id, handle, model, secret_hash)
@@ -1931,7 +2247,7 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       ])
 
       const firstMoveDb = taggedSql(firstMoveClient, async text => {
-        if (!/UPDATE things moving SET place_id/.test(text)) return
+        if (!/SELECT thing.id, thing.place_id FROM things thing.*FOR UPDATE OF thing/.test(text)) return
         markFirstMoveReady()
         await firstMoveGate
       })
@@ -1946,10 +2262,11 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
       firstMove = executeEffects(moveSource, {
         ...raceContext,
         destinationPlaceId: firstDestinationId,
+        reservedPlaceIds: [placeId, firstDestinationId],
       }, firstMoveDb)
       const firstMoveEndedEarly = firstMove.then(
         () => {
-          throw new Error('first move finished before reaching its guarded update')
+          throw new Error('first move finished before reaching its target lock')
         },
         (error: unknown) => {
           throw error
@@ -1959,21 +2276,24 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
         firstMoveReady,
         firstMoveEndedEarly,
         delay(5_000, undefined, { ref: false }).then(() => {
-          throw new Error('first move did not reach its guarded update')
+          throw new Error('first move did not reach its target lock')
         }),
       ])
 
       assert.equal(await executeEffects(moveSource, {
         ...raceContext,
         destinationPlaceId: secondDestinationId,
+        reservedPlaceIds: [placeId, secondDestinationId],
       }, secondMoveDb), 1)
       await secondMoveClient.query('COMMIT')
       releaseFirstMove()
 
+      // Attribution now locks the target before the guarded update. The stored room
+      // plan refuses the stale source there, before the losing move can write anything.
       await assert.rejects(firstMove, (error: unknown) => (
         error instanceof EngineError
         && error.status === 409
-        && error.message === 'thing or destination changed before the move; re-read both and retry'
+        && error.message === COLLISION_CONFLICT_MESSAGE
       ))
       await firstMoveClient.query('ROLLBACK')
 

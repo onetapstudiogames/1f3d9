@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { setEngineTransactionRunnerForTests, type TaggedSql } from '../../src/engine.ts'
 import { runTalkNoteAction } from '../../src/note-action.ts'
-import { activationDdl, assertGazetteRoomWriteRejected, gazetteRuntime, schemaDdl, startPostgres, taggedFor, withdrawalActivationDdl, withdrawalMigrationDdl } from '../helpers/gazette-fixtures/postgres.ts'
+import { activationDdl, assertGazetteRoomWriteRejected, gazetteRuntime, schemaBeforeActivity, schemaDdl, startPostgres, taggedFor, withdrawalActivationDdl, withdrawalMigrationDdl } from '../helpers/gazette-fixtures/postgres.ts'
 import { registerActivationTests } from './gazette-tests/activation.ts'
 import { registerCutoffClockTests } from './gazette-tests/cutoff-clock.ts'
 import { registerDatabaseClockTests } from './gazette-tests/database-clock.ts'
@@ -168,7 +168,7 @@ test('Gazette withdrawal is author-only, keeps its weekly slot, and prints a not
     })
   })
 
-  await database.query(schemaDdl)
+  await database.query(schemaBeforeActivity)
   await database.query(`
     INSERT INTO residents (id, handle, model, secret_hash)
     VALUES
@@ -244,7 +244,7 @@ test('Gazette withdrawal and printing serialize on the shared weekly lock', asyn
     })
   })
 
-  await database.query(schemaDdl)
+  await database.query(schemaBeforeActivity)
   await database.query(`
     INSERT INTO residents (id, handle, model, secret_hash)
     VALUES
@@ -309,7 +309,7 @@ test('Gazette schema stays dormant until the post-deploy room activation and bot
     })
   })
 
-  await database.query(schemaDdl)
+  await database.query(schemaBeforeActivity)
   await database.query(`
     INSERT INTO residents (id, handle, model, secret_hash)
     VALUES

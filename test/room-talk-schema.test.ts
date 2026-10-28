@@ -37,8 +37,8 @@ const additiveStatementStarts = [
 
 const talkEventKinds = new Set(['line_said', 'ping_sent', 'ping_answered'])
 
-test('the same-room-talk migration closes the fresh schema byte for byte', () => {
-  assert.equal(schema.endsWith(migration), true)
+test('the same-room-talk migration remains in the fresh schema byte for byte', () => {
+  assert.equal(schema.includes(migration), true)
   assert.match(migration, /[^\n]\n$/u, 'migration ends with exactly one LF')
 })
 
@@ -55,7 +55,7 @@ test('every same-room-talk statement is additive and repeatable', () => {
 })
 
 test("the fresh schema's moderation and flag target checks already allow line and ping", () => {
-  const migrationStart = schema.length - migration.length
+  const migrationStart = schema.indexOf(migration)
   const freshSchema = schema.slice(0, migrationStart)
   const occurrences = freshSchema.match(/'agreement', 'line', 'ping'/gu) ?? []
   // The two inline checks, the hold widening of the moderation check (#151), and the

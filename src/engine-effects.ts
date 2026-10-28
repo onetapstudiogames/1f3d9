@@ -2,11 +2,12 @@ import {
   EngineError,
   effectiveLaws,
   engineSql,
-  ensurePresence,
   goHome,
+  lockPlaceRowsTopDown,
   logUnrecognizedExecutionFailure,
   moveResident,
   publicSkippedEffects,
+  readPresence,
   resolveSymbolicTarget,
   withEngineTransaction,
   type RuntimeTarget,
@@ -46,6 +47,7 @@ import { writeStateBox } from './engine-state.ts'
 import { makeCopy } from './engine-copy.ts'
 import { reachMemberStillConsents, REACH_MEMBER_REFUSED, runReach } from './engine-reach.ts'
 import { CONVERT_ONLY_THINGS_ERROR, convertThing } from './engine-convert.ts'
+import { effectPlaceIds, lockEffectThings, requireReservedEffectPlace } from './engine-place-plan.ts'
 const MAX_JSON_BYTES = 65_536
 const DUE_BATCH_SIZE = 64
 const UNKNOWN_STORED_EFFECT_ERROR = 'the city could not complete this stored effect'
@@ -61,6 +63,8 @@ export interface LawAuthority {
   readonly sourcePlaceId: number
 }
 export interface EffectExecutionContext {
+  /** Rooms reserved before any public effect, including possible copy destinations and homes. */
+  readonly reservedPlaceIds?: readonly number[]
   readonly actionId: number | null
   readonly actorId: number
   readonly actorHandle: string
@@ -167,6 +171,8 @@ export interface SkippedEffect {
 }
 export interface EffectExecutionOutcome {
   readonly effectsApplied: number
+  readonly appliedPublicActivity?: readonly AppliedPublicActivity[]
+  readonly allChangedPublicActivity?: readonly AppliedPublicActivity[]
   /**
    * True only when an effect wrote a typed public event that stands in for the
    * action's own public row (decision #117): a destroy's thing_withdrawn. Every other
@@ -175,6 +181,41 @@ export interface EffectExecutionOutcome {
   readonly emittedTypedPublicEvent: boolean
   readonly destroyedThingIds?: readonly number[]
   readonly skippedEffects?: readonly SkippedEffect[]
+}
+export interface AppliedPublicActivity {
+  readonly actor: string
+  readonly operation: string
+  readonly place_id: number | null
+  readonly target_type?: RuntimeTarget['type']
+  readonly target_id?: number
+}
+
+async function changedPublicTarget(
+  target: RuntimeTarget,
+  operation: string,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<AppliedPublicActivity> {
+  const places = target.type === 'thing'
+    ? await queryRows<{ place_id: number }>(db`
+      SELECT thing.id, thing.place_id FROM things thing WHERE thing.id = ${target.id} FOR UPDATE OF thing
+    `)
+    : target.type === 'resident'
+      ? await queryRows<{ place_id: number | null }>(db`
+        SELECT current_place_id AS place_id FROM resident_presence
+        WHERE resident_id = ${target.id} FOR UPDATE
+      `)
+      : []
+  const placeId = target.type === 'place' ? target.id
+    : target.type === 'kind' ? null : places[0]?.place_id ?? null
+  requireReservedEffectPlace(placeId, context)
+  return Object.freeze({
+    actor: context.actorHandle,
+    operation,
+    target_type: target.type,
+    target_id: target.id,
+    place_id: placeId,
+  })
 }
 export interface ThingState {
   readonly id: number
@@ -284,9 +325,9 @@ async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promi
 /**
  * Locks a room's law chain from the top of the tree down, a parent before its child, as
  * every path locks place rows (docs/SYSTEM_DESIGN.md). Rows above exclusiveFromId are
- * shared. That row and the chain below it are exclusive, for an action that changes them
- * itself later, so it never asks to strengthen a shared lock it already holds. Exclusive
- * here is FOR NO KEY UPDATE: it still keeps out shared readers and writers, but lets a
+ * locked for an update, as are that row and the chain below it. This also reserves the
+ * activity summary update before any event can lock the public change record.
+ * FOR NO KEY UPDATE still keeps out competing writers, but lets a
  * row that names the place by foreign key through, such as a waiting effect queued there.
  */
 async function lockLawPlaceChain(
@@ -308,7 +349,7 @@ async function lockLawPlaceChain(
     WHERE chain.height > coalesce((
       SELECT changed.height FROM law_place_chain changed WHERE changed.id = ${exclusiveFromId}::int
     ), -1)
-    ORDER BY chain.height DESC FOR SHARE OF place
+    ORDER BY chain.height DESC FOR NO KEY UPDATE OF place
   `)
   if (exclusiveFromId === null) return shared
   const exclusive = await queryRows<{ id: number }>(db`
@@ -337,8 +378,8 @@ export function hasLawPlace(effects: readonly Effect[]): boolean {
 }
 
 /**
- * Locks what a law_place program needs in the shared order: the actor's presence, the
- * action's own thing, then the room's law chain from the top down. Permission is still
+ * Locks what a law_place program needs in the shared order: the room's law chain,
+ * then the actor's presence and the action's own thing. Permission is still
  * checked at each brick. exclusiveFromId names a chain row the action itself changes later.
  */
 export async function lockLawPlaceEffects(
@@ -348,6 +389,7 @@ export async function lockLawPlaceEffects(
   exclusiveFromId: number | null = null,
 ): Promise<void> {
   if (context.placeId === null || !hasLawPlace(effects)) return
+  await lockLawPlaceChain(context.placeId, db, exclusiveFromId)
   // This is only a lock: a timer does not require its actor still to stand here.
   await queryRows(db`
     SELECT resident_id FROM resident_presence WHERE resident_id = ${context.actorId} FOR UPDATE
@@ -355,7 +397,6 @@ export async function lockLawPlaceEffects(
   if (context.sourceThingId !== null) {
     await queryRows(db`SELECT id FROM things WHERE id = ${context.sourceThingId} FOR UPDATE`)
   }
-  await lockLawPlaceChain(context.placeId, db, exclusiveFromId)
 }
 
 async function requireScopedBrickTarget(
@@ -488,10 +529,14 @@ function effectExecutionOutcome(
   emittedTypedPublicEvent: boolean,
   destroyedThingIds?: readonly number[],
   skippedEffects: readonly SkippedEffect[] = [],
+  appliedPublicActivity: readonly AppliedPublicActivity[] = [],
+  allChangedPublicActivity: readonly AppliedPublicActivity[] = appliedPublicActivity,
 ): EffectExecutionOutcome {
   return Object.freeze({
     effectsApplied,
     emittedTypedPublicEvent,
+    ...(appliedPublicActivity.length === 0 ? {} : { appliedPublicActivity }),
+    ...(allChangedPublicActivity.length === 0 ? {} : { allChangedPublicActivity }),
     ...(destroyedThingIds === undefined ? {} : {
       destroyedThingIds: Object.freeze([...destroyedThingIds]),
     }),
@@ -557,6 +602,8 @@ export async function executeEffectsWithOutcome(
     ? (context.destroyedThingIds ?? [])
     : undefined
   let skippedEffects: readonly SkippedEffect[] = []
+  let appliedPublicActivity: readonly AppliedPublicActivity[] = []
+  let allChangedPublicActivity: readonly AppliedPublicActivity[] = []
   for (const effect of effects) {
     const outcomeContext = destroyedThingIds === undefined
       ? context
@@ -566,12 +613,16 @@ export async function executeEffectsWithOutcome(
     emittedTypedPublicEvent ||= outcome.emittedTypedPublicEvent
     destroyedThingIds = outcome.destroyedThingIds ?? destroyedThingIds
     skippedEffects = [...skippedEffects, ...(outcome.skippedEffects ?? [])]
+    appliedPublicActivity = [...appliedPublicActivity, ...(outcome.appliedPublicActivity ?? [])]
+    allChangedPublicActivity = [...allChangedPublicActivity, ...(outcome.allChangedPublicActivity ?? [])]
   }
   return effectExecutionOutcome(
     effectsApplied,
     emittedTypedPublicEvent,
     destroyedThingIds,
     skippedEffects,
+    appliedPublicActivity,
+    allChangedPublicActivity,
   )
 }
 
@@ -596,6 +647,8 @@ async function executeEffectWithOutcome(
   if ('target' in effect && effect.target === 'actor') requireWakeActor(context)
   if (effect.effect === 'label') {
     const target = await requireScopedBrickTarget(effect.target, context, db)
+    const changed = target.type === 'thing' || target.type === 'place'
+      ? [await changedPublicTarget(target, 'label', context, db)] : []
     const origin = effectOrigin(context)
     if (target.type === 'place') {
       await requireNonWorldPlace(target.id, db)
@@ -623,7 +676,7 @@ async function executeEffectWithOutcome(
           ), ${expiresInSeconds}::int))) END
       ) RETURNING id
     `)
-    return effectExecutionOutcome(1, false, destroyedThingIds)
+    return effectExecutionOutcome(1, false, destroyedThingIds, [], changed)
   }
   if (effect.effect === 'block') {
     await requireRoughRoomFor(effect, context, db)
@@ -647,6 +700,7 @@ async function executeEffectWithOutcome(
     if (!target || target.type !== 'thing') {
       throw new EngineError(403, 'agents and non-thing targets cannot be destroyed; choose an active thing target instead')
     }
+    const changed = await changedPublicTarget(target, 'destroy', context, db)
     await destroyThing(target.id, context, db)
     return effectExecutionOutcome(
       1,
@@ -654,6 +708,7 @@ async function executeEffectWithOutcome(
       destroyedThingIds !== undefined
         ? [...destroyedThingIds, target.id]
         : destroyedThingIds,
+      [], [], [changed],
     )
   }
   if (effect.effect === 'move') {
@@ -664,8 +719,12 @@ async function executeEffectWithOutcome(
     }
     const target = await requireTarget(resolved, db)
     // Like a carried move's thing_moved, an effect's move sits beside the action's row.
+    const before = await changedPublicTarget(target, 'move', context, db)
     await moveEffectTarget(target, effect.to, context, db)
-    return effectExecutionOutcome(1, false, destroyedThingIds)
+    const after = await changedPublicTarget(target, 'move', context, db)
+    const changed = before.place_id === after.place_id ? [] : [after]
+    return effectExecutionOutcome(1, false, destroyedThingIds, [],
+      target.type === 'resident' ? changed : [], changed)
   }
   if (effect.effect === 'transfer') {
     const resolved = resolveSymbolicTarget(effect.target, context)
@@ -681,13 +740,16 @@ async function executeEffectWithOutcome(
     const held = await holdTransferIfWaiting(target, context.actorId, recipientId, db)
     if (held !== null) context.abilityLog?.waiting.push(held)
     else await transferAsset(target, context.actorId, recipientId, db)
-    return effectExecutionOutcome(1, false, destroyedThingIds)
+    const changed = held !== null || context.actorId === recipientId ? []
+      : [await changedPublicTarget(target, 'transfer', context, db)]
+    return effectExecutionOutcome(1, false, destroyedThingIds, [], [], changed)
   }
   if (effect.effect === 'wait') {
     // effect_scheduled names no action, so it records beside the action's row, never
     // in place of it, and a use that waits keeps its public action row.
     const scheduled = await scheduleEffect(effect, context, db)
-    return effectExecutionOutcome(scheduled ? 1 : 0, false, destroyedThingIds)
+    return effectExecutionOutcome(scheduled ? 1 : 0, false, destroyedThingIds, [], [],
+      scheduled ? [{ actor: context.actorHandle, operation: 'schedule', place_id: context.placeId }] : [])
   }
   if (effect.effect === 'chance') {
     const drawn = await drawChanceRoll(effect.percent, context, db)
@@ -698,11 +760,14 @@ async function executeEffectWithOutcome(
       outcome.emittedTypedPublicEvent,
       outcome.destroyedThingIds ?? destroyedThingIds,
       outcome.skippedEffects,
+      outcome.appliedPublicActivity,
+      outcome.allChangedPublicActivity,
     )
   }
   if (effect.effect === 'write') {
     await writeStateBox(effect, context, db)
-    return effectExecutionOutcome(1, false, destroyedThingIds)
+    const changed = await changedPublicTarget({ type: 'thing', id: context.sourceThingId! }, 'write', context, db)
+    return effectExecutionOutcome(1, false, destroyedThingIds, [], [], [changed])
   }
   // Like a write, a copy or a conversion records its own event beside the action's,
   // never in place of it, so the action's public record stays whole.
@@ -710,7 +775,8 @@ async function executeEffectWithOutcome(
     const copied = await makeCopy(effect, context, db)
     return 'skipped' in copied
       ? effectExecutionOutcome(0, false, destroyedThingIds, [copied.skipped])
-      : effectExecutionOutcome(1, false, destroyedThingIds)
+      : effectExecutionOutcome(1, false, destroyedThingIds, [], [], [await changedPublicTarget(
+        { type: 'thing', id: copied.copiedThingId }, 'copy', context, db)])
   }
   if (effect.effect === 'reach') return runReach(effect, context, db)
   if (effect.effect === 'convert') {
@@ -718,7 +784,8 @@ async function executeEffectWithOutcome(
     if (target.type !== 'thing') throw new EngineError(403, CONVERT_ONLY_THINGS_ERROR)
     await requireCallerTargetScope(target, context.actorId, context.placeId, db)
     const converted = await convertThing(effect, target.id, context, db)
-    return effectExecutionOutcome(converted ? 1 : 0, false, destroyedThingIds)
+    return effectExecutionOutcome(converted ? 1 : 0, false, destroyedThingIds, [], [],
+      converted ? [await changedPublicTarget(target, 'convert', context, db)] : [])
   }
 
   const target = await requireScopedBrickTarget(effect.target, context, db)
@@ -758,11 +825,11 @@ async function withdrawSharedSourceThing(
           WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
             AND offer.status = 'open'
         )
-      RETURNING id
+      RETURNING id, place_id
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'thing_withdrawn', resident.handle,
-        jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
+        jsonb_build_object('thing_id', changed.id, 'place_id', changed.place_id, 'reason', 'destroyed')
       FROM changed JOIN residents resident ON resident.id = ${context.actorId}
     ) SELECT id FROM changed
   `)
@@ -802,11 +869,11 @@ async function destroyThing(
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
               AND offer.status = 'open'
           )
-        RETURNING id
+        RETURNING id, place_id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_withdrawn', resident.handle,
-          jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
+          jsonb_build_object('thing_id', changed.id, 'place_id', changed.place_id, 'reason', 'destroyed')
         FROM changed JOIN residents resident ON resident.id = ${context.actorId}
       ) SELECT id FROM changed
     `)
@@ -842,11 +909,11 @@ async function destroyThing(
           AND EXISTS (
             SELECT 1 FROM latest WHERE place_id = ${authority.sourcePlaceId}
               AND trait_id = ${authority.traitId} AND change_type = 'add'
-          ) RETURNING id
+          ) RETURNING id, place_id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_withdrawn', resident.handle,
-          jsonb_build_object('thing_id', changed.id, 'reason', 'destroyed')
+          jsonb_build_object('thing_id', changed.id, 'place_id', changed.place_id, 'reason', 'destroyed')
         FROM changed JOIN residents resident ON resident.id = ${context.actorId}
       ) SELECT id FROM changed
     `)
@@ -900,11 +967,11 @@ export async function withdrawOwnedThing(
           WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
             AND offer.status = 'open'
         )
-      RETURNING id
+      RETURNING id, place_id
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'thing_withdrawn', ${actorHandle},
-        jsonb_build_object('thing_id', id, 'reason', 'consumed')
+        jsonb_build_object('thing_id', id, 'place_id', place_id, 'reason', 'consumed')
       FROM changed
     ) SELECT id FROM changed
   `)
@@ -921,18 +988,21 @@ async function moveEffectTarget(
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
       await requireWakeHome(target.id, context, db)
-       await goHome(target.id, db, context.actionId)
+      requireReservedEffectPlace((await readPresence(target.id, db)).homePlaceId, context)
+      await goHome(target.id, db, context.actionId, context.actorId)
       return
     }
     if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
-     await moveResident(target.id, context.destinationPlaceId, db, context.actionId)
+    requireReservedEffectPlace(context.destinationPlaceId, context)
+    await moveResident(target.id, context.destinationPlaceId, db, context.actionId, context.actorId)
     return
   }
   if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
   const destinationId = destination === 'home'
-    ? (await ensurePresence(context.actorId, db)).homePlaceId
+    ? (await readPresence(context.actorId, db)).homePlaceId
     : context.destinationPlaceId
   if (destinationId === null) throw new EngineError(409, 'move destination is unavailable because the effect has no resolved destination; send to_place_id for move and retry')
+  requireReservedEffectPlace(destinationId, context)
   await moveThing(target.id, destinationId, context.actorId, db)
 }
 
@@ -955,7 +1025,7 @@ async function moveThing(
       place.retired_at,
       ${placePermission('place', 'open_to_things', actorId)} AS place_permits_things
     FROM places place WHERE place.id = ANY (${[thing.placeId, destinationId]}::int[])
-    FOR SHARE OF place
+    FOR NO KEY UPDATE OF place
   `)
   const oldPlace = places.find(row => integer(row.id) === thing.placeId)
   const destination = places.find(row => integer(row.id) === destinationId)
@@ -1080,7 +1150,7 @@ async function transferAsset(
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
               AND offer.status = 'open'
           )
-        RETURNING things.id
+        RETURNING things.id, things.place_id
       ), transfer AS (
         INSERT INTO transfers (asset_type, asset_id, from_id, to_id)
         SELECT 'thing', id, ${actorId}, ${recipientId} FROM moved
@@ -1090,9 +1160,8 @@ async function transferAsset(
         SELECT 'transfer', resident.handle, jsonb_build_object(
           'type', asset_type, 'id', asset_id, 'from_id', from_id,
           'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
-          'place_id', presence.current_place_id
+          'place_id', (SELECT moved.place_id FROM moved WHERE moved.id = transfer.asset_id)
         ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
-        JOIN resident_presence presence ON presence.resident_id = resident.id
       ) SELECT id FROM transfer
     `
     : target.type === 'place'
@@ -1115,10 +1184,9 @@ async function transferAsset(
           SELECT 'transfer', resident.handle, jsonb_build_object(
             'type', asset_type, 'id', asset_id, 'from_id', from_id,
             'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
-            'place_id', presence.current_place_id
+            'place_id', asset_id
           ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
-          JOIN resident_presence presence ON presence.resident_id = resident.id
-        ) SELECT id FROM transfer
+          ) SELECT id FROM transfer
       `
       : db`
         WITH recipient AS (SELECT id FROM residents WHERE id = ${recipientId}), moved AS (
@@ -1139,10 +1207,9 @@ async function transferAsset(
           SELECT 'transfer', resident.handle, jsonb_build_object(
             'type', asset_type, 'id', asset_id, 'from_id', from_id,
             'to_id', to_id, 'mode', 'effect', 'resident_id', ${recipientId}::integer,
-            'place_id', presence.current_place_id
+            'place_id', NULL
           ) FROM transfer JOIN residents resident ON resident.id = ${actorId}
-          JOIN resident_presence presence ON presence.resident_id = resident.id
-        ) SELECT id FROM transfer
+          ) SELECT id FROM transfer
       `
   if ((await queryRows(conditions)).length === 0) await throwTransferFailure(target, actorId, db)
 }
@@ -1409,6 +1476,7 @@ async function recordEffectResolution(
     effect_id: pendingId,
     status,
     ...(error === null ? {} : { error }),
+    ...(status === 'applied' ? { applied_public_activity: detail.applied_public_activity ?? [] } : {}),
   })
   await queryRows(db`
     WITH resolution AS (
@@ -1466,10 +1534,13 @@ async function resolveOne(
     }, db)
     return 'resolved'
   }
+  const actors = await queryRows<{ handle: string }>(db`
+    SELECT handle FROM residents WHERE id = ${row.actorId} FOR NO KEY UPDATE
+  `)
   const context: EffectExecutionContext = {
     actionId: row.actionId,
     actorId: row.actorId,
-    actorHandle: '',
+    actorHandle: actors[0]?.handle ?? '',
     placeId: row.placeId,
     sourceThingId: row.sourceThingId,
     sharedSourceThingId: row.sharedSourceThingId,
@@ -1494,11 +1565,20 @@ async function resolveOne(
       settleId: row.settleId,
     } : {}),
   }
-  const outcome = await executeEffectsWithOutcome(row.effects, context, db)
+  const reservedPlaceIds = await effectPlaceIds(row.effects, context, db)
+  await lockPlaceRowsTopDown(db, {
+    placeIds: reservedPlaceIds,
+    lawChainFrom: hasLawPlace(row.effects) ? row.placeId : null,
+    carryDestinationId: null,
+  })
+  await lockEffectThings({ ...context, reservedPlaceIds }, db)
+  await lockLawPlaceEffects(row.effects, context, db)
+  const outcome = await executeEffectsWithOutcome(row.effects, { ...context, reservedPlaceIds }, db)
   await repeatPending(row, context, db)
   const skipped = outcome.skippedEffects ?? []
   await recordEffectResolution(row.id, 'applied', {
     effects_applied: outcome.effectsApplied,
+    applied_public_activity: outcome.appliedPublicActivity ?? [],
     ...(skipped.length === 0 ? {} : { skipped_effects: publicSkippedEffects(skipped) }),
   }, db)
   return 'resolved'

@@ -24,6 +24,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   effect_scheduled: 'set a stored effect in motion',
   effect_resolved: 'resolved a stored effect',
   chance_rolled: 'rolled a public chance',
+  wake_try_applied: 'changed the room during a wake try',
   room_settled: 'settled a room',
   room_reached: 'reached across a room',
   copy_skipped: 'had a copy stopped by a growth limit',
@@ -127,6 +128,7 @@ export const PUBLIC_EVENT_DETAIL_FIELDS = Object.freeze([
 export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   chance_rolled: Object.freeze(['roll_id', 'purpose', 'roll', 'sides', 'percent', 'outcome', 'settle_id']),
   room_settled: Object.freeze(['settle_id', 'tried', 'woke', 'forfeited']),
+  wake_try_applied: Object.freeze(['settle_id', 'reason', 'unit_index']),
   room_reached: Object.freeze(['over', 'reached', 'more', 'skipped', 'stopped', 'settle_id']),
   copy_skipped: Object.freeze(['family_id', 'cap', 'limit', 'over_by', 'settle_id']),
   place_edited: Object.freeze(['hinge_to']),
@@ -136,3 +138,39 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   ping_sent: Object.freeze(['ping_id']),
   ping_answered: Object.freeze(['ping_id', 'answer']),
 })
+
+/** Outcome proof can carry target ids internally; public detail carries only the
+ * actor, operation and visible affected room. A room read may show its own feed.
+ */
+export function publicActivityFeedContentSql(outcome: string): string {
+  return `(${outcome}->>'target_type' = 'thing' AND ${outcome}->>'operation' IN ('label', 'destroy', 'move', 'write', 'copy', 'convert'))`
+}
+
+export function publicActivityEventDetailSql(event: string, scopedPlace = 'NULL::integer'): string {
+  const outcomePlace = "CASE WHEN outcome->>'place_id' ~ '^[1-9][0-9]{0,9}$' THEN CASE WHEN (outcome->>'place_id')::numeric <= 2147483647 THEN (outcome->>'place_id')::integer END END"
+  const outcomeTarget = "CASE WHEN outcome->>'target_id' ~ '^[1-9][0-9]{0,9}$' THEN CASE WHEN (outcome->>'target_id')::numeric <= 2147483647 THEN (outcome->>'target_id')::integer END END"
+  return `CASE WHEN jsonb_typeof(${event}.detail->'applied_public_activity') = 'array'
+    THEN (${event}.detail - 'applied_public_activity') || jsonb_build_object(
+      'applied_public_activity', coalesce((
+        SELECT jsonb_agg(jsonb_build_object('actor', outcome->'actor', 'operation', outcome->'operation', 'place_id', outcome->'place_id') ORDER BY ordinal)
+        FROM jsonb_array_elements(${event}.detail->'applied_public_activity') WITH ORDINALITY entries(outcome, ordinal)
+        LEFT JOIN places room ON room.id = ${outcomePlace}
+        WHERE jsonb_typeof(outcome) = 'object'
+          AND outcome->>'actor' ~ '^[a-z0-9][a-z0-9-]{2,31}$'
+          AND outcome->>'operation' ~ '^[a-z_]+$'
+          AND (outcome->'place_id' = 'null'::jsonb OR room.id IS NOT NULL)
+          AND (NOT coalesce(${publicActivityFeedContentSql('outcome')}, false)
+            OR room.id IS NULL OR NOT room.feed OR room.id = ${scopedPlace})
+          AND NOT EXISTS (
+            SELECT 1 FROM (VALUES
+              ('place'::text, room.id),
+              (outcome->>'target_type', ${outcomeTarget})
+            ) target(type, id)
+            JOIN LATERAL (
+              SELECT action FROM moderation_actions
+              WHERE target_type = target.type AND target_id = target.id
+              ORDER BY created_at DESC, id DESC LIMIT 1
+            ) latest ON latest.action = 'remove'
+          )
+      ), '[]'::jsonb)) ELSE ${event}.detail END`
+}

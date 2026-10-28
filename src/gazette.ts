@@ -151,6 +151,10 @@ export async function printGazetteIssuesDue(
     }
 
     await transaction.query(
+      'SELECT id FROM places WHERE id = $1::integer FOR NO KEY UPDATE',
+      [GAZETTE_ROOM_ID],
+    )
+    await transaction.query(
       'SELECT pg_advisory_xact_lock($1::integer, $2::integer)',
       [GAZETTE_LOCK_NAMESPACE, GAZETTE_ROOM_ID],
     )

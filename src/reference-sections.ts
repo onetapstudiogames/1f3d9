@@ -113,6 +113,7 @@ export const REFERENCE_ANCHOR_CATALOG: readonly ReferenceAnchor[] = Object.freez
   { anchor: 'batched-body-safety', page: 'search-and-changes', heading: 'MANY BODIES IN ONE READ' },
   { anchor: 'map-outline', page: 'search-and-changes', heading: 'THE BOUNDED MAP OUTLINE' },
   { anchor: 'passive-reads', page: 'search-and-changes', heading: 'PASSIVE READS AND PRESENCE' },
+  { anchor: 'public-activity', page: 'search-and-changes', heading: 'PUBLIC ACTIVITY' },
   { anchor: 'human-window', page: 'search-and-changes', heading: 'THE HUMAN WINDOW' },
   { anchor: 'window-portraits', page: 'search-and-changes', heading: 'PORTRAITS IN THE WINDOW' },
   { anchor: 'live-page', page: 'live-page', heading: 'THE STANDALONE LIVE PAGE', formerHeadings: ['THE LIVE CARTOGRAPHIC PLATE'] },

@@ -127,7 +127,14 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
   async function loadFocusedResident(handle, force) {
     if (!state.snapshot || state.snapshot.residents.some(resident => resident.handle === handle)) return
     const current = state.focusedResidents[handle]
-    if (current?.loading || (!force && current?.resident)) return
+    const selectionCurrent = current?.activitySelectionRevision === publicActivitySelectionRevision
+    if ((current?.loading && selectionCurrent && current.activityRevision === publicActivityRevision) ||
+        (!force && selectionCurrent && current?.resident)) return
+    const requestActivityRevision = publicActivityRevision
+    const requestActivitySelectionRevision = publicActivitySelectionRevision
+    const activityReadIsCurrent = () => requestActivityRevision === publicActivityRevision &&
+      requestActivitySelectionRevision === publicActivitySelectionRevision &&
+      activeSelectionKey() === selectionAtStart && !document.hidden
     const selectionAtStart = activeSelectionKey()
     const requestMarker = state.changeMarker
     const requestAuthoredRevision = authoredRevision
@@ -136,6 +143,8 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       focusedResidents: {
         ...state.focusedResidents,
         [handle]: Object.freeze({
+          activityRevision: requestActivityRevision,
+          activitySelectionRevision: requestActivitySelectionRevision,
           loading: true,
           error: false,
           notFound: false,
@@ -160,8 +169,10 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
       })
+      if (!activityReadIsCurrent()) return
       if (response.status === 404) {
         const payload = await response.json().catch(() => null)
+        if (!activityReadIsCurrent()) return
         requireCurrentReadMarker(payload?.change_marker, requestMarker)
         if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
           throw new Error('focused resident reply was overtaken by a newer public snapshot')
@@ -171,6 +182,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
           focusedResidents: {
             ...state.focusedResidents,
             [handle]: Object.freeze({
+              activitySelectionRevision: requestActivitySelectionRevision,
               loading: false,
               error: false,
               notFound: true,
@@ -183,17 +195,21 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       }
       if (!response.ok) throw new Error('focused resident unavailable')
       const payload = await response.json()
+      if (!activityReadIsCurrent()) return
       const [resident] = normalizeResidents([payload?.resident])
       if (!resident || resident.handle !== handle) throw new Error('wrong focused resident')
       requireCurrentReadMarker(payload?.change_marker, requestMarker)
       if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
         throw new Error('focused resident reply was overtaken by a newer public snapshot')
       }
+      residentActivity = new Map([...residentActivity,
+        [resident.id, activityBand(payload?.resident?.last_active)]])
       state = {
         ...state,
         focusedResidents: {
           ...state.focusedResidents,
           [handle]: Object.freeze({
+            activitySelectionRevision: requestActivitySelectionRevision,
             loading: false,
             error: false,
             notFound: false,
@@ -203,6 +219,9 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         },
       }
     } catch {
+      if (!activityReadIsCurrent()) return
+      if (current?.resident) residentActivity = new Map([...residentActivity]
+        .filter(([id]) => id !== current.resident.id))
       const retainedCovers = Boolean(current?.resident) &&
         (!state.changeMarker || markerCovers(current?.marker, state.changeMarker))
       state = {
@@ -210,6 +229,7 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         focusedResidents: {
           ...state.focusedResidents,
           [handle]: Object.freeze({
+            activitySelectionRevision: requestActivitySelectionRevision,
             loading: false,
             error: !retainedCovers,
             notFound: false,
@@ -246,7 +266,8 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
     if (selectedHandle &&
         !state.snapshot.residents.some(resident => resident.handle === selectedHandle)) {
       const entry = state.focusedResidents[selectedHandle]
-      if (!entry || forceResident) {
+      if (!entry || forceResident ||
+          entry.activitySelectionRevision !== publicActivitySelectionRevision) {
         await loadFocusedResident(selectedHandle, forceResident)
       }
       if (activeSelectionKey() !== selectionAtStart || state.resident !== selectedHandle) return

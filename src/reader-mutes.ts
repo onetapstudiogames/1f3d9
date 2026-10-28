@@ -199,7 +199,18 @@ function hiddenEvent(set: MuteSet, row: Readonly<Record<string, unknown>>): bool
   const kindId = detailId(detail, 'kind_id')
   if (kindId !== null && set.kinds.has(kindId)) return true
   const placeId = detailId(detail, 'place_id')
-  return placeId !== null && set.mutedPlaces.has(placeId)
+  if (placeId !== null && set.mutedPlaces.has(placeId)) return true
+  // A changed-outcome carrier can touch several rooms or responsible actors.
+  // Keep the existing whole-event rule and count one hidden carrier, not entries.
+  return Array.isArray(detail.applied_public_activity) && detail.applied_public_activity.some(value => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const outcome = value as Readonly<Record<string, unknown>>
+    const responsible = typeof outcome.actor === 'string' ? outcome.actor : ''
+    if (responsible === set.readerHandle || set.founderHandles.has(responsible)) return false
+    const destination = detailId(outcome, 'place_id')
+    return set.residentHandles.has(responsible)
+      || (destination !== null && set.mutedPlaces.has(destination))
+  })
 }
 
 function eventOutline(row: Readonly<Record<string, unknown>>): HiddenOutline {

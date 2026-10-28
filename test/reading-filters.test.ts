@@ -362,7 +362,7 @@ test('the reading filters refusals are stated in caller words, on HTTP and throu
   assert.equal(mixed.isError, true)
   assert.equal(mixed.error, 'settings is its own call: send me with settings alone, without paging, note_view or show_everything; only settings "show" may add show_muted_words')
   const changed = await meTool({ settings: 'everything' })
-  assert.equal(changed.error, 'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings')
+  assert.equal(changed.error, 'settings changes must be an object with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings')
 })
 
 test('the settings answer, the markers and the refusals pass the app door word rules', async () => {

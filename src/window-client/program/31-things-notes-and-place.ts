@@ -417,6 +417,15 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
   }
 
   function renderPlaceOrientation(place, factsOnly = false) {
+    nodes.placeSummary?.querySelector('.public-activity')?.remove()
+    const activityDetail = place ? state.details['place:' + String(place.id)] : null
+    const activityRecord = activityDetail?.record
+    if (place && activityRecord && !activityDetail.loading && !activityDetail.error &&
+        !isQuietPlace(place) && !isQuietPlace(activityRecord) && !activityRecord.feed &&
+        !place.moderated && !activityRecord.moderated && place.status !== 'retired' &&
+        !isMutedRow('place', place) && nodes.placeSummary) {
+      appendActivity(nodes.placeSummary, placeActivity.get(place.id))
+    }
     const words = placeOrientationWords(place)
     setOrientationLabel(nodes.placeDescriptionEyebrow, words.descriptionEyebrow)
     setOrientationLabel(nodes.placeDescriptionLabel, words.descriptionLabel)
@@ -436,6 +445,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       return
     }
     const description = state.details['place:' + String(place.id)]
+    if (description && description.activitySelectionRevision !== publicActivitySelectionRevision) {
+      window.queueMicrotask(() => void ensureDetail(false, place.id))
+    }
     if (place.moderated) {
       renderEmpty(placeDescriptionTarget(true), 'place-description-text', MODERATED_TEXT)
     } else if (!description || (description.loading && !description.record)) {

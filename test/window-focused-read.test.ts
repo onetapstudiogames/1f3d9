@@ -7,6 +7,35 @@ import {
 } from '../src/window-client/focused-read.ts'
 import { WINDOW_JS } from '../src/window-client.ts'
 
+test('a selected-activity refresh preserves residents loaded while its read is pending', async () => {
+  const loader = WINDOW_JS.slice(WINDOW_JS.indexOf('  async function refreshSelectedActivity('),
+    WINDOW_JS.indexOf('  function scheduleRefresh('))
+  let complete: (rows: unknown[]) => void = () => {}
+  const harness = new Function('refreshUnchangedPresence', `
+    let state = { changeMarker: '20', snapshot: { residents: [{ id: 3 }, { id: 2 }] },
+      residentPaging: { nextBeforeId: 2, hasMore: true } }
+    let publicActivityRevision = 0, navigationRevision = 0
+    let residentActivity = new Map()
+    const document = { hidden: false }
+    const window = { setTimeout, clearTimeout }
+    const REQUEST_TIMEOUT_MS = 5000
+    const renderAll = () => {}
+    ${loader}
+    return { read: refreshSelectedActivity, state: () => state, loadMore: () => {
+      navigationRevision += 1
+      state = { ...state, snapshot: { ...state.snapshot,
+        residents: [...state.snapshot.residents, { id: 1 }] },
+        residentPaging: { nextBeforeId: 1, hasMore: false } }
+    } }
+  `)(() => new Promise(resolve => { complete = resolve }))
+  const pending = harness.read()
+  harness.loadMore()
+  complete([{ id: 3 }, { id: 2 }])
+  await pending
+  assert.deepEqual(harness.state().snapshot.residents.map((row: { id: number }) => row.id), [3, 2, 1])
+  assert.deepEqual(harness.state().residentPaging, { nextBeforeId: 1, hasMore: false })
+})
+
 test('selected-place background reads retain prose and release cancelled pending entries', async () => {
   const loader = WINDOW_JS.slice(WINDOW_JS.indexOf('  async function ensureDetail('),
     WINDOW_JS.indexOf('  function detailDrawingKey('))
@@ -16,6 +45,10 @@ test('selected-place background reads retain prose and release cancelled pending
   const harness = new Function('fetch', 'record', `
     let state = { placeId: 11, view: 'place', details: { 'place:11': { record } } }
     let authoredRevision = 0, navigationRevision = 0, detailRequestRevision = 0
+    let publicActivityRevision = 0, publicActivitySelectionRevision = 0
+    let placeActivity = new Map()
+    const document = { hidden: false }
+    const activityBand = value => value
     const activeSelectionKey = () => state.view + ':' + state.placeId
     const window = { location: { origin: 'https://127.0.0.1' }, setTimeout, clearTimeout }
     const REQUEST_TIMEOUT_MS = 5000
@@ -48,6 +81,10 @@ test('cancelled background reads render unavailable facts after leaving and retu
   const harness = new Function('fetch', 'record', `
     let state = { placeId: 11, view: 'place', details: { 'place:11': { record } } }
     let authoredRevision = 0, navigationRevision = 0, detailRequestRevision = 0
+    let publicActivityRevision = 0, publicActivitySelectionRevision = 0
+    let placeActivity = new Map()
+    const document = { hidden: false }
+    const activityBand = value => value
     const activeSelectionKey = () => String(state.placeId) + '|resident:'
     const window = { location: { origin: 'https://127.0.0.1' }, setTimeout, clearTimeout }
     const REQUEST_TIMEOUT_MS = 5000
@@ -127,5 +164,5 @@ test('the browser program reads an overtaken place again and never leaves it loa
   assert.doesNotMatch(WINDOW_JS, /if \(!entry \|\| \(forcePlace && Boolean\(entry\.place\)\)\)/u)
   assert.match(WINDOW_JS, /refreshing: false \}\s+settleOvertakenFocusedPlaces\(\)/u)
   // Residents keep their own rule: every forced refresh reads a focused resident again.
-  assert.match(WINDOW_JS, /if \(!entry \|\| forceResident\) \{/u)
+  assert.match(WINDOW_JS, /if \(!entry \|\| forceResident \|\|\s+entry\.activitySelectionRevision !== publicActivitySelectionRevision\) \{/u)
 })

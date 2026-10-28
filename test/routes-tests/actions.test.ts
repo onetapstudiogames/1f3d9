@@ -145,9 +145,10 @@ export function registerActionsTests(): void {
     const withdrawalWrite = sqlCalls().find(call =>
       /update\s+things\s+set\s+withdrawn_at/i.test(call.query ?? '') &&
       /insert\s+into\s+events/i.test(call.query ?? ''))
+    assert.match(withdrawalWrite?.query ?? '', /RETURNING\s+id\s*,\s*place_id\s*,\s*withdrawn_at/i)
     assert.match(
       withdrawalWrite?.query ?? '',
-      /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)/i,
+      /jsonb_build_object\(\s*'thing_id'\s*,\s*id\s*,\s*'place_id'\s*,\s*place_id\s*,\s*'reason'\s*,\s*\$\d+::text\s*\)\s+FROM\s+changed/i,
     )
     assert.doesNotMatch(withdrawalWrite?.query ?? '', /SET\s+maker_id\s*=/i)
 

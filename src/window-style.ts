@@ -987,6 +987,7 @@ button { color: inherit; }
 .occupant-chip.asleep { opacity: 0.45; }
 .occupant-chip.asleep::before { content: "○"; }
 .resident-row.asleep, .person-card.asleep { opacity: 0.5; }
+.public-activity { display: inline-block; margin-inline-start: 0.6em; font-size: 0.85em; }
 
 .sleeper-toggle {
   display: inline-flex;

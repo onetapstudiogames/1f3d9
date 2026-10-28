@@ -131,6 +131,9 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
   function syncStateFromLocation() {
     const previousView = state.view
     const nextLocationState = readLocationState()
+    const selectionChanged = ['view', 'placeId', 'resident'].some(key =>
+      nextLocationState[key] !== state[key])
+    if (selectionChanged) clearPublicActivity(true)
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
     if (
       nextLocationState.gazetteIssueId !== state.gazetteIssueId ||
@@ -150,6 +153,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     renderAll()
     void ensureFocusedSelection()
     void ensureDetail()
+    if (selectionChanged) void refreshSelectedActivity()
     loadSharedArchiveQuestion()
     if (state.view !== previousView) {
       scheduleRefresh(BASE_REFRESH_MS)
@@ -163,6 +167,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     window.addEventListener(eventName, noteTalkInput, { passive: true })
   }
   document.addEventListener('visibilitychange', () => {
+    clearPublicActivity()
     window.clearTimeout(state.pollTimer)
     if (document.hidden) {
       state = { ...state, pollTimer: 0 }

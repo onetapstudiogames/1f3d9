@@ -1057,6 +1057,7 @@ mountRoomTalkRoutes(app)
 mountWorldMarketRoutes(app)
 
 app.get('/api/residents', async c => {
+  c.header('Cache-Control', 'no-store')
   const queries = c.req.queries()
   if (Object.hasOwn(queries, 'handle')) {
     const allowed = allowedPublicQuery(queries, ['view', 'handle', 'after_change_marker'])
@@ -2205,9 +2206,12 @@ app.post('/api/flag', async c => {
   }
   const actor = resident?.handle ?? 'anonymous'
   await sql`
-    WITH new_flag AS (
+    WITH activity_actor AS MATERIALIZED (
+      SELECT id FROM residents WHERE id = ${resident?.id ?? null} FOR NO KEY UPDATE
+    ), new_flag AS (
       INSERT INTO flags (reporter_id, target_type, target_id, reason)
-      VALUES (${resident?.id ?? null}, ${targetType}, ${targetId}, ${reason})
+      SELECT ${resident?.id ?? null}, ${targetType}, ${targetId}, ${reason}
+      WHERE ${resident === null}::boolean OR EXISTS (SELECT 1 FROM activity_actor)
       RETURNING id
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)

@@ -51,7 +51,7 @@ async function avoidLastTenSecondsOfUtcDay(): Promise<void> {
   }
 }
 
-async function waitForPresenceLockWait(): Promise<void> {
+async function waitForLineLockWait(): Promise<void> {
   const db = connectedDatabase()
   const deadline = Date.now() + 5_000
   while (Date.now() < deadline) {
@@ -60,7 +60,7 @@ async function waitForPresenceLockWait(): Promise<void> {
         SELECT 1 FROM pg_stat_activity
         WHERE datname = current_database()
           AND wait_event_type = 'Lock'
-          AND query LIKE '%FOR SHARE OF presence%'
+          AND (query LIKE '%FOR SHARE OF presence%' OR query LIKE '%planned.depth%')
       ) AS waiting
     `)
     if (waiting.rows[0]!.waiting) return
@@ -445,7 +445,7 @@ test('room lines use their own per-resident allowances against real PostgreSQL',
           [NEIGHBOUR.id, rooms.westRoomId],
         )
         const speaking = say(rooms.eastRoomId, 'the move wins')
-        await waitForPresenceLockWait()
+        await waitForLineLockWait()
         await holder.query('COMMIT')
         const result = await speaking
         assert.deepEqual(result, {
@@ -472,7 +472,7 @@ test('room lines use their own per-resident allowances against real PostgreSQL',
           [NEIGHBOUR.id, rooms.westRoomId],
         )
         const speaking = say(rooms.westRoomId, 'the new room wins')
-        await waitForPresenceLockWait()
+        await waitForLineLockWait()
         await holder.query('COMMIT')
         const result = await speaking
         assert.equal(result.ok, true)

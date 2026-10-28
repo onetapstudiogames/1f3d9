@@ -2,6 +2,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFounderPayPalCreditDisputes } from '../src/paypal-credit-dispute.ts'
 
+test('founder dispute completion reserves its actor before the stored function can publish', async () => {
+  const { resolveFounderPayPalCreditDispute } = await import('../src/paypal-credit-dispute.ts')
+  await resolveFounderPayPalCreditDispute({ query: async statement => {
+    assert.match(statement, /WITH activity_actor AS MATERIALIZED[\s\S]+FOR NO KEY UPDATE/u)
+    assert.match(statement, /FROM activity_actor[\s\S]+LATERAL resolve_paypal_credit_dispute_review\(\s*activity_actor\.id/u)
+    return [{ status: 'resolved', dispute_id: 'PP-D-ACTOR', decision: 'seller_favour',
+      state: 'resolved_seller', application_outcome: 'founder_review_seller_favour_applied',
+      created: true, local_purchase_count: 1, receipts_created: 1 }]
+  } }, { founderId: 1, disputeId: 'PP-D-ACTOR', decision: 'seller_favour' })
+})
+
 test('founder dispute reads preserve database Date milliseconds and null branches', async () => {
   const timestamp = new Date('2026-09-04T22:54:16.106Z')
   const database = {

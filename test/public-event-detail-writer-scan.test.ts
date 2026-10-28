@@ -1,9 +1,30 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import {
   assertEveryEventDetailFieldClassified,
   scanEventDetailWriters,
 } from './helpers/public-event-detail-writer-scan.ts'
+
+test('public activity outcomes expose only their public identity after room and target checks', async () => {
+  const { publicActivityEventDetailSql } = await import('../src/public-events.ts')
+  const sql = publicActivityEventDetailSql('event', '$3::integer')
+  assert.match(sql, /jsonb_build_object\('actor', outcome->'actor', 'operation', outcome->'operation', 'place_id', outcome->'place_id'\)/u)
+  assert.match(sql, /moderation_actions/u)
+  assert.match(sql, /target_type/u)
+  assert.match(sql, /target_id/u)
+  assert.match(sql, /room\.feed/u)
+  assert.match(sql, /outcome->>'target_type' = 'thing'/u)
+  assert.match(sql, /\$3::integer/u)
+  assert.doesNotMatch(sql, /SELECT\s+outcome\s|to_jsonb\(outcome\)/u)
+})
+
+test('spatial sale and offer writers record changed-row places in their event transaction', async () => {
+  for (const path of ['src/payment-sale-operation-sql.ts', 'src/world-market.ts', 'src/society.ts']) {
+    const source = await readFile(new URL(`../${path}`, import.meta.url), 'utf8')
+    assert.match(source, /'place_id', (?:asset\.activity_place_id|offer\.activity_place_id|locked_thing\.place_id|thing\.place_id|a\.activity_place_id)/u, path)
+  }
+})
 
 test('the writer scanner reports direct event-detail keys with their source location', () => {
   const scan = scanEventDetailWriters([{
@@ -273,4 +294,14 @@ test('event trigger detail mutations fail closed', () => {
       /unknown event-detail writer shape/iu,
     )
   }
+})
+
+test('the timestamp validation trigger cannot hide another event-detail trigger', () => {
+  assert.throws(() => scanEventDetailWriters([{
+    path: 'db/migrations/20990112_trigger.sql',
+    source: `CREATE TRIGGER events_guard_public_activity_time BEFORE INSERT ON events
+      FOR EACH ROW EXECUTE FUNCTION guard_public_activity_time();
+      CREATE TRIGGER second_trigger BEFORE INSERT ON events
+      FOR EACH ROW EXECUTE FUNCTION alter_detail();`,
+  }]), /trigger targeting events is unsupported/u)
 })

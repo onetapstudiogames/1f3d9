@@ -151,7 +151,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
       CROSS JOIN (SELECT clock_timestamp() AS now) stamp
       WHERE ping.id = $1
     `, [pingId])).rows[0]!
-    const waitForLock = async (fragment: string) => {
+    const waitForLock = async (fragment: string | readonly string[]) => {
       const deadline = Date.now() + 5_000
       while (Date.now() < deadline) {
         const waiting = await db.query<{ waiting: boolean }>(`
@@ -159,9 +159,9 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
             SELECT 1 FROM pg_stat_activity
             WHERE datname = current_database()
               AND wait_event_type = 'Lock'
-              AND query ILIKE $1
+              AND query ILIKE ANY($1::text[])
           ) AS waiting
-        `, ['%' + fragment + '%'])
+        `, [(typeof fragment === 'string' ? [fragment] : fragment).map(value => '%' + value + '%')])
         if (waiting.rows[0]!.waiting) return
         await delay(10)
       }
@@ -255,7 +255,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
           [GROWER.id, rooms.eastRoomId],
         )
         const inviting = invite()
-        await waitForLock('FOR UPDATE OF presence')
+        await waitForLock(['FOR UPDATE OF presence', 'planned.depth'])
         await holder.query('COMMIT')
         const result = await inviting
         assert.equal(result.ok, true)
@@ -566,7 +566,7 @@ test('room pings use durable outcomes and pair history against real PostgreSQL',
           [GROWER.id, rooms.westRoomId],
         )
         const answering = answer(offered.answer.ping.id)
-        await waitForLock('FOR UPDATE OF presence')
+        await waitForLock(['FOR UPDATE OF presence', 'planned.depth'])
         await moveFirst.query('COMMIT')
         const lost = await answering
         assert.equal(lost.ok, false)

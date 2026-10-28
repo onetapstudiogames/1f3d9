@@ -30,6 +30,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       item.append(follow, element('span', 'resident-number',
         'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '') +
         (location ? ' · at ' + location : '')))
+      appendActivity(item.querySelector('.resident-number'), residentActivity.get(resident.id))
       item.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
       const menu = muteMenu([residentMuteTarget(resident.handle)], 'person:' + resident.handle)
       if (menu) item.append(menu)

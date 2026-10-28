@@ -89,9 +89,11 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
     await t.test(`${door}: eligible selection keeps the place or sale conflict refusal`, async () => {
       reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterThingIds: [41, 42] })
       const fakeFetch = globalThis.fetch
+      let injectedConflicts = 0
       globalThis.fetch = async (input, init) => {
         if (String(input).includes('/sql') && typeof init?.body === 'string'
-            && init.body.includes('WITH candidate_locks AS MATERIALIZED')) {
+            && init.body.includes('candidate_locks AS MATERIALIZED')) {
+          injectedConflicts += 1
           return Response.json({
             command: 'SELECT', rowCount: 1,
             fields: [{ name: 'id', dataTypeID: 23 }, { name: 'front_matter_eligible', dataTypeID: 16 }],
@@ -109,6 +111,7 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
             params: { name: 'place_edit', arguments: { place_id: 2, ...patch } },
           }),
         })
+        assert.equal(injectedConflicts, 1, 'the atomic place edit reached the injected conflict')
         assert.equal(response.status, door === 'HTTP' ? 409 : 200)
         const body = await response.json()
         if (door === 'MCP') assert.equal(body.result.isError, true)
@@ -126,9 +129,11 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
     await t.test(`eligibility changed during the edit: ${code}`, async () => {
       reset({ scenario: 'room orientation', placeOwnerId: 7, frontMatterThingIds: [41, 42] })
       const fakeFetch = globalThis.fetch
+      let injectedConflicts = 0
       globalThis.fetch = async (input, init) => {
         if (String(input).includes('/sql') && typeof init?.body === 'string'
-            && init.body.includes('WITH candidate_locks AS MATERIALIZED')) {
+            && init.body.includes('candidate_locks AS MATERIALIZED')) {
+          injectedConflicts += 1
           return Response.json({ message: 'chosen thing changed', code }, { status: 400 })
         }
         return fakeFetch(input, init)
@@ -137,6 +142,7 @@ test('place front matter refusals state the accepted shape through HTTP and MCP'
         const response = await app.request('/api/place/2', {
           method: 'PATCH', headers, body: JSON.stringify({ front_matter_thing_ids: [43, 41] }),
         })
+        assert.equal(injectedConflicts, 1, 'the atomic place edit reached the injected conflict')
         assert.equal(response.status, 409)
         assert.equal((await response.json()).error, 'front_matter_thing_ids must be an empty list, or two or three distinct ids of active public things standing in this place; a chosen thing changed before the edit completed; retry')
         assert.deepEqual(fixtureState.current.frontMatterThingIds, [41, 42])

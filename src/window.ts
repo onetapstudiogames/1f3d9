@@ -40,6 +40,7 @@ import {
 import { readPublicMapOutline } from './public-map.ts'
 import {
   PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS,
+  PUBLIC_RESIDENT_ASLEEP_EVENT_KINDS,
   readPublicResidentPage,
 } from './public-residents.ts'
 import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
@@ -1413,7 +1414,7 @@ async function readFullWindowSnapshot() {
         FROM events
         WHERE actor = resident.handle
           AND at >= now() - (${WINDOW_ASLEEP_AFTER_DAYS}::int * interval '1 day')
-          AND kind = ANY(${PUBLIC_EVENT_KINDS}::text[])
+          AND kind = ANY(${PUBLIC_RESIDENT_ASLEEP_EVENT_KINDS}::text[])
         ORDER BY at DESC
         LIMIT 1
       ) activity ON true
@@ -1499,7 +1500,7 @@ async function readOutlineWindowSnapshotBody() {
   // The exact census read is also this snapshot's admission gate. Run it
   // before starting the other reads so a busy gate cannot fan one rejected
   // request out into map, history, and totals work that no caller will use.
-  const residentPage = await readPublicResidentPage(residentRequest, true)
+  const residentPage = await readPublicResidentPage(residentRequest, true, false)
   // The other exact citywide counts use the same two-slot/1.5-second guard.
   // Admit them before any map or history work so a cold busy instance rejects
   // cheaply instead of fanning one request out into reads it cannot return.

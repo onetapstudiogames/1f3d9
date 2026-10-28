@@ -164,12 +164,14 @@ export async function registerMigrationsAndLawsTests(
         ORDER BY id
       `)
     assert.deepEqual(events.rows, [
-      { kind: 'laws_changed', detail: { place_id: roomId, traits: ['peaceful', 'war-zone'] } },
-      { kind: 'laws_changed', detail: { place_id: roomId, traits: ['war-zone'] } },
+      { kind: 'laws_changed', detail: { place_id: roomId, traits: ['peaceful', 'war-zone'],
+        applied_public_activity: [{ actor: 'founder', operation: 'laws', place_id: roomId }] } },
+      { kind: 'laws_changed', detail: { place_id: roomId, traits: ['war-zone'],
+        applied_public_activity: [{ actor: 'founder', operation: 'laws', place_id: roomId }] } },
     ])
   })
   await t.test('withdrawal writes the timestamp and event in one statement', async () => {
-    await resetDatabase()
+    const roomId = await resetDatabase()
     const result = await withdrawThing(actor, 1, 'destroyed')
     assert.equal('error' in result, false)
     assert.ok(Number.isFinite(Date.parse(String('withdrawn_at' in result ? result.withdrawn_at : ''))))
@@ -184,7 +186,7 @@ export async function registerMigrationsAndLawsTests(
     assert.deepEqual(state.rows, [{
       withdrawn: true,
       kind: 'thing_withdrawn',
-      detail: { thing_id: 1, reason: 'destroyed' },
+      detail: { thing_id: 1, place_id: roomId, reason: 'destroyed' },
       reason_type: 'string',
     }])
   })

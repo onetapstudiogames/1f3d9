@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
+import { publicPlaceWriteFields } from './public-place-write.ts'
+import { lockPublicActivityInvalidation, withPublicActivityInvalidationRetry } from './public-activity-locks.ts'
 import type { Context, Hono } from 'hono'
 import { err, postgresErrorCode, postgresErrorConstraint, type Resident } from './core.ts'
 import { FEED_KEEPS_QUIET_REFUSAL, FEED_NEEDS_QUIET_REFUSAL, feedQuietRefusal } from './feed-rooms.ts'
@@ -318,9 +320,7 @@ function publicPlaceWriteRow(
   hinge: PublicHinge | null = null,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
-    ...Object.fromEntries(Object.entries(row).filter(([field]) => (
-      field !== 'front_matter_thing_ids' && field !== 'wake_block_resident_ids'
-    ))),
+    ...publicPlaceWriteFields(row),
     wake_block_residents: blockedResidents,
     hinge,
   })
@@ -377,15 +377,20 @@ function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string,
  */
 async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
   await withEngineTransaction(engineSql, async transaction => {
+    await transaction`SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE`
+    const lockedRooms = await transaction`SELECT place.id FROM places place
+      JOIN things thing ON thing.place_id = place.id
+      WHERE thing.id = ${id} FOR NO KEY UPDATE OF place` as Array<{ id: number }>
     const shownBefore = await readThingPresentation(id, transaction)
     const changed = await transaction`
       WITH changed AS (
         UPDATE things thing SET as_revision = kind.current_revision
         FROM kinds kind
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+          AND thing.place_id = ${lockedRooms[0]?.id ?? null}
           AND thing.withdrawn_at IS NULL AND kind.id = thing.as_kind_id
           AND thing.as_revision IS DISTINCT FROM kind.current_revision
-        RETURNING thing.id, thing.as_kind_id, thing.as_revision,
+        RETURNING thing.id, thing.place_id, thing.as_kind_id, thing.as_revision,
           coalesce(thing.family_id, thing.id) AS family_id
       ), cleared_marks AS (
         UPDATE family_growth_marks mark
@@ -395,7 +400,7 @@ async function upgradeConvertedThing(id: number, resident: Resident): Promise<vo
       )
       INSERT INTO events (kind, actor, detail)
       SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
-        'thing_id', id, 'kind_id', as_kind_id, 'current_revision', as_revision
+        'thing_id', id, 'place_id', place_id, 'kind_id', as_kind_id, 'current_revision', as_revision
       ) FROM changed
       RETURNING id
     ` as unknown[]
@@ -688,6 +693,7 @@ export function mountWorldRoutes(app: Hono): void {
   })
 
   app.get('/api/place/:id', async c => {
+    c.header('Cache-Control', 'no-store')
     const id = positiveId(c.req.param('id'))
     if (!id) return err(c, 400, 'place id must be a positive integer')
     const query = c.req.queries()
@@ -750,7 +756,7 @@ export function mountWorldRoutes(app: Hono): void {
       // When focus mode forced the outline, the caller's text limits have no text to
       // limit; drop them so the outline loader is never asked for limited text.
       : view === askedView ? textLimits : Object.freeze({ subplaces: null, things: null, notes: null })
-    const publicPlace = await loadPublicPlaceRecord(id)
+    const publicPlace = await loadPublicPlaceRecord(id, undefined, undefined, true)
     if (!publicPlace) return err(c, 404, `place_id ${id} was not found; call look with no target and view outline, or use GET /api/map?view=outline if your client can open URLs, and send a current place_id`)
 
     // A page its reader's mutes thinned reads further rows until it is full (src/page-fill.ts).
@@ -1146,10 +1152,13 @@ export function mountWorldRoutes(app: Hono): void {
         return err(c, 403, 'this place does not permit visitors to build; its owner can enable open_to_building, or you can choose your own or another open place')
       } else try {
         const rows = (await withPlacePermission(sql)`
-          WITH permitted_parent AS (
+          WITH activity_actor AS MATERIALIZED (
+            SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
+          ), permitted_parent AS (
             SELECT parent.id
             FROM places parent
             WHERE parent.id = ${parentId}
+              AND EXISTS (SELECT 1 FROM activity_actor)
               AND parent.retired_at IS NULL
               AND ${placePermission('parent', 'open_to_building', resident.id)}
             FOR UPDATE
@@ -1555,8 +1564,17 @@ export function mountWorldRoutes(app: Hono): void {
 
     let rows: Array<(PlaceRow | { id: null }) & { front_matter_eligible: boolean }>
     try {
-      rows = (await sql`
-        WITH candidate_locks AS MATERIALIZED (
+      rows = (await withPublicActivityInvalidationRetry(() => withEngineTransaction(engineSql, async transaction => {
+        if (feed !== undefined) {
+          await lockPublicActivityInvalidation(transaction.query!, resident.id, 'place', id)
+        }
+        return await transaction`
+        WITH activity_actor AS MATERIALIZED (
+          SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
+        ), activity_room AS MATERIALIZED (
+          SELECT id FROM places WHERE id = ${id}
+            AND EXISTS (SELECT 1 FROM activity_actor) FOR NO KEY UPDATE
+        ), candidate_locks AS MATERIALIZED (
           SELECT thing.id,
             thing.place_id = ${id}
               AND thing.withdrawn_at IS NULL
@@ -1571,6 +1589,7 @@ export function mountWorldRoutes(app: Hono): void {
             LIMIT 1
           ) latest_moderation ON TRUE
           WHERE ${frontMatterThingIds !== undefined}::boolean
+            AND EXISTS (SELECT 1 FROM activity_room)
             AND thing.id = ANY(${frontMatterThingIds === undefined ? [] : [...frontMatterThingIds]}::integer[])
           ORDER BY thing.id
           FOR UPDATE OF thing
@@ -1589,6 +1608,7 @@ export function mountWorldRoutes(app: Hono): void {
           LEFT JOIN transfer_offers offer ON offer.asset_type = 'place'
             AND offer.asset_id = p.id AND offer.status = 'open'
           WHERE p.id = ${id} AND p.owner_id = ${resident.id}
+            AND EXISTS (SELECT 1 FROM activity_room)
             AND p.retired_at IS NULL
             AND p.active_offer_id IS NULL AND offer.id IS NULL
             AND selection.eligible
@@ -1744,7 +1764,8 @@ export function mountWorldRoutes(app: Hono): void {
           selection.eligible AS front_matter_eligible
         FROM selection_state selection
         LEFT JOIN result ON TRUE
-      `) as typeof rows
+      `
+      }))) as typeof rows
     } catch (error) {
       const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
       if (gazetteRoomError) return err(c, 409, gazetteRoomError)
@@ -2279,9 +2300,12 @@ export function mountWorldRoutes(app: Hono): void {
 
     try {
       const rows = await sql`
-        WITH new_trait AS (
+        WITH activity_actor AS MATERIALIZED (
+          SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
+        ), new_trait AS (
           INSERT INTO traits (name, description, recipe, coiner_id)
-          VALUES (${name}, ${description}, ${recipe == null ? null : JSON.stringify(recipe)}::jsonb, ${resident.id})
+          SELECT ${name}, ${description}, ${recipe == null ? null : JSON.stringify(recipe)}::jsonb, id
+          FROM activity_actor
           RETURNING id, name, description, recipe, coiner_id, created_at
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
@@ -2518,7 +2542,13 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     const rows = (await sql`
-      WITH editable AS MATERIALIZED (
+      WITH activity_actor AS MATERIALIZED (
+        SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
+      ), activity_room AS MATERIALIZED (
+        SELECT place.id FROM places place JOIN things thing ON thing.place_id = place.id
+        WHERE thing.id = ${id} AND EXISTS (SELECT 1 FROM activity_actor)
+        FOR NO KEY UPDATE OF place
+      ), editable AS MATERIALIZED (
         SELECT thing.*,
           coalesce(thing.as_kind_id, thing.kind_id) AS shown_kind_id,
           coalesce(thing.as_revision, thing.current_revision) AS shown_revision,
@@ -2539,6 +2569,7 @@ export function mountWorldRoutes(app: Hono): void {
         LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
           AND offer.asset_id = thing.id AND offer.status = 'open'
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+          AND thing.place_id = (SELECT id FROM activity_room)
           AND thing.withdrawn_at IS NULL
           AND thing.active_offer_id IS NULL AND offer.id IS NULL
         FOR UPDATE OF thing
@@ -2700,7 +2731,7 @@ export function mountWorldRoutes(app: Hono): void {
         RETURNING id
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
-        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id)
+        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id, 'place_id', place_id)
         FROM changed
       ), result AS (
         SELECT changed.* FROM changed
@@ -2818,7 +2849,13 @@ export function mountWorldRoutes(app: Hono): void {
     let rows: ThingRow[]
     try {
       rows = (await sql`
-        WITH upgradeable AS MATERIALIZED (
+        WITH activity_actor AS MATERIALIZED (
+          SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
+        ), activity_room AS MATERIALIZED (
+          SELECT place.id FROM places place JOIN things thing ON thing.place_id = place.id
+          WHERE thing.id = ${id} AND EXISTS (SELECT 1 FROM activity_actor)
+          FOR NO KEY UPDATE OF place
+        ), upgradeable AS MATERIALIZED (
         SELECT thing.*,
           prior_revision.drawing AS prior_kind_drawing,
           prior_revision.drawing_state AS prior_kind_drawing_state,
@@ -2852,6 +2889,7 @@ export function mountWorldRoutes(app: Hono): void {
         LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
           AND offer.asset_id = thing.id AND offer.status = 'open'
         WHERE thing.id = ${id} AND thing.owner_id = ${resident.id}
+          AND thing.place_id = (SELECT id FROM activity_room)
           AND thing.withdrawn_at IS NULL
           AND thing.active_offer_id IS NULL AND offer.id IS NULL
           AND thing.current_revision = ${existing.current_revision ?? null}::integer
@@ -2971,7 +3009,7 @@ export function mountWorldRoutes(app: Hono): void {
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'thing_upgraded', ${resident.handle}, jsonb_build_object(
-          'thing_id', id, 'birth_revision', birth_revision,
+          'thing_id', id, 'place_id', place_id, 'birth_revision', birth_revision,
           'current_revision', current_revision
         ) FROM changed
       ), cleared_marks AS (

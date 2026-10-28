@@ -180,7 +180,7 @@ export function registerKindsAndUpgradesTests(): void {
     const current = await upgraded.json() as { thing: { birth_revision: number; current_revision: number } }
     assert.equal(current.thing.birth_revision, 1)
     assert.equal(current.thing.current_revision, 2)
-    const upgradeWrite = sqlCalls().find(call => /WITH\s+upgradeable/i.test(call.query ?? ''))
+    const upgradeWrite = sqlCalls().find(call => /\bupgradeable\s+AS/i.test(call.query ?? ''))
     assert.match(upgradeWrite?.query ?? '', /changed\.maker_id/i)
     assert.match(upgradeWrite?.query ?? '', /maker\.handle\s+AS\s+made_by/i)
     assert.match(upgradeWrite?.query ?? '', /changed\.owner_id\s+AS\s+current_owner_id/i)
@@ -347,7 +347,7 @@ export function registerKindsAndUpgradesTests(): void {
     }).thing
     assert.equal(preservedThing.current_revision, 2)
     assert.equal(preservedThing.drawing_variant_name, 'ember')
-    const preservedWrite = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))
+    const preservedWrite = sqlCalls().find(call => /\bupgradeable\s+AS/iu.test(call.query ?? ''))
     assert.match(preservedWrite?.query ?? '', /drawing_variant/iu)
     assert.match(preservedWrite?.query ?? '', /drawing_variants/iu)
 
@@ -381,7 +381,7 @@ export function registerKindsAndUpgradesTests(): void {
     })
     assert.equal(choseBase.status, 200, await choseBase.clone().text())
     assert.match(
-      sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? '',
+      sqlCalls().find(call => /\bupgradeable\s+AS/iu.test(call.query ?? ''))?.query ?? '',
       /drawing_variant/iu,
     )
 
@@ -426,7 +426,7 @@ export function registerKindsAndUpgradesTests(): void {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({}),
     })
     assert.equal(retry.status, 200, await retry.clone().text())
-    const write = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))
+    const write = sqlCalls().find(call => /\bupgradeable\s+AS/iu.test(call.query ?? ''))
     assert.match(write?.query ?? '', /IS\s+DISTINCT\s+FROM/iu)
     assert.match(write?.query ?? '', /INSERT\s+INTO\s+events[\s\S]*FROM\s+changed/iu)
     assert.match(write?.query ?? '', /WHERE\s+NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+changed\s*\)/iu)
@@ -449,7 +449,7 @@ export function registerKindsAndUpgradesTests(): void {
     assert.deepEqual(await response.json(), {
       error: 'another action is changing this thing or kind; retry this thing upgrade',
     })
-    const lockedUpgrade = sqlCalls().find(call => /WITH\s+upgradeable/iu.test(call.query ?? ''))?.query ?? ''
+    const lockedUpgrade = sqlCalls().find(call => /\bupgradeable\s+AS/iu.test(call.query ?? ''))?.query ?? ''
     assert.match(lockedUpgrade, /FOR\s+UPDATE\s+OF\s+thing\s*,\s*kind\s+NOWAIT/iu)
     assert.match(lockedUpgrade, /thing\.current_revision\s*=\s*\$\d+/iu)
     assert.match(lockedUpgrade, /thing\.drawing_state\s+IS\s+NOT\s+DISTINCT\s+FROM\s*\$\d+/iu)

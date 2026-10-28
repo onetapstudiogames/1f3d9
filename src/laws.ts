@@ -99,11 +99,13 @@ export async function replacePlaceLaws(
     return Object.freeze({ id: trait.id, name, position })
   })
   const rows = await sql`
-    WITH locked_place AS MATERIALIZED (
-      SELECT id FROM places
-      WHERE id = ${placeId} AND owner_id = ${actor.id}
-        AND retired_at IS NULL
-      FOR UPDATE
+    WITH locked_actor AS MATERIALIZED (
+      SELECT id FROM residents WHERE id = ${actor.id} FOR NO KEY UPDATE
+    ), locked_place AS MATERIALIZED (
+      SELECT place.id FROM places place CROSS JOIN locked_actor
+      WHERE place.id = ${placeId} AND place.owner_id = locked_actor.id
+        AND place.retired_at IS NULL
+      FOR UPDATE OF place
     ), requested AS MATERIALIZED (
       SELECT (entry->>'id')::integer AS trait_id,
         entry->>'name' AS name,
@@ -111,10 +113,17 @@ export async function replacePlaceLaws(
       FROM jsonb_array_elements(${JSON.stringify(ordered)}::jsonb) AS entry
     ), latest AS (
       SELECT DISTINCT ON (change.trait_id)
-        change.trait_id, change.change_type
+        change.trait_id, change.change_type, change.position
       FROM place_law_changes change
       JOIN locked_place ON locked_place.id = change.place_id
       ORDER BY change.trait_id, change.id DESC
+    ), changed_configuration AS (
+      SELECT coalesce((
+        SELECT jsonb_agg(trait_id ORDER BY position, trait_id)
+        FROM latest WHERE change_type = 'add'
+      ), '[]'::jsonb) IS DISTINCT FROM coalesce((
+        SELECT jsonb_agg(trait_id ORDER BY position, trait_id) FROM requested
+      ), '[]'::jsonb) AS changed
     ), changes AS (
       INSERT INTO place_law_changes (
         place_id, trait_id, actor_id, change_type, position
@@ -138,9 +147,12 @@ export async function replacePlaceLaws(
       INSERT INTO events (kind, actor, detail)
       SELECT 'laws_changed', ${actor.handle}, jsonb_build_object(
         'place_id', locked_place.id,
-        'traits', ${JSON.stringify(names)}::jsonb
+        'traits', ${JSON.stringify(names)}::jsonb,
+        'applied_public_activity', CASE WHEN changed_configuration.changed THEN
+          jsonb_build_array(jsonb_build_object('actor', ${actor.handle}::text,
+            'operation', 'laws', 'place_id', locked_place.id)) ELSE '[]'::jsonb END
       )
-      FROM locked_place
+      FROM locked_place CROSS JOIN changed_configuration
     )
     SELECT locked_place.id,
       coalesce((

@@ -263,7 +263,7 @@ test('paid frontier founding stores a continent under the world instead of creat
     readFile(new URL('../src/world.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/payment-treasury-operations.ts', import.meta.url), 'utf8'),
   ])
-  const ordinaryStart = source.indexOf('WITH permitted_parent AS')
+  const ordinaryStart = source.indexOf('permitted_parent AS')
   const ordinaryEnd = source.indexOf('const fee = await treasuryFee', ordinaryStart)
   const ordinary = source.slice(ordinaryStart, ordinaryEnd)
   const start = source.indexOf('const fee = await treasuryFee')

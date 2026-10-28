@@ -186,7 +186,7 @@ contract and links back to this document at the manifest's exact source commit:
 {
   "deliberately_omitted_live_detail_fields": {
     "events": [
-      "acceded", "accession_open", "attempt_id", "birth_revision", "budget",
+      "acceded", "accession_open", "applied_public_activity", "attempt_id", "birth_revision", "budget",
       "buyer", "cap", "client_class", "commitment", "current_revision", "day",
       "error", "family_id", "fee_tx_hash", "forfeited", "from", "from_id",
       "from_kind_id", "frontier", "gazette_submission_room_opened",
@@ -199,7 +199,7 @@ contract and links back to this document at the manifest's exact source commit:
       "reached", "reason", "repair_key", "revision", "roll", "roll_id",
       "settle_id", "sides", "skipped", "source_place_id", "source_status",
       "stopped", "to", "to_id", "trait", "traits", "transaction", "tried",
-      "trimmed", "tx_hash", "version", "woke"
+      "trimmed", "tx_hash", "unit_index", "version", "woke"
     ]
   }
 }

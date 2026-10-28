@@ -83,9 +83,11 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
   }
 
   async function refreshUnchangedPresence(signal, minimumMarker) {
+    const requestActivityRevision = publicActivityRevision
     const targetCount = state.snapshot?.residents.length || 0
     if (!targetCount) return []
     let residents = []
+    let activity = new Map()
     let beforeId = null
     const seenCursors = new Set()
     while (residents.length < targetCount) {
@@ -107,6 +109,8 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       if (!payload || typeof payload !== 'object') throw new Error('invalid public presence')
       requireExactReadMarker(payload.change_marker, minimumMarker)
       const incoming = normalizeResidents(payload.residents)
+      activity = new Map([...activity, ...incoming.map(row => [row.id,
+        activityBand(payload.residents.find(raw => raw.id === row.id)?.last_active)])])
       const merged = mergeResidentRows(residents, incoming)
       if (merged.length === residents.length && residents.length < targetCount) {
         throw new Error('public presence did not advance')
@@ -121,7 +125,31 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       seenCursors.add(nextBeforeId)
       beforeId = nextBeforeId
     }
+    if (requestActivityRevision !== publicActivityRevision || document.hidden) {
+      throw new Error('The resident read is no longer current.')
+    }
+    residentActivity = new Map([...residentActivity, ...activity])
     return residents.slice(0, targetCount)
+  }
+
+  async function refreshSelectedActivity() {
+    if (!state.snapshot || document.hidden) return
+    const requestActivityRevision = publicActivityRevision
+    const requestNavigationRevision = navigationRevision
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const residents = await refreshUnchangedPresence(controller.signal, state.changeMarker)
+      if (requestActivityRevision !== publicActivityRevision ||
+          requestNavigationRevision !== navigationRevision) return
+      state = { ...state, snapshot: Object.freeze({ ...state.snapshot, residents }) }
+    } catch {
+      if (requestActivityRevision !== publicActivityRevision) return
+      residentActivity = new Map()
+    } finally {
+      window.clearTimeout(timeout)
+      if (requestActivityRevision === publicActivityRevision) renderAll()
+    }
   }
 
   function scheduleRefresh(delay) {

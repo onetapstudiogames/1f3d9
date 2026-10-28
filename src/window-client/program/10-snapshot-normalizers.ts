@@ -1,4 +1,25 @@
-export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
+export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
+  let publicActivitySelectionRevision = 0
+  let residentActivity = new Map()
+  let placeActivity = new Map()
+
+  function activityBand(value) {
+    return ['active now', 'today', 'this week', 'longer'].includes(value) ? value : null
+  }
+
+  function clearPublicActivity(selectionChanged = false) {
+    if (selectionChanged) publicActivitySelectionRevision += 1
+    publicActivityRevision += 1
+    residentActivity = new Map()
+    placeActivity = new Map()
+    document.querySelectorAll('.public-activity').forEach(node => node.remove())
+  }
+
+  function appendActivity(target, band) {
+    if (!document.hidden && band) target.append(element('span', 'public-activity', band))
+  }
+
+  function dateLabel(date) {
     return date.toLocaleString([], {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     })

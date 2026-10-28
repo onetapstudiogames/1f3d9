@@ -1,5 +1,7 @@
 import { CITY_FEE_CREDIT_UNITS } from './city-credit.ts'
 import { PROTECTED_PLACE_LIFECYCLE_REFUSAL } from './place-lifecycle.ts'
+import { publicPlaceWriteJsonSql } from './public-place-write.ts'
+import { PAYMENT_ACTIVITY_LOCK_CTES, PAYMENT_ACTIVITY_LOCK_CHECK } from './payment-activity-locks.ts'
 
 export interface PlaceLifecycleOperationDatabase {
   query(
@@ -24,7 +26,7 @@ export type PlaceLifecycleOperationResult =
 
 const COMPLETE_PLACE_LIFECYCLE_SQL = `
   /* place-lifecycle:complete */
-  WITH owned_attempt AS MATERIALIZED (
+  WITH ${PAYMENT_ACTIVITY_LOCK_CTES}, owned_attempt AS MATERIALIZED (
     SELECT attempt.*, resident.handle AS actor_handle,
       spend.request_id AS credit_request_id
     FROM payment_attempts attempt
@@ -33,6 +35,7 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
       ON spend.payment_attempt_id = attempt.public_id
       AND spend.entry_kind = 'spend'
     WHERE attempt.public_id = $1::text
+      AND ${PAYMENT_ACTIVITY_LOCK_CHECK}
       AND attempt.lease_owner = $2::text
       AND attempt.status = 'payment_pending'
       AND attempt.method = 'credit'
@@ -188,10 +191,7 @@ const COMPLETE_PLACE_LIFECYCLE_SQL = `
   ), response AS MATERIALIZED (
     SELECT changed.attempt_id, changed.actor_id,
       jsonb_build_object(
-        'place', (to_jsonb(changed) - ARRAY[
-          'attempt_id', 'actor_id', 'actor_handle', 'requested_action', 'prior_name',
-          'front_matter_thing_ids'
-        ]::text[]) || jsonb_build_object('owner', changed.actor_handle),
+        'place', ${publicPlaceWriteJsonSql('changed', 'changed.actor_handle')},
         'city_fee_credit', jsonb_build_object(
           'spent_usdc', '1.000000',
           'balance_usdc', (
@@ -238,8 +238,12 @@ export async function completePlaceLifecycleOperation(
   input: Readonly<{ attemptId: string; leaseOwner: string }>,
 ): Promise<PlaceLifecycleOperationResult> {
   const complete = async (transaction: PlaceLifecycleOperationDatabase) => {
-    // The shared lock order (docs/SYSTEM_DESIGN.md): the owner's presence row, whose home
-    // a retirement clears, then the parent shared before the place itself exclusively.
+    // Reserve the responsible resident and rooms before presence and asset locks.
+    await transaction.query(`
+      /* place-lifecycle:lock-public-activity */
+      WITH ${PAYMENT_ACTIVITY_LOCK_CTES}
+      SELECT (SELECT count(*) FROM activity_actor) + (SELECT count(*) FROM activity_room)
+    `, [input.attemptId])
     await transaction.query(`
       /* place-lifecycle:lock-owner-presence */
       SELECT presence.resident_id

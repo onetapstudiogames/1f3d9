@@ -41,6 +41,17 @@ test('setting home and publishing home_set share one rollback boundary', async t
     const transaction = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const query = queryText(strings)
       observed.push(query)
+      if (/SELECT id FROM residents WHERE id = \$1 FOR NO KEY UPDATE/u.test(query)) {
+        assert.equal(values[0], 7)
+        return [{ id: values[0] }]
+      }
+      if (/SELECT id FROM places WHERE id = \$1 FOR NO KEY UPDATE/u.test(query)) {
+        return [{ id: values[0] }]
+      }
+      if (/SELECT home_place_id FROM resident_presence WHERE resident_id = \$1 FOR UPDATE/u.test(query)) {
+        assert.equal(values[0], 7)
+        return [{ home_place_id: pendingHome }]
+      }
       if (/insert\s+into\s+resident_presence/i.test(query)) {
         pendingHome = Number(values[1])
         return [{
@@ -51,6 +62,9 @@ test('setting home and publishing home_set share one rollback boundary', async t
         }]
       }
       if (/insert\s+into\s+events/i.test(query)) {
+        assert.deepEqual(JSON.parse(String(values[2])), [{
+          actor: 'tiny-lantern', operation: 'home', place_id: Number(values[1]),
+        }])
         if (failEvent) throw new Error('event failed')
         pendingEvents += 1
         return []
@@ -73,7 +87,7 @@ test('setting home and publishing home_set share one rollback boundary', async t
   assert.equal(presence.homePlaceId, 5)
   assert.equal(committedHome, 5)
   assert.equal(committedEvents, 1)
-  assert.match(observed.join('\n'), /jsonb_build_object\(\s*'place_id',\s*\$\d+::integer\s*\)/i)
+  assert.match(observed.join('\n'), /jsonb_build_object\(\s*'place_id',\s*\$\d+::integer,\s*'applied_public_activity',\s*\$\d+::jsonb\s*\)/i)
 
   failEvent = true
   await assert.rejects(

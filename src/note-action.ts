@@ -3,9 +3,12 @@ import {
   CommitOutcomeUnknownError,
   EngineError,
   engineSql,
+  prepareActionRooms,
+  readPresence,
   runAction,
   withEngineTransaction,
   type TaggedSql,
+  type ActionInput,
 } from './engine.ts'
 import {
   GAZETTE_LOCK_NAMESPACE,
@@ -533,6 +536,22 @@ async function attemptTalkNoteAction(
   database: TaggedSql,
 ): Promise<TalkNoteActionResult> {
   return withEngineTransaction(database, async transaction => {
+    await transaction`SELECT id FROM residents WHERE id = ${input.residentId} FOR NO KEY UPDATE`
+    let note: TalkNote | undefined
+    const actionInput: ActionInput = {
+      actorId: input.residentId,
+      actorHandle: input.residentHandle,
+      action: 'talk',
+      placeId: input.placeId,
+      primitiveHandledByCaller: true,
+      primitiveEmitsTypedEvent: true,
+      performPrimitive: async transaction => {
+        note = await createTalkNoteForAction(transaction, input)
+      },
+    }
+    const preparedRooms = input.placeId === GAZETTE_ROOM_ID
+      ? await prepareActionRooms(actionInput, await readPresence(input.residentId, transaction), transaction)
+      : undefined
     const replay = await findRecentTalkNoteReplayInTransaction(input, transaction)
     if (replay) {
       return {
@@ -545,18 +564,11 @@ async function attemptTalkNoteAction(
       }
     }
 
-    let note: TalkNote | undefined
-    const action = await runAction({
-      actorId: input.residentId,
-      actorHandle: input.residentHandle,
-      action: 'talk',
-      placeId: input.placeId,
-      primitiveHandledByCaller: true,
-      primitiveEmitsTypedEvent: true,
-      performPrimitive: async transaction => {
-        note = await createTalkNoteForAction(transaction, input)
-      },
-    }, transaction)
+    // The receipt keeps its room foreign key lock in this outer transaction.
+    // Reuse the ordinary room stage before that receipt can conflict with a writer.
+    const actionRooms = preparedRooms
+      ?? await prepareActionRooms(actionInput, await readPresence(input.residentId, transaction), transaction)
+    const action = await runAction(actionInput, transaction, actionRooms)
     if (action.error) {
       return {
         ok: false,

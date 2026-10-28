@@ -277,8 +277,14 @@ test('the world stores the exact founder drawing while ordinary topology writes 
     worldRootDrawingMigration,
     /ALTER\s+TABLE\s+places\s+(?:ADD\s+)?CONSTRAINT\s+places_world_shape/iu,
   )
-  assert.match(
-    schema,
-    /IF\s+OLD\.place_kind\s*=\s*'world'[\s\S]{0,160}world is transit only and immutable/iu,
-  )
+  const worldUpdate = /IF TG_OP = 'UPDATE' THEN\s+IF OLD\.place_kind = 'world' THEN([\s\S]*?)IF NEW\.place_kind/iu
+    .exec(schema)?.[1] ?? ''
+  assert.match(worldUpdate, /to_jsonb\(NEW\) \? 'last_public_action_at'/u)
+  assert.match(worldUpdate, /to_jsonb\(OLD\) \? 'last_public_action_at'/u)
+  assert.match(worldUpdate,
+    /to_jsonb\(NEW\)->'last_public_action_at' IS DISTINCT FROM to_jsonb\(OLD\)->'last_public_action_at'/u)
+  assert.match(worldUpdate,
+    /to_jsonb\(NEW\) - 'last_public_action_at' = to_jsonb\(OLD\) - 'last_public_action_at' THEN\s+RETURN NEW;\s+END IF;\s+RAISE EXCEPTION 'the world is transit only and immutable'/u)
+  assert.equal([...worldUpdate.matchAll(/RETURN NEW;/gu)].length, 1,
+    'only the internal stamp change may bypass the ordinary world update refusal')
 })

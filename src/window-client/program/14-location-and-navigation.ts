@@ -110,6 +110,9 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
   let rovingTabActivation = false
   function navigate(next) {
     const previousView = state.view
+    const selectionChanged = ['view', 'placeId', 'resident'].some(key =>
+      Object.hasOwn(next, key) && next[key] !== state[key])
+    if (selectionChanged) clearPublicActivity(true)
     const openingDetail = Boolean(next?.detail && (
       state.detail?.kind !== next.detail.kind || state.detail?.id !== next.detail.id
     ))
@@ -124,6 +127,7 @@ export const PART_14_LOCATION_AND_NAVIGATION = `  function readLocationState() {
     renderAll()
     void ensureFocusedSelection()
     void ensureDetail()
+    if (selectionChanged) void refreshSelectedActivity()
     if (state.view !== previousView) {
       scheduleRefresh(BASE_REFRESH_MS)
     }

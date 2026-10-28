@@ -32,13 +32,21 @@ export async function setHomeAndRecordEvent(
   db: TaggedSql = engineSql,
 ): Promise<Presence> {
   return withEngineTransaction(db, async transaction => {
+    await transaction`SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE`
+    await transaction`SELECT id FROM places WHERE id = ${placeId} FOR NO KEY UPDATE`
+    const previous = await transaction`
+      SELECT home_place_id FROM resident_presence WHERE resident_id = ${resident.id} FOR UPDATE
+    ` as Array<{ home_place_id: number | null }>
     const presence = await setHome(resident.id, placeId, transaction)
+    const changed = previous[0]?.home_place_id === placeId ? []
+      : [{ actor: resident.handle, operation: 'home', place_id: placeId }]
     await transaction`
       INSERT INTO events (kind, actor, detail)
       VALUES (
         'home_set',
         ${resident.handle},
-        jsonb_build_object('place_id', ${placeId}::integer)
+        jsonb_build_object('place_id', ${placeId}::integer,
+          'applied_public_activity', ${JSON.stringify(changed)}::jsonb)
       )
     `
     return presence

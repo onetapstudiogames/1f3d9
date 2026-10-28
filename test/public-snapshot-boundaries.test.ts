@@ -295,3 +295,17 @@ test('snapshot constants remain explicit and versioned', () => {
   assert.equal(PUBLIC_SNAPSHOT_FORMAT_NAME, '1f3d9-public-snapshot')
   assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 3)
 })
+
+test('stored activity does not expand frozen public snapshots', async () => {
+  const schema = await readFile(new URL('../db/schema.sql', import.meta.url), 'utf8')
+  const snapshotViews = [...schema.matchAll(/CREATE OR REPLACE VIEW city_snapshot\.[\s\S]+?;/gu)]
+  assert.ok(snapshotViews.length > 0)
+  for (const [view] of snapshotViews) {
+    assert.doesNotMatch(view, /\b(?:show_activity|last_active|last_public_action_at|wake_try_applied)\b/u)
+  }
+  assert.ok(PUBLIC_SNAPSHOT_CLASS_REGISTRY
+    .filter(entry => entry.disposition === 'exported')
+    .every(entry => !entry.database_sources.some(source => (
+      /(?:show_activity|last_public_action_at|public_activity_schema_state)/u.test(source)
+    ))))
+})

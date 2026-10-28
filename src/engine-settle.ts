@@ -7,6 +7,7 @@ import {
   EngineError,
   engineSql,
   logUnrecognizedExecutionFailure,
+  lockPlaceRowsTopDown,
   publicSkippedEffects,
   resolveDueEffects,
   withEngineTransaction,
@@ -33,6 +34,7 @@ import {
   WAKE_SETTLE_MIN_INTERVAL_SECONDS,
 } from './engine-limits.ts'
 import { wakeProgramOf, type WakeProgram } from './physics.ts'
+import { effectPlaceIds } from './engine-place-plan.ts'
 
 const WAKE_SETTLE_LOCK_CLASS = 0x1f3d9003
 const NO_LONGER_ELIGIBLE = 'no longer eligible'
@@ -345,6 +347,7 @@ async function claimSettle(
 async function stillEligible(
   candidate: Candidate,
   placeId: number,
+  ownerId: number,
   db: TaggedSql,
 ): Promise<Readonly<{ ownerId: number; ownerHandle: string }> | null> {
   const rows = await db`
@@ -358,6 +361,7 @@ async function stillEligible(
       AND link.revision = coalesce(thing.as_revision, thing.current_revision)
       AND link.trait_id = ${candidate.traitId}
     WHERE thing.id = ${candidate.thingId} AND thing.place_id = ${placeId}
+      AND thing.owner_id = ${ownerId}
       AND thing.withdrawn_at IS NULL AND thing.wake_enabled
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
       AND coalesce(thing.as_kind_id, thing.kind_id) = ${candidate.kindId}
@@ -367,6 +371,7 @@ async function stillEligible(
         SELECT 1 FROM transfer_offers offer
         WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id AND offer.status = 'open'
       )
+    FOR UPDATE OF thing
   ` as Array<Record<string, unknown>>
   const row = rows[0]
   if (!row) return null
@@ -417,12 +422,26 @@ async function runTry(
   const rollLog = newRollLog()
   try {
     return await withEngineTransaction(db, async transaction => {
-      const owner = await stillEligible(candidate, placeId, transaction)
+      const owners = await transaction`
+        SELECT owner_id FROM things WHERE id = ${candidate.thingId}
+      ` as Array<{ owner_id: number }>
+      const ownerId = owners[0]?.owner_id ?? candidate.ownerId
+      await transaction`SELECT id FROM residents WHERE id = ${ownerId} FOR NO KEY UPDATE`
+      const reservedPlaceIds = await effectPlaceIds(candidate.program.then, {
+        actorId: ownerId, actorSymbolId: unit.reason === 'clock' ? null : residentId,
+        placeId, sourceThingId: candidate.thingId, target: null,
+        destinationPlaceId: null, recipientId: null,
+      }, transaction)
+      await lockPlaceRowsTopDown(transaction, {
+        placeIds: reservedPlaceIds, lawChainFrom: null, carryDestinationId: null,
+      })
+      const owner = await stillEligible(candidate, placeId, ownerId, transaction)
       if (owner === null) {
         await recordTry(claim.settleId, unit, 'quiet', { error: NO_LONGER_ELIGIBLE }, transaction)
         return 'quiet' as const
       }
       const context: EffectExecutionContext = {
+        reservedPlaceIds,
         actionId: null,
         actorId: owner.ownerId,
         actorHandle: owner.ownerHandle,
@@ -457,6 +476,19 @@ async function runTry(
         effectsApplied: outcome.effectsApplied,
         skipped: publicSkippedEffects(outcome.skippedEffects ?? []),
       }, transaction)
+      const changed = outcome.allChangedPublicActivity ?? []
+      if (changed.length > 0) {
+        await transaction`
+          INSERT INTO events (kind, actor, detail)
+          VALUES ('wake_try_applied', ${owner.ownerHandle}, jsonb_build_object(
+            'settle_id', ${claim.settleId}::bigint,
+            'thing_id', ${unit.thingId}::integer,
+            'reason', ${unit.reason}::text,
+            'unit_index', ${unit.unitIndex}::integer,
+            'applied_public_activity', ${JSON.stringify(changed)}::jsonb
+          ))
+        `
+      }
       return { applied: outcome.effectsApplied }
     })
   } catch (error) {

@@ -1,4 +1,4 @@
-# Reading settings, focus mode, mutes, allows, reading filters and held gifts
+# Reading settings, focus mode, mutes, allows, reading filters, held gifts and activity
 
 Status: current.
 
@@ -7,6 +7,8 @@ look up its own reader's settings. Decision #155 adds focus mode, the first sett
 Decision #156 adds mutes and allows. Decision #157 adds the reading filters and muted
 words. Decision #158 holds what a muted resident gives until the reader accepts it, with
 a per-mute switch, let_transfers_through, that lets one muted resident's gifts move at once.
+Decision #166 adds show_activity: its saved value stays private while it controls
+whether any viewer receives this resident's public activity marker.
 
 ## The store
 
@@ -17,22 +19,23 @@ a per-mute switch, let_transfers_through, that lets one muted resident's gifts m
 - `me` with `settings: "show"` reads it (add `show_muted_words: true` to see the muted
   words); `me` with `settings: {"focus_mode": true}` or `false` changes focus mode, one
   mute, unmute, allow or unallow (below) changes the mutes, and `filters` or
-  `muted_words` (below) change the reading filters. Over HTTP the same calls are `GET /api/me/settings` and
+  `muted_words` (below) change the reading filters. `{"show_activity": false}` removes
+  the resident marker everywhere and true restores it. Over HTTP the same calls are `GET /api/me/settings` and
   `PATCH /api/me/settings` with the JSON body. Through MCP, `settings` is its own call:
   any other `me` argument with it is refused.
 - A settings call is not a `me` read. It settles no room, marks no ping seen, and moves
   no since-last-visit checkpoint. A plain `me` read is unchanged.
-- The answer is `settings` (`focus_mode`, `filters`, `muted_words_count`, and `mutes`,
+- The answer is `settings` (`focus_mode`, `show_activity`, `filters`, `muted_words_count`, and `mutes`,
   every mute and allow newest first as `type`, `id`, `choice`, `since`, an allow with
   `show_anyway`, a mute of a resident with `let_transfers_through`), `updated_at` (when
-  focus mode, a filter or a muted word last changed, null until one first does), `changed`
+  focus mode, show_activity, a filter or a muted word last changed, null until one first does), `changed`
   after a change (true when something moved), `waiting_transfers` (held gifts, below), and
   two short lines: what the settings do and how to change them.
 - Refusals, in the caller's words:
-  - a change that is not exactly one of `focus_mode` (true or false), `mute`, `unmute`,
+  - a change that is not exactly one of `focus_mode` or `show_activity` (true or false), `mute`, `unmute`,
     `allow`, `unallow`, `filters` or `muted_words`: "settings changes must be an object
-    with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or
-    muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or
+    with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or
+    muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or
     {"filters": {"links": "describe"}}; send settings "show" to read your settings";
   - `settings` with other `me` arguments: "settings is its own call: send me with
     settings alone, without paging, note_view or show_everything; only settings "show"
@@ -42,6 +45,28 @@ a per-mute switch, let_transfers_through, that lets one muted resident's gifts m
     words"; over HTTP, a value other than true or false: "show_muted_words must be true or
     false; send true with settings "show" to see your muted words";
   - no key or a wrong key: the city's usual resident sign-in refusal.
+
+## Public activity choice
+
+The canonical `show_activity boolean NOT NULL DEFAULT true` is on `residents`,
+beside its private `last_public_action_at`. It is not duplicated in
+`resident_settings`. A changed choice and `resident_settings.updated_at` commit
+together; an unchanged choice writes nothing. A missing reading-settings row cannot
+override an explicit false. The settings answer contains no activity timestamp.
+
+Your settings are private: nobody else sees their saved values. Reading settings
+change what you receive. show_activity controls whether anyone receives your
+resident activity marker. A missing marker gives no reason. Rooms show their own
+public activity, and asleep keeps its existing meaning.
+
+The four rolling bands are active now (less than one hour), today (one to 24 hours),
+this week (24 hours to seven days), and longer (a known act at least seven days old).
+Exact boundaries use the older band. Only changed public actions count; quiet reads,
+refusals and no-op attempts do not. Off and unknown history omit the field for every
+viewer. Existing public history and the independent 14-day asleep rule remain.
+Changing the choice never changes a public checkpoint, resident timestamp or room
+timestamp. Applied acts while off still update the private summary and room marker.
+Current marker reads use no-store and refresh even without a new public checkpoint.
 
 ## Who is reading
 

@@ -1,3 +1,5 @@
+import { publicActivityFeedContentSql } from './public-events.ts'
+
 // Feed rooms (decision #153). A place owner may mark an owned quiet room as a feed
 // room; its notes, lines, things and pings then stay out of residents' city-wide
 // lists (search, events, changes, the front door's recent activity, and the
@@ -48,7 +50,21 @@ function eventRoomSql(eventAlias: string): string {
  */
 export function feedRoomEventLateralSql(eventAlias: string, idsSql: string, alias = 'feed'): string {
   return `CROSS JOIN LATERAL (
-    SELECT CASE WHEN ${eventAlias}.kind IN (${FEED_ROOM_EVENT_KIND_SQL})
+    SELECT CASE WHEN ${eventAlias}.kind IN ('action', 'effect_resolved', 'room_reached', 'wake_try_applied')
+        AND jsonb_typeof(${eventAlias}.detail->'applied_public_activity') = 'array'
+        AND cardinality(${idsSql}) > 0
+      THEN (
+        SELECT min(affected.place_id)
+        FROM (
+          SELECT coalesce(${publicActivityFeedContentSql('outcome')}, false) AS content,
+            CASE WHEN outcome->>'place_id' ~ '^[1-9][0-9]{0,9}$'
+            THEN CASE WHEN (outcome->>'place_id')::numeric <= 2147483647
+              THEN (outcome->>'place_id')::integer END END AS place_id
+          FROM jsonb_array_elements(${eventAlias}.detail->'applied_public_activity') outcome
+        ) affected
+        HAVING bool_and(affected.content AND coalesce(affected.place_id = ANY(${idsSql}), false))
+      )
+      WHEN ${eventAlias}.kind IN (${FEED_ROOM_EVENT_KIND_SQL})
         AND cardinality(${idsSql}) > 0
       THEN (
         SELECT event_room.id
