@@ -22,7 +22,7 @@ import {
   type PublicQueryExecutor,
 } from '../src/public-pagination.ts'
 
-const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8').replaceAll('\r\n', '\n')
 const referenceSource = read('../src/reference.txt')
 const systemDesign = read('../docs/SYSTEM_DESIGN.md')
 const mcpSource = read('../src/mcp.ts')

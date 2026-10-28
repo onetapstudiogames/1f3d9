@@ -41,7 +41,7 @@ const schemaUrl = new URL('../db/schema.sql', import.meta.url)
 // The dated snapshots do not carry the ability events yet (decisions #106, #107,
 // #112, and #113), the precedent of decisions #95 and #102.
 const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set([
-  'chance_rolled', 'room_settled', 'room_reached', 'copy_skipped',
+  'chance_rolled', 'room_settled', 'room_reached', 'copy_skipped', 'wake_try_applied',
 ])
 // Unlike the ability kinds above, these ARE in dated snapshots through the v3
 // talk_events branch, not the v1 or v2 VALUES allowlists.
@@ -442,7 +442,7 @@ for (const [name, url] of [
 }
 
 test('the audited live-detail inventory exactly names fields absent from format v3 events', () => {
-  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 69)
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 71)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,

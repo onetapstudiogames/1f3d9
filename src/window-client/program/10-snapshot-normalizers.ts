@@ -1,4 +1,36 @@
-export const PART_10_SNAPSHOT_NORMALIZERS = `  function dateLabel(date) {
+export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
+  let residentActivity = new Map()
+  let placeActivity = new Map()
+
+  function activityBand(value) {
+    return ['active now', 'today', 'this week', 'longer'].includes(value) ? value : null
+  }
+
+  function clearPublicActivity() {
+    publicActivityRevision += 1
+    residentActivity = new Map()
+    placeActivity = new Map()
+    document.querySelectorAll('.public-activity').forEach(node => node.remove())
+  }
+
+  function appendActivity(target, band) {
+    if (!document.hidden && band) target.append(element('span', 'public-activity', band))
+  }
+
+  function appendResidentActivity(target, residentId) {
+    target.dataset.activityResident = String(residentId)
+    appendActivity(target, residentActivity.get(residentId))
+  }
+
+  function refreshResidentActivity() {
+    document.querySelectorAll('[data-activity-resident]').forEach(target => {
+      target.querySelector('.public-activity')?.remove()
+      if (target.closest('[hidden]')) return
+      appendActivity(target, residentActivity.get(Number(target.dataset.activityResident)))
+    })
+  }
+
+  function dateLabel(date) {
     return date.toLocaleString([], {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     })

@@ -681,12 +681,20 @@ export function mountWorldMarketRoutes(
     try {
       const rows = await dependencies.query(`
         /* world-market:create */
-        WITH next_offer AS MATERIALIZED (
+        WITH activity_actor AS MATERIALIZED (
+          SELECT id FROM residents WHERE id = $2 FOR NO KEY UPDATE
+        ), activity_room AS MATERIALIZED (
+          SELECT place.id FROM places place JOIN things thing ON thing.place_id = place.id
+          WHERE thing.id = $1 AND EXISTS (SELECT 1 FROM activity_actor)
+          FOR NO KEY UPDATE OF place
+        ), next_offer AS MATERIALIZED (
           SELECT nextval(pg_get_serial_sequence('transfer_offers', 'id'))::int AS id
+          FROM activity_room
         ), locked_thing AS (
           UPDATE things SET active_offer_id = next_offer.id
           FROM next_offer
           WHERE things.id = $1 AND things.owner_id = $2
+            AND things.place_id IN (SELECT id FROM activity_room)
             AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
             AND things.held_by IS NULL
             AND NOT EXISTS (
@@ -694,7 +702,7 @@ export function mountWorldMarketRoutes(
               WHERE conflict.asset_type = 'thing' AND conflict.asset_id = $1
                 AND conflict.status = 'open'
             )
-          RETURNING things.id, things.active_offer_id
+          RETURNING things.id, things.place_id, things.active_offer_id
         ), new_offer AS (
           INSERT INTO transfer_offers (
             id, channel, asset_type, asset_id, seller_id, buyer_id,
@@ -707,9 +715,9 @@ export function mountWorldMarketRoutes(
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'world_listed', $3, jsonb_build_object(
-            'offer_id', id, 'thing_id', $1::integer, 'market_draft_id', $7::integer,
-            'price_usdc', $4::numeric
-          ) FROM new_offer
+            'offer_id', new_offer.id, 'thing_id', $1::integer, 'market_draft_id', $7::integer,
+            'price_usdc', $4::numeric, 'place_id', locked_thing.place_id
+          ) FROM new_offer CROSS JOIN locked_thing
         )
         SELECT id FROM new_offer
       `, [
@@ -1225,9 +1233,17 @@ export function mountWorldMarketRoutes(
 
     const rows = await dependencies.query(`
       /* world-market:cancel */
-      WITH canceled_offer AS (
+      WITH activity_actor AS MATERIALIZED (
+        SELECT id FROM residents WHERE id = $2 FOR NO KEY UPDATE
+      ), activity_room AS MATERIALIZED (
+        SELECT place.id FROM places place JOIN things thing ON thing.place_id = place.id
+        JOIN transfer_offers offer ON offer.asset_id = thing.id AND offer.asset_type = 'thing'
+        WHERE offer.id = $1 AND EXISTS (SELECT 1 FROM activity_actor)
+        FOR NO KEY UPDATE OF place
+      ), canceled_offer AS (
         UPDATE transfer_offers SET status = 'canceled', canceled_at = clock_timestamp()
         WHERE id = $1 AND channel = 'world' AND status = 'open' AND seller_id = $2
+          AND EXISTS (SELECT 1 FROM activity_room)
           AND (
             pending_x402_tx_hash IS NULL
             OR x402_evidence_state IN ('invalid', 'expired', 'founder_review')
@@ -1252,8 +1268,9 @@ export function mountWorldMarketRoutes(
         UPDATE things SET active_offer_id = NULL
         FROM canceled_offer offer
         WHERE things.id = offer.asset_id AND things.owner_id = $2
+          AND things.place_id IN (SELECT id FROM activity_room)
           AND things.withdrawn_at IS NULL AND things.active_offer_id = offer.id
-        RETURNING things.id
+        RETURNING things.id, things.place_id
       ), release_guard AS MATERIALIZED (
         SELECT CASE
           WHEN NOT EXISTS (SELECT 1 FROM canceled_offer) THEN 0
@@ -1263,7 +1280,8 @@ export function mountWorldMarketRoutes(
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
         SELECT 'world_cancel', $3, jsonb_build_object(
-          'offer_id', offer.id, 'thing_id', offer.asset_id, 'market_draft_id', $4::integer
+          'offer_id', offer.id, 'thing_id', offer.asset_id, 'market_draft_id', $4::integer,
+          'place_id', thing.place_id
         )
         FROM canceled_offer offer CROSS JOIN released_thing thing CROSS JOIN release_guard guard
         WHERE guard.ok = 1

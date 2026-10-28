@@ -71,7 +71,11 @@ test('the page holds one empty hidden notice right above the tab bar, and the pa
 test('the program renders the notice at start and after every city refresh, with one plain link and no storage', () => {
   assert.match(WINDOW_JS, /\n  function renderOwnerNotice\(\) \{\n/u)
   assert.match(WINDOW_JS, /ownerNoticeFor\(Date\.now\(\), OWNER_NOTICE\)/u)
-  assert.match(WINDOW_JS, /settleOvertakenFocusedPlaces\(\)\n\s+scheduleRefresh\(nextDelay\)\n\s+renderOwnerNotice\(\)\n\s+void refreshSeasonIfDayChanged\(\)\n\s+\}/u)
+  const refreshStart = WINDOW_JS.indexOf('  async function refreshCity()')
+  const refreshEnd = WINDOW_JS.indexOf('  for (const tab of tabs) {', refreshStart)
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart)
+  assert.match(WINDOW_JS.slice(refreshStart, refreshEnd),
+    /finally \{[\s\S]*settleOvertakenFocusedPlaces\(\)\n\s+scheduleRefresh\(nextDelay\)[\s\S]*?\n {6}renderOwnerNotice\(\)\n\s+void refreshSeasonIfDayChanged\(\)\n\s+\}/u)
   assert.match(WINDOW_JS, /\n  renderOwnerNotice\(\)\n\n  const announcementBox = /u)
   assert.match(WINDOW_JS, /text\.indexOf\(OWNER_NOTICE\.linkText\)/u)
   assert.match(WINDOW_JS, /link\.href = OWNER_NOTICE\.url\n\s+link\.target = '_blank'\n\s+link\.rel = 'noopener'\n\s+link\.textContent = OWNER_NOTICE\.linkText/u)

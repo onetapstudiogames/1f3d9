@@ -44,7 +44,7 @@ test('the refusals are stated in caller words', () => {
   assert.equal(NOTE_VIEW_REFUSAL, 'note_view must be outline or full; outline sends each of your notes with its size instead of its body')
   assert.equal(
     SETTINGS_CHANGE_REFUSAL,
-    'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',
+    'settings changes must be an object with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',
   )
   assert.equal(FOCUS_MODE_DEFAULT, false, 'focus mode is off until a resident turns it on')
 })
@@ -63,6 +63,20 @@ test('a settings change is an object holding focus_mode and nothing else', () =>
   for (const bad of [null, 'show', [], {}, { focus_mode: 'on' }, { focus_mode: true, mute: 3 }, { focus: true }]) {
     assert.equal(parseSettingsChange(bad), null, JSON.stringify(bad))
   }
+})
+
+test('the activity choice accepts one boolean and keeps reading choices separate', async () => {
+  const { parseSettingsChange: parseChange, readReadingSettings } = await import('../src/resident-settings.ts')
+  assert.deepEqual(parseChange({ show_activity: false }), { show_activity: false })
+  assert.deepEqual(parseChange({ show_activity: true }), { show_activity: true })
+  for (const bad of [{ show_activity: 'false' }, { show_activity: null }, { show_activity: 0 }, { show_activity: false, focus_mode: true }]) {
+    assert.equal(parseChange(bad), null, JSON.stringify(bad))
+  }
+  const defaults = await readReadingSettings(7, async () => [])
+  assert.equal((defaults as unknown as Record<string, unknown>).show_activity, true)
+  const saved = await readReadingSettings(7, async () => [{ focus: true, show_activity: false }])
+  assert.equal((saved as unknown as Record<string, unknown>).show_activity, false)
+  assert.equal(saved.focus_mode, true)
 })
 
 test('focus mode sends outlines unless one read asks for show_everything', () => {
@@ -261,7 +275,7 @@ test('me with settings is its own call and refuses anything but "show" or an obj
     assert.equal(refused.isError, true, JSON.stringify(settings))
     assert.match(
       refused.content[0]!.text,
-      /settings changes must be an object with one of focus_mode \(true or false\), mute, unmute, allow, unallow, filters or muted_words, like \{\\"focus_mode\\": true\}, \{\\"mute\\": \{\\"type\\": \\"resident\\", \\"id\\": 12\}\} or \{\\"filters\\": \{\\"links\\": \\"describe\\"\}\}; send settings \\"show\\" to read your settings/u,
+      /settings changes must be an object with one of focus_mode \(true or false\), show_activity \(true or false\), mute, unmute, allow, unallow, filters or muted_words, like \{\\"focus_mode\\": true\}, \{\\"show_activity\\": false\}, \{\\"mute\\": \{\\"type\\": \\"resident\\", \\"id\\": 12\}\} or \{\\"filters\\": \{\\"links\\": \\"describe\\"\}\}; send settings \\"show\\" to read your settings/u,
     )
   }
 })
@@ -275,7 +289,7 @@ test('me routes settings to its own routes, never to GET /api/me', async () => {
   })
   const gateway = new Hono()
   gateway.post('/mcp', c => mcp(c, backing, { door: 'key' }))
-  for (const args of [{ settings: 'show' }, { settings: { focus_mode: true } }, { note_view: 'outline', show_everything: true }]) {
+  for (const args of [{ settings: 'show' }, { settings: { focus_mode: true } }, { settings: { show_activity: false } }, { settings: { show_activity: true } }, { note_view: 'outline', show_everything: true }]) {
     await gateway.request('/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer 1f3d9_sk_${'7'.repeat(48)}` },
@@ -284,6 +298,8 @@ test('me routes settings to its own routes, never to GET /api/me', async () => {
   }
   assert.deepEqual(seen, [
     'GET /api/me/settings',
+    'PATCH /api/me/settings',
+    'PATCH /api/me/settings',
     'PATCH /api/me/settings',
     'GET /api/me?note_view=outline&show_everything=true',
   ])
@@ -301,6 +317,8 @@ test('the app door lists the new arguments and keeps look a read-only hint', asy
   const tools = (await response.json() as { result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> }; annotations: Record<string, unknown> }> } }).result.tools
   const byName = new Map(tools.map(tool => [tool.name, tool]))
   for (const key of ['settings', 'note_view', 'show_everything']) assert.ok(byName.get('me')!.inputSchema.properties[key], `me ${key}`)
+  const choices = byName.get('me')!.inputSchema.properties.settings as { anyOf: Array<{ properties?: Record<string, unknown> }> }
+  assert.deepEqual(choices.anyOf.find(choice => choice.properties)?.properties?.show_activity, { type: 'boolean' })
   for (const name of ['look', 'browse', 'drawing', 'drawing_history']) {
     assert.ok(byName.get(name)!.inputSchema.properties.show_everything, `${name} show_everything`)
   }

@@ -4,16 +4,21 @@ import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Pool, type PoolClient } from 'pg'
+import { preparedBaselineSchema } from '../public-activity-benchmark/fixture.ts'
 
 import type { TaggedSql } from '../../../src/engine.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'gazette_integration'
 export const schemaDdl = await readFile(new URL('../../../db/schema.sql', import.meta.url), 'utf8')
+// Stored summaries depend on the Gazette and arrived after this upgrade baseline.
+export const schemaBeforeActivity = preparedBaselineSchema(schemaDdl, await readFile(
+  new URL('../../../db/migrations/20261028_stored_public_activity.sql', import.meta.url), 'utf8',
+))
 const gazetteSchemaMarker = '-- The Gazette is a deterministic weekly ledger'
-const gazetteSchemaOffset = schemaDdl.indexOf(gazetteSchemaMarker)
+const gazetteSchemaOffset = schemaBeforeActivity.indexOf(gazetteSchemaMarker)
 const postGazetteSchemaMarker = 'CREATE OR REPLACE FUNCTION complete_city_credit_purchase('
-const postGazetteSchemaOffset = schemaDdl.indexOf(postGazetteSchemaMarker)
+const postGazetteSchemaOffset = schemaBeforeActivity.indexOf(postGazetteSchemaMarker)
 assert.ok(gazetteSchemaOffset > 0, 'schema must keep the stable Gazette section marker')
 assert.ok(
   postGazetteSchemaOffset > gazetteSchemaOffset,
@@ -26,14 +31,15 @@ export const sameRoomTalkMigrationDdl = await readFile(
   new URL('../../../db/migrations/20260924_same_room_talk.sql', import.meta.url),
   'utf8',
 )
-const sameRoomTalkSchemaOffset = schemaDdl.indexOf(sameRoomTalkMigrationDdl)
+const normalizedTalkMigration = sameRoomTalkMigrationDdl.replaceAll('\r\n', '\n')
+const sameRoomTalkSchemaOffset = schemaBeforeActivity.indexOf(normalizedTalkMigration)
 assert.ok(
   sameRoomTalkSchemaOffset > postGazetteSchemaOffset,
   'schema must carry the same-room-talk migration after the Gazette section',
 )
-const postGazetteSchemaDdl = schemaDdl.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
-  + schemaDdl.slice(sameRoomTalkSchemaOffset + sameRoomTalkMigrationDdl.length)
-export const preGazetteSchemaDdl = schemaDdl.slice(0, gazetteSchemaOffset)
+const postGazetteSchemaDdl = schemaBeforeActivity.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
+  + schemaBeforeActivity.slice(sameRoomTalkSchemaOffset + normalizedTalkMigration.length)
+export const preGazetteSchemaDdl = schemaBeforeActivity.slice(0, gazetteSchemaOffset)
   + postGazetteSchemaDdl
 assert.doesNotMatch(preGazetteSchemaDdl, /gazette_/iu)
 assert.doesNotMatch(

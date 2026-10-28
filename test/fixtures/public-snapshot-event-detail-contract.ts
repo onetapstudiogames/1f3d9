@@ -16,15 +16,16 @@ const omittedFieldsByKind = {
   thing_upgraded: ['birth_revision', 'current_revision'],
   thing_withdrawn: ['output_thing_id', 'reason'],
   laws_changed: ['traits'],
-  action: ['error', 'source_place_id', 'trait'],
-  effect_resolved: ['error'],
+  action: ['applied_public_activity', 'error', 'source_place_id', 'trait'],
+  effect_resolved: ['applied_public_activity', 'error'],
   // The dated snapshots do not carry chance rolls yet (decision #107).
   chance_rolled: [
     'commitment', 'day', 'outcome', 'percent', 'purpose', 'roll', 'roll_id', 'settle_id', 'sides',
   ],
   room_settled: ['budget', 'forfeited', 'settle_id', 'tried', 'woke'],
+  wake_try_applied: ['applied_public_activity', 'reason', 'settle_id', 'unit_index'],
   // Nor reaches, nor copies a growth limit stopped (decisions #112 and #113).
-  room_reached: ['more', 'over', 'reached', 'settle_id', 'skipped', 'stopped'],
+  room_reached: ['applied_public_activity', 'more', 'over', 'reached', 'settle_id', 'skipped', 'stopped'],
   copy_skipped: ['cap', 'family_id', 'limit', 'over_by', 'settle_id'],
   note: ['moderated', 'moderation'],
   agreement: ['accession_open', 'parties'],

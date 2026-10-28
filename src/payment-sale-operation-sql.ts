@@ -1,3 +1,5 @@
+import { PAYMENT_ACTIVITY_LOCK_CTES, PAYMENT_ACTIVITY_LOCK_CHECK } from './payment-activity-locks.ts'
+
 const RESPONSE_WRAPPER = '__1f3d9_x402_response_v1'
 
 export const INVALIDATE_SALE_TARGET_SQL = `
@@ -332,10 +334,11 @@ export const CLOSE_SALE_TARGET_SQL = `
 
 export const DIRECT_COMPLETION_SQL = `
   /* payment-sale-operations:complete-direct */
-  WITH payment_attempt AS MATERIALIZED (
+  WITH ${PAYMENT_ACTIVITY_LOCK_CTES}, payment_attempt AS MATERIALIZED (
     SELECT attempt.*
     FROM payment_attempts attempt
     WHERE attempt.public_id = $1 AND attempt.lease_owner = $2
+      AND ${PAYMENT_ACTIVITY_LOCK_CHECK}
       AND attempt.operation = 'direct_sale' AND attempt.method = 'x402'
       AND attempt.status = 'payment_pending'
       AND attempt.recovery_deadline_at IS NOT NULL
@@ -378,22 +381,23 @@ export const DIRECT_COMPLETION_SQL = `
     WHERE offer.asset_type = 'place' AND places.id = offer.asset_id
       AND places.owner_id = offer.seller_id AND places.active_offer_id = offer.id
     RETURNING places.id, offer.id AS offer_id, offer.seller_id, offer.actor_id,
-      offer.asset_type, offer.price_usdc, offer.tx_hash
+      offer.asset_type, offer.price_usdc, offer.tx_hash, places.id AS activity_place_id
   ), changed_thing AS (
     UPDATE things SET owner_id = offer.actor_id, active_offer_id = NULL
     FROM eligible_offer offer
     WHERE offer.asset_type = 'thing' AND things.id = offer.asset_id
+      AND things.place_id IN (SELECT id FROM activity_room)
       AND things.owner_id = offer.seller_id AND things.active_offer_id = offer.id
       AND things.withdrawn_at IS NULL
     RETURNING things.id, offer.id AS offer_id, offer.seller_id, offer.actor_id,
-      offer.asset_type, offer.price_usdc, offer.tx_hash
+      offer.asset_type, offer.price_usdc, offer.tx_hash, things.place_id AS activity_place_id
   ), changed_kind AS (
     UPDATE kinds SET owner_id = offer.actor_id, active_offer_id = NULL
     FROM eligible_offer offer
     WHERE offer.asset_type = 'kind' AND kinds.id = offer.asset_id
       AND kinds.owner_id = offer.seller_id AND kinds.active_offer_id = offer.id
     RETURNING kinds.id, offer.id AS offer_id, offer.seller_id, offer.actor_id,
-      offer.asset_type, offer.price_usdc, offer.tx_hash
+      offer.asset_type, offer.price_usdc, offer.tx_hash, NULL::integer AS activity_place_id
   ), changed_asset AS MATERIALIZED (
     SELECT * FROM changed_place
     UNION ALL SELECT * FROM changed_thing
@@ -438,10 +442,12 @@ export const DIRECT_COMPLETION_SQL = `
     SELECT 'sale', buyer.handle, jsonb_build_object(
       'transfer_id', transfer.id, 'offer_id', transfer.offer_id,
       'asset_type', transfer.asset_type, 'asset_id', transfer.asset_id,
+      'place_id', asset.activity_place_id,
       'from', seller.handle, 'to', buyer.handle,
       'price_usdc', transfer.price_usdc, 'tx_hash', transfer.tx_hash
     )
     FROM new_transfer transfer
+    JOIN changed_asset asset ON asset.id = transfer.asset_id AND asset.asset_type = transfer.asset_type
     JOIN residents seller ON seller.id = transfer.from_id
     JOIN residents buyer ON buyer.id = transfer.to_id
   ), response_payload AS (
@@ -530,10 +536,11 @@ export const WORLD_PARK_SQL = `
 
 export const WORLD_COMPLETION_SQL = `
   /* payment-sale-operations:complete-world */
-  WITH payment_attempt AS MATERIALIZED (
+  WITH ${PAYMENT_ACTIVITY_LOCK_CTES}, payment_attempt AS MATERIALIZED (
     SELECT attempt.*
     FROM payment_attempts attempt
     WHERE attempt.public_id = $1 AND attempt.lease_owner = $2
+      AND ${PAYMENT_ACTIVITY_LOCK_CHECK}
       AND attempt.operation = 'world_sale' AND attempt.method = 'x402'
       AND attempt.status = 'payment_pending'
       AND attempt.recovery_deadline_at IS NOT NULL
@@ -579,14 +586,16 @@ export const WORLD_COMPLETION_SQL = `
     UPDATE things SET owner_id = offer.buyer_id, active_offer_id = NULL
     FROM eligible_offer offer
     WHERE things.id = offer.asset_id AND things.owner_id = offer.seller_id
+      AND things.place_id IN (SELECT id FROM activity_room)
       AND things.withdrawn_at IS NULL AND things.active_offer_id = offer.id
-    RETURNING things.id, things.maker_id, things.owner_id, offer.id AS offer_id,
+    RETURNING things.id, things.place_id, things.maker_id, things.owner_id, offer.id AS offer_id,
       offer.seller_id, offer.buyer_id, offer.price_usdc, offer.tx_hash
   ), claimed_offer AS (
     UPDATE transfer_offers offer SET status = 'claimed', claimed_at = clock_timestamp()
     FROM changed_thing thing
     WHERE offer.id = thing.offer_id AND offer.status = 'open'
-    RETURNING offer.*, thing.maker_id, thing.owner_id, thing.tx_hash
+    RETURNING offer.*, thing.maker_id, thing.owner_id, thing.tx_hash,
+      thing.place_id AS activity_place_id
   ), used_payment AS (
     INSERT INTO payment_uses (
       tx_hash, payment_attempt_id, actor_id, purpose,
@@ -620,6 +629,7 @@ export const WORLD_COMPLETION_SQL = `
     INSERT INTO events (kind, actor, detail)
     SELECT 'world_sale', buyer.handle, jsonb_build_object(
       'transfer_id', transfer.id, 'offer_id', offer.id, 'thing_id', offer.asset_id,
+      'place_id', offer.activity_place_id,
       'from', seller.handle, 'to', buyer.handle, 'price_usdc', offer.price_usdc,
       'tx_hash', offer.tx_hash, 'market_listing_id', offer.market_listing_id,
       'market_checkout_id', offer.market_checkout_id

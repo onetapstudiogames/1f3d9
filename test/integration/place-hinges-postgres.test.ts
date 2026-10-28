@@ -510,7 +510,8 @@ test('places keep owner-controlled hinges against real PostgreSQL', { timeout: 9
       try {
         await closer.query('UPDATE places SET hinge_to = NULL WHERE id = $1', [rooms.westRoomId])
         step = walkTo(app, WALKER.secret, rooms.westRoomId)
-        await waitForDatabaseLock(db, 'FOR SHARE')
+        // Plain moves reserve each room for their activity update before checking the hinge.
+        await waitForDatabaseLock(db, 'FOR NO KEY UPDATE OF place')
         await closer.query('COMMIT')
         committed = true
         const result = await step

@@ -1,5 +1,7 @@
 import { postgresErrorCode, type Resident } from './core.ts'
 import { sql } from './db.ts'
+import { lockPublicActivityInvalidation, withPublicActivityInvalidationRetry } from './public-activity-locks.ts'
+import { engineSql, withEngineTransaction } from './engine.ts'
 import { executeBudgetedExactQuery } from './public-exact-query.ts'
 import {
   MODERATED_TEXT,
@@ -453,7 +455,9 @@ async function insertModeration(
   endsHold: boolean,
 ): Promise<Array<Record<string, unknown>>> {
   const hold = input.hold
-  return await sql.query(`
+  return await withPublicActivityInvalidationRetry(() => withEngineTransaction(engineSql, async transaction => {
+    await lockPublicActivityInvalidation(transaction.query!, actor.id, input.target_type, input.target_id)
+    return await transaction.query!(`
     WITH target AS MATERIALIZED (
       SELECT id FROM ${table} WHERE id = $1
     ), current_hold AS MATERIALIZED (
@@ -514,7 +518,8 @@ async function insertModeration(
     hold === null ? null : hold.hold_stops_pings,
     hold === null ? null : hold.hold_stops_building,
     endsHold,
-  ]) as Array<Record<string, unknown>>
+    ]) as Array<Record<string, unknown>>
+  }))
 }
 
 export type RecordModerationResult =

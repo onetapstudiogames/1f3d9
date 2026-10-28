@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { HANDLE_RE } from './core-primitives.ts'
-import { engineSql, withEngineTransaction, type TaggedSql } from './engine.ts'
+import { engineSql, lockPlaceRowsTopDown, withEngineTransaction, type TaggedSql } from './engine.ts'
 import { isoTimestamp } from './timestamp.ts'
 import {
   pairHistoryStart,
@@ -246,6 +246,29 @@ async function lockPresenceRows(
   }))
 }
 
+/** Prepare the responsible resident and room before ping and presence rows. */
+async function lockActivityRoom(
+  transaction: TaggedSql,
+  residentId: number,
+  pingId: number | null,
+): Promise<number | null> {
+  await transaction`
+    SELECT id FROM residents WHERE id = ${residentId} FOR NO KEY UPDATE
+  `
+  const rooms = pingId === null
+    ? await queryRows<Readonly<{ place_id: number | string | null }>>(transaction`
+      SELECT current_place_id AS place_id FROM resident_presence WHERE resident_id = ${residentId}
+    `)
+    : await queryRows<Readonly<{ place_id: number | string | null }>>(transaction`
+      SELECT place_id FROM pings WHERE id = ${pingId}
+    `)
+  const placeId = rooms[0]?.place_id == null ? null : Number(rooms[0].place_id)
+  await lockPlaceRowsTopDown(transaction, {
+    placeIds: [placeId], lawChainFrom: null, carryDestinationId: null,
+  })
+  return placeId
+}
+
 async function loadPingForUpdate(
   transaction: TaggedSql,
   pingId: number,
@@ -339,6 +362,7 @@ export async function invitePing(
     const targetId = Number(target.id)
     if (targetId === residentId) return saveRefusal(PING_SELF_REFUSAL)
 
+    const preparedPlaceId = await lockActivityRoom(transaction, residentId, null)
     const presences = await lockPresenceRows(transaction, residentId, targetId)
     const now = await sampledNow(transaction)
     const senderPresence = presences.find(row => Number(row.resident_id) === residentId)
@@ -349,6 +373,7 @@ export async function invitePing(
     if (senderPresence === undefined
       || targetPresence === undefined
       || placeId === null
+      || placeId !== preparedPlaceId
       || Number(targetPresence.current_place_id) !== placeId
       || senderPresence.active !== true
       || targetPresence.active !== true) {
@@ -461,6 +486,7 @@ export async function answerPing(
     )
     if (prior !== null) return prior
 
+    await lockActivityRoom(transaction, residentId, pingId)
     const ping = await loadPingForUpdate(transaction, pingId)
     if (ping === null) {
       const now = await sampledNow(transaction)
@@ -548,6 +574,7 @@ export async function dismissPing(
     )
     if (prior !== null) return prior
 
+    await lockActivityRoom(transaction, residentId, pingId)
     const ping = await loadPingForUpdate(transaction, pingId)
     if (ping === null) {
       const now = await sampledNow(transaction)

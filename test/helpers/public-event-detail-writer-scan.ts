@@ -516,7 +516,13 @@ function scanSql(sql: string, context: SqlContext): WriterScan {
   const searchableSql = maskSqlComments(sql)
   const mutation = /\b(?:UPDATE\s+(?:ONLY\s+)?(?:(?:"?public"?)\s*\.\s*)?(?:"events"|events)|MERGE\s+INTO\s+(?:ONLY\s+)?(?:(?:"?public"?)\s*\.\s*)?(?:"events"|events)|COPY\s+(?:(?:"?public"?)\s*\.\s*)?(?:"events"|events))\b|\bNEW\s*\.\s*"?detail"?(?:\s*\[[^\]]+\])*\s*(?::=|=)|\bINTO\s+NEW\s*\.\s*"?detail"?(?:\s*\[[^\]]+\])*/iu.exec(searchableSql)
   if (mutation) failure(context, sql, mutation.index, mutation[0])
-  const trigger = eventTrigger(searchableSql)
+  // This reviewed trigger validates event time and returns the unchanged row.
+  // Detail assignments above still fail, including inside that function body.
+  const guardedSql = searchableSql.replace(
+    /\bCREATE TRIGGER events_guard_public_activity_time\s+BEFORE INSERT ON events\s+FOR EACH ROW EXECUTE FUNCTION guard_public_activity_time\(\);/giu,
+    match => match.replace(/[^\n]/gu, ' '),
+  )
+  const trigger = eventTrigger(guardedSql)
   if (trigger) failure(context, sql, trigger.index, 'trigger targeting events is unsupported')
   const fields: WriterField[] = []
   let writerCount = 0

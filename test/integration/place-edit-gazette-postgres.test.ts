@@ -11,7 +11,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test, { mock } from 'node:test'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 
 const POSTGRES_IMAGE =
   'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
@@ -25,21 +25,38 @@ function connectedDatabase(): Pool {
   return database
 }
 
-const sql = (async (
-  strings: TemplateStringsArray,
-  ...values: readonly unknown[]
-): Promise<Record<string, unknown>[]> => {
-  const text = strings.reduce(
+function sqlText(strings: TemplateStringsArray, values: readonly unknown[]): string {
+  return strings.reduce(
     (statement, part, index) => statement + part + (index < values.length ? `$${index + 1}` : ''),
     '',
   )
-  return (await connectedDatabase().query(text, [...values])).rows as Record<string, unknown>[]
-}) as unknown as {
-  (strings: TemplateStringsArray, ...values: readonly unknown[]): Promise<Record<string, unknown>[]>
-  query: (text: string, values?: readonly unknown[]) => Promise<Record<string, unknown>[]>
 }
-sql.query = async (text, values = []) => (
-  (await connectedDatabase().query(text, [...values])).rows as Record<string, unknown>[]
+
+function taggedFor(queryable: Pool | PoolClient) {
+  const tagged = async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ): Promise<Record<string, unknown>[]> => (
+    await queryable.query(sqlText(strings, values), [...values])
+  ).rows as Record<string, unknown>[]
+  tagged.query = async (
+    text: string,
+    values: readonly unknown[] = [],
+  ): Promise<Record<string, unknown>[]> => (
+    await queryable.query(text, [...values])
+  ).rows as Record<string, unknown>[]
+  return tagged
+}
+
+const sql = Object.assign(
+  async (strings: TemplateStringsArray, ...values: unknown[]) => (
+    taggedFor(connectedDatabase())(strings, ...values)
+  ),
+  {
+    query: async (text: string, values: readonly unknown[] = []) => (
+      taggedFor(connectedDatabase()).query(text, values)
+    ),
+  },
 )
 
 mock.module(new URL('../../src/db.ts', import.meta.url).href, {
@@ -56,6 +73,24 @@ function runDocker(args: readonly string[]): string {
     throw new Error(`docker ${args[0] ?? ''} failed: ${detail}`)
   }
   return result.stdout.trim()
+}
+
+async function useEngineTransactions(client: Pool): Promise<void> {
+  const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+  setEngineTransactionRunnerForTests(async (_db, work) => {
+    const connection = await client.connect()
+    try {
+      await connection.query('BEGIN')
+      const result = await work(taggedFor(connection), true)
+      await connection.query('COMMIT')
+      return result
+    } catch (error) {
+      await connection.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      connection.release()
+    }
+  })
 }
 
 async function startPostgres(): Promise<{ client: Pool; containerName: string }> {
@@ -152,6 +187,7 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
   const postgres = await startPostgres()
   database = postgres.client
   try {
+    await useEngineTransactions(postgres.client)
     const { Hono } = await import('hono')
     const { err } = await import('../../src/core.ts')
     const { mountWorldRoutes } = await import('../../src/world.ts')
@@ -292,6 +328,8 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
       )
     })
   } finally {
+    const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+    setEngineTransactionRunnerForTests(null)
     await database?.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8', windowsHide: true })
   }

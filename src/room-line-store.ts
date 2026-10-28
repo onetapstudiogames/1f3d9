@@ -1,6 +1,7 @@
 import { isoTimestamp } from './timestamp.ts'
 import {
   engineSql,
+  lockPlaceRowsTopDown,
   withEngineTransaction,
   type TaggedSql,
 } from './engine.ts'
@@ -219,6 +220,12 @@ export async function sayLine(
     const pingOperation = pingRows[0]?.operation
     if (pingOperation) return refusal(requestReuseRefusal(pingOperation as TalkRequestOperation))
 
+    await transaction`
+      SELECT id FROM residents WHERE id = ${residentId} FOR NO KEY UPDATE
+    `
+    await lockPlaceRowsTopDown(transaction, {
+      placeIds: [placeId], lawChainFrom: null, carryDestinationId: null,
+    })
     const presenceRows = await queryRows<PresenceRow>(transaction`
       SELECT presence.current_place_id, clock_timestamp() AS now
       FROM resident_presence presence

@@ -373,9 +373,13 @@ export async function resolveFounderPayPalCreditDispute(
   try {
     rows = await database.query(`
       /* paypal-credit:founder-dispute-resolution */
-      SELECT * FROM resolve_paypal_credit_dispute_review(
-        $1::integer, $2::text, $3::text
+      WITH activity_actor AS MATERIALIZED (
+        SELECT id FROM residents WHERE id = $1::integer FOR NO KEY UPDATE
       )
+      SELECT resolution.* FROM activity_actor
+      CROSS JOIN LATERAL resolve_paypal_credit_dispute_review(
+        activity_actor.id, $2::text, $3::text
+      ) resolution
     `, [input.founderId, input.disputeId, input.decision])
   } catch (error) {
     conflictFromDatabase(error)

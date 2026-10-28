@@ -203,6 +203,7 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     action_id: 7,
     action: 'move',
     status: 'applied',
+    applied_public_activity: [{ actor: 'snapshot-keeper', operation: 'move', place_id: 2 }],
     effects_applied: 1,
     from_place_id: 1,
     to_place_id: 2,

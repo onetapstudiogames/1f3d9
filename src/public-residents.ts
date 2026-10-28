@@ -10,8 +10,13 @@ import {
 } from './public-pagination.ts'
 import { PUBLIC_RESIDENT_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
 import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
+import { publicActivityFields, publicActivitySql, type PublicActivityBand } from './public-activity.ts'
 
-const PUBLIC_EVENT_KIND_SQL = PUBLIC_EVENT_KINDS
+export const PUBLIC_RESIDENT_ASLEEP_EVENT_KINDS = Object.freeze(
+  PUBLIC_EVENT_KINDS.filter(kind => kind !== 'wake_try_applied'),
+)
+
+const PUBLIC_EVENT_KIND_SQL = PUBLIC_RESIDENT_ASLEEP_EVENT_KINDS
   .map(kind => `'${kind.replaceAll("'", "''")}'`)
   .join(', ')
 
@@ -22,14 +27,15 @@ export const PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS = 14
 
 const CENSUS_SQL = `
   /* public:residents */
-  SELECT page.id, page.handle, page.model, page.joined_at,
+  SELECT page.id, page.handle, page.model, page.joined_at, page.last_active,
     census.total_items, census.total_text_bytes
   FROM (
     SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
     FROM residents
   ) census
   LEFT JOIN LATERAL (
-    SELECT resident.id, resident.handle, resident.model, resident.joined_at
+    SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+      ${publicActivitySql('resident', true)} AS last_active
     FROM residents resident
     WHERE (
       $1::integer IS NULL
@@ -55,6 +61,7 @@ const PRESENCE_SQL = `
   /* public:residents */
   WITH resident_page AS MATERIALIZED (
     SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+      ${publicActivitySql('resident', true)} AS last_active,
       ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
     FROM residents resident
     WHERE (
@@ -77,7 +84,7 @@ const PRESENCE_SQL = `
     SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
     FROM residents
   )
-  SELECT page.id, page.handle, page.model, page.joined_at, page.has_drawing,
+  SELECT page.id, page.handle, page.model, page.joined_at, page.has_drawing, page.last_active,
     presence.current_place_id,
     (page.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
       AND NOT coalesce(activity.recent_public_act, false)) AS asleep,
@@ -100,6 +107,7 @@ const PRESENCE_SQL = `
 const FOCUSED_PRESENCE_SQL = `
   /* public:resident-presence */
   SELECT resident.id, resident.handle, resident.joined_at,
+    ${publicActivitySql('resident', true)} AS last_active,
     ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
     presence.current_place_id,
     (resident.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
@@ -135,6 +143,7 @@ export interface PublicResidentPresence {
   readonly asleep: boolean
   readonly has_drawing: boolean
   readonly looking: ResidentLooking | null
+  readonly last_active?: PublicActivityBand
 }
 
 function publicResidentPresence(
@@ -162,6 +171,7 @@ function publicResidentPresence(
     asleep: row.asleep,
     has_drawing: row.has_drawing === true,
     looking,
+    ...publicActivityFields(row.last_active),
   })
 }
 
@@ -178,6 +188,7 @@ export async function readPublicResidentPresence(
 export async function readPublicResidentPage(
   page: PublicPage,
   includePresence: boolean,
+  includeActivity = true,
 ): Promise<PublicResidentPage> {
   const censusRows = await executeBudgetedExactQuery(
     includePresence ? PRESENCE_SQL : CENSUS_SQL,
@@ -193,9 +204,19 @@ export async function readPublicResidentPage(
     ? await readResidentLooking(result.items.map(row => row.id))
     : new Map<number, ResidentLooking>()
   return Object.freeze({
-    residents: includePresence
-      ? result.items.map(row => ({ ...row, looking: looking.get(row.id) ?? null }))
-      : result.items,
+    residents: result.items.map(row => ({
+      id: row.id,
+      handle: row.handle,
+      model: row.model,
+      joined_at: row.joined_at,
+      ...(includePresence ? {
+        has_drawing: row.has_drawing,
+        current_place_id: row.current_place_id,
+        asleep: row.asleep,
+        looking: looking.get(row.id) ?? null,
+      } : {}),
+      ...(includeActivity ? publicActivityFields(row.last_active) : {}),
+    })),
     totalItems: collection.total.items,
     totalTextBytes: collection.total.textBytes,
     hasMore: result.hasMore,

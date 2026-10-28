@@ -169,7 +169,7 @@ export async function registerTransfersAndRoutesTests(
     `)).rows[0], { owners: [1, 2, 1], transfer_count: 0, homes: [612, 610] })
   })
 
-  await t.test('place gift discovers a child committed while it waits for the root lock', async () => {
+  await t.test('place gift retries without partial changes when a child appears outside its locked plan', async () => {
     await seedNestedPlaces()
     const building = await database!.connect()
     await building.query('BEGIN')
@@ -184,7 +184,20 @@ export async function registerTransfersAndRoutesTests(
         VALUES (613, 610, 'place', 'concurrent child', 'created before the gift lock', 1)
       `)
       await building.query('COMMIT')
-      const completed = await pendingTransfer
+      const refused = await pendingTransfer
+      assert.equal(refused.status, 409, await refused.clone().text())
+      assert.deepEqual(await refused.json(), { error: 'another action changed the same records; retry' })
+      assert.deepEqual((await database!.query(`
+        SELECT array_agg(owner_id ORDER BY id) AS owners,
+          (SELECT count(*)::int FROM transfers WHERE asset_type = 'place' AND asset_id = 610)
+            AS transfer_count,
+          (SELECT count(*)::int FROM events
+            WHERE kind = 'transfer' AND (detail->>'asset_id')::int = 610) AS transfer_events,
+          (SELECT array_agg(home_place_id ORDER BY resident_id)
+            FROM resident_presence WHERE resident_id IN (1, 2)) AS homes
+        FROM places WHERE id IN (610, 611, 612, 613)
+      `)).rows[0], { owners: [1, 1, 1, 1], transfer_count: 0, transfer_events: 0, homes: [612, 610] })
+      const completed = await requestPlaceGift(610)
       assert.equal(completed.status, 200, await completed.clone().text())
     } finally {
       await building.query('ROLLBACK').catch(() => undefined)
@@ -192,9 +205,15 @@ export async function registerTransfersAndRoutesTests(
       setEngineTransactionRunnerForTests(null)
     }
     assert.deepEqual((await database!.query(`
-      SELECT array_agg(owner_id ORDER BY id) AS owners
+      SELECT array_agg(owner_id ORDER BY id) AS owners,
+        (SELECT count(*)::int FROM transfers WHERE asset_type = 'place' AND asset_id = 610)
+          AS transfer_count,
+        (SELECT count(*)::int FROM events
+          WHERE kind = 'transfer' AND (detail->>'asset_id')::int = 610) AS transfer_events,
+        (SELECT array_agg(home_place_id ORDER BY resident_id)
+          FROM resident_presence WHERE resident_id IN (1, 2)) AS homes
       FROM places WHERE id IN (610, 611, 612, 613)
-    `)).rows[0], { owners: [2, 2, 2, 2] })
+    `)).rows[0], { owners: [2, 2, 2, 2], transfer_count: 1, transfer_events: 1, homes: [null, null] })
   })
 
   await t.test('gift and effect transfers publish their interaction resident and place', async () => {

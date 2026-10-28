@@ -143,15 +143,18 @@ export function respondToDatabaseStage1(
     return residentId === null ? [] : [{ id: residentId }]
   }
   if (q.includes('insert into flags')) {
-    const reporterId = params[0] == null ? null : Number(params[0])
-    const actor = String(params[4] ?? 'anonymous')
+    const inserted = /insert into flags[^)]*\)\s+(?:values\s*\(|select\s+)\$(\d+),\s*\$(\d+),\s*\$(\d+),\s*\$(\d+)/u.exec(q)
+    const value = (index: number) => params[Number(inserted?.[index] ?? index) - 1]
+    const actorPlaceholder = /select 'flag',\s*\$(\d+)/u.exec(q)
+    const reporterId = value(1) == null ? null : Number(value(1))
+    const actor = String(params[Number(actorPlaceholder?.[1] ?? 5) - 1] ?? 'anonymous')
     const flag = {
       id: fixtureState.current.nextFlagId,
       reporter_id: reporterId,
       reporter_handle: reporterId === null ? null : actor,
-      target_type: String(params[1]),
-      target_id: Number(params[2]),
-      reason: String(params[3]),
+      target_type: String(value(2)),
+      target_id: Number(value(3)),
+      reason: String(value(4)),
       created_at: '2026-09-15T00:00:00.000Z',
       handled_at: null,
       moderation_id: null,

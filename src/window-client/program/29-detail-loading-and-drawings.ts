@@ -5,12 +5,14 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
     const current = state.details[key]
     if (current?.loading || (!force && (current?.record || current?.notFound ||
         (placeId && current?.error)))) return
+    const requestActivityRevision = publicActivityRevision
     const requestAuthoredRevision = authoredRevision
     const requestDetailRevision = placeId ? detailRequestRevision : ++detailRequestRevision
     const requestNavigationRevision = navigationRevision
     const requestSelection = activeSelectionKey()
     const retainedRecord = background && placeId ? current?.record || null : null
     const pending = Object.freeze({ loading: true, error: false, notFound: false, record: retainedRecord })
+    if (placeId) placeActivity = new Map([...placeActivity].filter(([id]) => id !== placeId))
     const requestViewIsCurrent = () => authoredRevision === requestAuthoredRevision &&
       (!background || (navigationRevision === requestNavigationRevision &&
         detailRequestRevision === requestDetailRevision && activeSelectionKey() === requestSelection))
@@ -60,9 +62,13 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         return
       }
       if (!response.ok) throw new Error('public detail unavailable')
-      const record = normalizeDetailRecord(target.kind, target.id, await response.json())
+      const payload = await response.json()
+      const record = normalizeDetailRecord(target.kind, target.id, payload)
       if (!requestIsCurrent()) return
       if (!record) throw new Error('invalid public detail')
+      if (placeId && requestActivityRevision === publicActivityRevision && !document.hidden) {
+        placeActivity = new Map([...placeActivity, [placeId, activityBand(payload?.place?.last_active)]])
+      }
       if (record.kind === 'note' && state.snapshot &&
           !placeReference(state.snapshot, record.placeId)) {
         await loadFocusedPlace(record.placeId, false)
@@ -97,7 +103,7 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         // The reader may have returned while the discarded request was pending.
         if (requestViewIsCurrent() || discardedBackgroundRead) renderSelectedPlaceDetail()
       } else if (placeId) {
-        if (authoredRevision === requestAuthoredRevision) renderAll()
+        if (authoredRevision === requestAuthoredRevision) renderSelectedPlaceDetail()
       } else if (requestIsCurrent()) renderDetail()
     }
   }

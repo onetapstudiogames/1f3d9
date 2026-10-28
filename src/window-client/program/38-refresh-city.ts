@@ -1,5 +1,7 @@
 export const PART_38_REFRESH_CITY = `  async function refreshCity() {
     if (state.refreshing) return
+    clearPublicActivity()
+    const requestActivityRevision = publicActivityRevision
     const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
@@ -24,6 +26,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           const residents = await refreshUnchangedPresence(
             controller.signal,
             changeState.marker,
+            requestActivityRevision,
           )
           if (navigationRevision !== navigationRevisionAtStart) {
             await finishWatchingPublicStreets()
@@ -37,6 +40,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
               changeMarker: changeState.marker,
               failures: 0,
             }
+            refreshResidentActivity()
             await finishWatchingPublicStreets()
             return
           }
@@ -170,6 +174,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
       await finishWatchingPublicStreets()
     } catch {
+      clearPublicActivity()
       const failures = state.failures + 1
       state = { ...state, failures }
       nextDelay = Math.min(BASE_REFRESH_MS * Math.pow(2, failures), MAX_REFRESH_MS)

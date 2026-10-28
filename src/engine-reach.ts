@@ -12,6 +12,7 @@ import {
   newAbilityLog,
   type EffectExecutionContext,
   type EffectExecutionOutcome,
+  type AppliedPublicActivity,
   type ReachMember,
   type SkippedEffect,
 } from './engine-effects.ts'
@@ -107,6 +108,8 @@ export async function runReach(
   let emitted = false
   let destroyedThingIds = context.destroyedThingIds
   let skipped: readonly SkippedEffect[] = []
+  let appliedPublicActivity: readonly AppliedPublicActivity[] = []
+  let allChangedPublicActivity: readonly AppliedPublicActivity[] = []
   let refusedMembers = 0
   let stopped: 'action_reach_limit' | null = null
   for (const member of members) {
@@ -133,6 +136,8 @@ export async function runReach(
       emitted ||= outcome.emittedTypedPublicEvent
       destroyedThingIds = outcome.destroyedThingIds ?? destroyedThingIds
       skipped = [...skipped, ...(outcome.skippedEffects ?? [])]
+      appliedPublicActivity = [...appliedPublicActivity, ...(outcome.appliedPublicActivity ?? [])]
+      allChangedPublicActivity = [...allChangedPublicActivity, ...(outcome.allChangedPublicActivity ?? [])]
     } catch (error) {
       if (!(error instanceof EngineError) || error.status >= 500) throw error
       await savepoint(db, 'ROLLBACK')
@@ -175,7 +180,8 @@ export async function runReach(
         'skipped', ${refusedMembers}::integer,
         'stopped', ${stopped}::text,
         'action_id', ${context.actionId}::bigint,
-        'settle_id', ${context.settleId ?? null}::bigint
+        'settle_id', ${context.settleId ?? null}::bigint,
+        'applied_public_activity', ${JSON.stringify(appliedPublicActivity)}::jsonb
       )
       FROM residents resident WHERE resident.id = ${context.actorId}
     `
@@ -183,6 +189,7 @@ export async function runReach(
   return Object.freeze({
     effectsApplied: applied,
     emittedTypedPublicEvent: emitted,
+    ...(allChangedPublicActivity.length === 0 ? {} : { allChangedPublicActivity }),
     ...(destroyedThingIds === undefined ? {} : { destroyedThingIds: Object.freeze([...destroyedThingIds]) }),
     ...(destroyedThingIds === undefined && skipped.length === 0 ? {} : { skippedEffects: Object.freeze([...skipped]) }),
   })

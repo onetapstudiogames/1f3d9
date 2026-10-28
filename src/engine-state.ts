@@ -211,10 +211,19 @@ export async function clearStateBox(
   db: TaggedSql,
 ): Promise<number> {
   const rows = await db`
-    WITH changed AS (
+    WITH activity_actor AS MATERIALIZED (
+      SELECT id FROM residents WHERE id = ${ownerId} FOR NO KEY UPDATE
+    ), activity_room AS MATERIALIZED (
+      SELECT place.id FROM things thing JOIN places place ON place.id = thing.place_id
+      WHERE thing.id = ${thingId} AND thing.owner_id = ${ownerId}
+        AND EXISTS (SELECT 1 FROM activity_actor)
+      FOR NO KEY UPDATE OF place
+    ), changed AS (
       UPDATE things SET state = '{}'::jsonb, state_version = state_version + 1
-      WHERE id = ${thingId} AND owner_id = ${ownerId} AND withdrawn_at IS NULL
-      RETURNING id, place_id, state_version
+      FROM activity_room
+      WHERE things.id = ${thingId} AND owner_id = ${ownerId} AND withdrawn_at IS NULL
+        AND things.place_id = activity_room.id
+      RETURNING things.id, things.place_id, things.state_version
     ), history AS (
       INSERT INTO thing_state_changes (
         thing_id, version, key, op, value, trimmed, trigger, resident_id, authority_id

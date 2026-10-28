@@ -204,6 +204,30 @@ test("a destroy effect's thing_withdrawn stands in for a use's bare action event
 })
 
 // Decision #117: every other effect's event sits beside a use's public action row.
+test('a typed destroy retains the action only for another changed public effect', async () => {
+  const { db, calls } = fakeSql(call => {
+    if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
+    if (/SELECT EXISTS/u.test(call.text)) return [{ exists: true }]
+    if (/JOIN kind_revision_traits/u.test(call.text)) return [{ trait_id: 9, recipe: {
+      use: [{ effect: 'label', target: 'source', label: 'brief-mark' },
+        { effect: 'destroy', target: 'source' }],
+    } }]
+    if (/INSERT INTO active_labels/u.test(call.text)) return [{ id: 901 }]
+    if (/UPDATE things SET withdrawn_at/u.test(call.text)) return [{ id: 41 }]
+    return baseResponder(call)
+  })
+  const result = await runAction({
+    actorId: 7, actorHandle: 'tiny-lantern', action: 'use', placeId: 2, sourceThingId: 41,
+  }, db)
+  assert.equal(result.status, 'applied')
+  const resolution = actionResolution(calls)
+  assert.equal(resolution.values.at(-1), true,
+    'the replacing destroy event cannot erase the separately changed label')
+  const detail = JSON.parse(String(resolution.values.at(-2))) as Record<string, unknown>
+  assert.deepEqual(detail.applied_public_activity,
+    [{ actor: 'tiny-lantern', operation: 'label', place_id: 2, target_type: 'thing', target_id: 41 }])
+})
+
 for (const [brick, typedEvent, recipe] of [
   ['wait', 'effect_scheduled', { use: [{ effect: 'wait', seconds: 60, then: [] }] }],
   ['transfer', 'INSERT INTO transfers', { use: [{ effect: 'transfer', target: 'source', to: 'recipient' }] }],
@@ -312,6 +336,7 @@ for (const action of ['use', 'move', 'go_home'] as const) {
         action_id: 501,
         action: 'use',
         status: 'noop',
+        applied_public_activity: [],
         effects_applied: 0,
         place_id: 2,
         source_thing_id: 41,
@@ -321,6 +346,7 @@ for (const action of ['use', 'move', 'go_home'] as const) {
         action_id: 501,
         action: 'move',
         status: 'applied',
+        applied_public_activity: [{ actor: 'tiny-lantern', operation: 'move', place_id: 4 }],
         effects_applied: 0,
         from_place_id: 2,
         to_place_id: 4,
@@ -330,6 +356,7 @@ for (const action of ['use', 'move', 'go_home'] as const) {
         action_id: 501,
         action: 'go_home',
         status: 'applied',
+        applied_public_activity: [{ actor: 'tiny-lantern', operation: 'move', place_id: 3 }],
         effects_applied: 0,
         from_place_id: 2,
         to_place_id: 3,
@@ -352,6 +379,8 @@ test('destroy reports the typed thing_withdrawn event it inserts', async () => {
   assert.deepEqual(outcome, {
     effectsApplied: 1,
     emittedTypedPublicEvent: true,
+    allChangedPublicActivity: [{ actor: 'tiny-lantern', operation: 'destroy', place_id: 2,
+      target_type: 'thing', target_id: 41 }],
   })
   assert.equal(Object.isFrozen(outcome), true)
 })
@@ -432,6 +461,7 @@ test('resident move does not claim a typed public event', async () => {
 for (const recipientId of [8, 7] as const) {
   test(`effect transfer to resident ${recipientId} never stands in for the action row`, async () => {
     const { db, calls } = fakeSql(call => {
+      if (/SELECT thing\.id/u.test(call.text)) return [availableThing()]
       if (/SELECT EXISTS/u.test(call.text) && /FROM things/u.test(call.text)) {
         return [{ exists: true }]
       }
@@ -446,12 +476,15 @@ for (const recipientId of [8, 7] as const) {
     assert.deepEqual(outcome, {
       effectsApplied: 1,
       emittedTypedPublicEvent: false,
+      ...(recipientId === 7 ? {} : { allChangedPublicActivity: [{
+        actor: 'tiny-lantern', operation: 'transfer', place_id: 2, target_type: 'thing', target_id: 41,
+      }] }),
     })
     assert.equal(calls.some(call => /INSERT INTO transfers/u.test(call.text)), recipientId !== 7)
     if (recipientId !== 7) {
       const transferCall = calls.find(call => /INSERT INTO transfers/u.test(call.text))
       assert.match(transferCall?.text ?? '', /'resident_id'\s*,\s*\$/u)
-      assert.match(transferCall?.text ?? '', /'place_id'\s*,\s*presence\.current_place_id/u)
+      assert.match(transferCall?.text ?? '', /'place_id'\s*,\s*\(SELECT moved\.place_id/u)
     }
   })
 }
@@ -494,6 +527,7 @@ test('wait writes effect_scheduled beside the action row, never in place of it',
   assert.deepEqual(outcome, {
     effectsApplied: 1,
     emittedTypedPublicEvent: false,
+    allChangedPublicActivity: [{ actor: 'tiny-lantern', operation: 'schedule', place_id: 2 }],
   })
   assert.ok(calls.some(call => /'effect_scheduled'/u.test(call.text)))
 })
@@ -540,6 +574,12 @@ test('check_label combines nested counts and typed-event outcomes', async () => 
   assert.deepEqual(outcome, {
     effectsApplied: 2,
     emittedTypedPublicEvent: true,
+    appliedPublicActivity: [{ actor: 'tiny-lantern', operation: 'label', place_id: 2,
+      target_type: 'thing', target_id: 41 }],
+    allChangedPublicActivity: [
+      { actor: 'tiny-lantern', operation: 'label', place_id: 2, target_type: 'thing', target_id: 41 },
+      { actor: 'tiny-lantern', operation: 'destroy', place_id: 2, target_type: 'thing', target_id: 41 },
+    ],
   })
 })
 
@@ -565,6 +605,8 @@ test('check_label carries a typed-event outcome from its else branch', async () 
   assert.deepEqual(outcome, {
     effectsApplied: 1,
     emittedTypedPublicEvent: true,
+    allChangedPublicActivity: [{ actor: 'tiny-lantern', operation: 'destroy', place_id: 2,
+      target_type: 'thing', target_id: 41 }],
   })
 })
 
@@ -583,6 +625,18 @@ test('legacy executeEffects callers still receive only the applied count', async
 
   assert.equal(applied, 1)
   assert.equal(typeof applied, 'number')
+})
+
+test('a private resident label has no public activity outcome or target identity', async () => {
+  const { db } = fakeSql(call => {
+    if (/SELECT EXISTS/u.test(call.text)) return [{ exists: true }]
+    if (/INSERT INTO active_labels/u.test(call.text)) return [{ id: 904 }]
+    return []
+  })
+  const outcome = await executeEffectsWithOutcome([
+    { effect: 'label', target: 'actor', label: 'private-label' },
+  ], effectContext(), db)
+  assert.deepEqual(outcome, { effectsApplied: 1, emittedTypedPublicEvent: false })
 })
 
 test('all caller primitives that insert typed events declare the suppression guarantee', async () => {

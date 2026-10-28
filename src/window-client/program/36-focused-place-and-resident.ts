@@ -128,6 +128,9 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
     if (!state.snapshot || state.snapshot.residents.some(resident => resident.handle === handle)) return
     const current = state.focusedResidents[handle]
     if (current?.loading || (!force && current?.resident)) return
+    const requestActivityRevision = publicActivityRevision
+    const activityReadIsCurrent = () => requestActivityRevision === publicActivityRevision &&
+      activeSelectionKey() === selectionAtStart && !document.hidden
     const selectionAtStart = activeSelectionKey()
     const requestMarker = state.changeMarker
     const requestAuthoredRevision = authoredRevision
@@ -189,6 +192,10 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
       if (authoredRevision !== requestAuthoredRevision || state.changeMarker !== requestMarker) {
         throw new Error('focused resident reply was overtaken by a newer public snapshot')
       }
+      if (activityReadIsCurrent()) {
+        residentActivity = new Map([...residentActivity,
+          [resident.id, activityBand(payload?.resident?.last_active)]])
+      }
       state = {
         ...state,
         focusedResidents: {
@@ -203,6 +210,8 @@ export const PART_36_FOCUSED_PLACE_AND_RESIDENT = `  async function loadFocusedP
         },
       }
     } catch {
+      if (activityReadIsCurrent() && current?.resident) residentActivity = new Map([...residentActivity]
+        .filter(([id]) => id !== current.resident.id))
       const retainedCovers = Boolean(current?.resident) &&
         (!state.changeMarker || markerCovers(current?.marker, state.changeMarker))
       state = {

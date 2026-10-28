@@ -73,12 +73,12 @@ export function registerLawsPresenceMovementTests(): void {
   })
 
   test('presence initializes current place and home from the resident first owned place', async () => {
-    const { db, calls } = fakeSql(() => [{
+    const { db, calls } = fakeSql(({ text }) => /WITH first_owned/.test(text) ? [{
       resident_id: 7,
       current_place_id: 2,
       home_place_id: 2,
       updated_at: new Date('2026-08-11T00:00:00.106Z'),
-    }])
+    }] : [])
 
     assert.deepEqual(await ensurePresence(7, db), {
       residentId: 7,
@@ -86,8 +86,20 @@ export function registerLawsPresenceMovementTests(): void {
       homePlaceId: 2,
       updatedAt: '2026-08-11T00:00:00.106Z',
     })
-    assert.match(calls[0]?.text ?? '', /ON CONFLICT \(resident_id\) DO UPDATE/i)
-    assert.match(calls[0]?.text ?? '', /COALESCE/i)
+    const initialization = calls.find(call => /WITH first_owned/.test(call.text))
+    assert.match(initialization?.text ?? '', /ON CONFLICT \(resident_id\) DO UPDATE/i)
+    assert.match(initialization?.text ?? '', /COALESCE/i)
+  })
+
+  test('observing initialized presence only reads its stored row', async () => {
+    const { db, calls } = fakeSql(() => [{
+      resident_id: 7, current_place_id: 2, home_place_id: null,
+      world_exists: true,
+      updated_at: new Date('2026-08-11T00:00:00.106Z'),
+    }])
+    assert.equal((await ensurePresence(7, db)).currentPlaceId, 2)
+    assert.equal(calls.length, 1)
+    assert.doesNotMatch(calls[0]!.text, /\b(?:INSERT|UPDATE|DELETE)\b|FOR SHARE/i)
   })
 
   test('home can only be set to land the resident owns', async () => {
@@ -132,7 +144,7 @@ export function registerLawsPresenceMovementTests(): void {
     })
     assert.equal((await moveResident(7, 9, allowed.db)).currentPlaceId, 9)
     const destinationRead = allowed.calls.find(call => /FROM places/.test(call.text))
-    assert.match(destinationRead?.text ?? '', /FOR SHARE/iu)
+    assert.match(destinationRead?.text ?? '', /FOR NO KEY UPDATE/iu)
   })
 
   test('a move crosses an open hinge and not a one-sided one', async () => {
@@ -151,7 +163,7 @@ export function registerLawsPresenceMovementTests(): void {
     const open = movement(9, 2)
     assert.equal((await moveResident(7, 9, open.db)).currentPlaceId, 9)
     const lockedPlaces = open.calls.find(call => /FROM places/.test(call.text))
-    assert.match(lockedPlaces?.text ?? '', /FOR SHARE/iu)
+    assert.match(lockedPlaces?.text ?? '', /FOR NO KEY UPDATE/iu)
 
     for (const [currentHinge, destinationHinge] of [[9, null], [null, 2]] as const) {
       const oneSided = movement(currentHinge, destinationHinge)

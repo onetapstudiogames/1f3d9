@@ -4,6 +4,7 @@ import { publicHingeSql } from './place-hinges.ts'
 import type { PlaceRow, ThingRow } from './world-support.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
+import { publicActivityFields, publicActivitySql } from './public-activity.ts'
 
 export type PublicPlaceRecord = Readonly<PlaceRow & Record<string, unknown>>
 export type PublicThingRecord = Readonly<ThingRow & Record<string, unknown>>
@@ -37,9 +38,11 @@ export async function loadPublicPlaceRecord(
   id: number,
   query: PublicPlaceRecordQuery = executePublicPlaceRecordQuery,
   moderate: PublicPlaceRecordModerator = moderatePublicPlaceRecords,
+  includeActivity = false,
 ): Promise<PublicPlaceRecord | null> {
   const rows = (await query(`
     SELECT p.id, p.parent_id, p.name, p.founding_name,
+      ${includeActivity ? `${publicActivitySql('p', false)} AS last_active,` : ''}
       history.name_history,
       p.retired_at,
       CASE WHEN p.retired_at IS NULL THEN 'active'::text ELSE 'retired'::text END AS status,
@@ -124,10 +127,14 @@ export async function loadPublicPlaceRecord(
     WHERE p.id = $1::integer
   `, [id])) as PublicPlaceRecord[]
   const publicRows = await moderate(rows)
-  const record = publicRows[0] ?? null
-  return record !== null && isWorldRootRow(record)
-    ? { ...record, purpose: WORLD_ROOT_PURPOSE }
-    : record
+  const row = publicRows[0]
+  if (row === undefined) return null
+  const { last_active: activity, ...record } = row
+  return {
+    ...record,
+    ...(isWorldRootRow(record) ? { purpose: WORLD_ROOT_PURPOSE } : {}),
+    ...(includeActivity && record.retired_at == null ? publicActivityFields(activity) : {}),
+  } as PublicPlaceRecord
 }
 
 /**

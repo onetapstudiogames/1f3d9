@@ -932,7 +932,8 @@ export function mountSocietyRoutes(app: Hono): void {
               FROM next_offer
               WHERE ${table}.id = $1 AND ${table}.owner_id = $2
                 AND ${table}.active_offer_id IS NULL${transferable}
-              RETURNING ${table}.id, ${table}.active_offer_id
+              RETURNING ${table}.id, ${table}.active_offer_id,
+                ${type === 'thing' ? `${table}.place_id` : type === 'place' ? `${table}.id` : 'NULL::integer'} AS activity_place_id
             ), new_offer AS (
               INSERT INTO transfer_offers (
                 id, asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet, status
@@ -943,9 +944,10 @@ export function mountSocietyRoutes(app: Hono): void {
             ), new_event AS (
               INSERT INTO events (kind, actor, detail)
               SELECT 'transfer_offer', $7, jsonb_build_object(
-                'offer_id', id, 'asset_type', type, 'asset_id', asset_id,
-                'buyer', $8::text, 'price_usdc', price_usdc
-              ) FROM new_offer
+                'offer_id', offer.id, 'asset_type', offer.type, 'asset_id', offer.asset_id,
+                'buyer', $8::text, 'price_usdc', offer.price_usdc,
+                'place_id', a.activity_place_id
+              ) FROM new_offer offer CROSS JOIN locked_asset a
             )
             SELECT o.*, $7::text AS seller, $8::text AS buyer
             FROM new_offer o
@@ -1225,9 +1227,18 @@ export function mountSocietyRoutes(app: Hono): void {
 
     const { table, transferable } = ASSETS[type]
     const rows = await sql.query(`
-      WITH canceled_offer AS (
+      WITH activity_actor AS MATERIALIZED (
+        SELECT id FROM residents WHERE id = $2 FOR NO KEY UPDATE
+      ), activity_room AS MATERIALIZED (
+        SELECT place.id FROM places place
+        WHERE place.id = ${type === 'thing' ? '(SELECT place_id FROM things WHERE id = $3)' : type === 'place' ? '$3' : 'NULL::integer'}
+          AND EXISTS (SELECT 1 FROM activity_actor)
+        FOR NO KEY UPDATE
+      ), canceled_offer AS (
         UPDATE transfer_offers SET status = 'canceled', canceled_at = now()
         WHERE id = $1 AND seller_id = $2 AND status = 'open'
+          AND EXISTS (SELECT 1 FROM activity_actor)
+          AND (${type === 'kind'}::boolean OR EXISTS (SELECT 1 FROM activity_room))
           AND (reserved_until IS NULL OR reserved_until <= now())
           AND NOT EXISTS (
             SELECT 1 FROM payment_attempts
@@ -1244,13 +1255,15 @@ export function mountSocietyRoutes(app: Hono): void {
         UPDATE ${table} SET active_offer_id = NULL
         FROM canceled_offer o
         WHERE ${table}.id = o.asset_id AND ${table}.owner_id = o.seller_id
+          ${type === 'thing' ? `AND ${table}.place_id IN (SELECT id FROM activity_room)` : ''}
           AND ${table}.active_offer_id = o.id${transferable}
-        RETURNING ${table}.id
+        RETURNING ${table}.id,
+          ${type === 'thing' ? `${table}.place_id` : type === 'place' ? `${table}.id` : 'NULL::integer'} AS activity_place_id
       ), release_guard AS MATERIALIZED (
         SELECT 1 / count(*)::int AS ok FROM released_asset
       ), new_event AS (
         INSERT INTO events (kind, actor, detail)
-        SELECT 'transfer_cancel', $4, jsonb_build_object('offer_id', o.id)
+        SELECT 'transfer_cancel', $4, jsonb_build_object('offer_id', o.id, 'place_id', a.activity_place_id)
         FROM canceled_offer o CROSS JOIN released_asset a CROSS JOIN release_guard g
         WHERE g.ok = 1
       )

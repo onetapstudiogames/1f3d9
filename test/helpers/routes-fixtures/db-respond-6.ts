@@ -171,7 +171,8 @@ export function respondToDatabaseStage6(
   if (q.includes('from places') && q.includes('parent_id') && !q.includes('update things')) {
     return [selectedPlacePermission(placeRow(2, 1), q)]
   }
-  if (q.includes('from places') && (q.includes('where p.id') || q.includes('where id'))) {
+  if (q.includes('from places') && !q.includes('update things')
+    && (q.includes('where p.id') || q.includes('where id'))) {
     return [selectedPlacePermission(placeRow(2, 1), q)]
   }
 

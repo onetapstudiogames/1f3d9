@@ -82,10 +82,12 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     }
   }
 
-  async function refreshUnchangedPresence(signal, minimumMarker) {
+  async function refreshUnchangedPresence(signal, minimumMarker, requestActivityRevision) {
+    const requestNavigationRevision = navigationRevision
     const targetCount = state.snapshot?.residents.length || 0
     if (!targetCount) return []
     let residents = []
+    let activity = new Map()
     let beforeId = null
     const seenCursors = new Set()
     while (residents.length < targetCount) {
@@ -107,6 +109,8 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       if (!payload || typeof payload !== 'object') throw new Error('invalid public presence')
       requireExactReadMarker(payload.change_marker, minimumMarker)
       const incoming = normalizeResidents(payload.residents)
+      activity = new Map([...activity, ...incoming.map(row => [row.id,
+        activityBand(payload.residents.find(raw => raw.id === row.id)?.last_active)])])
       const merged = mergeResidentRows(residents, incoming)
       if (merged.length === residents.length && residents.length < targetCount) {
         throw new Error('public presence did not advance')
@@ -120,6 +124,10 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       }
       seenCursors.add(nextBeforeId)
       beforeId = nextBeforeId
+    }
+    if (requestActivityRevision === publicActivityRevision &&
+        requestNavigationRevision === navigationRevision && !document.hidden) {
+      residentActivity = new Map([...residentActivity, ...activity])
     }
     return residents.slice(0, targetCount)
   }

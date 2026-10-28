@@ -101,6 +101,9 @@ export async function recordReviewRequest(input: Readonly<{
 }>): Promise<ReviewRequestResult> {
   return withEngineTransaction(engineSql, async transaction => {
     await rows(transaction`
+      SELECT id FROM residents WHERE id = ${input.residentId} FOR NO KEY UPDATE
+    `)
+    await rows(transaction`
       SELECT pg_advisory_xact_lock(${REVIEW_REQUEST_LOCK_NAMESPACE}, ${input.residentId})
     `)
     const open = await openReviewRequestId(transaction, input.residentId, input.recordId)

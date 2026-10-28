@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
+import * as ts from 'typescript'
 
 interface SqlCall {
   readonly body: string
@@ -79,7 +80,24 @@ function hasExplicitCast(body: string, start: number, end: number): boolean {
     && /^\s+as\s+[a-z_][a-z0-9_.]*(?:\s*\[\s*\])?/i.test(after)
 }
 
-function bareParameters(call: SqlCall): Array<{ offset: number; token: string }> {
+function plainInterpolationOffsets(source: string): ReadonlySet<number> {
+  const sourceFile = ts.createSourceFile('query.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const offsets = new Set<number>()
+  const visit = (node: ts.Node): void => {
+    if (ts.isTemplateExpression(node) && !ts.isTaggedTemplateExpression(node.parent)) {
+      let previousEnd = node.head.end
+      for (const span of node.templateSpans) {
+        offsets.add(previousEnd - 2)
+        previousEnd = span.literal.end
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return offsets
+}
+
+function bareParameters(call: SqlCall, plainOffsets: ReadonlySet<number>): Array<{ offset: number; token: string }> {
   const bare: Array<{ offset: number; token: string }> = []
   let quote: "'" | '"' | null = null
   for (let index = 0; index < call.body.length; index += 1) {
@@ -99,7 +117,7 @@ function bareParameters(call: SqlCall): Array<{ offset: number; token: string }>
 
     if (call.body[index + 1] === '{') {
       const end = interpolationEnd(call.body, index)
-      if (!hasExplicitCast(call.body, index, end)) {
+      if (!plainOffsets.has(call.bodyOffset + index) && !hasExplicitCast(call.body, index, end)) {
         bare.push({ offset: index, token: call.body.slice(index, end) })
       }
       index = end - 1
@@ -117,14 +135,33 @@ function bareParameters(call: SqlCall): Array<{ offset: number; token: string }>
   return bare
 }
 
+test('the JSONB audit distinguishes bound parameters from composed SQL fragments', () => {
+  const examples = [
+    { source: "sql`SELECT jsonb_build_object('id', ${value})`", bare: ['${value}'] },
+    { source: "sql`SELECT jsonb_build_object('id', ${value}::integer)`", bare: [] },
+    { source: "const text = `SELECT jsonb_build_object('id', ${columnSql})`", bare: [] },
+    { source: "const text = `SELECT jsonb_build_object('id', $1)`", bare: ['$1'] },
+    { source: "const text = `SELECT jsonb_build_object('id', $1::integer, 'name', ${nameSql})`", bare: [] },
+  ]
+  for (const example of examples) {
+    const plainOffsets = plainInterpolationOffsets(example.source)
+    assert.deepEqual(jsonObjectCalls(example.source)
+      .flatMap(call => bareParameters(call, plainOffsets).map(parameter => parameter.token)),
+    example.bare, example.source)
+  }
+})
+
 test('jsonb_build_object parameters always declare their PostgreSQL type', async () => {
   const sourceRoots = ['api', 'scripts', 'src'].map(directory => path.resolve(directory))
   const failures: string[] = []
   for (const sourceRoot of sourceRoots) {
     for (const file of await typescriptFiles(sourceRoot)) {
       const source = await readFile(file, 'utf8')
-      for (const call of jsonObjectCalls(source)) {
-        for (const parameter of bareParameters(call)) {
+      const calls = jsonObjectCalls(source)
+      if (calls.length === 0) continue
+      const plainOffsets = plainInterpolationOffsets(source)
+      for (const call of calls) {
+        for (const parameter of bareParameters(call, plainOffsets)) {
           const offset = call.bodyOffset + parameter.offset
           const line = source.slice(0, offset).split('\n').length
           failures.push(`${path.relative(process.cwd(), file).replaceAll('\\', '/')}:${line} ${parameter.token}`)

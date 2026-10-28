@@ -47,7 +47,7 @@ test('the mute refusals are stated in caller words', () => {
   assert.equal(HIDDEN_REFUSAL, 'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)')
   assert.equal(
     settingsChangeRefusal({ focus: true }),
-    'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',
+    'settings changes must be an object with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',
   )
   assert.equal(settingsChangeRefusal({ mute: { type: 'trait', id: 1 } }), MUTE_TARGET_REFUSAL)
   for (const text of [MUTE_FOUNDER_REFUSAL, MUTE_SELF_REFUSAL, ALLOW_TYPE_REFUSAL, MUTE_TARGET_REFUSAL, HIDDEN_REFUSAL, HIDDEN_NEXT_STEP]) {
@@ -212,6 +212,32 @@ test('rows are dropped, not replaced, and outlines never carry a body or a name'
   const residents = splitMutedResidents(judge, [{ id: MUTED, handle: 'muted-one' }, { id: 8, handle: 'other-one' }], 1)
   assert.deepEqual(residents.shown, [{ id: 8, handle: 'other-one' }])
   assert.equal(residents.hidden[0]!.type, 'resident')
+})
+
+test('changed outcome carriers use the existing whole-event mute rule across actors and rooms', async () => {
+  const judge = (await judgeMutes(muteSet(), {}, factsQuery))!
+  const outcome = (actor: string, place_id: number) => ({ actor, operation: 'label', place_id })
+  const event = (outcomes: unknown, detail: Record<string, unknown> = {}, actor = 'other-one') => ({
+    id: 5, kind: 'wake_try_applied', actor,
+    detail: { ...detail, applied_public_activity: outcomes },
+    at: '2026-10-17T00:00:00.000Z',
+  })
+  const destinationMuted = event([outcome('other-one', 1), outcome('other-one', 101)], { place_id: 1 })
+  assert.equal(judge.hidesEvent(destinationMuted), true, 'a clear source does not reveal a muted destination')
+  assert.equal(judge.hidesEvent(event([outcome('other-one', 101)])), true, 'a carrier needs no top-level place')
+  assert.equal(judge.hidesEvent(event([outcome('muted-one', 1)])), true, 'the responsible actor can differ from the carrier actor')
+  assert.equal(judge.hidesEvent(event([outcome('other-one', 1)])), false)
+  assert.equal(judge.hidesEvent(event([outcome('founder', 101)])), false)
+  assert.equal(judge.hidesEvent(event([outcome('reader-one', 101)])), false)
+  for (const actor of ['founder', '1f3d9-founder', 'reader-one']) {
+    assert.equal(judge.hidesEvent(event([outcome('muted-one', 101)], {}, actor)), false, 'the existing whole-event actor exemption wins')
+  }
+  assert.equal(judge.hidesEvent(event([outcome('other-one', 101)], { note_id: 31 })), false, 'an explicit item allow continues to allow its whole event')
+  assert.equal(judge.hidesEvent(event([outcome('other-one', 101)], { resident_id: READER })), false, 'an event about the reader still shows')
+  const split = splitMutedEvents(judge, [destinationMuted, event([outcome('muted-one', 1)])])
+  assert.equal(split.shown.length, 0)
+  assert.equal(split.hidden.length, 2, 'count carriers, not their outcome entries')
+  assert.doesNotMatch(JSON.stringify(split.hidden), /muted-one|label|applied_public_activity|101/u)
 })
 
 test('a muted place stays listed, marked, without its words, all the way down a map tree', async () => {

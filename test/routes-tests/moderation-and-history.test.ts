@@ -328,10 +328,16 @@ export function registerModerationAndHistoryTests(): void {
       created_at: '2026-08-11T00:00:00.000Z',
     })
 
-    const presenceReads = sqlCalls().filter(call =>
-      (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
-        .includes('with first_owned as'))
-    assert.equal(presenceReads.length, 2, JSON.stringify(sqlCalls().map(call => call.query)))
+    const queries = sqlCalls().map(call => (call.query ?? '').replace(/\s+/g, ' ').toLowerCase())
+    const presenceReads = queries.flatMap((query, index) =>
+      query.includes('from resident_presence presence') && query.includes('as world_exists') ? [index] : [])
+    assert.equal(presenceReads.length, 2, JSON.stringify(queries))
+    for (const index of presenceReads) assert.doesNotMatch(queries[index]!, /\b(insert|update|delete)\b/u)
+    assert.equal(queries.some(query => query.includes('insert into resident_presence')), false)
+    const timerResolution = queries.findIndex(query => query.includes('insert into effect_resolutions'))
+    assert(presenceReads[0]! < timerResolution && timerResolution < presenceReads[1]!,
+      'presence is read again after the due timer finishes')
+    assert.equal(fixtureState.current.pendingResolved, true)
     assert.ok(sqlCalls().some(call => {
       const query = (call.query ?? '').replace(/\s+/g, ' ').toLowerCase()
       return query.includes('from agreements a') &&

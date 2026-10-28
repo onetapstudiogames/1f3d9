@@ -17,7 +17,6 @@ import {
   startPostgres,
   taggedFor,
   withdrawalActivationDdl,
-  withdrawalMigrationDdl,
 } from '../helpers/gazette-fixtures/postgres.ts'
 
 const emptyBlock = [
@@ -245,7 +244,6 @@ test('Gazette Happenings prints the public week facts and contains a failed read
     createdAt: '2026-08-12T00:00:00.000Z',
   })
 
-  await database.query(withdrawalMigrationDdl)
   await database.query(activationDdl)
   await database.query(withdrawalActivationDdl)
   const transactionRunner = async (

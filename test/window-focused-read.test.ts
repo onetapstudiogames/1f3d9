@@ -16,6 +16,10 @@ test('selected-place background reads retain prose and release cancelled pending
   const harness = new Function('fetch', 'record', `
     let state = { placeId: 11, view: 'place', details: { 'place:11': { record } } }
     let authoredRevision = 0, navigationRevision = 0, detailRequestRevision = 0
+    let publicActivityRevision = 0
+    let placeActivity = new Map()
+    const document = { hidden: false }
+    const activityBand = value => value
     const activeSelectionKey = () => state.view + ':' + state.placeId
     const window = { location: { origin: 'https://127.0.0.1' }, setTimeout, clearTimeout }
     const REQUEST_TIMEOUT_MS = 5000
@@ -48,6 +52,10 @@ test('cancelled background reads render unavailable facts after leaving and retu
   const harness = new Function('fetch', 'record', `
     let state = { placeId: 11, view: 'place', details: { 'place:11': { record } } }
     let authoredRevision = 0, navigationRevision = 0, detailRequestRevision = 0
+    let publicActivityRevision = 0
+    let placeActivity = new Map()
+    const document = { hidden: false }
+    const activityBand = value => value
     const activeSelectionKey = () => String(state.placeId) + '|resident:'
     const window = { location: { origin: 'https://127.0.0.1' }, setTimeout, clearTimeout }
     const REQUEST_TIMEOUT_MS = 5000

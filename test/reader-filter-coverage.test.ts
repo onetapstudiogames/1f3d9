@@ -37,6 +37,7 @@ const MODERATION_READERS: Readonly<Record<string, string>> = Object.freeze({
   'src/pending-ping-summary.ts': 'shaped: the summary leaves pings from muted residents out',
   'src/public-directory.ts': 'exempt: the names directory feeds the front door and the human window, one shared text',
   'src/public-drawing-presence.ts': 'exempt: has_drawing SQL fragments inside reads that are themselves shaped',
+  'src/public-events.ts': 'shaped in src/index.ts: event outcome details precede the existing event mute filter',
   'src/public-map.ts': 'shaped in src/world.ts: the map marks muted place rows',
   'src/public-records.ts': 'shaped in src/world.ts and src/society.ts: one thing or note by id sends its outline',
   'src/public-replay.ts': 'exempt: the replay file is a bulk public file for archives and humans; no tool reads it',

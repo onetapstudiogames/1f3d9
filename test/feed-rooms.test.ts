@@ -66,6 +66,7 @@ test('only note, line, ping and thing events can be left out, never a place edit
   const join = feedRoomEventLateralSql('event', feedRoomIdsSql())
   assert.match(join, /^CROSS JOIN LATERAL \(/u)
   assert.match(join, /\) feed$/u)
+  assert.match(join, /outcome->>'target_type' = 'thing'/u)
   assert.match(join, /cardinality\(ARRAY\(SELECT feed_room\.id FROM places feed_room WHERE feed_room\.feed ORDER BY feed_room\.id\)\) > 0/u)
 })
 

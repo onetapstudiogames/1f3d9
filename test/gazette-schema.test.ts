@@ -49,18 +49,32 @@ function normalizedFunctionBody(ddl: string, name: string): string {
     .trim()
 }
 
-test('the withdrawal migration installs the fresh-schema room lifecycle guard', () => {
+test('the activity migration preserves the prior Gazette lifecycle guard with only its stamp exception', () => {
   const migrationGuard = normalizedFunctionBody(
     withdrawalMigration,
     'protect_gazette_submission_room',
   )
   const schemaGuard = normalizedFunctionBody(schema, 'protect_gazette_submission_room')
+  const activityGuard = normalizedFunctionBody(
+    read('../db/migrations/20261028_stored_public_activity.sql'), 'protect_gazette_submission_room',
+  )
   assert.notEqual(migrationGuard, '', 'the production migration must replace the lifecycle guard')
   assert.notEqual(schemaGuard, '', 'the fresh schema must define the lifecycle guard')
+  const stampException = `IF to_jsonb(NEW) ? 'last_public_action_at'
+    AND to_jsonb(OLD) ? 'last_public_action_at'
+    AND to_jsonb(NEW)->'last_public_action_at' IS DISTINCT FROM to_jsonb(OLD)->'last_public_action_at'
+    AND to_jsonb(NEW) - 'last_public_action_at' = to_jsonb(OLD) - 'last_public_action_at'
+    AND gazette_submission_room_state(NEW) IN ('closed', 'open', 'withdrawals_open')
+    AND gazette_submission_room_state(NEW) = gazette_submission_room_state(OLD)
+    AND gazette_submission_room_has_no_forbidden_contents()
+    AND gazette_submission_room_guards_ready() THEN RETURN NEW; END IF;`
+    .replace(/\s+/gu, ' ').trim()
+  assert.ok(schemaGuard.includes(stampException), 'the stamp exception must preserve all room contract checks')
+  assert.equal(activityGuard, schemaGuard, 'the current migration must install the complete fresh-schema guard')
   assert.equal(
     migrationGuard,
-    schemaGuard,
-    'every production CREATE OR REPLACE must preserve the complete fresh-schema guard',
+    schemaGuard.replace(stampException + ' ', ''),
+    'the only change from the immutable withdrawal migration must be the exact stamp exception',
   )
 })
 

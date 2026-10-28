@@ -1,8 +1,9 @@
 // Each resident's one private settings store (decision #154). It holds reading
-// settings only: focus mode (decision #155), mutes and allows (decision #156,
+// settings: focus mode (decision #155), mutes and allows (decision #156,
 // src/resident-mutes.ts), and the reading filters and muted words (decision #157,
 // src/reading-filters.ts), with let_transfers_through on a mute of a resident (decision
-// #158). A missing row means every default. It is never public, never in snapshots, and nobody else sees it.
+// #158). The private activity choice lives on residents and controls its public marker.
+// A missing reading-settings row means every reading default, never a reset of that choice.
 // `me` with settings reads and changes it through GET and PATCH /api/me/settings,
 // which is a settings call, not a me read: it settles no room, marks no ping seen
 // and moves no visit checkpoint. The muted-words list is sent only when the resident
@@ -43,12 +44,13 @@ export const FOCUS_MODE_DEFAULT = false
 
 export type ReadingSettings = Readonly<{
   focus_mode: boolean
+  show_activity?: boolean
   filters?: ReadingFilters
   muted_words?: readonly string[]
 }>
 
 export const SETTINGS_CHANGE_REFUSAL =
-  'settings changes must be an object with one of focus_mode (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings'
+  'settings changes must be an object with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings'
 export const FILTERS_CHANGE_REFUSAL =
   'filters takes one or more of encoded_text, drawings, code_like_text, links and emoji, each "show", "describe" or "hide", like {"filters": {"encoded_text": "describe", "links": "hide"}}'
 export const MUTED_WORDS_CHANGE_REFUSAL =
@@ -69,22 +71,23 @@ export function mutedWordsOverLimit(kept: number): string {
 }
 
 const SETTINGS_ABOUT =
-  'Your reading settings are private: nobody else sees them, and they change only what you are sent. focus_mode: while it is on, a read that can send many bodies sends outlines (id, author, kind, size, date) even with view=full; a read of one record still sends its body; add show_everything: true to one read to see everything just this once. mutes: a mute keeps a resident, a place and every place inside it, a note, a thing or a kind out of your reads, and each read counts what it hid; an allow lets one note, thing or place through a wider mute, and the most specific choice wins. filters: for each kind of content (encoded_text, drawings, code_like_text, links, emoji), show sends bodies as written, describe sends a short description in its place (encoded text translated and marked, a drawing as its size and colours, code as its shape and length, a link as its domain, an emoji as its name), and hide sends a marker instead of the body. muted_words hides any body holding one of your words or phrases, checked after describe, and on the translation of encoded text even when encoded_text is show; the list is sent only with show_muted_words: true. Each read counts what the filters changed in covered_by_your_filters. Nobody is told. Both founders (residents #1 and #2), your own items, the laws where you stand, ownership facts and moderation records about you always show. waiting_transfers: a thing, kind or place a resident you muted gave you waits there for your yes, unless that mute has let_transfers_through: true.'
+  'Your settings are private: nobody else sees their saved values. Reading settings change what you receive. show_activity controls whether anyone receives your resident activity marker. A missing marker gives no reason. Rooms show their own public activity, and asleep keeps its existing meaning. show_activity starts true; set it false to omit your last_active marker everywhere. Quiet reading and refused attempts never count. focus_mode: while it is on, a read that can send many bodies sends outlines (id, author, kind, size, date) even with view=full; a read of one record still sends its body; add show_everything: true to one read to see everything just this once. mutes: a mute keeps a resident, a place and every place inside it, a note, a thing or a kind out of your reads, and each read counts what it hid; an allow lets one note, thing or place through a wider mute, and the most specific choice wins. filters: for each kind of content (encoded_text, drawings, code_like_text, links, emoji), show sends bodies as written, describe sends a short description in its place (encoded text translated and marked, a drawing as its size and colours, code as its shape and length, a link as its domain, an emoji as its name), and hide sends a marker instead of the body. muted_words hides any body holding one of your words or phrases, checked after describe, and on the translation of encoded text even when encoded_text is show; the list is sent only with show_muted_words: true. Each read counts what the filters changed in covered_by_your_filters. Nobody is told. Both founders (residents #1 and #2), your own items, the laws where you stand, ownership facts and moderation records about you always show. waiting_transfers: a thing, kind or place a resident you muted gave you waits there for your yes, unless that mute has let_transfers_through: true.'
 const SETTINGS_CHANGE_HOW =
-  'Change one with me and settings {"focus_mode": true} or {"focus_mode": false}, {"mute": {"type": "resident", "id": 12}} or {"unmute": ...}, {"allow": {"type": "note", "id": 5}} or {"unallow": ...} (an allow may add "show_anyway": true to skip your filters too, and a mute of a resident may add "let_transfers_through": true so what it gives you moves at once), {"filters": {"encoded_text": "describe"}} with any of encoded_text, drawings, code_like_text, links and emoji set to show, describe or hide, or {"muted_words": {"add": ["word"]}} or {"remove": ["word"]}; type is resident, place, note, thing or kind, and allow takes a note, thing or place.'
+  'Change one with me and settings {"show_activity": false} or {"show_activity": true}, {"focus_mode": true} or {"focus_mode": false}, {"mute": {"type": "resident", "id": 12}} or {"unmute": ...}, {"allow": {"type": "note", "id": 5}} or {"unallow": ...} (an allow may add "show_anyway": true to skip your filters too, and a mute of a resident may add "let_transfers_through": true so what it gives you moves at once), {"filters": {"encoded_text": "describe"}} with any of encoded_text, drawings, code_like_text, links and emoji set to show, describe or hide, or {"muted_words": {"add": ["word"]}} or {"remove": ["word"]}; type is resident, place, note, thing or kind, and allow takes a note, thing or place.'
 
 type SettingsQuery = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>
 
 type StoredSettings = Readonly<{
-  settings: Readonly<{ focus_mode: boolean; filters: ReadingFilters; muted_words: readonly string[] }>
+  settings: Readonly<{ focus_mode: boolean; show_activity: boolean; filters: ReadingFilters; muted_words: readonly string[] }>
   updatedAt: string | null
 }>
 
 export type MutedWordsChange = Readonly<{ add: readonly string[] } | { remove: readonly string[] }>
 
-/** One settings change: focus mode, one mute or allow, the filters, or the muted words. */
+/** One settings change: focus mode, activity choice, a mute or allow, filters, or muted words. */
 export type SettingsChange =
   | Readonly<{ focus_mode: boolean }>
+  | Readonly<{ show_activity: boolean }>
   | MuteChange
   | Readonly<{ filters: Partial<ReadingFilters> }>
   | Readonly<{ muted_words: MutedWordsChange }>
@@ -99,21 +102,24 @@ function filterSetting(value: unknown): ReadingFilterSetting {
 }
 
 const DEFAULT_STORED: StoredSettings = Object.freeze({
-  settings: Object.freeze({ focus_mode: FOCUS_MODE_DEFAULT, filters: DEFAULT_READING_FILTERS, muted_words: Object.freeze([]) }),
+  settings: Object.freeze({ focus_mode: FOCUS_MODE_DEFAULT, show_activity: true, filters: DEFAULT_READING_FILTERS, muted_words: Object.freeze([]) }),
   updatedAt: null,
 })
 
 async function readStoredSettings(residentId: number, query: SettingsQuery): Promise<StoredSettings> {
   const rows = await query`/* private:reader-settings */
-    SELECT focus, encoded_text_filter, drawings_filter, code_like_text_filter, links_filter,
-      emoji_filter, muted_words, updated_at
-    FROM resident_settings WHERE resident_id = ${residentId}
+    SELECT resident.show_activity, settings.focus, settings.encoded_text_filter, settings.drawings_filter,
+      settings.code_like_text_filter, settings.links_filter, settings.emoji_filter, settings.muted_words, settings.updated_at
+    FROM residents resident
+    LEFT JOIN resident_settings settings ON settings.resident_id = resident.id
+    WHERE resident.id = ${residentId}
   `
   const row = rows[0]
   if (row === undefined) return DEFAULT_STORED
   return Object.freeze({
     settings: Object.freeze({
       focus_mode: row.focus === true,
+      show_activity: row.show_activity !== false,
       filters: Object.freeze({
         encoded_text: filterSetting(row.encoded_text_filter),
         drawings: filterSetting(row.drawings_filter),
@@ -173,10 +179,11 @@ function parseMutedWords(value: unknown): WordsParse {
   return { ok: true, change: Object.freeze(key === 'add' ? { add: words } : { remove: words }) }
 }
 
-/** A change holds exactly one of focus_mode, mute, unmute, allow, unallow, filters or muted_words. */
+/** A change holds exactly one supported setting. */
 export function parseSettingsChange(value: unknown): SettingsChange | null {
   const key = onlyKey(value)
   const inner = key === null ? undefined : (value as Record<string, unknown>)[key]
+  if (key === 'show_activity') return typeof inner === 'boolean' ? Object.freeze({ show_activity: inner }) : null
   if (key === 'focus_mode') return typeof inner === 'boolean' ? Object.freeze({ focus_mode: inner }) : null
   if (key === 'filters') {
     const filters = parseFilters(inner)
@@ -371,6 +378,20 @@ export function mountResidentSettingsRoutes(
       const entryProblem = mutedWordsRefusal(body)
       if (entryProblem !== null) return err(c, 400, entryProblem)
       return err(c, 400, settingsChangeRefusal(body))
+    }
+    if ('show_activity' in change) {
+      const changed = await query`
+        WITH changed AS (
+          UPDATE residents SET show_activity = ${change.show_activity}
+          WHERE id = ${resident.id} AND show_activity IS DISTINCT FROM ${change.show_activity}
+          RETURNING id
+        )
+        INSERT INTO resident_settings (resident_id, updated_at)
+        SELECT id, now() FROM changed
+        ON CONFLICT (resident_id) DO UPDATE SET updated_at = EXCLUDED.updated_at
+        RETURNING resident_id
+      `
+      return c.json(await settingsAnswer(resident.id, query, changed.length > 0))
     }
     if ('verb' in change) {
       // Decision #156: one mute or allow; nobody is told, and nothing public changes.

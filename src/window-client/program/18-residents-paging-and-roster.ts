@@ -24,6 +24,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
       return
     }
     const requestAuthoredRevision = authoredRevision
+    const requestActivityRevision = publicActivityRevision
     const requestMarker = state.changeMarker
     navigationRevision += 1
     state = {
@@ -86,6 +87,10 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
         : 0
       const automaticPaused = automatic && hasMore &&
         automaticPageCount >= MAX_AUTO_HISTORY_PAGES
+      if (requestActivityRevision === publicActivityRevision && !document.hidden) {
+        residentActivity = new Map([...residentActivity, ...incoming.map(row => [row.id,
+          activityBand(payload.residents.find(raw => raw.id === row.id)?.last_active)])])
+      }
       state = {
         ...state,
         snapshot,
@@ -213,6 +218,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
+        appendResidentActivity(row.querySelector('.resident-number'), resident.id)
         row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
         const menu = muteMenu([residentMuteTarget(resident.handle)], 'roster:' + resident.handle)
         if (menu) row.append(menu)

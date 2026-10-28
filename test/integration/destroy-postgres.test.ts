@@ -184,6 +184,7 @@ test('PostgreSQL keeps an inner destroy when a later inherited law targets the g
     assert.equal(committed.rows[0]?.status, 'applied')
     assert.equal(committed.rows[0]?.destroyed_events, '1')
     assert.deepEqual(committed.rows[0]?.detail, {
+      applied_public_activity: [],
       effects_applied: 1,
       place_id: innerPlaceId,
       source_thing_id: sourceThingId,

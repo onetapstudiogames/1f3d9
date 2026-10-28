@@ -6,6 +6,7 @@ import { noteFirstLineSql } from './note-first-line.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
 import { talkEventRemovedSql } from './talk-event-targets.ts'
+import { publicActivityEventDetailSql } from './public-events.ts'
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
@@ -234,6 +235,12 @@ function publicEventFilter(includeDescendants: boolean): string {
   AND ($6::integer IS NULL OR event.at >= transaction_timestamp()
     - ($6::integer * INTERVAL '1 second'))
   AND ($3::integer IS NULL
+    OR EXISTS (
+      SELECT 1 FROM jsonb_array_elements(CASE
+        WHEN jsonb_typeof(event.detail->'applied_public_activity') = 'array'
+        THEN (${publicActivityEventDetailSql('event', '$3::integer')})->'applied_public_activity'
+        ELSE '[]'::jsonb END) outcome
+      WHERE ${textPlace("outcome->>'place_id'")})
     OR ${textPlace("event.detail->>'place_id'")}
     OR ${textPlace("event.detail->>'from_place_id'")}
     OR ${textPlace("event.detail->>'to_place_id'")}
@@ -368,7 +375,8 @@ async function loadEventRows(
      FROM totals
      LEFT JOIN LATERAL (
        SELECT event.id, change.change_id::text AS change_id,
-         event.at, event.kind, event.actor, event.detail,
+         event.at, event.kind, event.actor,
+         ${publicActivityEventDetailSql('event', '$3::integer')} AS detail,
          event_thing.has_drawing AS thing_has_drawing
        FROM events event
        ${PUBLIC_EVENT_THING_DRAWING_JOIN_SQL}

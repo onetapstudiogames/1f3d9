@@ -1426,6 +1426,15 @@ Database migrations are separate operations. Run only the explicitly named
 `npm run migrate:*` command appropriate to the migration and environment. A
 deployment must never apply a migration as a side effect.
 
+### Stored public activity prerequisite
+
+At Production's current size, expect `20261028_stored_public_activity.sql` to finish
+within 60 seconds: the disposable rehearsal with 400,000 events took 4.363 seconds,
+with 0.154 seconds holding resident/place write-blocking locks; hosted timing still
+requires the separate ceremony.
+The backfill computes history into a temporary table first and updates rows last,
+while the existing event-write exclusion remains held for the whole transaction.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

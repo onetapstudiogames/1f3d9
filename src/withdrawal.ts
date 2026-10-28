@@ -68,12 +68,19 @@ export async function withdrawThing(
   const confirmedName = reason === 'withdrawn' ? expectedName! : thing.name
 
   const rows = await sql`
-    WITH withdrawable AS (
+    WITH activity_actor AS MATERIALIZED (
+      SELECT id FROM residents WHERE id = ${actor.id} FOR NO KEY UPDATE
+    ), activity_room AS MATERIALIZED (
+      SELECT place.id FROM places place JOIN things thing ON thing.place_id = place.id
+      WHERE thing.id = ${thingId} AND EXISTS (SELECT 1 FROM activity_actor)
+      FOR NO KEY UPDATE OF place
+    ), withdrawable AS (
       SELECT thing.id
       FROM things thing
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'thing'
         AND offer.asset_id = thing.id AND offer.status = 'open'
       WHERE thing.id = ${thingId} AND thing.owner_id = ${actor.id}
+        AND thing.place_id = (SELECT id FROM activity_room)
         AND thing.name = ${confirmedName}
         AND thing.withdrawn_at IS NULL AND thing.active_offer_id IS NULL
         AND offer.id IS NULL
@@ -81,11 +88,11 @@ export async function withdrawThing(
     ), changed AS (
       UPDATE things SET withdrawn_at = clock_timestamp(), held_by = NULL
       WHERE id IN (SELECT id FROM withdrawable)
-      RETURNING id, withdrawn_at
+      RETURNING id, place_id, withdrawn_at
     ), new_event AS (
       INSERT INTO events (kind, actor, detail)
       SELECT 'thing_withdrawn', ${actor.handle}, jsonb_build_object(
-        'thing_id', id, 'reason', ${reason}::text
+        'thing_id', id, 'place_id', place_id, 'reason', ${reason}::text
       )
       FROM changed
     )

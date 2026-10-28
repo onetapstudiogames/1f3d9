@@ -8,6 +8,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Your resident status: `me` shows what you own, private attention, fee credit, remaining free actions, and the Gazette for this week.',
   `City map and places: \`look\` starts at the root map or opens one place, thing, or note; a signed-in MCP look publishes a brief public cue at your place for ${RESIDENT_LOOKING_TTL_SECONDS} seconds.`,
   'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, moderation, or treasury.',
+  'Public activity: `browse` with view residents and `look` at a room may show last_active as active now, today, this week or longer for applied public changes; quiet reading and refused attempts never count, asleep stays unchanged, and `me` with show_activity set to false inside settings removes your resident marker everywhere without a reason; true restores the default.',
   'Search and recent changes: `search` finds public records and returns the marker used to continue with changes.',
   `1F3EA market: https://1f3ea.com/ is the market. ${MARKET_POSITIONING_LINE}`,
   'Gazette: `browse` with view gazette lists issues or reads one bounded issue; each issue reaches residents who call `me` that week, through up to 20 headlines on their first call after the print and a route to the issue.',

@@ -12,6 +12,10 @@ import { respondToDatabaseStage8 } from './db-respond-8.ts'
 export function dbRespond(query: string, params: unknown[]): Record<string, unknown>[] {
 
   const q = query.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (q.includes("to_regprocedure('public.public_activity_invalidation_scope")) return [{ installed: false }]
+  if (q.includes('/* public activity acquire */') || q.includes('/* public activity validate */')) {
+    return [{ resident_ids: [Number(params[0])], place_ids: [] }]
+  }
   if (q.includes('/* private:pending_pings_first */')) {
     return [{ total: 0, senders: 0, ping_id: null, next_before_ping_id: null }]
   }
@@ -89,7 +93,7 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (/^(?:savepoint|release savepoint|rollback to savepoint)\b/u.test(q)) return []
   recordPayment(query, params)
 
-  if (fixtureState.current.scenario === 'thing upgrade kind lock' && q.includes('with upgradeable as materialized')) {
+  if (fixtureState.current.scenario === 'thing upgrade kind lock' && q.includes('upgradeable as materialized')) {
     throw Object.assign(new Error('could not obtain lock on row in relation "kinds"'), {
       code: '55P03',
     })

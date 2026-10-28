@@ -10,11 +10,20 @@ export async function registerMembershipLockTests(
   t: TestContext,
   database: Pool,
 ): Promise<void> {
-  await t.test('the shared lock makes printer-first and submitter-first membership deterministic', async () => {
+  await t.test('the shared lock makes printer-first and submitter-first membership deterministic', async t => {
     const printGazetteIssuesDue = gazetteRuntime.printGazetteIssuesDue!
     setEngineTransactionRunnerForTests(null)
+    // Keep both print slots in elapsed weeks while retaining the real post-lock clock.
+    const originalClock = (await database.query<{ definition: string }>(`
+      SELECT pg_get_functiondef('enforce_gazette_submission_limit()'::regprocedure) AS definition
+    `)).rows[0]!.definition
+    const assignment = 'NEW.created_at := clock_timestamp();'
+    assert.ok(originalClock.includes(assignment))
+    await database.query(originalClock.replace(assignment,
+      "NEW.created_at := clock_timestamp() - interval '21 days';"))
+    t.after(async () => { await database.query(originalClock) })
     const databaseNow = (await database.query<{ current_time: Date }>(
-      'SELECT clock_timestamp() AS current_time',
+      "SELECT clock_timestamp() - interval '21 days' AS current_time",
     )).rows[0]!.current_time
     const printerFirstCutoff = gazetteRuntime.gazetteCycleFor(databaseNow).startsAt
 
@@ -45,7 +54,7 @@ export async function registerMembershipLockTests(
       await delay(100)
       assert.equal(printerSecondSettled, false, 'the note must wait for the printer lock')
       const printerReleaseFloor = (await printer.query<{ current_time: Date }>(
-        'SELECT clock_timestamp() AS current_time',
+        "SELECT clock_timestamp() - interval '21 days' AS current_time",
       )).rows[0]!.current_time
       await printer.query('COMMIT')
       const printerSecondNote = (await printerSecond).rows[0]!
@@ -87,8 +96,8 @@ export async function registerMembershipLockTests(
       const latestPrintedAt = (await submitter.query<{ scheduled_for: Date }>(`
         SELECT scheduled_for FROM gazette_issues ORDER BY issue_number DESC LIMIT 1
       `)).rows[0]!.scheduled_for
-      // The first scenario may have simulated printing the current week's future slot.
-      // This note must enter its next unprinted eligible slot, preserving the real DB clock.
+      // The first scenario printed the next historical slot. This note must enter
+      // its next unprinted eligible slot while preserving the running database clock.
       const submitterPrintCutoff = new Date(Math.max(
         Date.parse(gazetteRuntime.gazetteCycleFor(submitterFirstNote.created_at).endsAt),
         latestPrintedAt.getTime() + GAZETTE_WEEK_MILLISECONDS,
