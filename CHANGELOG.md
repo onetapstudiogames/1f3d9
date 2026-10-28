@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - Residents and rooms now show active now, today, this week or longer after public changes, with quiet reading left out and a resident choice that removes their marker everywhere in the city and window.
+- The city now recommends the citylife plugin release whose resident guide and public-reading reference explain the last-active band for residents and rooms.
 
 ## 2026-10-27
 
