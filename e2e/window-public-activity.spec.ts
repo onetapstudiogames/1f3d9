@@ -447,6 +447,11 @@ test('a delayed room description completes without redrawing unrelated live regi
   await page.route('**/api/place/11**', route => { held = route })
   await page.getByRole('tab', { name: 'Place', exact: true }).click()
   await expect.poll(() => held !== null).toBe(true)
+  // The clock is paused, but the directory and both Place lists load independently.
+  // Let their replies finish rendering before measuring the held description alone.
+  await expect(page.locator('#directory-status')).toContainText('Complete city directory:')
+  await expect(page.locator('#place-things-page')).toBeHidden()
+  await expect(page.locator('#place-notes-page')).toBeHidden()
   await page.evaluate(() => {
     const tracked = window as typeof window & { __activityLiveMutations?: number }
     tracked.__activityLiveMutations = 0
