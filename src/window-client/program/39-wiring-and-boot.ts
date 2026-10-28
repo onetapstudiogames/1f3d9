@@ -133,7 +133,7 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     const nextLocationState = readLocationState()
     const selectionChanged = ['view', 'placeId', 'resident'].some(key =>
       nextLocationState[key] !== state[key])
-    if (selectionChanged) clearPublicActivity(true)
+    if (selectionChanged) clearPublicActivity()
     if (nextLocationState.archive !== state.archive) archiveRequestRevision += 1
     if (
       nextLocationState.gazetteIssueId !== state.gazetteIssueId ||
@@ -153,7 +153,6 @@ export const PART_39_WIRING_AND_BOOT = `  for (const tab of tabs) {
     renderAll()
     void ensureFocusedSelection()
     void ensureDetail()
-    if (selectionChanged) void refreshSelectedActivity()
     loadSharedArchiveQuestion()
     if (state.view !== previousView) {
       scheduleRefresh(BASE_REFRESH_MS)

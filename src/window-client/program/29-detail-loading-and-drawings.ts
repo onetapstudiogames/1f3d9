@@ -3,25 +3,17 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
     if (!target || (target.kind === 'place' && !placeId) || target.kind === 'resident') return
     const key = target.kind + ':' + String(target.id)
     const current = state.details[key]
-    const selectionCurrent = !placeId ||
-      current?.activitySelectionRevision === publicActivitySelectionRevision
-    if ((current?.loading && selectionCurrent && current.activityRevision === publicActivityRevision) ||
-        (!force && selectionCurrent && (current?.record || current?.notFound ||
+    if (current?.loading || (!force && (current?.record || current?.notFound ||
         (placeId && current?.error)))) return
     const requestActivityRevision = publicActivityRevision
-    const requestActivitySelectionRevision = publicActivitySelectionRevision
     const requestAuthoredRevision = authoredRevision
     const requestDetailRevision = placeId ? detailRequestRevision : ++detailRequestRevision
     const requestNavigationRevision = navigationRevision
     const requestSelection = activeSelectionKey()
-    const retainedRecord = placeId ? current?.record || null : null
-    const pending = Object.freeze({ loading: true, error: false, notFound: false, record: retainedRecord,
-      activityRevision: requestActivityRevision, activitySelectionRevision: requestActivitySelectionRevision })
+    const retainedRecord = background && placeId ? current?.record || null : null
+    const pending = Object.freeze({ loading: true, error: false, notFound: false, record: retainedRecord })
     if (placeId) placeActivity = new Map([...placeActivity].filter(([id]) => id !== placeId))
     const requestViewIsCurrent = () => authoredRevision === requestAuthoredRevision &&
-      (!placeId || (requestActivityRevision === publicActivityRevision &&
-        requestActivitySelectionRevision === publicActivitySelectionRevision &&
-        activeSelectionKey() === requestSelection && !document.hidden)) &&
       (!background || (navigationRevision === requestNavigationRevision &&
         detailRequestRevision === requestDetailRevision && activeSelectionKey() === requestSelection))
     const requestIsCurrent = () => (
@@ -64,8 +56,7 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
           ...state,
           details: {
             ...state.details,
-            [key]: Object.freeze({ loading: false, error: false, notFound: true, record: null,
-              activitySelectionRevision: requestActivitySelectionRevision }),
+            [key]: Object.freeze({ loading: false, error: false, notFound: true, record: null }),
           },
         }
         return
@@ -75,8 +66,9 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
       const record = normalizeDetailRecord(target.kind, target.id, payload)
       if (!requestIsCurrent()) return
       if (!record) throw new Error('invalid public detail')
-      if (placeId) placeActivity = new Map([...placeActivity,
-        [placeId, activityBand(payload?.place?.last_active)]])
+      if (placeId && requestActivityRevision === publicActivityRevision && !document.hidden) {
+        placeActivity = new Map([...placeActivity, [placeId, activityBand(payload?.place?.last_active)]])
+      }
       if (record.kind === 'note' && state.snapshot &&
           !placeReference(state.snapshot, record.placeId)) {
         await loadFocusedPlace(record.placeId, false)
@@ -86,8 +78,7 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         ...state,
         details: {
           ...state.details,
-          [key]: Object.freeze({ loading: false, error: false, notFound: false, record,
-            activitySelectionRevision: requestActivitySelectionRevision }),
+          [key]: Object.freeze({ loading: false, error: false, notFound: false, record }),
         },
       }
     } catch {
@@ -96,25 +87,23 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
         ...state,
         details: {
           ...state.details,
-          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord,
-            activitySelectionRevision: requestActivitySelectionRevision }),
+          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord }),
         },
       }
     } finally {
       window.clearTimeout(timeout)
       // A cancelled refresh must not leave a cached room permanently loading.
-      const discardedBackgroundRead = placeId && state.details[key] === pending
+      const discardedBackgroundRead = background && state.details[key] === pending
       if (discardedBackgroundRead) {
         state = { ...state, details: { ...state.details,
-          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord,
-            activitySelectionRevision: requestActivitySelectionRevision }),
+          [key]: Object.freeze({ loading: false, error: true, notFound: false, record: retainedRecord }),
         } }
       }
       if (background && placeId) {
         // The reader may have returned while the discarded request was pending.
         if (requestViewIsCurrent() || discardedBackgroundRead) renderSelectedPlaceDetail()
       } else if (placeId) {
-        if (authoredRevision === requestAuthoredRevision) renderAll()
+        if (authoredRevision === requestAuthoredRevision) renderSelectedPlaceDetail()
       } else if (requestIsCurrent()) renderDetail()
     }
   }

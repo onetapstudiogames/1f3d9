@@ -82,8 +82,8 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
     }
   }
 
-  async function refreshUnchangedPresence(signal, minimumMarker) {
-    const requestActivityRevision = publicActivityRevision
+  async function refreshUnchangedPresence(signal, minimumMarker, requestActivityRevision) {
+    const requestNavigationRevision = navigationRevision
     const targetCount = state.snapshot?.residents.length || 0
     if (!targetCount) return []
     let residents = []
@@ -125,31 +125,11 @@ export const PART_37_SNAPSHOT_FETCH_AND_CACHE_INVALIDATION = `  async function g
       seenCursors.add(nextBeforeId)
       beforeId = nextBeforeId
     }
-    if (requestActivityRevision !== publicActivityRevision || document.hidden) {
-      throw new Error('The resident read is no longer current.')
+    if (requestActivityRevision === publicActivityRevision &&
+        requestNavigationRevision === navigationRevision && !document.hidden) {
+      residentActivity = new Map([...residentActivity, ...activity])
     }
-    residentActivity = new Map([...residentActivity, ...activity])
     return residents.slice(0, targetCount)
-  }
-
-  async function refreshSelectedActivity() {
-    if (!state.snapshot || document.hidden) return
-    const requestActivityRevision = publicActivityRevision
-    const requestNavigationRevision = navigationRevision
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    try {
-      const residents = await refreshUnchangedPresence(controller.signal, state.changeMarker)
-      if (requestActivityRevision !== publicActivityRevision ||
-          requestNavigationRevision !== navigationRevision) return
-      state = { ...state, snapshot: Object.freeze({ ...state.snapshot, residents }) }
-    } catch {
-      if (requestActivityRevision !== publicActivityRevision) return
-      residentActivity = new Map()
-    } finally {
-      window.clearTimeout(timeout)
-      if (requestActivityRevision === publicActivityRevision) renderAll()
-    }
   }
 
   function scheduleRefresh(delay) {

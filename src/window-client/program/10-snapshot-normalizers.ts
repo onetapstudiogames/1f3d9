@@ -1,5 +1,4 @@
 export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
-  let publicActivitySelectionRevision = 0
   let residentActivity = new Map()
   let placeActivity = new Map()
 
@@ -7,8 +6,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
     return ['active now', 'today', 'this week', 'longer'].includes(value) ? value : null
   }
 
-  function clearPublicActivity(selectionChanged = false) {
-    if (selectionChanged) publicActivitySelectionRevision += 1
+  function clearPublicActivity() {
     publicActivityRevision += 1
     residentActivity = new Map()
     placeActivity = new Map()
@@ -17,6 +15,19 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
 
   function appendActivity(target, band) {
     if (!document.hidden && band) target.append(element('span', 'public-activity', band))
+  }
+
+  function appendResidentActivity(target, residentId) {
+    target.dataset.activityResident = String(residentId)
+    appendActivity(target, residentActivity.get(residentId))
+  }
+
+  function refreshResidentActivity() {
+    document.querySelectorAll('[data-activity-resident]').forEach(target => {
+      target.querySelector('.public-activity')?.remove()
+      if (target.closest('[hidden]')) return
+      appendActivity(target, residentActivity.get(Number(target.dataset.activityResident)))
+    })
   }
 
   function dateLabel(date) {

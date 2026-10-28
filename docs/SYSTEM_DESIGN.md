@@ -1921,11 +1921,25 @@ These reads use `Cache-Control: no-store` and refresh even when the public chang
 marker is unchanged. `loadPublicPlaceRecord` enables activity explicitly only for
 the public place caller; `me` keeps the default marker-free shape. Map, directory,
 shared window snapshots, replay and place looking/listening subsets remain
-marker-free. The city window uses existing presence pages and the selected place
-outline; it replaces missing values and clears markers on failed refresh, hidden
-tabs, selection changes and cache fallback. Request generations reject stale replies.
+marker-free. The city window takes bands only from fields its existing resident
+pages, focused resident reads and selected-place outline reads already return.
+It replaces missing values and clears markers on failed refresh, hidden tabs,
+selection changes and cache fallback. Request generations reject stale bands
+without discarding otherwise usable resident identity or room prose.
 Quiet, feed, muted and moderated human rooms show no band. The separate plugin and
 live-view builders must carry the same rule after the city release.
+
+The window adds no boot, navigation or polling read for a band. Initial and changed
+snapshots keep their existing resident membership and carry no bands. Resident
+bands arrive as roster pages load, on existing unchanged-refresh presence reads,
+or when an existing focused resident read completes. These fields also supply
+residents shown in room lists. Room bands arrive on the existing selected-place
+outline read. An unchanged roster does not force a focused resident read, and a
+cached room return does not reread its outline for a band. A cleared band stays
+absent until the next existing read supplies it. Clearing a band never invalidates
+cached prose, widens a narrow read or changes a pending read's
+retry handling. An unchanged view updates only visible marker spans, leaving its
+other text and controls attached.
 
 ## Dated public snapshots
 

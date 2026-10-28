@@ -9,6 +9,7 @@ const BANDS = ['active now', 'today', 'this week', 'longer'] as const
 type Band = typeof BANDS[number]
 type ActivityCity = {
   residents: number
+  asleep: boolean
   band: Band | undefined
   roomBand: Band | undefined
   failPresence: boolean
@@ -29,7 +30,7 @@ function residentRows(city: ActivityCity, activity: boolean) {
     handle: 'marker-' + String(index + 1),
     current_place_id: 11,
     joined_at: new Date(NOW.getTime() - index * 1000).toISOString(),
-    asleep: index === 1,
+    asleep: city.asleep && index === 1,
     has_drawing: false,
     ...(activity && city.band ? { last_active: city.band } : {}),
   }))
@@ -45,8 +46,8 @@ function presenceBody(city: ActivityCity, url: URL) {
     next_before_id: residents.at(-1)?.id ?? null, change_marker: '20' }
 }
 
-async function mount(page: Page, count = 4) {
-  const city: ActivityCity = { residents: count, band: 'active now', roomBand: 'today',
+async function mount(page: Page, count = 4, initialCount = count) {
+  const city: ActivityCity = { residents: count, asleep: true, band: 'active now', roomBand: 'today',
     failPresence: false, failPlace: false, failSnapshot: false, quiet: false,
     moderated: false, feed: false, presence: [], places: [], heldPresence: null,
     holdPresence: false }
@@ -65,13 +66,14 @@ async function mount(page: Page, count = 4) {
       const collection = url.searchParams.get('collection')
       if (collection) return route.fulfill({ json: { [collection]: [], has_more: false,
         next_before_id: null, change_marker: '20' } })
-      const residents = residentRows(city, false)
+      const residents = residentRows(city, false).slice(0, initialCount)
       return route.fulfill({ json: { ...SNAPSHOT, residents,
         places: SNAPSHOT.places.map(place => ({ ...place, owner: 'marker-1', quiet: city.quiet,
           moderated: city.moderated })),
         totals: { ...SNAPSHOT.totals, residents: count },
-        shown: { ...SNAPSHOT.shown, residents: count },
-        pages: { ...SNAPSHOT.pages, residents: { has_more: false, next_before_id: null } } } })
+        shown: { ...SNAPSHOT.shown, residents: residents.length },
+        pages: { ...SNAPSHOT.pages, residents: { has_more: count > residents.length,
+          next_before_id: count > residents.length ? residents.at(-1)?.id : null } } } })
     }
     if (url.pathname === '/api/changes') return route.fulfill({ json: {
       change_marker: '20', changes: [], returned_items: 0, unchanged: true,
@@ -81,7 +83,7 @@ async function mount(page: Page, count = 4) {
       if (city.holdPresence) { city.heldPresence = route; return }
       if (city.failPresence) return route.fulfill({ status: 503, json: { error: 'Residents could not be read.' } })
       if (url.searchParams.has('handle')) return route.fulfill({ json: {
-        resident: { ...residentRows(city, true)[0], id: 9900, handle: 'marker-far' },
+        resident: { ...residentRows(city, true)[0], id: 9900, handle: 'marker-far', asleep: city.asleep },
         change_marker: '20' } })
       return route.fulfill({ json: presenceBody(city, url) })
     }
@@ -111,8 +113,11 @@ async function refresh(page: Page, city: ActivityCity) {
   await expect(page.locator('#window-status')).toContainText('Watching')
 }
 
-test('453 residents use three presence pages and keep asleep beside the band', async ({ page }) => {
+test('453 loaded residents gain bands on the existing three-page refresh beside asleep', async ({ page }) => {
   const city = await mount(page, 453)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
+  expect(city.presence).toHaveLength(0)
+  await refresh(page, city)
   await expect(page.locator('#resident-roster .public-activity')).toHaveCount(453)
   expect(city.presence).toHaveLength(3)
   expect(city.presence.map(url => Number(url.searchParams.get('limit')))).toEqual([200, 200, 53])
@@ -125,6 +130,22 @@ test('453 residents use three presence pages and keep asleep beside the band', a
   await refresh(page, city)
   await expect(asleep.locator('.public-activity')).toHaveText('longer')
   expect(city.presence).toHaveLength(6)
+})
+
+test('loading an older roster page adds only the bands returned by that page', async ({ page }) => {
+  const city = await mount(page, 30, 25)
+  await expect(page.locator('#resident-roster .resident-row')).toHaveCount(25)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
+  expect(city.presence).toHaveLength(0)
+  await page.getByRole('button', { name: 'Load more residents', exact: true }).click()
+  await expect(page.locator('#resident-roster .resident-row')).toHaveCount(30)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(5)
+  await expect(page.locator('#resident-roster .resident-row').first().locator('.public-activity'))
+    .toHaveCount(0)
+  expect(city.presence).toHaveLength(1)
+  expect(city.presence[0]?.searchParams.get('view')).toBe('presence')
+  expect(city.presence[0]?.searchParams.get('limit')).toBe('25')
+  expect(city.presence[0]?.searchParams.get('before_id')).toBe('506')
 })
 
 test('all four bands refresh without a new event and omission leaves no marker element', async ({ page }) => {
@@ -147,6 +168,7 @@ test('selected room gets its band from one outline read and replaces absence', a
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
   expect(city.places).toHaveLength(1)
   expect(city.places[0]?.searchParams.get('view')).toBe('outline')
+  expect(city.places[0]?.searchParams.get('limit')).toBe('1')
   city.roomBand = undefined
   await refresh(page, city)
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
@@ -156,6 +178,9 @@ test('selected room gets its band from one outline read and replaces absence', a
 test('failed presence and room reads clear bands while cached prose stays readable', async ({ page }) => {
   const city = await mount(page)
   await page.evaluate(() => { window.location.hash = '#view=place&place=11' })
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
+  await refresh(page, city)
+  await expect(page.locator('#place-occupants .public-activity')).toHaveCount(4)
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
   city.failPresence = true
   city.failPlace = true
@@ -168,6 +193,7 @@ test('failed presence and room reads clear bands while cached prose stays readab
 
 test('hidden and resumed tabs clear markers and a late old presence reply cannot restore them', async ({ page }) => {
   const city = await mount(page)
+  await refresh(page, city)
   await expect(page.locator('#resident-roster .public-activity')).toHaveCount(4)
   city.holdPresence = true
   await page.clock.fastForward(60_000)
@@ -180,6 +206,9 @@ test('hidden and resumed tabs clear markers and a late old presence reply cannot
   const held = city.heldPresence!
   await held.fulfill({ json: presenceBody(city, new URL(held.request().url())) })
   await expect(page.locator('.public-activity')).toHaveCount(0)
+  const hiddenReads = city.presence.length
+  await page.clock.fastForward(60_000)
+  expect(city.presence).toHaveLength(hiddenReads)
   city.holdPresence = false
   city.band = undefined
   await page.evaluate(() => {
@@ -206,19 +235,26 @@ test('quiet moderated and feed rooms never show a room band', async ({ page }) =
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
 })
 
-test('focused resident overlays refresh omission even when the roster and event marker stay equal', async ({ page }) => {
+test('focused resident bands clear until an existing focused read supplies a fresh value', async ({ page }) => {
   const city = await mount(page)
   await page.evaluate(() => { window.location.hash = '#view=map&resident=marker-far' })
   await expect(page.locator('#resident-roster .public-activity')).toHaveText('active now')
   const count = city.presence.filter(url => url.searchParams.has('handle')).length
   city.band = undefined
   await refresh(page, city)
+  expect(city.presence.filter(url => url.searchParams.has('handle'))).toHaveLength(count)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
+  city.asleep = false
+  await refresh(page, city)
   await expect.poll(() => city.presence.filter(url => url.searchParams.has('handle')).length)
-    .toBeGreaterThan(count)
+    .toBe(count + 1)
+  await expect(page.locator('#resident-roster .resident-number')).toHaveText('resident #9900')
   await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
   city.band = 'this week'
+  city.asleep = true
   await refresh(page, city)
   await expect(page.locator('#resident-roster .public-activity')).toHaveText('this week')
+  expect(city.presence.filter(url => url.searchParams.has('handle'))).toHaveLength(count + 2)
   city.failPresence = true
   city.failSnapshot = true
   await page.clock.fastForward(60_000)
@@ -230,7 +266,9 @@ test('selection changes discard late room bands and never reuse a cached marker'
   const city = await mount(page)
   let held: Route | null = null
   let shouldHold = true
+  let roomReads = 0
   await page.route('**/api/place/11**', async route => {
+    roomReads += 1
     if (shouldHold) { held = route; return }
     return route.fulfill({ status: 503, json: { error: 'Place could not be read.' } })
   })
@@ -244,13 +282,21 @@ test('selection changes discard late room bands and never reuse a cached marker'
   shouldHold = false
   await page.locator('#place-filter').selectOption('11')
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
-  await expect(page.locator('#place-description')).not.toContainText('Older room reply.')
+  await expect(page.locator('#place-description')).toContainText('Older room reply.')
+  expect(roomReads).toBe(1)
   expect(city.places.filter(url => url.pathname === '/api/place/12')).toHaveLength(1)
+  await refresh(page, city)
+  expect(roomReads).toBe(2)
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
+  await expect(page.locator('#place-description')).toContainText('Older room reply.')
 })
 
 test('muting the selected room removes both room and resident markers', async ({ page }) => {
-  await mount(page)
+  const city = await mount(page)
   await page.evaluate(() => { window.location.hash = '#view=place&place=11' })
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
+  await refresh(page, city)
+  await expect(page.locator('#place-occupants .public-activity')).toHaveCount(4)
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
   await page.locator('#place-focus-summary .mute-menu summary').click()
   await page.locator('#place-focus-summary').getByRole('button', { name: /^Mute place /u }).click()
@@ -267,6 +313,10 @@ test('returning to a cached room keeps its prose but requires a fresh band', asy
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
   city.failPlace = true
   await page.locator('#place-filter').selectOption('11')
+  await expect(page.locator('#place-description')).toContainText('Room words stay readable.')
+  expect(city.places.filter(url => url.pathname === '/api/place/11')).toHaveLength(1)
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
+  await refresh(page, city)
   await expect.poll(() => city.places.filter(url => url.pathname === '/api/place/11').length)
     .toBe(2)
   await expect(page.locator('#place-focus-summary .public-activity')).toHaveCount(0)
@@ -298,12 +348,16 @@ test('a room reply from a hidden tab cannot restore its band before a fresh read
   await expect(page.locator('#place-description')).not.toContainText('Older room reply.')
 })
 
-test('a late focused resident reply cannot replace fresh omission after a tab resumes', async ({ page }) => {
+test('a late focused resident reply stays marker-free after a tab resumes', async ({ page }) => {
   const city = await mount(page)
   let held: Route | null = null
+  let focusedReads = 0
   await page.route('**/api/residents?**', async route => {
     const url = new URL(route.request().url())
-    if (url.searchParams.get('handle') === 'marker-far' && !held) { held = route; return }
+    if (url.searchParams.get('handle') === 'marker-far') {
+      focusedReads += 1
+      if (!held) { held = route; return }
+    }
     return route.fallback()
   })
   await page.locator('#resident-filter').selectOption('marker-far')
@@ -317,29 +371,96 @@ test('a late focused resident reply cannot replace fresh omission after a tab re
     Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     document.dispatchEvent(new Event('visibilitychange'))
   })
-  await expect(page.locator('#resident-roster .resident-follow')).toHaveText('marker-far')
-  await expect.poll(() => city.presence.filter(url => url.searchParams.has('handle')).length).toBe(1)
+  await expect(page.locator('#resident-roster .resident-follow')).toHaveCount(0)
+  expect(focusedReads).toBe(1)
   await held!.fulfill({ json: { resident: { ...residentRows(city, false)[0],
-    id: 9900, handle: 'marker-far', last_active: 'active now' }, change_marker: '20' } })
+    id: 9900, handle: 'marker-far', asleep: true, last_active: 'active now' }, change_marker: '20' } })
+  await expect(page.locator('#resident-roster .resident-follow')).toHaveText('marker-far')
+  await expect(page.locator('#resident-roster .resident-number')).toContainText('asleep')
   await expect(page.locator('.public-activity')).toHaveCount(0)
+  expect(focusedReads).toBe(1)
+  city.asleep = false
+  await refresh(page, city)
+  await expect.poll(() => focusedReads).toBe(2)
+  await expect(page.locator('#resident-roster .resident-number')).toHaveText('resident #9900')
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
 })
 
 test('selecting a known resident clears retained bands and rejects a held roster reply', async ({ page }) => {
   const city = await mount(page)
+  await refresh(page, city)
   await expect(page.locator('#resident-roster .public-activity')).toHaveCount(4)
   city.holdPresence = true
   await page.clock.fastForward(60_000)
   await expect.poll(() => city.heldPresence !== null).toBe(true)
   const held = city.heldPresence!
+  const reads = city.presence.length
   await page.locator('#resident-filter').selectOption('marker-1')
-  await expect.poll(() => city.heldPresence !== held).toBe(true)
+  await expect(page.locator('#resident-roster .resident-follow')).toHaveText('marker-1')
+  expect(city.heldPresence).toBe(held)
+  expect(city.presence).toHaveLength(reads)
   await expect(page.locator('.public-activity')).toHaveCount(0)
   await held.fulfill({ json: presenceBody(city, new URL(held.request().url())) })
   await expect(page.locator('.public-activity')).toHaveCount(0)
   city.holdPresence = false
   city.band = undefined
-  const selectedRead = city.heldPresence!
-  await selectedRead.fulfill({ json: presenceBody(city, new URL(selectedRead.request().url())) })
+  await expect(page.locator('#window-status')).toContainText('Watching')
+  expect(city.presence).toHaveLength(reads)
+  await refresh(page, city)
+  expect(city.presence).toHaveLength(reads + 1)
+  await expect(page.locator('.public-activity')).toHaveCount(0)
+})
+
+test('a selection during a room refresh cannot give its later presence read a new marker generation', async ({ page }) => {
+  const city = await mount(page)
+  await page.evaluate(() => { window.location.hash = '#view=place&place=11' })
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
+  let held: Route | null = null
+  await page.route('**/api/place/11**', route => { held = route })
+  await page.clock.fastForward(60_000)
+  await expect.poll(() => held !== null).toBe(true)
+  await page.getByRole('tab', { name: 'Map', exact: true }).click()
+  const presenceBefore = city.presence.length
+  const completed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/residents')
+  await held!.fulfill({ json: { place: { id: 11, description: 'Earlier room words.',
+    labels: [], laws: [], last_active: 'longer' } } })
+  await completed
+  await expect.poll(() => city.presence.length).toBe(presenceBefore + 1)
   await expect(page.locator('#window-status')).toContainText('Watching')
   await expect(page.locator('.public-activity')).toHaveCount(0)
+})
+
+test('an unchanged presence refresh leaves inactive resident panels without bands', async ({ page }) => {
+  const city = await mount(page)
+  await refresh(page, city)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(4)
+  await page.getByRole('tab', { name: 'Place', exact: true }).click()
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
+  await refresh(page, city)
+  await expect(page.locator('#place-occupants .public-activity')).toHaveCount(4)
+  await expect(page.locator('#resident-roster .public-activity')).toHaveCount(0)
+})
+
+test('a delayed room description completes without redrawing unrelated live regions', async ({ page }) => {
+  await mount(page)
+  let held: Route | null = null
+  await page.route('**/api/place/11**', route => { held = route })
+  await page.getByRole('tab', { name: 'Place', exact: true }).click()
+  await expect.poll(() => held !== null).toBe(true)
+  await page.evaluate(() => {
+    const tracked = window as typeof window & { __activityLiveMutations?: number }
+    tracked.__activityLiveMutations = 0
+    for (const region of document.querySelectorAll('[aria-live], [role="status"]')) {
+      new MutationObserver(records => {
+        tracked.__activityLiveMutations = (tracked.__activityLiveMutations ?? 0) + records.length
+      }).observe(region, { attributes: true, childList: true, characterData: true, subtree: true })
+    }
+  })
+  await held!.fulfill({ json: { place: { id: 11, description: 'The delayed room words.',
+    labels: [], laws: [], last_active: 'today' } } })
+  await expect(page.locator('#place-description')).toHaveText('The delayed room words.')
+  await expect(page.locator('#place-focus-summary .public-activity')).toHaveText('today')
+  expect(await page.evaluate(() => (window as typeof window & {
+    __activityLiveMutations?: number
+  }).__activityLiveMutations)).toBe(0)
 })

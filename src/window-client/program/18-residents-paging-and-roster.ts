@@ -218,7 +218,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
         follow.addEventListener('click', () => chooseResident(resident.handle))
         row.append(follow, element('span', 'resident-number',
           'resident #' + String(resident.id) + (resident.asleep ? ' · asleep' : '')))
-        appendActivity(row.querySelector('.resident-number'), residentActivity.get(resident.id))
+        appendResidentActivity(row.querySelector('.resident-number'), resident.id)
         row.prepend(portraitNode('resident', resident.id, resident.handle, resident.has_drawing))
         const menu = muteMenu([residentMuteTarget(resident.handle)], 'roster:' + resident.handle)
         if (menu) row.append(menu)

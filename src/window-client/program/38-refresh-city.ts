@@ -1,8 +1,7 @@
 export const PART_38_REFRESH_CITY = `  async function refreshCity() {
-    if (state.refreshing || document.hidden) return
+    if (state.refreshing) return
     clearPublicActivity()
     const requestActivityRevision = publicActivityRevision
-    const requestActivitySelectionRevision = publicActivitySelectionRevision
     const hadSnapshot = state.hasSnapshot
     const navigationRevisionAtStart = navigationRevision
     state = { ...state, refreshing: true }
@@ -27,8 +26,8 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           const residents = await refreshUnchangedPresence(
             controller.signal,
             changeState.marker,
+            requestActivityRevision,
           )
-          if (requestActivityRevision !== publicActivityRevision || document.hidden) return
           if (navigationRevision !== navigationRevisionAtStart) {
             await finishWatchingPublicStreets()
             return
@@ -41,8 +40,7 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
               changeMarker: changeState.marker,
               failures: 0,
             }
-            renderAll()
-            await ensureFocusedSelection({ forceResident: true })
+            refreshResidentActivity()
             await finishWatchingPublicStreets()
             return
           }
@@ -60,11 +58,10 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           }
           populateFilters(snapshot)
           renderAll()
-          await ensureFocusedSelection({ forceResident: true })
+          void ensureFocusedSelection({ forceResident: true })
           await finishWatchingPublicStreets()
           return
         } catch {
-          if (requestActivityRevision !== publicActivityRevision || document.hidden) return
           // Presence is time-derived. If its small read fails, continue into a
           // marker-covered authored snapshot instead of retaining an unproven
           // mixed refresh.
@@ -72,7 +69,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       }
       const requiredMarker = changeState.marker || state.changeMarker
       const payload = await getSnapshot(controller.signal, requiredMarker)
-      if (requestActivityRevision !== publicActivityRevision || document.hidden) return
       const freshSnapshot = normalizeSnapshot(payload)
       if (requiredMarker && !markerCovers(freshSnapshot.changeMarker, requiredMarker)) {
         throw new Error('public snapshot does not cover the requested change marker')
@@ -165,13 +161,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
         hasSnapshot: true,
         failures: 0,
       }
-      try {
-        const residents = await refreshUnchangedPresence(controller.signal, state.changeMarker)
-        if (requestActivityRevision !== publicActivityRevision || document.hidden) return
-        state = { ...state, snapshot: Object.freeze({ ...state.snapshot, residents }) }
-      } catch {
-        if (requestActivityRevision !== publicActivityRevision || document.hidden) return
-      }
       populateFilters(snapshot)
       if (retainViewerReading) renderWithViewerInvalidations(changeState.changes, renderAll)
       else renderAll()
@@ -182,10 +171,9 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
           (state.directory.loaded || state.directory.error) && !state.directory.loading) {
         void loadDirectory(true)
       }
-      await ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
+      void ensureFocusedSelection({ forcePlace: replaceAuthored, forceResident: true })
       await finishWatchingPublicStreets()
     } catch {
-      if (requestActivityRevision !== publicActivityRevision || document.hidden) return
       clearPublicActivity()
       const failures = state.failures + 1
       state = { ...state, failures }
@@ -203,11 +191,6 @@ export const PART_38_REFRESH_CITY = `  async function refreshCity() {
       state = { ...state, refreshing: false }
       settleOvertakenFocusedPlaces()
       scheduleRefresh(nextDelay)
-      if (requestActivityRevision !== publicActivityRevision &&
-          requestActivitySelectionRevision === publicActivitySelectionRevision &&
-          !document.hidden && !state.failures) {
-        scheduleRefresh(0)
-      }
       renderOwnerNotice()
       void refreshSeasonIfDayChanged()
     }

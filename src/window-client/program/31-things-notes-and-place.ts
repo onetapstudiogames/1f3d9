@@ -445,9 +445,6 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       return
     }
     const description = state.details['place:' + String(place.id)]
-    if (description && description.activitySelectionRevision !== publicActivitySelectionRevision) {
-      window.queueMicrotask(() => void ensureDetail(false, place.id))
-    }
     if (place.moderated) {
       renderEmpty(placeDescriptionTarget(true), 'place-description-text', MODERATED_TEXT)
     } else if (!description || (description.loading && !description.record)) {
