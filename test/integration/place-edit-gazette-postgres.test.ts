@@ -16,7 +16,28 @@ import { Pool, type PoolClient } from 'pg'
 const POSTGRES_IMAGE =
   'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'place_edit_gazette_integration'
-const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+
+// Emit the start as well as the result so a parent timeout names the unfinished
+// step. Labels contain no query parameters, request bodies or credentials.
+async function timed<T>(label: string, work: () => T | Promise<T>): Promise<T> {
+  const started = performance.now()
+  const report = (state: string) => console.log(
+    `[place-edit-gazette ${new Date().toISOString()}] ${label}: ${state} ` +
+    `(${(performance.now() - started).toFixed(1)} ms)`,
+  )
+  report('start')
+  try {
+    const result = await work()
+    report('done')
+    return result
+  } catch (error) {
+    report('failed')
+    throw error
+  }
+}
+
+const schemaDdl = await timed('read schema', () =>
+  readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8'))
 
 let database: Pool | null = null
 
@@ -76,7 +97,7 @@ function runDocker(args: readonly string[]): string {
 }
 
 async function useEngineTransactions(client: Pool): Promise<void> {
-  const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+  const { setEngineTransactionRunnerForTests } = await timed('import engine', () => import('../../src/engine.ts'))
   setEngineTransactionRunnerForTests(async (_db, work) => {
     const connection = await client.connect()
     try {
@@ -96,36 +117,39 @@ async function useEngineTransactions(client: Pool): Promise<void> {
 async function startPostgres(): Promise<{ client: Pool; containerName: string }> {
   const containerName = `1f3d9-place-edit-gazette-${process.pid}-${randomBytes(4).toString('hex')}`
   const password = randomBytes(24).toString('hex')
-  runDocker([
+  await timed('docker start', () => runDocker([
     'run', '--detach', '--rm', '--name', containerName,
     '--publish', '127.0.0.1::5432',
     '--env', `POSTGRES_PASSWORD=${password}`,
     '--env', `POSTGRES_DB=${POSTGRES_DATABASE}`,
     POSTGRES_IMAGE,
-  ])
+  ]))
   try {
-    const portOutput = runDocker(['port', containerName, '5432/tcp'])
+    const portOutput = await timed('docker port', () => runDocker(['port', containerName, '5432/tcp']))
     const port = Number(portOutput.match(/:(\d+)\s*$/u)?.[1])
     assert.ok(Number.isSafeInteger(port) && port > 0, `could not read PostgreSQL port from ${portOutput}`)
     const client = new Pool({
       host: '127.0.0.1', port, user: 'postgres', password,
       database: POSTGRES_DATABASE, ssl: false, max: 10,
     })
-    const deadline = Date.now() + 30_000
-    let lastError: unknown = null
-    while (Date.now() < deadline) {
-      try {
-        await client.query('SELECT 1')
-        return { client, containerName }
-      } catch (error) {
-        lastError = error
-        await delay(200)
+    return await timed('postgres readiness', async () => {
+      const deadline = Date.now() + 30_000
+      let lastError: unknown = null
+      while (Date.now() < deadline) {
+        try {
+          await client.query('SELECT 1')
+          return { client, containerName }
+        } catch (error) {
+          lastError = error
+          await delay(200)
+        }
       }
-    }
-    await client.end().catch(() => undefined)
-    throw lastError instanceof Error ? lastError : new Error('PostgreSQL did not become ready')
+      await timed('close unready pool', () => client.end()).catch(() => undefined)
+      throw lastError instanceof Error ? lastError : new Error('PostgreSQL did not become ready')
+    })
   } catch (error) {
-    spawnSync('docker', ['stop', '--time', '0', containerName], { encoding: 'utf8', windowsHide: true })
+    await timed('docker stop after setup failure', () => runDocker(['stop', '--time', '0', containerName]))
+      .catch(() => undefined)
     throw error
   }
 }
@@ -152,16 +176,16 @@ const GAZETTE_ROOM_CLOSED_DESCRIPTION =
 // lifecycle guard before this test even gets to place_edit.
 async function resetDatabase(): Promise<void> {
   const client = connectedDatabase()
-  await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await client.query(schemaDdl)
-  await client.query(
+  await timed('reset: drop schema', () => client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public'))
+  await timed('reset: apply schema', () => client.query(schemaDdl))
+  await timed('reset: insert owner', () => client.query(
     `INSERT INTO residents (id, handle, model, secret_hash) VALUES (1, 'gazette-owner', 'place-edit-gazette-test', $1)`,
     [secretHash(ownerSecret)],
-  )
-  const worldId = Number((await client.query<{ id: number }>(
+  ))
+  const worldId = Number((await timed('reset: find world', () => client.query<{ id: number }>(
     `SELECT id FROM places WHERE place_kind = 'world'`,
-  )).rows[0]!.id)
-  await client.query(`
+  ))).rows[0]!.id)
+  await timed('reset: insert continent', () => client.query(`
     INSERT INTO places (
       id, parent_id, place_kind, name, founding_name, description, owner_id,
       open_to_building, open_to_things, open_to_notes
@@ -169,8 +193,8 @@ async function resetDatabase(): Promise<void> {
       2, $1, 'continent', 'Gazette test continent', 'Gazette test continent',
       'Integration-only parent for the Gazette room.', 1, FALSE, FALSE, FALSE
     )
-  `, [worldId])
-  await client.query(`
+  `, [worldId]))
+  await timed('reset: insert Gazette room', () => client.query(`
     INSERT INTO places (
       id, parent_id, place_kind, name, founding_name, description, purpose, owner_id,
       open_to_building, open_to_things, open_to_notes
@@ -178,23 +202,26 @@ async function resetDatabase(): Promise<void> {
       454, 2, 'place', 'the gazette submission room', NULL,
       $1, '', 1, FALSE, FALSE, FALSE
     )
-  `, [GAZETTE_ROOM_CLOSED_DESCRIPTION])
+  `, [GAZETTE_ROOM_CLOSED_DESCRIPTION]))
 }
 
 test('place_edit on the protected Gazette room answers the named refusal, in PostgreSQL', {
   timeout: 120_000,
 }, async t => {
+  t.beforeEach(child => {
+    console.log(`[place-edit-gazette ${new Date().toISOString()}] test start: ${child.name}`)
+  })
   const postgres = await startPostgres()
   database = postgres.client
   try {
     await useEngineTransactions(postgres.client)
-    const { Hono } = await import('hono')
-    const { err } = await import('../../src/core.ts')
-    const { mountWorldRoutes } = await import('../../src/world.ts')
+    const { Hono } = await timed('import Hono', () => import('hono'))
+    const { err } = await timed('import core', () => import('../../src/core.ts'))
+    const { mountWorldRoutes } = await timed('import world', () => import('../../src/world.ts'))
     const { GAZETTE_ROOM_PROTECTED_ERROR, gazetteRoomLifecycleRefusal } =
-      await import('../../src/gazette-room.ts')
+      await timed('import Gazette room', () => import('../../src/gazette-room.ts'))
     const app = new Hono()
-    mountWorldRoutes(app)
+    await timed('mount routes', () => mountWorldRoutes(app))
     // Mirrors only the Gazette branch of src/index.ts:441-447's global
     // onError -- not the full production chain, which also carries
     // isPublicExactReadBusy (503), isRetryableCollision (409), the terminal
@@ -228,18 +255,18 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
     for (const [label, body] of bodies) {
       await t.test(`PATCH /api/place/454 {"${label}": ...} refuses cleanly`, async () => {
         await resetDatabase()
-        const before = await connectedDatabase().query(
+        const before = await timed('read room before', () => connectedDatabase().query(
           'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
-        )
-        const response = await app.request('/api/place/454', {
+        ))
+        const response = await timed(`PATCH ${label}`, () => app.request('/api/place/454', {
           method: 'PATCH', headers: bearer(ownerSecret), body: JSON.stringify(body),
-        })
-        const text = await response.clone().text()
+        }))
+        const text = await timed('read response', () => response.clone().text())
         assert.equal(response.status, 409, text)
         assert.deepEqual(JSON.parse(text), { error: GAZETTE_ROOM_PROTECTED_ERROR })
-        const after = await connectedDatabase().query(
+        const after = await timed('read room after', () => connectedDatabase().query(
           'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
-        )
+        ))
         assert.deepEqual(after.rows, before.rows, 'the room must be completely unchanged')
       })
     }
@@ -254,10 +281,10 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
     // real change, but a no-op on the room's exact seeded values stays 200.
     await t.test('a value-identical edit is an ordinary 200 no-op, not a refusal', async () => {
       await resetDatabase()
-      const before = await connectedDatabase().query(
+      const before = await timed('read room before', () => connectedDatabase().query(
         'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
-      )
-      const response = await app.request('/api/place/454', {
+      ))
+      const response = await timed('PATCH identical values', () => app.request('/api/place/454', {
         method: 'PATCH',
         headers: bearer(ownerSecret),
         body: JSON.stringify({
@@ -266,12 +293,12 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
           quiet: false,
           front_matter_thing_ids: [],
         }),
-      })
-      const text = await response.clone().text()
+      }))
+      const text = await timed('read response', () => response.clone().text())
       assert.equal(response.status, 200, text)
-      const after = await connectedDatabase().query(
+      const after = await timed('read room after', () => connectedDatabase().query(
         'SELECT description, purpose, quiet, front_matter_thing_ids FROM places WHERE id = 454',
-      )
+      ))
       assert.deepEqual(after.rows, before.rows, 'a value-identical edit must change nothing')
     })
 
@@ -288,49 +315,50 @@ test('place_edit on the protected Gazette room answers the named refusal, in Pos
     // request naming a real trait still refuses 409.
     await t.test('PUT /api/place/454/laws with an empty traits list is a 200 no-op, not a refusal', async () => {
       await resetDatabase()
-      const response = await app.request('/api/place/454/laws', {
+      const response = await timed('PUT empty laws', () => app.request('/api/place/454/laws', {
         method: 'PUT', headers: bearer(ownerSecret), body: JSON.stringify({ traits: [] }),
-      })
-      const text = await response.clone().text()
+      }))
+      const text = await timed('read response', () => response.clone().text())
       assert.equal(response.status, 200, text)
       assert.deepEqual(JSON.parse(text), { place_id: 454, laws: [] })
     })
 
     await t.test('PUT /api/place/454/laws naming a real trait still refuses cleanly', async () => {
       await resetDatabase()
-      await connectedDatabase().query(
+      await timed('insert test trait', () => connectedDatabase().query(
         `INSERT INTO traits (name, coiner_id) VALUES ('probe-trait', 1)`,
-      )
-      const before = await connectedDatabase().query(
+      ))
+      const before = await timed('read laws before', () => connectedDatabase().query(
         'SELECT count(*)::integer AS n FROM place_law_changes WHERE place_id = 454',
-      )
-      const response = await app.request('/api/place/454/laws', {
+      ))
+      const response = await timed('PUT real trait', () => app.request('/api/place/454/laws', {
         method: 'PUT', headers: bearer(ownerSecret), body: JSON.stringify({ traits: ['probe-trait'] }),
-      })
-      const text = await response.clone().text()
+      }))
+      const text = await timed('read response', () => response.clone().text())
       assert.equal(response.status, 409, text)
       assert.deepEqual(JSON.parse(text), { error: GAZETTE_ROOM_PROTECTED_ERROR })
-      const after = await connectedDatabase().query(
+      const after = await timed('read laws after', () => connectedDatabase().query(
         'SELECT count(*)::integer AS n FROM place_law_changes WHERE place_id = 454',
-      )
+      ))
       assert.deepEqual(after.rows, before.rows, 'the refusal must add no law-change row')
     })
 
     await t.test('the underlying trigger really is what fires (23514 / gazette_submission_room_lifecycle)', async () => {
       await resetDatabase()
-      await assert.rejects(
+      await timed('direct UPDATE refusal', () => assert.rejects(
         connectedDatabase().query(`UPDATE places SET description = 'x' WHERE id = 454`),
         (error: unknown) => {
           assert.equal((error as { code?: string }).code, '23514')
           assert.equal((error as { constraint?: string }).constraint, 'gazette_submission_room_lifecycle')
           return true
         },
-      )
+      ))
     })
   } finally {
     const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
     setEngineTransactionRunnerForTests(null)
-    await database?.end().catch(() => undefined)
-    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8', windowsHide: true })
+    await timed('close pool', () => database?.end()).catch(() => undefined)
+    await timed('docker stop', () => runDocker(['stop', '--time', '0', postgres.containerName]))
+      .catch(() => undefined)
   }
 })
