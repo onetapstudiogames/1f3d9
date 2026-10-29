@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   auditRefusalCensus,
   discoverCandidates,
@@ -222,7 +222,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // GET /season/icon/:file and GET /season/word/:file.
   // Reading settings (decision #154) add GET /api/me/settings and PATCH /api/me/settings.
   // Waiting transfers (decision #158) add POST /api/transfer/waiting/:waitingId/accept and /decline.
-  assert.equal(http.registrations.length, 157)
+  // Decision #167 adds four founder backlog routes and the scheduled close route.
+  assert.equal(http.registrations.length, 162)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
@@ -327,6 +328,10 @@ test('expression-level provenance separates caller refusals from internal discri
   const byKey = new Map(candidates.map(row => [row.key, row]))
 
   for (const key of [
+    'src/showing-room-attention.ts::showing room status was not returned::1',
+    'src/showing-room-store.ts::showing room stores are not ready::1',
+    'src/showing-room-copy.ts::The question number must be a positive whole number.::1',
+    'src/showing-room-copy.ts::The complete rules must fit within 4000 characters. Shorten the title or prompt.::1',
     'src/city-credit.ts::city credit account is unavailable::1',
     'src/payment-sale-operations.ts::payment sale attempt is unavailable::1',
     'src/payment-treasury-operations.ts::treasury payment completion result is invalid::1',
@@ -356,4 +361,80 @@ test('expression-level provenance separates caller refusals from internal discri
   assert.equal(byKey.get(
     'src/paypal-credit-dispute.ts::This PayPal dispute is not awaiting founder review. Nothing changed.::1',
   )?.disposition, 'excluded')
+})
+
+test('showing room founder refusals name only their HTTP boundary', () => {
+  const rows = discoverCandidates(projectRoot).filter(row => (
+    ['src/showing-room-routes.ts', 'src/showing-room-store.ts', 'src/showing-room-cron-routes.ts'].includes(row.producer)
+    && row.disposition === 'included'
+  ))
+  assert.ok(rows.length > 20)
+  assert.ok(rows.every(row => row.finalBoundary === 'HTTP JSON'))
+})
+
+test('showing room run errors inventory fixed caller messages rather than code arguments', () => {
+  mkdirSync(new URL('../test-results/', import.meta.url), { recursive: true })
+  const fixtureRoot = mkdtempSync(join(fileURLToPath(projectRoot), 'test-results', 'showing-refusal-census-'))
+  mkdirSync(join(fixtureRoot, 'src'))
+  writeFileSync(join(fixtureRoot, 'src', 'showing-room-runner.ts'), `
+    class ShowingRoomRunError extends Error {
+      constructor(readonly code: string, message: string) { super(message) }
+    }
+    export function runShowingRoomClose(): never {
+      throw new ShowingRoomRunError('review_needed', 'The saved count needs review; ask the founder to read it.')
+    }
+    export function unresolved(message: string): never {
+      throw new ShowingRoomRunError('unavailable', message)
+    }
+  `)
+  try {
+    const fixtureUrl = new URL(`${pathToFileURL(fixtureRoot).href}/`)
+    assert.deepEqual(discoverCandidates(fixtureUrl).map(row => ({
+      text: row.finalText, status: row.status, adapter: row.adapter,
+      boundary: row.finalBoundary, disposition: row.disposition,
+    })), [{
+      text: 'The saved count needs review; ask the founder to read it.',
+      status: '503', adapter: 'showing room scheduled close adapter',
+      boundary: 'HTTP 503 JSON', disposition: 'included',
+    }])
+    assert.deepEqual(discoverUnresolvedProducers(fixtureUrl), [
+      'src/showing-room-runner.ts::message::1',
+    ])
+  } finally {
+    assert.ok(pathToFileURL(fixtureRoot).href.startsWith(new URL('test-results/', projectRoot).href))
+    rmSync(fixtureRoot, { recursive: true, force: true })
+  }
+})
+
+test('showing room award refusals preserve the fixed messages forwarded by the runner', () => {
+  const rows = discoverCandidates(projectRoot).filter(row => row.producer === 'src/showing-room-awards.ts')
+  assert.deepEqual(rows.map(row => ({ text: row.finalText, boundary: row.finalBoundary, status: row.status })), [
+    { text: 'only an open managed showing room contest can issue scheduled credits; manual contests stay with the founder', boundary: 'HTTP 503 JSON', status: '503' },
+    { text: 'the showing room award could not be confirmed; ask the founder to review this contest, its original source key and recipient', boundary: 'HTTP 503 JSON', status: '503' },
+  ])
+})
+
+test('every showing room migration refusal and table check has a reviewed SQL inventory row', () => {
+  const sql = readFileSync(new URL('../db/migrations/20261027_showing_room.sql', import.meta.url), 'utf8')
+  const expressions = [...sql.matchAll(/RAISE EXCEPTION '((?:''|[^'])*)'[\s\S]*?USING ERRCODE\s*=\s*'([^']+)'\s*,\s*CONSTRAINT\s*=\s*'([^']+)'/gu)]
+  assert.equal(expressions.length, (sql.match(/RAISE EXCEPTION/gu) ?? []).length)
+  const guards = expressions.map(match => ({
+    constraint: match[3], sqlState: match[2], sqlText: match[1]!.replaceAll("''", "'"),
+  }))
+  const section = auditText.split('<!-- showing-room-sql:begin -->')[1]?.split('<!-- showing-room-sql:end -->')[0] ?? ''
+  const rows = section.split(/\r?\n/u).filter(line => line.startsWith('{')).map(line => JSON.parse(line))
+  assert.deepEqual(rows.map(({ constraint, sqlState, sqlText }) => ({ constraint, sqlState, sqlText })), guards)
+  assert.equal(rows.length, 28)
+  for (const row of rows) {
+    assert.ok(row.translation.length > 20, row.constraint)
+    assert.equal(row.proof, 'structural:test/refusal-census-audit.test.ts exact SQL expression and translation inventory')
+  }
+
+  const checks = [...sql.matchAll(/\('showing_room_[^']+','([^']+)','CHECK /gu)].map(match => match[1])
+  const declaredChecks = sql.split('CREATE OR REPLACE FUNCTION protect_showing_room_contest()')[0]!.match(/\bCHECK\s*\(/gu) ?? []
+  assert.equal(checks.length, declaredChecks.length)
+  assert.equal(checks.length, 22)
+  const checkSection = auditText.split('<!-- showing-room-checks:begin -->')[1]?.split('<!-- showing-room-checks:end -->')[0] ?? ''
+  const documentedChecks = [...checkSection.matchAll(/^\| `([^`]+)` \|/gmu)].map(match => match[1])
+  assert.deepEqual(documentedChecks, checks)
 })

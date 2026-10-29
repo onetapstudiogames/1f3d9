@@ -80,7 +80,7 @@ test('the four reads use the fixed hidden-place and latest-moderation rules', as
   }
   assert.match(calls[0]!.text, /gazette:happenings-places[\s\S]*created_at >= \$1::timestamptz[\s\S]*created_at < \$2::timestamptz[\s\S]*owner_id/u)
   assert.match(calls[0]!.text, /WITH RECURSIVE[\s\S]*root_owner[\s\S]*UNION ALL[\s\S]*parent_id[\s\S]*IS NOT DISTINCT FROM/u)
-  assert.match(calls[1]!.text, /gazette:happenings-showing-room[\s\S]*note\.author_id = place\.owner_id[\s\S]*walk_to_read = FALSE[\s\S]*\$2::timestamptz - interval '30 days'[\s\S]*body ~ '\^THE \[A-Z\]\+ QUESTION:'[\s\S]*\$1::timestamptz < \$2::timestamptz/u)
+  assert.match(calls[1]!.text, /gazette:happenings-showing-room[\s\S]*note\.author_id = place\.owner_id[\s\S]*walk_to_read = FALSE[\s\S]*\$2::timestamptz - interval '30 days'[\s\S]*body ~ '\^THE \[A-Z\]\+\(-\[A-Z\]\+\)\* QUESTION:'[\s\S]*\$1::timestamptz < \$2::timestamptz/u)
   assert.match(calls[2]!.text, /target_type = 'line'[\s\S]*line\.created_at < \$2::timestamptz[\s\S]*DISTINCT ON \(line\.place_id\)[\s\S]*first_line\.created_at >= \$1::timestamptz/u)
   assert.match(calls[3]!.text, /DISTINCT ON \(note\.place_id\)[\s\S]*count_note\.created_at < \$2::timestamptz[\s\S]*\) < 10[\s\S]*ORDER BY created_at DESC, place_id DESC[\s\S]*LIMIT 22/u)
 })
@@ -198,6 +198,24 @@ test('the header byte cap yields the fixed unavailable block', () => {
     firstLines: Object.freeze([1]),
   }), 'x'.repeat(3990))
   assert.equal(block, [GAZETTE_HAPPENINGS_HEADING, GAZETTE_HAPPENINGS_FAILURE_SENTENCE].join('\n'))
+})
+
+test('internal ordinal hyphens preserve earliest question identity and latest three selection', () => {
+  const question = (id: number, ordinal: string, date = '2026-10-05') => ({
+    id, body: `THE ${ordinal} QUESTION: ${date} at 15:00:00 UTC`,
+  })
+  const facts = gazetteHappeningsFromRows({
+    places: [], firstLines: [], smallCorner: [],
+    showingRoom: [
+      question(21, 'TWENTY-FIRST'), question(22, 'TWENTY-SECOND'),
+      question(23, 'TWENTY-THIRD'), question(24, 'TWENTY-FOURTH'),
+      question(25, 'TWENTY-SECOND', '2026-10-07'),
+      question(26, '-TWENTY-FIFTH'), question(27, 'TWENTY-FIFTH-'),
+      question(28, 'TWENTY--FIFTH'), question(29, 'TWENTY_FIRST'),
+    ],
+  }, week)
+  assert.deepEqual(facts.showingRoom.map(row => row.note_id), [22, 23, 24])
+  assert.equal(facts.showingRoom[0]?.times[0], '2026-10-05 at 15:00 UTC')
 })
 
 test('the parser reads every stored section after the exact heading and skips unknown lines', () => {

@@ -45,6 +45,10 @@ export function resolvePublicActivityTarget(
 }
 
 const migration = readFileSync(new URL('../db/migrations/20261028_stored_public_activity.sql', import.meta.url), 'utf8')
+const showingMigration = readFileSync(new URL('../db/migrations/20261027_showing_room.sql', import.meta.url), 'utf8')
+const showingGuards = [...showingMigration.matchAll(
+  /CREATE OR REPLACE FUNCTION protect_gazette_submission_room\(\)\s+RETURNS trigger\s+LANGUAGE plpgsql\s+AS \$\$([\s\S]*?)\$\$;/gu,
+)]
 const normalizedSqlType = (value: string) => value.replaceAll('timestamptz', 'timestamp with time zone').replace(/\s+/gu, ' ').trim()
 const functionContracts = Object.fromEntries([...migration.matchAll(
   /CREATE OR REPLACE FUNCTION (\w+)\(([\s\S]*?)\)\s*RETURNS ([\s\S]*?)\s+LANGUAGE (\w+)([\s\S]*?)\bAS (\$\w*\$)([\s\S]*?)\6;/gu,
@@ -53,7 +57,10 @@ const functionContracts = Object.fromEntries([...migration.matchAll(
   volatility: /IMMUTABLE/u.test(match[5]!) ? 'i' : /STABLE/u.test(match[5]!) ? 's' : 'v',
   body: match[7]!.replaceAll('\r\n', '\n').trim(),
 }]))
-if (Object.keys(functionContracts).length !== 16) throw new Error('public activity reviewed function inventory is incomplete')
+if (Object.keys(functionContracts).length !== 16 || showingGuards.length !== 1) {
+  throw new Error('public activity reviewed function inventory is incomplete')
+}
+const showingGuardBody = showingGuards[0]![1]!.replaceAll('\r\n', '\n').trim()
 
 const POSTCONDITIONS = `WITH RECURSIVE snapshot_relations(oid) AS (
   SELECT relation.oid FROM pg_class relation
@@ -135,7 +142,9 @@ SELECT
       SELECT to_regprocedure('public.' || function_name || '()') FROM expected_triggers)
       AND trigger.tgname NOT IN (SELECT name FROM expected_triggers)) AS triggers_match,
   (SELECT count(*)=16 AND coalesce(bool_and(function.oid IS NOT NULL
-      AND btrim(replace(function.prosrc,E'\\r\\n',E'\\n'),E' \\t\\n')=expected.contract->>'body'
+      AND (btrim(replace(function.prosrc,E'\\r\\n',E'\\n'),E' \\t\\n')=expected.contract->>'body'
+        OR expected.name='protect_gazette_submission_room'
+          AND btrim(replace(function.prosrc,E'\\r\\n',E'\\n'),E' \\t\\n')=$2)
       AND pg_get_function_identity_arguments(function.oid)=expected.contract->>'args'
       AND pg_get_function_result(function.oid)=expected.contract->>'result'
       AND (SELECT lanname FROM pg_language WHERE oid=function.prolang)=expected.contract->>'language'
@@ -188,7 +197,7 @@ export async function verifyPublicActivityClient(client: Pick<QueryClient, 'quer
   try {
     await client.query('BEGIN READ ONLY')
     await client.query("SET LOCAL statement_timeout = '30s'")
-    const { rows } = await client.query(POSTCONDITIONS, [JSON.stringify(functionContracts)])
+    const { rows } = await client.query(POSTCONDITIONS, [JSON.stringify(functionContracts), showingGuardBody])
     const row = rows[0]
     if (rows.length !== 1 || row?.columns_match !== true || row.receipt_matches !== true
       || row.triggers_match !== true || row.functions_match !== true || row.summaries_match !== true || row.private_settings_exported !== false

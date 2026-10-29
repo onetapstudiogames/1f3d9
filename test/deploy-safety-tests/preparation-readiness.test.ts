@@ -140,6 +140,13 @@ export function registerPreparationReadinessTests(): void {
     assert.equal(existsSync(fixture.commandLog), false)
 
     for (const value of ['', 'APPLIED_TO_PREVIEW_AND_PRODUCTION']) {
+      const missingShowingRoom = fixture.run({ CONFIRM_SHOWING_ROOM_MIGRATION: value })
+      assert.notEqual(missingShowingRoom.status, 0)
+      assert.match(`${missingShowingRoom.stdout}\n${missingShowingRoom.stderr}`, /showing room schema and dormant guards.*Preview and Production.*activation follows/iu)
+      assert.equal(existsSync(fixture.commandLog), false)
+    }
+
+    for (const value of ['', 'APPLIED_TO_PREVIEW_AND_PRODUCTION']) {
       const missingHeldLuggage = fixture.run({ CONFIRM_HELD_LUGGAGE_MIGRATION: value })
       assert.notEqual(missingHeldLuggage.status, 0)
       assert.match(

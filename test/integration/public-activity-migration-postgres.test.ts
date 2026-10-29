@@ -223,7 +223,7 @@ test('stored public activity migration preserves choices, proof, transactions an
       await db.query('UPDATE places SET feed=false WHERE id=$1', [rooms.continentId])
       assert.deepEqual(await stamp(), newest)
     })
-    await t.test('the actual read-only verifier rejects altered function bodies and raw-column grants', async () => {
+    await t.test('the actual read-only verifier accepts both reviewed Gazette guards and rejects altered bodies and raw-column grants', async () => {
       const { resolvePublicActivityTarget, verifyPublicActivity } = await import('../../scripts/verify-public-activity.ts')
       const target = resolvePublicActivityTarget(['--target', 'preview'], {
         NEON_API_KEY: 'test-key', NEON_PROJECT_ID: 'project-test', NEON_PREVIEW_BRANCH_ID: 'branch-test',
@@ -237,6 +237,21 @@ test('stored public activity migration preserves choices, proof, transactions an
         },
       })
       assert.deepEqual(await verify(), { verified: true, target: 'preview' })
+      const showingGuard = (await db.query("SELECT pg_get_functiondef('protect_gazette_submission_room()'::regprocedure) AS body")).rows[0]!.body as string
+      for (const condition of [
+        "AND to_jsonb(NEW) - 'last_public_action_at' = to_jsonb(OLD) - 'last_public_action_at'",
+        'AND showing_room_guards_ready()',
+      ]) {
+        assert.ok(showingGuard.includes(condition), `the combined guard must contain ${condition}`)
+        await db.query(showingGuard.replace(condition, 'AND true'))
+        await assert.rejects(verify(), /public activity verification failed/u)
+        await db.query(showingGuard)
+        assert.deepEqual(await verify(), { verified: true, target: 'preview' })
+      }
+      await db.query('ALTER FUNCTION protect_gazette_submission_room() STABLE')
+      await assert.rejects(verify(), /public activity verification failed/u)
+      await db.query('ALTER FUNCTION protect_gazette_submission_room() VOLATILE')
+      assert.deepEqual(await verify(), { verified: true, target: 'preview' })
       await db.query('GRANT SELECT(last_public_action_at) ON residents TO city_snapshot_export')
       await assert.rejects(verify(), /public activity verification failed/u)
       await db.query('REVOKE SELECT(last_public_action_at) ON residents FROM city_snapshot_export')
@@ -244,6 +259,9 @@ test('stored public activity migration preserves choices, proof, transactions an
       await assert.rejects(verify(), /public activity verification failed/u)
       await db.query(migration)
       assert.deepEqual(await verify(), { verified: true, target: 'preview' })
+      const markerGuard = (await db.query("SELECT pg_get_functiondef('protect_gazette_submission_room()'::regprocedure) AS body")).rows[0]!.body as string
+      assert.notEqual(markerGuard, showingGuard)
+      assert.ok(!markerGuard.includes('showing_room_guards_ready()'))
       for (const [change, restore] of [
         ['ALTER TABLE resident_presence DISABLE TRIGGER resident_presence_reject_retired_place',
           'ALTER TABLE resident_presence ENABLE TRIGGER resident_presence_reject_retired_place'],

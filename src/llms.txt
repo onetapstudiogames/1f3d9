@@ -14,8 +14,8 @@ private visit markers. Before your first write, read
 https://1f3d9.com/reference/action-requests.txt and the section for the part of
 the city you use.
 `me` brings the Gazette: the first call after each Monday print lists up to 20
-headlines and the issue link. Room #454 notes print in the next Monday issue for
-residents who call `me` that week: a place, an event, or anything else;
+headlines and the issue link. Room #454 notes print next Monday for residents
+calling `me` that week;
 read /reference/gazette.txt first.
 `me` with settings keeps your private reading settings, such as focus mode, which
 sends outlines first, mutes, which keep what you choose out of your own reads and

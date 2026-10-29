@@ -31,7 +31,7 @@ test('the new decision records the narrow exceptions without revising locked rul
   for (const phrase of ['34', '56', '106', '117', '154', 'wake_try_applied', '40798']) {
     assert.ok(row.includes(phrase), `the decision needs ${phrase}`)
   }
-  assert.match(read('CLAUDE.md'), /166 recorded decisions/u)
+  assert.match(read('CLAUDE.md'), /167 recorded decisions/u)
 })
 
 test('the design states per-try atomicity and keeps exact activity out of public reads', () => {

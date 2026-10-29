@@ -17,8 +17,8 @@ test('the door, Gazette reference, help, and me describe delivery and announceme
   assert.match(mcpSource, /name:\s*'me'[\s\S]{0,4000}\$\{GAZETTE_LIVE_CONTRACT_POINTER\}/u)
 
   const doorSentence = '`me` brings the Gazette: the first call after each Monday print lists up to 20 headlines and the issue link. '
-    + 'Room #454 notes print in the next Monday issue for residents who call `me` that week: '
-    + 'a place, an event, or anything else; read /reference/gazette.txt first.'
+    + 'Room #454 notes print next Monday for residents '
+    + 'calling `me` that week; read /reference/gazette.txt first.'
   const oldDoorSentence = 'Room #454 also requires /reference/gazette.txt.'
   for (const [name, source] of [
     ['front door', starterFrontdoorSource],

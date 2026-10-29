@@ -62,6 +62,7 @@ type PreparationFixture = Readonly<{
 }>
 
 const laterHolderReleaseReady = Object.freeze({
+  CONFIRM_SHOWING_ROOM_MIGRATION: 'APPLIED_DORMANT_TO_PREVIEW_AND_PRODUCTION_WITH_GUARDS_VERIFIED',
   CONFIRM_LATER_HOLDER_PROVIDER_KEY: 'VERIFIED_IN_VERCEL_PREVIEW_AND_PRODUCTION',
   CONFIRM_LATER_HOLDER_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
   CONFIRM_PAYPAL_CREDIT_DISPUTES_MIGRATION: 'APPLIED_TO_PREVIEW_AND_PRODUCTION',
@@ -200,6 +201,8 @@ export function createPreparationFixture(): PreparationFixture {
     'export TEST_REQUIRED_CHECK_NAME',
     'TEST_REQUIRED_CHECK_APP_ID="${18-}"',
     'export TEST_REQUIRED_CHECK_APP_ID',
+    'CONFIRM_SHOWING_ROOM_MIGRATION="${19-}"',
+    'export CONFIRM_SHOWING_ROOM_MIGRATION',
     `cd ${JSON.stringify(bashRoot)}`,
     'bash scripts/deploy.sh --prepare',
     '',
@@ -232,6 +235,7 @@ export function createPreparationFixture(): PreparationFixture {
         overrides.TEST_REQUIRED_CHECK_CONCLUSION ?? '',
         overrides.TEST_REQUIRED_CHECK_NAME ?? '',
         overrides.TEST_REQUIRED_CHECK_APP_ID ?? '',
+        readiness.CONFIRM_SHOWING_ROOM_MIGRATION ?? '',
       ], {
         cwd: root,
         encoding: 'utf8',

@@ -104,6 +104,9 @@ const ALWAYS_ALLOWED: Readonly<Record<string, string>> = Object.freeze({
   "POST '/api/ping/:id/answer' src/room-talk-routes.ts": 'answering a ping is one fixed word, never new text',
   "POST '/api/ping/:id/dismiss' src/room-talk-routes.ts": 'dismissing your own receipt',
   "POST '/api/wait-here' src/room-talk-routes.ts": 'waits always work',
+  "POST '/api/founder/showing-room/contests' src/showing-room-routes.ts": 'founder only; manages the private showing room queue',
+  "PATCH '/api/founder/showing-room/contests/:id' src/showing-room-routes.ts": 'founder only; edits the private showing room queue',
+  "POST '/api/founder/showing-room/control' src/showing-room-routes.ts": 'founder only; controls the showing room service',
   "POST '/api/transfer' src/society.ts": 'giving always works',
   "POST '/api/transfer/offer' src/society.ts": 'offering your own property always works',
   "POST '/api/transfer/:offerId/claim' src/society.ts": 'claiming an offer moves property, never words',
@@ -129,8 +132,8 @@ test('every write route checks the hold or is always allowed with a reason', () 
   assert.deepEqual(unlisted, [], 'place each new write route on one of the two hold lists')
   const stale = [...listed].filter(key => !routes.some(route => route.key === key))
   assert.deepEqual(stale, [], 'a listed write route no longer exists')
-  // Decision #154 adds PATCH /api/me/settings; decision #158 adds accept and decline.
-  assert.equal(routes.length, 75, 'the city has 75 write route registrations; a new one needs a list entry')
+  // Decision #167 adds three founder showing room management routes.
+  assert.equal(routes.length, 78, 'the city has 78 write route registrations; a new one needs a list entry')
   for (const reason of Object.values(ALWAYS_ALLOWED)) assert.ok(reason.length > 0)
 
   for (const [key, where] of Object.entries(CHECKS_THE_HOLD)) {

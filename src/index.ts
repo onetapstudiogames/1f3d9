@@ -9,6 +9,7 @@ import {
   auth,
   authPassive,
   authRootKey,
+  authRootKeyPassive,
   COLLISION_CONFLICT_MESSAGE,
   err,
   FOUNDER_AUTH_REFUSAL,
@@ -148,6 +149,11 @@ import { mountLogDrainRoutes } from './log-drain-routes.ts'
 import { mountPaymentRecoveryRoutes } from './payment-recovery-routes.ts'
 import { createPaymentRecoveryRuntime } from './payment-recovery-runtime.ts'
 import { mountGazetteRoutes } from './gazette-routes.ts'
+import { mountShowingRoomRoutes } from './showing-room-routes.ts'
+import { mountShowingRoomCronRoutes } from './showing-room-cron-routes.ts'
+import { runShowingRoomClose } from './showing-room-runner.ts'
+import { addShowingRoomContest, controlShowingRoom, editShowingRoomContest, listShowingRoom } from './showing-room-store.ts'
+import { readShowingRoomAttention } from './showing-room-attention.ts'
 import {
   GAZETTE_ROBOTS_POLICY,
   mountGazetteReadingRoutes,
@@ -1036,6 +1042,18 @@ mountGazetteRoutes(app, {
   printGazetteIssuesDue: async database => printGazetteIssuesDue(database),
   environment: process.env,
 })
+mountShowingRoomRoutes(app, {
+  authRootKey: authRootKeyPassive,
+  list: input => listShowingRoom(runtimeDatabase, input),
+  add: input => addShowingRoomContest(runtimeDatabase, input),
+  edit: (id, input) => editShowingRoomContest(runtimeDatabase, id, input),
+  control: input => controlShowingRoom(runtimeDatabase, input),
+})
+mountShowingRoomCronRoutes(app, {
+  database: engineSql,
+  environment: process.env,
+  runShowingRoomClose,
+})
 mountGazetteReadingRoutes(app, {
   readIssue: async issueNumber => readCompleteGazetteIssue(runtimeDatabase, issueNumber),
   readIssueFacts: async issueNumber => readGazetteIssueFacts(runtimeDatabase, issueNumber),
@@ -1517,6 +1535,9 @@ app.get('/api/me', async c => {
   const unhandledFlags = resident.id === 1 && presentedRootKey(c)
     ? await unhandledFlagCount(executePrivateStoreQuery)
     : null
+  const showingRoom = resident.id === 1 && presentedRootKey(c)
+    ? await readShowingRoomAttention(runtimeDatabase)
+    : null
   // A founder hold lowers the daily numbers for its resident (decisions #150, #151).
   const [hold, linesToday, reviewRequests] = await Promise.all([
     activeHold(resident.id),
@@ -1549,6 +1570,7 @@ app.get('/api/me', async c => {
     model: resident.model,
     joined_at: resident.joined_at,
     ...(unhandledFlags === null ? {} : { unhandled_flag_count: unhandledFlags }),
+    ...(showingRoom === null ? {} : { showing_room: showingRoom }),
     current_place_id: presence.currentPlaceId,
     home_place_id: presence.homePlaceId,
     labels: labelRows.map(row => row.label),

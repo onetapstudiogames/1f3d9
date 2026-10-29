@@ -5,8 +5,8 @@ import {
   scanEventDetailWriters,
 } from './helpers/public-event-detail-writer-scan.ts'
 
-// Revision 3, current-main baseline: 35 sources and 64 sites. The independent
-// wake try carrier adds one site in an existing source, giving 65 candidate sites.
+// The marker's 35 sources and 65 sites gain two showing writers: ordinary
+// founder notes and the city's Gazette description change during activation.
 const WRITER_SITES = Object.freeze({
   'src/actions.ts': 1,
   'src/agreement-action.ts': 3,
@@ -34,6 +34,7 @@ const WRITER_SITES = Object.freeze({
   'src/place-lifecycle-operation.ts': 1,
   'src/room-line-store.ts': 1,
   'src/room-ping-store.ts': 2,
+  'src/showing-room-publications.ts': 1,
   'src/society.ts': 4,
   'src/thing-making.ts': 1,
   'src/withdrawal.ts': 1,
@@ -43,19 +44,20 @@ const WRITER_SITES = Object.freeze({
   'db/migrations/20260827_paypal_credit_disputes.sql': 1,
   'db/migrations/20260827_gazette_room_activation.sql': 1,
   'db/migrations/20260901_gazette_withdrawal_activation.sql': 1,
+  'db/migrations/20261027_showing_room.sql': 1,
 })
 
 test('every event writer and insert site has an explicit activity review', async () => {
   const sources = await readRepositoryEventWriterSources(new URL('../', import.meta.url))
   const counts = Object.fromEntries(sources
-    // The schema mirrors the one live SQL writer from its dated migration.
+    // The schema mirrors the two live SQL writers from their dated migrations.
     .filter(source => source.path !== 'db/schema.sql')
     .map(source => [source.path, scanEventDetailWriters([source]).writerCount] as const)
     .filter(([, count]) => count > 0))
   assert.deepEqual(counts, WRITER_SITES)
-  assert.equal(Object.keys(counts).length, 35)
-  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 65)
+  assert.equal(Object.keys(counts).length, 37)
+  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 67)
   const mirror = sources.find(source => source.path === 'db/schema.sql')
   assert.ok(mirror)
-  assert.equal(scanEventDetailWriters([mirror]).writerCount, 1)
+  assert.equal(scanEventDetailWriters([mirror]).writerCount, 2)
 })

@@ -114,7 +114,17 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/window.ts:Error',
   'src/world-market.ts:Error',
 ])
-const CALLER_ERROR_MESSAGE_ADAPTERS = new Map([
+const CALLER_ERROR_MESSAGE_ADAPTERS = new Map<string, {
+  status: string; adapter: string; boundary: string; messageArgument?: number
+}>([
+  [
+    'src/showing-room-runner.ts:ShowingRoomRunError',
+    { status: '503', adapter: 'showing room scheduled close adapter', boundary: 'HTTP 503 JSON', messageArgument: 1 },
+  ],
+  [
+    'src/showing-room-awards.ts:ShowingRoomAwardError',
+    { status: '503', adapter: 'showing room award through scheduled close adapter', boundary: 'HTTP 503 JSON', messageArgument: 1 },
+  ],
   [
     'src/public-replay.ts:PublicReplayUnavailableError',
     { status: '503', adapter: 'public replay unavailable adapter', boundary: 'HTTP 503 JSON with Retry-After: 1' },
@@ -137,6 +147,35 @@ const CALLER_ERROR_MESSAGE_ADAPTERS = new Map([
   ],
 ])
 const INTERNAL_EXPRESSION_REASONS = new Map<string, string>([
+  [
+    'src/showing-room-attention.ts::showing room status was not returned',
+    'The private attention reader catches this condition and returns its fixed unavailable notice without the underlying error.',
+  ],
+  [
+    'src/showing-room-store.ts::showing room stores are not ready',
+    'The founder PATCH route returns its fixed edit-result refusal; GET, POST and control routes return their fixed backlog unavailable refusal.',
+  ],
+  ...[
+    'The question number must be a positive whole number.',
+    'The complete rules must fit within 4000 characters. Shorten the title or prompt.',
+    'The complete showing room note must fit within 4000 characters.',
+    'A count detail is too long to publish. Ask the founder to review the saved count.',
+    'The complete count needs all of its note links before publication.',
+  ].map(text => [
+    `src/showing-room-copy.ts::${text}`,
+    'The private store translates rendering failure to its published text-limit refusal; a service rendering failure rolls back and reaches the fixed service refusal.',
+  ] as const),
+  ...[
+    'the showing room publication needs a recorded run and a count or next question',
+    'the showing room could not reserve every publication; retry the same Monday slot',
+    'each showing room publication must fit the ordinary 4000 character note limit and public text rules',
+    'the showing room could not record a note and its event together; retry the same Monday slot',
+    'the showing room cannot publish until its database can keep the whole run together',
+    'founder resident #1 must exist before the showing room can publish',
+  ].map(text => [
+    `src/showing-room-publications.ts::${text}`,
+    'Publication failure aborts the shared transaction; the scheduled route returns its fixed service refusal and never returns this internal text.',
+  ] as const),
   ...[
     'reference anchors do not match the reference text: ${detail}',
     'reference heading must appear exactly once: ${heading}',
@@ -260,6 +299,12 @@ const MESSAGE_HELPERS = new Map<string, number>([
   ['jsonError', 3],
 ])
 const IDENTITY_PATHS = new Set(['/join', '/rotate', '/recovery', '/api/register'])
+// These founder and scheduled service doors have no MCP forwarding tool.
+const HTTP_ONLY_REFUSAL_PRODUCERS = new Set([
+  'src/showing-room-routes.ts',
+  'src/showing-room-store.ts',
+  'src/showing-room-cron-routes.ts',
+])
 
 function sourceFiles(projectRoot: URL): string[] {
   const src = fileURLToPath(new URL('src/', projectRoot))
@@ -759,7 +804,8 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
           producer: relativeFile,
           adapter: callerOverride?.adapter ?? (internalReason ? 'internal control-flow/storage adapter' : adapter),
           status: callerOverride?.status ?? (internalReason ? 'n/a' : status),
-          finalBoundary: callerOverride?.boundary ?? (internalReason ? 'not returned at a caller boundary' : finalBoundary),
+          finalBoundary: callerOverride?.boundary ?? (internalReason ? 'not returned at a caller boundary'
+            : HTTP_ONLY_REFUSAL_PRODUCERS.has(relativeFile) ? 'HTTP JSON' : finalBoundary),
           disposition: callerOverride ? 'included' : internalReason ? 'excluded' : disposition,
           exclusionReason: callerOverride ? '' : internalReason ?? exclusionReason,
         })
@@ -785,12 +831,12 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
       if (ts.isThrowStatement(node) && node.expression && ts.isNewExpression(node.expression)) {
         const creation = node.expression
         const className = creation.expression.getText(source)
+        const callerAdapter = CALLER_ERROR_MESSAGE_ADAPTERS.get(`${relativeFile}:${className}`)
         const statusFirst = className === 'EngineError'
           || className === 'RouteFailure'
           || className === 'PayPalWebhookApplicationError'
-        const message = creation.arguments?.[statusFirst ? 1 : 0]
+        const message = creation.arguments?.[callerAdapter?.messageArgument ?? (statusFirst ? 1 : 0)]
         if (message) {
-          const callerAdapter = CALLER_ERROR_MESSAGE_ADAPTERS.get(`${relativeFile}:${className}`)
           const internal = INTERNAL_ERROR_MESSAGE_ADAPTERS.has(`${relativeFile}:${className}`)
           add(
             message,

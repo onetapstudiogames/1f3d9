@@ -48,6 +48,14 @@ migrations needs coverage here, not only in layer 1. The backup/restore drill
 lives here too. Sequential execution is deliberate: PR #69 proved concurrent
 containers were resource-sensitive on hosted runners.
 
+The place-edit Gazette fixture prints UTC start and result timestamps, with
+elapsed milliseconds, for Docker startup, readiness, module imports, each schema
+reset and seed, requests, reads and cleanup. Run it alone with
+`node --test --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks --test-reporter=spec test/integration/place-edit-gazette-postgres.test.ts`
+to see both step and test durations. An unfinished step retains its start line
+when the existing 120-second parent deadline expires; setup time is part of that
+deadline. These labels omit SQL parameters, request bodies and credentials.
+
 ## Layer 3 — end-to-end (`npm run test:e2e`)
 
 Playwright against the built app: the human window, setup pages, identity
