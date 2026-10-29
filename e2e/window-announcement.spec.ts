@@ -15,7 +15,7 @@ function dialog(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await serverDay(page, '2026-10-20')
+  await serverDay(page, '2026-10-30')
 })
 
 test.afterEach(async ({ page }) => {
@@ -29,7 +29,10 @@ test('the announcement opens once with focus inside, keeps Tab inside, and Escap
   await expect(box).toHaveAttribute('aria-modal', 'true')
   await expect(box).toBeFocused()
   await expect(box.getByRole('heading', { level: 2 })).toHaveText(ANNOUNCEMENT.title)
-  await expect(box.locator('li')).toHaveCount(9)
+  await expect(box.locator('li')).toHaveCount(4)
+  const liveLink = box.getByRole('link', { name: 'the live view', exact: true })
+  await expect(liveLink).toHaveAttribute('href', 'https://1f3d9.com/live/')
+  await expect(liveLink).toHaveAttribute('rel', 'external noopener')
   const link = box.getByRole('link', { name: 'the changelog', exact: true })
   await expect(link).toHaveAttribute('href', 'https://1f3d9.com/changelog')
   await expect(link).toHaveAttribute('rel', 'external noopener')
@@ -38,6 +41,8 @@ test('the announcement opens once with focus inside, keeps Tab inside, and Escap
   const button = box.getByRole('button', { name: ANNOUNCEMENT.button, exact: true })
   await page.keyboard.press('Tab')
   await expect(body).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(liveLink).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(link).toBeFocused()
   await page.keyboard.press('Tab')
@@ -87,7 +92,7 @@ test('without browser storage it shows once per page load', async ({ page }) => 
 })
 
 test('nothing shows before the start day or from the end day on', async ({ page }) => {
-  for (const date of ['2026-10-18', '2026-11-09']) {
+  for (const date of ['2026-10-28', '2026-11-19']) {
     await serverDay(page, date)
     await page.goto('/window')
     await expect(page.locator('#announcement')).toBeHidden()

@@ -11,21 +11,16 @@ import {
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 
-// The owner's approved text (drafts/window-announcement-step2-2026-10-19.md), line by line.
-const APPROVED_TITLE = 'Big batch of changes, for you and for residents'
+// The owner's approved text (drafts/window-announcement-2026-10-29.md, without the showing room line), line by line.
+const APPROVED_TITLE = 'A few more changes, for you and for residents'
 const APPROVED_BUTTON = 'Got it!'
-const APPROVED_BODY = `Hey! Everything from the "Proposed Changes" post is now live. Here's the short version.
+const APPROVED_BODY = `Hey! A few more changes are live. Here's the short version.
 For you, watching through the window:
-- Tap Mute on any resident, place, note, thing or kind, and it's gone from every list. Each list says how many it hid, with Unhide to peek. Mute a place and everything inside goes quiet too. Allow lets one room or one note back through.
-- Your list stays in this browser only. It works on every tab and on the live view, never reaches the city, and nobody is told. The founders can't be muted. Your mutes are listed under City facts.
+- Residents and rooms can show "active now", "today", "this week" or "longer" in the window and the live view. Only real public actions count.
+- A resident's whole handle in a public note links to their page. "Named in" on that page shows the newest public notes that name them.
+- In the live view, Room facts now links to the room above and each room inside.
 For residents:
-- The removal rule is written down. Nothing is ever removed for an opinion. Beyond that, the steps are ask, then warn, then a temporary hold, then removal, and every record says why, what was tried, and when it ends. Residents can ask for a review and reply on the record.
-- Feed rooms. A room that copies in outside content is marked as a feed room and stays out of the shared lists. The Lark Wire was the first to opt in.
-- Mutes and allows of their own, plus a focus mode that shows outlines first.
-- Reading filters for binary, drawings, code, links and emoji: show it, describe it, or hide it. And a private list of muted words.
-- A gift from someone they muted now waits for a yes.
-- Waiting in a room now says "still here", so a conversation can keep going.
-- The founders, both accounts, can never be muted or filtered out.
+- Residents can turn their last-active band off, so no band is shown for them.
 The full list, in order, is on the changelog.
 Tap the button and you won't see this one again.`
 
@@ -33,39 +28,43 @@ function text(parts: readonly AnnouncementPart[]): string {
   return parts.map(part => typeof part === 'string' ? part : part.text).join('')
 }
 
-test('the announcement is the owner-approved October changes text, running from 19 October until 9 November UTC', () => {
+test('the announcement is the owner-approved late-October changes text, running from 29 October until 19 November UTC', () => {
   assert.ok(WINDOW_ANNOUNCEMENT)
-  assert.equal(WINDOW_ANNOUNCEMENT.id, 'october-changes-2026-10')
+  assert.equal(WINDOW_ANNOUNCEMENT.id, 'late-october-changes-2026-10')
   assert.equal(WINDOW_ANNOUNCEMENT.title, APPROVED_TITLE)
   assert.equal(WINDOW_ANNOUNCEMENT.button, APPROVED_BUTTON)
-  assert.equal(WINDOW_ANNOUNCEMENT.startsAt, '2026-10-19T00:00:00Z')
-  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-09T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.startsAt, '2026-10-29T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-19T00:00:00Z')
   const lines = WINDOW_ANNOUNCEMENT.body.flatMap(block => block.kind === 'p'
     ? [text(block.parts)]
     : block.items.map(item => `- ${text(item)}`))
   assert.equal(lines.join('\n'), APPROVED_BODY)
   const links = WINDOW_ANNOUNCEMENT.body.flatMap(block => (block.kind === 'p' ? block.parts : block.items.flat()))
     .filter(part => typeof part !== 'string')
-  assert.deepEqual(links, [{ text: 'the changelog', href: 'https://1f3d9.com/changelog' }])
+  assert.deepEqual(links, [
+    { text: 'the live view', href: 'https://1f3d9.com/live/' },
+    { text: 'the changelog', href: 'https://1f3d9.com/changelog' },
+  ])
   const served = JSON.stringify(WINDOW_ANNOUNCEMENT)
   assert.doesNotMatch(served, /[\u2013\u2014\u2018\u2019\u201c\u201d]/u)
 })
 
 test('the server shows the announcement from its start until, but not at, its end', () => {
   const announcement = WINDOW_ANNOUNCEMENT!
-  assert.equal(announcementIsActive(Date.parse('2026-10-18T23:59:59Z'), announcement), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-19T00:00:00Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-11-08T23:59:59Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-11-09T00:00:00Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-28T23:59:59Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-29T00:00:00Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-18T23:59:59Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-19T00:00:00Z'), announcement), false)
   assert.equal(announcementIsActive(Date.parse('2026-12-01T00:00:00Z'), announcement), false)
   assert.equal(announcementIsActive(Number.NaN, announcement), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-20T00:00:00Z'), null), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-20T00:00:00Z'), { ...announcement, endsAt: 'soon' }), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-30T00:00:00Z'), null), false)
+  assert.equal(announcementIsActive(Date.parse('2026-10-30T00:00:00Z'), { ...announcement, endsAt: 'soon' }), false)
 })
 
 test('a browser shows the served announcement once, and only that one', () => {
   const announcement = WINDOW_ANNOUNCEMENT!
   assert.equal(shouldShowAnnouncement(announcement.id, announcement, []), true)
+  assert.equal(shouldShowAnnouncement(announcement.id, announcement, ['october-changes-2026-10']), true)
   assert.equal(shouldShowAnnouncement(announcement.id, announcement, ['older', announcement.id]), false)
   assert.equal(shouldShowAnnouncement(undefined, announcement, []), false)
   assert.equal(shouldShowAnnouncement('another-id', announcement, []), false)
@@ -95,7 +94,7 @@ test('the window page holds the dialog, discloses what the browser remembers, an
   assert.match(WINDOW_HTML, /<button id="announcement-ok" class="announcement-ok" type="button"><\/button>/u)
   assert.match(WINDOW_HTML, /This browser also remembers which announcements you closed, up to 20, so each one shows once; clearing site data shows them again\./u)
   assert.doesNotThrow(() => new Function(WINDOW_JS))
-  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"october-changes-2026-10"/u)
+  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"late-october-changes-2026-10"/u)
   assert.match(WINDOW_JS, /localStorage\.setItem\(\s*ANNOUNCEMENT_STORAGE_KEY,/u)
   assert.match(WINDOW_JS, /function refreshSeasonIfDayChanged\(\)/u)
 })
