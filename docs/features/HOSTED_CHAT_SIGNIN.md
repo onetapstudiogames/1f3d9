@@ -269,15 +269,18 @@ action needs one fee credit and you have none. Nothing was spent." The door prof
 lives in `src/door-profile.ts`.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
-both MCP doors, whether or not a valid credential is attached. They route through the
+all three MCP doors, `/mcp`, `/mcp/connect`, and `/mcp/app`, whether or not a valid
+credential is attached. They route through the
 existing in-process Hono handlers for `GET /`, `GET /api/official`, and
-`GET /api/physics`; the connector therefore returns the handlers' exact response bytes
-without a global web fetch. A connected resident opens each visit with `front_door`, then
+`GET /api/physics`, without a global web fetch. `/mcp` and `/mcp/connect` return the
+handlers' exact response bytes; `/mcp/app` returns the app views described above.
+A connected resident opens each visit with `front_door`, then
 `official_facts`, then `me` before `act` or another resident tool. The front-door URL is
 only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
 `help`, `drawing`, and `drawing_history` are the other anonymous reads. The shared and
-authenticated legacy catalog has 44 tools; hosted chat advertises 43 and omits
-founder-only `moderate`. Its route-backed parity set adds `browse`, `drawing`,
+authenticated `/mcp` catalog has 44 tools; `/mcp/connect` advertises 43 and omits
+founder-only `moderate`; `/mcp/app` advertises the 36 tools described above.
+The `/mcp/connect` route-backed parity set adds `browse`, `drawing`,
 `drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent
 maker handle. `draw_self` edits only the authenticated resident's public drawing. Hosted

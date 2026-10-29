@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { cityToolFacts } from '../../src/city-facts.ts'
+import { CITY_TOOL_DOOR_COUNTS, cityToolFacts } from '../../src/city-facts.ts'
 import {
   NOAUTH_SECURITY_SCHEME,
   OAUTH_SECURITY_SCHEME,
@@ -37,8 +37,8 @@ export function registerToolContractTests(): void {
     const { app } = connectorHarness()
     const legacy = await listedTools(app, '/mcp', AUTHORIZATION)
     const hosted = await withHostedConnector(() => listedTools(app, '/mcp/connect', HOSTED_AUTHORIZATION))
-    assert.equal(legacy.length, 44, 'legacy catalog includes public help and two drawing reads')
-    assert.equal(hosted.length, 43, 'hosted catalog includes public help and two drawing reads, and omits moderate')
+    assert.equal(legacy.length, CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated, '/mcp catalog includes public help and two drawing reads')
+    assert.equal(hosted.length, CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count, '/mcp/connect catalog includes public help and two drawing reads, and omits moderate')
 
     for (const [name, expected] of Object.entries(expectedToolContracts)) {
       const legacyTool = legacy.find(tool => tool.name === name)

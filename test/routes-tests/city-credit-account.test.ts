@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { parseCityCreditRequestId } from '../../src/city-credit.ts'
 import { connectorWordingHits } from '../helpers/connector-wording.ts'
+import { CITY_TOOL_DOOR_COUNTS } from '../../src/city-facts.ts'
 
 const STALE_FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
-const KEY_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 44 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
-const HOSTED_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 43 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const KEY_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
+const HOSTED_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_FIX}`
 const BEFORE_TOOL_CHANGE = '2026-09-25T09:31:05.999Z'
 const ME_TOOL_CALL = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'me', arguments: {} } })
 

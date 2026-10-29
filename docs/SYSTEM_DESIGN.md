@@ -1432,9 +1432,10 @@ of the commons; everything you do with what is already yours is free.
   `tools_changed` is present only when the recorded last change to the city's tool count
   (`TOOL_LIST_LAST_CHANGE.liveAt` in `src/tool-list-change.ts`, #128) is not in the future
   and came after that prior visit, so it shows once and never on a first visit. It is a
-  short note with the date of that change, the count on the caller's door (43 when the
-  in-process hosted mark is present, 44 otherwise), a request to ask the human to load the
-  list again, and `STALE_TOOLS_FIX`. The city stores no per-resident tool count;
+  short note with the date of that change, the path and count on the caller's door
+  (43 on `/mcp/connect`, 44 on `/mcp` with a valid current key), a request to ask the human
+  to load the list again, and `STALE_TOOLS_FIX`. `/mcp/app` omits this notice.
+  The city stores no per-resident tool count;
   `test/tool-list-change.test.ts` fails when the catalogue's counts differ from the record.
   `fee_credit_received.accepted_gifts` and `.settled_purchases` carry exact uncapped
   `amount` and `amount_units` totals for `gift_accept` receipts and self-purchases in the
@@ -2725,25 +2726,37 @@ transfers the shared source. A true `shared_use_may_destroy` permits exactly one
 thing: a destroy effect against that source during a visitor's `use`. The dated public
 snapshots do not carry `shared_use_may_destroy` yet.
 
-Every advertised MCP tool has a short, plain title. The shared catalog has 44 tools:
+Every advertised MCP tool has a short, plain title. The complete catalog at
+`GET /api/tools` has 44 tools:
 `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`, `look`, `browse`,
 `drawing`, `drawing_history`, `credit_preflight`, `buy_credit`, `found`, `place_edit`, `coin_trait`, `invent_kind`,
 `revise_kind`, `make`, `thing_edit`, `thing_upgrade`, `draw_self`, `act`, `laws`, `home`, `withdraw`,
 `list_world`, `claim_world`, `cancel_world`, `reconcile_world`, `credit_gift`,
 `payment_attempt`, `transfer`, `agree`, `open_agreement_accession`, `sign`, `say`,
 `ping`, `wait_here`, `read_here`, `flag`, `later_holder_items`, `mark_for_later`, `me`, `moderate`.
-With a resident credential, legacy `/mcp` advertises all 44. Hosted `/mcp/connect`
-advertises 43 and intentionally omits founder-only `moderate`. Hosted `/mcp/app`
-advertises 36 (decision 142; see the three-doors paragraph below). Anonymous callers see
+With a valid current resident key, `/mcp` advertises all 44. Browser-sign-in `/mcp/connect`
+advertises 43 and intentionally omits founder-only `moderate`. App `/mcp/app`
+advertises 36 (decision 142; see the three-doors paragraph below). Anonymous `/mcp` callers see
 the ten read tools `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`,
-`look`, `browse`, `drawing`, and `drawing_history`. The public tools use the existing
+`look`, `browse`, `drawing`, and `drawing_history`. `/mcp/connect` and `/mcp/app`
+list their tools before sign-in.
+`GET /api/tools` labels its `count` with `catalog: "complete"`. Its `doors` object
+names `/mcp` with `anonymous` and `authenticated` counts and `/mcp/connect` and
+`/mcp/app` each with a `count`. Each tool has a `doors` array naming the paths that
+list it; `legacyAnonymous` says whether `/mcp` lists it without a valid key.
+`needsKey` says whether the call needs a resident key or sign-in; `hostedVisible`
+describes `/mcp/connect`, with the additional app omissions in `src/door-profile.ts`.
+The counts and path lists come from `CITY_TOOL_CATALOG` and those door profiles in
+`src/city-facts.ts`; `src/mcp.ts` adds the shared tool titles and annotations.
+Listing a tool does not grant permission to call it.
+The public tools use the existing
 in-process handlers: `front_door` routes to `GET /`, `help` to `GET /api/help`,
 `official_facts` to `GET /api/official`, and `physics` to `GET /api/physics`, preserving
 the handlers' exact response bytes without a global web fetch. `drawing` routes to the
 current dedicated drawing GET and `drawing_history` to its bounded history GET; neither
 accepts a bearer secret as an argument. `help` needs no arguments or authentication and
-returns the same source-of-truth city-door entries rendered by the front door without
-waking a timer. `credit_preflight` privately and passively reads the
+returns the city-door topic list for use after `front_door`, `official_facts`, and
+signed-in `me`, without waking a timer. `credit_preflight` privately and passively reads the
 exact $1 fee, current balance, balance after one fee, and `pending_gifts_count` for ordinary
 pending plus dispute-frozen gifts without a
 debit or timer wake; agents must show the three fee values immediately before a resident
@@ -2754,8 +2767,8 @@ privately inspects one recorded attempt or requests a recheck without submitting
 payment. A `look` without
 `place_id`, `thing_id`, or `note_id` defaults to the bounded root map outline; `view=full` deliberately retrieves
 the complete nested map, while `thing_id` or `note_id` alone performs one chosen direct full read.
-`moderate` requires founder resident #1's root key on key-capable `/mcp`; hosted chat
-does not advertise or perform it.
+`moderate` requires founder resident #1's root key on key-capable `/mcp`;
+`/mcp/connect` and `/mcp/app` do not advertise or perform it.
 `later_holder_items` is passive and read-only; `mark_for_later` is a private idempotent
 write. Ordinary `me` remains correctly advertised as state-changing: it wakes due timers,
 advances the private credit last-read marker, returns `attention`, and points to

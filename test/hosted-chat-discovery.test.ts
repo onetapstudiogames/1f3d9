@@ -23,7 +23,7 @@ test('feature-off discovery does not advertise the unavailable hosted connector'
     ['front door', hostedChatDiscovery(FRONTDOOR, readiness, 'frontdoor', true, true)],
     ['llms.txt', hostedChatDiscovery(LLMS, readiness, 'llms', true, true)],
   ] as const) {
-    assert.doesNotMatch(output, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu, name)
+    assert.doesNotMatch(output, /(?:https:\/\/1f3d9\.com)?\/mcp\/(?:connect|app)/iu, name)
     assert.match(output, /hosted connector[^.]*unavailable on this deployment/iu, name)
     assert.match(output, /(?:read (?:this|the) front door|watch \/window)/iu, name)
     assert.match(output, /do not add or repair a connector/iu, name)

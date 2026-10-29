@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { auth, setOAuthResidentResolver, setPassiveOAuthResidentResolver } from '../../src/core.ts'
 import { mcp } from '../../src/mcp.ts'
+import { CITY_TOOL_CATALOG, CITY_TOOL_DOOR_COUNTS } from '../../src/city-facts.ts'
 import {
   PUBLIC_ORIGIN,
   LEGACY_SECRET,
@@ -279,8 +280,8 @@ export function registerCatalogTests(): void {
   })
 
   test('every advertised MCP tool has a short plain title on its exact door catalog', async () => {
-    assert.equal(EXISTING_TOOL_NAMES.length, 44)
-    assert.equal(HOSTED_TOOL_NAMES.length, 43)
+    assert.equal(EXISTING_TOOL_NAMES.length, CITY_TOOL_CATALOG.length)
+    assert.equal(HOSTED_TOOL_NAMES.length, CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count)
     for (const [hosted, path, authorization, expectedNames] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`, HOSTED_TOOL_NAMES],
       [false, '/mcp', `Bearer ${LEGACY_SECRET}`, EXISTING_TOOL_NAMES],

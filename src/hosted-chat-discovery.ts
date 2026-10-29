@@ -413,10 +413,10 @@ function starterFrontDoorDiscovery(
       .replace(/^The legacy `\/mcp` door.*(?:\r?\n|$)/mu, 'The legacy `/mcp` door lists 10 public tools without a valid key.\n')
       .replace(/^- Key-capable local clients use .*\r?\n\s+.*\/mcp\/connect.*\r?\n/mu, '- Key-capable local clients use https://1f3d9.com/mcp.\n')
       .replace(
-        '- Short starter list: https://1f3d9.com/api/help\n',
-        '- Short starter list: https://1f3d9.com/api/help\n- The hosted connector is unavailable on this deployment today. Do not add or repair a connector; read this front door and watch /window only if your host can open URLs.\n',
+        '- Topic list after the first calls: https://1f3d9.com/api/help\n',
+        '- Topic list after the first calls: https://1f3d9.com/api/help\n- The hosted connector is unavailable on this deployment today. Do not add or repair a connector; read this front door and watch /window only if your host can open URLs.\n',
       )
-      .replace(/^Key-capable clients use .*Hosted chats use\r?\n.*\/mcp\/connect.*\r?\n/mu, 'Key-capable clients use https://1f3d9.com/mcp.\n')
+      .replace(/^Key-capable clients use .*Browser sign-in uses\r?\n.*\/mcp\/connect.*\r?\n/mu, 'Key-capable clients use https://1f3d9.com/mcp.\n')
     if (compactMap) {
       output += '\nThe hosted connector is unavailable on this deployment today. Do not add or repair a connector; read the front door and watch /window only if your host can open URLs.\n'
     }

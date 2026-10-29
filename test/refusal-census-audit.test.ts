@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { CITY_TOOL_CATALOG } from '../src/city-facts.ts'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -227,7 +228,7 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)
-  assert.equal(mcp.tools.length, 44)
+  assert.equal(mcp.tools.length, CITY_TOOL_CATALOG.length)
   assert.deepEqual(mcp.protocol, [
     'invalid-json',
     'invalid-message',

@@ -1,4 +1,5 @@
 import type { Hono } from 'hono'
+import { DOOR_PROFILES } from './door-profile.ts'
 import { HANDLE_RULE, NORMALIZED_WORLD_NAME_MAX_CHARACTERS } from './core-primitives.ts'
 import { CREDIT_GIFT_LIMITS } from './credit-gift-limits.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
@@ -171,7 +172,7 @@ export function isOtherCityToolName(value: unknown): value is string {
 
 type CityRouteFact = Readonly<{ method: 'GET' | 'POST'; path: string; description: string }>
 export const CITY_ROUTE_CATALOG: readonly CityRouteFact[] = Object.freeze([
-  { method: 'GET', path: '/api/help', description: 'starter door list' },
+  { method: 'GET', path: '/api/help', description: 'city topic list after the first calls' },
   { method: 'GET', path: FULL_TOOL_CATALOG_PATH, description: 'every MCP tool and key requirement' },
   { method: 'GET', path: '/api/official', description: 'official domain, fee, versions, and identity doors' },
   { method: 'GET', path: '/api/physics', description: "actions, effect bricks and each brick's fields, the wake key, ability defaults, enforced limits, and one public roll with roll_id" },
@@ -355,6 +356,25 @@ export const CITY_TOOL_CATALOG = Object.freeze(TOOL_CATALOG_SEED.map(seed => {
 
 const TOOL_FACTS_BY_NAME = new Map(CITY_TOOL_CATALOG.map(tool => [tool.name, tool]))
 
+export function cityToolDoors(tool: (typeof CITY_TOOL_CATALOG)[number]) {
+  return Object.freeze(Object.values(DOOR_PROFILES)
+    .filter(profile => (!profile.hostedChat || tool.hostedVisible) && !profile.droppedTools.has(tool.name))
+    .map(profile => profile.path))
+}
+
+export const CITY_TOOL_DOOR_COUNTS = Object.freeze({
+  '/mcp': Object.freeze({
+    anonymous: CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length,
+    authenticated: CITY_TOOL_CATALOG.length,
+  }),
+  '/mcp/connect': Object.freeze({
+    count: CITY_TOOL_CATALOG.filter(tool => cityToolDoors(tool).includes('/mcp/connect')).length,
+  }),
+  '/mcp/app': Object.freeze({
+    count: CITY_TOOL_CATALOG.filter(tool => cityToolDoors(tool).includes('/mcp/app')).length,
+  }),
+})
+
 export function cityToolFacts(name: string) {
   const facts = TOOL_FACTS_BY_NAME.get(name)
   if (!facts) throw new Error(`tool ${name} is missing from CITY_TOOL_CATALOG`)
@@ -373,8 +393,8 @@ export function describeCityTool(name: string, description: string): string {
 
 export function renderToolCatalogText(): string {
   return CITY_TOOL_CATALOG.map(tool => {
-    const key = tool.needsKey ? 'key required' : 'public without a key'
-    const doors = tool.hostedVisible ? 'local and hosted doors' : 'local door only'
+    const key = tool.needsKey ? 'key required on /mcp' : 'public without a key'
+    const doors = cityToolDoors(tool).join(', ')
     return `- ${tool.name}: ${key}; ${doors}`
   }).join('\n')
 }
@@ -407,8 +427,7 @@ const WINDOW_HISTORY_BOUNDS_LINES = [
 ].join('\n')
 
 export function renderCityFactTokens(document: string): string {
-  const anonymousCount = CITY_TOOL_CATALOG.filter(tool => tool.legacyAnonymous).length
-  const hostedCount = CITY_TOOL_CATALOG.filter(tool => tool.hostedVisible).length
+  const counts = CITY_TOOL_DOOR_COUNTS
   return document
     .replaceAll('{{CITY_POSITIONING_LINE}}', CITY_POSITIONING_LINE)
     .replaceAll('{{WORLD_ROOT_PURPOSE}}', WORLD_ROOT_PURPOSE)
@@ -434,7 +453,7 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{PAYMENT_TERMINAL_STATES}}', PAYMENT_TERMINAL_STATES_LINE)
     .replaceAll(
       '{{TOOL_DOOR_COUNTS}}',
-      `The legacy \`/mcp\` door lists ${anonymousCount} public tools without a valid key and all ${CITY_TOOL_CATALOG.length} tools with a valid current key. The hosted \`/mcp/connect\` door lists ${hostedCount} tools to everyone, refuses key-only tools at call time, and omits founder-only \`moderate\`.`,
+      `The legacy \`/mcp\` door lists ${counts['/mcp'].anonymous} public tools without a valid key and all ${counts['/mcp'].authenticated} with one. \`/mcp/connect\` lists ${counts['/mcp/connect'].count} tools; \`/mcp/app\` lists ${counts['/mcp/app'].count}. Both list before sign-in and omit founder-only \`moderate\`.`,
     )
     .replaceAll(
       '{{CITY_FEE_RAILS}}',
@@ -464,6 +483,7 @@ export function duplicateParagraphs(files: readonly TextFile[]) {
 }
 
 export type CityPublicTool = (typeof CITY_TOOL_CATALOG)[number] & Readonly<{
+  doors: ReturnType<typeof cityToolDoors>
   title: string
   annotations: Readonly<{
     title: string
@@ -479,6 +499,6 @@ export function mountCityToolCatalogRoute(app: Hono, catalog: readonly CityPubli
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return c.json({ error: allowed.error }, 400)
     c.header('Cache-Control', 'public, max-age=300')
-    return c.json({ count: catalog.length, tools: catalog })
+    return c.json({ catalog: 'complete', count: catalog.length, doors: CITY_TOOL_DOOR_COUNTS, tools: catalog })
   })
 }

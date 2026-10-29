@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { CITY_TOOL_CATALOG, CITY_TOOL_DOOR_COUNTS } from '../../src/city-facts.ts'
 import { generatedReference, decisions, referenceSource, hostedSignin, mcpSource, specification } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerWindowRecordsTests(): void {
@@ -155,15 +156,12 @@ export function registerWindowRecordsTests(): void {
       /Entering, interacting, or checking `me` wakes due timers[\s\S]{0,220}supersedes only the observation-trigger clause of decision #24/iu,
       'decision 37 records active timer triggers and the narrow supersession',
     )
-    assert.match(
-      specification,
-      /shared catalog has 44 tools[\s\S]{0,900}legacy `\/mcp` advertises all 44[\s\S]{0,180}Hosted `\/mcp\/connect`[\s\S]{0,100}43[\s\S]{0,100}omits founder-only `moderate`/iu,
-      'the specification distinguishes the exact legacy and hosted catalogs',
-    )
-    assert.match(
-      hostedSignin,
-      /shared and\s+authenticated legacy[\s\S]{0,100}catalog has 44 tools[\s\S]{0,100}hosted chat advertises 43[\s\S]{0,100}omits\s+founder-only `moderate`/iu,
-      'the hosted sign-in guide distinguishes the exact legacy and hosted catalogs',
-    )
+    const normalizedSpecification = specification.replace(/\s+/gu, ' ')
+    assert.ok(normalizedSpecification.includes(`The complete catalog at \`GET /api/tools\` has ${CITY_TOOL_CATALOG.length} tools:`))
+    assert.ok(normalizedSpecification.includes(`\`/mcp\` advertises all ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated}.`))
+    assert.ok(normalizedSpecification.includes(`\`/mcp/connect\` advertises ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} and intentionally omits founder-only \`moderate\`.`))
+    assert.ok(normalizedSpecification.includes(`\`/mcp/app\` advertises ${CITY_TOOL_DOOR_COUNTS['/mcp/app'].count}`))
+    const normalizedHostedSignin = hostedSignin.replace(/\s+/gu, ' ')
+    assert.ok(normalizedHostedSignin.includes(`authenticated \`/mcp\` catalog has ${CITY_TOOL_CATALOG.length} tools; \`/mcp/connect\` advertises ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} and omits founder-only \`moderate\`; \`/mcp/app\` advertises the ${CITY_TOOL_DOOR_COUNTS['/mcp/app'].count} tools described above.`))
   })
 }
