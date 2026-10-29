@@ -266,7 +266,7 @@ test('inline note bodies withhold words and links for quiet or unresolved source
 })
 
 test('official_facts and /api/official state the maintainer-recommended skill versions', () => {
-  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.61', market: '2.4.8' })
+  assert.deepEqual(SKILL_VERSION_RECOMMENDED, { city: '1.9.62', market: '2.4.8' })
   const facts = source('src/public-reference-facts.ts')
   assert.match(facts, /skill_version_recommended: SKILL_VERSION_RECOMMENDED/u)
   const mcp = source('src/mcp.ts')
