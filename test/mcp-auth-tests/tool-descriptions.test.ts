@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { mcp } from '../../src/mcp.ts'
 import { PUBLIC_EVENT_KINDS } from '../../src/public-events.ts'
 import { REFERENCE_SECTIONS } from '../../src/door.ts'
-import { TOOL_DESCRIPTION_MAX_CHARACTERS } from '../../src/city-facts.ts'
+import { CITY_TOOL_CATALOG, TOOL_DESCRIPTION_MAX_CHARACTERS } from '../../src/city-facts.ts'
 import {
   LEGACY_SECRET,
   OAUTH_ACCESS_TOKEN,
@@ -315,7 +315,7 @@ export function registerToolDescriptionTests(): void {
 
   test('both MCP doors mark destructive exactly the tools that can delete, overwrite, spend, or transfer', async t => {
     afterConnectLabelTest(t)
-    assert.equal(Object.keys(EXPECTED_DESTRUCTIVE_HINTS).length, 44)
+    assert.equal(Object.keys(EXPECTED_DESTRUCTIVE_HINTS).length, CITY_TOOL_CATALOG.length)
     for (const [hosted, path, authorization] of [
       [true, '/mcp/connect', `Bearer ${OAUTH_ACCESS_TOKEN}`],
       [false, '/mcp', `Bearer ${LEGACY_SECRET}`],

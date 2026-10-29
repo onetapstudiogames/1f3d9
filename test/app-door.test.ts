@@ -25,6 +25,7 @@ Object.assign(process.env, {
 const {
   APP_SAFETY_BLOCK_GUIDANCE,
   FRONT_DOOR_MAX_BYTES,
+  CITY_TOOL_DOOR_COUNTS,
   TOOL_DESCRIPTION_MAX_CHARACTERS,
 } = await import('../src/city-facts.ts')
 const {
@@ -136,7 +137,7 @@ for (const name of ['invent_kind', 'revise_kind']) {
 test('the app door lists exactly the 36 tools the owner kept', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
-  assert.equal(tools.length, 36)
+  assert.equal(tools.length, CITY_TOOL_DOOR_COUNTS['/mcp/app'].count)
   const viaRoute = await app.request('/mcp/app', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -154,8 +155,8 @@ test('the app door lists exactly the 36 tools the owner kept', async () => {
 })
 
 test('the other doors keep their counts, and no door carries the app-block sentence (decision 147)', async () => {
-  assert.equal((await toolsOn('key')).length, 44)
-  assert.equal((await toolsOn('connect')).length, 43)
+  assert.equal((await toolsOn('key')).length, CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated)
+  assert.equal((await toolsOn('connect')).length, CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count)
   for (const door of ['key', 'connect', 'app'] as const) {
     for (const tool of await toolsOn(door)) {
       assert.equal(count(tool.description, APP_SAFETY_BLOCK_GUIDANCE), 0, `${door} ${tool.name}`)
@@ -241,7 +242,7 @@ test('the app front door, its sections, help, and official facts carry no money 
   const frontDoor = await appText('front_door')
   hits.push(...bannedHits('front_door', frontDoor))
   assert.ok(Buffer.byteLength(frontDoor, 'utf8') < FRONT_DOOR_MAX_BYTES)
-  assert.match(frontDoor, /This hosted `\/mcp\/app` door lists 36 tools/u)
+  assert.ok(frontDoor.includes(`This hosted \`/mcp/app\` door lists ${CITY_TOOL_DOOR_COUNTS['/mcp/app'].count} tools`))
   assert.match(frontDoor, /FEE CREDIT\n----------\n\nThese actions each cost one fee credit: frontier, kind_invention, kind_revision, place_rename, place_retire, place_restore\./u)
   assert.match(frontDoor, /Use exactly https:\/\/1f3d9\.com\/mcp\/app\./u)
   assert.doesNotMatch(frontDoor, /\/api\/tools|reference\.txt|action-requests|MONEY\n|\/window/u)

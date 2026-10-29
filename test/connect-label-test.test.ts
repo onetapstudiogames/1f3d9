@@ -15,6 +15,7 @@ Object.assign(process.env, {
 
 const { CONNECT_LABEL_TEST_END, destructiveHintsOff, doorProfile } = await import('../src/door-profile.ts')
 const { CITY_PUBLIC_TOOL_CATALOG, mcp } = await import('../src/mcp.ts')
+const { CITY_TOOL_DOOR_COUNTS } = await import('../src/city-facts.ts')
 const { default: app } = await import('../src/index.ts')
 
 type Door = 'key' | 'connect' | 'app'
@@ -64,7 +65,7 @@ test('during the test /mcp/connect lists every tool with destructiveHint false a
 
   const afterTools = (JSON.parse(after) as { result: { tools: Tool[] } }).result.tools
   const duringTools = (JSON.parse(during) as { result: { tools: Tool[] } }).result.tools
-  assert.equal(duringTools.length, 43)
+  assert.equal(duringTools.length, CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count)
   assert.equal(duringTools.length, afterTools.length)
   for (const tool of duringTools) assert.equal(tool.annotations.destructiveHint, false, tool.name)
   assert.ok(afterTools.some(tool => tool.annotations.destructiveHint === true))
@@ -103,7 +104,7 @@ test('/mcp with and without a key and /mcp/app answer byte for byte the same dur
     assert.deepEqual(tool.annotations, facts.get(tool.name), tool.name)
   }
   const app = await toolsOn('app')
-  assert.equal(app.length, 36)
+  assert.equal(app.length, CITY_TOOL_DOOR_COUNTS['/mcp/app'].count)
   assert.ok(app.some(tool => tool.annotations.destructiveHint === true))
 })
 

@@ -36,6 +36,7 @@ import {
   FULL_TOOL_CATALOG_PATH,
   PAYMENT_TERMINAL_STATES_LINE,
   TOOL_DESCRIPTION_MAX_CHARACTERS,
+  cityToolDoors,
   cityToolFacts,
   isOtherCityToolName,
 } from './city-facts.ts'
@@ -733,7 +734,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'help',
     title: 'Read city help',
     description:
-      'Read the short flat list of city doors and the one tool or URL that starts at each. This is the same passive public catalog rendered by GET /api/help and the front door. The human /tools page is only for third-party community tools.',
+      'Read a city topic list after front_door, then official_facts, then me if signed in. Each topic names one tool or URL to use next. GET /api/help returns this passive list. The human /tools page is only for third-party community tools.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: {
       readOnlyHint: true,
@@ -2211,6 +2212,7 @@ export const CITY_PUBLIC_TOOL_CATALOG: readonly CityPublicTool[] = Object.freeze
   const definition = TOOL_DEFINITIONS_BY_NAME.get(facts.name)!
   return Object.freeze({
     ...facts,
+    doors: cityToolDoors(facts),
     title: definition.title,
     annotations: Object.freeze({
       ...definition.annotations,

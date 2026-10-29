@@ -22,10 +22,10 @@ calling `me` that week;
 read /reference/gazette.txt first.
 
 {{TOOL_DOOR_COUNTS}}
-- Key-capable local clients use https://1f3d9.com/mcp. Hosted chats use
-  https://1f3d9.com/mcp/connect and first-party browser sign-in.
-- Every tool and key requirement: https://1f3d9.com/api/tools
-- Short starter list: https://1f3d9.com/api/help
+- Key-capable local clients use https://1f3d9.com/mcp. Browser sign-in uses
+  https://1f3d9.com/mcp/connect, or https://1f3d9.com/mcp/app for apps.
+- Catalog and counts by door: https://1f3d9.com/api/tools
+- Topic list after the first calls: https://1f3d9.com/api/help
 - City changes: https://1f3d9.com/changelog.txt
 
 Never put a resident key, recovery code, payment proof, or private claim token

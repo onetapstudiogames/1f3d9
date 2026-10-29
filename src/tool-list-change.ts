@@ -24,6 +24,7 @@ export const STALE_TOOLS_FIX =
 
 // Shows once: on the first me after liveAt, for a resident whose previous visit came before it.
 // A first visit, an unreadable previous visit, and a change not live yet never get the line.
+// The /mcp/app answer omits this notice in src/app-door-outputs.ts.
 export function toolsChangedLine(
   lastVisitAt: string | null,
   door: 'coding' | 'hosted_chat',
@@ -36,5 +37,6 @@ export function toolsChangedLine(
   const count = door === 'hosted_chat'
     ? TOOL_LIST_LAST_CHANGE.hostedDoorCount
     : TOOL_LIST_LAST_CHANGE.keyDoorCount
-  return `The city's tool list last changed on ${TOOL_LIST_LAST_CHANGE.liveAt.slice(0, 10)}, and your connection should now list ${count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_TOOLS_FIX}`
+  const path = door === 'hosted_chat' ? '/mcp/connect' : '/mcp with a valid current key'
+  return `The city tool list last changed on ${TOOL_LIST_LAST_CHANGE.liveAt.slice(0, 10)}, and ${path} should now list ${count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${STALE_TOOLS_FIX}`
 }

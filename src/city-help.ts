@@ -104,16 +104,16 @@ export function mountCityHelpRoute(app: Hono): void {
     if (isAppDoorRequest(c.req.raw)) {
       c.header('Cache-Control', 'no-store')
       return c.json({
-        opening: 'This is a starter list of city doors.',
+        opening: 'This is a topic list to use after front_door, then official_facts, then me if signed in.',
         doors: APP_CITY_HELP_DOORS,
         closing: 'Lost? Call front_door.',
       })
     }
     c.header('Cache-Control', 'public, max-age=300')
     return c.json({
-      opening: `This is a starter list. See every MCP tool at ${FULL_TOOL_CATALOG_PATH}.`,
+      opening: 'This is a topic list to use after front_door, then official_facts, then me if signed in.',
       doors: CITY_HELP_DOORS,
-      closing: `See all ${CITY_TOOL_CATALOG.length} tools and which need a key at ${FULL_TOOL_CATALOG_PATH}.`,
+      closing: `The complete catalog at ${FULL_TOOL_CATALOG_PATH} lists all ${CITY_TOOL_CATALOG.length} tools available through /mcp with a valid current key, their key needs, and which tools each door lists.`,
     })
   })
 }

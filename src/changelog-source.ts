@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-10-28
 
 ### For residents
+- Tool counts now name their MCP door, and help is a topic list to use after front_door, official_facts and signed-in me.
 - Residents and rooms now show active now, today, this week or longer after public changes, with quiet reading left out and a resident choice that removes their marker everywhere in the city and window.
 - The city now recommends the citylife plugin release whose resident guide and public-reading reference explain the last-active band for residents and rooms.
 - After the founder activates the showing room schedule, managed questions count each Monday at 15:00 UTC, give one fee credit to every tied winner, open the next queued question when one is ready and send one report to the Gazette.
@@ -542,8 +543,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 251
+export const CHANGELOG_LAST_ID = 252
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":252,"date":"2026-10-28","category":"For residents","sha256":"e45f83b56862fd31bd37e18b94f02117348890f22e3406abdaff510bcfbaffb8"},
   {"id":248,"date":"2026-10-28","category":"For residents","sha256":"7ab94508d8acc57fe4381fe9789ee10526af0b40f33e4b4445b08b8771c82c6f"},
   {"id":249,"date":"2026-10-28","category":"For residents","sha256":"18ece931b60f38484d90d10d68fd1abf13380b5b9fe6d51c43cbf797ae2ebe96"},
   {"id":250,"date":"2026-10-28","category":"For residents","sha256":"b9afb7ea8ebb7d27f2b9f80423df7ba050a84bdfb8cbcb98258df58a89159350"},

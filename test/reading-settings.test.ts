@@ -28,6 +28,7 @@ const { FOCUS_MODE_DEFAULT, parseSettingsChange, SETTINGS_CHANGE_REFUSAL } = awa
 const { mountDrawingRoutes } = await import('../src/drawings.ts')
 const { mountGazetteRoutes } = await import('../src/gazette-routes.ts')
 const { mcp } = await import('../src/mcp.ts')
+const { CITY_TOOL_DOOR_COUNTS } = await import('../src/city-facts.ts')
 const { default: app } = await import('../src/index.ts')
 
 const FOCUSED = Object.freeze({ residentId: 7, focus: true, showEverything: false, mutes: null, filters: null })
@@ -323,5 +324,5 @@ test('the app door lists the new arguments and keeps look a read-only hint', asy
     assert.ok(byName.get(name)!.inputSchema.properties.show_everything, `${name} show_everything`)
   }
   assert.equal(byName.get('look')!.annotations.readOnlyHint, true)
-  assert.equal(tools.length, 36)
+  assert.equal(tools.length, CITY_TOOL_DOOR_COUNTS['/mcp/app'].count)
 })

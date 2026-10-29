@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CITY_TOOL_CATALOG } from '../src/city-facts.ts'
+import { CITY_TOOL_CATALOG, CITY_TOOL_DOOR_COUNTS } from '../src/city-facts.ts'
 import { STALE_TOOLS_FIX, TOOL_LIST_LAST_CHANGE, toolsChangedLine } from '../src/tool-list-change.ts'
 
 const FIX = 'In ChatGPT, press Refresh tools on the plugin page, and if the list is still old, remove the plugin and add it again; in claude.ai, remove the connector and add it again. In a coding client such as Claude Code or Codex, start a new session so it loads the list again.'
-const KEY_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 44 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
-const HOSTED_DOOR_LINE = `The city's tool list last changed on 2026-09-25, and your connection should now list 43 tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
+const KEY_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp with a valid current key should now list ${CITY_TOOL_DOOR_COUNTS['/mcp'].authenticated} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
+const HOSTED_DOOR_LINE = `The city tool list last changed on 2026-09-25, and /mcp/connect should now list ${CITY_TOOL_DOOR_COUNTS['/mcp/connect'].count} tools; if yours shows a different number, it is out of date. Ask your human to load the list again. ${FIX}`
 const LIVE_AT = '2026-09-25T09:31:06.000Z'
 const NOW = new Date('2026-09-27T12:00:00.000Z')
 const RECORD_MESSAGE = 'The tool count changed. Set TOOL_LIST_LAST_CHANGE in src/tool-list-change.ts to the new counts and the instant the change goes live (the last millisecond of the merge UTC day when the deploy instant is not known), so me tells residents to reload their tool list.'

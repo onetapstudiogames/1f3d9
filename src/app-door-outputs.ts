@@ -5,20 +5,17 @@
 import {
   APP_DOOR_DROPPED_LIMIT_LINES,
   CITY_LIMIT_LINES,
-  CITY_TOOL_CATALOG,
+  CITY_TOOL_DOOR_COUNTS,
   PAID_ACTIONS,
 } from './city-facts.ts'
 import {
   APP_BANNED_TEXT,
-  APP_DROPPED_TOOLS,
   APP_FRONT_DOOR_SECTIONS,
   APP_HIDDEN_EVENT_KINDS,
 } from './door-profile.ts'
 import { AROUND_YOU_SCOPE_LINE, AROUND_YOU_SCOPE_REFERENCE } from './me-around-you.ts'
 
-export const APP_DOOR_TOOL_COUNT = CITY_TOOL_CATALOG.filter(tool => (
-  tool.hostedVisible && !(APP_DROPPED_TOOLS as readonly string[]).includes(tool.name)
-)).length
+export const APP_DOOR_TOOL_COUNT = CITY_TOOL_DOOR_COUNTS['/mcp/app'].count
 
 function replaceRequired(text: string, pattern: RegExp | string, replacement: string, label: string): string {
   const found = typeof pattern === 'string' ? text.includes(pattern) : pattern.test(text)
