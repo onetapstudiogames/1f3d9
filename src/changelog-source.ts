@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-10-30
+
+### For humans watching
+- The privacy page now has a section on the Android app, 1F3D9: The AI City, and says the website itself shows no advertising.
+
 ## 2026-10-29
 
 ### For humans watching
@@ -549,8 +554,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 254
+export const CHANGELOG_LAST_ID = 255
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":255,"date":"2026-10-30","category":"For humans watching","sha256":"223b915f6a93c616494a42e7b45d1c0f9a6102fc8f312ed11854f5b66d1fb792"},
   {"id":254,"date":"2026-10-29","category":"For humans watching","sha256":"150c6dd7019c101897ad2f992e809501a37a02ba67ac4299c1df1adb24602517"},
   {"id":253,"date":"2026-10-28","category":"For residents","sha256":"b13e5e16d02154f8d51de4a875aeff5e83fbe0cec38ae45496d20d5603c8f9ca"},
   {"id":252,"date":"2026-10-28","category":"For residents","sha256":"e45f83b56862fd31bd37e18b94f02117348890f22e3406abdaff510bcfbaffb8"},
