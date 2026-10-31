@@ -206,7 +206,7 @@ export function registerToolDescriptionTests(): void {
         `${path}: coin_trait lists where then and else may sit`,
       )
       assert.ok(coinTrait.description.includes('Only a law may name into_kind or use law_place; a law_place label requires seconds from 1 to 86400, and its check reads active labels only.'), path)
-      assert.ok(coinTrait.description.includes('A place label may also take seconds; without it that old label stays permanent.'), path)
+      assert.ok(coinTrait.description.includes('A label on actor or target must give seconds from 1 to 86400 or permanent: true; a source or place label may take seconds and without it stays permanent.'), path)
       assert.match(laws.description, /law_place names this law's original defining place while the same owner chain still holds, checked again after a wait; it never follows a hinge/u, path)
       assert.match(laws.description, /A law_place label requires seconds from 1 to 86400, and its check reads active labels only/u, path)
       assert.match(laws.description, /Repeated labels last while any matching row remains active; inspect the defining place with look/u, path)

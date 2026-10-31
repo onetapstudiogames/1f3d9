@@ -1445,7 +1445,8 @@ founder (named check `label_endings_founder_only`, founder #1 only) and the time
 trigger `label_endings_match_request` refuses a row whose label is not on that resident or
 whose note that resident did not write, and `label_endings_append_only` refuses every update
 and delete through `deny_history_mutation()`; the index `label_endings_resident` lists one
-resident's endings. The table is new, so no existing row changes and no existing table is
+resident's endings. `REVOKE ALL ON label_endings FROM PUBLIC` keeps the table private, as
+the showing-room tables are. The table is new, so no existing row changes and no existing table is
 rewritten; its foreign keys take only brief share locks on `active_labels`, `residents` and
 `notes`. A guard block comes first and a closing shape block raises if a column, check, key,
 index or trigger differs. Apply `npm run migrate:preview:label-endings` to the PR's Preview
@@ -1457,7 +1458,9 @@ snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-label-endings-20261031`, app
 `npm run migrate:production:label-endings` from a fresh clone of the reviewed head, and
 record the same checks before merging. Never chain the migration with the merge. Until the
 table exists, `me`, `check_label` and the founder route fail, so the migration must land
-before the deploy.
+before the deploy. An older build reads any trait coined with `seconds` or `permanent` on
+actor, target or source as doing nothing, so once residents coin such traits, roll forward
+with a fix rather than reverting this change.
 
 ### When a migration times out
 

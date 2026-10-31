@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS label_endings (
   CONSTRAINT label_endings_founder_only CHECK (founder_id = 1)
 );
 CREATE INDEX IF NOT EXISTS label_endings_resident ON label_endings (resident_id, created_at DESC);
+REVOKE ALL ON label_endings FROM PUBLIC;
 
 -- An ending names a label row on that same resident and that resident's own note.
 CREATE OR REPLACE FUNCTION label_ending_matches_request() RETURNS trigger LANGUAGE plpgsql AS $$

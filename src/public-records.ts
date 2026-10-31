@@ -302,7 +302,6 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         JOIN traits trait ON trait.id = link.trait_id
         WHERE link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
           AND link.revision = coalesce(thing.as_revision, thing.current_revision)
-          AND trait.recipe ? 'use'
       ), '[]'::jsonb) AS use_recipes,
       jsonb_build_object(
         'version', thing.state_version,

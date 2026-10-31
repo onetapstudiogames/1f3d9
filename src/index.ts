@@ -1989,7 +1989,28 @@ app.post('/api/founder/labels/end', async c => {
   if (founder.id !== 1) return err(c, 403, "only founder resident #1 may end a resident's label")
   const allowed = allowedPublicQuery(c.req.queries(), [])
   if (!allowed.ok) return err(c, 400, allowed.error)
-  const parsed = parseLabelEndingInput(await c.req.json().catch(() => null))
+  // The body is read like the flag answer route's: same helper, same byte limit.
+  if (declaredBodyLength(
+    c.req.header('content-length'),
+    FOUNDER_FLAG_HANDLE_BODY_BYTES,
+  ) === 'unusable') {
+    return err(c, 400, `label ending Content-Length must be one decimal byte count no larger than ${FOUNDER_FLAG_HANDLE_BODY_BYTES}, or be omitted`)
+  }
+  const mediaType = (c.req.header('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json') {
+    return err(c, 400, 'label ending Content-Type must be application/json; send one application/json body')
+  }
+  const bodyBytes = Buffer.from(await c.req.arrayBuffer())
+  if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > FOUNDER_FLAG_HANDLE_BODY_BYTES) {
+    return err(c, 400, `label ending body must be 1 to ${FOUNDER_FLAG_HANDLE_BODY_BYTES} bytes`)
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(bodyBytes.toString('utf8')) as unknown
+  } catch {
+    return err(c, 400, 'label ending body must be valid JSON')
+  }
+  const parsed = parseLabelEndingInput(body)
   if (!parsed.ok) return err(c, 400, parsed.error)
   const { input } = parsed
   const result = await endResidentLabels(executePrivateStoreQuery, founder, input)

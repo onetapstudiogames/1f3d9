@@ -100,6 +100,14 @@ test('a thing says what using it puts on you and for how long, with may for cond
     'Using it may put a label on you that lasts 1 day.',
     'a reach over residents reaches you too, and its stickers end within a day',
   )
+  assert.equal(
+    useLabelStatement([
+      [label('actor')],
+      { use: [{ effect: 'wait', seconds: 30, then: [label('actor', { seconds: 60 })] }] },
+    ]),
+    'Using it puts a permanent label on you and may put a label on you that lasts 1 minute.',
+    'a trait stored as an array runs as use, so its label is certain beside a delayed one',
+  )
   assert.equal(durationWords(1), '1 second')
   assert.equal(durationWords(120), '2 minutes')
   assert.equal(durationWords(172_800), '2 days')

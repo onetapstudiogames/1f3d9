@@ -6,7 +6,6 @@
 // names the label.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import {
   bearer,
@@ -161,7 +160,7 @@ test('label life and the founder ending against real PostgreSQL', { timeout: 600
         use: [
           { effect: 'label', target: 'actor', label: 'mirror-used', seconds: 60 },
           { effect: 'label', target: 'actor', label: 'mirror-title', permanent: true },
-          { effect: 'label', target: 'source', label: 'mirror-warm', seconds: 1 },
+          { effect: 'label', target: 'source', label: 'mirror-warm', seconds: 60 },
         ],
       })
       assert.equal(coined.status, 201, coined.text)
@@ -191,12 +190,44 @@ test('label life and the founder ending against real PostgreSQL', { timeout: 600
       const usedEnds = Date.parse(ends[1]!.expires_at!) - Date.now()
       assert.ok(usedEnds > 50_000 && usedEnds < 65_000, `mirror-used ends in about a minute (the container clock may differ a little), not ${usedEnds} ms`)
 
+      const db = connectedDatabase()
+      const warmLife = (await db.query<{ seconds: number }>(`
+        SELECT round(extract(epoch FROM expires_at - created_at))::int AS seconds
+        FROM active_labels WHERE target_type = 'thing' AND target_id = $1 AND label = 'mirror-warm'
+      `, [mirror])).rows
+      assert.deepEqual(warmLife, [{ seconds: 60 }], 'a chosen life on a thing is stored as its end')
       const warm = ((await call(app, null, 'GET', `/api/thing/${mirror}`)).json.thing as Json).labels as Json[]
       assert.deepEqual(warm.map(entry => entry.label), ['mirror-warm'])
       assert.equal(typeof warm[0]!.expires_at, 'string', 'a chosen life on a thing shows its end')
-      await delay(1_200)
+      const warmEnds = Date.parse(String(warm[0]!.expires_at)) - Date.now()
+      assert.ok(warmEnds > 50_000 && warmEnds < 65_000, `mirror-warm ends in about a minute, not ${warmEnds} ms`)
+      // Reach that end without waiting a minute: move the label's stored times two minutes
+      // back, keeping its one-minute life, so its end is in the past.
+      await db.query('ALTER TABLE active_labels DISABLE TRIGGER active_labels_append_only')
+      try {
+        await db.query(`
+          UPDATE active_labels
+          SET created_at = created_at - interval '2 minutes', expires_at = expires_at - interval '2 minutes'
+          WHERE target_type = 'thing' AND target_id = $1 AND label = 'mirror-warm'
+        `, [mirror])
+      } finally {
+        await db.query('ALTER TABLE active_labels ENABLE TRIGGER active_labels_append_only')
+      }
       const cooled = (await call(app, null, 'GET', `/api/thing/${mirror}`)).json.thing as Json
       assert.deepEqual(cooled.labels, [], 'a chosen life on a thing ends that label then')
+
+      // A trait stored as an array runs as use, so the thing read counts it beside a wait trait.
+      const arrayTrait = await storeOldTrait('old-array', [{ effect: 'label', target: 'actor', label: 'array-title' }])
+      const waitTrait = await storeOldTrait('old-wait', {
+        use: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'actor', label: 'late-title', seconds: 60 }] }],
+      })
+      const frame = await seedThing(MAKER.id, rooms.eastRoomId,
+        await seedKind(MAKER.id, 'frames', [arrayTrait, waitTrait]), 'an old frame', { openToUse: true })
+      const framed = await call(app, null, 'GET', `/api/thing/${frame}`)
+      assert.equal(framed.status, 200, framed.text)
+      assert.equal((framed.json.thing as Json).on_use,
+        'Using it puts a permanent label on you and may put a label on you that lasts 1 minute.',
+        'an array-shaped stored trait is certain, not may')
     })
 
     await t.test('inside a reach or a wake try a sticker on a resident still ends within a day, and a shorter chosen life wins', async () => {
@@ -277,6 +308,18 @@ test('label life and the founder ending against real PostgreSQL', { timeout: 600
       const wrongSource = await end(FOUNDER.secret, { ...body, source_thing_id: 999 })
       assert.equal(wrongSource.status, 404)
       assert.equal(wrongSource.json.error, `${VISITOR.handle} has no current label mirror-title from thing 999; nothing was ended`)
+      // The body is read like the flag answer route's: JSON only, at most 512 bytes, valid JSON.
+      const raw = async (contentType: string, text: string) => {
+        const response = await app.request('http://city.test/api/founder/labels/end', {
+          method: 'POST', headers: { authorization: `Bearer ${FOUNDER.secret}`, 'content-type': contentType }, body: text,
+        })
+        return Object.freeze({ status: response.status, error: (await response.json() as Json).error })
+      }
+      assert.deepEqual(await raw('text/plain', JSON.stringify(body)),
+        { status: 400, error: 'label ending Content-Type must be application/json; send one application/json body' })
+      assert.deepEqual(await raw('application/json', JSON.stringify({ ...body, label: 'x'.repeat(600) })),
+        { status: 400, error: 'label ending body must be 1 to 512 bytes' })
+      assert.deepEqual(await raw('application/json', '{'), { status: 400, error: 'label ending body must be valid JSON' })
       const rowsBefore = Number((await db.query('SELECT count(*)::int AS n FROM active_labels')).rows[0]!.n)
       const eventsBefore = Number((await db.query(`SELECT count(*)::int AS n FROM events WHERE kind = 'moderation'`)).rows[0]!.n)
       assert.equal(eventsBefore, 0, 'a refused ending writes no record')
