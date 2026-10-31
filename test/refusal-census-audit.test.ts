@@ -224,7 +224,8 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // Reading settings (decision #154) add GET /api/me/settings and PATCH /api/me/settings.
   // Waiting transfers (decision #158) add POST /api/transfer/waiting/:waitingId/accept and /decline.
   // Decision #167 adds four founder backlog routes and the scheduled close route.
-  assert.equal(http.registrations.length, 162)
+  // Decision #169 adds the founder-only POST /api/founder/labels/end.
+  assert.equal(http.registrations.length, 163)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

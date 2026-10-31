@@ -204,7 +204,7 @@ test('public activity uses provable historical room evidence', { timeout: 600_00
       await standIn(NEIGHBOUR.id, rooms.eastRoomId)
       assert.equal((await coin(app, GROWER.secret, 'activity-reach', {
         use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 1,
-          then: [{ effect: 'label', target: 'target', label: 'later-public-label' }] }] }],
+          then: [{ effect: 'label', target: 'target', label: 'later-public-label', permanent: true }] }] }],
       })).status, 201)
       const kind = await seedKind(GROWER.id, 'activity-reach-kind', [await traitId('activity-reach')])
       const source = await seedThing(GROWER.id, rooms.eastRoomId, kind, 'reach source')

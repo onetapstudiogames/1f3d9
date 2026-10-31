@@ -22,7 +22,7 @@ import {
   traitRecipeFault,
 } from '../src/physics.ts'
 
-const soak = { effect: 'label', target: 'target', label: 'wet' } as const
+const soak = { effect: 'label', target: 'target', label: 'wet', permanent: true } as const
 
 test('the brick list grows to twelve with copy, reach, and convert', () => {
   assert.deepEqual(EFFECT_BRICKS, [
@@ -51,7 +51,7 @@ test('copy, reach, and convert canonicalize with every default written out', () 
       { effect: 'copy', generations: 8, copies: 'Unlimited', to: 'ADJACENT', inherit: ['state', 'body'] },
       { effect: 'copy', copies: 10_000, inherit: [] },
       { effect: 'reach', then: [soak] },
-      { effect: 'reach', over: 'residents', max: 64, then: [{ effect: 'label', target: 'target', label: 'seen' }] },
+      { effect: 'reach', over: 'residents', max: 64, then: [{ effect: 'label', target: 'target', label: 'seen', permanent: true }] },
       { effect: 'reach', kind: 'Oak', max: 1, then: [{ effect: 'convert', target: 'target' }] },
       { effect: 'convert', target: 'TARGET' },
     ],
@@ -62,7 +62,7 @@ test('copy, reach, and convert canonicalize with every default written out', () 
       { effect: 'copy', generations: 8, copies: 'unlimited', to: 'adjacent', inherit: ['body', 'state'] },
       { effect: 'copy', generations: 3, copies: 10_000, to: 'here', inherit: [] },
       { effect: 'reach', over: 'things', max: 16, then: [soak] },
-      { effect: 'reach', over: 'residents', max: 64, then: [{ effect: 'label', target: 'target', label: 'seen' }] },
+      { effect: 'reach', over: 'residents', max: 64, then: [{ effect: 'label', target: 'target', label: 'seen', permanent: true }] },
       { effect: 'reach', over: 'things', max: 1, kind: 'oak', then: [{ effect: 'convert', target: 'target' }] },
       { effect: 'convert', target: 'target' },
     ],
@@ -109,9 +109,9 @@ test('copy, reach, and convert dials outside their ranges are refused at coining
 
 test('a reach over residents accepts only sticker, check, roll, and write', () => {
   const soft = [
-    { effect: 'label', target: 'target', label: 'seen' },
+    { effect: 'label', target: 'target', label: 'seen', permanent: true },
     { effect: 'check_label', target: 'target', label: 'friend', then: [{ effect: 'write', key: 'friends', op: 'add' }] },
-    { effect: 'chance', percent: 10, then: [{ effect: 'label', target: 'target', label: 'lucky' }] },
+    { effect: 'chance', percent: 10, then: [{ effect: 'label', target: 'target', label: 'lucky', permanent: true }] },
     { effect: 'write', key: 'counted', op: 'add' },
   ]
   assert.ok(parseTraitRecipe({ use: [{ effect: 'reach', over: 'residents', then: soft }] }))

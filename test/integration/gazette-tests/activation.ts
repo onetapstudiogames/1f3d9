@@ -96,7 +96,7 @@ export async function registerActivationTests(
       VALUES (
         'gazette-race-marker',
         'Integration proof that rejected Gazette submissions roll back talk-law effects.',
-        '{"talk":[{"effect":"label","target":"actor","label":"gazette-race-leak"}]}'::jsonb,
+        '{"talk":[{"effect":"label","target":"actor","label":"gazette-race-leak", "permanent": true}]}'::jsonb,
         1
       )
       RETURNING id

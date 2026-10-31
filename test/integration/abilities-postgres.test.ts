@@ -222,7 +222,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(handOver.json.error, 'a wake program may never hand a thing over, because nobody who arrives or speaks asked for it; drop the transfer step')
 
       const outside = await coin(app, MAKER.secret, 'far-reacher', {
-        wake: { then: [{ effect: 'label', target: 'target', label: 'touched' }] },
+        wake: { then: [{ effect: 'label', target: 'target', label: 'touched', permanent: true }] },
       })
       assert.equal(outside.status, 400)
       assert.equal(outside.json.error, 'a wake try has no target, destination, or recipient of its own; use target only inside a reach, and move things only to home')
@@ -236,18 +236,18 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       const counter = await coin(app, MAKER.secret, 'counter', { use: [{ effect: 'write', key: 'visits', op: 'add' }] })
       assert.equal(counter.status, 201, JSON.stringify(counter.json))
       const greeter = await coin(app, MAKER.secret, 'greeter', {
-        wake: { then: [{ effect: 'label', target: 'actor', label: 'greeted' }] },
+        wake: { then: [{ effect: 'label', target: 'actor', label: 'greeted', permanent: true }] },
       })
       assert.equal(greeter.status, 201, JSON.stringify(greeter.json))
       assert.deepEqual((greeter.json.trait as Json).recipe, {
-        wake: { on: ['arrive'], every_seconds: 60, then: [{ effect: 'label', target: 'actor', label: 'greeted' }] },
+        wake: { on: ['arrive'], every_seconds: 60, then: [{ effect: 'label', target: 'actor', label: 'greeted', permanent: true }] },
       })
       const doorman = await coin(app, MAKER.secret, 'doorman', {
         wake: { on: ['talk'], then: [{ effect: 'block', target: 'actor', action: 'talk', seconds: 30 }] },
       })
       assert.equal(doorman.status, 201, 'coining allows a hold; the room decides when it runs')
       const lucky = await coin(app, MAKER.secret, 'lucky-floor', {
-        talk: [{ effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'lucky' }] }],
+        talk: [{ effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'lucky', permanent: true }] }],
       })
       assert.equal(lucky.status, 201)
 
@@ -525,7 +525,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await standIn(VISITOR.id, rooms.continentId)
       assert.equal((await coin(app, FOUNDER.secret, 'greeter', {
         wake: { then: [
-          { effect: 'label', target: 'actor', label: 'greeted' },
+          { effect: 'label', target: 'actor', label: 'greeted', permanent: true },
           { effect: 'write', key: 'guests', op: 'append', value: { from: 'actor' } },
         ] },
       })).status, 201)
@@ -648,7 +648,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
         wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }] },
       })).status, 201)
       assert.equal((await coin(app, FOUNDER.secret, 'sticker-clock', {
-        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'label', target: 'actor', label: 'late' }] },
+        wake: { on: ['clock'], every_seconds: 10, then: [{ effect: 'label', target: 'actor', label: 'late', permanent: true }] },
       })).status, 201)
       const ticker = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'tickers', [await traitId('ticker')]), 'a clock', { wakeEnabled: true })
       const stickerClock = await seedThing(FOUNDER.id, rooms.eastRoomId, await seedKind(FOUNDER.id, 'sticker-clocks', [await traitId('sticker-clock')]), 'a sticker clock', { wakeEnabled: true })
@@ -729,7 +729,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await db.query(`UPDATE places SET owner_id = $1 WHERE id = $2`, [VISITOR.id, rooms.continentId])
       assert.equal((await coin(app, FOUNDER.secret, 'gatekeeper', {
         wake: { then: [
-          { effect: 'label', target: 'actor', label: 'held' },
+          { effect: 'label', target: 'actor', label: 'held', permanent: true },
           { effect: 'block', target: 'actor', action: 'move', seconds: 600 },
         ] },
       })).status, 201)
@@ -796,7 +796,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await db.query('UPDATE places SET wake_visitors = TRUE WHERE id = $1', [rooms.eastRoomId])
       assert.equal((await coin(app, FOUNDER.secret, 'greeter', {
         wake: { then: [
-          { effect: 'label', target: 'actor', label: 'greeted' },
+          { effect: 'label', target: 'actor', label: 'greeted', permanent: true },
           { effect: 'write', key: 'last', op: 'set', value: { from: 'actor' } },
         ] },
       })).status, 201)

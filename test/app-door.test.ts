@@ -147,7 +147,7 @@ test('the app door lists exactly the 36 tools the owner kept', async () => {
   assert.deepEqual(routeTools.map(tool => tool.name), APP_TOOLS, 'anonymous callers see the same list')
   const coin = routeTools.find(tool => tool.name === 'coin_trait')!.description
   assert.ok(coin.includes('Only a law may name into_kind or use law_place; a law_place label requires seconds from 1 to 86400, and its check reads active labels only.'))
-  assert.ok(coin.includes('A place label may also take seconds; without it that old label stays permanent.'))
+  assert.ok(coin.includes('A label on actor or target must give seconds from 1 to 86400 or permanent: true; a source or place label may take seconds and without it stays permanent.'))
   const laws = routeTools.find(tool => tool.name === 'laws')!.description
   assert.match(laws, /law_place names this law's original defining place while the same owner chain still holds, checked again after a wait; it never follows a hinge/u)
   assert.match(laws, /A law_place label requires seconds from 1 to 86400, and its check reads active labels only/u)

@@ -101,15 +101,15 @@ test('the public feed and snapshots show what abilities did', { timeout: 900_000
       })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'one-sprout', { use: [{ effect: 'copy', generations: 1 }] })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'soak-room', {
-        use: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'soaked' }] }],
+        use: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'soaked', permanent: true }] }],
       })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'mist-people', {
-        use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'private-mist' }] }],
+        use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'private-mist', permanent: true }] }],
       })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'ash-touch', { use: [{ effect: 'convert', target: 'target' }] })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'door-greeter', {
         wake: { then: [
-          { effect: 'label', target: 'actor', label: 'private-greeting' },
+          { effect: 'label', target: 'actor', label: 'private-greeting', permanent: true },
           { effect: 'write', key: 'visits', op: 'add' },
         ] },
       })).status, 201)

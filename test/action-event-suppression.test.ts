@@ -634,7 +634,7 @@ test('a private resident label has no public activity outcome or target identity
     return []
   })
   const outcome = await executeEffectsWithOutcome([
-    { effect: 'label', target: 'actor', label: 'private-label' },
+    { effect: 'label', target: 'actor', label: 'private-label', permanent: true },
   ], effectContext(), db)
   assert.deepEqual(outcome, { effectsApplied: 1, emittedTypedPublicEvent: false })
 })

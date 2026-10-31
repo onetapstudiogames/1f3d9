@@ -5,7 +5,7 @@ import {
   MAX_EFFECT_COUNT,
   MAX_EFFECT_DEPTH,
   MAX_EFFECT_GENERATIONS,
-  MAX_PLACE_LABEL_SECONDS,
+  MAX_LABEL_LIFE_SECONDS,
   MAX_RECIPE_BYTES,
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
@@ -31,7 +31,7 @@ function grammarRule(fault: RecipeGrammarFault): string {
     if (fault.brick === 'destroy') return 'destroy takes target (source or target)'
     if (fault.brick === 'move') return 'move takes target (actor, source, or target) and to (destination or home)'
     if (fault.brick === 'transfer') return 'transfer takes target (source or target) and to (recipient or actor)'
-    if (fault.brick === 'label') return `label takes target (actor, source, target, place, or law_place) and label (a world name); only place and law_place take seconds (${MIN_TIMER_SECONDS} to ${MAX_PLACE_LABEL_SECONDS}), optional on place and required on law_place`
+    if (fault.brick === 'label') return `label takes target (actor, source, target, place, or law_place), label (a world name), and how long it lasts: on actor and target exactly one of seconds (${MIN_TIMER_SECONDS} to ${MAX_LABEL_LIFE_SECONDS}) or permanent: true; on source and place optional seconds, permanent when omitted; on law_place required seconds`
     if (fault.brick === 'block') return `block takes target (actor or target), action (talk, move, use, give, consume, or make), and seconds (1 to ${MAX_BLOCK_SECONDS})`
     if (fault.brick === 'wait') return `wait takes seconds (${MIN_TIMER_SECONDS} to ${MAX_TIMER_SECONDS}), then, and an optional repeat (1 to ${MAX_EFFECT_GENERATIONS})`
     if (fault.brick === 'check_label') return 'check_label takes target (actor, source, target, place, or law_place), label (a world name), required then, and optional else; it takes no seconds'
@@ -49,6 +49,7 @@ function grammarRule(fault: RecipeGrammarFault): string {
   if (fault.code === 'weight') return `one program may weigh at most ${MAX_APPLICATIONS_PER_PROGRAM.toLocaleString('en-US')} effect applications, a reach counting its max times its steps`
   if (fault.code === 'bytes') return `a recipe may be at most ${MAX_RECIPE_BYTES.toLocaleString('en-US')} bytes as JSON`
   if (fault.code === 'step') return 'each step is an object whose effect is destroy, move, transfer, label, block, wait, check_label, chance, write, copy, reach, or convert'
+  if (fault.code === 'label_life') return `a label on actor or target must say how long it lasts: add seconds, a whole number from ${MIN_TIMER_SECONDS} to ${MAX_LABEL_LIFE_SECONDS}, or permanent: true`
   if (fault.code === 'reach_steps') return 'a reach never holds block, copy, or another reach, and never moves actor; over residents it holds only label, check_label, chance, and write'
   return `wake takes then and optional on (a list of ${WAKE_EVENTS[0]}, ${WAKE_EVENTS[1]}, and ${WAKE_EVENTS[2]}) and every_seconds (${WAKE_MIN_EVERY_SECONDS} to ${WAKE_MAX_EVERY_SECONDS})`
 }

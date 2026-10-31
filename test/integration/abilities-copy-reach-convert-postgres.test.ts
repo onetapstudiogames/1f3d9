@@ -238,7 +238,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         use: [{ effect: 'copy', generations: 3, copies: 1, to: 'here', inherit: ['body'] }],
       })
       const rain = await coin(app, GROWER.secret, 'rain', {
-        wake: { on: ['clock'], then: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet' }] }] },
+        wake: { on: ['clock'], then: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet', permanent: true }] }] },
       })
       assert.equal(rain.status, 201, 'a wake program may name target inside a reach')
       const stray = await coin(app, GROWER.secret, 'stray', {
@@ -253,7 +253,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         talk: [{ effect: 'reach', kind: 'oak', then: [{ effect: 'convert', target: 'target', into_kind: 'ash' }] }],
       })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'drizzle', {
-        talk: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'damp' }] }],
+        talk: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'damp', permanent: true }] }],
       })).status, 201)
 
       for (const name of ['sprout', 'blight']) {
@@ -689,10 +689,10 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
       await standIn(GROWER.id, rooms.eastRoomId)
       assert.equal((await coin(app, GROWER.secret, 'soak-all', {
-        use: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet' }] }],
+        use: [{ effect: 'reach', then: [{ effect: 'label', target: 'target', label: 'wet', permanent: true }] }],
       })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'slow-scorch', {
-        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'target', label: 'scorched' }] }] }],
+        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'target', label: 'scorched', permanent: true }] }] }],
       })).status, 201)
       const cloud = await seedKind(GROWER.id, 'cloud', [await traitId('soak-all'), await traitId('slow-scorch')])
       const sourceId = await seedThing(GROWER.id, rooms.eastRoomId, cloud, 'a cloud')
@@ -763,7 +763,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
 
       // A shared use runs another's program, so the visitor's own things need open_to_reach too.
       assert.equal((await coin(app, NEIGHBOUR.secret, 'slow-scorch', {
-        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'scorched' }] }] }],
+        use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'scorched', permanent: true }] }] }],
       })).status, 201)
       const torch = await seedKind(NEIGHBOUR.id, 'torch', [await traitId('slow-scorch')])
       const torchId = await seedThing(NEIGHBOUR.id, rooms.eastRoomId, torch, 'a torch', { openToUse: true })
@@ -783,7 +783,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await standIn(FOUNDER.id, rooms.westRoomId)
       assert.equal((await coin(app, GROWER.secret, 'drizzle', {
         use: [{ effect: 'reach', over: 'residents', then: [
-          { effect: 'label', target: 'target', label: 'damp' },
+          { effect: 'label', target: 'target', label: 'damp', permanent: true },
           { effect: 'write', key: 'counted', op: 'add' },
         ] }],
       })).status, 201)
@@ -841,7 +841,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       const db = connectedDatabase()
       await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
       await standIn(GROWER.id, rooms.eastRoomId)
-      const eight = Array.from({ length: 8 }, (_, index) => ({ effect: 'label', target: 'target', label: `mark-${index}` }))
+      const eight = Array.from({ length: 8 }, (_, index) => ({ effect: 'label', target: 'target', label: `mark-${index}`, permanent: true }))
       for (const name of ['wave-one', 'wave-two']) {
         assert.equal((await coin(app, GROWER.secret, name, { use: [{ effect: 'reach', max: 64, then: eight }] })).status, 201)
       }
@@ -871,8 +871,8 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
         wake: {
           on: ['arrive'],
           then: [
-            { effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'splashed' }] },
-            { effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'soaked' }] }] },
+            { effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'splashed', permanent: true }] },
+            { effect: 'reach', then: [{ effect: 'wait', seconds: 30, then: [{ effect: 'label', target: 'target', label: 'soaked', permanent: true }] }] },
           ],
         },
       })).status, 201)

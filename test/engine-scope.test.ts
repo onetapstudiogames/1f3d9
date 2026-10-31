@@ -61,12 +61,12 @@ const cases: readonly Readonly<{
   {
     name: 'label a remote thing',
     target: { type: 'thing', id: 42 },
-    effect: { effect: 'label', target: 'target', label: 'marked' },
+    effect: { effect: 'label', target: 'target', label: 'marked', permanent: true },
   },
   {
     name: 'label another resident kind',
     target: { type: 'kind', id: 9 },
-    effect: { effect: 'label', target: 'target', label: 'marked' },
+    effect: { effect: 'label', target: 'target', label: 'marked', permanent: true },
   },
   {
     name: 'check a remote place label',

@@ -253,7 +253,7 @@ test('showing room runner holds its promises in real PostgreSQL', { timeout: 600
     const scheduleWait = async (label: string) => {
       const clock = (await database.query('SELECT showing_test_clock() AS at')).rows[0].at as Date
       await executeEffects([{
-        effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'actor', label }],
+        effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'actor', label, permanent: true }],
       }], {
         actionId: null, actorId: 11, actorHandle: 'entry-one', placeId: 438,
         sourceThingId: null, sharedSourceThingId: null, target: null,
@@ -613,7 +613,7 @@ test('showing room runner holds its promises in real PostgreSQL', { timeout: 600
         VALUES(90,'showing-talk-law','Synthetic talk law.',$1::jsonb,1)`,
       [JSON.stringify({ talk: target === 'law_place'
         ? [{ effect: 'label', target, label: 'ordinary-spoken', seconds: 60 }]
-        : [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'actor', label: 'ordinary-later' }] }] })])
+        : [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'actor', label: 'ordinary-later', permanent: true }] }] })])
       await database.query(`INSERT INTO place_law_changes(place_id,trait_id,actor_id,change_type,position)
         VALUES(438,90,1,'add',0)`)
       const ordinaryLocked = Promise.withResolvers<void>()

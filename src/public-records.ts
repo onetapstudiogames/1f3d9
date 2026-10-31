@@ -5,6 +5,7 @@ import type { PlaceRow, ThingRow } from './world-support.ts'
 import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { publicActivityFields, publicActivitySql } from './public-activity.ts'
+import { useLabelStatement } from './use-labels.ts'
 
 export type PublicPlaceRecord = Readonly<PlaceRow & Record<string, unknown>>
 export type PublicThingRecord = Readonly<ThingRow & Record<string, unknown>>
@@ -295,6 +296,14 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
           AND trait.recipe ? 'wake'
         ORDER BY link.position LIMIT 1
       ) AS wake,
+      coalesce((
+        SELECT jsonb_agg(trait.recipe ORDER BY link.position)
+        FROM kind_revision_traits link
+        JOIN traits trait ON trait.id = link.trait_id
+        WHERE link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+          AND link.revision = coalesce(thing.as_revision, thing.current_revision)
+          AND trait.recipe ? 'use'
+      ), '[]'::jsonb) AS use_recipes,
       jsonb_build_object(
         'version', thing.state_version,
         'values', thing.state,
@@ -327,8 +336,17 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
     LEFT JOIN kinds birth_kind ON birth_kind.id = thing.kind_id
     WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
   `) as PublicThingRecord[]
-  const publicDetails = await moderatePlaceDetails(rows, [])
+  const publicDetails = await moderatePlaceDetails(rows.map(withOnUse), [])
   return publicDetails.things[0] ?? null
+}
+
+/** Replaces the stored use recipes with the plain sentence of what using it does to you (#168). */
+function withOnUse(row: PublicThingRecord): PublicThingRecord {
+  const { use_recipes: useRecipes, ...record } = row
+  return {
+    ...record,
+    on_use: useLabelStatement(Array.isArray(useRecipes) ? useRecipes : []),
+  } as PublicThingRecord
 }
 
 /**

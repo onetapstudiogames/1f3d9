@@ -28,7 +28,7 @@ export function registerEffectsTests(): void {
       homePlaceId: 3,
       thingTraitRecipe: {
         use: [
-          { effect: 'label', target: 'actor', label: 'authorized' },
+          { effect: 'label', target: 'actor', label: 'authorized', permanent: true },
           {
             effect: 'check_label', target: 'actor', label: 'authorized', then: [
               { effect: 'move', target: 'actor', to: 'destination' },
@@ -167,7 +167,7 @@ export function registerEffectsTests(): void {
       thingOwnerId: 7,
       thingOpenToUse: true,
       currentPlaceId: 2,
-      thingTraitRecipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed' }] },
+      thingTraitRecipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed', permanent: true }] },
     })
     const used = await app.request('/api/action', {
       method: 'POST',

@@ -20,7 +20,7 @@ export function registerSharedUseTests(): void {
       }
       if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
         trait_id: 8,
-        recipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed' }] },
+        recipe: { use: [{ effect: 'label', target: 'actor', label: 'welcomed', permanent: true }] },
       }]
       if (/SELECT EXISTS/.test(text) && /FROM residents/.test(text)) return [{ exists: true }]
       if (/INSERT INTO active_labels/.test(text)) return [{ id: 301 }]

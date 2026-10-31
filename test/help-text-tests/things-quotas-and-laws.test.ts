@@ -35,7 +35,7 @@ export function registerThingsQuotasAndLawsTests(): void {
 
   for (const [contract, pattern] of [
     ['stable origin through nested checks and timers', /originPlaceId[\s\S]*lawAuthority.sourcePlaceId[\s\S]*nested check[\s\S]*timers preserve/u],
-    ['accepted targets and duration refusals', /label and check_label accept actor, source, target, place, or law_place[\s\S]*actor, source, and target refuse seconds, even when target names a place[\s\S]*check_label takes no seconds/u],
+    ['accepted targets and duration refusals', /label and check_label accept actor, source, target, place, or law_place[\s\S]*A label on actor or target in a newly coined trait gives exactly one of seconds \(1 to 86400\) or permanent: true \(decision #168\)[\s\S]*check_label takes no seconds/u],
     ['current chain and retirement guard', /source, room, and connecting parent places must still form an unbroken same-owner chain and none may be retired/u],
     ['current room and visitors', /place still names the run's current room[\s\S]*visitors can trigger an installed law through a permitted action; they need not own the place/u],
     ['execution-time lifetime', /duration starts when the label is written, including after a wait/u],
@@ -97,8 +97,9 @@ export function registerThingsQuotasAndLawsTests(): void {
     const prose = text.replace(/\s+/gu, ' ')
     for (const [contract, pattern] of [
       ['law-only target and accepted label targets', /a kind refuses a trait using law_place or whose convert names one[\s\S]*label and check_label accept actor, source, target, place, or law_place[\s\S]*law_place works only for label and check_label in a place law/u],
-      ['required and optional duration', /label on law_place requires seconds, a whole number from 1 to 86400 inclusive[\s\S]*label on literal place may use the same range; omitting seconds keeps its permanent label/u],
-      ['duration refusals', /actor, source, and target refuse seconds, even when target names a place[\s\S]*Missing required seconds, fractions, out-of-range values, and seconds on other targets refuse the recipe[\s\S]*only place and law_place take seconds \(1 to 86400\), optional on place and required on law_place[\s\S]*check_label takes no seconds/u],
+      ['required and optional duration', /On actor and target, the targets that can land on a resident, give exactly one of seconds, a whole number from 1 to 86400 inclusive, or permanent: true[\s\S]*A trait coined before this rule keeps working as it was coined, and its label that gave neither stays permanent\. label on law_place requires seconds, a whole number from 1 to 86400 inclusive\. label on literal place may use the same range; omitting seconds keeps its permanent label\. label on source may take the same seconds and without them stays permanent\./u],
+      ['duration refusals', /A trait that gives neither is refused with "a label on actor or target must say how long it lasts: add seconds, a whole number from 1 to 86400, or permanent: true"[\s\S]*permanent: true is accepted only on actor and target\. Fractions, out-of-range values, and seconds with permanent together refuse the recipe\. check_label takes no seconds/u],
+      ['wake and reach ceiling', /Inside a wake try or a reach, a label on a resident still ends within 24 hours, or within the room's wake_label_seconds for a wake: a shorter chosen life wins, and permanent ends then too/u],
       ['label-only check and unchanged old checks', /check_label on law_place reads active labels only, never an adopted law's name, and grants no named-law authority[\s\S]*Existing check_label targets keep matching active labels or a law name/u],
       ['execution-time duration', /duration starts when the label is written, including after a wait/u],
       ['ordinary parent-law example sequence', /Own a parent and two nested rooms[\s\S]*Coin an ordinary free trait[\s\S]*install it as a law on the parent[\s\S]*use an ordinary usable thing in one child[\s\S]*later note in the other child's room runs the inherited talk law and writes the local witness label/u],

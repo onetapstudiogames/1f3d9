@@ -64,7 +64,7 @@ export function registerWaitGiveTests(): void {
         trait_id: 8,
         recipe: { use: [{
           effect: 'wait', seconds: 10,
-          then: [{ effect: 'label', target: 'actor', label: 'welcomed-later' }],
+          then: [{ effect: 'label', target: 'actor', label: 'welcomed-later', permanent: true }],
         }] },
       }]
       if (/pg_advisory_xact_lock/.test(text)) return []

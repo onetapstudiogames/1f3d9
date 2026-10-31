@@ -17,7 +17,7 @@ export async function registerQuotaTests(
         VALUES (
           'gazette-quota-marker',
           'Integration proof that capped Gazette submissions roll back talk-law effects.',
-          '{"talk":[{"effect":"label","target":"actor","label":"gazette-quota-effect"}]}'::jsonb,
+          '{"talk":[{"effect":"label","target":"actor","label":"gazette-quota-effect", "permanent": true}]}'::jsonb,
           1
         )
         RETURNING id

@@ -82,6 +82,7 @@ const ALWAYS_ALLOWED: Readonly<Record<string, string>> = Object.freeze({
   "POST '/api/founder/city-credit/disputes/:disputeId/resolve' src/index.ts": 'founder only',
   "POST '/api/founder/community-tool-submissions/:id/review' src/index.ts": 'founder only',
   "POST '/api/founder/flags/:id/handle' src/index.ts": 'founder only',
+  "POST '/api/founder/labels/end' src/index.ts": 'founder only',
   "POST '/api/flag' src/index.ts": 'flags always work',
   "POST '/api/moderation' src/index.ts": 'founder only; this is where a hold is set',
   "POST '/api/internal/mcp-looking' src/index.ts": 'a passive looking cue, never a write of words',
@@ -133,7 +134,7 @@ test('every write route checks the hold or is always allowed with a reason', () 
   const stale = [...listed].filter(key => !routes.some(route => route.key === key))
   assert.deepEqual(stale, [], 'a listed write route no longer exists')
   // Decision #167 adds three founder showing room management routes.
-  assert.equal(routes.length, 78, 'the city has 78 write route registrations; a new one needs a list entry')
+  assert.equal(routes.length, 79, 'the city has 79 write route registrations; a new one needs a list entry')
   for (const reason of Object.values(ALWAYS_ALLOWED)) assert.ok(reason.length > 0)
 
   for (const [key, where] of Object.entries(CHECKS_THE_HOLD)) {

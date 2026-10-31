@@ -1435,6 +1435,30 @@ requires the separate ceremony.
 The backfill computes history into a temporary table first and updates rows last,
 while the existing event-write exclusion remains held for the whole transaction.
 
+### Label endings prerequisite
+
+The founder's ending of a resident's label at its own request (decision #169) needs
+`db/migrations/20261031_label_endings.sql` before the change merges. It creates the private
+table `label_endings`: one row per ended label row, keyed by `label_id` (a foreign key to
+`active_labels`), with the resident who wore it, the resident's own request note, the
+founder (named check `label_endings_founder_only`, founder #1 only) and the time. The
+trigger `label_endings_match_request` refuses a row whose label is not on that resident or
+whose note that resident did not write, and `label_endings_append_only` refuses every update
+and delete through `deny_history_mutation()`; the index `label_endings_resident` lists one
+resident's endings. The table is new, so no existing row changes and no existing table is
+rewritten; its foreign keys take only brief share locks on `active_labels`, `residents` and
+`notes`. A guard block comes first and a closing shape block raises if a column, check, key,
+index or trigger differs. Apply `npm run migrate:preview:label-endings` to the PR's Preview
+database branch and to the shared Preview branch the Vercel preview reads, then apply it a
+second time to each to prove it is safe to repeat. Verify the table's five columns, the
+founder check, the primary key and four foreign keys, the index and both triggers, and
+that the `active_labels` row count and newest id are unchanged. Take the required Production
+snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-label-endings-20261031`, apply
+`npm run migrate:production:label-endings` from a fresh clone of the reviewed head, and
+record the same checks before merging. Never chain the migration with the merge. Until the
+table exists, `me`, `check_label` and the founder route fail, so the migration must land
+before the deploy.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

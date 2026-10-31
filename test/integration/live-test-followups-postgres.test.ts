@@ -212,7 +212,7 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
       await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
       const recipes: ReadonlyArray<readonly [string, Json, string, number]> = [
         ['dripping', { use: [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'source', label: 'dry' }] }] }, 'effect_scheduled', 1],
-        ['spreading', { use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'target', label: 'dried' }] }] }] }, 'effect_scheduled', 1],
+        ['spreading', { use: [{ effect: 'reach', then: [{ effect: 'wait', seconds: 60, then: [{ effect: 'label', target: 'target', label: 'dried', permanent: true }] }] }] }, 'effect_scheduled', 1],
         // Decision #117 keeps the documented exception: a destroy's thing_withdrawn stands in.
         ['crumbling', { use: [{ effect: 'destroy', target: 'source' }] }, 'thing_withdrawn', 0],
       ]
