@@ -32,8 +32,8 @@ test('the served reference says how long a wake sticker lasts and lists wake_lab
   const placeEditPage = (REFERENCE_SECTIONS.mcp ?? '').replace(/\s+/gu, ' ')
   const full = REFERENCE.replace(/\s+/gu, ' ')
   for (const sentence of [
-    "Going home is never blocked anywhere, and a sticker a waking thing puts on you expires after the room's wake_label_seconds, 24 hours unless its owner set it shorter.",
-    "A reach over residents may only sticker, check, roll, and write, and its stickers on residents expire after 24 hours, or after the room's wake_label_seconds when a waking thing reaches.",
+    "Going home is never blocked anywhere, and a sticker a waking thing puts on you expires after the room's wake_label_seconds, 24 hours unless its owner set it shorter, or sooner when the trait chose a shorter life.",
+    "A reach over residents may only sticker, check, roll, and write, and its stickers on residents expire after 24 hours, or after the room's wake_label_seconds when a waking thing reaches, or sooner when the step chose a shorter life.",
     'wake_random_cap, 0 to 32, default 8; wake_label_seconds, 10 to 86400, default 86400 (24 hours), how long a sticker a thing waking here puts on a resident lasts; and rough_room, default false.',
     'Changing wake_label_seconds changes only stickers put on afterward, never one already on a resident.',
   ]) {

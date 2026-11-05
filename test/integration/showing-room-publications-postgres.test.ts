@@ -182,7 +182,7 @@ test('recorded showing room publications are ordinary founder notes in real Post
     `)
     const clock=(await database.query('SELECT showing_test_clock() AS at')).rows[0].at as Date
     await executeEffects([{
-      effect:'wait',seconds:1,then:[{effect:'label',target:'actor',label:'manual-founder-timer'}],
+      effect:'wait',seconds:1,then:[{effect:'label',target:'actor',label:'manual-founder-timer', permanent: true}],
     }],{
       actionId:null,actorId:1,actorHandle:'founder',placeId:438,sourceThingId:null,
       sharedSourceThingId:null,target:null,destinationPlaceId:null,recipientId:null,

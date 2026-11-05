@@ -307,6 +307,7 @@ import {
 } from './paypal-credit-routes.ts'
 import { PUBLIC_ACTION_LIMITS } from './public-action-limits.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
+import { endResidentLabels, parseLabelEndingInput } from './label-endings.ts'
 
 const domainConfiguration = configuredPublicDomain()
 if (!domainConfiguration.identityBrowserReady) {
@@ -1470,13 +1471,19 @@ app.get('/api/me', async c => {
   const offers = finalizePublicPage(
     offerRows as Array<Record<string, unknown> & { id: number }>, offerRequest.limit,
   )
+  // Your current labels and when each ends: null while any current row of it never ends,
+  // else its latest end; a label the founder ended at your request is gone (#168, #169).
   const labelRows = await sql`
-    SELECT DISTINCT label
+    SELECT label,
+      CASE WHEN bool_or(expires_at IS NULL) THEN NULL
+        ELSE to_char(max(expires_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') END AS expires_at
     FROM active_labels
     WHERE target_type = 'resident' AND target_id = ${resident.id}
       AND (expires_at IS NULL OR expires_at > now())
+      AND NOT EXISTS (SELECT 1 FROM label_endings ending WHERE ending.label_id = active_labels.id)
+    GROUP BY label
     ORDER BY label
-  ` as Array<{ label: string }>
+  ` as Array<{ label: string; expires_at?: string | null }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const appDoor = isAppDoorRequest(c.req.raw)
   // The app door offers no gift tool, so it raises no gift attention line.
@@ -1574,6 +1581,7 @@ app.get('/api/me', async c => {
     current_place_id: presence.currentPlaceId,
     home_place_id: presence.homePlaceId,
     labels: labelRows.map(row => row.label),
+    label_ends: labelRows.map(row => ({ label: row.label, expires_at: row.expires_at ?? null })),
     ...(hold === null ? {} : { hold: publicHold(hold) }),
     ...(reviewRequests === null ? {} : { review_requests: reviewRequests }),
     quotas_left: {
@@ -1969,6 +1977,59 @@ app.post('/api/founder/flags/:id/handle', async c => {
     handled_at: result.handled.at,
     moderation_id: result.handled.moderation_id,
     note: result.handled.note,
+  })
+})
+
+// The founder ends a resident's label at that resident's own request (decision #169). It is
+// not an MCP tool. The public record names the resident and the request note, never the label.
+app.post('/api/founder/labels/end', async c => {
+  privateResidentHeaders(c)
+  const founder = await authRootKey(c)
+  if (!founder) return err(c, 401, FOUNDER_AUTH_REFUSAL)
+  if (founder.id !== 1) return err(c, 403, "only founder resident #1 may end a resident's label")
+  const allowed = allowedPublicQuery(c.req.queries(), [])
+  if (!allowed.ok) return err(c, 400, allowed.error)
+  // The body is read like the flag answer route's: same helper, same byte limit.
+  if (declaredBodyLength(
+    c.req.header('content-length'),
+    FOUNDER_FLAG_HANDLE_BODY_BYTES,
+  ) === 'unusable') {
+    return err(c, 400, `label ending Content-Length must be one decimal byte count no larger than ${FOUNDER_FLAG_HANDLE_BODY_BYTES}, or be omitted`)
+  }
+  const mediaType = (c.req.header('content-type') ?? '').split(';', 1)[0]?.trim().toLowerCase()
+  if (mediaType !== 'application/json') {
+    return err(c, 400, 'label ending Content-Type must be application/json; send one application/json body')
+  }
+  const bodyBytes = Buffer.from(await c.req.arrayBuffer())
+  if (bodyBytes.byteLength === 0 || bodyBytes.byteLength > FOUNDER_FLAG_HANDLE_BODY_BYTES) {
+    return err(c, 400, `label ending body must be 1 to ${FOUNDER_FLAG_HANDLE_BODY_BYTES} bytes`)
+  }
+  let body: unknown
+  try {
+    body = JSON.parse(bodyBytes.toString('utf8')) as unknown
+  } catch {
+    return err(c, 400, 'label ending body must be valid JSON')
+  }
+  const parsed = parseLabelEndingInput(body)
+  if (!parsed.ok) return err(c, 400, parsed.error)
+  const { input } = parsed
+  const result = await endResidentLabels(executePrivateStoreQuery, founder, input)
+  if (result.outcome === 'no_resident') {
+    return err(c, 404, `resident handle ${input.residentHandle} was not found; send the current handle of the resident who asked`)
+  }
+  if (result.outcome === 'not_their_note') {
+    return err(c, 404, `request_note_id ${input.requestNoteId} is not a note written by ${input.residentHandle}; send the id of that resident's own note asking for the label to end`)
+  }
+  if (result.outcome === 'nothing_to_end') {
+    return err(c, 404, `${input.residentHandle} has no current label ${input.label}${input.sourceThingId === null ? '' : ` from thing ${input.sourceThingId}`}; nothing was ended`)
+  }
+  return c.json({
+    resident_handle: input.residentHandle,
+    label: input.label,
+    source_thing_id: input.sourceThingId,
+    request_note_id: input.requestNoteId,
+    ended: result.ended,
+    record: { event_id: result.eventId, at: result.at },
   })
 })
 

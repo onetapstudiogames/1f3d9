@@ -188,7 +188,7 @@ export function registerLabelsBlockingTests(): void {
       if (/FROM things thing JOIN kind_revision_traits/.test(text)) return [{
         trait_id: 8,
         recipe: { use: [
-          { effect: 'label', target: 'actor', label: 'lit' },
+          { effect: 'label', target: 'actor', label: 'lit', permanent: true },
           {
             effect: 'check_label', target: 'actor', label: 'lit',
             then: [{ effect: 'block', target: 'actor', action: 'talk', seconds: 30 }],

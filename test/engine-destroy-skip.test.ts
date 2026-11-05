@@ -90,7 +90,7 @@ test('a different missing thing still refuses normally', async () => {
 
   await assert.rejects(
     executeEffectsWithOutcome(
-      [{ effect: 'label', target: 'target', label: 'missing' }],
+      [{ effect: 'label', target: 'target', label: 'missing', permanent: true }],
       { ...baseContext, target: { type: 'thing', id: 42 } },
       db,
     ),

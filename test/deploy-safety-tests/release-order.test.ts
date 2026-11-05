@@ -316,6 +316,13 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /resident_settings_muted_words_count[\s\S]*Never chain the migration with the merge\./u)
   })
 
+  test('release preparation applies the label endings migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Label endings prerequisite/u)
+    assert.match(deploymentRunbook, /npm run migrate:preview:label-endings/u)
+    assert.match(deploymentRunbook, /npm run migrate:production:label-endings/u)
+    assert.match(deploymentRunbook, /label_endings_founder_only[\s\S]*Never chain the migration with the merge\./u)
+  })
+
   test('release preparation applies the waiting transfers migration to Preview and Production before the merge', () => {
     assert.match(deploymentRunbook, /### Waiting transfers prerequisite/u)
     assert.match(deploymentRunbook, /npm run migrate:preview:waiting-transfers/u)

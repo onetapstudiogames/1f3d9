@@ -173,8 +173,8 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
         use: [{ effect: 'label', target: 'law_place', label: 'shared-condition', seconds: 8 }],
         talk: [{
           effect: 'check_label', target: 'law_place', label: 'shared-condition',
-          then: [{ effect: 'label', target: 'actor', label: 'condition-present' }],
-          else: [{ effect: 'label', target: 'actor', label: 'condition-absent' }],
+          then: [{ effect: 'label', target: 'actor', label: 'condition-present', permanent: true }],
+          else: [{ effect: 'label', target: 'actor', label: 'condition-absent', permanent: true }],
         }],
       }
       const coined = await coin(app, FOUNDER.secret, 'shared-condition-law', recipe)
@@ -333,7 +333,7 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
       const innerRoomId = await seedInnerRoom(rooms.eastRoomId)
       await standIn(VISITOR.id, rooms.continentId)
       assert.equal((await coin(app, FOUNDER.secret, 'wet-feet', {
-        wake: { then: [{ effect: 'label', target: 'actor', label: 'wet_feet' }] },
+        wake: { then: [{ effect: 'label', target: 'actor', label: 'wet_feet', permanent: true }] },
       })).status, 201)
       const streams = await seedKind(FOUNDER.id, 'streams', [await traitId('wet-feet')])
       const eastStream = await seedThing(FOUNDER.id, rooms.eastRoomId, streams, 'east stream', { wakeEnabled: true })
@@ -359,10 +359,10 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
       await standIn(MAKER.id, rooms.eastRoomId)
       await standIn(VISITOR.id, rooms.continentId)
       assert.equal((await coin(app, FOUNDER.secret, 'splash-all', {
-        wake: { then: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'splashed' }] }] },
+        wake: { then: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'splashed', permanent: true }] }] },
       })).status, 201)
       assert.equal((await coin(app, FOUNDER.secret, 'drizzle', {
-        use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'damp' }] }],
+        use: [{ effect: 'reach', over: 'residents', then: [{ effect: 'label', target: 'target', label: 'damp', permanent: true }] }],
       })).status, 201)
       const fountain = await seedThing(FOUNDER.id, rooms.eastRoomId,
         await seedKind(FOUNDER.id, 'fountains', [await traitId('splash-all')]), 'a fountain', { wakeEnabled: true })
@@ -389,7 +389,7 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
       const rooms = await resetCity([FOUNDER, VISITOR])
       await standIn(VISITOR.id, rooms.continentId)
       assert.equal((await coin(app, FOUNDER.secret, 'wet-feet', {
-        wake: { then: [{ effect: 'label', target: 'actor', label: 'wet_feet' }] },
+        wake: { then: [{ effect: 'label', target: 'actor', label: 'wet_feet', permanent: true }] },
       })).status, 201)
       await seedThing(FOUNDER.id, rooms.eastRoomId,
         await seedKind(FOUNDER.id, 'streams', [await traitId('wet-feet')]), 'a stream', { wakeEnabled: true })
@@ -428,7 +428,7 @@ test('a room owner shortens wake stickers against real PostgreSQL', { timeout: 6
       const rooms = await resetCity([FOUNDER, VISITOR])
       await standIn(VISITOR.id, rooms.continentId)
       assert.equal((await coin(app, FOUNDER.secret, 'late-drip', {
-        wake: { then: [{ effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'actor', label: 'late_drip' }] }] },
+        wake: { then: [{ effect: 'wait', seconds: 1, then: [{ effect: 'label', target: 'actor', label: 'late_drip', permanent: true }] }] },
       })).status, 201)
       const pool = await seedThing(FOUNDER.id, rooms.eastRoomId,
         await seedKind(FOUNDER.id, 'pools', [await traitId('late-drip')]), 'a slow pool', { wakeEnabled: true })

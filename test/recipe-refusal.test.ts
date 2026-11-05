@@ -15,13 +15,13 @@ import { recipeGrammarWords, recipeRefusalWords } from '../src/recipe-refusal.ts
 
 const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, and wake'
 const LIST_RULE = 'steps must be a list'
-const LABEL_RULE = 'label takes target (actor, source, target, place, or law_place) and label (a world name); only place and law_place take seconds (1 to 86400), optional on place and required on law_place'
+const LABEL_RULE = 'label takes target (actor, source, target, place, or law_place), label (a world name), and how long it lasts: on actor and target exactly one of seconds (1 to 86400) or permanent: true; on source and place optional seconds, permanent when omitted; on law_place required seconds'
 const CHECK_LABEL_RULE = 'check_label takes target (actor, source, target, place, or law_place), label (a world name), required then, and optional else; it takes no seconds'
 const BAD_BRICK_CASES: readonly Readonly<{ step: unknown; rule: string }>[] = [
   { step: { effect: 'destroy', target: 'actor' }, rule: 'destroy takes target (source or target)' },
   { step: { effect: 'move', target: 'actor', to: 'there' }, rule: 'move takes target (actor, source, or target) and to (destination or home)' },
   { step: { effect: 'transfer', target: 'source', to: 'nobody' }, rule: 'transfer takes target (source or target) and to (recipient or actor)' },
-  { step: { effect: 'label', target: 'actor', label: 'Bad Name!' }, rule: LABEL_RULE },
+  { step: { effect: 'label', target: 'actor', label: 'Bad Name!', permanent: true }, rule: LABEL_RULE },
   { step: { effect: 'block', target: 'actor', action: 'go_home', seconds: 1 }, rule: 'block takes target (actor or target), action (talk, move, use, give, consume, or make), and seconds (1 to 86400)' },
   { step: { effect: 'wait', seconds: 0, then: [] }, rule: 'wait takes seconds (1 to 86400), then, and an optional repeat (1 to 8)' },
   { step: { effect: 'check_label', target: 'room', label: 'x', then: [] }, rule: CHECK_LABEL_RULE },
@@ -36,9 +36,18 @@ const BAD_BRICK_CASES: readonly Readonly<{ step: unknown; rule: string }>[] = [
       step: { effect: 'label', target, label: 'shared', seconds }, rule: LABEL_RULE,
     }))
   )),
-  ...['actor', 'source', 'target'].map(target => ({
-    step: { effect: 'label', target, label: 'shared', seconds: 1 }, rule: LABEL_RULE,
+  ...['actor', 'source', 'target'].flatMap(target => (
+    [0, 1.5, 86401].map(seconds => ({
+      step: { effect: 'label', target, label: 'shared', seconds }, rule: LABEL_RULE,
+    }))
+  )),
+  ...['source', 'place', 'law_place'].map(target => ({
+    step: { effect: 'label', target, label: 'shared', permanent: true }, rule: LABEL_RULE,
   })),
+  ...['actor', 'target'].flatMap(target => [
+    { step: { effect: 'label', target, label: 'shared', seconds: 1, permanent: true }, rule: LABEL_RULE },
+    { step: { effect: 'label', target, label: 'shared', permanent: false }, rule: LABEL_RULE },
+  ]),
   ...['actor', 'source', 'target', 'place', 'law_place'].map(target => ({
     step: { effect: 'check_label', target, label: 'shared', then: [], seconds: 1 }, rule: CHECK_LABEL_RULE,
   })),
@@ -60,7 +69,7 @@ function nestedChances(count: number): unknown[] {
 test('recipe refusals name the first failing location and rule', () => {
   const first = {
     use: [
-      { effect: 'label', target: 'actor', label: 'a' },
+      { effect: 'label', target: 'actor', label: 'a', permanent: true },
       { effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'b', then: [] }] },
     ],
   }
@@ -91,7 +100,7 @@ test('recipe refusals name the first failing location and rule', () => {
     'a reach never holds block, copy, or another reach, and never moves actor; over residents it holds only label, check_label, chance, and write',
   )
   expectRefusal(
-    { use: [{ effect: 'reach', max: 64, then: Array.from({ length: 9 }, () => ({ effect: 'label', target: 'target', label: 'a' })) }] },
+    { use: [{ effect: 'reach', max: 64, then: Array.from({ length: 9 }, () => ({ effect: 'label', target: 'target', label: 'a', permanent: true })) }] },
     'use',
     `one program may weigh at most ${MAX_APPLICATIONS_PER_PROGRAM} effect applications, a reach counting its max times its steps`,
   )
@@ -109,20 +118,20 @@ test('recipe refusals name the first failing location and rule', () => {
     'steps nest at most 8 levels deep, so a step on level 8 takes no then or else',
   )
   expectRefusal(
-    { use: Array.from({ length: 129 }, () => ({ effect: 'label', target: 'actor', label: 'a' })) },
+    { use: Array.from({ length: 129 }, () => ({ effect: 'label', target: 'actor', label: 'a', permanent: true })) },
     'use',
     'a recipe holds at most 128 steps in all',
   )
   expectRefusal(
-    Array.from({ length: 129 }, () => ({ effect: 'label', target: 'actor', label: 'a' })),
+    Array.from({ length: 129 }, () => ({ effect: 'label', target: 'actor', label: 'a', permanent: true })),
     'use',
     'a recipe holds at most 128 steps in all',
   )
   expectRefusal(new Array(1), 'use', LIST_RULE)
   expectRefusal(
     {
-      use: Array.from({ length: 100 }, () => ({ effect: 'label', target: 'actor', label: 'a' })),
-      give: Array.from({ length: 29 }, () => ({ effect: 'label', target: 'actor', label: 'a' })),
+      use: Array.from({ length: 100 }, () => ({ effect: 'label', target: 'actor', label: 'a', permanent: true })),
+      give: Array.from({ length: 29 }, () => ({ effect: 'label', target: 'actor', label: 'a', permanent: true })),
     },
     'give',
     'a recipe holds at most 128 steps in all',
@@ -194,7 +203,7 @@ test('reference example and credential-shaped values do not expose caller text',
   const credential = `1f3d9_sk_${'a1'.repeat(24)}`
   expectRefusal({ [credential]: [] }, 'the top level', TOP_RULE)
   const labelWords = recipeRefusalWords({
-    use: [{ effect: 'label', target: 'actor', label: credential }],
+    use: [{ effect: 'label', target: 'actor', label: credential, permanent: true }],
   })
   assert.deepEqual(labelWords, { where: 'use, step 1', rule: LABEL_RULE })
   assert.equal(JSON.stringify(labelWords).includes(credential), false)

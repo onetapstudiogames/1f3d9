@@ -80,7 +80,7 @@ export function registerCarryTests(): void {
           recipe: { move: [{
             effect: 'wait',
             seconds: 10,
-            then: [{ effect: 'label', target: 'actor', label: 'arrived-later' }],
+            then: [{ effect: 'label', target: 'actor', label: 'arrived-later', permanent: true }],
           }] },
           source_place_id: 2,
           position: 0,

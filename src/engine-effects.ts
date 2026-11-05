@@ -20,7 +20,7 @@ import {
   MAX_TIMER_SECONDS,
   MIN_TIMER_SECONDS,
   RESIDENT_ABILITY_LABEL_SECONDS,
-  parseTraitRecipe,
+  loadTraitRecipe,
   type Effect,
   type SymbolicTarget,
 } from './physics.ts'
@@ -511,6 +511,8 @@ async function activeLabel(target: RuntimeTarget, label: string, db: TaggedSql):
       WHERE target_type = ${target.type} AND target_id = ${target.id}
         AND label = ${label} AND (expires_at IS NULL OR expires_at >
           CASE WHEN ${target.type} = 'place' THEN clock_timestamp() ELSE now() END)
+        -- A label the founder ended at its wearer's request no longer counts (decision #169).
+        AND NOT EXISTS (SELECT 1 FROM label_endings ending WHERE ending.label_id = active_labels.id)
     ) AS present
   `)
   return rows[0]?.present === true
@@ -655,12 +657,15 @@ async function executeEffectWithOutcome(
     if (target.type === 'place') {
       await requireNonWorldPlace(target.id, db)
     }
-    // A sticker a waking thing or a reach puts on a resident expires after a day. One a wake
-    // try puts on, directly or through a reach, expires after its room's wake_label_seconds
-    // instead, read as the sticker is put on, never more than a day (decision #131).
-    const expiresInSeconds = (context.fromWake === true || context.reachMember !== undefined)
+    // A label lasts the life its maker chose, or never ends when it chose permanent or, in a
+    // trait coined before that choice, chose nothing (decision #168). A sticker a waking thing
+    // or a reach puts on a resident still ends within a day: the chosen life when shorter,
+    // and one a wake try puts on, directly or through a reach, within its room's
+    // wake_label_seconds, read as the sticker is put on (decisions #113 and #131).
+    const chosenSeconds = effect.seconds ?? null
+    const residentCapSeconds = (context.fromWake === true || context.reachMember !== undefined)
       && target.type === 'resident'
-      ? RESIDENT_ABILITY_LABEL_SECONDS
+      ? Math.min(chosenSeconds ?? RESIDENT_ABILITY_LABEL_SECONDS, RESIDENT_ABILITY_LABEL_SECONDS)
       : null
     const wakeRoomId = context.fromWake === true ? context.placeId : null
     await queryRows(db`
@@ -670,12 +675,13 @@ async function executeEffectWithOutcome(
       ) VALUES (
         ${target.type}, ${target.id}, ${effect.label}, ${context.actorId},
         ${context.sourceTraitId}, ${origin.placeId}, ${origin.thingId},
-        CASE WHEN ${target.type === 'place' ? (effect.seconds ?? null) : null}::int IS NOT NULL
-          THEN clock_timestamp() + make_interval(secs => ${target.type === 'place' ? (effect.seconds ?? null) : null}::int)
-          WHEN ${expiresInSeconds}::int IS NULL THEN NULL
-          ELSE now() + make_interval(secs => LEAST(${expiresInSeconds}::int, coalesce((
+        CASE WHEN ${residentCapSeconds}::int IS NOT NULL
+          THEN now() + make_interval(secs => LEAST(${residentCapSeconds}::int, coalesce((
             SELECT room.wake_label_seconds FROM places room WHERE room.id = ${wakeRoomId}::int
-          ), ${expiresInSeconds}::int))) END
+          ), ${residentCapSeconds}::int)))
+          WHEN ${chosenSeconds}::int IS NULL THEN NULL
+          WHEN ${target.type === 'place'}::boolean THEN clock_timestamp() + make_interval(secs => ${chosenSeconds}::int)
+          ELSE now() + make_interval(secs => ${chosenSeconds}::int) END
       ) RETURNING id
     `)
     return effectExecutionOutcome(1, false, destroyedThingIds, [], changed)
@@ -1318,7 +1324,7 @@ async function scheduleEffect(
 function pendingFromRow(row: Record<string, unknown>): PendingRow | null {
   const payload = objectRecord(row.payload)
   if (!payload || !Array.isArray(payload.effects)) return null
-  const recipe = parseTraitRecipe({ use: payload.effects })
+  const recipe = loadTraitRecipe({ use: payload.effects })
   if (!recipe?.use) return null
   const type = row.target_type == null ? null : targetType(row.target_type)
   const id = row.target_id == null ? null : integer(row.target_id)

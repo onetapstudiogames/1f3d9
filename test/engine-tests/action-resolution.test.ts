@@ -88,7 +88,7 @@ export function registerActionResolutionTests(): void {
         return [{
           trait_id: 31,
           name: 'talk-marker',
-          recipe: { talk: [{ effect: 'label', target: 'actor', label: 'talked' }] },
+          recipe: { talk: [{ effect: 'label', target: 'actor', label: 'talked', permanent: true }] },
           source_place_id: 2,
           position: 0,
         }]

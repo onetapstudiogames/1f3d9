@@ -65,7 +65,7 @@ export function registerKindsAndUpgradesTests(): void {
         ['/api/trait', 'POST', { name: leaked, description: 'safe' }],
         ['/api/trait', 'POST', {
           name: 'safe-trait', description: 'safe',
-          recipe: { use: [{ effect: 'label', target: 'actor', label: leaked }] },
+          recipe: { use: [{ effect: 'label', target: 'actor', label: leaked, permanent: true }] },
         }],
         ['/api/trait', 'POST', {
           name: 'safe-trait', description: 'safe',
@@ -106,7 +106,7 @@ export function registerKindsAndUpgradesTests(): void {
         name: 'crossing-gate-probe',
         recipe: {
           use: [
-            { effect: 'label', target: 'actor', label: 'a' },
+            { effect: 'label', target: 'actor', label: 'a', permanent: true },
             { effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'b', then: [] }] },
           ],
         },

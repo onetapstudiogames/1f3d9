@@ -475,8 +475,8 @@ test('law_place shares one timed condition through the current owner chain', asy
     })
     const check = (label: string, marker: string, target: 'place' | 'law_place' = 'law_place'): Effect => ({
       effect: 'check_label', target, label,
-      then: [{ effect: 'label', target: 'actor', label: `${marker}-yes` }],
-      else: [{ effect: 'label', target: 'actor', label: `${marker}-no` }],
+      then: [{ effect: 'label', target: 'actor', label: `${marker}-yes`, permanent: true }],
+      else: [{ effect: 'label', target: 'actor', label: `${marker}-no`, permanent: true }],
     })
     await client.query(`
       INSERT INTO traits (id, name, description, recipe, coiner_id)
@@ -661,8 +661,8 @@ test('law_place shares one timed condition through the current owner chain', asy
       assert.equal(delayed.target_id, a)
       assert.ok(delayed.remaining > 1.5 && delayed.remaining <= 2, 'late timers start expiry at execution')
       await client.query('UPDATE places SET wake_label_seconds = 10 WHERE id = $1', [b])
-      await execute([{ effect: 'label', target: 'actor', label: 'wake-life' }], { ...context, fromWake: true })
-      await execute([{ effect: 'label', target: 'actor', label: 'reach-life' }], {
+      await execute([{ effect: 'label', target: 'actor', label: 'wake-life', permanent: true }], { ...context, fromWake: true })
+      await execute([{ effect: 'label', target: 'actor', label: 'reach-life', permanent: true }], {
         ...context, reachMember: { answererId: 2, admittedBy: 'soft' },
       })
       assert.ok((await rows('wake-life'))[0].remaining > 9)
@@ -1557,7 +1557,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       VALUES (11, 'hall-tagging', 'marks the hall and the thing used upon', $1::jsonb, 1)
     `, [JSON.stringify({ use: [
       { effect: 'label', target: 'law_place', label: 'hall-busy', seconds: 60 },
-      { effect: 'label', target: 'target', label: 'hall-tagged' },
+      { effect: 'label', target: 'target', label: 'hall-tagged', permanent: true },
     ] })])
     await client.query(`
       INSERT INTO place_law_changes (place_id, trait_id, actor_id, change_type, position)
@@ -1632,7 +1632,7 @@ test('law_place shares one timed condition through the current owner chain', asy
       const land = await place('workshop-land', world)
       const workshop = await place('timer-workshop', land)
       await client.query('UPDATE places SET open_to_things = true WHERE id = $1', [workshop])
-      const later = { effect: 'wait', seconds: 600, then: [{ effect: 'label', target: 'actor', label: 'workshop-later' }] }
+      const later = { effect: 'wait', seconds: 600, then: [{ effect: 'label', target: 'actor', label: 'workshop-later', permanent: true }] }
       await client.query(`
         INSERT INTO traits (id, name, description, recipe, coiner_id)
         VALUES (12, 'workshop-rule', 'a room law that waits', $1::jsonb, 1)
@@ -1829,7 +1829,7 @@ test('law_place shares one timed condition through the current owner chain', asy
     const loaf = await kind('bakery-loaf', 3, [{ kind: 'bakery-flour', quantity: 1 }])
     const bakeryUse = [
       { effect: 'label', target: 'law_place', label: 'bakery-busy', seconds: 60 },
-      { effect: 'label', target: 'target', label: 'bakery-dusted' },
+      { effect: 'label', target: 'target', label: 'bakery-dusted', permanent: true },
     ]
     await client.query(`
       INSERT INTO traits (id, name, description, recipe, coiner_id)
@@ -2015,7 +2015,7 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
     const scheduled = await executeEffects([{
       effect: 'wait',
       seconds: 1,
-      then: [{ effect: 'label', target: 'actor', label: 'timer-fired' }],
+      then: [{ effect: 'label', target: 'actor', label: 'timer-fired', permanent: true }],
     }], context, db)
     assert.equal(scheduled, 1)
 
@@ -2090,7 +2090,7 @@ test('shared use and wait effects execute against PostgreSQL', async () => {
         1,
         'welcoming',
         'labels a visitor',
-        '{"use":[{"effect":"label","target":"actor","label":"welcomed"}]}'::jsonb,
+        '{"use":[{"effect":"label","target":"actor","label":"welcomed", "permanent": true}]}'::jsonb,
         1
       );
       INSERT INTO kinds (id, name, owner_id) VALUES (1, 'visitor-bell', 1);

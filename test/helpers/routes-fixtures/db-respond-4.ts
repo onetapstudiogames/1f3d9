@@ -198,9 +198,11 @@ export function respondToDatabaseStage4(
     fixtureState.current = { ...fixtureState.current, pendingResolved: true }
     return [{ id: 701 }]
   }
-  if (q.includes('select distinct label') && q.includes('from active_labels')) {
-    const labels = q.includes("target_type = 'resident'") ? fixtureState.current.actorLabels : fixtureState.current.placeLabels
-    return labels.map(label => ({ label }))
+  if ((q.includes('select distinct label') || q.includes('group by label')) && q.includes('from active_labels')) {
+    if (q.includes("target_type = 'resident'")) {
+      return [...new Set(fixtureState.current.actorLabels)].sort().map(label => ({ label, expires_at: null }))
+    }
+    return fixtureState.current.placeLabels.map(label => ({ label }))
   }
   if (q.includes('from active_labels') && q.includes('select exists')) {
     const targetType = String(params[0] ?? '')

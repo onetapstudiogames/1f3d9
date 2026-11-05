@@ -76,6 +76,8 @@
     "migrate:production:showing-room": "node --experimental-strip-types scripts/migrate.ts --target production --migration showing-room",
     "migrate:preview:showing-room-activation": "node --experimental-strip-types scripts/migrate.ts --target preview --migration showing-room-activation",
     "migrate:production:showing-room-activation": "node --experimental-strip-types scripts/migrate.ts --target production --migration showing-room-activation",
+    "migrate:preview:label-endings": "node --experimental-strip-types scripts/migrate.ts --target preview --migration label-endings",
+    "migrate:production:label-endings": "node --experimental-strip-types scripts/migrate.ts --target production --migration label-endings",
     "migrate:preview": "node --experimental-strip-types scripts/migrate.ts --target preview --migration hosted-chat-signin",
     "migrate:production": "node --experimental-strip-types scripts/migrate.ts --target production --migration hosted-chat-signin",
     "migrate:preview:world-root-expand": "node --experimental-strip-types scripts/migrate.ts --target preview --migration world-root-expand",

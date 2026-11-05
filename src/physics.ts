@@ -78,7 +78,13 @@ export const MAX_EFFECT_DEPTH = 8
 export const MAX_BLOCK_SECONDS = 24 * 60 * 60
 export const MIN_TIMER_SECONDS = 1
 export const MAX_TIMER_SECONDS = 24 * 60 * 60
-export const MAX_PLACE_LABEL_SECONDS = MAX_BLOCK_SECONDS
+/**
+ * The longest chosen life of a label, a day, the same ceiling as blocks and wake stickers:
+ * on place and law_place (decision #163), and on actor, target, and source (decision #168).
+ */
+export const MAX_LABEL_LIFE_SECONDS = MAX_BLOCK_SECONDS
+/** The label targets that can land on a resident, so a new trait must choose their life (decision #168). */
+export const LABEL_LIFE_TARGETS = Object.freeze(['actor', 'target'] as const)
 export const MAX_EFFECT_GENERATIONS = 8
 export const MAX_KIND_INGREDIENTS = 64
 export const MAX_CRAFT_INGREDIENTS = 1_024
@@ -148,6 +154,8 @@ export interface LabelEffect {
   readonly target: SymbolicTarget
   readonly label: string
   readonly seconds?: number
+  /** Only on actor or target: the maker chose a label that never ends (decision #168). */
+  readonly permanent?: true
 }
 
 export interface BlockEffect {
@@ -250,7 +258,7 @@ export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope'
 
 /** Where a refused recipe stopped reading: the action key and step path, and the rule it met. */
 export type RecipeGrammarFault = Readonly<
-  | { where: string; code: 'top' | 'list' | 'count' | 'depth' | 'weight' | 'bytes' | 'step' | 'reach_steps' | 'wake' }
+  | { where: string; code: 'top' | 'list' | 'count' | 'depth' | 'weight' | 'bytes' | 'step' | 'reach_steps' | 'wake' | 'label_life' }
   | { where: string; code: 'shape'; brick: EffectBrick; hasThen: boolean; hasElse: boolean }
 >
 
@@ -281,9 +289,17 @@ const REACH_OVER_SET: ReadonlySet<string> = new Set(REACH_OVER)
 const REACH_SOFT_STEP_SET: ReadonlySet<string> = new Set(REACH_SOFT_STEPS)
 const REACH_HARD_STEP_SET: ReadonlySet<string> = new Set(REACH_HARD_STEPS)
 const REACH_NEVER_INSIDE_SET: ReadonlySet<string> = new Set(REACH_NEVER_INSIDE)
+const LABEL_LIFE_TARGET_SET: ReadonlySet<string> = new Set(LABEL_LIFE_TARGETS)
+/** Targets whose label may carry seconds: the life targets, source, and the two place targets. */
+const LABEL_SECONDS_TARGET_SET: ReadonlySet<string> = new Set([...LABEL_LIFE_TARGETS, 'source', 'place', 'law_place'])
 
 type UnknownRecord = Record<PropertyKey, unknown>
-type ParseState = { count: number; fault: RecipeGrammarFault | null }
+/**
+ * `authoring` is true for a recipe being coined now, which must choose the life of every
+ * label on actor or target; stored recipes load with it false, so a label coined before
+ * that rule keeps its permanent life (decision #168).
+ */
+type ParseState = { count: number; fault: RecipeGrammarFault | null; authoring: boolean }
 
 function refuse(
   state: ParseState,
@@ -452,6 +468,32 @@ function parseReach(value: UnknownRecord, depth: number, state: ParseState, wher
     : Object.freeze({ effect: 'reach', over, max, kind, then })
 }
 
+/**
+ * A label's life: seconds on actor, target, source, place, or law_place (required on
+ * law_place), or permanent: true on actor or target. A recipe coined now must choose one
+ * of the two on actor and target; a stored recipe that chose neither stays permanent.
+ */
+function parseLabel(value: UnknownRecord, state: ParseState, where: string): LabelEffect | null {
+  if (!hasExactKeys(value, ['effect', 'target', 'label'], ['seconds', 'permanent'])) return null
+  const target = symbolicTarget(value.target)
+  const label = canonicalName(value.label)
+  if (!target || !label) return null
+  const hasSeconds = Object.hasOwn(value, 'seconds')
+  if (Object.hasOwn(value, 'permanent')) {
+    return value.permanent === true && !hasSeconds && LABEL_LIFE_TARGET_SET.has(target)
+      ? Object.freeze({ effect: 'label', target, label, permanent: true })
+      : null
+  }
+  if (!hasSeconds) {
+    if (target === 'law_place') return null
+    if (state.authoring && LABEL_LIFE_TARGET_SET.has(target)) return refuse(state, where, 'label_life')
+    return Object.freeze({ effect: 'label', target, label })
+  }
+  if (!LABEL_SECONDS_TARGET_SET.has(target)) return null
+  const seconds = boundedInteger(value.seconds, MIN_TIMER_SECONDS, MAX_LABEL_LIFE_SECONDS)
+  return seconds === null ? null : Object.freeze({ effect: 'label', target, label, seconds })
+}
+
 function parseConvert(value: UnknownRecord): ConvertEffect | null {
   if (!hasExactKeys(value, ['effect', 'target'], ['into_kind'])) return null
   if (canonicalToken(value.target, new Set(['target'])) !== 'target') return null
@@ -531,18 +573,7 @@ function parseEffect(value: unknown, depth: number, state: ParseState, where: st
     return target && to ? Object.freeze({ effect: 'transfer', target, to }) as TransferEffect : null
   }
 
-  if (discriminator === 'label') {
-    if (!hasExactKeys(value, ['effect', 'target', 'label'], ['seconds'])) return null
-    const target = symbolicTarget(value.target)
-    const label = canonicalName(value.label)
-    if (!target || !label) return null
-    if (!Object.hasOwn(value, 'seconds')) {
-      return target === 'law_place' ? null : Object.freeze({ effect: 'label', target, label })
-    }
-    if (target !== 'place' && target !== 'law_place') return null
-    const seconds = boundedInteger(value.seconds, MIN_TIMER_SECONDS, MAX_PLACE_LABEL_SECONDS)
-    return seconds === null ? null : Object.freeze({ effect: 'label', target, label, seconds })
-  }
+  if (discriminator === 'label') return parseLabel(value, state, where)
 
   if (discriminator === 'block') {
     if (!hasExactKeys(value, ['effect', 'target', 'action', 'seconds'])) return null
@@ -707,8 +738,8 @@ function recipeInput(value: unknown, state: ParseState): UnknownRecord | null {
   return plain ? value : null
 }
 
-function parseRecipe(value: unknown): RecipeParse {
-  const state: ParseState = { count: 0, fault: null }
+function parseRecipe(value: unknown, authoring: boolean): RecipeParse {
+  const state: ParseState = { count: 0, fault: null, authoring }
   try {
     const input = recipeInput(value, state)
     if (!input) return grammarFault(state, 'the top level', 'top')
@@ -739,17 +770,17 @@ function parseRecipe(value: unknown): RecipeParse {
 
 /** Parse and canonicalize a newly authored trait recipe. */
 export function parseTraitRecipe(value: unknown): TraitRecipe | null {
-  return parseRecipe(value).recipe
+  return parseRecipe(value, true).recipe
 }
 
 /** Why a newly authored recipe is refused, or null when it is accepted. */
 export function traitRecipeFault(value: unknown): RecipeFault | null {
-  return parseRecipe(value).fault
+  return parseRecipe(value, true).fault
 }
 
 /** Where a newly authored recipe stopped reading, when its fault was grammar. */
 export function traitRecipeGrammarFault(value: unknown): RecipeGrammarFault | null {
-  const parsed = parseRecipe(value)
+  const parsed = parseRecipe(value, true)
   return parsed.fault === 'grammar' ? parsed.grammar : null
 }
 
@@ -794,9 +825,12 @@ export function wakeProgramOf(value: unknown): WakeProgram | null {
   return loadTraitRecipe(value).wake ?? null
 }
 
-/** Load untrusted stored data without ever executing a malformed partial recipe. */
+/**
+ * Load untrusted stored data without ever executing a malformed partial recipe. A label on
+ * actor or target stored without a chosen life loads as permanent, as it was coined.
+ */
 export function loadTraitRecipe(value: unknown): TraitRecipe {
-  return parseTraitRecipe(value) ?? EMPTY_TRAIT_RECIPE
+  return parseRecipe(value, false).recipe ?? EMPTY_TRAIT_RECIPE
 }
 
 /** Select an action program from stored data; invalid legacy data is inert. */

@@ -947,10 +947,15 @@ The server hardcodes **meanings never, mechanisms only**:
   a trait using it, including nested branches and a `convert` naming a kind, before
   any fee. A label on `law_place` requires `seconds`, a whole number from 1 to 86400
   inclusive. A label on literal `place` may use the same range; omitting `seconds`
-  keeps its permanent label. `actor`, `source`, and `target` refuse `seconds`, even
-  when `target` names a place; `check_label` takes no `seconds`. Missing required
-  seconds, fractions, out-of-range values, and seconds on other targets refuse the
-  recipe. The duration starts when the label is written, including after a wait.
+  keeps its permanent label, and a label on `source` may take the same `seconds`,
+  permanent without them. A label on `actor` or `target` in a newly coined
+  trait gives exactly one of `seconds` (1 to 86400) or `permanent: true` (decision #168);
+  `parseTraitRecipe` refuses one that gives neither with the `label_life` fault, while
+  `loadTraitRecipe` reads stored recipes, timers included, without that rule, so a
+  trait coined earlier keeps its unstated label permanent. `permanent` is accepted only
+  on `actor` and `target`; `check_label` takes no `seconds`. Missing required seconds,
+  fractions, out-of-range values, and both fields together refuse the recipe. The
+  duration starts when the label is written, including after a wait.
   The source, room, and connecting parent places must still form an unbroken
   same-owner chain and none may be retired; the exact source law must still be
   effective in the room. These conditions are checked again when delayed work runs,
@@ -1033,7 +1038,27 @@ The server hardcodes **meanings never, mechanisms only**:
   contains that value.
 - Resident labels are private to their bearer. Authenticated `GET /api/me` returns
   only that resident's distinct labels; public resident and action or effect event
-  rows do not disclose resident label holdings.
+  rows do not disclose resident label holdings. `labels` keeps its string list, and
+  `label_ends` lists each as `{label, expires_at}`: the latest end among its current
+  rows, or null while any never ends (decision #168).
+- The founder ends a resident's label only at that resident's request (decision #169):
+  `POST /api/founder/labels/end`, founder #1 root key, body exactly `resident_handle`,
+  `label`, `request_note_id` (a note that resident wrote) and optional
+  `source_thing_id`. One statement in `src/label-endings.ts` inserts one row per current
+  matching label row into the private, append-only `label_endings` table (migration
+  `20261031_label_endings.sql`; a trigger checks that the label row is on that resident
+  and the note is theirs) and one `moderation` event with `action: "end_labels"`,
+  `resident_id` and `note_id`, never the label. `active_labels` stays append-only; the
+  two readers of resident labels, `me` and `check_label` (`activeLabel` in
+  `src/engine-effects.ts`), skip a row with an ending. Place and thing label reads never
+  include resident labels, so they need no change. Nothing left to end is a 404 and
+  writes nothing.
+- Every thing read (`loadPublicThingRecord`) carries `on_use`, one sentence from
+  `src/use-labels.ts` built from the `use` steps of the traits on the effective kind
+  revision: how many labels using it puts on you (label `actor`, and label `target` in a
+  reach over residents) and how long each lasts, "may" inside chance, check_label, wait
+  or reach, capped at a day inside a reach, never naming a label. Room laws are not read.
+  The window's thing view shows it under the thing's meta line.
 - Labels on a thing are public. `GET /api/thing/:id`, the official `look` of a thing,
   and the thing_edit and thing_upgrade answers carry `labels`: one entry per current label
   (`label`, `set_by` the newest setter's handle, `set_at` its time, and `expires_at`, the
@@ -1126,7 +1151,8 @@ The server hardcodes **meanings never, mechanisms only**:
   room's `wake_label_seconds` (10 to 86,400, default 86,400), read inside the label step's
   own `INSERT` in `src/engine-effects.ts`; a reach outside a wake keeps
   `RESIDENT_ABILITY_LABEL_SECONDS`, and a sticker already written keeps its `expires_at`,
-  because `active_labels` is append-only (decision #131).
+  because `active_labels` is append-only (decision #131). A shorter life the step chose
+  wins, and `permanent: true` is capped like an unstated label (decision #168).
   The `things_sleep_on_owner_change` trigger turns `wake_enabled` off on every change
   of owner.
   Decision #167 adds one note exception: publications durably linked to a
@@ -2096,6 +2122,7 @@ POST /api/founder/showing-room/control auth, resident #1 root key only; request_
 GET  /api/internal/showing-room-close CRON_SECRET only; no query options; private recorded result for the due Monday slot
 GET  /api/founder/community-tool-submissions auth, founder #1 root key — read the private pending tool queue
 POST /api/founder/community-tool-submissions/:id/review auth, founder #1 root key — mark one copied-to-code or declined queue item reviewed; `application/json` ≤256 actual bytes
+POST /api/founder/labels/end auth, founder #1 root key: end a resident's current rows of one label at that resident's own request; body resident_handle, label, request_note_id, optional source_thing_id; writes one moderation event with action end_labels, never the label (decision #169)
 GET  /api/founder/flags     auth, founder #1 root key: read reports newest first with ?before_id= and ?limit=, each with reporter or anonymous, target, reason, and handled marker, plus the unhandled count, `has_more`, and `next_before_id`
 POST /api/founder/flags/:id/handle auth, founder #1 root key: record one permanent answer naming `moderation_id`, `note`, or both; one `application/json` body within the published founder flag answer limits
 POST /api/me               passive auth {"mode":"later_holder_notice"|"later_holder_index", "before"?, "limit"?}

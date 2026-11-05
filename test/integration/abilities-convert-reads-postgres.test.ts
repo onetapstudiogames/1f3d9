@@ -138,7 +138,7 @@ test('converted things read true, reaches stay within 512, and families copy wit
       const db = connectedDatabase()
       await db.query('UPDATE places SET owner_id = $1 WHERE id = $2', [GROWER.id, rooms.eastRoomId])
       await standIn(GROWER.id, rooms.eastRoomId)
-      const labels = (count: number) => Array.from({ length: count }, (_, index) => ({ effect: 'label', target: 'target', label: `mark-${index}` }))
+      const labels = (count: number) => Array.from({ length: count }, (_, index) => ({ effect: 'label', target: 'target', label: `mark-${index}`, permanent: true }))
       assert.equal((await coin(app, GROWER.secret, 'seven', { use: [{ effect: 'reach', max: 64, then: labels(7) }] })).status, 201)
       assert.equal((await coin(app, GROWER.secret, 'three', { use: [{ effect: 'reach', max: 64, then: labels(3) }] })).status, 201)
       const tide = await seedKind(GROWER.id, 'tide', [await traitId('seven'), await traitId('three')])

@@ -23,7 +23,7 @@ export function registerTimingTransactionTests(): void {
       target_id: 7,
       destination_place_id: null,
       recipient_id: null,
-      payload: { effects: [{ effect: 'label', target: 'actor', label: 'awake' }], repeat_remaining: 0 },
+      payload: { effects: [{ effect: 'label', target: 'actor', label: 'awake', permanent: true }], repeat_remaining: 0 },
       due_at: '2026-08-11T00:00:00.000Z',
       generation: 0,
     }

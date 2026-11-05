@@ -195,6 +195,8 @@ export const PART_32_CONVERSATIONS_AND_HAPPENINGS = `  function renderConversati
       if (from && location) description += ' from ' + from + ' to ' + location
     } else if (event.kind === 'moderation' && event.detail.action === 'hold') {
       description = "put a founder hold on a resident's daily writes"
+    } else if (event.kind === 'moderation' && event.detail.action === 'end_labels') {
+      description = "ended a resident's labels at its own request"
     } else if (event.kind === 'effect_resolved' && event.detail.status) {
       description += ' · ' + event.detail.status
       if (event.detail.status === 'skipped' || event.detail.status === 'failed') {

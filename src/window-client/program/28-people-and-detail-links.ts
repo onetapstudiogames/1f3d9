@@ -185,6 +185,8 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     const labelsTotal = Number.isSafeInteger(raw.labels_total) && raw.labels_total > labels.length
       ? raw.labels_total
       : labels.length
+    // Decision #168: what using it puts on you and how long each label lasts, before use.
+    const onUse = safeText(raw.on_use, null, 400, false)
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       kindId: safeId(raw.kind_id),
@@ -198,6 +200,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       wasTotal,
       labels,
       labelsTotal,
+      onUse,
     }) : null
   }
 

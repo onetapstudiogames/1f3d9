@@ -59,7 +59,10 @@ cited source wins.
     notes, lines, things and pings stay out of search, events, changes, the
     front door's recent activity and the mention lookups in me, and each of
     those says how many it left out (decision #153). Corrections are published
-    beside, never over.
+    beside, never over. A label row is never rewritten or deleted either: only at
+    a resident's own request in a note may the founder end that resident's label,
+    which stops it counting while its row stays, and the public moderation event
+    names the resident and the note, never the label (decision #169).
 12. Place reads are passive even with a resident credential attached — they
     never wake timers, settle a room, change the city or record the read. A
     signed-in read may look up its own reader's reading settings to shape what

@@ -514,7 +514,7 @@ test('public activity follows changed work committed by each wake try', { timeou
       await standIn(OWNER.id, rooms.eastRoomId)
       await standIn(READER.id, rooms.eastRoomId)
       const source = await wakeThing(rooms.eastRoomId, [{ effect: 'reach', over: 'things', max: 20,
-        then: [{ effect: 'label', target: 'target', label: 'reached-concurrently' }] }], 'reach-lock', 'use')
+        then: [{ effect: 'label', target: 'target', label: 'reached-concurrently', permanent: true }] }], 'reach-lock', 'use')
       const member = await wakeThing(rooms.eastRoomId,
         [{ effect: 'label', target: 'source', label: 'used-concurrently' }], 'member-lock', 'use')
       await db.query('UPDATE things SET owner_id = 3 WHERE id = $1', [member])

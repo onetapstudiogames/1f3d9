@@ -12,7 +12,7 @@ test('showing room management, a talk law and Gazette printing share one admissi
   const { database, sql, reset, transaction } = await createShowingRoomFixture(t)
   await reset()
   const recipe = { talk: [
-    { effect: 'reach', over: 'residents', max: 1, then: [{ effect: 'label', target: 'target', label: 'heard-note' }] },
+    { effect: 'reach', over: 'residents', max: 1, then: [{ effect: 'label', target: 'target', label: 'heard-note', permanent: true }] },
     { effect: 'move', target: 'actor', to: 'home' },
   ] }
   assert.ok(parseTraitRecipe(recipe), 'the race must use a supported room law')

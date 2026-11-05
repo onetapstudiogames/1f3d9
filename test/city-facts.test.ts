@@ -280,15 +280,15 @@ test('physics lists the fields of every brick and where then and else may sit, a
   assert.equal(physics.wake.then, 'required')
   assert.deepEqual(physics.brick_fields.label!.target, ['actor', 'source', 'target', 'place', 'law_place'])
   assert.deepEqual(physics.brick_fields.label!.required, ['target', 'label'])
-  assert.deepEqual(physics.brick_fields.label!.optional, ['seconds'])
+  assert.deepEqual(physics.brick_fields.label!.optional, ['seconds', 'permanent'])
   assert.deepEqual(physics.brick_fields.label!.seconds, {
     min: 1,
     max: 86400,
-    targets: ['place', 'law_place'],
+    targets: ['actor', 'target', 'source', 'place', 'law_place'],
     required_on: ['law_place'],
-    omitted_on_place: 'permanent',
-    other_targets: 'not allowed',
+    omitted_on_source_and_place: 'permanent',
   })
+  assert.deepEqual(physics.brick_fields.label!.permanent, { value: true, targets: ['actor', 'target'] })
   assert.deepEqual(physics.brick_fields.check_label!.target, ['actor', 'source', 'target', 'place', 'law_place'])
   assert.deepEqual(physics.brick_fields.check_label!.required, ['target', 'label', 'then'])
   assert.deepEqual(physics.brick_fields.check_label!.optional, ['else'])
@@ -310,7 +310,7 @@ test('physics lists the fields of every brick and where then and else may sit, a
     { effect: 'destroy', target: 'source' },
     { effect: 'move', target: 'actor', to: 'home' },
     { effect: 'transfer', target: 'source', to: 'actor' },
-    { effect: 'label', target: 'actor', label: 'seen' },
+    { effect: 'label', target: 'actor', label: 'seen', permanent: true },
     { effect: 'block', target: 'actor', action: 'talk', seconds: 60 },
     { effect: 'wait', seconds: 60, then: [] },
     { effect: 'check_label', target: 'actor', label: 'seen', then: [] },

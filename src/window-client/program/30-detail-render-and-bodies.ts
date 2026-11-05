@@ -152,6 +152,9 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
           ? thingMuteTargets(record)
           : noteMuteTargets(record, record.author), 'detail:' + record.kind + ':' + String(record.id))
         if (recordMenu) parts.splice(1, 0, recordMenu)
+        if (record.kind === 'thing' && record.onUse) {
+          parts.splice(1, 0, element('p', 'record-detail-meta', record.onUse))
+        }
         if (record.kind === 'thing') {
           parts.push(drawingDetailNode('thing', record.id, record.name))
         }

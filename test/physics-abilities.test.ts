@@ -131,7 +131,7 @@ test('a wake program may never hand a thing over (R-W2), even in a nested branch
 
 test('a wake program has no target or destination of its own and moves only to home (R-W3)', () => {
   for (const then of [
-    [{ effect: 'label', target: 'target', label: 'x' }],
+    [{ effect: 'label', target: 'target', label: 'x', permanent: true }],
     [{ effect: 'destroy', target: 'target' }],
     [{ effect: 'move', target: 'source', to: 'destination' }],
     [{ effect: 'move', target: 'actor', to: 'destination' }],
@@ -153,7 +153,7 @@ test('a wake program may block or send home the resident who arrived; the room d
         { effect: 'block', target: 'actor', action: 'talk', seconds: 60 },
         { effect: 'move', target: 'actor', to: 'home' },
         { effect: 'move', target: 'source', to: 'home' },
-        { effect: 'label', target: 'actor', label: 'greeted' },
+        { effect: 'label', target: 'actor', label: 'greeted', permanent: true },
       ],
     },
   })
@@ -179,7 +179,7 @@ test('write and the wake key are kind-only abilities; chance is not', () => {
   })!), true)
   assert.equal(recipeUsesKindOnlyAbility(parseTraitRecipe({ wake: { then: [label] } })!), true)
   assert.equal(recipeUsesKindOnlyAbility(parseTraitRecipe({
-    talk: [{ effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'lucky' }] }],
+    talk: [{ effect: 'chance', percent: 50, then: [{ effect: 'label', target: 'actor', label: 'lucky', permanent: true }] }],
   })!), false)
 })
 

@@ -843,6 +843,59 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the waiting transfers statements')
   })
 
+  test('the label endings migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261031_label_endings.sql' as const
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /label endings migration needs the active_labels, residents and notes tables/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS label_endings \(\s+label_id\s+BIGINT PRIMARY KEY REFERENCES active_labels\(id\)/u)
+    assert.ok(migration.includes('CONSTRAINT label_endings_founder_only CHECK (founder_id = 1)'))
+    assert.match(migration, /CREATE TRIGGER label_endings_append_only BEFORE UPDATE OR DELETE ON label_endings/u)
+    assert.match(migration, /CREATE TRIGGER label_endings_match_request BEFORE INSERT ON label_endings/u)
+    assert.match(migration, /label_endings is missing one of its reviewed checks, keys, index or triggers/u)
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|CONSTRAINT)|DELETE\s+FROM|UPDATE\s+(?!OR)|TRUNCATE|ALTER TABLE/iu)
+
+    const environments = {
+      preview: {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+      production: {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-label-endings-20261031',
+      },
+    } as const
+    for (const target of ['preview', 'production'] as const) {
+      const run = resolveMigrationRun(['--target', target, '--migration', 'label-endings'], environments[target])
+      assert.equal(run.migrationFile, migrationFile)
+      assert.equal(run.executionMode, 'transactional')
+    }
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:label-endings'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration label-endings')
+    assert.equal(packageJson.scripts?.['migrate:production:label-endings'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration label-endings')
+
+    // db/schema.sql carries the same statements, byte for byte.
+    const body = migration.slice(
+      migration.indexOf('DO $label_endings_guard$'),
+      migration.lastIndexOf('COMMIT;'),
+    ).trimEnd()
+    assert.ok(body.length > 2_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the label endings statements')
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

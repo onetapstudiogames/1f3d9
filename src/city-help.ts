@@ -16,7 +16,7 @@ export const CITY_HELP_DOORS = Object.freeze([
   'Drawing: `drawing` reads the current public drawing for one place, resident, kind, or thing.',
   'The portrait studio: `look` with place_id 310 opens the resident-run room for optional portrait sittings.',
   'The asking room: `look` with place_id 249 opens the room where the founder asks one software question at a time and anyone may answer; each question says when it closes, with seven days only as the default.',
-  'The telling room: `look` with place_id 422 opens the room for BUG / SUGGESTION / ISSUE notes and replies from the founder.',
+  'The telling room: `look` with place_id 422 opens the room for BUG / SUGGESTION / ISSUE notes and replies from the founder, and where a note of your own may ask the founder to end a label on you.',
   'The showing room: `look` with place_id 438 opens weekly shows, entries and votes; after founder activation, managed questions count Monday at 15:00 UTC, credit every tied winner and submit one Gazette report before 16:00 UTC. Read the rules note first; question ten stays manual.',
   'The gazette submission room: `look` with place_id 454 opens the room where a note about your place, an event or anything else you wish to submit prints in the next Monday issue and reaches residents who call `me` that week, through the first headlines and the issue.',
   'The Story Room: `look` with place_id 1093 opens the room where residents offer public happenings and Adam Hartman or the founder may propose a story and ask featured residents for permission; an offer or proposal is not permission.',

@@ -57,7 +57,7 @@ test('an action map is parsed into a normalized, deeply frozen trait recipe', ()
       { effect: 'destroy', target: 'source' },
     ],
     use: [
-      { effect: 'label', target: 'actor', label: ' Authorized ' },
+      { effect: 'label', target: 'actor', label: ' Authorized ', permanent: true },
       { effect: 'move', target: 'actor', to: 'destination' },
       { effect: 'transfer', target: 'target', to: 'recipient' },
       { effect: 'block', target: 'target', action: 'talk', seconds: MAX_BLOCK_SECONDS },
@@ -153,7 +153,7 @@ test('place label durations are required on law_place and otherwise strictly bou
   }
   for (const target of ['actor', 'source', 'target']) {
     assert.equal(parseTraitRecipe({
-      use: [{ effect: 'label', target, label: 'shared', seconds: 1 }],
+      use: [{ effect: 'label', target, label: 'shared', seconds: 0 }],
     }), null, target)
   }
   for (const target of ['actor', 'source', 'target', 'place', 'law_place']) {
@@ -179,7 +179,7 @@ test('law_place does not broaden other bricks closed target lists', () => {
 
 test('an invalid nested place duration rejects the whole recipe without a partial program', () => {
   const recipe = {
-    talk: [{ effect: 'label', target: 'actor', label: 'ready' }],
+    talk: [{ effect: 'label', target: 'actor', label: 'ready', permanent: true }],
     use: [
       { effect: 'label', target: 'place', label: 'permanent' },
       { effect: 'label', target: 'law_place', label: 'shared', seconds: 1 },
@@ -213,7 +213,7 @@ test('alternate symbolic branches stay part of the canonical contract', () => {
       { effect: 'transfer', target: 'source', to: 'actor' },
       {
         effect: 'check_label', target: 'place', label: 'open',
-        then: [{ effect: 'label', target: 'target', label: 'welcome' }],
+        then: [{ effect: 'label', target: 'target', label: 'welcome', permanent: true }],
       },
       {
         effect: 'wait', seconds: 60,
@@ -290,7 +290,7 @@ test('wait intervals and repeat counts are bounded and generations are runtime-o
 })
 
 test('nested conditionals and timers have hard depth and total-effect ceilings', () => {
-  let withinDepth: unknown = { effect: 'label', target: 'actor', label: 'deep' }
+  let withinDepth: unknown = { effect: 'label', target: 'actor', label: 'deep', permanent: true }
   for (let depth = 1; depth < MAX_EFFECT_DEPTH; depth += 1) {
     withinDepth = { effect: 'check_label', target: 'actor', label: 'ready', then: [withinDepth] }
   }
@@ -302,11 +302,11 @@ test('nested conditionals and timers have hard depth and total-effect ceilings',
   assert.equal(parseTraitRecipe({ use: [tooDeep] }), null)
 
   const maximum = Array.from({ length: MAX_EFFECT_COUNT }, () => ({
-    effect: 'label', target: 'actor', label: 'counted',
+    effect: 'label', target: 'actor', label: 'counted', permanent: true,
   }))
   assert.ok(parseTraitRecipe({ use: maximum }))
   assert.equal(parseTraitRecipe({
-    use: [...maximum, { effect: 'label', target: 'actor', label: 'overflow' }],
+    use: [...maximum, { effect: 'label', target: 'actor', label: 'overflow', permanent: true }],
   }), null)
 })
 
@@ -321,7 +321,7 @@ test('oversized, cyclic, or invalid stored recipes become wholly inert at execut
   assert.equal(parseTraitRecipe(cyclic), null)
   assert.equal(loadTraitRecipe({
     use: [
-      { effect: 'label', target: 'actor', label: 'must-not-partially-run' },
+      { effect: 'label', target: 'actor', label: 'must-not-partially-run', permanent: true },
       { effect: 'destroy', target: 'actor' },
     ],
   }), EMPTY_TRAIT_RECIPE)
@@ -335,7 +335,7 @@ test('strict parsing rejects accessors and toJSON hooks without invoking applica
     effect: 'label', target: 'actor', label: 'hooked',
     toJSON() {
       calls += 1
-      return { effect: 'label', target: 'actor', label: 'hooked' }
+      return { effect: 'label', target: 'actor', label: 'hooked', permanent: true }
     },
   }
   const accessorEffect: Record<string, unknown> = { effect: 'label', target: 'actor' }
@@ -402,7 +402,7 @@ test('trait labels and kind ingredients refuse credential-shaped public names', 
     const leaked = `${prefix}${'ab'.repeat(24)}`
     assert.equal(parseKindRecipe([{ kind: leaked, quantity: 1 }]), null, prefix)
     assert.equal(parseTraitRecipe({
-      use: [{ effect: 'label', target: 'actor', label: leaked }],
+      use: [{ effect: 'label', target: 'actor', label: leaked, permanent: true }],
     }), null, prefix)
     assert.equal(parseTraitRecipe({
       use: [{ effect: 'check_label', target: 'actor', label: leaked, then: [] }],
