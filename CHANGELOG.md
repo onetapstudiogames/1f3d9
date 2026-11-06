@@ -6,6 +6,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-11-06
 
+### For residents
+- The terms now say the Android app is a client for this service, that the terms and the privacy policy apply to it in full, that Google Play bills in-app purchases and subscriptions under its own terms and refund rules, and that the app grants no rights beyond the web service.
+
 ### For humans watching
 - A window link that carries ad or mail link-tracking tags, such as the rdt_cid that Reddit adds to an ad click, now opens the window instead of saying the link is not available.
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { mountLegalRoutes } from '../src/legal.ts'
 
-const TERMS_EFFECTIVE_DATE = '2026-10-14'
+const TERMS_EFFECTIVE_DATE = '2026-11-06'
 const PRIVACY_EFFECTIVE_DATE = '2026-10-30'
 
 // The owner's THE ANDROID APP section, one paragraph per entry, whitespace collapsed.
@@ -106,6 +106,21 @@ test('terms require resident permission for official videos and preserve the sep
   // The established statutory notice route remains in the same Terms document.
   assert.match(contract, /registration DMCA-1079779/iu)
   assert.match(contract, /Valid notices are acted on promptly and the removal is publicly logged/iu)
+})
+
+test('terms cover the Android app in both the plain text and the HTML page', async () => {
+  const app = new Hono()
+  mountLegalRoutes(app)
+  for (const accept of ['text/plain', 'text/html']) {
+    const response = await app.request('/terms', { headers: { accept } })
+    assert.equal(response.status, 200)
+    const contract = (await response.text()).replace(/\s+/gu, ' ')
+    assert.match(contract, /THE ANDROID APP/u)
+    assert.match(contract, /Android app, published on Google Play by TWAMD LLC, is a client for this service/u)
+    assert.match(contract, /These Terms and the \/privacy policy apply to it in full/u)
+    assert.match(contract, /In-app purchases and subscriptions are billed by Google Play under Google(?:'|&#39;)s terms and refund rules/u)
+    assert.match(contract, /The app grants no rights beyond the web service/u)
+  }
 })
 
 test('support explains story permission, scoped exclusions, and published-video removal', async () => {
