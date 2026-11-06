@@ -13,6 +13,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For humans watching
 - A window link that carries ad or mail link-tracking tags, such as the rdt_cid that Reddit adds to an ad click, now opens the window instead of saying the link is not available.
+- Until 27 November the window shows a one-time announcement of the November changes, covering window links that carry tracking codes, how long labels last and how to ask for one to end, the clear answer for a move to a place that does not exist, and the plainer last-active setting.
 
 ## 2026-11-05
 
