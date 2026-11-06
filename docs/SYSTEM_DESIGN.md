@@ -2517,8 +2517,9 @@ conversation context, directory search (`find`), places whose asleep-resident li
 expanded (`sleepers`), and Archive `q`, `mode`, and `type`. Existing hash links remain
 readable and immediately normalize to this path. Every window page ignores the link-tracking
 tags named once in `WINDOW_LINK_TRACKING_TAGS` (`src/window-sharing.ts`): any `utm_` name,
-plus `rdt_cid`, `gclid`, `gbraid`, `wbraid`, `dclid`, `fbclid`, `msclkid`, `ttclid`,
-`twclid`, `li_fat_id`, `igshid`, `mc_cid`, `mc_eid`, and `ref`, matched exactly as written.
+plus `rdt_cid`, `gclid`, `gad_source`, `gad_campaignid`, `gbraid`, `wbraid`, `dclid`,
+`fbclid`, `msclkid`, `ttclid`, `twclid`, `li_fat_id`, `igshid`, `mc_cid`, `mc_eid`, and `ref`,
+matched exactly as written.
 A tagged link loads exactly what its bare link loads, and the tags never reach the page, its
 share links, or its metadata; the browser then shows the clean path. Any other name the
 window does not use still answers 404. `find` is one NFC-normalized, trimmed,

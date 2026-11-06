@@ -261,8 +261,8 @@ export const WINDOW_LINK_TRACKING_TAGS: Readonly<{
 }> = Object.freeze({
   prefix: 'utm_',
   names: Object.freeze([
-    'rdt_cid', 'gclid', 'gbraid', 'wbraid', 'dclid', 'fbclid', 'msclkid',
-    'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
+    'rdt_cid', 'gclid', 'gad_source', 'gad_campaignid', 'gbraid', 'wbraid', 'dclid',
+    'fbclid', 'msclkid', 'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
   ]),
 })
 

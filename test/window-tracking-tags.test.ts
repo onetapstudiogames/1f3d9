@@ -10,11 +10,11 @@ import { windowPage } from '../src/window.ts'
 const REFUSAL = 'that public city window link is not available; return to /window and create a new Share link'
 
 const NAMED_TAGS = [
-  'rdt_cid', 'gclid', 'gbraid', 'wbraid', 'dclid', 'fbclid', 'msclkid',
-  'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
+  'rdt_cid', 'gclid', 'gad_source', 'gad_campaignid', 'gbraid', 'wbraid', 'dclid',
+  'fbclid', 'msclkid', 'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
 ] as const
 
-const TAG_TEXT = /rdt_cid|utm_|fbclid|gclid|ad-click/u
+const TAG_TEXT = /rdt_cid|utm_|fbclid|gclid|gad_|ad-click/u
 
 function windowApp() {
   const app = new Hono()
@@ -95,6 +95,7 @@ test('tagged window pages answer 200 with the same page and never echo the tag',
     ['/window/gazette?issue=7&utm_source=reddit', '/window/gazette?issue=7'],
     ['/window/note/301?fbclid=ad-click', '/window/note/301'],
     ['/window/thing/401?gclid=ad-click', '/window/thing/401'],
+    ['/window?gad_source=1&gad_campaignid=123&gclid=ad-click', '/window'],
   ]
   for (const [tagged, bare] of pairs) {
     const taggedResponse = await app.request(tagged)
