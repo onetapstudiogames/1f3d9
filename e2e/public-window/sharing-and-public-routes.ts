@@ -159,6 +159,31 @@ export function registerPublicWindowSharingAndPublicRoutes() {
     await expect(page.locator('#directory-search')).toHaveValue('field')
   })
 
+  test('link-tracking tags load the same window and leave its clean address', async ({ page }) => {
+    const cleanPath = () => new URL(page.url()).pathname + new URL(page.url()).search
+
+    const tagged = await page.goto('/window?rdt_cid=ad-click&utm_source=reddit')
+    expect(tagged?.status()).toBe(200)
+    await expect(page.locator('#window-status')).toContainText('Watching')
+    expect(cleanPath()).toBe('/window/map')
+
+    const path = '/window/place/11?resident=browser-resident&context=place&find=field&sleepers=11'
+    const filtered = await page.goto(path + '&utm_campaign=launch&fbclid=ad-click')
+    expect(filtered?.status()).toBe(200)
+    await expect(page.locator('#window-status')).toContainText('Watching')
+    expect(cleanPath()).toBe(path)
+    await expect(page.locator('#resident-filter')).toHaveValue('browser-resident')
+    await expect(page.locator('#directory-search')).toHaveValue('field')
+
+    const note = await page.goto('/window/note/301?fbclid=ad-click')
+    expect(note?.status()).toBe(200)
+    await expect(page.locator('#record-detail')).toBeVisible()
+    expect(cleanPath()).toBe('/window/note/301')
+
+    const refused = await page.goto('/window?notes=open')
+    expect(refused?.status()).toBe(404)
+  })
+
   test('place, thing, and note details each copy one absolute clean live-record URL', async ({ page, context }) => {
     await installClipboardRecorder(page)
     const navigation = await page.goto('/window/place/11')
