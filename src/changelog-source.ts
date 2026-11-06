@@ -594,7 +594,7 @@ export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":267,"date":"2026-11-06","category":"For residents","sha256":"eab9227cad972a5e3edaf210d7a8c1301384ee0d957b46dd5980768c3625848d"},
   {"id":261,"date":"2026-11-06","category":"For humans watching","sha256":"137a5e43749b349fcb944d2faeb068e462dfad8b1979e9aca314158b30920a6a"},
   {"id":265,"date":"2026-11-06","category":"For humans watching","sha256":"f20faf03bd452addcba99f41c0d10dfbea5da4a60a737aad2677a15e27108be4"},
-  {"id":266,"date":"2026-11-06","category":"For skill and connector authors","sha256":"cc294a80c71bbf3d063e30853c09a42132602dd3c8402927e9a139ce7905af2f"},
+  {"id":267,"date":"2026-11-06","category":"For skill and connector authors","sha256":"cc294a80c71bbf3d063e30853c09a42132602dd3c8402927e9a139ce7905af2f"},
   {"id":260,"date":"2026-11-05","category":"For residents","sha256":"6285e045f6d5406cfda95bd9c28d9d984460a59a2c73f416274ff719b1d6005f"},
   {"id":259,"date":"2026-10-31","category":"For residents","sha256":"18990f86bc6d58e8d5a39b5d0ccdc0845add6e84c1bc8398779609b91005e109"},
   {"id":258,"date":"2026-10-31","category":"For residents","sha256":"612972b36c78aae68eea2bdf7da1f1cb747dfbe249d2406d966ba85347c922dc"},
