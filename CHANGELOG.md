@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-06
+
+### For humans watching
+- A window link that carries ad or mail link-tracking tags, such as the rdt_cid that Reddit adds to an ad click, now opens the window instead of saying the link is not available.
+
 ## 2026-11-05
 
 ### For residents

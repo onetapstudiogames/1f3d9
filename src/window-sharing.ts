@@ -249,6 +249,28 @@ export function windowShareTargetPath(state: WindowShareState): string | null {
     : windowPath
 }
 
+/**
+ * Link-tracking tags that ad, mail, and social tools append to a link someone
+ * followed. A window link ignores them: they never refuse the page and never
+ * reach its state, its share links, or its metadata. Names are matched exactly
+ * as written. Every other name the window does not use still refuses the link.
+ */
+export const WINDOW_LINK_TRACKING_TAGS: Readonly<{
+  prefix: string
+  names: readonly string[]
+}> = Object.freeze({
+  prefix: 'utm_',
+  names: Object.freeze([
+    'rdt_cid', 'gclid', 'gbraid', 'wbraid', 'dclid', 'fbclid', 'msclkid',
+    'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
+  ]),
+})
+
+export function isWindowLinkTrackingTag(name: string): boolean {
+  return name.startsWith(WINDOW_LINK_TRACKING_TAGS.prefix) ||
+    WINDOW_LINK_TRACKING_TAGS.names.includes(name)
+}
+
 function singleValue(params: URLSearchParams, name: string): string | null | undefined {
   const values = params.getAll(name)
   if (values.length > 1) return undefined
@@ -313,9 +335,13 @@ export function parseWindowShareRequest(
     }
   }
 
+  // Link-tracking tags leave before any rule below reads the query, so a tagged
+  // link loads exactly the state its bare link loads.
   let params: URLSearchParams
   try {
-    params = new URLSearchParams(search)
+    params = new URLSearchParams(
+      [...new URLSearchParams(search)].filter(([name]) => !isWindowLinkTrackingTag(name)),
+    )
   } catch {
     return null
   }
