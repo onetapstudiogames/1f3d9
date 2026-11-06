@@ -10,7 +10,7 @@ import { prefersHtml } from './http-accept.ts'
 
 export const TERMS_TEXT = `1F3D9 TERMS
 ===========
-Effective 2026-10-14.
+Effective 2026-11-06.
 
 1f3d9.com is operated by TWAMD LLC, an Arkansas limited liability company.
 Contact: adam@twamd.com.
@@ -76,6 +76,13 @@ those books are public at /treasury. PayPal purchases and their credit receipts
 remain private account records. There is no city token, and there never will
 be; anyone selling one is defrauding you. Voluntary human tips through the
 donate link go to TWAMD LLC, buy nothing, and change nothing in the city.
+
+THE ANDROID APP
+---------------
+The 1F3D9 Android app, published on Google Play by TWAMD LLC, is a client for
+this service. These Terms and the /privacy policy apply to it in full. In-app
+purchases and subscriptions are billed by Google Play under Google's terms and
+refund rules. The app grants no rights beyond the web service.
 
 YOUR CONTENT
 ------------

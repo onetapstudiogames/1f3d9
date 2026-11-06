@@ -1163,8 +1163,9 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
   read shows the dials, `rough_room`, and `last_settle`; the answer to the move, the note,
   or the `GET /api/me` read that caused a settle carries it as `settle` (`settle_id`,
-  `tried`, `woke`, `forfeited`), and omits `settle` when the room had nothing to settle
-  or had settled in the last 10 seconds; every subplace, map, and
+  `tried`, `woke`, `forfeited`), and omits `settle` when the room had no wake tries to
+  settle or had settled them in the last 10 seconds; due wait timers run either way and
+  never appear in `settle`; every subplace, map, and
   continent row carries `rough_room` too; the thing read shows
   `wake_enabled`, `wake`, and `state`. `GET /api/changes` carries a roll's `roll_id`,
   `purpose`, `roll`, `sides`, `percent`, `outcome`, and `settle_id`, a settle's
@@ -1943,8 +1944,23 @@ round trip. `active now` is less than one hour, `today` at least one hour and le
 than 24 hours, `this week` at least 24 hours and less than seven days, and `longer`
 requires known activity at least seven days old. Boundaries take the older band.
 The SQL checks `show_activity` before evaluating a resident timestamp. Explicit
-public shaping omits null, so off and no known qualifying activity are identical
-for every viewer; no raw stamp, choice, reason, placeholder or count is sent.
+public shaping omits null, so off and no proved qualifying activity have the same
+shape for every viewer; no raw stamp, choice, reason, placeholder or count is sent.
+For residents, unproved history comes only from the backfill cut (53 residents in the
+2026-10-28 Production receipt), so a record from 28 October 2026 before the cut can be
+unproved. The backfill proves an old move or go_home only through `action_runs`, which
+stores no go_home destination, so every old go_home is unproved even when its notice
+names two different places, and an old first home_set has nothing earlier to compare
+with. Every live writer records applied_public_activity, so no live write adds to
+the set, and a resident's next act that changed the public record leaves it. A
+moderation removal or feed change, which recomputes from history, can return a
+resident whose later counted acts it took away. The public event list keeps every
+actor and time, so the choice hides the marker, not the activity, and a missing marker
+beside an act that changed the public record after the cut reads as off (#170). An
+applied act with an empty applied_public_activity, such as going home while already
+home, or a use whose only effect labels or blocks a resident, changed nothing public
+and stamps no one. Feed-room content is the one exception to that list: it never stamps
+its writer, and the list counts it instead of listing it.
 
 The `show_activity` choice is #166's narrow exception to #154: it controls the
 resident marker for everyone. Other reading settings still affect only their owner.
@@ -2509,8 +2525,9 @@ conversation context, directory search (`find`), places whose asleep-resident li
 expanded (`sleepers`), and Archive `q`, `mode`, and `type`. Existing hash links remain
 readable and immediately normalize to this path. Every window page ignores the link-tracking
 tags named once in `WINDOW_LINK_TRACKING_TAGS` (`src/window-sharing.ts`): any `utm_` name,
-plus `rdt_cid`, `gclid`, `gbraid`, `wbraid`, `dclid`, `fbclid`, `msclkid`, `ttclid`,
-`twclid`, `li_fat_id`, `igshid`, `mc_cid`, `mc_eid`, and `ref`, matched exactly as written.
+plus `rdt_cid`, `gclid`, `gad_source`, `gad_campaignid`, `gbraid`, `wbraid`, `dclid`,
+`fbclid`, `msclkid`, `ttclid`, `twclid`, `li_fat_id`, `igshid`, `mc_cid`, `mc_eid`, and `ref`,
+matched exactly as written.
 A tagged link loads exactly what its bare link loads, and the tags never reach the page, its
 share links, or its metadata; the browser then shows the clean path. Any other name the
 window does not use still answers 404. `find` is one NFC-normalized, trimmed,
@@ -2748,6 +2765,38 @@ target_type/target_id pair; those are its only allowed fields. target_type may b
 resident, place, thing, or kind; target_type and target_id must always appear together.
 No other fields are accepted. talk and make use their dedicated endpoints:
 `POST /api/note` and `POST /api/thing`.
+A `to_place_id` or `thing_id` that names no place or thing at all is refused with 404 at the
+route, before any room settles: the action record cites both by foreign key, so nothing is
+recorded and no event is written. A retired place or withdrawn thing still exists and meets
+its own recorded refusal inside the action.
+
+An action that runs answers 200 with one `action` object: always `id`, `action`, `status`
+(`applied`, or `noop` for a use that applied nothing), `place_id`, and `effects_applied`
+(always 0 for `go_home`); `skipped_effects`, `rolls`, `reaches`, `copied_thing_ids`,
+`converted_thing_ids`, `carried_thing_id`, `reason`, `settle`, and a held transfer's
+`waiting_transfers` (with top-level `attention`) appear only when they apply. It names neither
+the actor nor the requested destination and carries no `request_id`. `place_id` is read after
+the action commits and before the arrival room settles, so a rough-room wake or a due wait
+timer in that room can move the resident after the answer's `place_id` was read; `settle.woke`
+hints at a wake, and a timer leaves no hint.
+
+Before an action runs, the room the actor stands in settles in its own committed steps. Body and
+field checks, sign-in, a `to_place_id` or `thing_id` that names nothing, a `to_handle` that names
+no resident, and the checks on a give held for a muting recipient come before that settle and
+leave no action record. Any other missing id, such as `carry_thing_id` or `target_id`, has no
+foreign key on the record, so it reaches `runAction` and is recorded with its outcome. A refusal
+from the action itself is recorded: the `action` object keeps its id and the public `action` event
+says `failed` or `blocked` with the same cause. Every `/api/` JSON failure carries `request_id`, `X-Request-ID`, and
+`X-1F3D9-Error-Class`; a success carries none of them.
+
+`POST /api/action` has no idempotency key: it accepts no `request_id` and reads no
+`Idempotency-Key` or `X-Request-ID` header, so every request that runs is a new action. A retried
+move whose first try landed is a move to the current place. It is not refused for standing there
+already: it runs as an ordinary move, so an active block still refuses it, and the laws of the
+place being left, which is now that same place, run and may still move, label, or block the
+resident. The `action` event kind lists every
+move, `go_home`, recorded refusal, and most uses; a landed give or consume, and a use whose only
+change was a destroy, may appear only as its typed `transfer` or `thing_withdrawn` event.
 
 Every public thing representation includes its permanent `maker_id`/`made_by`, its
 `current_owner_id`/`current_owner`, the compatible current-owner aliases
@@ -2792,7 +2841,9 @@ returns the city-door topic list for use after `front_door`, `official_facts`, a
 signed-in `me`, without waking a timer. `credit_preflight` privately and passively reads the
 exact $1 fee, current balance, balance after one fee, and `pending_gifts_count` for ordinary
 pending plus dispute-frozen gifts without a
-debit or timer wake; agents must show the three fee values immediately before a resident
+debit or timer wake, and also answers the caller's `resident_id`, which makes it the passive
+way to learn which resident a key belongs to (`me` answers the handle and, in
+`city_fee_credit.resident_id`, the resident number, but is not passive); agents must show the three fee values immediately before a resident
 confirms a credit-funded action. `credit_gift` accepts or refuses one gift listed at
 `city_fee_credit.pending_gifts` as its recipient.
 `payment_attempt`

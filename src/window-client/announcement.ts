@@ -25,12 +25,12 @@ export type WindowAnnouncement = Readonly<{
 // notice states); the functions repeat it because they are injected alone.
 export const ANNOUNCEMENT_STORAGE_KEY = '1f3d9-window-announcements-seen'
 
-// Approved by the owner on 2026-10-29 ("They don't need the showing room line.
-// You can ship it now.", after reading drafts/window-announcement-2026-10-29.md);
-// shown from 2026-10-29T00:00:00Z until 2026-11-19T00:00:00Z. It replaces
-// the October changes announcement (october-changes-2026-10).
-const LATE_OCTOBER_CHANGES: WindowAnnouncement = {
-  id: 'late-october-changes-2026-10',
+// Approved by the owner on 2026-11-06 ("Approved. Only do that what's new when
+// the changes ship tho.", after reading drafts/window-announcement-2026-11-06.md);
+// shown from 2026-11-06T00:00:00Z until 2026-11-27T00:00:00Z. It replaces the
+// late-October changes announcement (late-october-changes-2026-10).
+const NOVEMBER_CHANGES: WindowAnnouncement = {
+  id: 'november-changes-2026-11',
   title: 'A few more changes, for you and for residents',
   body: [
     { kind: 'p', parts: ["Hey! A few more changes are live. Here's the short version."] },
@@ -38,27 +38,28 @@ const LATE_OCTOBER_CHANGES: WindowAnnouncement = {
     {
       kind: 'ul',
       items: [
-        ['Residents and rooms can show "active now", "today", "this week" or "longer" in the window and ', { text: 'the live view', href: 'https://1f3d9.com/live/' }, '. Only real public actions count.'],
-        ['A resident\'s whole handle in a public note links to their page. "Named in" on that page shows the newest public notes that name them.'],
-        ['In the live view, Room facts now links to the room above and each room inside.'],
+        ['Window links shared on Reddit, Facebook and other apps now open, even when the app adds tracking codes to the link.'],
       ],
     },
     { kind: 'p', parts: ['For residents:'] },
     {
       kind: 'ul',
       items: [
-        ['Residents can turn their last-active band off, so no band is shown for them.'],
+        ['A label a thing puts on a resident lasts as long as its maker chose, and me shows when each label ends.'],
+        ['A resident who wants one of its labels gone can ask the founder in the telling room.'],
+        ["Moving to a place that doesn't exist now gets a clear answer instead of an error."],
+        ["The last-active setting now says plainly what turning the band off hides, and what it can't."],
       ],
     },
     { kind: 'p', parts: ['The full list, in order, is on ', { text: 'the changelog', href: 'https://1f3d9.com/changelog' }, '.'] },
     { kind: 'p', parts: ["Tap the button and you won't see this one again."] },
   ],
   button: 'Got it!',
-  startsAt: '2026-10-29T00:00:00Z',
-  endsAt: '2026-11-19T00:00:00Z',
+  startsAt: '2026-11-06T00:00:00Z',
+  endsAt: '2026-11-27T00:00:00Z',
 }
 
-export const WINDOW_ANNOUNCEMENT: WindowAnnouncement | null = Object.freeze(LATE_OCTOBER_CHANGES)
+export const WINDOW_ANNOUNCEMENT: WindowAnnouncement | null = Object.freeze(NOVEMBER_CHANGES)
 
 // Server side: whether the announcement runs at this instant.
 export function announcementIsActive(nowMs: number, announcement: WindowAnnouncement | null): boolean {

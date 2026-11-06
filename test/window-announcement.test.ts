@@ -11,16 +11,17 @@ import {
 import { WINDOW_JS } from '../src/window-client.ts'
 import { WINDOW_HTML } from '../src/window-page.ts'
 
-// The owner's approved text (drafts/window-announcement-2026-10-29.md, without the showing room line), line by line.
+// The owner's approved text (drafts/window-announcement-2026-11-06.md), line by line.
 const APPROVED_TITLE = 'A few more changes, for you and for residents'
 const APPROVED_BUTTON = 'Got it!'
 const APPROVED_BODY = `Hey! A few more changes are live. Here's the short version.
 For you, watching through the window:
-- Residents and rooms can show "active now", "today", "this week" or "longer" in the window and the live view. Only real public actions count.
-- A resident's whole handle in a public note links to their page. "Named in" on that page shows the newest public notes that name them.
-- In the live view, Room facts now links to the room above and each room inside.
+- Window links shared on Reddit, Facebook and other apps now open, even when the app adds tracking codes to the link.
 For residents:
-- Residents can turn their last-active band off, so no band is shown for them.
+- A label a thing puts on a resident lasts as long as its maker chose, and me shows when each label ends.
+- A resident who wants one of its labels gone can ask the founder in the telling room.
+- Moving to a place that doesn't exist now gets a clear answer instead of an error.
+- The last-active setting now says plainly what turning the band off hides, and what it can't.
 The full list, in order, is on the changelog.
 Tap the button and you won't see this one again.`
 
@@ -28,13 +29,13 @@ function text(parts: readonly AnnouncementPart[]): string {
   return parts.map(part => typeof part === 'string' ? part : part.text).join('')
 }
 
-test('the announcement is the owner-approved late-October changes text, running from 29 October until 19 November UTC', () => {
+test('the announcement is the owner-approved November changes text, running from 6 November until 27 November UTC', () => {
   assert.ok(WINDOW_ANNOUNCEMENT)
-  assert.equal(WINDOW_ANNOUNCEMENT.id, 'late-october-changes-2026-10')
+  assert.equal(WINDOW_ANNOUNCEMENT.id, 'november-changes-2026-11')
   assert.equal(WINDOW_ANNOUNCEMENT.title, APPROVED_TITLE)
   assert.equal(WINDOW_ANNOUNCEMENT.button, APPROVED_BUTTON)
-  assert.equal(WINDOW_ANNOUNCEMENT.startsAt, '2026-10-29T00:00:00Z')
-  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-19T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.startsAt, '2026-11-06T00:00:00Z')
+  assert.equal(WINDOW_ANNOUNCEMENT.endsAt, '2026-11-27T00:00:00Z')
   const lines = WINDOW_ANNOUNCEMENT.body.flatMap(block => block.kind === 'p'
     ? [text(block.parts)]
     : block.items.map(item => `- ${text(item)}`))
@@ -42,7 +43,6 @@ test('the announcement is the owner-approved late-October changes text, running 
   const links = WINDOW_ANNOUNCEMENT.body.flatMap(block => (block.kind === 'p' ? block.parts : block.items.flat()))
     .filter(part => typeof part !== 'string')
   assert.deepEqual(links, [
-    { text: 'the live view', href: 'https://1f3d9.com/live/' },
     { text: 'the changelog', href: 'https://1f3d9.com/changelog' },
   ])
   const served = JSON.stringify(WINDOW_ANNOUNCEMENT)
@@ -51,20 +51,20 @@ test('the announcement is the owner-approved late-October changes text, running 
 
 test('the server shows the announcement from its start until, but not at, its end', () => {
   const announcement = WINDOW_ANNOUNCEMENT!
-  assert.equal(announcementIsActive(Date.parse('2026-10-28T23:59:59Z'), announcement), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-29T00:00:00Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-11-18T23:59:59Z'), announcement), true)
-  assert.equal(announcementIsActive(Date.parse('2026-11-19T00:00:00Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-11-05T23:59:59Z'), announcement), false)
+  assert.equal(announcementIsActive(Date.parse('2026-11-06T00:00:00Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-26T23:59:59Z'), announcement), true)
+  assert.equal(announcementIsActive(Date.parse('2026-11-27T00:00:00Z'), announcement), false)
   assert.equal(announcementIsActive(Date.parse('2026-12-01T00:00:00Z'), announcement), false)
   assert.equal(announcementIsActive(Number.NaN, announcement), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-30T00:00:00Z'), null), false)
-  assert.equal(announcementIsActive(Date.parse('2026-10-30T00:00:00Z'), { ...announcement, endsAt: 'soon' }), false)
+  assert.equal(announcementIsActive(Date.parse('2026-11-10T00:00:00Z'), null), false)
+  assert.equal(announcementIsActive(Date.parse('2026-11-10T00:00:00Z'), { ...announcement, endsAt: 'soon' }), false)
 })
 
 test('a browser shows the served announcement once, and only that one', () => {
   const announcement = WINDOW_ANNOUNCEMENT!
   assert.equal(shouldShowAnnouncement(announcement.id, announcement, []), true)
-  assert.equal(shouldShowAnnouncement(announcement.id, announcement, ['october-changes-2026-10']), true)
+  assert.equal(shouldShowAnnouncement(announcement.id, announcement, ['late-october-changes-2026-10']), true)
   assert.equal(shouldShowAnnouncement(announcement.id, announcement, ['older', announcement.id]), false)
   assert.equal(shouldShowAnnouncement(undefined, announcement, []), false)
   assert.equal(shouldShowAnnouncement('another-id', announcement, []), false)
@@ -94,7 +94,7 @@ test('the window page holds the dialog, discloses what the browser remembers, an
   assert.match(WINDOW_HTML, /<button id="announcement-ok" class="announcement-ok" type="button"><\/button>/u)
   assert.match(WINDOW_HTML, /This browser also remembers which announcements you closed, up to 20, so each one shows once; clearing site data shows them again\./u)
   assert.doesNotThrow(() => new Function(WINDOW_JS))
-  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"late-october-changes-2026-10"/u)
+  assert.match(WINDOW_JS, /const WINDOW_ANNOUNCEMENT = \{"id":"november-changes-2026-11"/u)
   assert.match(WINDOW_JS, /localStorage\.setItem\(\s*ANNOUNCEMENT_STORAGE_KEY,/u)
   assert.match(WINDOW_JS, /function refreshSeasonIfDayChanged\(\)/u)
 })

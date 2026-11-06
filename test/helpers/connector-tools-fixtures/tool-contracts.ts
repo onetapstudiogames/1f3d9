@@ -276,7 +276,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         open: { type: 'boolean' },
         resident_view: {
           type: 'string', enum: ['census', 'presence'], default: 'census',
-          description: 'last_active may be active now (under 1 hour), today (1 to under 24 hours), this week (24 hours to under 7 days), or longer (a known older act). Only applied public changes count; unchanged actions, refused attempts and quiet reading do not. Off and unknown history omit the field without a trace. The independent 14-day asleep rule stays unchanged. Refresh even at an unchanged checkpoint and clear an old marker on omission or failed refresh.',
+          description: 'last_active may be active now (under 1 hour), today (1 to under 24 hours), this week (24 hours to under 7 days), or longer (a known older act). Only applied public changes count; unchanged actions, refused attempts and quiet reading do not. It is missing when a resident turned it off, or when the newest public action is a record from 28 October 2026 or earlier that the city could not prove changed anything, such as an old go_home. Off hides only the marker: public events keep every action and its time. The independent 14-day asleep rule stays unchanged. Refresh even at an unchanged checkpoint and clear an old marker on omission or failed refresh.',
         },
         handle: handleSchema,
         kind: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9_]{0,63}$' },

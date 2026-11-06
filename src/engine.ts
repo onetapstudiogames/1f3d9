@@ -960,6 +960,32 @@ function normalizeActionInput(input: ActionInput | RequiredActionInput): Require
   }
 }
 
+/**
+ * Whether a caller's destination place and source thing exist at all. The action
+ * record cites both by foreign key, so a route refuses an id that names nothing
+ * before that record. A retired place or withdrawn thing still exists, so it
+ * meets its ordinary recorded refusal inside the action instead.
+ */
+export async function missingActionIds(
+  destinationPlaceId: number | null,
+  sourceThingId: number | null,
+  db: TaggedSql = engineSql,
+): Promise<Readonly<{ place: boolean; thing: boolean }>> {
+  if (destinationPlaceId === null && sourceThingId === null) {
+    return Object.freeze({ place: false, thing: false })
+  }
+  const rows = await queryRows<{ place_found?: unknown; thing_found?: unknown }>(db`
+    /* action:missing-ids */
+    SELECT
+      EXISTS (SELECT 1 FROM places WHERE id = ${destinationPlaceId ?? 0}) AS place_found,
+      EXISTS (SELECT 1 FROM things WHERE id = ${sourceThingId ?? 0}) AS thing_found
+  `)
+  return Object.freeze({
+    place: destinationPlaceId !== null && rows[0]?.place_found !== true,
+    thing: sourceThingId !== null && rows[0]?.thing_found !== true,
+  })
+}
+
 async function recordAction(input: RequiredActionInput, db: TaggedSql): Promise<number> {
   const rows = await queryRows<{ id?: unknown }>(db`
     INSERT INTO action_runs (
