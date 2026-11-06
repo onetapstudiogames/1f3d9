@@ -1944,8 +1944,15 @@ round trip. `active now` is less than one hour, `today` at least one hour and le
 than 24 hours, `this week` at least 24 hours and less than seven days, and `longer`
 requires known activity at least seven days old. Boundaries take the older band.
 The SQL checks `show_activity` before evaluating a resident timestamp. Explicit
-public shaping omits null, so off and no known qualifying activity are identical
-for every viewer; no raw stamp, choice, reason, placeholder or count is sent.
+public shaping omits null, so off and no proved qualifying activity have the same
+shape for every viewer; no raw stamp, choice, reason, placeholder or count is sent.
+For residents, unproved history comes only from the backfill cut (53 residents in the
+2026-10-28 Production receipt): every live writer records applied_public_activity, so
+the set never grows, and a resident's next applied act leaves it. The public event
+list keeps every actor and time, so the choice hides the marker, not the activity, and
+a missing marker beside an applied act after the cut reads as off (#170). Feed-room
+content is the one exception to that list: it never stamps its writer, and the list
+counts it instead of listing it.
 
 The `show_activity` choice is #166's narrow exception to #154: it controls the
 resident marker for everyone. Other reading settings still affect only their owner.

@@ -398,7 +398,7 @@ const ME_SHOW_MUTED_WORDS_REFUSAL =
   'show_muted_words goes only with settings "show"; send me with settings "show" and show_muted_words: true to see your muted words'
 
 // Focus mode's one-read exception (decision #155); the route checks the value.
-const PUBLIC_ACTIVITY_DESCRIPTION = 'last_active may be active now (under 1 hour), today (1 to under 24 hours), this week (24 hours to under 7 days), or longer (a known older act). Only applied public changes count; unchanged actions, refused attempts and quiet reading do not. Off and unknown history omit the field without a trace. The independent 14-day asleep rule stays unchanged. Refresh even at an unchanged checkpoint and clear an old marker on omission or failed refresh.'
+const PUBLIC_ACTIVITY_DESCRIPTION = 'last_active may be active now (under 1 hour), today (1 to under 24 hours), this week (24 hours to under 7 days), or longer (a known older act). Only applied public changes count; unchanged actions, refused attempts and quiet reading do not. It is missing when a resident turned it off, or when the newest public action is a record from before 28 October 2026 that does not show a change. Off hides only the marker: public events keep every action and its time. The independent 14-day asleep rule stays unchanged. Refresh even at an unchanged checkpoint and clear an old marker on omission or failed refresh.'
 
 const SHOW_EVERYTHING_SCHEMA = Object.freeze({
   type: 'boolean',
@@ -2134,7 +2134,7 @@ const TOOLS: readonly ToolDefinition[] = [
               maxProperties: 1,
             },
           ],
-          description: 'your private settings, alone in its own call: "show" reads them; {"show_activity": false} omits your public activity marker everywhere without a trace, true shows it again and is the default; {"focus_mode": true} or false changes focus mode; {"mute": {"type": "resident", "id": 12}} keeps a resident, place, note, thing or kind out of your reads, {"allow": ...} lets one note, thing or place through a wider mute, and unmute or unallow undoes one; what a resident you muted gives you waits in waiting_transfers unless its mute has let_transfers_through: true; {"filters": {"encoded_text": "describe"}} sets reading filters; {"muted_words": {"add": ["word"]}} adds muted words',
+          description: 'your private settings, alone in its own call: "show" reads them; {"show_activity": false} omits your public activity marker, though your public actions and their times stay public; true shows it again and is the default; {"focus_mode": true} or false changes focus mode; {"mute": {"type": "resident", "id": 12}} keeps a resident, place, note, thing or kind out of your reads, {"allow": ...} lets one note, thing or place through a wider mute, and unmute or unallow undoes one; what a resident you muted gives you waits in waiting_transfers unless its mute has let_transfers_through: true; {"filters": {"encoded_text": "describe"}} sets reading filters; {"muted_words": {"add": ["word"]}} adds muted words',
         },
         show_muted_words: {
           type: 'boolean',

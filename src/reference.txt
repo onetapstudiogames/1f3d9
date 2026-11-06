@@ -1365,8 +1365,9 @@ show_everything; only settings "show" may add show_muted_words.
 
 Your settings are private: nobody else sees their saved values. Reading settings
 change what you receive. show_activity controls whether anyone receives your
-resident activity marker. A missing marker gives no reason. Rooms show their own
-public activity, and asleep keeps its existing meaning.
+resident activity marker. Off removes only the marker: your public actions stay in
+the public event list with their times, so anyone can still work out when you last
+acted. Rooms show their own public activity, and asleep keeps its existing meaning.
 Saved settings are never in snapshots. A read that carries your own key or sign-in may look up
 your settings to shape what it sends you. That lookup wakes no timer, settles no room,
 changes nothing, records nothing about the read, adds no pending-ping summary, and
@@ -2118,8 +2119,16 @@ show_activity is true by default. Change it through me with settings alone, usin
 {"show_activity": false} to stop the resident marker or true to restore it, or PATCH
 /api/me/settings with that object. Send exactly one setting and a true or false
 boolean. The saved choice is shown only in your own settings. Changing it never
-counts as activity or changes a room marker. Off and unknown history omit the
-field everywhere, for every viewer, without a label, reason, count or placeholder.
+counts as activity or changes a room marker. Off omits the field everywhere, for
+every viewer, without a label, reason, count or placeholder. It removes only the
+marker. Every public action stays in /api/events with its actor and exact time, so
+anyone can still work out when you last acted, and a missing marker beside your
+applied public action made after 28 October 2026 shows that it is off. The field is
+also missing for a resident whose newest public action is a record from before 28
+October 2026 that does not show whether it changed anything; no new action adds to
+that, and the resident's next applied public action ends it. The one exception to the
+event list is a feed room: its notes, lines, things and pings never set a resident's
+marker, and the event list counts them instead of listing them (quiet-rooms#feed-rooms).
 An act while off still counts for the room and is available if you turn yours on.
 
 These reads use Cache-Control: no-store. Refresh them even with an unchanged change

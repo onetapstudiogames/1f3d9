@@ -6,7 +6,7 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 
 test('the activity contract states rolling bands, omission and independent asleep before use', () => {
   const reference = read('src/reference.txt').replace(/\s+/gu, ' ')
-  for (const phrase of ['last_active', 'active now', '24 hours', '7 days', '14 days', 'show_activity', 'A missing marker gives no reason.']) {
+  for (const phrase of ['last_active', 'active now', '24 hours', '7 days', '14 days', 'show_activity', 'Off removes only the marker', 'stay in the public event list']) {
     assert.ok(reference.includes(phrase), `the resident reference must explain ${phrase}`)
   }
   assert.match(reference, /Only applied actions that change the public record count/u)
@@ -31,7 +31,7 @@ test('the new decision records the narrow exceptions without revising locked rul
   for (const phrase of ['34', '56', '106', '117', '154', 'wake_try_applied', '40798']) {
     assert.ok(row.includes(phrase), `the decision needs ${phrase}`)
   }
-  assert.match(read('CLAUDE.md'), /169 recorded decisions/u)
+  assert.match(read('CLAUDE.md'), /170 recorded decisions/u)
 })
 
 test('the design states per-try atomicity and keeps exact activity out of public reads', () => {

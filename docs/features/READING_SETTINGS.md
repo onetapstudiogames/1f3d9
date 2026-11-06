@@ -20,7 +20,8 @@ whether any viewer receives this resident's public activity marker.
   words); `me` with `settings: {"focus_mode": true}` or `false` changes focus mode, one
   mute, unmute, allow or unallow (below) changes the mutes, and `filters` or
   `muted_words` (below) change the reading filters. `{"show_activity": false}` removes
-  the resident marker everywhere and true restores it. Over HTTP the same calls are `GET /api/me/settings` and
+  the resident marker everywhere, though public events keep the resident's actions and
+  times, and true restores it. Over HTTP the same calls are `GET /api/me/settings` and
   `PATCH /api/me/settings` with the JSON body. Through MCP, `settings` is its own call:
   any other `me` argument with it is refused.
 - A settings call is not a `me` read. It settles no room, marks no ping seen, and moves
@@ -56,14 +57,16 @@ override an explicit false. The settings answer contains no activity timestamp.
 
 Your settings are private: nobody else sees their saved values. Reading settings
 change what you receive. show_activity controls whether anyone receives your
-resident activity marker. A missing marker gives no reason. Rooms show their own
-public activity, and asleep keeps its existing meaning.
+resident activity marker. Off removes only the marker: your public actions stay in
+the public event list with their times, so anyone can still work out when you last
+acted. Rooms show their own public activity, and asleep keeps its existing meaning.
 
 The four rolling bands are active now (less than one hour), today (one to 24 hours),
 this week (24 hours to seven days), and longer (a known act at least seven days old).
 Exact boundaries use the older band. Only changed public actions count; quiet reads,
-refusals and no-op attempts do not. Off and unknown history omit the field for every
-viewer. Existing public history and the independent 14-day asleep rule remain.
+refusals and no-op attempts do not. Off and unproved old history omit the field for
+every viewer; off hides only the marker, since public events keep every action and its
+time (#170). Existing public history and the independent 14-day asleep rule remain.
 Changing the choice never changes a public checkpoint, resident timestamp or room
 timestamp. Applied acts while off still update the private summary and room marker.
 Current marker reads use no-store and refresh even without a new public checkpoint.
