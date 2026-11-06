@@ -47,6 +47,28 @@ test('the cut wording names what the city could not prove and counts only public
   assert.doesNotMatch(design, /act that changed something|changed nothing and stamps no one/u)
 })
 
+test('the last-active words name rooms inside a feed room, which never set the marker yet stay listed', async () => {
+  // public_activity_feed_room walks every parent, so feed content in a room inside a feed
+  // room at any depth never stamps its writer, while the event list leaves out only rooms
+  // marked feed themselves. Room 1369 inside feed room 1278 is the live case.
+  const schema = read('db/schema.sql')
+  const ancestry = schema.slice(schema.indexOf('CREATE OR REPLACE FUNCTION public_activity_feed_room('))
+  assert.match(ancestry.slice(0, ancestry.indexOf('$f$;')), /JOIN ancestry ON parent\.id=ancestry\.parent_id/u)
+  const { feedRoomIdsSql } = await import('../src/feed-rooms.ts')
+  assert.doesNotMatch(feedRoomIdsSql(), /RECURSIVE|parent_id/u)
+  const reference = read('src/reference.txt').replace(/\s+/gu, ' ')
+  const start = reference.indexOf('show_activity is true by default.')
+  const section = reference.slice(start, reference.indexOf('An act while off still counts', start))
+  assert.ok(section.includes("Notes, lines, things and pings in a feed room, or in a room inside one at any depth, never set a resident's marker."))
+  assert.ok(section.includes('but lists those in a room inside it, so a missing marker beside one of those does not show that it is off'))
+  assert.doesNotMatch(section, /The one exception to the event list is a feed room/u)
+  assert.ok(reference.includes('The mark covers that room only, not the rooms inside it, except for the resident marker (search-and-changes#public-activity).'))
+  const design = read('docs/SYSTEM_DESIGN.md').replace(/\s+/gu, ' ')
+  assert.ok(design.includes('in a feed room, or in a room inside one at any depth (`public_activity_feed_room` walks every parent), it never stamps its writer'))
+  assert.ok(design.includes('It covers that room only, except for the activity marker'))
+  assert.doesNotMatch(design, /it never stamps its writer, and the list counts it instead of listing it/u)
+})
+
 test('help explains activity and the choice without punctuation that breaks its plain text doors', async () => {
   const { CITY_HELP_DOORS, APP_CITY_HELP_DOORS } = await import('../src/city-help.ts')
   for (const doors of [CITY_HELP_DOORS, APP_CITY_HELP_DOORS]) {
