@@ -3,9 +3,11 @@ import { registerReservationTests } from './world-market-tests/reservation.test.
 import { registerPaymentTests } from './world-market-tests/payment.test.ts'
 import { registerReconciliationTests } from './world-market-tests/reconciliation.test.ts'
 import { registerCancellationTests } from './world-market-tests/cancellation.test.ts'
+import { registerOfferBatchTests } from './world-market-tests/offers-batch.test.ts'
 
 registerListingAndPublicRecordTests()
 registerReservationTests()
 registerPaymentTests()
 registerReconciliationTests()
 registerCancellationTests()
+registerOfferBatchTests()

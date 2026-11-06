@@ -31,6 +31,8 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:waiting-transfers-list */')) return []
   if (q.includes('/* private:hidden_pending_pings */')) return []
   if (q.includes('/* resident-hold:current */')) return []
+  // The world offer batch read: the route fixtures list no world offers, so every id reads as not_found.
+  if (q.includes('/* world-market:offer-batch */')) return []
   // An action's destination place and source thing exist unless a test sends the reserved missing id.
   if (q.includes('/* action:missing-ids */')) {
     return [{ place_found: Number(params[0]) !== 2_147_483_647, thing_found: Number(params[1]) !== 2_147_483_647 }]

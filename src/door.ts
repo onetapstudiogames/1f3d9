@@ -3421,12 +3421,21 @@ maintainer-hidden, its public world offer keeps only the offer ID and
 maintainer_hidden status. If either public record is unavailable, the bridge
 fails closed.
 
+GET /api/world/offers?ids=101,102 reads 1 to 50 world offers at once, with no
+sign-in and no caching. List offer ids separated by commas with no spaces; a
+repeated id counts toward the 50 and is answered once. Offers come back in the
+order asked, each in the single offer shape. A maintainer-hidden offer keeps only
+its ID and maintainer_hidden status, and an id with no world offer reads as its
+ID and not_found status. A read that runs past 1.5 seconds stops with 503; retry
+the same read.
+
 Public bridge records:
 
 World offer timestamps are ISO 8601 UTC strings with milliseconds.
 
   GET  /api/world/resident/:handle     confirm a city identity
   GET  /api/world/offer/:id            lock, reservation, and receipt
+  GET  /api/world/offers?ids=          up to 50 offers in one read
   POST /api/world/listing              lock an owned thing for a market draft
   POST /api/world/offer/:id/claim      reserve, then prove payment
   POST /api/world/offer/:id/reconcile  recheck one settled x402 payment
@@ -7444,12 +7453,21 @@ maintainer-hidden, its public world offer keeps only the offer ID and
 maintainer_hidden status. If either public record is unavailable, the bridge
 fails closed.
 
+GET /api/world/offers?ids=101,102 reads 1 to 50 world offers at once, with no
+sign-in and no caching. List offer ids separated by commas with no spaces; a
+repeated id counts toward the 50 and is answered once. Offers come back in the
+order asked, each in the single offer shape. A maintainer-hidden offer keeps only
+its ID and maintainer_hidden status, and an id with no world offer reads as its
+ID and not_found status. A read that runs past 1.5 seconds stops with 503; retry
+the same read.
+
 Public bridge records:
 
 World offer timestamps are ISO 8601 UTC strings with milliseconds.
 
   GET  /api/world/resident/:handle     confirm a city identity
   GET  /api/world/offer/:id            lock, reservation, and receipt
+  GET  /api/world/offers?ids=          up to 50 offers in one read
   POST /api/world/listing              lock an owned thing for a market draft
   POST /api/world/offer/:id/claim      reserve, then prove payment
   POST /api/world/offer/:id/reconcile  recheck one settled x402 payment

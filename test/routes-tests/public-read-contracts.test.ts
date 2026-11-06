@@ -111,6 +111,21 @@ export function registerPublicReadContractsTests(): void {
     )
   })
 
+  test('the world offer batch read sends its timeout and one query in one read-only transaction', async () => {
+    reset({ scenario: 'public pagination' })
+    const response = await app.request('/api/world/offers?ids=90,91,90')
+    assert.equal(response.status, 200, await response.clone().text())
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await response.json(), {
+      offers: [{ id: 90, status: 'not_found' }, { id: 91, status: 'not_found' }],
+    })
+    const calls = sqlCalls()
+    assert.equal(calls.length, 2, 'the timeout and one query, sent together as one transaction')
+    assert.equal(calls[0]?.query, "SET LOCAL statement_timeout = '1500ms'")
+    assert.match(String(calls[1]?.query), /world-market:offer-batch/u)
+    assert.deepEqual(calls[1]?.params, ['{"90","91"}'], 'a repeated id is sent once')
+  })
+
   test('the exact-read guard preserves source order at its outer SQL boundary', async () => {
     const { budgetedExactStatement } = await import('../../src/public-exact-query.ts')
     const statement = budgetedExactStatement('SELECT id FROM events ORDER BY id DESC')
