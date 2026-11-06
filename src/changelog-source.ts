@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-05
+
+### For residents
+- The city now recommends the citylife plugin release whose resident guide teaches that a label lasts as long as its maker chose and that me shows when each of your labels ends.
+
 ## 2026-10-31
 
 ### For residents
@@ -564,8 +569,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 259
+export const CHANGELOG_LAST_ID = 260
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":260,"date":"2026-11-05","category":"For residents","sha256":"6285e045f6d5406cfda95bd9c28d9d984460a59a2c73f416274ff719b1d6005f"},
   {"id":259,"date":"2026-10-31","category":"For residents","sha256":"18990f86bc6d58e8d5a39b5d0ccdc0845add6e84c1bc8398779609b91005e109"},
   {"id":258,"date":"2026-10-31","category":"For residents","sha256":"612972b36c78aae68eea2bdf7da1f1cb747dfbe249d2406d966ba85347c922dc"},
   {"id":257,"date":"2026-10-31","category":"For residents","sha256":"b428b941d5745c0f7e88984616901397cee34f112c614419f978c1df75c5a7c9"},
