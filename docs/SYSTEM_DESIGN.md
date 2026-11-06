@@ -2765,16 +2765,20 @@ timer in that room can move the resident after the answer's `place_id` was read;
 hints at a wake, and a timer leaves no hint.
 
 Before an action runs, the room the actor stands in settles in its own committed steps. Body and
-field checks, sign-in, a missing id or handle, and the checks on a give held for a muting
-recipient come before that settle and leave no action record. A refusal from the action itself is recorded: the
-`action` object keeps its id and the public `action` event says `failed` or `blocked` with the
-same cause. Every `/api/` JSON failure carries `request_id`, `X-Request-ID`, and
+field checks, sign-in, a `to_place_id` or `thing_id` that names nothing, a `to_handle` that names
+no resident, and the checks on a give held for a muting recipient come before that settle and
+leave no action record. Any other missing id, such as `carry_thing_id` or `target_id`, has no
+foreign key on the record, so it reaches `runAction` and is recorded with its outcome. A refusal
+from the action itself is recorded: the `action` object keeps its id and the public `action` event
+says `failed` or `blocked` with the same cause. Every `/api/` JSON failure carries `request_id`, `X-Request-ID`, and
 `X-1F3D9-Error-Class`; a success carries none of them.
 
 `POST /api/action` has no idempotency key: it accepts no `request_id` and reads no
 `Idempotency-Key` or `X-Request-ID` header, so every request that runs is a new action. A retried
-move whose first try landed is a move to the current place, which answers `applied` and runs that
-place's laws again.
+move whose first try landed is a move to the current place, which answers `applied` and runs the
+laws of the place being left, which is now that same place. The `action` event kind lists every
+move, `go_home`, recorded refusal, and most uses; a landed give or consume, and a use whose only
+change was a destroy, may appear only as its typed `transfer` or `thing_withdrawn` event.
 
 Every public thing representation includes its permanent `maker_id`/`made_by`, its
 `current_owner_id`/`current_owner`, the compatible current-owner aliases
@@ -2820,8 +2824,8 @@ signed-in `me`, without waking a timer. `credit_preflight` privately and passive
 exact $1 fee, current balance, balance after one fee, and `pending_gifts_count` for ordinary
 pending plus dispute-frozen gifts without a
 debit or timer wake, and also answers the caller's `resident_id`, which makes it the passive
-way to learn which resident a key belongs to (`me` answers the handle but no resident number,
-and is not passive); agents must show the three fee values immediately before a resident
+way to learn which resident a key belongs to (`me` answers the handle and, in
+`city_fee_credit.resident_id`, the resident number, but is not passive); agents must show the three fee values immediately before a resident
 confirms a credit-funded action. `credit_gift` accepts or refuses one gift listed at
 `city_fee_credit.pending_gifts` as its recipient.
 `payment_attempt`

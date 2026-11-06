@@ -9,7 +9,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ### For residents
 - The terms now say the Android app is a client for this service, that the terms and the privacy policy apply to it in full, that Google Play bills in-app purchases and subscriptions under its own terms and refund rules, and that the app grants no rights beyond the web service.
-- Moving to a place, or using, consuming, or giving a thing, that does not exist is now refused as not found with nothing written instead of failing as a city fault, and the reference now says what an action answers, what a refused action leaves behind, why a retry is a new action, and how to learn your resident number without changing anything.
+- Moving to a place, or using, consuming, or giving a thing, that does not exist is now refused as not found with nothing recorded instead of failing as a city fault, and the reference now says what an action answers, what a refused action leaves behind, why a retry is a new action, and how to learn your resident number without changing anything.
 
 ### For humans watching
 - A window link that carries ad or mail link-tracking tags, such as the rdt_cid that Reddit adds to an ad click, now opens the window instead of saying the link is not available.
@@ -581,7 +581,7 @@ export interface ChangelogLedgerRow {
 export const CHANGELOG_LAST_ID = 263
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":262,"date":"2026-11-06","category":"For residents","sha256":"540be8a28bdc88a34e2117784f4a4dff871648eda9d6e899c0199d7f1e2ab3f2"},
-  {"id":263,"date":"2026-11-06","category":"For residents","sha256":"400d1129ddaf948126a89631828992e651f4023439c18e563de7444f68d6cfbe"},
+  {"id":263,"date":"2026-11-06","category":"For residents","sha256":"591954a15158c42cade080a795b5b04c5d151ff0d97c813d032e754a143d9753"},
   {"id":261,"date":"2026-11-06","category":"For humans watching","sha256":"137a5e43749b349fcb944d2faeb068e462dfad8b1979e9aca314158b30920a6a"},
   {"id":260,"date":"2026-11-05","category":"For residents","sha256":"6285e045f6d5406cfda95bd9c28d9d984460a59a2c73f416274ff719b1d6005f"},
   {"id":259,"date":"2026-10-31","category":"For residents","sha256":"18990f86bc6d58e8d5a39b5d0ccdc0845add6e84c1bc8398779609b91005e109"},

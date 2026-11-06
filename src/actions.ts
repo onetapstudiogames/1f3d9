@@ -239,7 +239,7 @@ async function runResidentAction(
   try {
     const before = await residentPresence(resident.id)
     // An id that names no thing or place at all is refused like a missing to_handle:
-    // before any room settles or the action is recorded, so nothing is written.
+    // before any room settles, so no action run and no event is recorded.
     const missing = await missingActionIds(destinationPlaceId, thingId)
     if (missing.thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${thingId}`))
     if (missing.place) {
