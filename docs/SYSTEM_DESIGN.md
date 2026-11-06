@@ -1948,14 +1948,18 @@ public shaping omits null, so off and no proved qualifying activity have the sam
 shape for every viewer; no raw stamp, choice, reason, placeholder or count is sent.
 For residents, unproved history comes only from the backfill cut (53 residents in the
 2026-10-28 Production receipt), so a record from 28 October 2026 before the cut can be
-unproved. Every live writer records applied_public_activity, so no live write adds to
-the set, and a resident's next act that changed something leaves it. A moderation
-removal or feed change, which recomputes from history, can return a resident whose
-later counted acts it took away. The public event list keeps every actor and time, so
-the choice hides the marker, not the activity, and a missing marker beside an act that
-changed something after the cut reads as off (#170). An applied act with an empty
-applied_public_activity, such as going home while already home, changed nothing and
-stamps no one. Feed-room content is the one exception to that list: it never stamps
+unproved. The backfill proves an old move or go_home only through `action_runs`, which
+stores no go_home destination, so every old go_home is unproved even when its notice
+names two different places, and an old first home_set has nothing earlier to compare
+with. Every live writer records applied_public_activity, so no live write adds to
+the set, and a resident's next act that changed the public record leaves it. A
+moderation removal or feed change, which recomputes from history, can return a
+resident whose later counted acts it took away. The public event list keeps every
+actor and time, so the choice hides the marker, not the activity, and a missing marker
+beside an act that changed the public record after the cut reads as off (#170). An
+applied act with an empty applied_public_activity, such as going home while already
+home, or a use whose only effect labels or blocks a resident, changed nothing public
+and stamps no one. Feed-room content is the one exception to that list: it never stamps
 its writer, and the list counts it instead of listing it.
 
 The `show_activity` choice is #166's narrow exception to #154: it controls the
