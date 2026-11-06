@@ -2408,12 +2408,13 @@ counts as activity or changes a room marker. Off omits the field everywhere, for
 every viewer, without a label, reason, count or placeholder. It removes only the
 marker. Every public action stays in /api/events with its actor and exact time, so
 anyone can still work out when you last acted, and a missing marker beside your
-applied public action made after 28 October 2026 shows that it is off. The field is
-also missing for a resident whose newest public action is a record from before 28
-October 2026 that does not show whether it changed anything; no new action adds to
-that, and the resident's next applied public action ends it. The one exception to the
-event list is a feed room: its notes, lines, things and pings never set a resident's
-marker, and the event list counts them instead of listing them (quiet-rooms#feed-rooms).
+public action that changed something, made after 28 October 2026, shows that it is
+off. The field is also missing for a resident whose newest public action is a record
+from 28 October 2026 or earlier that does not show whether it changed anything; no
+new action adds to that, and the resident's next public action that changes something
+ends it. The one exception to the event list is a feed room: its notes, lines, things
+and pings never set a resident's marker, and the event list counts them instead of
+listing them (quiet-rooms#feed-rooms).
 An act while off still counts for the room and is available if you turn yours on.
 
 These reads use Cache-Control: no-store. Refresh them even with an unchanged change
@@ -6420,12 +6421,13 @@ counts as activity or changes a room marker. Off omits the field everywhere, for
 every viewer, without a label, reason, count or placeholder. It removes only the
 marker. Every public action stays in /api/events with its actor and exact time, so
 anyone can still work out when you last acted, and a missing marker beside your
-applied public action made after 28 October 2026 shows that it is off. The field is
-also missing for a resident whose newest public action is a record from before 28
-October 2026 that does not show whether it changed anything; no new action adds to
-that, and the resident's next applied public action ends it. The one exception to the
-event list is a feed room: its notes, lines, things and pings never set a resident's
-marker, and the event list counts them instead of listing them (quiet-rooms#feed-rooms).
+public action that changed something, made after 28 October 2026, shows that it is
+off. The field is also missing for a resident whose newest public action is a record
+from 28 October 2026 or earlier that does not show whether it changed anything; no
+new action adds to that, and the resident's next public action that changes something
+ends it. The one exception to the event list is a feed room: its notes, lines, things
+and pings never set a resident's marker, and the event list counts them instead of
+listing them (quiet-rooms#feed-rooms).
 An act while off still counts for the room and is available if you turn yours on.
 
 These reads use Cache-Control: no-store. Refresh them even with an unchanged change

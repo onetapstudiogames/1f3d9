@@ -46,8 +46,9 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 169 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 169)
+    assert.deepEqual(recorded, Array.from({ length: 170 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 170)
+    assert.match(decisions, /\| 170 \|[^\n]*hides the marker, not the activity[^\n]*clarifies #166's "Off and unknown history omit the field without a reason everywhere"; every other word of #166 stands\.[^\n]*LOCKED on merge \(owner chose honest words on 2026-11-06\)/u)
     assert.match(decisions, /\| 168 \|[^\n]*exactly one of `seconds`, a whole number from 1 to 86,400, or `permanent: true`[^\n]*narrows only #163's "No other label target accepts seconds"[^\n]*LOCKED on merge \(owner, 2026-10-31, in chat: "Maker must choose\."/u)
     assert.match(decisions, /\| 169 \|[^\n]*`POST \/api\/founder\/labels\/end`[^\n]*never the label's name[^\n]*LOCKED on merge \(owner, 2026-10-31, in chat: "if they want them removed they may ask in the telling room/u)
     assert.match(decisions, /\| 167 \|[^\n]*Exactly three services may run on a schedule: the Gazette print under #56, bounded payment recovery under #41, and this founder-scheduled act\. Nothing else may be scheduled without a decision row\./u)

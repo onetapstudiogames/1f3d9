@@ -14,6 +14,21 @@ test('the activity contract states rolling bands, omission and independent aslee
   assert.match(reference, /an unchanged change marker/u)
 })
 
+test('the cut wording covers 28 October itself and names only acts that changed something', () => {
+  // The backfill cut is late on 2026-10-28, so a record from that day can be unproved,
+  // and an applied act that changed nothing (going home while home) stamps no one.
+  const reference = read('src/reference.txt').replace(/\s+/gu, ' ')
+  const description = read('src/mcp.ts').split('\n').find(line => line.startsWith('const PUBLIC_ACTIVITY_DESCRIPTION = ')) ?? ''
+  assert.ok(description, 'the shared tool description must stay one source line')
+  for (const text of [reference, description]) {
+    assert.ok(text.includes('a record from 28 October 2026 or earlier that does not show whether it changed anything'))
+    assert.doesNotMatch(text, /before 28 October 2026/u)
+  }
+  assert.ok(reference.includes('beside your public action that changed something, made after 28 October 2026'))
+  assert.ok(reference.includes("the resident's next public action that changes something ends it"))
+  assert.doesNotMatch(reference, /next applied public action|beside your applied public action/u)
+})
+
 test('help explains activity and the choice without punctuation that breaks its plain text doors', async () => {
   const { CITY_HELP_DOORS, APP_CITY_HELP_DOORS } = await import('../src/city-help.ts')
   for (const doors of [CITY_HELP_DOORS, APP_CITY_HELP_DOORS]) {
