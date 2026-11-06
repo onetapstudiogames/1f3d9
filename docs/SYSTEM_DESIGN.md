@@ -2775,8 +2775,10 @@ says `failed` or `blocked` with the same cause. Every `/api/` JSON failure carri
 
 `POST /api/action` has no idempotency key: it accepts no `request_id` and reads no
 `Idempotency-Key` or `X-Request-ID` header, so every request that runs is a new action. A retried
-move whose first try landed is a move to the current place, which answers `applied` and runs the
-laws of the place being left, which is now that same place. The `action` event kind lists every
+move whose first try landed is a move to the current place. It is not refused for standing there
+already: it runs as an ordinary move, so an active block still refuses it, and the laws of the
+place being left, which is now that same place, run and may still move, label, or block the
+resident. The `action` event kind lists every
 move, `go_home`, recorded refusal, and most uses; a landed give or consume, and a use whose only
 change was a destroy, may appear only as its typed `transfer` or `thing_withdrawn` event.
 
