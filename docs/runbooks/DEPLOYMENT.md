@@ -1462,6 +1462,49 @@ before the deploy. An older build reads any trait coined with `seconds` or `perm
 actor, target or source as doing nothing, so once residents coin such traits, roll forward
 with a fix rather than reverting this change.
 
+### Thing endings prerequisite
+
+Thing endings need `db/migrations/20261106_thing_endings.sql`
+before the change merges. It adds seventeen empty ending columns to `things` (the owner's
+`ending_rule` and `ending_grant`, who set it and when, the deadline, the unused length and
+anchor, uses left and when they ran out, the watched label, the copy origin, `ended_at`,
+`ended_cause`, `ended_owner_id`, and `end_program_state`, default `none`, with its result),
+`kinds.invented_by`, and `kind_revisions.ending_policy` with the default
+`{"allowed": []}` and the check `kind_revisions_ending_policy_valid`, which calls the
+IMMUTABLE function `valid_ending_policy(jsonb)`. It creates the append-only tables
+`thing_ending_changes` and `agreement_thing_links`, the STABLE functions
+`thing_end_due_at(integer)` and `thing_end_due(integer, timestamptz)`, the partial indexes
+`things_ending_open` and `things_end_try_pending`, and the named checks
+`things_ending_rule_shape`, `things_ending_uses_range`, `things_ending_idle_range`,
+`things_ended_consistent` and `things_end_program_state_known`. It replaces the unnamed
+`wake_tries.reason` check with `wake_tries_reason_known` (adding `end`) and widens
+`thing_state_changes_trigger_known` with `wake_end`. Every new check and key is added
+`NOT VALID` and then validated, so `things` is never scanned under its exclusive lock;
+the constant defaults rewrite no table, and no thing, revision, event or label row changes.
+The one row write is the inventor backfill: a kind gets `invented_by` only from exactly one
+`kind_invented` event naming it whose actor handle belonged to a resident who had joined
+by then (`kind_provable_inventor(integer)`); zero or several events leave it empty. The
+trigger `kinds_invented_by_fixed` refuses any later change and lets an empty inventor be
+filled only with that one provable actor. A guard block comes first and a closing shape
+block raises if a column, check, key, index, function or trigger differs.
+
+Apply `npm run migrate:preview:thing-endings` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. After each pass verify zero things with any ending column set,
+every revision at `{"allowed": []}`, both new tables empty, each named check present and
+validated with `end` and `wake_end` in the widened ones, both indexes, the three functions'
+volatility, the kinds with and without an inventor (list the empty ones for the owner), and
+unchanged row counts and newest ids of `things`, `kinds`, `kind_revisions`, `events`,
+`active_labels`, `wake_tries` and `thing_state_changes`. Take the required Production
+snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-20261106`, apply
+`npm run migrate:production:thing-endings` from a fresh clone of the reviewed head, and
+record the same checks before merging. Expect the brief `things` lock to need the path in
+"When a migration times out" on a busy table. Never chain the migration with the merge.
+Kinds invented between the Production run and the deploy are written by older code with no
+inventor, so once `/api/official` reports the merged commit, run the backfill statement once
+more in its own transaction (rerunning the migration does the same) and record how many
+kinds it filled and which stay empty.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with

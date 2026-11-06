@@ -323,6 +323,20 @@ export function registerReleaseOrderTests(): void {
     assert.match(deploymentRunbook, /label_endings_founder_only[\s\S]*Never chain the migration with the merge\./u)
   })
 
+  test('release preparation applies the thing endings migration to Preview and Production before the merge', () => {
+    assert.match(deploymentRunbook, /### Thing endings prerequisite/u)
+    const section = deploymentRunbook.slice(
+      deploymentRunbook.indexOf('### Thing endings prerequisite'),
+      deploymentRunbook.indexOf('### When a migration times out'),
+    )
+    assert.ok(section.length > 1_000, 'the thing endings section comes before the timeout runbook')
+    assert.match(section, /npm run migrate:preview:thing-endings/u)
+    assert.match(section, /npm run migrate:production:thing-endings/u)
+    assert.match(section, /PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-/u)
+    assert.match(section, /kinds_invented_by_fixed[\s\S]*Never chain the migration with the merge\./u)
+    assert.match(section, /Never chain the migration with the merge\.[\s\S]*run the backfill statement once\s+more/u)
+  })
+
   test('release preparation applies the waiting transfers migration to Preview and Production before the merge', () => {
     assert.match(deploymentRunbook, /### Waiting transfers prerequisite/u)
     assert.match(deploymentRunbook, /npm run migrate:preview:waiting-transfers/u)
