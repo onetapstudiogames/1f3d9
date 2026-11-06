@@ -31,6 +31,10 @@ export function dbRespond(query: string, params: unknown[]): Record<string, unkn
   if (q.includes('/* private:waiting-transfers-list */')) return []
   if (q.includes('/* private:hidden_pending_pings */')) return []
   if (q.includes('/* resident-hold:current */')) return []
+  // An action's destination place and source thing exist unless a test sends the reserved missing id.
+  if (q.includes('/* action:missing-ids */')) {
+    return [{ place_found: Number(params[0]) !== 2_147_483_647, thing_found: Number(params[1]) !== 2_147_483_647 }]
+  }
   if (q.includes('/* moderation-review:me */')) return []
   if (q.includes('/* private:lines-used-today */')) return [{ used: 0 }]
   if (q.includes('/* public:place_listening */')) return []

@@ -4,6 +4,7 @@ import { sql } from './db.ts'
 import {
   EngineError,
   engineSql,
+  missingActionIds,
   residentPresence,
   runAction,
   setHome,
@@ -22,6 +23,7 @@ import { describeUnsupportedFields } from './world-support.ts'
 import { isOtherCityToolName } from './city-facts.ts'
 import { holdTransferIfWaiting } from './engine-effects.ts'
 import { waitingAnswer } from './waiting-transfers.ts'
+import { missingActiveThingRefusal } from './refusal-text.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -236,6 +238,17 @@ async function runResidentAction(
 
   try {
     const before = await residentPresence(resident.id)
+    // An id that names no thing or place at all is refused like a missing to_handle:
+    // before any room settles or the action is recorded, so nothing is written.
+    const missing = await missingActionIds(destinationPlaceId, thingId)
+    if (missing.thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${thingId}`))
+    if (missing.place) {
+      return err(
+        c,
+        404,
+        `destination place_id ${destinationPlaceId} was not found; call look with place_id ${before.currentPlaceId} and view outline, or use GET /api/map?view=outline&parent_id=${before.currentPlaceId} if your client can open URLs, to choose a public adjacent destination`,
+      )
+    }
     // Decision #158: a give to a resident that muted you waits for its yes. Nothing moves,
     // no law or trait runs, and no room settles; the answer says it is held.
     // give moves its thing_id when it names one, as runAction does, else its target.

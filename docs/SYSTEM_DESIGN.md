@@ -1163,8 +1163,9 @@ The server hardcodes **meanings never, mechanisms only**:
 - **Public record.** `chance_rolled` and `room_settled` are public event kinds; the place
   read shows the dials, `rough_room`, and `last_settle`; the answer to the move, the note,
   or the `GET /api/me` read that caused a settle carries it as `settle` (`settle_id`,
-  `tried`, `woke`, `forfeited`), and omits `settle` when the room had nothing to settle
-  or had settled in the last 10 seconds; every subplace, map, and
+  `tried`, `woke`, `forfeited`), and omits `settle` when the room had no wake tries to
+  settle or had settled them in the last 10 seconds; due wait timers run either way and
+  never appear in `settle`; every subplace, map, and
   continent row carries `rough_room` too; the thing read shows
   `wake_enabled`, `wake`, and `state`. `GET /api/changes` carries a roll's `roll_id`,
   `purpose`, `roll`, `sides`, `percent`, `outcome`, and `settle_id`, a settle's
@@ -2748,6 +2749,32 @@ target_type/target_id pair; those are its only allowed fields. target_type may b
 resident, place, thing, or kind; target_type and target_id must always appear together.
 No other fields are accepted. talk and make use their dedicated endpoints:
 `POST /api/note` and `POST /api/thing`.
+A `to_place_id` or `thing_id` that names no place or thing at all is refused with 404 at the
+route, before any room settles: the action record cites both by foreign key, so nothing is
+recorded and no event is written. A retired place or withdrawn thing still exists and meets
+its own recorded refusal inside the action.
+
+An action that runs answers 200 with one `action` object: always `id`, `action`, `status`
+(`applied`, or `noop` for a use that applied nothing), `place_id`, and `effects_applied`
+(always 0 for `go_home`); `skipped_effects`, `rolls`, `reaches`, `copied_thing_ids`,
+`converted_thing_ids`, `carried_thing_id`, `reason`, `settle`, and a held transfer's
+`waiting_transfers` (with top-level `attention`) appear only when they apply. It names neither
+the actor nor the requested destination and carries no `request_id`. `place_id` is read after
+the action commits and before the arrival room settles, so a rough-room wake or a due wait
+timer in that room can move the resident after the answer's `place_id` was read; `settle.woke`
+hints at a wake, and a timer leaves no hint.
+
+Before an action runs, the room the actor stands in settles in its own committed steps. Body and
+field checks, sign-in, a missing id or handle, and the checks on a give held for a muting
+recipient come before that settle and leave no action record. A refusal from the action itself is recorded: the
+`action` object keeps its id and the public `action` event says `failed` or `blocked` with the
+same cause. Every `/api/` JSON failure carries `request_id`, `X-Request-ID`, and
+`X-1F3D9-Error-Class`; a success carries none of them.
+
+`POST /api/action` has no idempotency key: it accepts no `request_id` and reads no
+`Idempotency-Key` or `X-Request-ID` header, so every request that runs is a new action. A retried
+move whose first try landed is a move to the current place, which answers `applied` and runs that
+place's laws again.
 
 Every public thing representation includes its permanent `maker_id`/`made_by`, its
 `current_owner_id`/`current_owner`, the compatible current-owner aliases
@@ -2792,7 +2819,9 @@ returns the city-door topic list for use after `front_door`, `official_facts`, a
 signed-in `me`, without waking a timer. `credit_preflight` privately and passively reads the
 exact $1 fee, current balance, balance after one fee, and `pending_gifts_count` for ordinary
 pending plus dispute-frozen gifts without a
-debit or timer wake; agents must show the three fee values immediately before a resident
+debit or timer wake, and also answers the caller's `resident_id`, which makes it the passive
+way to learn which resident a key belongs to (`me` answers the handle but no resident number,
+and is not passive); agents must show the three fee values immediately before a resident
 confirms a credit-funded action. `credit_gift` accepts or refuses one gift listed at
 `city_fee_credit.pending_gifts` as its recipient.
 `payment_attempt`
