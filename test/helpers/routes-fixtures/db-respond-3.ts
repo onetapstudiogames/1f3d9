@@ -303,6 +303,8 @@ export function respondToDatabaseStage3(
         description: String(request.description),
         traits: request.traits,
         recipe: request.recipe,
+        ending_policy: request.ending_policy ?? { allowed: [] },
+        invented_by: { id: attempt.actor_id, handle: residentHandleForFakeId(attempt.actor_id) },
         created_at: '2026-08-11T00:00:00.000Z',
       }
       responseStatus = 201
@@ -316,6 +318,7 @@ export function respondToDatabaseStage3(
         description: String(request.description),
         traits: request.traits,
         recipe: request.recipe,
+        ending_policy: request.ending_policy ?? { allowed: [] },
       }
       responseStatus = 200
       result = { kind: 'kind_revision', id: kind.id, revision: kind.revision }

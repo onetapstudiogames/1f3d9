@@ -11,6 +11,9 @@ import {
   type CityCreditDatabase,
 } from '../../src/city-credit.ts'
 import { completeTreasuryPaymentOperation } from '../../src/payment-treasury-operations.ts'
+import { NETWORK, USDC } from '../../src/chain.ts'
+import { bindPaymentEvidence, canonicalPaymentRequest } from '../../src/payment-attempts.ts'
+import { TREASURY } from '../../src/pay.ts'
 
 const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
 const POSTGRES_DATABASE = 'payment_treasury_operations_integration'
@@ -535,6 +538,346 @@ test('shared treasury completion survives twelve immediate paid kind inventions 
       kind_count: 12,
       balance_units: '0',
     }])
+  } finally {
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
+// Things ending, T6: a kind fee carries ending_policy. The stored request is the only
+// source the completion reads, so every path that completes it must store the policy
+// the resident paid for, and a request stored before the change must keep completing.
+const ENDING_POLICY = Object.freeze({ allowed: ['uses', 'label_added'], labels: ['spent'], max_uses: 12 })
+
+async function storedKindFee(client: Pool, name: string): Promise<{
+  invented_by: number | null
+  revisions: number
+  ending_policy: unknown
+}> {
+  return (await client.query(`
+    SELECT kind.invented_by,
+      (SELECT count(*)::int FROM kind_revisions WHERE kind_id = kind.id) AS revisions,
+      revision.ending_policy
+    FROM kinds kind
+    JOIN kind_revisions revision
+      ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
+    WHERE kind.name = $1
+  `, [name])).rows[0]
+}
+
+async function seedOwnedKind(client: Pool, name: string, inventedBy: number | null): Promise<number> {
+  const id = Number((await client.query(
+    'INSERT INTO kinds (name, owner_id, invented_by) VALUES ($1, 2, $2) RETURNING id', [name, inventedBy],
+  )).rows[0].id)
+  await client.query(
+    `INSERT INTO kind_revisions (kind_id, revision, description) VALUES ($1, 1, 'seeded for a revision proof')`,
+    [id],
+  )
+  return id
+}
+
+test('kind fees store ending_policy on credit, legacy and invalid completions in real PostgreSQL', {
+  timeout: 180_000,
+}, async () => {
+  const postgres = await startPostgres()
+  try {
+    await resetFresh(postgres.client)
+    const db = database(postgres.client)
+    // Seven fees: a rejected stored request keeps its credit until the caller returns it.
+    await issueCredits(db, 7, 'treasury-ending-policy-credit')
+
+    // Credit invention with a policy: stored, answered, and the actor is the inventor.
+    const inventionRequest = {
+      name: 'treasury-ending-kind', description: 'A kind whose owners may end things.',
+      traits: [], recipe: [], ending_policy: ENDING_POLICY,
+    }
+    const invention = await beginCityCreditSpend(db, {
+      actorId: 2, operation: 'kind_invention', targetKey: `kind-invention:${inventionRequest.name}`,
+      request: inventionRequest, requestId: 'treasury-ending-invention-request',
+    })
+    if (invention.state !== 'ready') assert.fail('the invention spend did not acquire its lease')
+    const invented = await completeTreasuryPaymentOperation(db, {
+      attemptId: invention.attempt_id, leaseOwner: invention.lease_owner,
+    })
+    if (invented.state !== 'completed') assert.fail(`the invention did not complete: ${invented.state}`)
+    const inventedKind = invented.response.kind as Record<string, unknown>
+    assert.deepEqual(inventedKind.ending_policy, ENDING_POLICY)
+    assert.deepEqual(inventedKind.invented_by, { id: 2, handle: 'resident-two' })
+    assert.deepEqual(await storedKindFee(postgres.client, inventionRequest.name), {
+      invented_by: 2, revisions: 1, ending_policy: ENDING_POLICY,
+    })
+    await assert.rejects(
+      completeTreasuryPaymentOperation(db, { attemptId: invention.attempt_id, leaseOwner: invention.lease_owner }),
+      /no longer owns this attempt lease/u,
+      'a second completion writes nothing',
+    )
+    assert.equal((await storedKindFee(postgres.client, inventionRequest.name)).revisions, 1)
+
+    // Credit revision with a policy, on a kind the actor invented.
+    const revisedId = Number(inventedKind.id)
+    const revision = await beginCityCreditSpend(db, {
+      actorId: 2, operation: 'kind_revision', targetKey: `kind-revision:${revisedId}:2`,
+      assetType: 'kind', assetId: revisedId,
+      request: {
+        kind_id: revisedId, description: 'Owners may now end things only by uses.',
+        traits: [], recipe: [], ending_policy: { allowed: ['uses'] },
+      },
+      requestId: 'treasury-ending-revision-request',
+    })
+    if (revision.state !== 'ready') assert.fail('the revision spend did not acquire its lease')
+    const revised = await completeTreasuryPaymentOperation(db, {
+      attemptId: revision.attempt_id, leaseOwner: revision.lease_owner,
+    })
+    if (revised.state !== 'completed') assert.fail(`the revision did not complete: ${revised.state}`)
+    const revisedKind = revised.response.kind as Record<string, unknown>
+    assert.deepEqual(revisedKind.ending_policy, { allowed: ['uses'] })
+    assert.deepEqual(revisedKind.invented_by, { id: 2, handle: 'resident-two' })
+    assert.deepEqual(await storedKindFee(postgres.client, inventionRequest.name), {
+      invented_by: 2, revisions: 2, ending_policy: { allowed: ['uses'] },
+    })
+
+    // A request stored before C1 has no ending_policy and completes with the default.
+    const legacyId = await seedOwnedKind(postgres.client, 'treasury-legacy-revised-kind', null)
+    const legacy = [
+      ['kind_invention', 'kind-invention:treasury-legacy-kind', {
+        name: 'treasury-legacy-kind', description: 'Stored before endings.', traits: [], recipe: [],
+      }, undefined],
+      ['kind_revision', `kind-revision:${legacyId}:2`, {
+        kind_id: legacyId, description: 'Revised from a request stored before endings.', traits: [], recipe: [],
+      }, legacyId],
+    ] as const
+    for (const [operation, targetKey, request, assetId] of legacy) {
+      const spend = await beginCityCreditSpend(db, {
+        actorId: 2, operation, targetKey, request, requestId: `treasury-legacy-${operation}-request`,
+        ...(assetId === undefined ? {} : { assetType: 'kind' as const, assetId }),
+      })
+      if (spend.state !== 'ready') assert.fail(`the legacy ${operation} spend did not acquire its lease`)
+      const completed = await completeTreasuryPaymentOperation(db, {
+        attemptId: spend.attempt_id, leaseOwner: spend.lease_owner,
+      })
+      if (completed.state !== 'completed') assert.fail(`the legacy ${operation} did not complete`)
+      assert.deepEqual((completed.response.kind as Record<string, unknown>).ending_policy, { allowed: [] }, operation)
+    }
+    assert.deepEqual(await storedKindFee(postgres.client, 'treasury-legacy-kind'), {
+      invented_by: 2, revisions: 1, ending_policy: { allowed: [] },
+    })
+    assert.deepEqual(await storedKindFee(postgres.client, 'treasury-legacy-revised-kind'), {
+      invented_by: null, revisions: 2, ending_policy: { allowed: [] },
+    })
+
+    // A bad stored policy is a changed target, never a raise inside the completion.
+    const badId = await seedOwnedKind(postgres.client, 'treasury-bad-policy-kind', 2)
+    for (const [index, policy] of [{ allowed: ['forever'] }, null].entries()) {
+      const name = `treasury-bad-policy-new-kind-${index}`
+      const spend = await beginCityCreditSpend(db, {
+        actorId: 2, operation: 'kind_invention', targetKey: `kind-invention:${name}`,
+        request: { name, description: `bad policy ${index}`, traits: [], recipe: [], ending_policy: policy },
+        requestId: `treasury-bad-policy-invention-${index}`,
+      })
+      if (spend.state !== 'ready') assert.fail(`the bad invention spend ${index} did not acquire its lease`)
+      const rejected = await completeTreasuryPaymentOperation(db, {
+        attemptId: spend.attempt_id, leaseOwner: spend.lease_owner,
+      })
+      assert.equal(rejected.state, 'target_changed', `invention ${JSON.stringify(policy)}`)
+      assert.equal((await postgres.client.query('SELECT count(*)::int AS n FROM kinds WHERE name = $1', [name])).rows[0].n, 0)
+    }
+    const badRevision = await beginCityCreditSpend(db, {
+      actorId: 2, operation: 'kind_revision', targetKey: `kind-revision:${badId}:2`,
+      assetType: 'kind', assetId: badId,
+      request: { kind_id: badId, description: 'bad policy', traits: [], recipe: [], ending_policy: { allowed: ['uses'], max_uses: 0 } },
+      requestId: 'treasury-bad-policy-revision',
+    })
+    if (badRevision.state !== 'ready') assert.fail('the bad revision spend did not acquire its lease')
+    const rejectedRevision = await completeTreasuryPaymentOperation(db, {
+      attemptId: badRevision.attempt_id, leaseOwner: badRevision.lease_owner,
+    })
+    assert.equal(rejectedRevision.state, 'target_changed')
+    assert.equal((await storedKindFee(postgres.client, 'treasury-bad-policy-kind')).revisions, 1)
+  } finally {
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
+test('a kind fee whose first completion failed mid-way is completed by recovery with its ending_policy', {
+  timeout: 180_000,
+}, async () => {
+  const postgres = await startPostgres()
+  try {
+    await resetFresh(postgres.client)
+    const db = database(postgres.client)
+    await issueCredits(db, 1, 'treasury-recovered-policy-credit')
+    const request = {
+      name: 'treasury-recovered-kind', description: 'Completed by recovery.',
+      traits: [], recipe: [], ending_policy: ENDING_POLICY,
+    }
+    const spend = await beginCityCreditSpend(db, {
+      actorId: 2, operation: 'kind_invention', targetKey: `kind-invention:${request.name}`,
+      request, requestId: 'treasury-recovered-policy-request',
+    })
+    if (spend.state !== 'ready') assert.fail('the spend did not acquire its lease')
+
+    // The first completion fails inside its one statement, so nothing of it stays.
+    await postgres.client.query(`
+      CREATE FUNCTION suite_fail_revision() RETURNS trigger LANGUAGE plpgsql AS
+        $fail$ BEGIN RAISE EXCEPTION 'suite: the first completion fails mid-way'; END $fail$;
+      CREATE TRIGGER suite_fail_revision BEFORE INSERT ON kind_revisions
+        FOR EACH ROW EXECUTE FUNCTION suite_fail_revision();
+    `)
+    await assert.rejects(
+      completeTreasuryPaymentOperation(db, { attemptId: spend.attempt_id, leaseOwner: spend.lease_owner }),
+      /fails mid-way/u,
+    )
+    await postgres.client.query('DROP TRIGGER suite_fail_revision ON kind_revisions; DROP FUNCTION suite_fail_revision()')
+    assert.equal((await postgres.client.query('SELECT count(*)::int AS n FROM kinds WHERE name = $1', [request.name])).rows[0].n, 0)
+
+    // The request's process died: its lease runs out, and recovery completes it.
+    await postgres.client.query(`
+      UPDATE payment_attempts SET lease_expires_at = clock_timestamp() - interval '1 second'
+      WHERE public_id = $1
+    `, [spend.attempt_id])
+    const { createPaymentRecoveryRuntime } = await import('../../src/payment-recovery-runtime.ts')
+    const runtime = createPaymentRecoveryRuntime(db as Parameters<typeof createPaymentRecoveryRuntime>[0])
+    const batch = await runtime.runBatch(10)
+    assert.equal(batch.completed, 1, JSON.stringify(batch))
+    assert.deepEqual(await storedKindFee(postgres.client, request.name), {
+      invented_by: 2, revisions: 1, ending_policy: ENDING_POLICY,
+    })
+    const again = await runtime.runBatch(10)
+    assert.equal(again.completed, 0, 'a second recovery writes nothing')
+    assert.equal((await storedKindFee(postgres.client, request.name)).revisions, 1)
+  } finally {
+    await postgres.client.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
+test('x402 kind fees with ending_policy complete when chain finality is later than the operation window', {
+  timeout: 180_000,
+}, async () => {
+  const postgres = await startPostgres()
+  try {
+    await resetFresh(postgres.client)
+    const db = database(postgres.client)
+    const revisedId = await seedOwnedKind(postgres.client, 'late-ending-revised-kind', 2)
+    const boundary = (await postgres.client.query<{
+      start_time: Date
+      end_time: Date
+      block_time: Date
+      valid_after: string
+      valid_before: string
+    }>(`
+      WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at)
+      SELECT at AS start_time,
+        at + interval '2 seconds' AS end_time,
+        at + interval '1 second' AS block_time,
+        extract(epoch FROM date_trunc('second', at))::bigint - 1 AS valid_after,
+        extract(epoch FROM date_trunc('second', at))::bigint + 2 AS valid_before
+      FROM observed
+    `)).rows[0]!
+    const fees = [
+      {
+        attemptId: 'ending-late-finality-invention-0001',
+        leaseOwner: 'ending-late-finality-lease-0001',
+        operation: 'kind_invention',
+        targetKey: 'kind-invention:late-ending-kind',
+        assetId: null,
+        request: { name: 'late-ending-kind', description: 'Finalized late.', traits: [], recipe: [], ending_policy: ENDING_POLICY },
+        txHash: `0x${'a'.repeat(64)}`,
+        nonce: `0x${'b'.repeat(64)}`,
+        kindName: 'late-ending-kind',
+      },
+      {
+        attemptId: 'ending-late-finality-revision-0001',
+        leaseOwner: 'ending-late-finality-lease-0002',
+        operation: 'kind_revision',
+        targetKey: `kind-revision:${revisedId}:2`,
+        assetId: revisedId,
+        request: { kind_id: revisedId, description: 'Revised late.', traits: [], recipe: [], ending_policy: { allowed: ['at'] } },
+        txHash: `0x${'c'.repeat(64)}`,
+        nonce: `0x${'d'.repeat(64)}`,
+        kindName: 'late-ending-revised-kind',
+      },
+    ] as const
+    const header = (txHash: string) => Buffer.from(JSON.stringify({
+      success: true, transaction: txHash, payer: `0x${'5'.repeat(40)}`, network: NETWORK,
+    })).toString('base64')
+    for (const fee of fees) {
+      const canonical = canonicalPaymentRequest(fee.request)
+      await postgres.client.query(`
+        INSERT INTO payment_attempts (
+          public_id, actor_id, operation, target_key, asset_type, asset_id, request_hash, request_json,
+          method, network, token, payer_wallet, payee_wallet, amount_units,
+          x402_nonce, x402_payload_digest, x402_valid_after, x402_valid_before,
+          start_block, start_time, end_time, status, lease_owner, lease_expires_at
+        ) VALUES (
+          $1, 2, $2, $3, $4, $5, $6, $7::jsonb,
+          'x402', $8, $9, $10, $11, 1000000,
+          $12, repeat('a', 64), $13::bigint, $14::bigint,
+          50000000, $15::timestamptz, $16::timestamptz,
+          'settling', $17, clock_timestamp() + interval '30 seconds'
+        )
+      `, [
+        fee.attemptId, fee.operation, fee.targetKey, fee.assetId === null ? null : 'kind', fee.assetId,
+        canonical.hash, canonical.json, NETWORK, USDC.toLowerCase(), `0x${'5'.repeat(40)}`, TREASURY,
+        fee.nonce, boundary.valid_after, boundary.valid_before,
+        boundary.start_time.toISOString(), boundary.end_time.toISOString(), fee.leaseOwner,
+      ])
+      const pending = await bindPaymentEvidence(db, {
+        publicId: fee.attemptId, leaseOwner: fee.leaseOwner, txHash: fee.txHash,
+        finality: null, paymentResponseHeader: header(fee.txHash),
+      })
+      assert.equal(pending.status, 'payment_pending')
+    }
+
+    const startedAt = Date.now()
+    let finalizedAt = ''
+    for (;;) {
+      const observed = (await postgres.client.query<{ observed_at: Date; passed: boolean }>(`
+        SELECT clock_timestamp() AS observed_at,
+          clock_timestamp() > $1::timestamptz + interval '1 millisecond'
+            AND clock_timestamp() > to_timestamp($2::bigint) + interval '1 millisecond' AS passed
+      `, [boundary.end_time.toISOString(), boundary.valid_before])).rows[0]!
+      if (observed.passed) {
+        finalizedAt = observed.observed_at.toISOString()
+        break
+      }
+      await delay(25)
+    }
+    assert.ok(Date.now() - startedAt >= 1_500, 'the proof must cross a real PostgreSQL operation window')
+
+    for (const [index, fee] of fees.entries()) {
+      const finalized = await bindPaymentEvidence(db, {
+        publicId: fee.attemptId, leaseOwner: fee.leaseOwner, txHash: fee.txHash,
+        finality: {
+          blockNumber: 50_000_001n + BigInt(index),
+          blockHash: `0x${String(8 - index).repeat(64)}`,
+          blockTime: boundary.block_time.toISOString(),
+          finalizedAt,
+        },
+        paymentResponseHeader: header(fee.txHash),
+      })
+      assert.equal(finalized.status, 'payment_pending')
+      const completed = await completeTreasuryPaymentOperation(db, {
+        attemptId: fee.attemptId, leaseOwner: fee.leaseOwner,
+      })
+      if (completed.state !== 'completed') assert.fail(`${fee.operation} did not complete: ${completed.state}`)
+      assert.equal(completed.method, 'x402')
+      assert.deepEqual((completed.response.kind as Record<string, unknown>).ending_policy, fee.request.ending_policy)
+      assert.deepEqual(await storedKindFee(postgres.client, fee.kindName), {
+        invented_by: 2,
+        revisions: fee.operation === 'kind_invention' ? 1 : 2,
+        ending_policy: fee.request.ending_policy,
+      })
+      const uses = (await postgres.client.query(
+        'SELECT count(*)::int AS n FROM payment_uses WHERE payment_attempt_id = $1', [fee.attemptId],
+      )).rows[0].n
+      assert.equal(uses, 1)
+      await assert.rejects(
+        completeTreasuryPaymentOperation(db, { attemptId: fee.attemptId, leaseOwner: fee.leaseOwner }),
+        /no longer owns this attempt lease/u,
+      )
+    }
   } finally {
     await postgres.client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })

@@ -82,7 +82,7 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
         assert.equal(refused.status, 409, JSON.stringify(refused.json))
         assert.equal(
           refused.json.error,
-          `this revision is identical to the current revision 1 of kind ${lichen}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, or drawing_variants before revising`,
+          `this revision is identical to the current revision 1 of kind ${lichen}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, drawing_variants, or ending_policy before revising`,
         )
       }
       const db = connectedDatabase()

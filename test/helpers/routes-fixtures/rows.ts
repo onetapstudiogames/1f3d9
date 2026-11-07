@@ -70,6 +70,9 @@ const kindRow = () => ({
   drawing_state: fixtureState.current.kindDrawingState,
   drawing_description: fixtureState.current.kindDrawingDescription,
   drawing_variants: fixtureState.current.kindDrawingVariants,
+  // Things ending (T6): every kind revision has a policy; the fixture kind has no proven inventor.
+  ending_policy: { allowed: [] },
+  invented_by: null,
   created_at: '2026-08-11T00:00:00.000Z',
 })
 

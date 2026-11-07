@@ -22,7 +22,20 @@ import {
 } from './physics.ts'
 import { recipeRefusalWords } from './recipe-refusal.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
-import { END_KEY_REFUSAL, endTraitConflictRefusal } from './thing-ending-refusals.ts'
+import {
+  END_KEY_REFUSAL,
+  ENDING_POLICY_REFUSAL,
+  ENDING_POLICY_WIDEN_REFUSAL,
+  endTraitConflictRefusal,
+} from './thing-ending-refusals.ts'
+import {
+  DEFAULT_ENDING_POLICY,
+  isDefaultEndingPolicy,
+  parseEndingPolicy,
+  policyWidens,
+  storedEndingPolicy,
+  type EndingPolicy,
+} from './thing-endings.ts'
 import { clearStateBox } from './engine-state.ts'
 import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
@@ -47,6 +60,7 @@ import {
 } from './moderation-store.ts'
 import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 import {
+  EngineError,
   effectiveLaws,
   engineSql,
   residentPresence,
@@ -251,13 +265,17 @@ function variantRequestRows(
   })))
 }
 
-/** Everything a kind revision stores, in one comparable shape. */
+/**
+ * Everything a kind revision stores, in one comparable shape. Both policies must be
+ * canonical (parseEndingPolicy or storedEndingPolicy), so jsonb key order never matters.
+ */
 function kindRevisionContent(
   description: string,
   traits: readonly string[],
   recipe: unknown,
   drawing: DrawingValue,
   variants: readonly DrawingVariant[],
+  endingPolicy: EndingPolicy,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
     description,
@@ -265,7 +283,34 @@ function kindRevisionContent(
     recipe,
     ...drawingRequestFields(drawing),
     drawing_variants: variantRequestRows(variants),
+    ending_policy: endingPolicy,
   })
+}
+
+type EndingPolicyField =
+  | Readonly<{ ok: true; supplied: boolean; policy: EndingPolicy }>
+  | Readonly<{ ok: false }>
+
+/**
+ * The ending_policy a kind body sent: not supplied (the caller keeps or defaults it), a
+ * canonical policy, or not ok, which the route answers with E1. null is refused, never a clear.
+ */
+function endingPolicyField(body: Readonly<Record<string, unknown>>): EndingPolicyField {
+  if (!Object.hasOwn(body, 'ending_policy')) return { ok: true, supplied: false, policy: DEFAULT_ENDING_POLICY }
+  try {
+    return { ok: true, supplied: true, policy: parseEndingPolicy(body.ending_policy) }
+  } catch (error) {
+    if (error instanceof EngineError) return { ok: false }
+    throw error
+  }
+}
+
+/**
+ * A kind fee request carries ending_policy only when it is not the default, so a stored
+ * request from before endings and a new one with the default hash the same way.
+ */
+function endingPolicyRequestFields(policy: EndingPolicy): Readonly<{ ending_policy?: EndingPolicy }> {
+  return isDefaultEndingPolicy(policy) ? {} : { ending_policy: policy }
 }
 
 function storedDrawingValue(row: Readonly<{
@@ -351,6 +396,14 @@ async function traitRecipes(names: readonly string[]): Promise<ReadonlyMap<strin
     SELECT name, recipe FROM traits WHERE name = ANY(${[...names]}::text[])
   ` as Array<{ name: string; recipe: unknown }>
   return new Map(rows.map(row => [row.name, row.recipe]))
+}
+
+/**
+ * The trait in a list that carries an end key, or null. It uses the same test as
+ * kindTraitRefusal, so a malformed stored end key still counts as the end trait.
+ */
+export function endTraitName(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
+  return names.find(name => loadTraitRecipe(recipes.get(name)).end !== undefined) ?? null
 }
 
 /**
@@ -1832,15 +1885,20 @@ export function mountWorldRoutes(app: Hono): void {
           ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
       )
       SELECT page.id, page.name, page.owner_id, page.owner,
-        page.revision, page.description, page.traits, page.recipe, page.created_at,
+        page.revision, page.description, page.traits, page.recipe,
+        page.ending_policy, page.invented_by, page.created_at,
         totals.total_items, totals.total_text_bytes
       FROM totals
       LEFT JOIN LATERAL (
         SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
           revision.revision, revision.description, revision.traits, revision.recipe,
+          revision.ending_policy,
+          CASE WHEN inventor.id IS NULL THEN NULL
+            ELSE jsonb_build_object('id', inventor.id, 'handle', inventor.handle) END AS invented_by,
           k.created_at
         FROM kinds k
         JOIN residents owner ON owner.id = k.owner_id
+        LEFT JOIN residents inventor ON inventor.id = k.invented_by
         JOIN kind_revisions revision
           ON revision.kind_id = k.id AND revision.revision = k.current_revision
         WHERE ($1::integer IS NULL OR k.id < $1::integer)
@@ -1905,13 +1963,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'name', 'description', 'traits', 'recipe',
-        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, drawing_variants, and ending_policy`)
       }
     }
+    const requestedPolicy = endingPolicyField(body)
+    if (!requestedPolicy.ok) return err(c, 400, ENDING_POLICY_REFUSAL)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariants = drawingVariantsField(body)
@@ -1952,6 +2012,7 @@ export function mountWorldRoutes(app: Hono): void {
           ...(requestedVariants.supplied
             ? { drawing_variants: variantRequestRows(requestedVariants.variants) }
             : {}),
+          ...endingPolicyRequestFields(requestedPolicy.policy),
         },
       },
     )
@@ -2038,13 +2099,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'description', 'traits', 'recipe',
-        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, drawing_variants, and ending_policy`)
       }
     }
+    const requestedPolicy = endingPolicyField(body)
+    if (!requestedPolicy.ok) return err(c, 400, ENDING_POLICY_REFUSAL)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariants = drawingVariantsField(body)
@@ -2061,6 +2124,7 @@ export function mountWorldRoutes(app: Hono): void {
       SELECT k.id, k.name, k.owner_id, k.current_revision AS revision,
         revision.description, revision.traits, revision.recipe, revision.drawing,
         revision.drawing_state, revision.drawing_description, revision.drawing_variants,
+        revision.ending_policy, k.invented_by,
         k.active_offer_id, (offer.id IS NOT NULL) AS has_open_offer
       FROM kinds k
       JOIN kind_revisions revision
@@ -2068,7 +2132,11 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'kind'
         AND offer.asset_id = k.id AND offer.status = 'open'
       WHERE k.id = ${id}
-    `) as Array<KindRow & { active_offer_id: number | null; has_open_offer?: boolean }>
+    `) as Array<Omit<KindRow, 'invented_by'> & {
+      invented_by: number | null
+      active_offer_id: number | null
+      has_open_offer?: boolean
+    }>
     const current = currentRows[0]
     if (!current) return err(c, 404, `kind_id ${id} was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and send a current kind_id`)
     if (current.owner_id !== resident.id) return err(c, 403, 'only the kind owner may revise it')
@@ -2096,8 +2164,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const traitConflict = kindTraitRefusal(traits, await traitRecipes(traits))
+    const recipes = await traitRecipes(traits)
+    const traitConflict = kindTraitRefusal(traits, recipes)
     if (traitConflict) return err(c, 400, traitConflict)
+    // An omitted ending_policy keeps the current one, as an omitted drawing does.
+    const currentPolicy = storedEndingPolicy(current.ending_policy)
+    const revisionPolicy = requestedPolicy.supplied ? requestedPolicy.policy : currentPolicy
+    // Only the kind's inventor, while owning it, may allow more endings or add, replace or
+    // drop its end trait (E19). invented_by never changes once set, and the completion still
+    // requires this owner at the next revision number, so this check cannot go stale.
+    const changesEndings = policyWidens(currentPolicy, revisionPolicy)
+      || endTraitName(current.traits, await traitRecipes(current.traits)) !== endTraitName(traits, recipes)
+    if (changesEndings && (current.invented_by == null || Number(current.invented_by) !== resident.id)) {
+      return err(c, 403, ENDING_POLICY_WIDEN_REFUSAL)
+    }
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing
@@ -2107,13 +2187,13 @@ export function mountWorldRoutes(app: Hono): void {
     // A revision must change something the revision stores; an identical one would
     // charge the fee for nothing, so it is refused before any payment or credit.
     if (isDeepStrictEqual(
-      kindRevisionContent(description, traits, recipe, revisionDrawing, revisionVariants),
+      kindRevisionContent(description, traits, recipe, revisionDrawing, revisionVariants, revisionPolicy),
       kindRevisionContent(
         current.description, current.traits, parseKindRecipe(current.recipe),
-        currentDrawing, currentVariants,
+        currentDrawing, currentVariants, currentPolicy,
       ),
     )) {
-      return err(c, 409, `this revision is identical to the current revision ${current.revision} of kind ${id}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, or drawing_variants before revising`)
+      return err(c, 409, `this revision is identical to the current revision ${current.revision} of kind ${id}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, drawing_variants, or ending_policy before revising`)
     }
 
     const fee = await treasuryFee(
@@ -2134,6 +2214,7 @@ export function mountWorldRoutes(app: Hono): void {
           ...(requestedVariants.supplied || revisionVariants.length > 0
             ? { drawing_variants: variantRequestRows(revisionVariants) }
             : {}),
+          ...endingPolicyRequestFields(revisionPolicy),
         },
       },
     )

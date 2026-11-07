@@ -198,6 +198,21 @@ jobs:
             )
           ' >/dev/null || { echo "kind drawing projection wrong: $DRAWING"; exit 1; }
 
+      - name: paid kinds carry their ending policy and inventor
+        run: |
+          # Kind invention and revision store ending_policy and invented_by through the paid
+          # completion (things ending). Read-only: one public kind page, nothing spent.
+          KINDS=$(curl -sf --max-time 20 "https://1f3d9.com/api/kinds?limit=1")
+          echo "$KINDS" | jq -e '
+            .kinds | type == "array" and all(.[];
+              (.ending_policy | type == "object" and (.allowed | type == "array"))
+              and has("invented_by")
+              and (.invented_by == null
+                or (.invented_by | type == "object"
+                  and (.id | type == "number")
+                  and (.handle | type == "string"))))
+          ' >/dev/null || { echo "kind ending policy or inventor shape wrong: $KINDS"; exit 1; }
+
       - name: the edge-stripped body class stays fixed (webhook canary)
         run: |
           # An unverifiable-but-well-formed webhook body must be refused for
