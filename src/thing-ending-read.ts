@@ -4,13 +4,13 @@ import {
   endingReached,
   endingStatus,
   endTryGates,
-  THING_FIRST_LABEL_AT_SQL,
   type EndingObject,
   type EndingTime,
   type EndProgramState,
   type ResidentRef,
   type ThingEndingRow,
 } from './thing-endings.ts'
+import { THING_FIRST_LABEL_AT_SQL } from './thing-ending-sql.ts'
 import { endProgramStatement } from './use-labels.ts'
 
 // The live read of a thing's end, for every read that carries the full ending object:

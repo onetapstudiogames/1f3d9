@@ -6,7 +6,6 @@
 // Each step reads due from the database, so a thing a label made due earlier in the same
 // run is skipped by the next step, and the run finishes.
 import assert from 'node:assert/strict'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import {
   call,
@@ -19,6 +18,7 @@ import {
   type CityApp,
   type Json,
 } from '../helpers/abilities-fixtures.ts'
+import { waitPastPendingEffects } from '../helpers/database-clock.ts'
 import {
   connectedDatabase,
   resetCity,
@@ -133,6 +133,12 @@ test('thing endings inside programs, against PostgreSQL', { timeout: 600_000 }, 
           { effect: 'move', target: 'target', to: 'home' },
         ] }],
       })
+      const givers = await kindWith('givers', 'mark-and-give', {
+        use: [{ effect: 'reach', max: 16, then: [
+          { effect: 'label', target: 'target', label: 'spent', permanent: true },
+          { effect: 'transfer', target: 'target', to: 'recipient' },
+        ] }],
+      })
       const plain = await seedThing(KEEPER.id, shed, null, 'a plain pot')
       const due = await seedThing(KEEPER.id, shed, null, 'a due pot')
       const remnant = await seedThing(KEEPER.id, shed, null, 'a spent pot')
@@ -150,17 +156,22 @@ test('thing endings inside programs, against PostgreSQL', { timeout: 600_000 }, 
       assert.notEqual((await row(due)).ended_at, null, 'the room settle records it, never the step')
 
       // Fresh members with a label end: the label step makes each one due, so the next step skips it.
-      for (const [kind, name, effect] of [[burners, 'a burner', 'destroy'], [senders, 'a sender', 'move']] as const) {
+      for (const [kind, name, effect] of [
+        [burners, 'a burner', 'destroy'], [senders, 'a sender', 'move'], [givers, 'a giver', 'transfer'],
+      ] as const) {
         await db.query(`UPDATE things SET withdrawn_at = now() WHERE place_id = $1 AND withdrawn_at IS NULL AND ended_at IS NULL AND ending_rule IS NULL`, [shed])
         const member = await seedThing(KEEPER.id, shed, null, `a pot for the ${effect}`)
         await setEnd(member, { label: 'spent' })
         const runner = await seedThing(KEEPER.id, shed, kind, name)
-        const used = await act({ action: 'use', thing_id: runner })
+        const used = await act({
+          action: 'use', thing_id: runner, ...(effect === 'transfer' ? { to_handle: NEIGHBOUR.handle } : {}),
+        })
         assert.equal(used.status, 200, JSON.stringify(used.json))
         assert.deepEqual(skips(used.json), [[effect, THING_ENDED_SKIP_REASON, member]], `the ${effect} step skips the member`)
         assert.equal((used.json.action as Json).effects_applied, 1, 'the label landed and the run finished')
         const after = await row(member)
-        assert.deepEqual([after.withdrawn_at, after.place_id, after.due, after.ended_at], [null, shed, true, null])
+        assert.deepEqual([after.withdrawn_at, after.place_id, after.owner_id, after.due, after.ended_at],
+          [null, shed, KEEPER.id, true, null], `${effect}: the member stays with its owner, due and unrecorded`)
       }
     })
 
@@ -250,7 +261,7 @@ test('thing endings inside programs, against PostgreSQL', { timeout: 600_000 }, 
       }
       await setEnd(target, { at: '-1 second' })
       await setEnd(fading, { at: '-1 second' })
-      await delay(3_300)
+      await waitPastPendingEffects(db)
       assert.deepEqual(await resolveDueEffects(home), { resolved: 4, failed: 0, capped: false })
       const resolutions = (await db.query<{ source_thing_id: number; status: string; detail: Json }>(`
         SELECT pending.source_thing_id, resolution.status, resolution.detail

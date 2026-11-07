@@ -510,6 +510,44 @@ test('thing endings in the room settle, against PostgreSQL', { timeout: 900_000 
       assert.equal((await one<Json>('SELECT copies_made FROM things WHERE id = $1', [seed])).copies_made, 1)
     })
 
+    await t.test('end tries run outside the random cap and before pinned wake tries', async () => {
+      await reset()
+      const lanterns = await endKind('lanterns', 'last-light', [{ effect: 'write', key: 'ended', op: 'add' }])
+      const glows = await coin(app, KEEPER.secret, 'glow', { wake: { then: [{ effect: 'write', key: 'woke', op: 'add' }] } })
+      assert.equal(glows.status, 201, JSON.stringify(glows.json))
+      const glowKind = await seedKind(KEEPER.id, 'glows', [await traitId('glow')])
+      const cap = 2
+      const ending = [] as number[]
+      for (let index = 0; index < cap + 2; index += 1) ending.push(await waking(KEEPER.id, home, lanterns, `an ending lantern ${index}`))
+      await setEnd(ending, { at: '-1 minute' })
+      const pinnedLamp = await waking(KEEPER.id, home, glowKind, 'a pinned lamp')
+      const lamps = [] as number[]
+      for (let index = 0; index < cap + 1; index += 1) lamps.push(await waking(KEEPER.id, home, glowKind, `a lamp ${index}`))
+      await db.query('UPDATE places SET wake_random_cap = $2, wake_pins = $3::int[] WHERE id = $1', [home, cap, [pinnedLamp]])
+
+      const settle = await settleRoom(home, 'arrive', KEEPER.id)
+      assert.deepEqual({ ...settle, settle_id: undefined }, {
+        settle_id: undefined, tried: ending.length + 1 + cap, woke: ending.length + 1 + cap, forfeited: 0,
+        ended: ending.length, end_tries: ending.length, more_due: false,
+      }, 'every end try runs, beside the pinned try and the capped pick')
+      for (const id of ending) assert.equal((await row(id)).end_program_state, 'ran')
+      const picked = (await one<{ picked: Json[] }>('SELECT picked FROM wake_settles WHERE id = $1', [settle!.settle_id])).picked
+      assert.deepEqual(picked.slice(0, ending.length + 1).map(unit => [unit.thing_id, unit.reason, unit.pinned]), [
+        ...ending.map(id => [id, 'end', false]), [pinnedLamp, 'arrive', true],
+      ], 'end units come first, then the pinned wake unit')
+      assert.equal(picked.length, ending.length + 1 + cap)
+      const tries = (await db.query<{ thing_id: number; reason: string }>(`
+        SELECT thing_id, reason FROM wake_tries WHERE settle_id = $1 ORDER BY id
+      `, [settle!.settle_id])).rows
+      assert.deepEqual(tries.slice(0, ending.length + 1).map(attempt => [attempt.thing_id, attempt.reason]), [
+        ...ending.map(id => [id, 'end']), [pinnedLamp, 'arrive'],
+      ], 'the end tries ran before the pinned wake try')
+      const roll = await one<{ sides: number }>(`
+        SELECT sides FROM chance_rolls WHERE purpose = 'wake_pick' AND settle_id = $1
+      `, [settle!.settle_id])
+      assert.equal(roll.sides, lamps.length, 'the random pick counts the unpinned wake units only')
+    })
+
     await t.test('a recorder failure inside the settle fails nothing, and the wake part still runs', async () => {
       await reset()
       const glows = await coin(app, KEEPER.secret, 'glow', { wake: { then: [{ effect: 'write', key: 'woke', op: 'add' }] } })

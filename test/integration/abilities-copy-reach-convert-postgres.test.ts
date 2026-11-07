@@ -5,7 +5,6 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
 import {
   FOUNDER, GROWER, NEIGHBOUR, addRevision, call, coin, seedKind, seedThing, traitId, use,
   type CityApp, type Json,
@@ -17,6 +16,7 @@ import {
   standIn,
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
+import { waitPastPendingEffects } from '../helpers/database-clock.ts'
 import { issueCredit } from '../helpers/city-credit-postgres-fixtures/ledger.ts'
 // Loaded only after the fixture points src/db.ts at the test container.
 const { rollValue } = await import('../../src/engine-chance.ts')
@@ -678,7 +678,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       const seedId = await seedThing(GROWER.id, rooms.eastRoomId, seed, 'a slow seed')
       const planted = await use(app, GROWER.secret, seedId)
       assert.equal(planted.status, 200, JSON.stringify(planted.json))
-      await delay(1_200)
+      await waitPastPendingEffects(db, [seedId])
       await call(app, GROWER.secret, 'GET', '/api/me')
       const resolution = (await db.query(`
         SELECT resolution.status, resolution.detail FROM effect_resolutions resolution
@@ -730,7 +730,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       // Consent is read again when the delayed step fires.
       await db.query('UPDATE things SET open_to_reach = FALSE WHERE id = $1', [theirsOpen])
       await db.query('UPDATE things SET owner_id = $2 WHERE id = $1', [mineClosed, FOUNDER.id])
-      await delay(1_200)
+      await waitPastPendingEffects(db, [sourceId])
       assert.equal((await call(app, GROWER.secret, 'GET', '/api/me')).status, 200)
       const scorched = (await db.query(`
         SELECT target_id FROM active_labels WHERE label = 'scorched' ORDER BY target_id

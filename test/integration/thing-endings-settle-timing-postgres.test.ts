@@ -37,7 +37,24 @@ interface Captured {
   readonly values: readonly unknown[]
 }
 
-type PlanNode = Readonly<{ 'Node Type'?: string; 'Relation Name'?: string; 'Index Name'?: string; Plans?: PlanNode[] }>
+type PlanNode = Readonly<{
+  'Node Type'?: string
+  'Relation Name'?: string
+  'Index Name'?: string
+  'Subplan Name'?: string
+  'Actual Rows'?: number
+  Plans?: PlanNode[]
+}>
+
+/** The first plan node with this subplan name, depth first. */
+function subplan(node: PlanNode, name: string): PlanNode | null {
+  if (node['Subplan Name'] === name) return node
+  for (const child of node.Plans ?? []) {
+    const found = subplan(child, name)
+    if (found) return found
+  }
+  return null
+}
 
 /** Every scan in a plan, as node type and relation or index. */
 function scans(node: PlanNode): string[] {
@@ -50,7 +67,7 @@ function median(values: readonly number[]): number {
   return sorted[Math.floor(sorted.length / 2)]!
 }
 
-test('the settle step reads stay fast on a city-sized fixture', { timeout: 600_000 }, async () => {
+test('the settle step reads stay fast on a city-sized fixture', { timeout: 600_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('thing-endings-settle-timing')
   try {
     const { default: app } = await import('../../src/index.ts') as { default: CityApp }
@@ -102,13 +119,16 @@ test('the settle step reads stay fast on a city-sized fixture', { timeout: 600_0
     `, [busy, KEEPER.id, wakeKind])
 
     // Earlier settles of the busy room, the most recent ones naming end units still open.
+    // Ids and times rise together, as in a real room: the newest settle is 20 seconds old
+    // (outside the 10-second quiet), so the claim marker's recent set holds the latest ones.
     await db.query(`
       INSERT INTO wake_settles (place_id, trigger, resident_id, budget, units, picked, created_at)
       SELECT $1, 'arrive', $2, 8,
         jsonb_build_array(jsonb_build_object('thing_id', ($3::int[])[1 + (g % $4::int)], 'unit_index', 0,
           'reason', 'end', 'pinned', false)),
-        '[]'::jsonb, now() - make_interval(secs => g * 20)
+        '[]'::jsonb, now() - make_interval(secs => ($5::int - g + 1) * 20)
       FROM generate_series(1, $5::int) g
+      ORDER BY g
     `, [busy, KEEPER.id, pending, PENDING_IN_BUSY_ROOM, SETTLES_IN_BUSY_ROOM])
     // Settles and their tries in the other rooms, so no read of the busy room's settles or of
     // its things' tries can lean on the busy room being the only one.
@@ -156,13 +176,21 @@ test('the settle step reads stay fast on a city-sized fixture', { timeout: 600_0
     for (const statement of captured) {
       const times: number[] = []
       let plan = ''
+      let recentRows: number | null = null
       for (let run = 0; run < RUNS; run += 1) {
         const explained = (await db.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${statement.text}`, [...statement.values]))
           .rows[0]!['QUERY PLAN'] as Array<{ 'Execution Time': number; 'Planning Time': number; Plan: PlanNode }>
         times.push(explained[0]!['Execution Time'] + explained[0]!['Planning Time'])
         plan = scans(explained[0]!.Plan).join(', ')
+        recentRows = subplan(explained[0]!.Plan, 'CTE recent')?.['Actual Rows'] ?? null
       }
       const took = median(times)
+      // The marker must be measured doing its work: the busy room's latest settles are recent.
+      if (statement.name === 'end-try claim') {
+        assert.ok(recentRows !== null && recentRows > 0, `end-try claim: the marker's recent set is empty (${recentRows})`)
+      }
+      t.diagnostic(`${statement.name}: median ${took.toFixed(2)} ms over ${RUNS} runs${
+        statement.name === 'end-try claim' ? `, recent settles ${recentRows}` : ''}, plan ${plan}`)
       assert.ok(took < BUDGET_MS, `${statement.name}: median ${took.toFixed(1)} ms over ${RUNS} runs, plan ${plan}`)
       assert.doesNotMatch(plan, /Seq Scan (things|wake_settles)\b/u, `${statement.name}: no full scan of things or settles: ${plan}`)
       if (statement.name === 'room due pick') assert.match(plan, /things_ending_open/u, plan)

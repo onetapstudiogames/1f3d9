@@ -597,19 +597,9 @@ export interface EndingDueRow {
   readonly ended_at?: EndingTime | null
 }
 
-/**
- * The one SQL fragment a loader selects as first_label_at, the same subquery
- * thing_end_due_at_row runs. It reads the row under the alias `thing`. A door that only
- * needs the due time can read thing_end_due_at(id) instead.
- */
-export const THING_FIRST_LABEL_AT_SQL = `(
-  SELECT min(label.created_at)
-  FROM active_labels AS label
-  WHERE label.target_type = 'thing'
-    AND label.target_id = thing.id
-    AND label.label = thing.ending_label
-    AND label.created_at > thing.ending_set_at
-)`
+// Kept here by re-export; it lives in a leaf module so the recorder can read it without
+// an import cycle back through src/engine.ts.
+export { THING_FIRST_LABEL_AT_SQL } from './thing-ending-sql.ts'
 
 /**
  * A label row counts only when it was created strictly after the end was set. The loader's

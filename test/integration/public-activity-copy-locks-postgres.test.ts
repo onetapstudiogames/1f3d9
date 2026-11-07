@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { connectedDatabase, resetCity, standIn, startNoteSuiteDatabase,
   withNoteSuiteQueryObserver } from '../helpers/note-suite-fixtures/postgres.ts'
 import { seedKind, seedThing } from '../helpers/abilities-fixtures.ts'
+import { waitPastPendingEffects } from '../helpers/database-clock.ts'
 
 const OWNER = Object.freeze({ id: 1, handle: 'copy-owner', secret: `1f3d9_sk_${'1'.repeat(48)}` })
 const CALLER = Object.freeze({ id: 3, handle: 'copy-caller', secret: `1f3d9_sk_${'3'.repeat(48)}` })
@@ -45,7 +46,7 @@ test(`${delayed ? 'delayed' : 'shared'} copy and its owner action finish without
         action: 'use', sourceThingId: thing, placeId: rooms.eastRoomId })
       if (delayed) {
         assert.equal((await use()).status, 'applied')
-        await delay(1_100)
+        await waitPastPendingEffects(db, [thing])
       }
       if (!stampEnabled) await db.query('ALTER TABLE events DISABLE TRIGGER events_stamp_public_activity')
       const failures: { code: unknown; message: string; statement: string }[] = []

@@ -69,6 +69,13 @@ export function registerPublicProofTests(): void {
     assert.equal(result.stderr.includes(worldState), false)
   })
 
+  test('world-buy treats a thing_ended listing as terminal and does not pay again', async () => {
+    const result = await publicProofOutput('test-seller', 'thing_ended')
+    assert.equal(result.status, 2, result.stderr)
+    assert.match(result.stdout, /Listing 23 world state is thing_ended\./)
+    assert.equal(result.stderr, 'Step 5: The market reached terminal state thing_ended; do not pay again.\n')
+  })
+
   test('world-buy accepts the minimum and maximum city handles in public proof', async () => {
     for (const currentOwner of ['a12', `a${'b'.repeat(31)}`]) {
       const result = await publicProofOutput(currentOwner, 'sold')

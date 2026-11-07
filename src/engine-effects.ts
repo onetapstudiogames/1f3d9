@@ -1239,14 +1239,8 @@ async function transferEndingSkip(
     }
     return null
   }
-  return Object.freeze({
-    effect: effect.effect,
-    target: 'target' in effect ? effect.target : 'source' as const,
-    sourceTrait: context.sourceTraitName ?? null,
-    sourceTraitId: context.sourceTraitId,
-    sourcePlaceId: context.originPlaceId ?? null,
-    reason: THING_ENDED_SKIP_REASON,
-  })
+  // The same skip as the other steps, so a reach names the member it was aimed at.
+  return endedThingSkip(effect, thing.id, context)
 }
 
 /** True when the asset would move now: the actor owns it, it is active, unheld and has no open offer. */

@@ -1,7 +1,8 @@
 import { postgresErrorCode } from './core-primitives.ts'
 import { EngineError, engineSql, withEngineTransaction, type TaggedSql } from './engine.ts'
 import { PUBLIC_SYSTEM_EVENT_ACTORS } from './public-events.ts'
-import { dueCause, THING_FIRST_LABEL_AT_SQL, type EndingDueRow } from './thing-endings.ts'
+import { THING_FIRST_LABEL_AT_SQL } from './thing-ending-sql.ts'
+import { dueCause, type EndingDueRow } from './thing-endings.ts'
 
 // The one recorder of a thing's end. A door calls it before a resident-triggered write
 // that names a thing; the write then proceeds or refuses by what this call returned.

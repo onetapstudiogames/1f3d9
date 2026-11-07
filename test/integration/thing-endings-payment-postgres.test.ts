@@ -7,7 +7,6 @@
 // and a claim on a due thing runs nothing, its program waiting for the room's next settle.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Hono } from 'hono'
 import {
@@ -21,6 +20,7 @@ import {
   type CityApp,
   type Json,
 } from '../helpers/abilities-fixtures.ts'
+import { waitPastDatabaseTime } from '../helpers/database-clock.ts'
 import { connectedDatabase, resetCity, standIn, startNoteSuiteDatabase } from '../helpers/note-suite-fixtures/postgres.ts'
 import type { WorldMarketDependencies } from '../../src/world-market.ts'
 import type { PaymentFlowDependencies } from '../../src/payment-flow.ts'
@@ -96,17 +96,6 @@ function paymentHeader(reservedAt: Date, reservedUntil: Date): string {
       },
     },
   }), 'utf8').toString('base64')
-}
-
-async function waitPastDatabaseTime(boundary: Date): Promise<Date> {
-  for (;;) {
-    const row = await one<{ observed_at: Date; passed: boolean }>(`
-      SELECT clock_timestamp() AS observed_at,
-        clock_timestamp() > $1::timestamptz + interval '1 millisecond' AS passed
-    `, [boundary.toISOString()])
-    if (row.passed) return row.observed_at
-    await delay(25)
-  }
 }
 
 test('thing endings on claims, reservations and the payment race, against PostgreSQL', { timeout: 900_000 }, async t => {
@@ -452,6 +441,47 @@ test('thing endings on claims, reservations and the payment race, against Postgr
       assert.deepEqual(marketReads, ['/api/world/checkout/81', '/api/world/draft/71'])
     })
 
+    await t.test('a world claim whose end comes inside the open window refuses E8 and writes no payment attempt', async () => {
+      await reset()
+      const lamp = await seedThing(KEEPER.id, home, null, 'a world lamp ended by a label')
+      // The window was opened ten seconds ago on the database clock, as the direct case moves
+      // its window back, so a container clock a little ahead of the host cannot hide it.
+      const offer = await worldOffer(lamp, 77, '10 seconds')
+      assert.equal(await reservedBy(offer.id), NEIGHBOUR.id)
+      await setEnd(lamp, { label: 'spent' })
+      // A real path: a label put on now makes the label_added end due at once.
+      await db.query(`
+        INSERT INTO active_labels (target_type, target_id, label, actor_id) VALUES ('thing', $1, 'spent', $2)
+      `, [lamp, KEEPER.id])
+      assert.equal((await thingRow(lamp)).due, true)
+
+      const realFetch = globalThis.fetch
+      let fetched = 0
+      globalThis.fetch = (async () => {
+        fetched += 1
+        throw new Error('no network: a refused claim must never reach the facilitator')
+      }) as typeof fetch
+      try {
+        const instructions = await worldClaim(offer.id, {})
+        assert.equal(instructions.status, 409, JSON.stringify(instructions.json))
+        assert.equal(instructions.json.error, ENDING_PURCHASE_REFUSAL, 'no payment instructions once the end came')
+        const paid = await worldClaim(offer.id, {}, paymentHeader(offer.reserved_at!, offer.reserved_until!))
+        assert.equal(paid.status, 409, JSON.stringify(paid.json))
+        assert.equal(paid.json.error, ENDING_PURCHASE_REFUSAL)
+      } finally {
+        globalThis.fetch = realFetch
+      }
+      assert.equal(fetched, 0, 'the payment is never verified or settled')
+      assert.equal(settlements, 0)
+      assert.deepEqual(marketReads, [], 'a refused claim costs no market call')
+      assert.equal(await count('SELECT count(*) AS n FROM payment_attempts'), 0, 'no payment attempt is written')
+      const after = await thingRow(lamp)
+      assert.notEqual(after.ended_at, null, 'the claim records the due end first')
+      assert.equal(after.owner_id, KEEPER.id)
+      const kept = await one<Json>('SELECT status, reserved_by FROM transfer_offers WHERE id = $1', [offer.id])
+      assert.deepEqual(kept, { status: 'open', reserved_by: NEIGHBOUR.id }, 'the offer and its window stay as they were')
+    })
+
     await t.test('claim_world on a due thing records and runs nothing; cancelled first, its program runs at the next settle', async () => {
       await reset()
       const lantern = await endingLantern('a sold lantern')
@@ -527,7 +557,7 @@ test('thing endings on claims, reservations and the payment race, against Postgr
         SELECT public_id, end_time FROM payment_attempts WHERE operation = 'world_sale' AND offer_id = $1
       `, [offer.id])
 
-      const finalizedAt = await waitPastDatabaseTime(endsAt)
+      const finalizedAt = await waitPastDatabaseTime(db, endsAt)
       assert.ok(finalizedAt > attempt.end_time, 'finality comes after the reservation window')
       assert.equal((await thingRow(lantern)).due, true, 'the end came while payment was pending')
 
@@ -583,7 +613,7 @@ test('thing endings on claims, reservations and the payment race, against Postgr
       blockTime = new Date(Math.ceil(reservedAt.getTime() / 1_000) * 1_000)
       const paid = await worldClaim(offer.id, {}, paymentHeader(reservedAt, reservedUntil))
       assert.equal(paid.status, 202, JSON.stringify(paid.json))
-      await waitPastDatabaseTime(endsAt)
+      await waitPastDatabaseTime(db, endsAt)
 
       classify = async () => ({ state: 'invalid_final', reason: 'failed_transaction' })
       const batch = await recovery().runBatch(10)
