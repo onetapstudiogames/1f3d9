@@ -6,6 +6,7 @@ import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { isWorldRootRow, WORLD_ROOT_PURPOSE } from './world-root.ts'
 import { publicActivityFields, publicActivitySql } from './public-activity.ts'
 import { useLabelStatement } from './use-labels.ts'
+import { THING_ENDING_READ_COLUMNS, THING_ENDING_READ_JOIN, thingEndingRead } from './thing-ending-read.ts'
 
 export type PublicPlaceRecord = Readonly<PlaceRow & Record<string, unknown>>
 export type PublicThingRecord = Readonly<ThingRow & Record<string, unknown>>
@@ -140,10 +141,13 @@ export async function loadPublicPlaceRecord(
 
 /**
  * Read one current active thing by an already-validated ID from 1 through 2,147,483,647.
- * Returns its fully moderated public record, or null when it is absent or withdrawn.
+ * Returns its fully moderated public record, or null when it is absent or withdrawn. The
+ * record carries the full ending object and end_program_summary beside on_use, judged at
+ * the database's time; a thing whose end has come reads no current labels while its label
+ * rows stay. The read never records an end (#37).
  */
 export async function loadPublicThingRecord(id: number): Promise<PublicThingRecord | null> {
-  const rows = (await sql`
+  const rows = (await sql.query(`
     SELECT thing.id, thing.place_id, thing.name, thing.body,
       thing.maker_id, maker.handle AS made_by,
       thing.owner_id AS current_owner_id, owner.handle AS current_owner,
@@ -178,6 +182,7 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
       (SELECT count(*)::int FROM thing_conversions memory WHERE memory.thing_id = thing.id) AS was_total,
       -- Current labels only: one entry per label, naming its newest setter, and holding
       -- until the latest expiry among its current rows (null while any row never expires).
+      -- A thing whose end has come (due or recorded) wears no label any more; its rows stay.
       coalesce((
         SELECT jsonb_agg(current_label.entry ORDER BY current_label.id DESC)
         FROM (
@@ -193,6 +198,7 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
             FROM active_labels active
             WHERE active.target_type = 'thing' AND active.target_id = thing.id
               AND (active.expires_at IS NULL OR active.expires_at > now())
+              AND NOT thing_ending.reached
             ORDER BY active.label, active.id DESC
           ) newest
           JOIN residents setter ON setter.id = newest.actor_id
@@ -212,6 +218,7 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
         SELECT count(DISTINCT active.label)::int FROM active_labels active
         WHERE active.target_type = 'thing' AND active.target_id = thing.id
           AND (active.expires_at IS NULL OR active.expires_at > now())
+          AND NOT thing_ending.reached
       ) AS labels_total,
       thing.open_to_reach, thing.open_to_convert,
       CASE
@@ -327,24 +334,40 @@ export async function loadPublicThingRecord(id: number): Promise<PublicThingReco
           ORDER BY change.version DESC LIMIT 1
         )
       ) AS state,
-      thing.created_at
+      thing.created_at,
+      ${THING_ENDING_READ_COLUMNS}
     FROM things thing
     JOIN residents maker ON maker.id = thing.maker_id
     JOIN residents owner ON owner.id = thing.owner_id
     LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
     LEFT JOIN kinds birth_kind ON birth_kind.id = thing.kind_id
-    WHERE thing.id = ${id} AND thing.withdrawn_at IS NULL
-  `) as PublicThingRecord[]
-  const publicDetails = await moderatePlaceDetails(rows.map(withOnUse), [])
+    ${THING_ENDING_READ_JOIN}
+    WHERE thing.id = $1::integer AND thing.withdrawn_at IS NULL
+  `, [id])) as PublicThingRecord[]
+  const publicDetails = await moderatePlaceDetails(rows.map(withOnUseAndEnding), [])
   return publicDetails.things[0] ?? null
 }
 
-/** Replaces the stored use recipes with the plain sentence of what using it does to you (#168). */
-function withOnUse(row: PublicThingRecord): PublicThingRecord {
-  const { use_recipes: useRecipes, ...record } = row
+/**
+ * Replaces the stored use recipes with the plain sentence of what using it does to you
+ * (#168), and the end facts with the full ending object and the end program sentence, the
+ * same mapper the offer reads use (src/thing-ending-read.ts).
+ */
+function withOnUseAndEnding(row: PublicThingRecord): PublicThingRecord {
+  const {
+    use_recipes: useRecipes,
+    thing_ending_facts: _facts,
+    thing_ending_reached: _reached,
+    thing_ending_withdrawn: _withdrawn,
+    thing_ending_checked_at: _checkedAt,
+    ...record
+  } = row
+  const end = thingEndingRead(row)
   return {
     ...record,
     on_use: useLabelStatement(Array.isArray(useRecipes) ? useRecipes : []),
+    ending: end.ending,
+    end_program_summary: end.end_program_summary,
   } as PublicThingRecord
 }
 

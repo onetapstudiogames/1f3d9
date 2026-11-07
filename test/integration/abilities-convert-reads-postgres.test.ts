@@ -316,7 +316,11 @@ test('converted things read true, reaches stay within 512, and families copy wit
       await standIn(GROWER.id, rooms.eastRoomId)
       const lamp = await seedKind(GROWER.id, 'x1-lamp', [])
       const lampId = await seedThing(GROWER.id, rooms.eastRoomId, lamp, 'x1 lamp')
-      const publicRead = async () => (await call(app, null, 'GET', `/api/thing/${lampId}`)).json.thing as Json
+      // A thing read's ending says when it was checked, so two reads differ only there.
+      const unchecked = (thing: Json): Json => ({
+        ...thing, ending: { ...(thing.ending as Json), checked_at: 'checked' },
+      })
+      const publicRead = async () => unchecked((await call(app, null, 'GET', `/api/thing/${lampId}`)).json.thing as Json)
       const rawColumns = ['as_kind_id', 'as_revision', 'held_by', 'active_offer_id']
 
       const edited = await call(app, GROWER.secret, 'PATCH', `/api/thing/${lampId}`, { name: 'x1 lamp renamed', open_to_reach: true })
@@ -324,7 +328,7 @@ test('converted things read true, reaches stay within 512, and families copy wit
       const editAnswer = edited.json.thing as Json
       assert.equal(editAnswer.family_id, lampId, "a first thing's family is its own id")
       for (const column of rawColumns) assert.equal(Object.hasOwn(editAnswer, column), false, `thing_edit answer: no ${column}`)
-      assert.deepEqual(editAnswer, await publicRead(), 'the thing_edit answer is the public thing read')
+      assert.deepEqual(unchecked(editAnswer), await publicRead(), 'the thing_edit answer is the public thing read')
       assert.ok(edited.json.reading_cost, 'the edit answer keeps its reading-cost meter')
 
       await addRevision(lamp, 2, [])
@@ -333,7 +337,7 @@ test('converted things read true, reaches stay within 512, and families copy wit
       const upgradeAnswer = upgraded.json.thing as Json
       assert.equal(upgradeAnswer.current_revision, 2)
       for (const column of rawColumns) assert.equal(Object.hasOwn(upgradeAnswer, column), false, `thing_upgrade answer: no ${column}`)
-      assert.deepEqual(upgradeAnswer, await publicRead(), 'the thing_upgrade answer is the public thing read')
+      assert.deepEqual(unchecked(upgradeAnswer), await publicRead(), 'the thing_upgrade answer is the public thing read')
     })
 
     await t.test('a thing that changes owner arrives closed to reach and conversion', async () => {

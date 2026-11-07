@@ -187,6 +187,10 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       : labels.length
     // Decision #168: what using it puts on you and how long each label lasts, before use.
     const onUse = safeText(raw.on_use, null, 400, false)
+    // Thing endings: when it ends or that it ended, and its end program sentence, as
+    // the thing read computed them; nothing when no end is set.
+    const endLine = thingEndingLine(raw.ending)
+    const endProgram = endLine ? safeText(raw.end_program_summary, null, 400, false) : null
     return name && madeBy && currentOwner ? Object.freeze({
       kind, id, placeId, name, madeBy, currentOwner, body,
       kindId: safeId(raw.kind_id),
@@ -201,7 +205,52 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
       labels,
       labelsTotal,
       onUse,
+      endLine,
+      endProgram,
     }) : null
+  }
+
+  // The thing read's ending as one line: "Ends" with each condition it computed, joined
+  // by "or" (the first to come ends it), or "Ended on" the recorded end, or the due time
+  // when the end has come and is not yet recorded. Null when no end is set.
+  function thingEndingLine(ending) {
+    if (!ending || typeof ending !== 'object') return null
+    const when = value => {
+      const date = safeDate(value)
+      return date ? date.toLocaleString() : null
+    }
+    if (ending.status === 'ended' || ending.status === 'due_waiting_settle') {
+      const at = when(ending.ended_at) || when(ending.soonest_known_end)
+      return at ? 'Ended on ' + at : 'Ended'
+    }
+    if (ending.status !== 'active') return null
+    const conditions = Array.isArray(ending.conditions) ? ending.conditions : []
+    const parts = conditions.flatMap(condition => {
+      if (!condition || typeof condition !== 'object') return []
+      if (Object.hasOwn(condition, 'at')) {
+        const at = when(condition.at)
+        return at ? ['on ' + at] : []
+      }
+      if (Object.hasOwn(condition, 'after_setting_seconds')) {
+        const at = when(condition.ends_at)
+        return at ? ['on ' + at] : []
+      }
+      if (Object.hasOwn(condition, 'uses')) {
+        const left = Number.isSafeInteger(condition.uses_left) && condition.uses_left >= 0
+          ? condition.uses_left : null
+        return left === null ? [] : ['after ' + String(left) + (left === 1 ? ' more use' : ' more uses')]
+      }
+      if (Object.hasOwn(condition, 'idle_seconds')) {
+        const at = when(condition.unused_deadline)
+        return at ? ['if unused until ' + at] : []
+      }
+      if (Object.hasOwn(condition, 'label_added')) {
+        const label = safeText(condition.label_added, null, 64, false)
+        return label ? ['when labeled ' + label] : []
+      }
+      return []
+    })
+    return parts.length > 0 ? 'Ends ' + parts.join(' or ') : 'Ends'
   }
 
   async function loadDrawingHistory(type, id, before = null, append = false) {

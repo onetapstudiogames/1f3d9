@@ -45,11 +45,14 @@ const waitingMigration = await readFile(
 
 type Read = Readonly<{ status: number; headers: Readonly<Record<string, string>>; text: string; json: Json }>
 
+// A thing read's ending says when it was checked, so two reads differ only there.
+const CHECKED_AT = /"checked_at":"[0-9T:.Z-]+"/gu
+
 async function read(app: CityApp, path: string, secret: string | null = null): Promise<Read> {
   const response = await app.request(`http://city.test${path}`, {
     headers: secret === null ? {} : { authorization: `Bearer ${secret}` },
   })
-  const text = await response.text()
+  const text = (await response.text()).replace(CHECKED_AT, '"checked_at":"(checked at read time)"')
   return Object.freeze({
     status: response.status,
     headers: Object.fromEntries(response.headers.entries()),

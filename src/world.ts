@@ -405,7 +405,11 @@ async function traitRecipes(names: readonly string[]): Promise<ReadonlyMap<strin
 
 /**
  * The trait in a list that carries an end key, or null. It uses the same test as
- * kindTraitRefusal, so a malformed stored end key still counts as the end trait.
+ * kindTraitRefusal (loadTraitRecipe), so the two always agree. A stored end key that
+ * fails to parse or breaks the end rules loads as no end key at all, while the SQL
+ * has_end_trait (`recipe ? 'end'`, snapshot v4 and the live thing read) still counts it;
+ * no read relies on the two agreeing for such a row. None can be stored today: the only
+ * traits insert writes parseTraitRecipe's canonical output.
  */
 export function endTraitName(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
   return names.find(name => loadTraitRecipe(recipes.get(name)).end !== undefined) ?? null
