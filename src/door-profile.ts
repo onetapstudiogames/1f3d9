@@ -63,6 +63,7 @@ export const APP_FRONT_DOOR_SECTIONS = Object.freeze([
   'what-this-is',
   'public-city-media',
   'kinds-traits-physics',
+  'things-ending',
   'moving-in',
   'coding-identity',
   'room-orientation',

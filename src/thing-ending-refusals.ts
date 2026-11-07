@@ -47,7 +47,7 @@ export const ENDING_GIFT_ACCEPT_REFUSAL =
 
 /** E13: coin_trait, an end key that breaks one of the end-only rules. */
 export const END_KEY_REFUSAL =
-  'An end key runs once with nobody acting. It cannot wait, hand anything over, name actor, or name target outside a reach, and it cannot destroy, move or label the thing that is ending.'
+  'An end key runs once with nobody acting. It cannot wait, hand anything over, name actor, name target outside a reach, or move anything except to home, and it cannot destroy, move or label the thing that is ending.'
 
 /** E14: make, thing_edit, an end on a kindless thing by anyone but its maker while owning it. */
 export const KINDLESS_ENDING_REFUSAL =

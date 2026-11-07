@@ -710,6 +710,13 @@ function touchesEndingThing(effect: Effect): boolean {
     && effect.target === 'source'
 }
 
+/** The three rules an end key keeps on top of the wake program rules, as physics states them. */
+export const END_ONLY_RULES = Object.freeze([
+  "never names actor or writes the actor's handle",
+  'never waits',
+  'never destroys, moves or labels the thing that is ending',
+] as const)
+
 /**
  * An end program runs once with nobody acting, so on top of the wake program rules it
  * never names actor, never waits, and never destroys, moves or labels its own thing.

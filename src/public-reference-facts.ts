@@ -55,6 +55,7 @@ import {
   STATE_TEXT_MAX_CHARACTERS,
   TRANSFER_RECIPIENTS,
   TRANSFER_TARGETS,
+  END_ONLY_RULES,
   WAKE_DEFAULT_EVENTS,
   WAKE_DEFAULT_EVERY_SECONDS,
   WAKE_EVENTS,
@@ -64,7 +65,15 @@ import {
   WRITE_FROM,
   WRITE_OPS,
 } from './physics.ts'
+import { ENDING_MODES } from './thing-endings.ts'
 import {
+  ENDING_MAX_CONDITIONS,
+  ENDING_MAX_SECONDS,
+  ENDING_MAX_USES,
+  ENDING_MIN_SECONDS,
+  ENDING_MIN_USES,
+  ENDING_POLICY_MAX_LABELS,
+  ENDING_POLICY_MIN_LABELS,
   GROWTH_CAP_DEFAULT,
   GROWTH_CAP_MAX,
   GROWTH_SHARE_DEFAULT,
@@ -81,6 +90,7 @@ import {
 import {
   ACT_TOOL_ACTIONS,
   CITY_LIMIT_LINES,
+  ENDING_LIMITS_LINE,
   OTHER_BASIC_ACTION_TOOLS,
   PAID_ACTIONS,
   PUBLIC_CONTENT_RETELLING_LINE,
@@ -146,6 +156,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
     claim_fee_usdc: CLAIM_FEE_USDC,
     paid_actions: PAID_ACTIONS,
     enforced_limits: CITY_LIMIT_LINES,
+    ending_limits: ENDING_LIMITS_LINE,
     city_fee_credit: Object.freeze({
       unit_usdc: '1.000000',
       eligible_actions: PAID_ACTIONS,
@@ -248,6 +259,22 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
       resident_label_seconds: RESIDENT_ABILITY_LABEL_SECONDS,
       thing_switch: 'wake_enabled',
       go_home: 'never blocked anywhere, by any wake try',
+    }),
+    end: Object.freeze({
+      key: 'end',
+      then: 'required',
+      one_per_kind: 'a kind revision may list only one trait with an end key',
+      runs: 'once, after the end is written down, the next time a resident is in its room, if waking is on for the thing and its room lets it wake',
+      never_in_end: Object.freeze(['transfer', 'target outside a reach', 'move to destination']),
+      end_only: END_ONLY_RULES,
+      program_weight: MAX_APPLICATIONS_PER_PROGRAM,
+      modes: ENDING_MODES,
+      conditions: Object.freeze({ min: 1, max: ENDING_MAX_CONDITIONS }),
+      at_days_ahead_max: ENDING_MAX_SECONDS / 86_400,
+      seconds: Object.freeze({ min: ENDING_MIN_SECONDS, max: ENDING_MAX_SECONDS }),
+      uses: Object.freeze({ min: ENDING_MIN_USES, max: ENDING_MAX_USES }),
+      policy_labels: Object.freeze({ min: ENDING_POLICY_MIN_LABELS, max: ENDING_POLICY_MAX_LABELS }),
+      policy_default: Object.freeze({ allowed: Object.freeze([]) }),
     }),
     brick_fields: Object.freeze({
       destroy: Object.freeze({
@@ -380,7 +407,7 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
         ...branches('convert'),
       }),
     }),
-    kind_only: Object.freeze(['copy', 'write', 'wake', 'convert without into_kind']),
+    kind_only: Object.freeze(['copy', 'write', 'wake', 'end', 'convert without into_kind']),
     law_only: Object.freeze(['convert with into_kind', 'label with law_place', 'check_label with law_place']),
     law_place: Object.freeze({
       source: "the law's original defining place, never a law named by a later check",
@@ -410,7 +437,7 @@ export function publicPhysicsFacts(): Readonly<Record<string, unknown>> {
     }),
     roll: Object.freeze({
       formula: 'roll = (first 4 bytes of HMAC-SHA256(day secret, "1f3d9-roll|v1|<roll_id>|<purpose>|<place_id>|<source_thing_id or 0>|<source_trait_id or 0>") as unsigned big-endian) mod sides + 1; chance has 100 sides',
-      wake_pick: 'units with the smallest HMAC-SHA256(day secret, "1f3d9-wake|v1|<settle_id>|<thing_id>|<unit_index>") in lowercase hex run first',
+      wake_pick: 'end tries run first and are not part of the pick; then units with the smallest HMAC-SHA256(day secret, "1f3d9-wake|v1|<settle_id>|<thing_id>|<unit_index>") in lowercase hex run first',
       commitment: 'lowercase hex SHA-256 of the 32-byte day secret, made a day ahead',
       secret_revealed: 'after its UTC day ends',
       read: '/api/physics?roll_id=<id>',

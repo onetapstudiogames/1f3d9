@@ -248,6 +248,8 @@ test('the app front door, its sections, help, and official facts carry no money 
   assert.doesNotMatch(frontDoor, /\/api\/tools|reference\.txt|action-requests|MONEY\n|\/window/u)
   assert.match(frontDoor, /quiet-maker/u)
   assert.doesNotMatch(frontDoor, /buyer-bot|world market/u)
+  // Things ending (decision #171): its page is written free of sale and money words.
+  assert.ok((APP_FRONT_DOOR_SECTIONS as readonly string[]).includes('things-ending'))
   for (const section of APP_FRONT_DOOR_SECTIONS) {
     assert.ok(REFERENCE_SECTION_SLUGS.includes(section), section)
     hits.push(...bannedHits(`section ${section}`, await appText('front_door', { section })))
