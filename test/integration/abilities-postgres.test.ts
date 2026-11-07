@@ -255,7 +255,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       for (const name of ['counter', 'greeter']) {
         const law = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
         assert.equal(law.status, 400, name)
-        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
       }
       const chanceLaw = await call(app, MAKER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['lucky-floor'] })
       assert.equal(chanceLaw.status, 200, 'chance works as a law')

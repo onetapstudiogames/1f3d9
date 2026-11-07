@@ -22,6 +22,7 @@ import {
 } from './physics.ts'
 import { recipeRefusalWords } from './recipe-refusal.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
+import { END_KEY_REFUSAL, endTraitConflictRefusal } from './thing-ending-refusals.ts'
 import { clearStateBox } from './engine-state.ts'
 import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
@@ -354,16 +355,19 @@ async function traitRecipes(names: readonly string[]): Promise<ReadonlyMap<strin
 
 /**
  * A kind revision may list only one trait with a wake key, so a thing has one
- * clock, and no trait using law_place or convert with into_kind, which are law-only.
+ * clock, only one trait with an end key, so a thing has one end program, and no
+ * trait using law_place or convert with into_kind, which are law-only.
  * It reads recipes already loaded, so the refusal census can follow each sentence
  * from the caller's err().
  */
-function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
+export function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
   const recipeOf = (name: string) => loadTraitRecipe(recipes.get(name))
   const waking = names.filter(name => recipeOf(name).wake !== undefined)
   if (waking.length > 1) {
     return `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
   }
+  const ending = names.filter(name => recipeOf(name).end !== undefined)
+  if (ending.length > 1) return endTraitConflictRefusal(ending[0]!, ending[1]!)
   const lawOnly = names.find(name => recipeUsesLawOnlyAbility(recipeOf(name)))
   return lawOnly === undefined
     ? null
@@ -2294,6 +2298,7 @@ export function mountWorldRoutes(app: Hono): void {
       const fault = traitRecipeFault(body.recipe)
       if (fault === 'wake_hand_over') return err(c, 400, WAKE_HAND_OVER_ERROR)
       if (fault === 'wake_scope') return err(c, 400, WAKE_SCOPE_ERROR)
+      if (fault === 'end_key') return err(c, 400, END_KEY_REFUSAL)
       const grammar = recipeRefusalWords(body.recipe)
       return err(c, 400, `recipe refused at ${grammar.where}: ${grammar.rule}; call physics for every brick's fields, defaults, and limits`)
     }

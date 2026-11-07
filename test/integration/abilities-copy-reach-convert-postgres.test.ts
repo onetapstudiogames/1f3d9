@@ -266,7 +266,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       for (const name of ['sprout', 'blight']) {
         const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
         assert.equal(law.status, 400, name)
-        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
       }
       const reachLaw = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['drizzle'] })
       assert.equal(reachLaw.status, 200, 'reach works as a law')
@@ -338,7 +338,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
           const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
           if ('wake' in recipe) {
             assert.equal(law.status, 400, 'a mixed wake and law_place trait cannot be a law')
-            assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+            assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
           } else {
             assert.equal(law.status, 200, JSON.stringify(law.json))
           }
