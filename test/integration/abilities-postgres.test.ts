@@ -1161,7 +1161,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(woken.status, 200, JSON.stringify(woken.json))
       assert.equal(((await call(app, null, 'GET', `/api/thing/${quietId}`)).json.thing as Json).wake_enabled, true)
       const unknown = await call(app, FOUNDER.secret, 'PATCH', `/api/thing/${quietId}`, { wake_now: true })
-      assert.equal(unknown.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      assert.equal(unknown.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, and ending are editable; birth_revision is permanent')
 
       const given = await call(app, FOUNDER.secret, 'POST', '/api/transfer', { type: 'thing', id: quietId, to_handle: 'bell-maker' })
       assert.equal(given.status, 200, JSON.stringify(given.json))

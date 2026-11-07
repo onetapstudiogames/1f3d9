@@ -27,7 +27,11 @@ import {
   ENDING_POLICY_REFUSAL,
   ENDING_POLICY_WIDEN_REFUSAL,
   endTraitConflictRefusal,
+  ENDING_REMNANT_CHANGE_REFUSAL,
+  THING_REMNANT_REFUSAL,
 } from './thing-ending-refusals.ts'
+import { applyOwnerEnding, endingField, endingShapeRefusal } from './thing-ending-owner.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 import {
   DEFAULT_ENDING_POLICY,
   isDefaultEndingPolicy,
@@ -65,6 +69,7 @@ import {
   engineSql,
   residentPresence,
   withEngineTransaction,
+  type TaggedSql,
 } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
@@ -432,7 +437,11 @@ export function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<
  * and revision never change, a family's open growth marks clear, and a changed
  * presentation is appended to its drawing history.
  */
-async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
+async function upgradeConvertedThing(
+  id: number,
+  resident: Resident,
+  afterUpgrade?: (transaction: TaggedSql) => Promise<unknown>,
+): Promise<void> {
   await withEngineTransaction(engineSql, async transaction => {
     await transaction`SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE`
     const lockedRooms = await transaction`SELECT place.id FROM places place
@@ -464,6 +473,8 @@ async function upgradeConvertedThing(id: number, resident: Resident): Promise<vo
     if (changed.length > 0 && shownBefore) {
       await appendThingPresentationRevision(id, shownBefore, { id: resident.id, relation: 'owner' }, transaction)
     }
+    // An end sent with the upgrade is judged against the revision just reached.
+    if (afterUpgrade) await afterUpgrade(transaction)
   })
 }
 
@@ -2420,13 +2431,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
-        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids',
+        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids', 'ending',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, ingredient_ids, and optional ending`)
       }
     }
+    const ending = endingField(body)
+    const endingShapeError = endingShapeRefusal(ending)
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
@@ -2462,6 +2475,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
     }
+    if (endingShapeError) return err(c, 400, endingShapeError)
 
     const placeRows = (await withPlacePermission(sql)`
       SELECT place.id, place.parent_id, place.place_kind, place.owner_id,
@@ -2498,6 +2512,7 @@ export function mountWorldRoutes(app: Hono): void {
       wakeEnabled,
       kindId,
       ingredientIds,
+      ending,
     })
     if (!made.ok) return err(c, made.status, made.error)
     const readingCost = await safeReadingCostMeter(placeId, made.thing.body)
@@ -2521,10 +2536,11 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
-      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear',
+      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear', 'ending',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, and ending are editable; birth_revision is permanent')
     }
+    const ending = endingField(body)
     if (body.state_clear !== undefined && body.state_clear !== true) {
       return err(c, 400, 'state_clear must be true when present')
     }
@@ -2565,13 +2581,18 @@ export function mountWorldRoutes(app: Hono): void {
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
     if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
     if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
+    const endingShapeError = endingShapeRefusal(ending)
+    if (endingShapeError) return err(c, 400, endingShapeError)
+    // A due end is written down before anything else touches the thing.
+    await recordDueEndQuietly([id], engineSql)
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
         thing.as_kind_id IS NOT NULL AS converted,
         thing.drawing_state, thing.drawing_variant_name, pinned.drawing_variants,
         thing.active_offer_id,
-        (offer.id IS NOT NULL) AS has_open_offer
+        (offer.id IS NOT NULL) AS has_open_offer,
+        thing_end_reached(thing.id) AS end_reached
       FROM things thing
       LEFT JOIN kind_revisions pinned
         ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
@@ -2590,10 +2611,14 @@ export function mountWorldRoutes(app: Hono): void {
       drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
+      end_reached?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
+    if (existing.end_reached === true) {
+      return err(c, 409, ending.supplied ? ENDING_REMNANT_CHANGE_REFUSAL : THING_REMNANT_REFUSAL)
+    }
     if (existing.converted === true && requestedVariant !== undefined) {
       return err(c, 409, convertedVariantRefusal(id))
     }
@@ -2627,7 +2652,9 @@ export function mountWorldRoutes(app: Hono): void {
         : `drawing_variant_name is not offered by this pinned kind revision; choose base with null or an available variant: ${choices.join(', ')}`)
     }
 
-    const rows = (await sql`
+    // One statement for every edit; an end sent with it was written just before, in the
+    // same transaction, and counts as the edit when nothing else changed.
+    const editStatement = (db: TaggedSql, endingChanged: boolean) => db`
       WITH activity_actor AS MATERIALIZED (
         SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
       ), activity_room AS MATERIALIZED (
@@ -2815,10 +2842,6 @@ export function mountWorldRoutes(app: Hono): void {
             OR prior.drawing_variant_name IS DISTINCT FROM current.drawing_variant_name
           )
         RETURNING id
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id, 'place_id', place_id)
-        FROM changed
       ), result AS (
         SELECT changed.* FROM changed
         UNION ALL
@@ -2826,6 +2849,11 @@ export function mountWorldRoutes(app: Hono): void {
         FROM things thing
         JOIN editable ON editable.id = thing.id
         WHERE NOT EXISTS (SELECT 1 FROM changed)
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id, 'place_id', place_id)
+        FROM result
+        WHERE EXISTS (SELECT 1 FROM changed) OR ${endingChanged}::boolean
       )
       SELECT result.*, maker.handle AS made_by,
         result.owner_id AS current_owner_id,
@@ -2837,7 +2865,24 @@ export function mountWorldRoutes(app: Hono): void {
       JOIN residents current_owner ON current_owner.id = result.owner_id
       LEFT JOIN kinds kind_definition
         ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
-    `) as ThingRow[]
+    `
+    let rows: ThingRow[]
+    if (!ending.supplied) {
+      rows = (await editStatement(engineSql, false)) as ThingRow[]
+    } else {
+      try {
+        rows = await withEngineTransaction(engineSql, async transaction => {
+          const endingChanged = await applyOwnerEnding(transaction, id, resident.id, ending.value, { lock: true })
+          const edited = (await editStatement(transaction, endingChanged)) as ThingRow[]
+          // The end stays unwritten when the edit itself found the thing changed.
+          if (!edited[0]) throw new EngineError(409, 'thing changed or received an open sale offer; retry')
+          return edited
+        })
+      } catch (error) {
+        if (error instanceof EngineError) return err(c, error.status, error.message)
+        throw error
+      }
+    }
     const written = rows[0]
     if (!written) return err(c, 409, 'thing changed or received an open sale offer; retry')
     // The owner empties the state box; values are never written by hand.
@@ -2863,18 +2908,23 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     {
-      const fields = ['drawing_variant_name'] as const
+      const fields = ['drawing_variant_name', 'ending'] as const
       if (!hasOnly(decoded.body, fields)) {
         const rejected = unsupportedFields(decoded.body, fields)
-        return err(c, 400, `thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name`)
+        return err(c, 400, `thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name and optional ending`)
       }
     }
+    const ending = endingField(decoded.body)
+    const endingShapeError = endingShapeRefusal(ending)
     const requestedVariant = Object.hasOwn(decoded.body, 'drawing_variant_name')
       ? drawingVariantName(decoded.body.drawing_variant_name)
       : undefined
     if (requestedVariant === 'invalid') {
       return err(c, 400, `drawing_variant_name must be null or a safe one-line label of 1-${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes`)
     }
+    if (endingShapeError) return err(c, 400, endingShapeError)
+    // A due end is written down before anything else touches the thing.
+    await recordDueEndQuietly([id], engineSql)
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.birth_revision,
@@ -2883,7 +2933,8 @@ export function mountWorldRoutes(app: Hono): void {
         thing.drawing_state, thing.drawing_variant_name,
         latest.drawing_variants AS latest_drawing_variants,
         thing.active_offer_id,
-        (offer.id IS NOT NULL) AS has_open_offer
+        (offer.id IS NOT NULL) AS has_open_offer,
+        thing_end_reached(thing.id) AS end_reached
       FROM things thing
       LEFT JOIN kinds kind ON kind.id = thing.kind_id
       LEFT JOIN kind_revisions latest
@@ -2900,17 +2951,29 @@ export function mountWorldRoutes(app: Hono): void {
       drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
+      end_reached?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may upgrade it')
+    if (existing.end_reached === true) return err(c, 409, THING_REMNANT_REFUSAL)
+    // An end sent with the upgrade is set, renewed or cleared in the upgrade's own
+    // transaction, after it, so a new end takes its grant from the revision reached.
+    const endingAfterUpgrade = ending.supplied
+      ? async (transaction: TaggedSql) => applyOwnerEnding(transaction, id, resident.id, ending.value, { lock: true })
+      : undefined
     if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be upgraded while it has an open sale offer; close that offer before upgrading the thing')
     }
     if (existing.as_kind_id != null) {
       if (requestedVariant !== undefined) return err(c, 409, convertedVariantRefusal(id))
-      await upgradeConvertedThing(id, resident)
+      try {
+        await upgradeConvertedThing(id, resident, endingAfterUpgrade)
+      } catch (error) {
+        if (error instanceof EngineError) return err(c, error.status, error.message)
+        throw error
+      }
       const converted = await loadPublicThingRecord(id)
       if (!converted) return err(c, 409, 'thing changed or received an open sale offer; retry')
       return c.json({ thing: converted })
@@ -2933,8 +2996,7 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     let rows: ThingRow[]
-    try {
-      rows = (await sql`
+    const upgradeStatement = (db: TaggedSql) => db`
         WITH activity_actor AS MATERIALIZED (
           SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
         ), activity_room AS MATERIALIZED (
@@ -3122,11 +3184,22 @@ export function mountWorldRoutes(app: Hono): void {
         JOIN residents maker ON maker.id = changed.maker_id
         JOIN residents current_owner ON current_owner.id = changed.owner_id
         LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
-      `) as ThingRow[]
+      `
+    try {
+      rows = endingAfterUpgrade
+        ? await withEngineTransaction(engineSql, async transaction => {
+          const upgraded = (await upgradeStatement(transaction)) as ThingRow[]
+          // Without the upgrade nothing is written, the end included.
+          if (!upgraded[0]) return upgraded
+          await endingAfterUpgrade(transaction)
+          return upgraded
+        })
+        : (await upgradeStatement(engineSql)) as ThingRow[]
     } catch (error) {
       if (postgresErrorCode(error) === '55P03') {
         return err(c, 409, 'another action is changing this thing or kind; retry this thing upgrade')
       }
+      if (error instanceof EngineError) return err(c, error.status, error.message)
       throw error
     }
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')

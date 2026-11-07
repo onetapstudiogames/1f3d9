@@ -1145,7 +1145,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(badConvert.json.error, 'open_to_convert must be boolean when present')
       const unknown = await make({ open_to_all: true })
       assert.equal(unknown.status, 400)
-      assert.match(String(unknown.json.error), /send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids/)
+      assert.match(String(unknown.json.error), /send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, ingredient_ids, and optional ending/)
 
       const closed = await make({})
       assert.equal(closed.status, 201, JSON.stringify(closed.json))
@@ -1175,7 +1175,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(badEdit.json.error, 'open_to_convert must be boolean when present')
       const unknownEdit = await call(app, GROWER.secret, 'PATCH', `/api/thing/${closedId}`, { open_to_everyone: true })
       assert.equal(unknownEdit.status, 400)
-      assert.equal(unknownEdit.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      assert.equal(unknownEdit.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, and ending are editable; birth_revision is permanent')
     })
 
     await t.test('place_edit sets the growth dials, the place read shows them, and a changed dial clears the marks', async () => {

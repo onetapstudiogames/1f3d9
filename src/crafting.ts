@@ -9,6 +9,8 @@ import { isWorldRootRow, WORLD_TRANSIT_ONLY_ERROR } from './world-root.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { EngineError, type TaggedSql } from './engine.ts'
+import { newThingEnding, transactionNow, type EndingField } from './thing-ending-owner.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -34,6 +36,8 @@ export interface CraftThingInput {
   readonly openToConvert?: unknown
   readonly wakeEnabled?: unknown
   readonly ingredientIds: unknown
+  /** The owner's end for the new thing, judged against the kind's current revision. */
+  readonly ending?: EndingField | undefined
 }
 
 export interface CraftedThing {
@@ -99,6 +103,7 @@ interface KindRow {
   readonly name: string
   readonly current_revision: number
   readonly recipe: unknown
+  readonly ending_policy?: unknown
 }
 
 interface PlaceRow {
@@ -261,7 +266,7 @@ export async function craftKindThing(
 
   const kindRows = await sql`
     /* crafting:kind */
-    SELECT kind.id, kind.name, kind.current_revision, revision.recipe
+    SELECT kind.id, kind.name, kind.current_revision, revision.recipe, revision.ending_policy
     FROM kinds AS kind
     JOIN kind_revisions AS revision
       ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
@@ -340,6 +345,24 @@ export async function craftKindThing(
   if (ingredients.length !== input.ingredientIds.length || !exactRecipeMatch(recipe, ingredients)) {
     return failure(409, 'ingredients do not exactly match the current recipe; re-read the kind and retry with every required ingredient in its exact quantity')
   }
+
+  // The end takes its grant from the current revision the commit below re-checks. The
+  // maker owns the new thing, and revisions never change, so this is its grant at birth.
+  let columns: ReturnType<typeof newThingEnding> = null
+  if (request.ending?.supplied === true && request.ending.value !== null) {
+    try {
+      columns = newThingEnding(request.ending, {
+        kind_id: kind.id, current_revision: kind.current_revision,
+        owner_id: input.actorId, maker_id: input.actorId,
+      }, kind.ending_policy, await transactionNow(sql as unknown as TaggedSql))
+    } catch (error) {
+      if (error instanceof EngineError && (error.status === 400 || error.status === 403)) {
+        return failure(error.status, error.message)
+      }
+      throw error
+    }
+  }
+  const ending = columns?.columns ?? null
 
   const recipeJson = JSON.stringify(recipe)
   // Locks follow the shared order (docs/SYSTEM_DESIGN.md): the ingredients by id, as an
@@ -427,14 +450,26 @@ export async function craftKindThing(
     ), new_thing AS (
       INSERT INTO things (
         place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy,
-        open_to_reach, open_to_convert, wake_enabled, kind_id, birth_revision, current_revision
+        open_to_reach, open_to_convert, wake_enabled, kind_id, birth_revision, current_revision,
+        ending_rule, ending_grant, ending_set_by, ending_set_at, ending_deadline,
+        ending_idle_seconds, ending_idle_anchor, ending_uses_left, ending_label
       )
       SELECT locked_place.id, ${input.name}, ${input.body}, quota_spend.id, quota_spend.id,
         ${input.openToUse}, ${input.sharedUseMayDestroy}, ${input.openToReach},
         ${input.openToConvert}, ${input.wakeEnabled},
-        locked_kind.id, locked_kind.current_revision, locked_kind.current_revision
+        locked_kind.id, locked_kind.current_revision, locked_kind.current_revision,
+        ${ending ? JSON.stringify(ending.ending_rule) : null}::jsonb,
+        ${ending ? JSON.stringify(ending.ending_grant) : null}::jsonb,
+        ${ending?.ending_set_by ?? null}::integer, ${ending?.ending_set_at ?? null}::timestamptz,
+        ${ending?.ending_deadline ?? null}::timestamptz, ${ending?.ending_idle_seconds ?? null}::integer,
+        ${ending?.ending_idle_anchor ?? null}::timestamptz, ${ending?.ending_uses_left ?? null}::integer,
+        ${ending?.ending_label ?? null}::text
       FROM locked_kind CROSS JOIN locked_place CROSS JOIN quota_spend
       RETURNING *
+    ), ending_change AS (
+      INSERT INTO thing_ending_changes (thing_id, change, actor_id, rule, "grant")
+      SELECT new_thing.id, 'set', new_thing.maker_id, new_thing.ending_rule, new_thing.ending_grant
+      FROM new_thing WHERE new_thing.ending_rule IS NOT NULL
     ), withdrawn AS (
       UPDATE things AS ingredient
       SET withdrawn_at = clock_timestamp()

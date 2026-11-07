@@ -3,6 +3,7 @@
 // city, naming the owner as of the end; a resident's request records first and then
 // refuses or proceeds; a use counts its uses and moves the unused clock; a thing that
 // falls due during its own use never fails that use; and a guard refusal answers 409.
+// T8: owners set, renew and clear ends through make, thing_edit and thing_upgrade.
 import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
@@ -549,13 +550,389 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       assert.equal((feed.json.left_out_feed_rooms as Json).count, 1)
     })
 
+    // T8: the owner sets, renews and clears an end through make, thing_edit and thing_upgrade.
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString()
+    const edit = (secret: string, thingId: number, body: Json) => call(app, secret, 'PATCH', `/api/thing/${thingId}`, body)
+    const upgrade = (secret: string, thingId: number, body: Json = {}) => call(app, secret, 'POST', `/api/thing/${thingId}/upgrade`, body)
+    const endColumns = (thingId: number) => one<Json>(`
+      SELECT ending_rule, ending_grant, ending_set_by, ending_set_at, ending_deadline, ending_idle_seconds,
+        ending_idle_anchor, ending_uses_left, ending_uses_spent_at, ending_label, ending_copied_from,
+        ending_copied_at, ended_at, current_revision, name
+      FROM things WHERE id = $1
+    `, [thingId])
+    const endChanges = async (thingId: number) => (await db.query(`
+      SELECT change, actor_id, rule, "grant" FROM thing_ending_changes WHERE thing_id = $1 ORDER BY id
+    `, [thingId])).rows as Json[]
+    const editedEvents = (thingId: number) => count(
+      `SELECT count(*) AS n FROM events WHERE kind = 'thing_edited' AND detail->>'thing_id' = $1::text`, [thingId],
+    )
+    /** A kind whose revisions 1..n carry these ending policies; its current revision is the last. */
+    const seedPolicyKind = async (name: string, policies: readonly Json[]): Promise<number> => {
+      const kindId = Number((await one<{ id: number }>(
+        'INSERT INTO kinds (name, owner_id) VALUES ($1, $2) RETURNING id', [name, OWNER.id],
+      )).id)
+      for (const [index, policy] of policies.entries()) {
+        await db.query(
+          'INSERT INTO kind_revisions (kind_id, revision, ending_policy) VALUES ($1, $2, $3::jsonb)',
+          [kindId, index + 1, JSON.stringify(policy)],
+        )
+      }
+      await db.query('UPDATE kinds SET current_revision = $2 WHERE id = $1', [kindId, policies.length])
+      return kindId
+    }
+    const {
+      ENDING_COPY_FIXED_REFUSAL,
+      ENDING_MARKED_REFUSAL,
+      ENDING_NOT_ALLOWED_REFUSAL,
+      ENDING_REMNANT_CHANGE_REFUSAL,
+      ENDING_SHAPE_REFUSAL,
+      KINDLESS_ENDING_REFUSAL,
+    } = await import('../../src/thing-ending-refusals.ts')
+
+    await t.test('make sets an end on a kindless or a crafted thing inside its grant, and refuses outside it', async () => {
+      await reset()
+      const made = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a timed lamp', body: '',
+        ending: { any: [{ uses: 3 }, { after_setting_seconds: 3_600 }] },
+      })
+      assert.equal(made.status, 201, JSON.stringify(made.json))
+      const madeId = Number((made.json.thing as Json).id)
+      const row = await endColumns(madeId)
+      assert.deepEqual(row.ending_rule, { any: [{ after_setting_seconds: 3_600 }, { uses: 3 }] }, 'stored in canonical order')
+      assert.deepEqual(row.ending_grant, KINDLESS_GRANT)
+      assert.equal(row.ending_set_by, OWNER.id)
+      assert.equal(row.ending_uses_left, 3)
+      assert.equal((row.ending_deadline as Date).getTime() - (row.ending_set_at as Date).getTime(), 3_600_000)
+      const setAt = (await one<Json>(`
+        SELECT ending_set_at = date_trunc('milliseconds', created_at) AS same FROM things WHERE id = $1
+      `, [madeId])).same
+      assert.equal(setAt, true, 'set at the make transaction time, to the millisecond')
+      assert.deepEqual((await endChanges(madeId)).map(change => [change.change, change.actor_id]), [['set', OWNER.id]])
+
+      const plain = await call(app, OWNER.secret, 'POST', '/api/thing', { place_id: room, name: 'a plain lamp', body: '', ending: null })
+      assert.equal(plain.status, 201, JSON.stringify(plain.json))
+      assert.equal((await endColumns(Number((plain.json.thing as Json).id))).ending_rule, null)
+
+      const thingsBefore = await count('SELECT count(*) AS n FROM things')
+      const malformed = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a broken lamp', body: '', ending: { any: [{ uses: 0 }] },
+      })
+      assert.equal(malformed.status, 400, JSON.stringify(malformed.json))
+      assert.equal(malformed.json.error, ENDING_SHAPE_REFUSAL)
+      const past = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a late lamp', body: '', ending: { any: [{ at: inDays(-1) }] },
+      })
+      assert.equal(past.status, 400, JSON.stringify(past.json))
+
+      const candles = await seedPolicyKind('timed-candles', [{ allowed: ['uses', 'label_added'], labels: ['snuffed'], max_uses: 5 }])
+      const crafted = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a timed candle', body: '', kind_id: candles, ingredient_ids: [],
+        ending: { any: [{ uses: 4 }, { label_added: 'snuffed' }] },
+      })
+      assert.equal(crafted.status, 201, JSON.stringify(crafted.json))
+      const craftedId = Number((crafted.json.thing as Json).id)
+      const grant = (await endColumns(craftedId)).ending_grant as Json
+      assert.equal(grant.kind_id, candles)
+      assert.equal(grant.revision, 1)
+      assert.deepEqual(grant.allowed, ['uses', 'label_added'])
+      assert.deepEqual(grant.limits, { max_seconds: 31_622_400, max_uses: 5, labels: ['snuffed'] })
+      assert.equal((await endColumns(craftedId)).ending_label, 'snuffed')
+      assert.deepEqual((await endChanges(craftedId)).map(change => change.change), ['set'])
+
+      const notAllowed = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a dated candle', body: '', kind_id: candles, ingredient_ids: [],
+        ending: { any: [{ at: inDays(2) }] },
+      })
+      assert.equal(notAllowed.status, 403, JSON.stringify(notAllowed.json))
+      assert.equal(notAllowed.json.error, ENDING_NOT_ALLOWED_REFUSAL)
+      const overLimit = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a long candle', body: '', kind_id: candles, ingredient_ids: [],
+        ending: { any: [{ uses: 6 }] },
+      })
+      assert.equal(overLimit.status, 400, JSON.stringify(overLimit.json))
+      assert.equal(overLimit.json.error, ENDING_SHAPE_REFUSAL)
+      const otherLabel = await call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a labelled candle', body: '', kind_id: candles, ingredient_ids: [],
+        ending: { any: [{ label_added: 'melted' }] },
+      })
+      assert.equal(otherLabel.status, 400, JSON.stringify(otherLabel.json))
+      assert.equal(await count('SELECT count(*) AS n FROM things'), thingsBefore + 1, 'only the allowed craft made a thing')
+      const unknownField = await call(app, OWNER.secret, 'POST', '/api/thing', { place_id: room, name: 'x', body: '', endings: null })
+      assert.equal(unknownField.status, 400)
+      assert.match(String(unknownField.json.error), /optional kind_id, ingredient_ids, and optional ending$/u)
+    })
+
+    await t.test('thing_edit sets, renews and clears an end, and an exact repeat writes nothing', async () => {
+      await reset()
+      const thingId = await seedThing(room)
+      const date = inDays(3)
+      const set = await edit(OWNER.secret, thingId, { ending: { any: [{ at: date }] } })
+      assert.equal(set.status, 200, JSON.stringify(set.json))
+      const first = await endColumns(thingId)
+      assert.deepEqual(first.ending_rule, { any: [{ at: date }] })
+      assert.deepEqual(first.ending_grant, KINDLESS_GRANT)
+      assert.equal((first.ending_deadline as Date).toISOString(), date)
+      assert.equal(await editedEvents(thingId), 1)
+
+      const repeat = await edit(OWNER.secret, thingId, { ending: { any: [{ at: date }] } })
+      assert.equal(repeat.status, 200, JSON.stringify(repeat.json))
+      assert.equal(((await endColumns(thingId)).ending_set_at as Date).getTime(), (first.ending_set_at as Date).getTime())
+      assert.equal((await endChanges(thingId)).length, 1, 'an exact repeat writes nothing')
+      assert.equal(await editedEvents(thingId), 1)
+
+      const renewed = await edit(OWNER.secret, thingId, { ending: { any: [{ at: date }, { idle_seconds: 600 }] } })
+      assert.equal(renewed.status, 200, JSON.stringify(renewed.json))
+      const second = await endColumns(thingId)
+      assert.equal(second.ending_idle_seconds, 600)
+      assert.equal((second.ending_idle_anchor as Date).getTime(), (second.ending_set_at as Date).getTime())
+      assert.deepEqual(second.ending_grant, KINDLESS_GRANT)
+      // Resending an unused-for rule moves its clock, so it renews.
+      const again = await edit(OWNER.secret, thingId, { ending: { any: [{ at: date }, { idle_seconds: 600 }] } })
+      assert.equal(again.status, 200, JSON.stringify(again.json))
+
+      const cleared = await edit(OWNER.secret, thingId, { ending: null })
+      assert.equal(cleared.status, 200, JSON.stringify(cleared.json))
+      const third = await endColumns(thingId)
+      for (const column of ['ending_rule', 'ending_grant', 'ending_set_by', 'ending_set_at', 'ending_deadline',
+        'ending_idle_seconds', 'ending_idle_anchor', 'ending_uses_left', 'ending_label']) {
+        assert.equal(third[column], null, column)
+      }
+      const clearedAgain = await edit(OWNER.secret, thingId, { ending: null })
+      assert.equal(clearedAgain.status, 200, JSON.stringify(clearedAgain.json))
+      const changes = await endChanges(thingId)
+      assert.deepEqual(changes.map(change => [change.change, change.actor_id]), [
+        ['set', OWNER.id], ['renew', OWNER.id], ['renew', OWNER.id], ['clear', OWNER.id],
+      ])
+      assert.deepEqual(changes[3]!.rule, { any: [{ at: date }, { idle_seconds: 600 }] }, 'a clear records the rule it ended')
+      assert.equal(await editedEvents(thingId), 4)
+
+      const both = await edit(OWNER.secret, thingId, { name: 'a renamed lamp', ending: { any: [{ uses: 2 }] } })
+      assert.equal(both.status, 200, JSON.stringify(both.json))
+      assert.equal((await endColumns(thingId)).name, 'a renamed lamp')
+      assert.equal((await endColumns(thingId)).ending_uses_left, 2)
+      assert.equal(await editedEvents(thingId), 5, 'one request, one edit event')
+
+      const stranger = await edit(VISITOR.secret, thingId, { ending: null })
+      assert.equal(stranger.status, 403, JSON.stringify(stranger.json))
+      const malformed = await edit(OWNER.secret, thingId, { ending: { any: [{ uses: 2 }, { uses: 3 }] } })
+      assert.equal(malformed.status, 400, JSON.stringify(malformed.json))
+      assert.equal(malformed.json.error, ENDING_SHAPE_REFUSAL)
+      assert.equal((await endColumns(thingId)).ending_uses_left, 2)
+      const unknownField = await edit(OWNER.secret, thingId, { endings: null })
+      assert.equal(unknownField.status, 400)
+      assert.match(String(unknownField.json.error), /wake_enabled, state_clear, and ending are editable/u)
+    })
+
+    await t.test('a renewal fits its grant after an upgrade or a conversion; a new setting takes the current revision', async () => {
+      await reset()
+      const lamps = await seedPolicyKind('grant-lamps', [{ allowed: ['at', 'uses'], max_seconds: 172_800 }, { allowed: ['uses'] }])
+      const thingId = await seedThing(room, { kindId: lamps })
+      const set = await edit(OWNER.secret, thingId, { ending: { any: [{ at: inDays(1) }] } })
+      assert.equal(set.status, 200, JSON.stringify(set.json))
+      const grant = (await endColumns(thingId)).ending_grant as Json
+      assert.equal(grant.revision, 1)
+
+      const upgraded = await upgrade(OWNER.secret, thingId)
+      assert.equal(upgraded.status, 200, JSON.stringify(upgraded.json))
+      assert.equal((await endColumns(thingId)).current_revision, 2)
+      assert.deepEqual((await endColumns(thingId)).ending_grant, grant, 'an active end keeps its grant across the upgrade')
+      const renewed = await edit(OWNER.secret, thingId, { ending: { any: [{ at: inDays(1.5) }] } })
+      assert.equal(renewed.status, 200, JSON.stringify(renewed.json))
+      assert.deepEqual((await endColumns(thingId)).ending_grant, grant)
+      const tooFar = await edit(OWNER.secret, thingId, { ending: { any: [{ at: inDays(3) }] } })
+      assert.equal(tooFar.status, 400, JSON.stringify(tooFar.json))
+      assert.equal(tooFar.json.error, ENDING_SHAPE_REFUSAL)
+
+      assert.equal((await edit(OWNER.secret, thingId, { ending: null })).status, 200)
+      const refused = await edit(OWNER.secret, thingId, { ending: { any: [{ at: inDays(1) }] } })
+      assert.equal(refused.status, 403, JSON.stringify(refused.json))
+      assert.equal(refused.json.error, ENDING_NOT_ALLOWED_REFUSAL)
+      const fresh = await edit(OWNER.secret, thingId, { ending: { any: [{ uses: 3 }] } })
+      assert.equal(fresh.status, 200, JSON.stringify(fresh.json))
+      assert.equal(((await endColumns(thingId)).ending_grant as Json).revision, 2, 'a new setting takes a new grant')
+
+      // A conversion keeps the stored grant for renewals; clearing then reads the new kind.
+      const stones = await seedPolicyKind('plain-stones', [{ allowed: [] }])
+      const converted = await seedThing(room, { kindId: lamps })
+      assert.equal((await edit(OWNER.secret, converted, { ending: { any: [{ at: inDays(1) }] } })).status, 200)
+      await db.query('UPDATE things SET as_kind_id = $2, as_revision = 1 WHERE id = $1', [converted, stones])
+      const renewedConverted = await edit(OWNER.secret, converted, { ending: { any: [{ at: inDays(1.2) }] } })
+      assert.equal(renewedConverted.status, 200, JSON.stringify(renewedConverted.json))
+      assert.equal(((await endColumns(converted)).ending_grant as Json).kind_id, lamps)
+      assert.equal((await edit(OWNER.secret, converted, { ending: null })).status, 200)
+      const convertedRefused = await edit(OWNER.secret, converted, { ending: { any: [{ uses: 1 }] } })
+      assert.equal(convertedRefused.status, 403, JSON.stringify(convertedRefused.json))
+      assert.equal(convertedRefused.json.error, ENDING_NOT_ALLOWED_REFUSAL)
+    })
+
+    await t.test('upgrade sets an end in the same request, all or nothing; a newer revision changes no existing thing', async () => {
+      await reset()
+      const lamps = await seedPolicyKind('later-lamps', [{ allowed: [] }, { allowed: ['at'] }])
+      const thingId = await seedThing(room, { kindId: lamps })
+      const tooEarly = await edit(OWNER.secret, thingId, { ending: { any: [{ at: inDays(2) }] } })
+      assert.equal(tooEarly.status, 403, JSON.stringify(tooEarly.json))
+      assert.equal(tooEarly.json.error, ENDING_NOT_ALLOWED_REFUSAL)
+      const date = inDays(2)
+      const upgraded = await upgrade(OWNER.secret, thingId, { ending: { any: [{ at: date }] } })
+      assert.equal(upgraded.status, 200, JSON.stringify(upgraded.json))
+      const row = await endColumns(thingId)
+      assert.equal(row.current_revision, 2)
+      assert.deepEqual(row.ending_rule, { any: [{ at: date }] })
+      assert.equal((row.ending_grant as Json).revision, 2)
+      assert.deepEqual((await endChanges(thingId)).map(change => change.change), ['set'])
+
+      const never = await seedPolicyKind('never-lamps', [{ allowed: [] }, { allowed: [] }])
+      const stuck = await seedThing(room, { kindId: never })
+      const refused = await upgrade(OWNER.secret, stuck, { ending: { any: [{ at: date }] } })
+      assert.equal(refused.status, 403, JSON.stringify(refused.json))
+      assert.equal(refused.json.error, ENDING_NOT_ALLOWED_REFUSAL)
+      assert.equal((await endColumns(stuck)).current_revision, 1, 'the upgrade rolled back with the refused end')
+      const malformed = await upgrade(OWNER.secret, stuck, { ending: { any: [] } })
+      assert.equal(malformed.status, 400, JSON.stringify(malformed.json))
+      const unknownField = await upgrade(OWNER.secret, stuck, { endings: null })
+      assert.equal(unknownField.status, 400)
+      assert.match(String(unknownField.json.error), /send only optional drawing_variant_name and optional ending$/u)
+
+      // A converted thing upgrades to its new kind's newest revision and may take an end then.
+      const stone = await seedPolicyKind('ending-stones', [{ allowed: [] }, { allowed: ['uses'] }])
+      const convertedId = await seedThing(room, { kindId: never })
+      await db.query('UPDATE things SET as_kind_id = $2, as_revision = 1 WHERE id = $1', [convertedId, stone])
+      const convertedUpgrade = await upgrade(OWNER.secret, convertedId, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(convertedUpgrade.status, 200, JSON.stringify(convertedUpgrade.json))
+      const convertedRow = await one<Json>('SELECT as_revision, ending_uses_left, ending_grant FROM things WHERE id = $1', [convertedId])
+      assert.equal(convertedRow.as_revision, 2)
+      assert.equal(convertedRow.ending_uses_left, 2)
+      assert.equal((convertedRow.ending_grant as Json).kind_id, stone)
+
+      const quiet = await seedPolicyKind('quiet-lamps', [{ allowed: [] }])
+      const untouched = await seedThing(room, { kindId: quiet })
+      await db.query(`INSERT INTO kind_revisions (kind_id, revision, ending_policy) VALUES ($1, 2, '{"allowed": ["at", "uses"]}'::jsonb)`, [quiet])
+      await db.query('UPDATE kinds SET current_revision = 2 WHERE id = $1', [quiet])
+      const after = await endColumns(untouched)
+      assert.equal(after.ending_rule, null, 'a revision that allows endings gives no existing thing a clock')
+      assert.equal(after.current_revision, 1)
+      assert.equal((await endChanges(untouched)).length, 0)
+    })
+
+    await t.test('E14 after a kindless thing was given, and E4 on a marked thing on thing_edit and upgrade', async () => {
+      await reset()
+      const given = await seedThing(room)
+      const transferred = await call(app, OWNER.secret, 'POST', '/api/transfer', { type: 'thing', id: given, to_handle: VISITOR.handle })
+      assert.equal(transferred.status, 200, JSON.stringify(transferred.json))
+      const refused = await edit(VISITOR.secret, given, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(refused.status, 403, JSON.stringify(refused.json))
+      assert.equal(refused.json.error, KINDLESS_ENDING_REFUSAL)
+      assert.equal((await endColumns(given)).ending_rule, null)
+
+      const marked = await seedThing(room)
+      const mark = await call(app, OWNER.secret, 'POST', `/api/thing/${marked}/mark`, { action: 'mark' })
+      assert.equal(mark.status, 200, JSON.stringify(mark.json))
+      const markedEdit = await edit(OWNER.secret, marked, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(markedEdit.status, 409, JSON.stringify(markedEdit.json))
+      assert.equal(markedEdit.json.error, ENDING_MARKED_REFUSAL)
+      const lamps = await seedPolicyKind('marked-lamps', [{ allowed: [] }, { allowed: ['uses'] }])
+      const markedKind = await seedThing(room, { kindId: lamps })
+      assert.equal((await call(app, OWNER.secret, 'POST', `/api/thing/${markedKind}/mark`, { action: 'mark' })).status, 200)
+      const markedUpgrade = await upgrade(OWNER.secret, markedKind, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(markedUpgrade.status, 409, JSON.stringify(markedUpgrade.json))
+      assert.equal(markedUpgrade.json.error, ENDING_MARKED_REFUSAL)
+      assert.equal((await endColumns(markedKind)).current_revision, 1)
+      // Clearing a marked thing's (absent) end is a no-op, and unmarking lets the end be set.
+      assert.equal((await edit(OWNER.secret, marked, { ending: null })).status, 200)
+      assert.equal((await call(app, OWNER.secret, 'POST', `/api/thing/${marked}/mark`, { action: 'unmark' })).status, 200)
+      const unmarked = await edit(OWNER.secret, marked, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(unmarked.status, 200, JSON.stringify(unmarked.json))
+      assert.equal((await endColumns(marked)).ending_uses_left, 2)
+    })
+
+    await t.test('a copy may only clear its end: an older copy cannot gain one, and a cleared copy keeps its origin', async () => {
+      await reset()
+      const parent = await seedThing(room)
+      const copyOf = async () => Number((await one<{ id: number }>(`
+        INSERT INTO things (place_id, name, body, owner_id, maker_id, parent_thing_id, family_id, generation)
+        VALUES ($1, 'a copied lamp', '', $2, $2, $3, $3, 1) RETURNING id
+      `, [room, OWNER.id, parent])).id)
+      const older = await copyOf()
+      const gain = await edit(OWNER.secret, older, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(gain.status, 409, JSON.stringify(gain.json))
+      assert.equal(gain.json.error, ENDING_COPY_FIXED_REFUSAL)
+      assert.equal((await edit(OWNER.secret, older, { ending: null })).status, 200)
+      assert.equal((await endChanges(older)).length, 0)
+
+      const ended = await copyOf()
+      await setEnd(ended, { at: '2 days', copiedFrom: parent })
+      const later = await edit(OWNER.secret, ended, { ending: { any: [{ at: inDays(1) }] } })
+      assert.equal(later.status, 409, JSON.stringify(later.json))
+      // The same refusal a second time adds the city's "same refusal again" line.
+      assert.ok(String(later.json.error).startsWith(ENDING_COPY_FIXED_REFUSAL))
+      const cleared = await edit(OWNER.secret, ended, { ending: null })
+      assert.equal(cleared.status, 200, JSON.stringify(cleared.json))
+      const row = await endColumns(ended)
+      assert.equal(row.ending_rule, null)
+      assert.equal(row.ending_copied_from, parent, 'the copy origin stays after a clear')
+      assert.notEqual(row.ending_copied_at, null)
+      const setAgain = await edit(OWNER.secret, ended, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(setAgain.status, 409, JSON.stringify(setAgain.json))
+      assert.ok(String(setAgain.json.error).startsWith(ENDING_COPY_FIXED_REFUSAL))
+    })
+
+    await t.test('a due thing: thing_edit records it and refuses E5 for its end and E7 otherwise; upgrade refuses E7', async () => {
+      await reset()
+      const thingId = await seedThing(room)
+      await setEnd(thingId, { at: '-1 minute' })
+      const clear = await edit(OWNER.secret, thingId, { ending: null })
+      assert.equal(clear.status, 409, JSON.stringify(clear.json))
+      assert.equal(clear.json.error, ENDING_REMNANT_CHANGE_REFUSAL)
+      assert.notEqual((await endColumns(thingId)).ended_at, null, 'recorded first')
+      assert.equal((await endedEvents(thingId)).length, 1)
+      const renamed = await edit(OWNER.secret, thingId, { name: 'a renamed remnant' })
+      assert.equal(renamed.status, 409, JSON.stringify(renamed.json))
+      assert.equal(renamed.json.error, THING_REMNANT_REFUSAL)
+      const again = await edit(OWNER.secret, thingId, { ending: { any: [{ uses: 2 }] } })
+      assert.equal(again.status, 409)
+      assert.ok(String(again.json.error).startsWith(ENDING_REMNANT_CHANGE_REFUSAL))
+      assert.equal((await endColumns(thingId)).name, 'an ending lamp')
+      assert.equal((await endedEvents(thingId)).length, 1)
+
+      const lamps = await seedPolicyKind('due-lamps', [{ allowed: ['at'] }, { allowed: ['at'] }])
+      const kindThing = await seedThing(room, { kindId: lamps })
+      await setEnd(kindThing, { at: '-1 minute' })
+      const upgraded = await upgrade(OWNER.secret, kindThing)
+      assert.equal(upgraded.status, 409, JSON.stringify(upgraded.json))
+      assert.equal(upgraded.json.error, THING_REMNANT_REFUSAL)
+      assert.equal((await endColumns(kindThing)).current_revision, 1)
+      assert.notEqual((await endColumns(kindThing)).ended_at, null)
+    })
+
     await t.test('a guard refusal on a door answers 409 with E16, never 500', async () => {
       await reset()
       const thingId = await seedThing(room)
       await setEnd(thingId, { at: '-1 minute' })
-      const edited = await call(app, OWNER.secret, 'PATCH', `/api/thing/${thingId}`, { name: 'a renamed lamp' })
-      assert.equal(edited.status, 409, JSON.stringify(edited.json))
-      assert.equal(edited.json.error, THING_ENDING_CHANGED_REFUSAL)
+      // thing_edit records a due thing first and refuses E7 (T8), so the guard is forced here
+      // on an active thing to prove that the door still maps it to E16.
+      const active = await seedThing(room)
+      await db.query(`
+        CREATE FUNCTION test_force_thing_ending_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.name = 'a forced name' THEN
+            RAISE EXCEPTION 'forced' USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+          END IF;
+          RETURN NEW;
+        END
+        $$
+      `)
+      await db.query('CREATE TRIGGER test_force_thing_ending_guard BEFORE UPDATE ON things FOR EACH ROW EXECUTE FUNCTION test_force_thing_ending_guard()')
+      try {
+        const edited = await call(app, OWNER.secret, 'PATCH', `/api/thing/${active}`, { name: 'a forced name' })
+        assert.equal(edited.status, 409, JSON.stringify(edited.json))
+        assert.equal(edited.json.error, THING_ENDING_CHANGED_REFUSAL)
+      } finally {
+        await db.query('DROP TRIGGER test_force_thing_ending_guard ON things')
+        await db.query('DROP FUNCTION test_force_thing_ending_guard()')
+      }
+      const remnantEdit = await call(app, OWNER.secret, 'PATCH', `/api/thing/${thingId}`, { name: 'a renamed lamp' })
+      assert.equal(remnantEdit.status, 409, JSON.stringify(remnantEdit.json))
+      assert.equal(remnantEdit.json.error, THING_REMNANT_REFUSAL)
       const marked = await call(app, OWNER.secret, 'POST', `/api/thing/${thingId}/mark`, { action: 'mark' })
       assert.equal(marked.status, 409, JSON.stringify(marked.json))
       assert.equal(marked.json.error, THING_ENDING_CHANGED_REFUSAL)
