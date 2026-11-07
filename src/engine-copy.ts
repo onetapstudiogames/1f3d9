@@ -3,6 +3,11 @@
  * one more of its kind, owned by its current owner, one generation down, inside
  * the family, generation, and place limits. A copy that a limit stops is
  * skipped and recorded, never a failed action.
+ *
+ * A copy is born with its parent's remaining end, fixed at copy time (decision #174):
+ * copyRuleFrom writes it, with the parent's grant and one thing_ending_changes 'copy'
+ * row. A parent whose end has come is skipped with its reason, except by its own end
+ * try (the end_try:<id> writer), whose copy starts with no end.
  */
 import { EngineError, type TaggedSql } from './engine.ts'
 import { drawCopyPlaceRoll } from './engine-chance.ts'
@@ -12,6 +17,8 @@ import { MAX_EFFECT_GENERATIONS, type CopyEffect } from './physics.ts'
 import type { EffectExecutionContext, GrowthCap, SkippedEffect } from './engine-effects.ts'
 import { requireReservedEffectPlace } from './engine-place-plan.ts'
 import { COLLISION_CONFLICT_MESSAGE } from './core.ts'
+import { THING_ENDED_SKIP_REASON } from './thing-ending-refusals.ts'
+import { copyRuleFrom, type CopyEndingColumns, type EndingCopyParent } from './thing-endings.ts'
 
 /** One advisory lock per destination, so two copies landing at once never both pass its cap. */
 const COPY_PLACE_LOCK_CLASS = 0x1f3d9006
@@ -35,6 +42,12 @@ interface Parent {
   readonly familyId: number
   readonly copiesMade: number
   readonly state: Readonly<Record<string, unknown>>
+  /** Whether the parent's end has come (recorded, or due now), judged at this step. */
+  readonly endReached: boolean
+  /** Whether this transaction is the parent's own end try (the end_try:<id> writer). */
+  readonly ownEndTry: boolean
+  /** The end its copy is born with, or null for none. */
+  readonly copyEnding: CopyEndingColumns | null
 }
 
 interface CapHit {
@@ -63,7 +76,14 @@ async function lockParent(thingId: number, db: TaggedSql): Promise<Parent> {
       thing.open_to_use, thing.shared_use_may_destroy, thing.open_to_reach,
       thing.open_to_convert, thing.wake_enabled, thing.generation,
       coalesce(thing.family_id, thing.id) AS family_id, thing.copies_made, thing.state,
-      thing.withdrawn_at
+      thing.withdrawn_at,
+      thing.ending_rule, thing.ending_grant, thing.ending_set_at, thing.ending_deadline,
+      thing.ending_idle_seconds, thing.ending_idle_anchor, thing.ending_uses_left,
+      thing.ending_uses_spent_at, thing.ending_label, thing.ending_copied_from, thing.ended_at,
+      (thing.ended_at IS NOT NULL
+        OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
+      thing_ending_writer(thing.id) = 'end_try' AS own_end_try,
+      transaction_timestamp() AS copied_at
     FROM things thing WHERE thing.id = ${thingId}
     FOR NO KEY UPDATE OF thing
   ` as Array<Record<string, unknown>>
@@ -77,6 +97,7 @@ async function lockParent(thingId: number, db: TaggedSql): Promise<Parent> {
   if (Number(row.family_id) !== thingId) {
     await db`SELECT 1 FROM things WHERE id = ${Number(row.family_id)} FOR KEY SHARE`
   }
+  const endReached = row.end_reached === true
   return Object.freeze({
     id: thingId,
     ownerId: Number(row.owner_id),
@@ -96,6 +117,59 @@ async function lockParent(thingId: number, db: TaggedSql): Promise<Parent> {
     familyId: Number(row.family_id),
     copiesMade: Number(row.copies_made),
     state: record(row.state),
+    endReached,
+    ownEndTry: row.own_end_try === true,
+    copyEnding: endReached ? null : copyEndingOf(thingId, Number(row.owner_id), row),
+  })
+}
+
+function nullableNumber(value: unknown): number | null {
+  return value == null ? null : Number(value)
+}
+
+function storedTime(value: unknown): EndingCopyParent['ending_set_at'] {
+  return value instanceof Date || typeof value === 'string' ? value : null
+}
+
+/**
+ * The parent's remaining end for its copy, set by the copy's owner (the parent's owner)
+ * at the transaction time, cut to milliseconds as every set time is. A row without
+ * ending columns (an older reader or a fake) gives no end. The caller has already found
+ * that the parent's end has not come, so the label rows copyRuleFrom would read cannot
+ * change its answer and are not loaded.
+ */
+function copyEndingOf(thingId: number, ownerId: number, row: Record<string, unknown>): CopyEndingColumns | null {
+  if (row.ending_rule == null) return null
+  const copiedAt = row.copied_at instanceof Date ? row.copied_at : new Date(String(row.copied_at))
+  if (Number.isNaN(copiedAt.getTime())) {
+    throw new EngineError(500, 'database returned an invalid result; retry once, then contact the city operator')
+  }
+  return copyRuleFrom({
+    id: thingId,
+    ending_rule: row.ending_rule,
+    ending_grant: row.ending_grant,
+    ending_set_at: storedTime(row.ending_set_at),
+    ending_deadline: storedTime(row.ending_deadline),
+    ending_idle_seconds: nullableNumber(row.ending_idle_seconds),
+    ending_idle_anchor: storedTime(row.ending_idle_anchor),
+    ending_uses_left: nullableNumber(row.ending_uses_left),
+    ending_uses_spent_at: storedTime(row.ending_uses_spent_at),
+    ending_label: row.ending_label == null ? null : String(row.ending_label),
+    ending_copied_from: nullableNumber(row.ending_copied_from),
+    first_label_at: null,
+    ended_at: storedTime(row.ended_at),
+  }, copiedAt, ownerId)
+}
+
+/** The copy step on a parent whose end has come, outside its own end try: skipped, never written. */
+function endedParentSkip(context: EffectExecutionContext): SkippedEffect {
+  return Object.freeze({
+    effect: 'copy',
+    target: 'source',
+    sourceTrait: context.sourceTraitName ?? null,
+    sourceTraitId: context.sourceTraitId,
+    sourcePlaceId: context.originPlaceId ?? null,
+    reason: THING_ENDED_SKIP_REASON,
   })
 }
 
@@ -265,21 +339,40 @@ async function insertCopy(
   const residentId = context.fromWake === true
     ? (context.actorSymbolId ?? null)
     : (context.actorSymbolId ?? context.actorId)
+  // A copy made by its parent's own end try starts with no end.
+  const end = parent.ownEndTry ? null : parent.copyEnding
   const rows = await db`
     WITH new_thing AS (
       INSERT INTO things (
         place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy,
         open_to_reach, open_to_convert, wake_enabled, kind_id, birth_revision, current_revision,
-        drawing_variant_name, generation, parent_thing_id, family_id, state, state_version
+        drawing_variant_name, generation, parent_thing_id, family_id, state, state_version,
+        ending_rule, ending_grant, ending_set_by, ending_set_at, ending_deadline,
+        ending_idle_seconds, ending_idle_anchor, ending_uses_left, ending_label,
+        ending_copied_from, ending_copied_at
       ) VALUES (
         ${destinationId}, ${parent.name}, ${body}, ${parent.ownerId}, ${parent.ownerId},
         ${parent.openToUse}, ${parent.sharedUseMayDestroy}, ${parent.openToReach},
         ${parent.openToConvert}, ${parent.wakeEnabled}, ${parent.kindId}, ${parent.revision},
         ${parent.revision}, ${parent.converted ? null : parent.variantName},
         ${parent.generation + 1}, ${parent.id}, ${parent.familyId},
-        ${JSON.stringify(state)}::jsonb, ${inheritsState ? 1 : 0}
+        ${JSON.stringify(state)}::jsonb, ${inheritsState ? 1 : 0},
+        ${end ? JSON.stringify(end.ending_rule) : null}::jsonb,
+        ${end ? JSON.stringify(end.ending_grant) : null}::jsonb,
+        ${end?.ending_set_by ?? null}::integer, ${end?.ending_set_at ?? null}::timestamptz,
+        ${end?.ending_deadline ?? null}::timestamptz, ${end?.ending_idle_seconds ?? null}::integer,
+        ${end?.ending_idle_anchor ?? null}::timestamptz, ${end?.ending_uses_left ?? null}::integer,
+        ${end?.ending_label ?? null}::text, ${end?.ending_copied_from ?? null}::integer,
+        ${end?.ending_copied_at ?? null}::timestamptz
       )
-      RETURNING id, place_id, name, kind_id, birth_revision, generation, family_id
+      RETURNING id, place_id, name, kind_id, birth_revision, generation, family_id, owner_id,
+        ending_rule, ending_grant, ending_copied_at
+    ), ending_change AS (
+      INSERT INTO thing_ending_changes (thing_id, change, actor_id, rule, "grant", result, action_id, settle_id)
+      SELECT new_thing.id, 'copy', new_thing.owner_id, new_thing.ending_rule, new_thing.ending_grant,
+        jsonb_build_object('source_thing_id', ${parent.id}::integer, 'copied_at', new_thing.ending_copied_at),
+        ${context.actionId}::bigint, ${context.settleId ?? null}::bigint
+      FROM new_thing WHERE new_thing.ending_rule IS NOT NULL
     ), parent_count AS (
       UPDATE things SET copies_made = copies_made + 1 WHERE id = ${parent.id} RETURNING id
     ), counted AS (
@@ -341,6 +434,9 @@ export async function makeCopy(
   if (context.reservedResidentIds !== undefined && !context.reservedResidentIds.includes(parent.ownerId)) {
     throw new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   }
+  // Judged at this step, from the database: a parent whose end came, even earlier in this
+  // transaction, is left as it is unless this is its own end try.
+  if (parent.endReached && !parent.ownEndTry) return Object.freeze({ skipped: endedParentSkip(context) })
   const hit = await firstCapHit(effect, parent, context, db)
   if (typeof hit !== 'number') {
     await markFamily(parent, hit, context, db)
