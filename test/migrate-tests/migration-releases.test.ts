@@ -944,8 +944,23 @@ export function registerMigrationReleaseTests(): void {
     assert.equal([...migration.matchAll(/DROP CONSTRAINT/gu)].length, 2)
     assert.equal([...migration.matchAll(/^UPDATE /gmu)].length, 1, 'the only row write is the inventor backfill')
     assert.match(migration, /^UPDATE kinds AS kind SET invented_by = proof\.inventor_id/mu)
-    // No guard, export view or event list moves in this step.
-    assert.doesNotMatch(migration, /things_aa_ending_owner_change|things_zz_ending_freeze|public_records_v4|thing_ended/u)
+    // The guards: the owner-change guard, the freeze, and the four insert guards, all
+    // reading the transaction-local writer setting and refusing as thing_ending_guard.
+    for (const trigger of [
+      'things_aa_ending_owner_change BEFORE UPDATE OF owner_id ON things',
+      'things_zz_ending_freeze BEFORE UPDATE ON things',
+      'things_ending_parent_guard BEFORE INSERT ON things',
+      'active_labels_ending_guard BEFORE INSERT ON active_labels',
+      'thing_later_holder_marks_ending_guard BEFORE INSERT ON thing_later_holder_marks',
+      'transfer_offers_ending_guard BEFORE INSERT ON transfer_offers',
+    ]) assert.ok(migration.includes(`CREATE TRIGGER ${trigger}`), trigger)
+    assert.match(migration, /current_setting\('city\.ending_writer', true\)/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due_at_row\(thing things\) RETURNS timestamptz\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /SELECT thing_end_due_at_row\(thing\)\s+FROM things AS thing\s+WHERE thing\.id = \$1/u)
+    assert.match(migration, /thing endings guards are out of order among the things triggers/u)
+    assert.doesNotMatch(migration, /clock_timestamp\(\)/u, 'every guard judges at the transaction time')
+    // No export view or event list moves in this step.
+    assert.doesNotMatch(migration, /public_records_v4|thing_ended/u)
 
     const environments = {
       preview: {

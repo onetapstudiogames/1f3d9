@@ -335,6 +335,8 @@ export function registerReleaseOrderTests(): void {
     assert.match(section, /PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-/u)
     assert.match(section, /kinds_invented_by_fixed[\s\S]*Never chain the migration with the merge\./u)
     assert.match(section, /Never chain the migration with the merge\.[\s\S]*run the backfill statement once\s+more/u)
+    assert.match(section, /`things_aa_ending_owner_change`[\s\S]*`things_zz_ending_freeze`[\s\S]*`city\.ending_writer`/u)
+    assert.match(section, /each guard present, enabled and in order/u)
   })
 
   test('release preparation applies the waiting transfers migration to Preview and Production before the merge', () => {

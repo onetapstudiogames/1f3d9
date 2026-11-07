@@ -1,4 +1,4 @@
-// Thing endings, the stores only, against real PostgreSQL 17: the migration applied twice
+// Thing endings, the stores, against real PostgreSQL 17: the migration applied twice
 // to the city as it is before C1, the inventor backfill, and when a thing's end falls due.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -419,13 +419,15 @@ test('thing endings stores against real PostgreSQL 17', { timeout: 900_000 }, as
       await setEnd(afterSetting, `ending_set_at = now() - interval '10 minutes', ending_deadline = now() - interval '5 minutes'`)
       assert.equal(await dueNow(afterSetting), true)
 
+      // Nothing may be written to a thing once its end has come (the guards), so each case
+      // writes while the thing is not yet due and reads the due time after.
       const idle = await newThing()
-      await setEnd(idle, `ending_set_at = '2026-11-01T00:00:00Z', ending_idle_seconds = 3600, ending_idle_anchor = '2026-11-01T00:00:00Z'`)
-      assert.equal(await dueAt(idle), '2026-11-01T01:00:00.000Z')
-      assert.equal(await dueNow(idle), true)
-      await db.query(`UPDATE things SET ending_idle_anchor = '2031-01-01T00:00:00Z' WHERE id = $1`, [idle])
-      assert.equal(await dueAt(idle), '2031-01-01T01:00:00.000Z', 'a use moves the unused deadline')
+      await setEnd(idle, `ending_set_at = '2026-11-01T00:00:00Z', ending_idle_seconds = 3600, ending_idle_anchor = '2031-01-01T00:00:00Z'`)
+      assert.equal(await dueAt(idle), '2031-01-01T01:00:00.000Z')
       assert.equal(await dueNow(idle), false)
+      await db.query(`UPDATE things SET ending_idle_anchor = '2026-11-01T00:00:00Z' WHERE id = $1`, [idle])
+      assert.equal(await dueAt(idle), '2026-11-01T01:00:00.000Z', 'the anchor moves the unused deadline')
+      assert.equal(await dueNow(idle), true)
 
       const spent = await newThing()
       await setEnd(spent, `ending_set_at = '2026-11-01T00:00:00Z', ending_uses_left = 3`)
@@ -447,13 +449,20 @@ test('thing endings stores against real PostgreSQL 17', { timeout: 900_000 }, as
       `, [labelled])
       assert.equal(await dueAt(labelled), '2026-11-01T12:00:00.000Z', 'an expired label still counts')
       assert.equal(await dueNow(labelled), true)
-      await db.query(`
-        INSERT INTO active_labels (target_type, target_id, label, actor_id, created_at)
-        VALUES ('thing', $1, 'lit', 2, '2026-11-01T09:00:00Z')
-      `, [labelled])
-      assert.equal(await dueAt(labelled), '2026-11-01T09:00:00.000Z', 'the first counted label sets the time')
       await db.query(`INSERT INTO active_labels (target_type, target_id, label, actor_id) VALUES ('place', $1, 'lit', 2)`, [labelled])
-      assert.equal(await dueAt(labelled), '2026-11-01T09:00:00.000Z', 'a label on something else never counts')
+      assert.equal(await dueAt(labelled), '2026-11-01T12:00:00.000Z', 'a label on something else never counts')
+
+      // Labels written before the end was set, then the end set in one write: the first
+      // label created after set_at counts.
+      const earliest = await newThing()
+      await db.query(`
+        INSERT INTO active_labels (target_type, target_id, label, actor_id, created_at, expires_at)
+        VALUES ('thing', $1, 'lit', 2, '2026-10-31T00:00:00Z', NULL),
+          ('thing', $1, 'lit', 2, '2026-11-01T12:00:00Z', '2026-11-01T12:05:00Z'),
+          ('thing', $1, 'lit', 2, '2026-11-01T09:00:00Z', NULL)
+      `, [earliest])
+      await setEnd(earliest, `ending_set_at = '2026-11-01T00:00:00Z', ending_label = 'lit'`)
+      assert.equal(await dueAt(earliest), '2026-11-01T09:00:00.000Z', 'the first counted label sets the time')
 
       // A label written in the same transaction makes the end due at once.
       const sameTransaction = await newThing()
@@ -472,17 +481,19 @@ test('thing endings stores against real PostgreSQL 17', { timeout: 900_000 }, as
       }
       assert.equal(await dueNow(sameTransaction), false)
 
+      // Times relative to now, so no write ever lands on a thing that is already due.
+      const base = Math.floor(Date.now() / 1000) * 1000
+      const later = (days: number): string => new Date(base + days * 86_400_000).toISOString()
       const several = await newThing()
-      await setEnd(several, `ending_set_at = '2026-11-01T00:00:00Z', ending_deadline = '2026-12-01T00:00:00Z',
-        ending_idle_seconds = 86400, ending_idle_anchor = '2026-11-10T00:00:00Z', ending_uses_left = 1,
-        ending_label = 'lit'`)
+      await setEnd(several, `ending_set_at = $2, ending_deadline = $3, ending_idle_seconds = 86400,
+        ending_idle_anchor = $4, ending_uses_left = 1, ending_label = 'lit'`, [later(-1), later(30), later(4)])
       await db.query(`
         INSERT INTO active_labels (target_type, target_id, label, actor_id, created_at)
-        VALUES ('thing', $1, 'lit', 2, '2026-11-20T00:00:00Z')
-      `, [several])
-      assert.equal(await dueAt(several), '2026-11-11T00:00:00.000Z', 'the least of a date, an unused deadline and a label')
-      await db.query(`UPDATE things SET ending_uses_left = 0, ending_uses_spent_at = '2026-11-05T00:00:00Z' WHERE id = $1`, [several])
-      assert.equal(await dueAt(several), '2026-11-05T00:00:00.000Z', 'spent uses come first')
+        VALUES ('thing', $1, 'lit', 2, $2)
+      `, [several, later(14)])
+      assert.equal(await dueAt(several), later(5), 'the least of a date, an unused deadline and a label')
+      await db.query(`UPDATE things SET ending_uses_left = 0, ending_uses_spent_at = $2 WHERE id = $1`, [several, later(2)])
+      assert.equal(await dueAt(several), later(2), 'spent uses come first')
     })
 
     await t.test('a fresh city from db/schema.sql has the same shape, and the migration still repeats on it', async () => {

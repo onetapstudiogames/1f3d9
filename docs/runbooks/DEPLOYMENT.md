@@ -1473,7 +1473,8 @@ anchor, uses left and when they ran out, the watched label, the copy origin, `en
 `{"allowed": []}` and the check `kind_revisions_ending_policy_valid`, which calls the
 IMMUTABLE function `valid_ending_policy(jsonb)`. It creates the append-only tables
 `thing_ending_changes` and `agreement_thing_links`, the STABLE functions
-`thing_end_due_at(integer)` and `thing_end_due(integer, timestamptz)`, the partial indexes
+`thing_end_due_at(integer)` and `thing_end_due(integer, timestamptz)` (both over the one
+rule `thing_end_due_at_row(things)`), the partial indexes
 `things_ending_open` and `things_end_try_pending`, and the named checks
 `things_ending_rule_shape`, `things_ending_uses_range`, `things_ending_idle_range`,
 `things_ended_consistent` and `things_end_program_state_known`. It replaces the unnamed
@@ -1486,8 +1487,27 @@ The one row write is the inventor backfill: a kind gets `invented_by` only from 
 `kind_invented` event naming it whose actor handle belonged to a resident who had joined
 by then (`kind_provable_inventor(integer)`); zero or several events leave it empty. The
 trigger `kinds_invented_by_fixed` refuses any later change and lets an empty inventor be
-filled only with that one provable actor. A guard block comes first and a closing shape
-block raises if a column, check, key, index, function or trigger is missing or not validated.
+filled only with that one provable actor.
+It also installs the guards that keep a thing whose end has come (due, or recorded as
+ended) as it was. `things_aa_ending_owner_change` lets a thing with an end set and not yet
+recorded change hands only by closing a sale already open. `things_zz_ending_freeze`,
+which sorts after every other `BEFORE UPDATE` trigger on `things`, refuses any change to a
+due or ended thing except carrying, setting down, giving, and clearing an open sale, and
+lets only the recorder write an end. `things_ending_parent_guard`,
+`active_labels_ending_guard`, `thing_later_holder_marks_ending_guard` and
+`transfer_offers_ending_guard` refuse a new thing born ended, a copy, a label, a mark or a
+new offer on such a thing. Three writers pass more, each for one thing and only inside its
+own transaction, through the transaction-local setting `city.ending_writer`:
+`record:<id>`, `end_try:<id>` and `withdraw:<id>`. Every guard judges at the transaction
+time and refuses with the constraint name `thing_ending_guard`; no existing row is
+changed by them. Creating them also locks `active_labels`, `thing_later_holder_marks`
+and `transfer_offers` briefly while `things` is held, so an open payment transaction
+waiting on `things` can deadlock with the run; PostgreSQL aborts one side or the 5s lock
+timeout fires, the payment side rolls back whole and its recovery replays it, and the
+migration takes the path in "When a migration times out".
+A guard block comes first and a closing shape
+block raises if a column, check, key, index, function or trigger is missing or not validated,
+or if a guard is disabled or out of order.
 A rerun keeps an existing check or index as it is, so if a fix changes one after a Preview
 run, reset that Preview branch before applying the fixed migration.
 
@@ -1495,8 +1515,11 @@ Apply `npm run migrate:preview:thing-endings` to the PR's Preview database branc
 the shared Preview branch the Vercel preview reads, then apply it a second time to each to
 prove it is safe to repeat. After each pass verify zero things with any ending column set,
 every revision at `{"allowed": []}`, both new tables empty, each named check present and
-validated with `end` and `wake_end` in the widened ones, both indexes, the three functions'
-volatility, the kinds with and without an inventor (list the empty ones for the owner), and
+validated with `end` and `wake_end` in the widened ones, both indexes, the functions'
+volatility, each guard present, enabled and in order (`things_aa_ending_owner_change`
+before the two owner-change triggers, `things_zz_ending_freeze` last among the
+`BEFORE UPDATE` triggers on `things`), the kinds with and without an inventor (list the
+empty ones for the owner), and
 unchanged row counts and newest ids of `things`, `kinds`, `kind_revisions`, `events`,
 `active_labels`, `wake_tries` and `thing_state_changes`. Take the required Production
 snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-20261106`, apply

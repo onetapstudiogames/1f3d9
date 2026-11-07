@@ -3,26 +3,38 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
--- Thing endings, the stores only. An owner may give a thing an end its kind permits; the
--- first condition met ends it, and it stays at its id as a remnant. This adds the empty
--- columns on things, the inventor on kinds, the permission on kind revisions, two
--- append-only tables, the due functions, two partial indexes, and the end reason in the
--- wake vocabularies. Every new column is empty or at its default, so no thing, revision,
--- event or label row changes; only kinds gain an inventor, and only from exactly one
--- provable kind_invented event. The whole migration holds the things lock until it commits;
--- NOT VALID then VALIDATE does not shorten it in one transaction. It is safe to run again,
--- and running it again fills the inventor of kinds invented since the last run.
+-- Thing endings: the stores and the guards. An owner may give a thing an end its kind
+-- permits; the first condition met ends it, and it stays at its id as a remnant. This adds
+-- the empty columns on things, the inventor on kinds, the permission on kind revisions, two
+-- append-only tables, the due functions, two partial indexes, the end reason in the wake
+-- vocabularies, and the guards: things_aa_ending_owner_change, things_zz_ending_freeze and
+-- four insert guards, which read the transaction-local writer setting city.ending_writer.
+-- Every new column is empty or at its default, so no thing, revision, event or label row
+-- changes; only kinds gain an inventor, and only from exactly one provable kind_invented
+-- event. The whole migration holds the things lock until it commits; NOT VALID then
+-- VALIDATE does not shorten it in one transaction. Creating the guards also locks
+-- active_labels, thing_later_holder_marks and transfer_offers briefly while things is
+-- held. It is safe to run again, and running it again fills the inventor of kinds
+-- invented since the last run.
 DO $thing_endings_guard$
 BEGIN
   IF to_regclass('public.things') IS NULL OR to_regclass('public.kinds') IS NULL
     OR to_regclass('public.kind_revisions') IS NULL OR to_regclass('public.residents') IS NULL
     OR to_regclass('public.events') IS NULL OR to_regclass('public.active_labels') IS NULL
     OR to_regclass('public.agreements') IS NULL OR to_regclass('public.wake_tries') IS NULL
-    OR to_regclass('public.thing_state_changes') IS NULL THEN
-    RAISE EXCEPTION 'thing endings migration needs the things, kinds, kind_revisions, residents, events, active_labels, agreements, wake_tries and thing_state_changes tables';
+    OR to_regclass('public.thing_state_changes') IS NULL
+    OR to_regclass('public.transfer_offers') IS NULL
+    OR to_regclass('public.thing_later_holder_marks') IS NULL THEN
+    RAISE EXCEPTION 'thing endings migration needs the things, kinds, kind_revisions, residents, events, active_labels, agreements, wake_tries, thing_state_changes, transfer_offers and thing_later_holder_marks tables';
   END IF;
   IF to_regprocedure('public.deny_history_mutation()') IS NULL THEN
     RAISE EXCEPTION 'thing endings migration needs the deny_history_mutation function';
+  END IF;
+  -- The owner-change guard must fire before the two triggers that turn a thing's switches
+  -- off as it changes hands, and the freeze guard after them, so both must exist.
+  IF (SELECT count(*) FROM pg_trigger WHERE tgrelid = 'things'::regclass AND NOT tgisinternal
+      AND tgname IN ('things_close_consent_on_owner_change', 'things_sleep_on_owner_change')) <> 2 THEN
+    RAISE EXCEPTION 'thing endings migration needs the things_close_consent_on_owner_change and things_sleep_on_owner_change triggers';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'thing_state_changes'::regclass
       AND conname = 'thing_state_changes_trigger_known' AND contype = 'c') THEN
@@ -317,9 +329,11 @@ CREATE TRIGGER agreement_thing_links_append_only BEFORE UPDATE OR DELETE ON agre
 -- When a thing's end falls due: the soonest of its fixed deadline, its unused deadline,
 -- the moment its uses ran out, and the first label row with its watched label created
 -- after the end was set. A label row counts even if it has since expired or been ended,
--- so a thing never flips back from due. Callers pass transaction_timestamp().
-CREATE OR REPLACE FUNCTION thing_end_due_at(thing_id integer) RETURNS timestamptz
-LANGUAGE sql STABLE AS $thing_end_due_at$
+-- so a thing never flips back from due. Callers pass transaction_timestamp(). The rule is
+-- written once, over a row, so the guards judge a row as it was before a write by the
+-- same rule the id form reads.
+CREATE OR REPLACE FUNCTION thing_end_due_at_row(thing things) RETURNS timestamptz
+LANGUAGE sql STABLE AS $thing_end_due_at_row$
   SELECT CASE WHEN thing.ending_rule IS NULL THEN NULL ELSE LEAST(
     thing.ending_deadline,
     thing.ending_idle_anchor + make_interval(secs => thing.ending_idle_seconds),
@@ -333,6 +347,11 @@ LANGUAGE sql STABLE AS $thing_end_due_at$
         AND label.created_at > thing.ending_set_at
     )
   ) END
+$thing_end_due_at_row$;
+
+CREATE OR REPLACE FUNCTION thing_end_due_at(thing_id integer) RETURNS timestamptz
+LANGUAGE sql STABLE AS $thing_end_due_at$
+  SELECT thing_end_due_at_row(thing)
   FROM things AS thing
   WHERE thing.id = $1
 $thing_end_due_at$;
@@ -376,6 +395,209 @@ END
 $thing_endings_wake_reason$;
 ALTER TABLE wake_tries VALIDATE CONSTRAINT wake_tries_reason_known;
 ALTER TABLE thing_state_changes VALIDATE CONSTRAINT thing_state_changes_trigger_known;
+
+-- The guards. Every one judges at transaction_timestamp() and refuses with SQLSTATE 23514
+-- and the constraint name thing_ending_guard. A thing whose end has come (due, or recorded
+-- as ended) keeps everything it had, except what its owner may still do: carry it, set it
+-- down, give it, or withdraw it. Three writers may pass more, each only for the one thing
+-- it names in the transaction-local setting city.ending_writer: record:<id> writes the
+-- end, end_try:<id> runs the end program once, withdraw:<id> withdraws a remnant.
+
+-- Whether the writer setting names this thing, and as which writer; '' for nothing.
+CREATE OR REPLACE FUNCTION thing_ending_writer(target_thing_id integer) RETURNS text
+LANGUAGE sql STABLE AS $thing_ending_writer$
+  SELECT CASE coalesce(current_setting('city.ending_writer', true), '')
+    WHEN 'record:' || $1 THEN 'record'
+    WHEN 'end_try:' || $1 THEN 'end_try'
+    WHEN 'withdraw:' || $1 THEN 'withdraw'
+    ELSE ''
+  END
+$thing_ending_writer$;
+
+-- Whether a thing's end has come: recorded, or due now. False for no such thing.
+CREATE OR REPLACE FUNCTION thing_end_reached(target_thing_id integer) RETURNS boolean
+LANGUAGE sql STABLE AS $thing_end_reached$
+  SELECT coalesce(bool_or(
+    thing.ended_at IS NOT NULL
+    OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)
+  ), false)
+  FROM things AS thing
+  WHERE thing.id = $1
+$thing_end_reached$;
+
+-- While an end is set and not yet recorded, a thing changes hands only by closing a sale
+-- that was already open, the one write that clears active_offer_id with the owner. A
+-- recorded remnant may change hands.
+CREATE OR REPLACE FUNCTION guard_thing_ending_owner_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.owner_id IS NOT DISTINCT FROM OLD.owner_id THEN
+    RETURN NEW;
+  END IF;
+  IF NOT ((OLD.ending_rule IS NOT NULL AND OLD.ended_at IS NULL)
+      OR (NEW.ending_rule IS NOT NULL AND NEW.ended_at IS NULL)) THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.active_offer_id IS NOT NULL AND NEW.active_offer_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'thing % has an end set, so it changes hands only by closing a sale that was already open', OLD.id
+    USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+END
+$$;
+DROP TRIGGER IF EXISTS things_aa_ending_owner_change ON things;
+CREATE TRIGGER things_aa_ending_owner_change BEFORE UPDATE OF owner_id ON things
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_owner_change();
+
+-- The freeze. It sorts after every other BEFORE UPDATE trigger on things, so it sees the
+-- switches the owner-change triggers turned off. Values are compared, never the SET list:
+-- every column not allowed below must keep its value.
+CREATE OR REPLACE FUNCTION guard_thing_ending_freeze() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  writer TEXT;
+  due_at TIMESTAMPTZ;
+  allowed TEXT[];
+BEGIN
+  -- A thing with no end that is not being ended in this write costs nothing more.
+  IF OLD.ending_rule IS NULL AND (NEW.ending_rule IS NULL OR NEW.ended_at IS NULL) THEN
+    RETURN NEW;
+  END IF;
+  writer := thing_ending_writer(OLD.id);
+  due_at := thing_end_due_at_row(OLD);
+
+  -- Only the recorder writes an end, once, at the moment it fell due.
+  IF NEW.ended_at IS DISTINCT FROM OLD.ended_at
+    OR NEW.ended_cause IS DISTINCT FROM OLD.ended_cause
+    OR NEW.ended_owner_id IS DISTINCT FROM OLD.ended_owner_id THEN
+    IF writer <> 'record' OR OLD.ended_at IS NOT NULL OR due_at IS NULL
+      OR due_at > transaction_timestamp() OR NEW.ended_at IS DISTINCT FROM due_at THEN
+      RAISE EXCEPTION 'thing % has no end to record now; only the recorder writes an end, once, at the moment it fell due', OLD.id
+        USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+    END IF;
+  END IF;
+
+  IF OLD.ended_at IS NULL AND (due_at IS NULL OR due_at > transaction_timestamp()) THEN
+    RETURN NEW;
+  END IF;
+
+  -- The end has come. The owner may still carry it, set it down, give it, and close or
+  -- cancel a sale already open.
+  allowed := ARRAY['place_id', 'held_by', 'owner_id', 'active_offer_id',
+    'wake_enabled', 'open_to_reach', 'open_to_convert'];
+  IF writer = 'record' AND OLD.ended_at IS NULL THEN
+    allowed := allowed || ARRAY['ended_at', 'ended_cause', 'ended_owner_id', 'end_program_state'];
+  ELSIF writer = 'end_try' AND OLD.ended_at IS NOT NULL AND OLD.end_program_state = 'pending' THEN
+    allowed := allowed || ARRAY['state', 'state_version', 'copies_made',
+      'end_program_state', 'end_program_result'];
+  ELSIF writer = 'withdraw' AND OLD.ended_at IS NOT NULL THEN
+    allowed := allowed || ARRAY['withdrawn_at', 'end_program_state', 'end_program_result'];
+  END IF;
+  IF (to_jsonb(NEW) - allowed) IS DISTINCT FROM (to_jsonb(OLD) - allowed) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so it keeps everything it had', OLD.id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  IF NEW.active_offer_id IS DISTINCT FROM OLD.active_offer_id AND NEW.active_offer_id IS NOT NULL THEN
+    RAISE EXCEPTION 'thing % has reached its end, so no new sale can hold it', OLD.id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  IF (NEW.wake_enabled IS DISTINCT FROM OLD.wake_enabled
+      OR NEW.open_to_reach IS DISTINCT FROM OLD.open_to_reach
+      OR NEW.open_to_convert IS DISTINCT FROM OLD.open_to_convert)
+    AND (NEW.owner_id IS NOT DISTINCT FROM OLD.owner_id
+      OR NEW.wake_enabled OR NEW.open_to_reach OR NEW.open_to_convert) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so its switches only turn off as it changes hands', OLD.id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  IF NEW.end_program_state IS DISTINCT FROM OLD.end_program_state AND NOT (
+      (writer = 'record' AND OLD.end_program_state = 'none' AND NEW.end_program_state = 'pending')
+      OR (writer = 'end_try' AND OLD.end_program_state = 'pending'
+        AND NEW.end_program_state IN ('ran', 'skipped'))
+      OR (writer = 'withdraw' AND OLD.end_program_state = 'pending'
+        AND NEW.end_program_state = 'skipped')
+    ) THEN
+    RAISE EXCEPTION 'thing % end program cannot move from % to %', OLD.id, OLD.end_program_state, NEW.end_program_state
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS things_zz_ending_freeze ON things;
+CREATE TRIGGER things_zz_ending_freeze BEFORE UPDATE ON things
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_freeze();
+
+-- A new thing starts with no recorded end, and a copy cannot be made of a thing whose end
+-- has come, except by that thing's own end program while it is still pending.
+CREATE OR REPLACE FUNCTION guard_thing_ending_insert() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.ended_at IS NOT NULL OR NEW.ended_cause IS NOT NULL OR NEW.ended_owner_id IS NOT NULL
+    OR NEW.end_program_state <> 'none' OR NEW.end_program_result IS NOT NULL THEN
+    RAISE EXCEPTION 'a new thing starts with no recorded end'
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  IF NEW.parent_thing_id IS NOT NULL AND thing_end_reached(NEW.parent_thing_id)
+    AND NOT (thing_ending_writer(NEW.parent_thing_id) = 'end_try' AND EXISTS (
+      SELECT 1 FROM things AS parent
+      WHERE parent.id = NEW.parent_thing_id
+        AND parent.ended_at IS NOT NULL AND parent.end_program_state = 'pending'
+    )) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so it cannot be copied', NEW.parent_thing_id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS things_ending_parent_guard ON things;
+CREATE TRIGGER things_ending_parent_guard BEFORE INSERT ON things
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_insert();
+
+-- No new label lands on a thing whose end has come. The target is what counts: a remnant's
+-- own end program may still label other things.
+CREATE OR REPLACE FUNCTION guard_thing_ending_label() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.target_type = 'thing' AND thing_end_reached(NEW.target_id) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so it takes no new label', NEW.target_id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS active_labels_ending_guard ON active_labels;
+CREATE TRIGGER active_labels_ending_guard BEFORE INSERT ON active_labels
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_label();
+
+CREATE OR REPLACE FUNCTION guard_thing_ending_mark() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF thing_end_reached(NEW.thing_id) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so it takes no later-holder mark', NEW.thing_id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS thing_later_holder_marks_ending_guard ON thing_later_holder_marks;
+CREATE TRIGGER thing_later_holder_marks_ending_guard BEFORE INSERT ON thing_later_holder_marks
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_mark();
+
+-- No new offer, world or direct, names a thing whose end has come. Reservations and claims
+-- are updates of an open offer and are judged by the city's sale code, not here, so a
+-- payment already holding evidence is never stranded by a refusal.
+CREATE OR REPLACE FUNCTION guard_thing_ending_offer() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.asset_type = 'thing' AND thing_end_reached(NEW.asset_id) THEN
+    RAISE EXCEPTION 'thing % has reached its end, so no new offer can name it', NEW.asset_id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS transfer_offers_ending_guard ON transfer_offers;
+CREATE TRIGGER transfer_offers_ending_guard BEFORE INSERT ON transfer_offers
+  FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_offer();
 
 DO $thing_endings_shape$
 DECLARE
@@ -501,6 +723,58 @@ BEGIN
       OR (tgrelid = 'agreement_thing_links'::regclass AND tgname = 'agreement_thing_links_append_only')
     )) <> 3 THEN
     RAISE EXCEPTION 'thing endings triggers are missing';
+  END IF;
+
+  -- Each guard is present, enabled, a BEFORE row trigger on its events (tgtype bits: 1 row,
+  -- 2 before, 4 insert, 16 update), and calls its own function.
+  SELECT string_agg(expected.trigger_name, ', ')
+  INTO missing
+  FROM (VALUES
+    ('things', 'things_aa_ending_owner_change', 'guard_thing_ending_owner_change', 19, ARRAY['owner_id']::text[]),
+    ('things', 'things_zz_ending_freeze', 'guard_thing_ending_freeze', 19, ARRAY[]::text[]),
+    ('things', 'things_ending_parent_guard', 'guard_thing_ending_insert', 7, ARRAY[]::text[]),
+    ('active_labels', 'active_labels_ending_guard', 'guard_thing_ending_label', 7, ARRAY[]::text[]),
+    ('thing_later_holder_marks', 'thing_later_holder_marks_ending_guard', 'guard_thing_ending_mark', 7, ARRAY[]::text[]),
+    ('transfer_offers', 'transfer_offers_ending_guard', 'guard_thing_ending_offer', 7, ARRAY[]::text[])
+  ) AS expected(table_name, trigger_name, function_name, trigger_type, columns)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_trigger AS trigger_row
+    WHERE trigger_row.tgrelid = to_regclass('public.' || expected.table_name)
+      AND trigger_row.tgname = expected.trigger_name
+      AND NOT trigger_row.tgisinternal
+      AND trigger_row.tgenabled = 'O'
+      AND trigger_row.tgtype = expected.trigger_type
+      AND trigger_row.tgfoid = to_regprocedure('public.' || expected.function_name || '()')
+      AND ARRAY(
+        SELECT attribute.attname::text FROM unnest(trigger_row.tgattr::int2[]) AS column_number(attnum)
+        JOIN pg_attribute AS attribute
+          ON attribute.attrelid = trigger_row.tgrelid AND attribute.attnum = column_number.attnum
+        ORDER BY attribute.attname
+      ) = expected.columns
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'thing endings guards are missing, disabled or of the wrong shape: %', missing;
+  END IF;
+  -- Row triggers fire in name order. The owner-change guard runs before the two triggers
+  -- that turn a thing's switches off as it changes hands; the freeze runs last of all.
+  IF EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'things'::regclass AND NOT tgisinternal
+      AND tgtype & 3 = 3 AND tgtype & 16 = 16
+      AND tgname::text COLLATE "C" > 'things_zz_ending_freeze'
+  ) OR EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'things'::regclass AND NOT tgisinternal
+      AND tgname IN ('things_close_consent_on_owner_change', 'things_sleep_on_owner_change')
+      AND tgname::text COLLATE "C" < 'things_aa_ending_owner_change'
+  ) THEN
+    RAISE EXCEPTION 'thing endings guards are out of order among the things triggers';
+  END IF;
+  IF to_regprocedure('public.thing_end_due_at_row(things)') IS NULL
+    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_due_at_row(things)')) IS DISTINCT FROM 's'
+    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_reached(integer)')) IS DISTINCT FROM 's'
+    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_ending_writer(integer)')) IS DISTINCT FROM 's' THEN
+    RAISE EXCEPTION 'thing endings guard functions are missing or have the wrong volatility';
   END IF;
 END
 $thing_endings_shape$;

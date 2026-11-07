@@ -58,6 +58,12 @@ const storedPublicActivityDdl = await readFile(
   new URL('../../db/migrations/20261028_stored_public_activity.sql', import.meta.url),
   'utf8',
 )
+// Thing endings add columns, checks, indexes and guard triggers on things after this one,
+// so the upgraded database takes that migration too before the catalogs are compared.
+const thingEndingsDdl = await readFile(
+  new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url),
+  'utf8',
+)
 // db/schema.sql ends with this change's statements; everything before them is the
 // database exactly as production holds it once abilities-wake-chance-write has run.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
@@ -213,6 +219,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query(residentSettingsDdl)
       await db.query(sameRoomTalkDdl)
       await db.query(storedPublicActivityDdl)
+      await db.query(thingEndingsDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })
