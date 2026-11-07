@@ -43,6 +43,8 @@ const WRITE_SITES: Readonly<Record<string, Decision>> = Object.freeze({
     'skips: moveThing reads end_reached from thingState and skips',
   'src/engine-effects.ts transferAsset UPDATE#1':
     'skips: the transfer step skips the actor own reached thing, and its WHERE keeps a thing with an active end (E9)',
+  'src/engine-end-try.ts finishEndTry UPDATE#1':
+    'exempt: the end try moves its own pending program to ran or skipped under its end_try writer, the one writer the freeze guard lets do so',
   'src/engine-state.ts writeStateBox UPDATE#1':
     'skips: skipAfterOwnEnd skips a write on the program own reached thing; the freeze guard passes state only under end_try',
   'src/engine-state.ts clearStateBox UPDATE#1':
@@ -99,6 +101,7 @@ const BRICK_FILES = Object.freeze([
   'src/engine-convert.ts',
   'src/engine-copy.ts',
   'src/engine-effects.ts',
+  'src/engine-end-try.ts',
   'src/engine-place-plan.ts',
   'src/engine-reach.ts',
   'src/engine-settle.ts',
@@ -131,6 +134,14 @@ const SELECTION_SITES: Readonly<Record<string, Decision>> = Object.freeze({
     'skips: gives end_reached to destroy, move and transfer',
   'src/engine-effects.ts timerThingEnds SELECT#1':
     'skips: a waiting step whose source or target thing ended is skipped and never repeats',
+  'src/engine-end-try.ts endTryFacts SELECT#1':
+    'exempt: reads the owner and end trait to plan the locks; lockEndTry judges the thing under its lock',
+  'src/engine-end-try.ts loadEndUnits SELECT#1':
+    'exempt: claims only remnants whose end try waits; lockEndTry judges each again under its lock',
+  'src/engine-end-try.ts lockEndTry SELECT#1':
+    'exempt: the end try runs only for a recorded remnant still pending in this room, judged under its row lock',
+  'src/engine-end-try.ts recordRoomEnds SELECT#1':
+    'records first: picks the due ends in the room and records each through recordDueEnd',
   'src/engine-place-plan.ts lockEffectResidents SELECT#1':
     'exempt: reads owners to plan lock order; it writes nothing and each step judges the end',
   'src/engine-place-plan.ts effectPlaceIds SELECT#1':
@@ -147,6 +158,8 @@ const SELECTION_SITES: Readonly<Record<string, Decision>> = Object.freeze({
     'skips: a thing whose end has come never wakes',
   'src/engine-settle.ts stillEligible SELECT#1':
     'skips: a thing whose end has come never wakes, judged again under the lock',
+  'src/engine-settle.ts roomMayWake SELECT#2':
+    'exempt: asks only whether an end try waits in the room; the try judges its thing under the lock',
   'src/engine-settle.ts runTry SELECT#1':
     'exempt: reads the owner of a thing stillEligible already judged',
   'src/engine-state.ts writeStateBox SELECT#1':

@@ -200,6 +200,9 @@ test('live-test follow-ups against real PostgreSQL', { timeout: 600_000 }, async
         tried: settled.tried,
         woke: settled.woke,
         forfeited: settled.forfeited,
+        ended: settled.ended,
+        end_tries: settled.end_tries,
+        more_due: settled.more_due,
       })
       assert.equal(settled.tried, 2)
       assert.equal(settled.woke, 2)

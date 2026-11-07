@@ -1,7 +1,9 @@
 /**
  * Lazy settle (decisions #105 and #106): nothing runs while nobody is there. When
  * a resident arrives, speaks, acts, or reads `me` in a room, the room first
- * resolves its due timers, then runs the wake tries its things are owed.
+ * resolves its due timers, then records up to 64 ends that came there (things
+ * ending), then runs each recorded thing's end try once and the wake tries its things
+ * are owed, sharing one budget.
  */
 import {
   EngineError,
@@ -35,27 +37,46 @@ import {
 } from './engine-limits.ts'
 import { wakeProgramOf, type WakeProgram } from './physics.ts'
 import { effectPlaceIds, lockEffectResidents } from './engine-place-plan.ts'
+import {
+  INTERNAL_TRY_ERROR,
+  loadEndUnits,
+  NO_LONGER_ELIGIBLE,
+  recordRoomEnds,
+  recordTry,
+  recordWakeTryApplied,
+  runEndTry,
+  type RoomEnds,
+  type TryStatus,
+  type Unit,
+} from './engine-end-try.ts'
+import { thingEndingGuardRefusal } from './thing-ending-refusals.ts'
 
 const WAKE_SETTLE_LOCK_CLASS = 0x1f3d9003
-const NO_LONGER_ELIGIBLE = 'no longer eligible'
-const INTERNAL_TRY_ERROR = 'the city could not complete this wake try'
 
 export type SettleTrigger = 'arrive' | 'talk' | 'act' | 'me'
-type UnitReason = 'arrive' | 'talk' | 'clock'
 
 export interface SettleSummary {
-  readonly settle_id: number
+  /** Null when the settle only recorded ends and claimed no tries. */
+  readonly settle_id: number | null
+  /** Tries run, end tries included; a try the budget never started is not counted. */
   readonly tried: number
   readonly woke: number
   readonly forfeited: number
+  /** Ends this settle recorded in its room. */
+  readonly ended: number
+  /** End tries this settle ran. */
+  readonly end_tries: number
+  /** More ends had come in the room than one settle records; the next settle records them. */
+  readonly more_due: boolean
 }
 
-interface Unit {
-  readonly thingId: number
-  readonly unitIndex: number
-  readonly reason: UnitReason
-  readonly pinned: boolean
+/** A settle's public summary, and the things it recorded, for the door that called it. */
+export interface RoomSettleResult {
+  readonly settle: SettleSummary | null
+  readonly recordedThingIds: readonly number[]
 }
+
+const NO_ENDS: RoomEnds = Object.freeze({ recorded: Object.freeze([]), moreDue: false })
 
 interface Candidate {
   readonly thingId: number
@@ -81,6 +102,7 @@ interface RoomDials {
 interface Claim {
   readonly settleId: number
   readonly budget: number
+  /** End units first (outside the random pick), then pinned wake units, then the picked ones. */
   readonly runOrder: readonly Unit[]
   readonly forfeited: number
   readonly candidates: ReadonlyMap<number, Candidate>
@@ -153,7 +175,10 @@ async function loadCandidates(placeId: number, db: TaggedSql): Promise<Candidate
   return [...byThing.values()]
 }
 
-/** One cheap read that lets a room with no waking things skip the wake part entirely. */
+/**
+ * One cheap read that lets a room with no waking things and no end try waiting skip the
+ * wake part entirely. A remnant never wakes, but its pending end try still needs a claim.
+ */
 async function roomMayWake(placeId: number, db: TaggedSql): Promise<boolean> {
   const rows = await db`
     /* wake:probe */
@@ -167,6 +192,10 @@ async function roomMayWake(placeId: number, db: TaggedSql): Promise<boolean> {
         AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
           AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
         AND trait.recipe ? 'wake'
+    ) OR EXISTS (
+      SELECT 1 FROM things pending
+      WHERE pending.place_id = ${placeId} AND pending.end_program_state = 'pending'
+        AND pending.withdrawn_at IS NULL
     ) AS waking
   ` as Array<{ waking?: unknown }>
   return rows[0]?.waking === true
@@ -263,6 +292,9 @@ async function claimSettle(
       randomCap: Number(place.wake_random_cap),
     }
     const now = Number(place.now_ms)
+    // End tries waiting in the room run first, outside wake_random_cap and the random pick.
+    const endUnits: Unit[] = (await loadEndUnits(placeId, transaction))
+      .map(thingId => Object.freeze({ thingId, unitIndex: 0, reason: 'end' as const, pinned: false }))
     const candidates = await loadCandidates(placeId, transaction)
     const plan = planUnits(candidates, room, trigger, now)
     const nowIso = new Date(now).toISOString()
@@ -272,7 +304,7 @@ async function claimSettle(
         ON CONFLICT (thing_id) DO UPDATE SET clock_at = coalesce(thing_wake_state.clock_at, EXCLUDED.clock_at)
       `
     }
-    if (plan.units.length === 0) return null
+    if (plan.units.length === 0 && endUnits.length === 0) return null
 
     const settleRows = await transaction`SELECT nextval('wake_settles_id_seq')::bigint AS id` as Array<{ id?: unknown }>
     const settleId = Number(settleRows[0]?.id)
@@ -294,12 +326,13 @@ async function claimSettle(
     const pickedSet = new Set(picked)
     const unpickedClock = others.filter(unit => !pickedSet.has(unit) && unit.reason === 'clock').length
     const forfeited = plan.forfeited + unpickedClock
-    const runOrder = [...pinned, ...picked]
+    const wakeOrder = [...pinned, ...picked]
+    const runOrder = [...endUnits, ...wakeOrder]
     await transaction`
       INSERT INTO wake_settles (id, place_id, trigger, resident_id, budget, units, picked, forfeited)
       VALUES (
         ${settleId}, ${placeId}, ${trigger}, ${residentId}, ${room.randomCap},
-        ${JSON.stringify(plan.units.map(unitJson))}::jsonb,
+        ${JSON.stringify([...endUnits, ...plan.units].map(unitJson))}::jsonb,
         ${JSON.stringify(runOrder.map(unitJson))}::jsonb, ${forfeited}
       )
     `
@@ -321,7 +354,7 @@ async function claimSettle(
         branch: null,
       }, 'counted', transaction)
     }
-    const triedThings = new Set(runOrder.map(unit => unit.thingId))
+    const triedThings = new Set(wakeOrder.map(unit => unit.thingId))
     for (const candidate of candidates) {
       const advance = plan.clockAdvance.get(candidate.thingId)
       if (advance === undefined && !triedThings.has(candidate.thingId)) continue
@@ -404,26 +437,6 @@ async function stillEligible(
     : null
 }
 
-type TryStatus = 'woke' | 'quiet' | 'failed' | 'stopped'
-
-async function recordTry(
-  settleId: number,
-  unit: Unit,
-  status: TryStatus,
-  details: Readonly<{ effectsApplied?: number; skipped?: readonly unknown[]; error?: string | null }>,
-  db: TaggedSql,
-): Promise<void> {
-  await db`
-    INSERT INTO wake_tries (
-      settle_id, thing_id, reason, unit_index, status, effects_applied, skipped_effects, error
-    ) VALUES (
-      ${settleId}, ${unit.thingId}, ${unit.reason}, ${unit.unitIndex}, ${status},
-      ${details.effectsApplied ?? 0}, ${JSON.stringify(details.skipped ?? [])}::jsonb,
-      ${details.error ?? null}
-    )
-  `
-}
-
 /** Run one claimed try in its own transaction; a failed try never undoes anything else. */
 async function runTry(
   claim: Claim,
@@ -496,26 +509,19 @@ async function runTry(
         effectsApplied: outcome.effectsApplied,
         skipped: publicSkippedEffects(outcome.skippedEffects ?? []),
       }, transaction)
-      const changed = outcome.allChangedPublicActivity ?? []
-      if (changed.length > 0) {
-        await transaction`
-          INSERT INTO events (kind, actor, detail)
-          VALUES ('wake_try_applied', ${owner.ownerHandle}, jsonb_build_object(
-            'settle_id', ${claim.settleId}::bigint,
-            'thing_id', ${unit.thingId}::integer,
-            'reason', ${unit.reason}::text,
-            'unit_index', ${unit.unitIndex}::integer,
-            'applied_public_activity', ${JSON.stringify(changed)}::jsonb
-          ))
-        `
-      }
+      await recordWakeTryApplied(
+        claim.settleId, unit, owner.ownerHandle, outcome.allChangedPublicActivity ?? [], transaction,
+      )
       return { applied: outcome.effectsApplied }
     })
   } catch (error) {
-    if (!(error instanceof EngineError) || error.status >= 500) {
+    // The ending guard is a known refusal: its own words, never an unrecognized failure.
+    const guard = thingEndingGuardRefusal(error)
+    if (guard === null && (!(error instanceof EngineError) || error.status >= 500)) {
       logUnrecognizedExecutionFailure('wake try', claim.settleId, error)
     }
-    const message = error instanceof EngineError && error.status < 500 ? error.message : INTERNAL_TRY_ERROR
+    const message = guard
+      ?? (error instanceof EngineError && error.status < 500 ? error.message : INTERNAL_TRY_ERROR)
     await withEngineTransaction(db, async transaction => {
       await recordTry(claim.settleId, unit, 'failed', { error: message }, transaction)
       await recordFailedRolls(rollLog, transaction)
@@ -524,47 +530,105 @@ async function runTry(
   }
 }
 
+interface SettleCounts {
+  readonly settleId: number | null
+  readonly budget: number | null
+  readonly status: 'woke' | 'quiet'
+  readonly tried: number
+  readonly woke: number
+  readonly forfeited: number
+  readonly endTries: number
+}
+
+const NOTHING_CLAIMED: SettleCounts = Object.freeze({
+  settleId: null, budget: null, status: 'quiet', tried: 0, woke: 0, forfeited: 0, endTries: 0,
+})
+
+/** The one room_settled writer, for a claimed settle and for one that only recorded ends. */
+async function recordRoomSettled(
+  placeId: number,
+  trigger: SettleTrigger,
+  residentId: number,
+  counts: SettleCounts,
+  ends: RoomEnds,
+  db: TaggedSql,
+): Promise<SettleSummary> {
+  await db`
+    INSERT INTO events (kind, actor, detail)
+    SELECT 'room_settled', settler.handle, jsonb_build_object(
+      'settle_id', ${counts.settleId}::bigint,
+      'place_id', ${placeId}::integer,
+      'mode', ${trigger}::text,
+      'status', ${counts.status}::text,
+      'tried', ${counts.tried}::integer,
+      'woke', ${counts.woke}::integer,
+      'forfeited', ${counts.forfeited}::integer,
+      'budget', coalesce(${counts.budget}::integer, room.wake_random_cap::integer),
+      'ended', ${ends.recorded.length}::integer,
+      'end_tries', ${counts.endTries}::integer,
+      'more_due', ${ends.moreDue}::boolean
+    )
+    FROM residents settler, places room
+    WHERE settler.id = ${residentId} AND room.id = ${placeId}
+  `
+  return Object.freeze({
+    settle_id: counts.settleId,
+    tried: counts.tried,
+    woke: counts.woke,
+    forfeited: counts.forfeited,
+    ended: ends.recorded.length,
+    end_tries: counts.endTries,
+    more_due: ends.moreDue,
+  })
+}
+
 async function settleWake(
   placeId: number,
   trigger: SettleTrigger,
   residentId: number,
+  ends: RoomEnds,
   db: TaggedSql,
 ): Promise<SettleSummary | null> {
-  if (placeId === GAZETTE_ROOM_ID || !await roomMayWake(placeId, db)) return null
-  const claim = await claimSettle(placeId, trigger, residentId, db)
-  if (claim === null) return null
+  const claim = placeId === GAZETTE_ROOM_ID || !await roomMayWake(placeId, db)
+    ? null
+    : await claimSettle(placeId, trigger, residentId, db)
+  if (claim === null) {
+    // A settle that only recorded ends still says so; one that did nothing writes nothing.
+    return ends.recorded.length === 0
+      ? null
+      : recordRoomSettled(placeId, trigger, residentId, NOTHING_CLAIMED, ends, db)
+  }
   let applied = 0
   let tried = 0
   let woke = 0
+  let endTries = 0
   let stoppedClock = 0
   for (const unit of claim.runOrder) {
+    // No new try starts once the budget is spent; an end try not started stays pending.
     if (applied >= MAX_WAKE_EFFECTS_PER_SETTLE) {
       await recordTry(claim.settleId, unit, 'stopped', {}, db)
       if (unit.reason === 'clock') stoppedClock += 1
       continue
     }
     tried += 1
-    const result = await runTry(claim, unit, placeId, residentId, db)
+    if (unit.reason === 'end') endTries += 1
+    const result: TryStatus | { applied: number } = unit.reason === 'end'
+      ? await runEndTry(claim.settleId, unit, placeId, db)
+      : await runTry(claim, unit, placeId, residentId, db)
     if (typeof result === 'object') {
       applied += result.applied
       if (result.applied > 0) woke += 1
     }
   }
-  const forfeited = claim.forfeited + stoppedClock
-  await db`
-    INSERT INTO events (kind, actor, detail)
-    VALUES ('room_settled', ${claim.settlerHandle}, jsonb_build_object(
-      'settle_id', ${claim.settleId}::bigint,
-      'place_id', ${placeId}::integer,
-      'mode', ${trigger}::text,
-      'status', ${woke > 0 ? 'woke' : 'quiet'}::text,
-      'tried', ${tried}::integer,
-      'woke', ${woke}::integer,
-      'forfeited', ${forfeited}::integer,
-      'budget', ${claim.budget}::integer
-    ))
-  `
-  return Object.freeze({ settle_id: claim.settleId, tried, woke, forfeited })
+  return recordRoomSettled(placeId, trigger, residentId, {
+    settleId: claim.settleId,
+    budget: claim.budget,
+    status: woke > 0 ? 'woke' : 'quiet',
+    tried,
+    woke,
+    forfeited: claim.forfeited + stoppedClock,
+    endTries,
+  }, ends, db)
 }
 
 /** Day secrets, then due timers exactly as before; no wake tries. */
@@ -575,22 +639,42 @@ export async function settleTimers(placeId: number, db: TaggedSql = engineSql): 
 
 /**
  * Settle a room when a resident arrives, speaks, acts, or reads `me` there: day
- * secrets first, then due timers exactly as before, then owed wake tries.
+ * secrets first, then due timers exactly as before, then the ends that came in the
+ * room, then end tries and owed wake tries. Also returns the ids this settle recorded,
+ * so a door that settles before its own write can tell a thing that just ended.
  */
+export async function settleRoomAndRecord(
+  placeId: number | null,
+  trigger: SettleTrigger,
+  residentId: number,
+  db: TaggedSql = engineSql,
+): Promise<RoomSettleResult> {
+  if (placeId === null) return Object.freeze({ settle: null, recordedThingIds: Object.freeze([]) })
+  await settleTimers(placeId, db)
+  // Neither part ever blocks the act that set it off: an end not recorded is recorded by
+  // the next settle or write, an unclaimed try stays owed, and every claimed try records
+  // its own outcome. A recorder failure never stops the wake part.
+  let ends = NO_ENDS
+  try {
+    ends = await recordRoomEnds(placeId, db)
+  } catch (error) {
+    logUnrecognizedExecutionFailure('room settle', placeId, error)
+  }
+  let settle: SettleSummary | null = null
+  try {
+    settle = await settleWake(placeId, trigger, residentId, ends, db)
+  } catch (error) {
+    logUnrecognizedExecutionFailure('room settle', placeId, error)
+  }
+  return Object.freeze({ settle, recordedThingIds: ends.recorded })
+}
+
+/** settleRoomAndRecord, for a caller that needs only the public summary. */
 export async function settleRoom(
   placeId: number | null,
   trigger: SettleTrigger,
   residentId: number,
   db: TaggedSql = engineSql,
 ): Promise<SettleSummary | null> {
-  if (placeId === null) return null
-  await settleTimers(placeId, db)
-  // The wake part never blocks the act that set it off: an unclaimed try stays
-  // owed for the next settle, and every claimed try records its own outcome.
-  try {
-    return await settleWake(placeId, trigger, residentId, db)
-  } catch (error) {
-    logUnrecognizedExecutionFailure('room settle', placeId, error)
-    return null
-  }
+  return (await settleRoomAndRecord(placeId, trigger, residentId, db)).settle
 }

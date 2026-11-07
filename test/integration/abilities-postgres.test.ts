@@ -553,7 +553,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
       assert.equal(arrived.status, 200, JSON.stringify(arrived.json))
       const settle = (arrived.json.action as Json).settle as Json
-      assert.deepEqual({ ...settle, settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      assert.deepEqual({ ...settle, settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0, ended: 0, end_tries: 0, more_due: false })
       const owned = (await call(app, null, 'GET', `/api/thing/${ownBell}`)).json.thing as Json
       assert.deepEqual((owned.state as Json).values, { guests: ['far-walker'] })
       assert.equal(((owned.state as Json).last_write as Json).trigger, 'wake_arrive')
@@ -582,7 +582,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(event[0]!.actor, 'far-walker')
       assert.deepEqual({ ...event[0]!.detail, settle_id: undefined }, {
         settle_id: undefined, place_id: rooms.eastRoomId, mode: 'arrive', status: 'woke',
-        tried: 1, woke: 1, forfeited: 0, budget: 8,
+        tried: 1, woke: 1, forfeited: 0, budget: 8, ended: 0, end_tries: 0, more_due: false,
       })
 
       // The room owner lets visitors' things wake; the owner's bell is inside "not more often than".
@@ -591,7 +591,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await standIn(VISITOR.id, rooms.continentId)
       const again = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
       assert.deepEqual({ ...((again.json.action as Json).settle as Json), settle_id: undefined }, {
-        settle_id: undefined, tried: 1, woke: 1, forfeited: 0,
+        settle_id: undefined, tried: 1, woke: 1, forfeited: 0, ended: 0, end_tries: 0, more_due: false,
       })
       const guestBell = (await call(app, null, 'GET', `/api/thing/${visitorBell}`)).json.thing as Json
       assert.deepEqual((guestBell.state as Json).values, { guests: ['far-walker'] })
@@ -617,7 +617,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
 
       const arrived = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
       assert.deepEqual({ ...((arrived.json.action as Json).settle as Json), settle_id: undefined }, {
-        settle_id: undefined, tried: 1, woke: 1, forfeited: 0,
+        settle_id: undefined, tried: 1, woke: 1, forfeited: 0, ended: 0, end_tries: 0, more_due: false,
       })
       const rings = (await db.query(`SELECT id, state FROM things WHERE id = ANY($1::int[]) ORDER BY id`, [[pinned, blocked, asleep]])).rows
       assert.deepEqual(rings.map(row => row.state), [{ rings: 1 }, {}, {}])
@@ -718,7 +718,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
 
       const said = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'hello, room' })
       assert.equal(said.status, 201, JSON.stringify(said.json))
-      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0, ended: 0, end_tries: 0, more_due: false })
       assert.equal(((await db.query('SELECT state FROM things WHERE id = $1', [ear])).rows[0]!.state as Json).heard, 1)
 
       // Inside the room's ten-second quiet the wake part is skipped, and nothing is queued.
@@ -756,7 +756,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       assert.equal(refused.status, 200, 'the move stands even though the wake try was refused')
       const refusedAction = refused.json.action as Json
       assert.equal(refusedAction.place_id, rooms.eastRoomId)
-      assert.deepEqual({ ...(refusedAction.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 0, forfeited: 0 })
+      assert.deepEqual({ ...(refusedAction.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 0, forfeited: 0, ended: 0, end_tries: 0, more_due: false })
       const failed = (await db.query(`SELECT status, error FROM wake_tries`)).rows
       assert.deepEqual(failed, [{
         status: 'failed',
@@ -776,7 +776,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await ageRoom(rooms.eastRoomId, 120)
       await standIn(VISITOR.id, rooms.continentId)
       const held = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.eastRoomId })
-      assert.deepEqual({ ...((held.json.action as Json).settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0 })
+      assert.deepEqual({ ...((held.json.action as Json).settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 1, woke: 1, forfeited: 0, ended: 0, end_tries: 0, more_due: false })
       const blockedMove = await call(app, VISITOR.secret, 'POST', '/api/action', { action: 'move', to_place_id: rooms.continentId })
       assert.equal(blockedMove.status, 403, 'in a rough room the waking gate may hold the visitor')
       assert.match(String(blockedMove.json.error), /^move is temporarily blocked by thing trait "gatekeeper" from thing_id \d+/u)
@@ -992,7 +992,7 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
 
       const said = await call(app, VISITOR.secret, 'POST', '/api/note', { place_id: rooms.eastRoomId, body: 'is anyone here' })
       assert.equal(said.status, 201, JSON.stringify(said.json))
-      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 3, woke: 3, forfeited: 0 })
+      assert.deepEqual({ ...(said.json.settle as Json), settle_id: undefined }, { settle_id: undefined, tried: 3, woke: 3, forfeited: 0, ended: 0, end_tries: 0, more_due: false })
       const states = (await db.query('SELECT id, state FROM things WHERE id = ANY($1::int[]) ORDER BY id', [[clock, ear]])).rows
       assert.deepEqual(states.map(row => row.state), [{ ticks: 2 }, { heard: 1 }])
       assert.equal((await db.query('SELECT count(*)::int AS settles FROM wake_settles')).rows[0]!.settles, 1,

@@ -128,7 +128,7 @@ export const PUBLIC_EVENT_DETAIL_FIELDS = Object.freeze([
  */
 export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   chance_rolled: Object.freeze(['roll_id', 'purpose', 'roll', 'sides', 'percent', 'outcome', 'settle_id']),
-  room_settled: Object.freeze(['settle_id', 'tried', 'woke', 'forfeited']),
+  room_settled: Object.freeze(['settle_id', 'tried', 'woke', 'forfeited', 'ended', 'end_tries', 'more_due']),
   wake_try_applied: Object.freeze(['settle_id', 'reason', 'unit_index']),
   room_reached: Object.freeze(['over', 'reached', 'more', 'skipped', 'stopped', 'settle_id']),
   copy_skipped: Object.freeze(['family_id', 'cap', 'limit', 'over_by', 'settle_id']),

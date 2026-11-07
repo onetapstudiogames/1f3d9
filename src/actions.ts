@@ -17,7 +17,7 @@ import {
   type TargetType,
 } from './engine.ts'
 import { isBasicAction, type BasicAction } from './physics.ts'
-import { settleRoom, type SettleSummary } from './engine-settle.ts'
+import { settleRoom, settleRoomAndRecord, type SettleSummary } from './engine-settle.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 import { isOtherCityToolName } from './city-facts.ts'
@@ -283,7 +283,9 @@ async function runResidentAction(
         },
       })
     }
-    await settleRoom(before.currentPlaceId, 'act', resident.id)
+    // A thing the settle itself recorded just ended in this request, as the door's own record.
+    const settled = await settleRoomAndRecord(before.currentPlaceId, 'act', resident.id)
+    recordedThingIds = [...recordedThingIds, ...settled.recordedThingIds]
     const result = await runAction({
       actorId: resident.id,
       actorHandle: resident.handle,

@@ -162,7 +162,7 @@ export function newAbilityLog(): AbilityLog {
 }
 export type EffectTrigger =
   | 'use' | 'consume' | 'give' | 'talk' | 'move' | 'make' | 'timer'
-  | 'wake_arrive' | 'wake_talk' | 'wake_clock'
+  | 'wake_arrive' | 'wake_talk' | 'wake_clock' | 'wake_end'
 export const SKIP_REASONS = Object.freeze([
   'target thing was destroyed earlier in this use',
   'a growth cap refused the copy',

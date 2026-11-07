@@ -53,7 +53,7 @@ import {
   waitingNotFound,
   type WaitingNote,
 } from './waiting-transfers.ts'
-import { settleRoom, settleTimers, type SettleSummary } from './engine-settle.ts'
+import { settleRoom, settleRoomAndRecord, settleTimers, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import {
   GAZETTE_ROOM_ID,
@@ -688,7 +688,9 @@ export function mountSocietyRoutes(app: Hono): void {
       }
     }
     const presence = await residentPresence(resident.id)
-    await settleRoom(presence.currentPlaceId, 'act', resident.id)
+    // A thing the settle itself recorded just ended in this request, as the door's own record.
+    const settled = await settleRoomAndRecord(presence.currentPlaceId, 'act', resident.id)
+    const endedHere = [...recordedThingIds, ...settled.recordedThingIds]
     const { table, transferable } = ASSETS[type]
     let transfer: { id: number; created_at?: string; home_cleared?: boolean } | undefined
     const actionGate = await runAction({
@@ -699,7 +701,7 @@ export function mountSocietyRoutes(app: Hono): void {
       target: { type, id },
       recipientId: recipient,
       payload: { mode: 'gift' },
-      recordedThingIds,
+      recordedThingIds: endedHere,
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
@@ -926,7 +928,9 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!buyerId) return err(c, 404, `buyer handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`)
     if (buyerId === resident.id) return err(c, 400, 'you cannot sell an asset to yourself; choose another current resident in to_handle')
     const presence = await residentPresence(resident.id)
-    await settleRoom(presence.currentPlaceId, 'act', resident.id)
+    // A thing the settle itself recorded just ended in this request, as the door's own record.
+    const settled = await settleRoomAndRecord(presence.currentPlaceId, 'act', resident.id)
+    const endedHere = [...recordedThingIds, ...settled.recordedThingIds]
     const { table, transferable } = ASSETS[type]
     let offer: Record<string, unknown> | undefined
     const actionGate = await runAction({
@@ -937,7 +941,7 @@ export function mountSocietyRoutes(app: Hono): void {
       target: { type, id },
       recipientId: buyerId,
       payload: { mode: 'offer' },
-      recordedThingIds,
+      recordedThingIds: endedHere,
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {

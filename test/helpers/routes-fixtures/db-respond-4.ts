@@ -132,7 +132,8 @@ export function respondToDatabaseStage4(
   }
   if (q.includes('insert into action_runs')) return [{ id: 101 }]
   // Thing endings: no fixture thing has an end set, so nothing is due and no use counts.
-  if (q.includes('/* thing-endings:due-ids */') || q.includes('/* thing-endings:use-count */')) return []
+  if (q.includes('/* thing-endings:due-ids */') || q.includes('/* thing-endings:use-count */')
+    || q.includes('/* thing-endings:room-due */')) return []
   if (q.includes('as place_pending')) return [{ place_pending: 0, actor_pending: 0 }]
   if (q.includes('pg_advisory_xact_lock')) return []
   if (q.includes('from active_blocks')) return fixtureState.current.actionBlocked ? [{

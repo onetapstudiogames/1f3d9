@@ -22,7 +22,7 @@ const omittedFieldsByKind = {
   chance_rolled: [
     'commitment', 'day', 'outcome', 'percent', 'purpose', 'roll', 'roll_id', 'settle_id', 'sides',
   ],
-  room_settled: ['budget', 'forfeited', 'settle_id', 'tried', 'woke'],
+  room_settled: ['budget', 'end_tries', 'ended', 'forfeited', 'more_due', 'settle_id', 'tried', 'woke'],
   wake_try_applied: ['applied_public_activity', 'reason', 'settle_id', 'unit_index'],
   // Nor reaches, nor copies a growth limit stopped (decisions #112 and #113).
   room_reached: ['applied_public_activity', 'more', 'over', 'reached', 'settle_id', 'skipped', 'stopped'],

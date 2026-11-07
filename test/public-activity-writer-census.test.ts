@@ -8,7 +8,9 @@ import {
 // The marker's 35 sources and 65 sites gain two showing writers: ordinary
 // founder notes and the city's Gazette description change during activation.
 // The founder's label ending at a resident's request adds one more writer, and the
-// thing endings recorder adds one: the city's thing_ended event.
+// thing endings recorder adds one: the city's thing_ended event. The settle's end tries
+// moved the one wake_try_applied writer beside them (40 sources, 69 sites), so the settle
+// keeps room_settled only.
 const WRITER_SITES = Object.freeze({
   'src/actions.ts': 1,
   'src/agreement-action.ts': 3,
@@ -18,8 +20,9 @@ const WRITER_SITES = Object.freeze({
   'src/engine-convert.ts': 1,
   'src/engine-copy.ts': 2,
   'src/engine-effects.ts': 9,
+  'src/engine-end-try.ts': 1,
   'src/engine-reach.ts': 1,
-  'src/engine-settle.ts': 2,
+  'src/engine-settle.ts': 1,
   'src/engine-state.ts': 2,
   'src/engine-timer-store.ts': 1,
   'src/engine.ts': 3,
@@ -59,7 +62,7 @@ test('every event writer and insert site has an explicit activity review', async
     .map(source => [source.path, scanEventDetailWriters([source]).writerCount] as const)
     .filter(([, count]) => count > 0))
   assert.deepEqual(counts, WRITER_SITES)
-  assert.equal(Object.keys(counts).length, 39)
+  assert.equal(Object.keys(counts).length, 40)
   assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), 69)
   const mirror = sources.find(source => source.path === 'db/schema.sql')
   assert.ok(mirror)

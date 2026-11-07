@@ -146,7 +146,8 @@ test('thing endings inside programs, against PostgreSQL', { timeout: 600_000 }, 
       assert.deepEqual([await labelsOn(plain, 'tagged'), await labelsOn(due, 'tagged'), await labelsOn(remnant, 'tagged')], [1, 0, 0])
       const reached = await one<Json>(`SELECT detail FROM events WHERE kind = 'room_reached' ORDER BY id DESC LIMIT 1`)
       assert.equal((reached.detail as Json).reached, 1, 'a member whose end came is not a member')
-      assert.equal((await row(due)).ended_at, null, 'a step records nothing')
+      // The use's own room settle recorded it first (T11); the reach then left the remnant out.
+      assert.notEqual((await row(due)).ended_at, null, 'the room settle records it, never the step')
 
       // Fresh members with a label end: the label step makes each one due, so the next step skips it.
       for (const [kind, name, effect] of [[burners, 'a burner', 'destroy'], [senders, 'a sender', 'move']] as const) {
@@ -304,7 +305,7 @@ test('thing endings inside programs, against PostgreSQL', { timeout: 600_000 }, 
       assert.deepEqual(spent.skipped_effects.map(skip => [skip.effect, skip.reason]), [['write', THING_ENDED_SKIP_REASON]])
       const after = await row(spender)
       assert.deepEqual([after.state, after.due, after.ended_at], [{}, true, null])
-      assert.equal((await row(due)).ended_at, null, 'a settle in T10a records nothing')
+      assert.notEqual((await row(due)).ended_at, null, 'the settle records the end that came in its room (T11)')
     })
 
     await t.test('crafting records a due ingredient and refuses E7, and refuses an older remnant', async () => {
