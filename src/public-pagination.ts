@@ -7,6 +7,7 @@ import { noteBodyWithheldSql, publicNoteRow } from './walk-to-read.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
 import { talkEventRemovedSql } from './talk-event-targets.ts'
 import { publicActivityEventDetailSql } from './public-events.ts'
+import { placeRemnantCountSql, thingShortEndsSql, withShortEnds } from './thing-ending-short.ts'
 
 export const PUBLIC_EVENT_WITHIN_MAX_SECONDS = 1_800
 const PUBLIC_PLACE_RECORD_TEXT_MAX_BYTES = 65_536
@@ -459,6 +460,8 @@ export interface PublicPlaceCollectionRows {
     notes: PublicCollectionTotal
   }>
   readonly pages: PublicPlacePageStates | null
+  /** Things here whose end is recorded or due now, a live count; totals.things.items counts them too. */
+  readonly thingRemnants: number
 }
 
 export interface PublicCollectionTotal {
@@ -488,6 +491,12 @@ function recordArray(value: unknown, field: string): readonly Record<string, unk
     }
     return Object.freeze(record)
   }))
+}
+
+// The live remnant count, checked as a collection total is; a reader of the stored rows
+// alone (a test double) sends none, and that reads 0.
+function remnantCount(value: unknown): number {
+  return collectionTotal({ items: value ?? 0, text_bytes: 0 }).items
 }
 
 function nullableSafeInteger(value: unknown, field: string): number | null {
@@ -565,6 +574,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
          coalesce(t.as_kind_id, t.kind_id) AS kind_id, k.name AS kind, t.birth_revision,
          coalesce(t.as_revision, t.current_revision) AS current_revision,
          ${thingBornAsColumnsSql('t')}, t.created_at,
+         ${thingShortEndsSql('t')} AS ends,
          octet_length(t.body)::integer AS __text_bytes
        FROM things t
        JOIN residents maker ON maker.id = t.maker_id
@@ -626,6 +636,7 @@ async function loadBudgetedPublicPlaceCollectionRows(
         ), '[]'::jsonb) FROM note_page page) AS notes,
        totals.subplace_items, totals.subplace_text_bytes,
        totals.thing_items, totals.thing_text_bytes,
+       ${placeRemnantCountSql('$1::integer')} AS thing_remnant_items,
        totals.note_items, totals.note_text_bytes,
        (SELECT coalesce(sum(__text_bytes), 0)::bigint FROM subplace_page) AS subplace_returned_text_bytes,
        (SELECT count(*) FROM subplace_candidates) > (SELECT count(*) FROM subplace_page) AS subplace_has_more,
@@ -697,7 +708,8 @@ async function loadBudgetedPublicPlaceCollectionRows(
   if (!totals) throw new Error('public place reading totals are unavailable')
   return Object.freeze({
     subplaces: recordArray(totals.subplaces, 'subplaces'),
-    things: recordArray(totals.things, 'things'),
+    things: Object.freeze(recordArray(totals.things, 'things').map(withShortEnds)),
+    thingRemnants: remnantCount(totals.thing_remnant_items),
     notes: Object.freeze(recordArray(totals.notes, 'notes').map(publicNoteRow)),
     totals: Object.freeze({
       subplaces: collectionTotal({ items: totals.subplace_items, text_bytes: totals.subplace_text_bytes }),
@@ -762,7 +774,8 @@ export async function loadPublicPlaceCollectionRows(
          t.open_to_use, t.shared_use_may_destroy,
          coalesce(t.as_kind_id, t.kind_id) AS kind_id, k.name AS kind, t.birth_revision,
          coalesce(t.as_revision, t.current_revision) AS current_revision,
-         ${thingBornAsColumnsSql('t')}, t.created_at
+         ${thingBornAsColumnsSql('t')}, t.created_at,
+         ${thingShortEndsSql('t')} AS ends
        FROM things t
        JOIN residents maker ON maker.id = t.maker_id
        JOIN residents owner ON owner.id = t.owner_id
@@ -790,6 +803,7 @@ export async function loadPublicPlaceCollectionRows(
         FROM note_page page) AS notes,
        totals.subplace_items, totals.subplace_text_bytes,
        totals.thing_items, totals.thing_text_bytes,
+       ${placeRemnantCountSql('$1::integer')} AS thing_remnant_items,
        totals.note_items, totals.note_text_bytes
      FROM place_reading_totals totals
      WHERE totals.place_id = $1::integer`,
@@ -807,7 +821,8 @@ export async function loadPublicPlaceCollectionRows(
   if (!totals) throw new Error('public place reading totals are unavailable')
   return Object.freeze({
     subplaces: recordArray(totals.subplaces, 'subplaces'),
-    things: recordArray(totals.things, 'things'),
+    things: Object.freeze(recordArray(totals.things, 'things').map(withShortEnds)),
+    thingRemnants: remnantCount(totals.thing_remnant_items),
     notes: Object.freeze(recordArray(totals.notes, 'notes').map(publicNoteRow)),
     totals: Object.freeze({
       subplaces: collectionTotal({ items: totals.subplace_items, text_bytes: totals.subplace_text_bytes }),

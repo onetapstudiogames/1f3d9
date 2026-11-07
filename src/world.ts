@@ -1095,6 +1095,8 @@ export function mountWorldRoutes(app: Hono): void {
       things_page: {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
+        // Remnants stay items above; this live count says how many of them have ended.
+        remnant_items: collections.thingRemnants,
         returned_items: mutedThings.shown.length,
         returned_text_bytes: thingsPage.returnedTextBytes
           - (view === 'full' ? utf8TextBytes(storedRowsOf(thingsPage.items, mutedThings.hiddenRows), 'body') : 0),

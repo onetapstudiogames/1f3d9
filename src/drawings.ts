@@ -16,6 +16,8 @@ import { renderDrawingThumbnailPng } from './drawing-thumbnail.ts'
 import { parsePublicChangeMarker } from './public-changes.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { markBrowserRefusal, type BrowserRefusalReason } from './browser-refusal.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
+import type { ShortEndingStatus } from './thing-endings.ts'
 import {
   drawingOutline,
   filterFields,
@@ -202,7 +204,8 @@ const DRAWING_READ_SQL: Readonly<Record<DrawingRecordType, string>> = Object.fre
       CASE WHEN thing.drawing_state = 'undrawn'
           AND selected.variant IS NOT NULL
           AND coalesce(kind_moderation.action, 'restore') <> 'remove'
-        THEN thing.drawing_variant_name ELSE NULL END AS variant_name
+        THEN thing.drawing_variant_name ELSE NULL END AS variant_name,
+      ${thingShortEndsSql('thing')} AS ends
     FROM things thing
     LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
     LEFT JOIN kind_revisions revision
@@ -267,7 +270,7 @@ const DRAWING_HISTORY_VISIBLE_SQL: Readonly<Record<DrawingRecordType, string>> =
       AND coalesce(moderation.action, 'restore') <> 'remove'
   `,
   thing: `
-    SELECT thing.id
+    SELECT thing.id, ${thingShortEndsSql('thing')} AS ends
     FROM things thing
     LEFT JOIN LATERAL (
       SELECT action FROM moderation_actions
@@ -304,6 +307,7 @@ function drawingHistorySql(recordType: DrawingRecordType): string {
       ${DRAWING_HISTORY_VISIBLE_SQL[recordType]}
     )
     SELECT visible.id AS visible_id,
+      ${recordType === 'thing' ? 'visible.ends' : 'NULL::jsonb'} AS visible_ends,
       history.id AS revision_id, history.slot_variant_name,
       history.prior_state, history.prior_description, history.prior_drawing,
       history.prior_source, history.prior_kind_id,
@@ -348,6 +352,15 @@ function drawingThumbnailSql(recordType: DrawingRecordType): string {
     ) AS checkpoint, drawing.*
     FROM drawing
   `
+}
+
+/**
+ * A thing's short status beside its drawing: the drawing is its stored presentation as
+ * it was, ended or not, and the read writes no revision (#62). Left out when no end applies.
+ */
+function thingEndsField(recordType: DrawingRecordType, value: unknown): Readonly<{ ends?: ShortEndingStatus }> {
+  const ends = recordType === 'thing' ? publicShortEnds(value) : null
+  return ends === null ? {} : { ends }
 }
 
 function drawingRecordType(value: string): DrawingRecordType | null {
@@ -624,6 +637,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     return c.json({
       type: recordType,
       id,
+      ...thingEndsField(recordType, rows[0]?.visible_ends),
       ...(reading === null ? {} : { reading }),
       ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
       ...filterFields(filter),
@@ -672,6 +686,7 @@ export function mountDrawingRoutes(app: Hono, dependencies: DrawingRouteDependen
     return c.json({
       type: recordType,
       id,
+      ...thingEndsField(recordType, row.ends),
       ...(reading === null ? {} : { reading }),
       ...(muted ? { hidden_by_your_mutes: 1, next_step: mutedItemNextStep(recordType, id) } : {}),
       ...filterFields(filter),
