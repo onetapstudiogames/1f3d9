@@ -11,6 +11,7 @@ import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import { EngineError, type TaggedSql } from './engine.ts'
 import { newThingEnding, transactionNow, type EndingField } from './thing-ending-owner.ts'
+import { THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 
 export type CraftSqlRow = Readonly<Record<string, unknown>>
 
@@ -125,6 +126,8 @@ interface IngredientRow {
   readonly held_by: unknown
   readonly has_open_offer: boolean
   readonly kind: unknown
+  /** Recorded or due now; a row without it (a fake) reads as no end. */
+  readonly end_reached?: unknown
 }
 
 import { THING_BODY_MAX_BYTES } from './world-limits.ts'
@@ -319,6 +322,8 @@ export async function craftKindThing(
       SELECT ingredient.id, ingredient.owner_id, ingredient.place_id,
         ingredient.withdrawn_at, ingredient.active_offer_id, ingredient.held_by,
         definition.name AS kind,
+        (ingredient.ended_at IS NOT NULL
+          OR coalesce(thing_end_due_at_row(ingredient) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers AS offer
           WHERE offer.asset_type = 'thing'
@@ -341,6 +346,10 @@ export async function craftKindThing(
       409,
       'every ingredient must be active, owned by you, in the requested place_id, and not offered for sale',
     )
+  }
+  // The make recorded each ingredient's due end first; a remnant is never used up.
+  if (ingredients.some(ingredient => ingredient.end_reached === true)) {
+    return failure(409, THING_REMNANT_REFUSAL)
   }
   if (ingredients.length !== input.ingredientIds.length || !exactRecipeMatch(recipe, ingredients)) {
     return failure(409, 'ingredients do not exactly match the current recipe; re-read the kind and retry with every required ingredient in its exact quantity')
@@ -382,6 +391,8 @@ export async function craftKindThing(
         AND ingredient.place_id = ${input.placeId}
         AND ingredient.withdrawn_at IS NULL AND ingredient.held_by IS NULL
         AND ingredient.active_offer_id IS NULL
+        AND ingredient.ended_at IS NULL
+        AND NOT coalesce(thing_end_due_at_row(ingredient) <= transaction_timestamp(), false)
         AND NOT EXISTS (
           SELECT 1 FROM transfer_offers AS offer
           WHERE offer.asset_type = 'thing'

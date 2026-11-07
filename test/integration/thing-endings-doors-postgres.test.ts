@@ -411,9 +411,9 @@ test('thing endings at the gift, withdraw, mark and offer doors, against Postgre
       assert.equal(after.held_by, null, 'set down at home, where things may stay')
 
       const ticking = await thing('a ticking lantern')
-      await setEnd(ticking, '3 seconds')
+      await setEnd(ticking, '10 seconds')
       assert.equal((await act({ action: 'move', to_place_id: closed, carry_thing_id: ticking })).status, 200)
-      await delay(3_500)
+      await delay(10_500)
       assert.equal((await one<Json>('SELECT thing_end_due(id, now()) AS due FROM things WHERE id = $1', [ticking])).due, true)
       const onward = await act({ action: 'move', to_place_id: inner })
       assert.equal(onward.status, 200, JSON.stringify(onward.json))

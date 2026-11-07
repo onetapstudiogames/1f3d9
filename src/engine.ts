@@ -1787,10 +1787,12 @@ export async function prepareActionRooms(
  * the transaction's time, and the next request records it.
  */
 async function recordActionThingEnds(input: RequiredActionInput, db: TaggedSql): Promise<ReadonlySet<number>> {
+  // A make's ingredients are its own things too: crafting refuses one whose end has come.
   const ids = [
     input.sourceThingId,
     input.target?.type === 'thing' ? input.target.id : null,
     input.carryThingId,
+    ...input.primitiveThingIds,
   ].filter((id): id is number => id !== null)
   const recorded = ids.length === 0 ? [] : await recordDueEndQuietly(ids, db)
   return new Set([...input.recordedThingIds, ...recorded])

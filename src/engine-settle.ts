@@ -118,6 +118,9 @@ async function loadCandidates(placeId: number, db: TaggedSql): Promise<Candidate
     LEFT JOIN thing_wake_state state ON state.thing_id = thing.id
     WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
+      -- A thing whose end has come never wakes here; a thing with no end costs no more.
+      AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
+        AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
       AND trait.recipe ? 'wake'
       AND NOT EXISTS (
         SELECT 1 FROM transfer_offers offer
@@ -161,6 +164,8 @@ async function roomMayWake(placeId: number, db: TaggedSql): Promise<boolean> {
         AND link.revision = coalesce(thing.as_revision, thing.current_revision)
       JOIN traits trait ON trait.id = link.trait_id
       WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
+        AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
+          AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
         AND trait.recipe ? 'wake'
     ) AS waking
   ` as Array<{ waking?: unknown }>
@@ -343,15 +348,19 @@ async function claimSettle(
   })
 }
 
-/** Recheck, inside the try's own transaction, that the thing may still wake here, and say who owns it now. */
+/**
+ * Recheck, inside the try's own transaction, that the thing may still wake here (its end
+ * has not come), and say who owns it now and whether it has an end set.
+ */
 async function stillEligible(
   candidate: Candidate,
   placeId: number,
   ownerId: number,
   db: TaggedSql,
-): Promise<Readonly<{ ownerId: number; ownerHandle: string }> | null> {
+): Promise<Readonly<{ ownerId: number; ownerHandle: string; endingSet: boolean }> | null> {
   const rows = await db`
     SELECT owner.handle AS owner_handle, thing.owner_id,
+      thing.ending_rule IS NOT NULL AS ending_set,
       place.owner_id AS room_owner_id, place.wake_visitors, place.wake_pins,
       place.wake_block_thing_ids, place.wake_block_resident_ids
     FROM things thing
@@ -364,6 +373,9 @@ async function stillEligible(
       AND thing.owner_id = ${ownerId}
       AND thing.withdrawn_at IS NULL AND thing.wake_enabled
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
+      -- A thing whose end has come never wakes here; a thing with no end costs no more.
+      AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
+        AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
       AND coalesce(thing.as_kind_id, thing.kind_id) = ${candidate.kindId}
       AND coalesce(thing.as_revision, thing.current_revision) = ${candidate.revision}
       AND place.retired_at IS NULL
@@ -386,7 +398,9 @@ async function stillEligible(
   // The thing may have changed hands since the claim; its try answers to whoever owns it now.
   const current = { ...candidate, ownerId: Number(row.owner_id) }
   return allowedHere(current, room)
-    ? Object.freeze({ ownerId: current.ownerId, ownerHandle: String(row.owner_handle) })
+    ? Object.freeze({
+      ownerId: current.ownerId, ownerHandle: String(row.owner_handle), endingSet: row.ending_set === true,
+    })
     : null
 }
 
@@ -472,6 +486,9 @@ async function runTry(
         logicalAt: new Date(),
         sameUseDestroySkip: true,
         destroyedThingIds: [],
+        // A waking thing with an end can fall due during its own try (a label step), so its
+        // own write and copy steps re-read due before they run.
+        endingThingIds: owner.endingSet ? [candidate.thingId] : [],
       }
       const outcome = await executeEffectsWithOutcome(candidate.program.then, context, transaction)
       const status = outcome.effectsApplied > 0 ? 'woke' as const : 'quiet' as const

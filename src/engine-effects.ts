@@ -322,8 +322,16 @@ function targetType(value: unknown): RuntimeTarget['type'] | null {
     : null
 }
 
-async function targetExists(target: RuntimeTarget, db: TaggedSql): Promise<boolean> {
-  let rows: Array<{ exists?: unknown }>
+/**
+ * Whether the target exists (an active thing for a thing), and for a thing whether its end
+ * has come, read in the same statement at this step, so a thing a label made due earlier in
+ * this transaction reads as ended. A row without end_reached (a fake) reads as no end.
+ */
+async function readTarget(
+  target: RuntimeTarget,
+  db: TaggedSql,
+): Promise<Readonly<{ exists: boolean; endReached: boolean }>> {
+  let rows: Array<{ exists?: unknown; end_reached?: unknown }>
   if (target.type === 'resident') {
     rows = await queryRows(db`SELECT EXISTS (SELECT 1 FROM residents WHERE id = ${target.id}) AS exists`)
   } else if (target.type === 'place') {
@@ -334,16 +342,25 @@ async function targetExists(target: RuntimeTarget, db: TaggedSql): Promise<boole
     rows = await queryRows(db`
       SELECT EXISTS (
         SELECT 1 FROM things WHERE id = ${target.id} AND withdrawn_at IS NULL
-      ) AS exists
+      ) AS exists, thing_end_reached(${target.id}::integer) AS end_reached
     `)
   }
-  return rows[0]?.exists === true
+  return Object.freeze({ exists: rows[0]?.exists === true, endReached: rows[0]?.end_reached === true })
+}
+
+/** The target, and whether it is a thing whose end has come (judged at this step). */
+async function requireTargetEnd(
+  target: RuntimeTarget | null,
+  db: TaggedSql,
+): Promise<Readonly<{ target: RuntimeTarget; endReached: boolean }>> {
+  if (!target) throw new EngineError(400, 'effect target is unavailable because its type or id is missing; send one documented target_type and target_id')
+  const found = await readTarget(target, db)
+  if (!found.exists) throw new EngineError(404, `${target.type} target was not found; choose a current public target before retrying`)
+  return Object.freeze({ target, endReached: target.type === 'thing' && found.endReached })
 }
 
 async function requireTarget(target: RuntimeTarget | null, db: TaggedSql): Promise<RuntimeTarget> {
-  if (!target) throw new EngineError(400, 'effect target is unavailable because its type or id is missing; send one documented target_type and target_id')
-  if (!await targetExists(target, db)) throw new EngineError(404, `${target.type} target was not found; choose a current public target before retrying`)
-  return target
+  return (await requireTargetEnd(target, db)).target
 }
 
 /**
@@ -423,17 +440,21 @@ export async function lockLawPlaceEffects(
   }
 }
 
+/**
+ * The step's target after its scope checks, and whether it is a thing whose end has come.
+ * The scope refusals answer first; the step itself then skips an ended thing.
+ */
 async function requireScopedBrickTarget(
   symbol: SymbolicTarget,
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<RuntimeTarget> {
+): Promise<Readonly<{ target: RuntimeTarget; endReached: boolean }>> {
   const origin = effectOrigin(context)
   if (symbol === 'law_place' && (origin.placeId === null || origin.thingId !== null
     || context.sourceTraitId === null || context.placeId === null)) {
     throw new EngineError(403, 'law_place is available only to a place law; put this trait on a place you own as a law')
   }
-  const target = await requireTarget(resolveSymbolicTarget(symbol, {
+  const { target, endReached } = await requireTargetEnd(resolveSymbolicTarget(symbol, {
     ...context, originThingId: origin.thingId, originPlaceId: origin.placeId,
   }), db)
   if (symbol === 'law_place') {
@@ -470,7 +491,7 @@ async function requireScopedBrickTarget(
   if (symbol === 'target') {
     await requireCallerTargetScope(target, context.actorId, context.placeId, db)
   }
-  return target
+  return Object.freeze({ target, endReached })
 }
 
 async function requireNonWorldPlace(placeId: number, db: TaggedSql): Promise<void> {
@@ -548,6 +569,8 @@ async function activeLabel(target: RuntimeTarget, label: string, db: TaggedSql):
           CASE WHEN ${target.type} = 'place' THEN clock_timestamp() ELSE now() END)
         -- A label the founder ended at its wearer's request no longer counts (decision #169).
         AND NOT EXISTS (SELECT 1 FROM label_endings ending WHERE ending.label_id = active_labels.id)
+        -- A thing whose end has come wears no label any more; its rows stay.
+        AND NOT (${target.type} = 'thing' AND thing_end_reached(${target.id}::integer))
     ) AS present
   `)
   return rows[0]?.present === true
@@ -636,6 +659,30 @@ async function skipAfterOwnEnd(
   })
 }
 
+/**
+ * A step aimed at a thing whose end has come (even earlier in this same transaction) is
+ * skipped with its reason, and the rest of the program runs. Inside a reach the skip names
+ * the member it was aimed at.
+ */
+function endedThingSkip(
+  effect: Effect,
+  thingId: number,
+  context: EffectExecutionContext,
+): SkippedEffect {
+  const symbol = 'target' in effect ? effect.target : 'source' as const
+  const member = context.reachMember !== undefined && symbol === 'target'
+    && context.target?.type === 'thing' && context.target.id === thingId
+  return Object.freeze({
+    effect: effect.effect,
+    target: symbol,
+    sourceTrait: context.sourceTraitName ?? null,
+    sourceTraitId: context.sourceTraitId,
+    sourcePlaceId: context.originPlaceId ?? null,
+    reason: THING_ENDED_SKIP_REASON,
+    ...(member ? { memberId: thingId } : {}),
+  })
+}
+
 /** The thing, or for a law the place, whose recipe this run follows. */
 export function effectOrigin(context: EffectExecutionContext): Readonly<{
   thingId: number | null
@@ -716,7 +763,10 @@ async function executeEffectWithOutcome(
   if (skipped) return effectExecutionOutcome(0, false, destroyedThingIds, [skipped])
   if ('target' in effect && effect.target === 'actor') requireWakeActor(context)
   if (effect.effect === 'label') {
-    const target = await requireScopedBrickTarget(effect.target, context, db)
+    const { target, endReached } = await requireScopedBrickTarget(effect.target, context, db)
+    if (endReached) {
+      return effectExecutionOutcome(0, false, destroyedThingIds, [endedThingSkip(effect, target.id, context)])
+    }
     const changed = target.type === 'thing' || target.type === 'place'
       ? [await changedPublicTarget(target, 'label', context, db)] : []
     const origin = effectOrigin(context)
@@ -754,7 +804,7 @@ async function executeEffectWithOutcome(
   }
   if (effect.effect === 'block') {
     await requireRoughRoomFor(effect, context, db)
-    const target = await requireScopedBrickTarget(effect.target, context, db)
+    const { target } = await requireScopedBrickTarget(effect.target, context, db)
     if (target.type !== 'resident') throw new EngineError(400, 'block target must be a resident')
     const origin = effectOrigin(context)
     await queryRows(db`
@@ -775,7 +825,9 @@ async function executeEffectWithOutcome(
       throw new EngineError(403, 'agents and non-thing targets cannot be destroyed; choose an active thing target instead')
     }
     const changed = await changedPublicTarget(target, 'destroy', context, db)
-    await destroyThing(target.id, context, db)
+    if (await destroyThing(target.id, context, db) === 'ended') {
+      return effectExecutionOutcome(0, false, destroyedThingIds, [endedThingSkip(effect, target.id, context)])
+    }
     return effectExecutionOutcome(
       1,
       true,
@@ -794,7 +846,9 @@ async function executeEffectWithOutcome(
     const target = await requireTarget(resolved, db)
     // Like a carried move's thing_moved, an effect's move sits beside the action's row.
     const before = await changedPublicTarget(target, 'move', context, db)
-    await moveEffectTarget(target, effect.to, context, db)
+    if (await moveEffectTarget(target, effect.to, context, db) === 'ended') {
+      return effectExecutionOutcome(0, false, destroyedThingIds, [endedThingSkip(effect, target.id, context)])
+    }
     const after = await changedPublicTarget(target, 'move', context, db)
     const changed = before.place_id === after.place_id ? [] : [after]
     return effectExecutionOutcome(1, false, destroyedThingIds, [],
@@ -860,11 +914,14 @@ async function executeEffectWithOutcome(
     if (target.type !== 'thing') throw new EngineError(403, CONVERT_ONLY_THINGS_ERROR)
     await requireCallerTargetScope(target, context.actorId, context.placeId, db)
     const converted = await convertThing(effect, target.id, context, db)
+    if (converted === 'ended') {
+      return effectExecutionOutcome(0, false, destroyedThingIds, [endedThingSkip(effect, target.id, context)])
+    }
     return effectExecutionOutcome(converted ? 1 : 0, false, destroyedThingIds, [], [],
       converted ? [await changedPublicTarget(target, 'convert', context, db)] : [])
   }
 
-  const target = await requireScopedBrickTarget(effect.target, context, db)
+  const { target } = await requireScopedBrickTarget(effect.target, context, db)
   const law = effect.target === 'law_place' ? null : await matchingLaw(target, effect.label, db)
   const matched = law !== null || await activeLabel(target, effect.label, db)
   const branch = matched ? effect.then : (effect.else ?? [])
@@ -911,11 +968,12 @@ async function withdrawSharedSourceThing(
   `)
 }
 
+/** Withdraws the thing, or answers 'ended' and writes nothing when its end has come. */
 async function destroyThing(
   thingId: number,
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<void> {
+): Promise<'destroyed' | 'ended'> {
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   const ownedByActor = thing.ownerId === context.actorId
@@ -927,6 +985,8 @@ async function destroyThing(
     || context.lawAuthority === null)) {
     throw new EngineError(403, 'damage to another resident property requires an effective local law')
   }
+  // Who may destroy it answers first; a thing whose end has come is then left as it is.
+  if (thing.endReached) return 'ended'
   if (thing.heldBy !== null && !ownedByActor) throw new EngineError(409, HELD_THING_ERROR)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
@@ -994,7 +1054,7 @@ async function destroyThing(
       ) SELECT id FROM changed
     `)
   }
-  if (rows[0]) return
+  if (rows[0]) return 'destroyed'
   if (ownedByActor) throw new EngineError(409, 'thing changed before it could be destroyed; re-read the thing before retrying')
   if (sharedSource) {
     const stillOpen = await thingState(thing.id, db)
@@ -1054,24 +1114,25 @@ export async function withdrawOwnedThing(
   if (!rows[0]) throw new EngineError(409, 'thing cannot be consumed because its state changed; re-read the thing before retrying')
 }
 
+/** Moves the target, or answers 'ended' and moves nothing for a thing whose end has come. */
 async function moveEffectTarget(
   target: RuntimeTarget,
   destination: 'destination' | 'home',
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<void> {
+): Promise<'moved' | 'ended'> {
   if (target.type === 'resident') {
     await requireResidentAtActionPlace(target.id, context.placeId, db)
     if (destination === 'home') {
       await requireWakeHome(target.id, context, db)
       requireReservedEffectPlace((await readPresence(target.id, db)).homePlaceId, context)
       await goHome(target.id, db, context.actionId, context.actorId)
-      return
+      return 'moved'
     }
     if (context.destinationPlaceId === null) throw new EngineError(400, 'move effect needs a destination')
     requireReservedEffectPlace(context.destinationPlaceId, context)
     await moveResident(target.id, context.destinationPlaceId, db, context.actionId, context.actorId)
-    return
+    return 'moved'
   }
   if (target.type !== 'thing') throw new EngineError(400, 'move effect target must be a resident or thing')
   const destinationId = destination === 'home'
@@ -1079,7 +1140,7 @@ async function moveEffectTarget(
     : context.destinationPlaceId
   if (destinationId === null) throw new EngineError(409, 'move destination is unavailable because the effect has no resolved destination; send to_place_id for move and retry')
   requireReservedEffectPlace(destinationId, context)
-  await moveThing(target.id, destinationId, context.actorId, db)
+  return moveThing(target.id, destinationId, context.actorId, db)
 }
 
 async function moveThing(
@@ -1087,15 +1148,17 @@ async function moveThing(
   destinationId: number,
   actorId: number,
   db: TaggedSql,
-): Promise<void> {
+): Promise<'moved' | 'ended'> {
   const thing = await thingState(thingId, db)
   if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
   if (thing.ownerId !== actorId) throw new EngineError(403, 'only the owner can move a thing')
+  // Its owner may still carry a thing whose end has come, but no program step moves it.
+  if (thing.endReached) return 'ended'
   if (thing.heldBy !== null) throw new EngineError(409, HELD_THING_ERROR)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing has an open sale offer; cancel the offer or choose another active thing')
   }
-  if (thing.placeId === destinationId) return
+  if (thing.placeId === destinationId) return 'moved'
   const places = await queryRows<Record<string, unknown>>(withPlacePermission(db)`
     SELECT place.id, place.parent_id, place.owner_id, place.open_to_things,
       place.retired_at,
@@ -1146,6 +1209,7 @@ async function moveThing(
     SELECT id FROM moved
   `)
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move; re-read both and retry')
+  return 'moved'
 }
 
 /**
@@ -1622,6 +1686,37 @@ async function repeatPending(row: PendingRow, context: EffectExecutionContext, d
   }, context, db)
 }
 
+/**
+ * The things a waiting step names, judged when it comes due: 'source' when its source or
+ * own thing has reached its end, else 'target' when its target thing has, else null. Also
+ * the ones with an end set, whose own write and copy steps re-read due as they run.
+ */
+async function timerThingEnds(
+  row: PendingRow,
+  db: TaggedSql,
+): Promise<Readonly<{ ended: 'source' | 'target' | null; endingThingIds: readonly number[] }>> {
+  const sourceIds = [row.sourceThingId, row.originThingId ?? null]
+    .filter((id): id is number => id !== null)
+  const targetId = row.target?.type === 'thing' ? row.target.id : null
+  const ids = [...new Set([...sourceIds, ...(targetId === null ? [] : [targetId])])]
+  if (ids.length === 0) return Object.freeze({ ended: null, endingThingIds: [] })
+  const rows = await queryRows<{ id?: unknown; ending_set?: unknown; end_reached?: unknown }>(db`
+    /* thing-endings:timer-end */
+    SELECT thing.id, thing.ending_rule IS NOT NULL AS ending_set,
+      (thing.ended_at IS NOT NULL
+        OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached
+    FROM things thing
+    WHERE thing.id = ANY(${ids}::int[]) AND thing.withdrawn_at IS NULL
+  `)
+  const reached = new Set(rows.filter(found => found.end_reached === true).map(found => Number(found.id)))
+  const ended = sourceIds.some(id => reached.has(id)) ? 'source' as const
+    : targetId !== null && reached.has(targetId) ? 'target' as const : null
+  return Object.freeze({
+    ended,
+    endingThingIds: Object.freeze(rows.filter(found => found.ending_set === true).map(found => Number(found.id))),
+  })
+}
+
 async function resolveOne(
   raw: Record<string, unknown>,
   placeId: number,
@@ -1653,6 +1748,25 @@ async function resolveOne(
     }, db)
     return 'resolved'
   }
+  // A waiting step whose source or target thing reached its end meanwhile is skipped, and
+  // never repeats; the room's other due steps still run. It records no end.
+  const ends = await timerThingEnds(row, db)
+  if (ends.ended !== null) {
+    await recordEffectResolution(row.id, 'skipped', {
+      effects_applied: 0,
+      skipped_effects: publicSkippedEffects([{
+        effect: 'wait',
+        target: ends.ended,
+        sourceTrait: null,
+        sourceTraitId: row.sourceTraitId,
+        sourcePlaceId: row.originPlaceId ?? null,
+        reason: THING_ENDED_SKIP_REASON,
+        ...(ends.ended === 'target' && row.reachMember !== null && row.target !== null
+          ? { memberId: row.target.id } : {}),
+      }]),
+    }, db)
+    return 'resolved'
+  }
   const reservedResidentIds = await lockEffectResidents(row.effects, row, db)
   const actors = await queryRows<{ handle: string }>(db`
     SELECT handle FROM residents WHERE id = ${row.actorId}
@@ -1678,6 +1792,7 @@ async function resolveOne(
     trigger: 'timer',
     rollLog,
     ownProgram: row.ownProgram,
+    endingThingIds: ends.endingThingIds,
     abilityLog: newAbilityLog(),
     ...(row.reachMember === null ? {} : { reachMember: row.reachMember }),
     ...(row.fromWake ? {
