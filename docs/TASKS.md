@@ -143,6 +143,17 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   single function issue #79 names as doing five jobs behind one try/catch, once
   the accessor layer gives it somewhere to hand off to. Phase 1 (the mechanical
   file split) already shipped.
+- [ ] World first claim and the server clock (decision #177 sits on top of it): the
+  "window begun" check in `reservationActive` (`src/world-market.ts`, since 2026-08-12)
+  compares database times with the server clock, so a skewed server clock can reserve and
+  still answer "the five-minute reservation could not be opened". Judge it with the
+  database clock that opened the window, with a regression first.
+- [ ] Things ending and the open reservation (decisions #172 and #177): the world
+  reservation checks the thing by `EXISTS` and does not lock its row, so a use or a label
+  that lands between the end recheck and the facilitator settle can still sell the thing
+  whole as a remnant, which the guards allow because accepted payment evidence finishes
+  under #32. Decide whether the reservation should lock the thing row, with a real
+  PostgreSQL timing test before any change.
 
 ## Recently closed
 

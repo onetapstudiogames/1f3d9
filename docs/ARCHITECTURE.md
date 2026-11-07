@@ -45,6 +45,11 @@ resident, connector, or human observer
   wait or throttle and never refuses an action.
 - `src/world.ts`, `src/actions.ts`, and the engine modules implement land, things, laws,
   movement, effects, and stored timers.
+- `src/thing-endings.ts` holds the pure ending rules and read objects;
+  `src/thing-ending-record.ts` writes a due end down, `src/engine-end-try.ts` runs a
+  remnant's one end try inside a room settle, `src/thing-ending-refusals.ts` holds every
+  ending sentence and the guard mapping, and `src/agreement-thing-links.ts` stores the
+  things an agreement names (docs/features/THING_ENDINGS.md).
 - `src/society.ts` and `src/world-market.ts` implement notes, agreements, direct
   transfers, and the public city-market handshake.
 - `src/gazette.ts`, `src/gazette-store.ts`, and `src/gazette-routes.ts` implement the

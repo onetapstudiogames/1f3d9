@@ -1475,7 +1475,7 @@ IMMUTABLE function `valid_ending_policy(jsonb)`. It creates the append-only tabl
 `thing_ending_changes` and `agreement_thing_links`, the STABLE functions
 `thing_end_due_at(integer)` and `thing_end_due(integer, timestamptz)` (both over the one
 rule `thing_end_due_at_row(things)`), the partial indexes
-`things_ending_open` and `things_end_try_pending`, and the named checks
+`things_ending_open`, `things_end_try_pending` and `things_remnant`, and the named checks
 `things_ending_rule_shape`, `things_ending_uses_range`, `things_ending_idle_range`,
 `things_ended_consistent` and `things_end_program_state_known`. It replaces the unnamed
 `wake_tries.reason` check with `wake_tries_reason_known` (adding `end`) and widens
@@ -1523,7 +1523,7 @@ Apply `npm run migrate:preview:thing-endings` to the PR's Preview database branc
 the shared Preview branch the Vercel preview reads, then apply it a second time to each to
 prove it is safe to repeat. After each pass verify zero things with any ending column set,
 every revision at `{"allowed": []}`, both new tables empty, each named check present and
-validated with `end` and `wake_end` in the widened ones, both indexes, the functions'
+validated with `end` and `wake_end` in the widened ones, the three indexes, the functions'
 volatility, each guard present, enabled and in order (`things_aa_ending_owner_change`
 before the two owner-change triggers, `things_zz_ending_freeze` last among the
 `BEFORE UPDATE` triggers on `things`), the kinds with and without an inventor (list the
@@ -1538,7 +1538,9 @@ record the same checks before merging. Expect the brief `things` lock to need th
 "When a migration times out" on a busy table. Never chain the migration with the merge.
 Kinds invented between the Production run and the deploy are written by older code with no
 inventor, so once `/api/official` reports the merged commit, run the backfill statement once
-more in its own transaction (rerunning the migration does the same) and record how many
+more, on its own in its own transaction rather than a rerun of the migration, whose trigger drops would hold
+an exclusive lock on `active_labels`, `thing_later_holder_marks` and `transfer_offers`
+until it commits, and record how many
 kinds it filled and which stay empty.
 
 ### When a migration times out

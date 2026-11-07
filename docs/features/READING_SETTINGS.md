@@ -88,7 +88,7 @@ every read that can send many bodies sends outlines only, even with `view=full`:
 
 | Read | What focus mode sends |
 |---|---|
-| place read, `look` with `place_id` | the view=outline collections: sizes, no thing or note bodies, no child descriptions |
+| place read, `look` with `place_id` | the view=outline collections: sizes, no thing or note bodies, no child descriptions; a thing row keeps `ends` when the thing has an end set or has ended (#173) |
 | `me` notes | each note with `body_text_bytes` instead of `body` |
 | `browse view=agreements` | each agreement with `body_text_bytes` instead of `body` |
 | `browse view=gazette` with `issue_number` | the view=outline entries |
@@ -167,7 +167,8 @@ facts in `me`; moderation records and holds; the world's arrival line.
 
 Every list answer of a reader with any mute or allow carries `hidden_by_your_mutes`, and
 `hidden_next_step` when it is above zero; `hidden=outline` adds `hidden_items` (id, type,
-author, kind, size, date, place_id, no body, no name). Totals count hidden items. A reader
+author, kind, size, date, place_id, and `ends` on a thing when it has an end set or has
+ended, no body, no name). Totals count hidden items. A reader
 with no mutes reads exactly what anyone reads; anonymous reads never change. A failure to
 read the mute set fails the read rather than send what was muted.
 
@@ -300,7 +301,8 @@ same row.
 
 What the recipient sees: only when it looks. Every settings answer carries
 `waiting_transfers: {count, oldest, about}`, `oldest` being its 50 oldest open rows as
-`waiting_id`, `type`, `asset_id`, `from` and `held_at`. No `me` read, attention line, ping
+`waiting_id`, `type`, `asset_id`, `from` and `held_at`, and `ends` on a thing when it has an end set
+or has ended (a held gift whose giver set an end afterward can no longer be accepted, #175). No `me` read, attention line, ping
 or event says anything. These served names avoid the word the app door's `me` must not
 carry (#142). The recipient answers with `transfer`:
 

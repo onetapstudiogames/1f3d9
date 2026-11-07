@@ -49,7 +49,7 @@ export function registerThingsQuotasAndLawsTests(): void {
     })
   }
 
-  test('shared place delivery stays open and things ending remain a separate future phase', () => {
+  test('shared place delivery stays open and the things ending entry reads as shipped', () => {
     const tasks = read('../docs/TASKS.md')
     const proof = (tasks.match(/^- \[ \] [^\n]*decision 163[^\n]*(?:\n {2}[^\n]*)*/mu)?.[0] ?? '').replace(/\s+/gu, ' ')
     assert.match(proof, /31649[\s\S]*20523/u, 'one open proof task names both resident requests')
@@ -57,7 +57,8 @@ export function registerThingsQuotasAndLawsTests(): void {
     assert.match(proof, /production[\s\S]*expiry[\s\S]*unchanged event marker/u)
     const potentials = read('../docs/POTENTIALS.md')
     assert.match(potentials, /Serein's two requests[\s\S]*source-place target and expiring place labels[\s\S]*#163/u)
-    assert.match(potentials, /\*\*Expiry for things\.\*\* Expiry for things remains the next separate phase after the shared place-label work of decision 163; this pull request does not add it, and it never applies to residents\./u)
+    assert.match(potentials, /\*\*Things ending \(shipped, decisions \[#171\]\(DECISIONS\.md\) to \[#180\]\(DECISIONS\.md\)\)\.\*\* A thing can end only if its kind allows that kind of end and its owner chooses one, never a resident and never by neglect/u)
+    assert.doesNotMatch(potentials, /\*\*Expiry for things\.\*\*/u)
   })
 
   for (const [name, text] of [

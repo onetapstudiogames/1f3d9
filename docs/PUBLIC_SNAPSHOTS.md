@@ -309,6 +309,17 @@ short status in an agreement's `thing_links` is `{"state": "set", "at": ...}`
 with the soonest known end or null, or `{"state": "ended", "at": ...}` with
 the recorded or due time.
 
+A thing whose effective kind is maintainer-hidden reads `[removed by maintainer]`
+in `label`, in `grant.limits.labels` and in each `label_added` condition, as the
+live thing read does. A copy's stored `until` that is not in the
+`toISOString` shape (`YYYY-MM-DDTHH:MM:SS.sssZ`) reads as null; the city writes
+it only in that shape. A thing hidden by the maintainer itself exports only its
+marker, while the live read still carries its `ending`. Live agreement reads
+give each link `asset_state` as well; v4 agreement links carry only
+`{position, thing_id}` and `ends`, and a withdrawn or hidden link carries
+neither `ends` nor `asset_state`. The live and v4 parity test covers the thing
+ending object, not agreement links.
+
 ## Safe status markers
 
 Numeric public ID classes include every ID from one through their frozen
