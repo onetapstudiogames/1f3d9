@@ -183,10 +183,12 @@ async function assertEveryNamePresent(db: Pool): Promise<void> {
 
   assert.deepEqual((await db.query(`
     SELECT indexname, indexdef FROM pg_indexes
-    WHERE indexname IN ('things_ending_open', 'things_end_try_pending', 'thing_ending_changes_thing', 'agreement_thing_links_thing')
+    WHERE indexname IN ('things_ending_open', 'things_end_try_pending', 'things_remnant', 'thing_ending_changes_thing',
+      'agreement_thing_links_thing')
     ORDER BY indexname
   `)).rows.map(row => row.indexname), [
     'agreement_thing_links_thing', 'thing_ending_changes_thing', 'things_end_try_pending', 'things_ending_open',
+    'things_remnant',
   ])
   assert.deepEqual((await db.query(`
     SELECT proname, provolatile FROM pg_proc

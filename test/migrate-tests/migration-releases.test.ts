@@ -936,6 +936,7 @@ export function registerMigrationReleaseTests(): void {
     assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due\(thing_id integer, at timestamptz\) RETURNS boolean\s+LANGUAGE sql STABLE/u)
     assert.match(migration, /CREATE INDEX IF NOT EXISTS things_ending_open ON things \(place_id, id\)\s+WHERE ending_rule IS NOT NULL AND ended_at IS NULL AND withdrawn_at IS NULL;/u)
     assert.match(migration, /CREATE INDEX IF NOT EXISTS things_end_try_pending ON things \(place_id, id\)\s+WHERE end_program_state = 'pending';/u)
+    assert.match(migration, /CREATE INDEX IF NOT EXISTS things_remnant ON things \(place_id\)\s+WHERE ended_at IS NOT NULL AND withdrawn_at IS NULL;/u)
     assert.match(migration, /inventor\.handle = invention\.actor\s+AND inventor\.joined_at <= invention\.at/u)
     assert.match(migration, /thing endings columns differ from the reviewed shape/u)
     // Additive: no table or column is dropped, no row deleted; the only drops are the

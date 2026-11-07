@@ -287,11 +287,14 @@ ALTER TABLE things VALIDATE CONSTRAINT things_ending_idle_range;
 ALTER TABLE things VALIDATE CONSTRAINT things_ended_consistent;
 ALTER TABLE things VALIDATE CONSTRAINT things_end_program_state_known;
 
--- Things with an end set and not yet ended or withdrawn, and remnants whose end try waits.
+-- Things with an end set and not yet ended or withdrawn, remnants whose end try waits,
+-- and the recorded remnants a place read counts live.
 CREATE INDEX IF NOT EXISTS things_ending_open ON things (place_id, id)
   WHERE ending_rule IS NOT NULL AND ended_at IS NULL AND withdrawn_at IS NULL;
 CREATE INDEX IF NOT EXISTS things_end_try_pending ON things (place_id, id)
   WHERE end_program_state = 'pending';
+CREATE INDEX IF NOT EXISTS things_remnant ON things (place_id)
+  WHERE ended_at IS NOT NULL AND withdrawn_at IS NULL;
 
 -- Every set, renewal, clear, copy, end and end program result, append-only.
 CREATE TABLE IF NOT EXISTS thing_ending_changes (
@@ -1083,6 +1086,7 @@ BEGIN
 
   IF to_regclass('public.things_ending_open') IS NULL
     OR to_regclass('public.things_end_try_pending') IS NULL
+    OR to_regclass('public.things_remnant') IS NULL
     OR to_regclass('public.thing_ending_changes_thing') IS NULL
     OR to_regclass('public.agreement_thing_links_thing') IS NULL THEN
     RAISE EXCEPTION 'thing endings indexes are missing';

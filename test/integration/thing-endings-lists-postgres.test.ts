@@ -11,6 +11,7 @@ import test from 'node:test'
 import { call, type CityApp, type Json } from '../helpers/abilities-fixtures.ts'
 import { connectedDatabase, startNoteSuiteDatabase } from '../helpers/note-suite-fixtures/postgres.ts'
 import { seedFiveStates, type FiveStatesFixture } from '../helpers/thing-endings-fixtures/five-states.ts'
+import { placeRemnantCountSql } from '../../src/thing-ending-short.ts'
 
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 
@@ -118,6 +119,24 @@ test('thing endings on the public lists, against PostgreSQL', { timeout: 600_000
       const home = (await call(app, null, 'GET', `/api/place/${rooms.home}?view=full&thing_text_limit_bytes=100000`)).json.things_page as Json
       assert.equal(home.total_items, 11)
       assert.equal(home.remnant_items, 2)
+    })
+
+    await t.test('the recorded half of the remnant count reads the things_remnant index', async () => {
+      // Sequential scans are switched off so the small fixture table shows which index the
+      // count can use; on a busy room the planner picks it on cost alone.
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query('SET LOCAL enable_seqscan = off')
+        const plan = (await client.query(`EXPLAIN SELECT ${placeRemnantCountSql('$1::integer')} AS n`, [rooms.home]))
+          .rows.map(row => String(row['QUERY PLAN'])).join('\n')
+        assert.match(plan, /\bthings_remnant\b/u, plan)
+        const counted = (await client.query(`SELECT ${placeRemnantCountSql('$1::integer')} AS n`, [rooms.home])).rows[0]!
+        assert.equal(Number(counted.n), 2, 'the index changes no count')
+      } finally {
+        await client.query('ROLLBACK')
+        client.release()
+      }
     })
 
     await t.test('front matter carries ends on the place read and both map reads', async () => {

@@ -390,6 +390,9 @@ export function respondToDatabaseStage4(
     && !q.includes('/* public:map-continent */')
     && !q.includes('far.hinge_to =')
     && !q.includes('as has_drawing')
+    // Agreement thing links (#179) read a linked thing's hidden marker inside the agreement
+    // statement itself; those statements are answered by the agreement fixtures below.
+    && !q.includes('agreement_thing_links')
   ) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'

@@ -281,11 +281,19 @@ const ROUTES: Readonly<Record<string, RouteDecision>> = Object.freeze<Record<str
     proof: [OFFER_READS],
   },
   'src/world-market.ts POST /api/world/offer/:offerId/claim': {
-    carries: 'full', how: 'the offer in the 202 and 402 answers, built by publicOffer', builder: 'publicOffer(',
+    carries: 'full',
+    how: 'the offer, built by publicOffer, in the pending 202, the founder-review 409 and the already-claimed re-read; '
+      + 'the 402 payment challenge has no offer, and a completed claim replays the stored completion body, '
+      + 'whose offer names the thing with no end fields (#32)',
+    builder: 'publicOffer(',
     proof: [OFFER_READS],
   },
   'src/world-market.ts POST /api/world/offer/:offerId/reconcile': {
-    carries: 'full', how: 'the offer, built by publicOffer', builder: 'publicOffer(', proof: [OFFER_READS],
+    carries: 'full',
+    how: 'the offer, built by publicOffer, in the pending 202, the founder-review 409 and the re-read of a claimed, '
+      + 'canceled or invalid-payment offer; a completed reconcile replays the stored completion body, '
+      + 'whose offer names the thing with no end fields (#32)',
+    builder: 'publicOffer(', proof: [OFFER_READS],
   },
   'src/world-market.ts POST /api/world/offer/:offerId/cancel': {
     carries: 'full', how: 'the offer, built by publicOffer', builder: 'publicOffer(',
