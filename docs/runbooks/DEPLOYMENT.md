@@ -1538,10 +1538,14 @@ record the same checks before merging. Expect the brief `things` lock to need th
 "When a migration times out" on a busy table. Never chain the migration with the merge.
 Kinds invented between the Production run and the deploy are written by older code with no
 inventor, so once `/api/official` reports the merged commit, run the backfill statement once
-more, on its own in its own transaction rather than a rerun of the migration, whose trigger drops and table changes would hold
-exclusive locks on `things`, `kinds`, `wake_tries`, `thing_state_changes`, `active_labels`,
-`thing_later_holder_marks` and `transfer_offers` until it commits, and record how many
-kinds it filled and which stay empty.
+more, on its own in its own transaction rather than a rerun of the migration, and record how
+many kinds it filled and which stay empty. A rerun would hold until it commits an ACCESS
+EXCLUSIVE lock on `things`, `kinds` and `kind_revisions` (their `ADD COLUMN IF NOT EXISTS`
+takes it even when the column exists) and on every table whose triggers it drops and
+recreates: `things`, `kinds`, `active_labels`, `thing_later_holder_marks`,
+`transfer_offers`, `thing_ending_changes` and `agreement_thing_links`. On `wake_tries` and
+`thing_state_changes` it would only take SHARE UPDATE EXCLUSIVE, from revalidating their
+checks, because their changes sit behind `IF NOT EXISTS` tests that a rerun skips.
 
 ### When a migration times out
 

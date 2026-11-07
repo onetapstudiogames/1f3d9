@@ -35,9 +35,12 @@ page `things-ending` and the money section `sale-ends`; this page is the build a
   `{"label_added": "name"}`. City limits (`src/engine-limits.ts`, official facts
   `ending_limits`): a future time at most 366 days ahead, 60 to 31,622,400 seconds, 1 to
   10,000 uses, a label the kind names. The first condition met ends the thing. Setting,
-  renewing and clearing are free. Sending again the end it already has writes nothing
-  when its conditions are only `at`, `label_added` or uses none of which have been counted
-  since, sent by the resident who set it; otherwise it renews from now inside the grant.
+  renewing and clearing are free. The resend rule, as `src/reference.txt` serves it:
+  "Sending again the end it already has writes nothing when you are the one who last set
+  or renewed it, its conditions are only at, label_added or uses, and not one of those
+  uses has been spent since. Otherwise it renews: a time after setting and a time unused
+  count again from now, and uses start again at the number sent, inside the grant." This
+  is `sameEnding` in `src/thing-ending-owner.ts`.
 - **No kind.** A kindless thing may take any of the five inside the city limits with any
   label name, set only by the resident who made it, while owning it (E14). A converted
   thing (kind_id null, as_kind_id set) takes its permission from that kind.

@@ -44,8 +44,9 @@ export function thingShortEndsSql(alias: string): string {
  * An SQL expression counting the remnants standing in one place: things not withdrawn
  * whose end is recorded or due now. It is a live count, beside the item count from
  * place_reading_totals, which keeps counting remnants as items, and it is the one count
- * a place collection read makes itself. Its second half matches the things_ending_open
- * index exactly. `placeId` is fixed SQL text, such as a parameter placeholder.
+ * a place collection read makes itself. Its first half, the recorded remnants, matches
+ * the things_remnant index exactly, and its second half, the ends due now, matches the
+ * things_ending_open index. `placeId` is fixed SQL text, such as a parameter placeholder.
  */
 export function placeRemnantCountSql(placeId: string): string {
   return `((SELECT count(*)

@@ -869,9 +869,10 @@ The kind's maker may have set smaller limits. The first condition met ends the t
 official_facts states the same limits as ending_limits: Endings: 1..4 conditions; a date up to 366 days ahead; 60..31622400 seconds after setting or unused; 1..10000 uses; 1..8 label names on a kind; one end-key trait per kind; agreement thing_links 0..16.
 
 Setting, renewing and clearing an end are free. Sending again the end it already has
-writes nothing when its conditions are only at, label_added or uses not yet spent.
-Otherwise it renews: a time after setting and a time unused count again from now, and uses
-start again at the number sent, inside the grant. A use counts when it applied, even if it
+writes nothing when you are the one who last set or renewed it, its conditions are only
+at, label_added or uses, and not one of those uses has been spent since. Otherwise it
+renews: a time after setting and a time unused count again from now, and uses start again
+at the number sent, inside the grant. A use counts when it applied, even if it
 changed nothing; a refused or failed use counts nothing. Unused is measured from the last
 counted use or your last setting; reads, visits, waking and moving do not count. A label
 counts only when it was put on after the end was set, and it still counts after that label
@@ -1000,8 +1001,9 @@ agree takes optional thing_links: 0 to 16 different ids of things that exist and
 withdrawn when the agreement is written, remnants included. They are stored with the
 agreement for good, at no agreement action beyond the agreement's own. Every agreement
 read lists them as {position, thing_id, asset_state, ends}: asset_state active, remnant or
-withdrawn, and ends as on any row. A link moves nothing, adds no consent, changes no terms
-and never writes an end down.
+withdrawn, and ends as on any row, except a thing the maintainer hid, which shows only
+position and thing_id. A link moves nothing, adds no consent, changes no terms and never
+writes an end down.
 
 THE WORLD AND WALKING
 ---------------------
@@ -5155,9 +5157,10 @@ The kind's maker may have set smaller limits. The first condition met ends the t
 official_facts states the same limits as ending_limits: Endings: 1..4 conditions; a date up to 366 days ahead; 60..31622400 seconds after setting or unused; 1..10000 uses; 1..8 label names on a kind; one end-key trait per kind; agreement thing_links 0..16.
 
 Setting, renewing and clearing an end are free. Sending again the end it already has
-writes nothing when its conditions are only at, label_added or uses not yet spent.
-Otherwise it renews: a time after setting and a time unused count again from now, and uses
-start again at the number sent, inside the grant. A use counts when it applied, even if it
+writes nothing when you are the one who last set or renewed it, its conditions are only
+at, label_added or uses, and not one of those uses has been spent since. Otherwise it
+renews: a time after setting and a time unused count again from now, and uses start again
+at the number sent, inside the grant. A use counts when it applied, even if it
 changed nothing; a refused or failed use counts nothing. Unused is measured from the last
 counted use or your last setting; reads, visits, waking and moving do not count. A label
 counts only when it was put on after the end was set, and it still counts after that label
@@ -5286,8 +5289,9 @@ agree takes optional thing_links: 0 to 16 different ids of things that exist and
 withdrawn when the agreement is written, remnants included. They are stored with the
 agreement for good, at no agreement action beyond the agreement's own. Every agreement
 read lists them as {position, thing_id, asset_state, ends}: asset_state active, remnant or
-withdrawn, and ends as on any row. A link moves nothing, adds no consent, changes no terms
-and never writes an end down.
+withdrawn, and ends as on any row, except a thing the maintainer hid, which shows only
+position and thing_id. A link moves nothing, adds no consent, changes no terms and never
+writes an end down.
 
 `,
   "world-and-walking": `THE WORLD AND WALKING
