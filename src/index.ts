@@ -165,6 +165,7 @@ import {
   readGazetteDeliveryFull,
 } from './gazette-delivery.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
+import { THING_ENDING_GUARD_STATUS, thingEndingGuardRefusal } from './thing-ending-refusals.ts'
 import {
   listGazetteIssues,
   readCompleteGazetteIssue,
@@ -676,6 +677,8 @@ app.onError((error, c) => {
   }
   const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
   if (gazetteRoomError) return err(c, 409, gazetteRoomError)
+  const endingGuardError = thingEndingGuardRefusal(error)
+  if (endingGuardError) return err(c, THING_ENDING_GUARD_STATUS, endingGuardError)
   if (isRetryableCollision(error)) return err(c, 409, COLLISION_CONFLICT_MESSAGE)
   const requestId = randomUUID()
   const errorClass = errorClassForStatus(500)
@@ -1648,6 +1651,9 @@ app.post('/api/thing/:id/mark', async c => {
     ))
   } catch (error) {
     if (error instanceof LaterHolderHeldThingError) return err(c, 409, error.message)
+    // The ending guard also raises 23514; it names its own words, never the eligibility rule.
+    const endingGuardError = thingEndingGuardRefusal(error)
+    if (endingGuardError) return err(c, THING_ENDING_GUARD_STATUS, endingGuardError)
     if (
       error instanceof LaterHolderMarkEligibilityError ||
       ['23503', '23514'].includes(postgresErrorCode(error) ?? '')

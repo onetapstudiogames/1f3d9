@@ -28,7 +28,15 @@ test('every public kind is classified in the sole stored-summary writer', async 
   assert.ok(classifier, 'the migration must own one explicit event classifier')
   assert.ok(potential)
   assert.match(classifier, /public_activity_potential_kind\(event_kind\)/u)
+  // thing_ended is bookkeeping by omission: the city records it, it stamps nobody, and
+  // public_activity_potential_kind lists only the kinds that stamp. The thing endings
+  // PostgreSQL test proves public_activity_potential_kind('thing_ended') is false.
+  const BOOKKEEPING_BY_OMISSION = new Set(['thing_ended'])
   for (const kind of PUBLIC_EVENT_KINDS) {
+    if (BOOKKEEPING_BY_OMISSION.has(kind)) {
+      assert.equal(`${potential}${classifier}`.includes(`'${kind}'`), false, `${kind} must stay unlisted`)
+      continue
+    }
     assert.ok(`${potential}${classifier}`.includes(`'${kind}'`), `${kind} has no activity decision`)
   }
   assert.match(classifier, /applied_public_activity/u)

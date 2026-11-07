@@ -82,6 +82,13 @@ export const END_TRY_SKIP_REASONS = Object.freeze({
   room_retired: 'the room was retired',
 } as const)
 
+/**
+ * Not a refusal: the reason a program step records when it is skipped because its own
+ * thing's end has come, including during the same use, and for each give-trait step of
+ * a remnant that is given. Every brick that skips a due or ended thing uses these words.
+ */
+export const THING_ENDED_SKIP_REASON = 'this thing has reached its end' as const
+
 /** The status a door answers with when the ending guard refused its write. */
 export const THING_ENDING_GUARD_STATUS = 409
 

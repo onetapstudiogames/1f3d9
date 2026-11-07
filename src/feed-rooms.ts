@@ -12,7 +12,7 @@ import { publicActivityFeedContentSql } from './public-events.ts'
 export const FEED_ROOM_EVENT_KINDS = Object.freeze([
   'note', 'line_said', 'ping_sent', 'ping_answered',
   'thing_created', 'thing_crafted', 'thing_edited', 'thing_moved', 'thing_upgraded',
-  'thing_withdrawn',
+  'thing_withdrawn', 'thing_ended',
 ] as const)
 
 const FEED_ROOM_EVENT_KIND_SQL = FEED_ROOM_EVENT_KINDS.map(kind => `'${kind}'`).join(', ')

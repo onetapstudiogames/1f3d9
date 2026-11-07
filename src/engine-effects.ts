@@ -14,6 +14,7 @@ import {
   type TaggedSql,
 } from './engine.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { THING_ENDED_SKIP_REASON } from './thing-ending-refusals.ts'
 import { giftsWaitFor, holdTransfer, type WaitingNote } from './waiting-transfers.ts'
 import {
   MAX_EFFECT_GENERATIONS,
@@ -111,6 +112,12 @@ export interface EffectExecutionContext {
   readonly abilityLog?: AbilityLog
   /** Set on every step a reach runs for one member, target being that member. */
   readonly reachMember?: ReachMember
+  /**
+   * The things in this run that had an end set when it began. Only these can fall due
+   * during the run (a label step adding the watched label), so only their own write and
+   * copy steps re-read due from the database before they run.
+   */
+  readonly endingThingIds?: readonly number[]
 }
 
 /**
@@ -154,6 +161,7 @@ export const SKIP_REASONS = Object.freeze([
   'a growth cap refused the copy',
   'the family reached its generation or copy limit',
   'this reach member refused the step',
+  THING_ENDED_SKIP_REASON,
 ] as const)
 export type SkipReason = typeof SKIP_REASONS[number]
 /** Which limit stopped a copy: the family's depth or count, no open destination, or a place cap. */
@@ -229,6 +237,13 @@ export interface ThingState {
   readonly openToUse: boolean
   readonly sharedUseMayDestroy: boolean
   readonly heldBy: number | null
+  /** An end is set (ending_rule not null); it cannot be set during an action. */
+  readonly endingSet: boolean
+  /** For reading only: every brick re-reads due from the database before its step. */
+  readonly dueAt: string | null
+  readonly endedAt: string | null
+  /** Recorded, or due at this transaction's time, as the guards judge it. */
+  readonly endReached: boolean
 }
 interface PendingRow {
   readonly id: number
@@ -468,6 +483,10 @@ export async function thingState(
       SELECT thing.id, thing.owner_id, thing.place_id,
         thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
         thing.shared_use_may_destroy, thing.held_by,
+        thing.ending_rule IS NOT NULL AS ending_set, thing.ended_at,
+        thing_end_due_at_row(thing) AS end_due_at,
+        (thing.ended_at IS NOT NULL
+          OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -481,6 +500,10 @@ export async function thingState(
       SELECT thing.id, thing.owner_id, thing.place_id,
         thing.withdrawn_at, thing.active_offer_id, thing.open_to_use,
         thing.shared_use_may_destroy, thing.held_by,
+        thing.ending_rule IS NOT NULL AS ending_set, thing.ended_at,
+        thing_end_due_at_row(thing) AS end_due_at,
+        (thing.ended_at IS NOT NULL
+          OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
           WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id
@@ -501,6 +524,11 @@ export async function thingState(
     openToUse: row.open_to_use === true,
     sharedUseMayDestroy: row.shared_use_may_destroy === true,
     heldBy: nullableRowId(row.held_by, 'thing holder id'),
+    // A row without these columns (an older reader or a fake) reads as no end at all.
+    endingSet: row.ending_set === true,
+    dueAt: row.end_due_at == null ? null : isoTimestamp(row.end_due_at),
+    endedAt: row.ended_at == null ? null : isoTimestamp(row.ended_at),
+    endReached: row.end_reached === true,
   }
 }
 
@@ -568,6 +596,36 @@ function skipAfterEarlierDestroy(
     sourceTraitId: context.sourceTraitId,
     sourcePlaceId: context.originPlaceId ?? null,
     reason: 'target thing was destroyed earlier in this use' as const,
+  })
+}
+
+/**
+ * A write or a copy acts on the program's own thing. When that thing's end has come,
+ * even earlier in this same transaction, the step is skipped with its reason and the
+ * rest of the program runs. Due is read from the database for each step, never cached.
+ * The thing's own end try (its end_try writer) is never skipped here.
+ */
+async function skipAfterOwnEnd(
+  effect: Effect,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<SkippedEffect | null> {
+  if (effect.effect !== 'write' && effect.effect !== 'copy') return null
+  const ownThingId = context.originThingId ?? null
+  if (ownThingId === null || !context.endingThingIds?.includes(ownThingId)) return null
+  const rows = await queryRows<{ skip?: unknown }>(db`
+    /* thing-endings:step-end */
+    SELECT thing_end_reached(${ownThingId}::integer)
+      AND thing_ending_writer(${ownThingId}::integer) <> 'end_try' AS skip
+  `)
+  if (rows[0]?.skip !== true) return null
+  return Object.freeze({
+    effect: effect.effect,
+    target: 'source' as const,
+    sourceTrait: context.sourceTraitName ?? null,
+    sourceTraitId: context.sourceTraitId,
+    sourcePlaceId: context.originPlaceId ?? null,
+    reason: THING_ENDED_SKIP_REASON,
   })
 }
 
@@ -647,6 +705,7 @@ async function executeEffectWithOutcome(
     ? (context.destroyedThingIds ?? [])
     : undefined
   const skipped = skipAfterEarlierDestroy(effect, context)
+    ?? await skipAfterOwnEnd(effect, context, db)
   if (skipped) return effectExecutionOutcome(0, false, destroyedThingIds, [skipped])
   if ('target' in effect && effect.target === 'actor') requireWakeActor(context)
   if (effect.effect === 'label') {

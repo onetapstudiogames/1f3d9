@@ -31,6 +31,13 @@ import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import {
+  THING_ENDED_SKIP_REASON,
+  THING_ENDING_GUARD_STATUS,
+  THING_REMNANT_REFUSAL,
+  thingEndingGuardRefusal,
+} from './thing-ending-refusals.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 import { effectPlaceIds, lockEffectResidents, lockEffectThings } from './engine-place-plan.ts'
 import type { WaitingNote } from './waiting-transfers.ts'
 import {
@@ -212,6 +219,12 @@ interface BaseActionInput {
   readonly carryThingId?: number | null
   readonly recipientId?: number | null
   readonly payload?: Readonly<Record<string, unknown>>
+  /**
+   * Things whose end this request already recorded before calling, for example in an
+   * earlier settle or at its own door. runAction treats them as just recorded (refuse
+   * E7), exactly like the ids its own recorder call returns.
+   */
+  readonly recordedThingIds?: readonly number[]
 }
 
 export type ActionInput = BaseActionInput & (
@@ -275,6 +288,7 @@ interface RequiredActionInput {
   readonly primitiveEmitsTypedEvent: boolean
   readonly primitiveThingIds: readonly number[]
   readonly performPrimitive: ((transaction: TaggedSql) => Promise<void>) | null
+  readonly recordedThingIds: readonly number[]
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -957,6 +971,7 @@ function normalizeActionInput(input: ActionInput | RequiredActionInput): Require
       ? (input.primitiveThingIds ?? []).filter(id => Number.isSafeInteger(id) && id > 0)
       : [],
     performPrimitive: input.primitiveHandledByCaller === true ? input.performPrimitive : null,
+    recordedThingIds: (input.recordedThingIds ?? []).filter(id => Number.isSafeInteger(id) && id > 0),
   }
 }
 
@@ -1242,6 +1257,8 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   if (error instanceof EngineError && error.status < 500) return error
   const gazetteRoomError = gazetteRoomLifecycleRefusal(error)
   if (gazetteRoomError) return new EngineError(409, gazetteRoomError)
+  const endingGuardError = thingEndingGuardRefusal(error)
+  if (endingGuardError) return new EngineError(THING_ENDING_GUARD_STATUS, endingGuardError)
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedExecutionFailure('action', actionId, error)
   return new EngineError(
@@ -1317,7 +1334,27 @@ async function resolveUncertainCommit(
   }
 }
 
-async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
+/**
+ * A source whose end has come refuses E7, except a give (act give or a transfer gift,
+ * never a sale offer) of a remnant recorded before this request. A thing this request
+ * recorded refuses for every action, so nobody receives a thing that ended a moment ago.
+ */
+function refuseEndedSource(
+  input: RequiredActionInput,
+  thing: Readonly<{ id: number; endReached: boolean; endedAt: string | null }>,
+  recordedThingIds: ReadonlySet<number>,
+): void {
+  if (!thing.endReached) return
+  const olderRemnant = thing.endedAt !== null && !recordedThingIds.has(thing.id)
+  const remnantGive = input.action === 'give' && input.payload.mode !== 'offer'
+  if (!(olderRemnant && remnantGive)) throw new EngineError(409, THING_REMNANT_REFUSAL)
+}
+
+async function sourceReady(
+  input: RequiredActionInput,
+  db: TaggedSql,
+  recordedThingIds: ReadonlySet<number> = new Set(),
+) {
   if (input.sourceThingId === null) return null
   const thing = await thingState(input.sourceThingId, db, { forUpdate: true })
   if (!thing || thing.withdrawnAt !== null) {
@@ -1330,6 +1367,7 @@ async function sourceReady(input: RequiredActionInput, db: TaggedSql) {
       'thing_id is not yours; use a thing you own, or use an open_to_use thing, which your use can destroy only when its owner allows that',
     )
   }
+  refuseEndedSource(input, thing, recordedThingIds)
   if (thing.activeOfferId !== null || thing.hasOpenOffer) {
     throw new EngineError(409, 'thing_id has an open sale offer; cancel the offer or use another active thing')
   }
@@ -1737,6 +1775,53 @@ export async function prepareActionRooms(
     lawPrograms, observedThingPrograms, reservedPlaceIds })
 }
 
+/**
+ * Record a due end on the action's own things (its source, a thing target, a carried
+ * thing) before the action's run is written, so a refusal names a recorded remnant. A
+ * failed recording never changes the action's answer: sourceReady still refuses E7 at
+ * the transaction's time, and the next request records it.
+ */
+async function recordActionThingEnds(input: RequiredActionInput, db: TaggedSql): Promise<ReadonlySet<number>> {
+  const ids = [
+    input.sourceThingId,
+    input.target?.type === 'thing' ? input.target.id : null,
+    input.carryThingId,
+  ].filter((id): id is number => id !== null)
+  const recorded = ids.length === 0 ? [] : await recordDueEndQuietly(ids, db)
+  return new Set([...input.recordedThingIds, ...recorded])
+}
+
+/** Each top-level step of a remnant's own programs, skipped because its end has come. */
+function remnantProgramSkips(programs: readonly StoredProgram[]): readonly SkippedEffect[] {
+  return programs.flatMap(program => program.effects.map(effect => Object.freeze({
+    effect: effect.effect,
+    target: 'target' in effect ? effect.target : 'source' as const,
+    sourceTrait: program.sourceTraitName,
+    sourceTraitId: program.sourceTraitId,
+    sourcePlaceId: null,
+    reason: THING_ENDED_SKIP_REASON,
+  })))
+}
+
+/**
+ * A successful use lowers the uses left (stamping the moment they run out with this
+ * transaction's time) and moves the unused clock. It writes nothing on a thing that fell
+ * due during the use, so it never meets the guard.
+ */
+async function countEndingUse(thingId: number, db: TaggedSql): Promise<void> {
+  await queryRows(db`
+    /* thing-endings:use-count */
+    UPDATE things SET
+      ending_uses_left = CASE WHEN ending_uses_left IS NULL THEN NULL ELSE ending_uses_left - 1 END,
+      ending_uses_spent_at = CASE WHEN ending_uses_left = 1 THEN transaction_timestamp() ELSE ending_uses_spent_at END,
+      ending_idle_anchor = CASE WHEN ending_idle_seconds IS NULL THEN ending_idle_anchor ELSE transaction_timestamp() END
+    WHERE id = ${thingId} AND withdrawn_at IS NULL AND ending_rule IS NOT NULL AND ended_at IS NULL
+      AND (ending_uses_left IS NOT NULL OR ending_idle_seconds IS NOT NULL)
+      AND NOT thing_end_due(id, transaction_timestamp())
+    RETURNING id
+  `)
+}
+
 export async function runAction(
   rawInput: ActionInput,
   db: TaggedSql = engineSql,
@@ -1754,11 +1839,13 @@ export async function runAction(
     }
     input = { ...input, placeId: presence.currentPlaceId }
   }
+  const recordedThingIds = await recordActionThingEnds(input, db)
   const actionId = await recordAction(input, db)
   const rollLog = newRollLog()
   const abilityLog = newAbilityLog()
+  let endWatchThingId: number | null = null
   try {
-    return await withEngineTransaction(db, async transaction => {
+    const execution = await withEngineTransaction<ActionExecution>(db, async transaction => {
       const possibleThingPrograms = input.sourceThingId === null ? []
         : await thingProgramsForAction(input.sourceThingId, input.action, transaction)
       const reservedResidentIds = await lockEffectResidents(
@@ -1851,13 +1938,19 @@ export async function runAction(
       // Read source state and recipes only after its row is locked, following the rooms.
       const heldAtStart = input.action === 'move'
         ? await heldThingForResident(input.actorId, transaction) : null
-      const source = await sourceReady(input, transaction)
+      const source = await sourceReady(input, transaction, recordedThingIds)
       const thingPrograms = input.sourceThingId === null
         ? [] : await thingProgramsForAction(input.sourceThingId, input.action, transaction)
       if (JSON.stringify(thingPrograms) !== JSON.stringify(observedThingPrograms)) {
         throw new EngineError(409, COLLISION_CONFLICT_MESSAGE)
       }
-      const programs = [...thingPrograms, ...lawPrograms]
+      // Only a give of an older remnant gets here with its end reached; nobody can use a
+      // remnant, so its own give-trait steps are skipped with their reason.
+      const remnantSource = source?.endReached === true
+      const endingSource = source !== null && source.endingSet && !source.endReached
+      if (endingSource) endWatchThingId = source.id
+      const programs = remnantSource ? [...lawPrograms] : [...thingPrograms, ...lawPrograms]
+      const remnantSkips = remnantSource ? remnantProgramSkips(thingPrograms) : []
       const sharedSourceThingId = input.action === 'use'
         && source
         && source.ownerId !== input.actorId
@@ -1881,11 +1974,12 @@ export async function runAction(
         async () => {
           const intrinsic = await intrinsicAction(input, actionId, transaction, abilityLog)
           const base = { ...actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog),
-            reservedPlaceIds, reservedResidentIds }
+            reservedPlaceIds, reservedResidentIds,
+            endingThingIds: endingSource && source ? [source.id] : [] }
           let effectsApplied = 0
           let emittedTypedPublicEvent = intrinsic.emittedTypedPublicEvent
           let destroyedThingIds: readonly number[] = []
-          let skippedEffects: readonly SkippedEffect[] = []
+          let skippedEffects: readonly SkippedEffect[] = remnantSkips
           let appliedPublicActivity: readonly AppliedPublicActivity[] = input.action === 'move'
             && input.destinationPlaceId !== lockedPresence.currentPlaceId
             ? [{ actor: input.actorHandle, operation: 'move', place_id: input.destinationPlaceId }]
@@ -1951,6 +2045,9 @@ export async function runAction(
       } = actionOutcome
       const status: ResolutionStatus = effectsApplied === 0 && !primitiveApplied
         && input.action === 'use' ? 'noop' : 'applied'
+      // A successful use (applied or noop) counts once its programs ran, so a one-use
+      // thing's only use runs its steps first.
+      if (input.action === 'use' && endingSource && source) await countEndingUse(source.id, transaction)
       await recordActionResolution(
         actionId,
         input.actorHandle,
@@ -1989,6 +2086,9 @@ export async function runAction(
         ...abilityAnswer(abilityLog),
       }
     })
+    // After a real commit only: the thing may have fallen due during this action.
+    if (endWatchThingId !== null && db === engineSql) await recordDueEndQuietly([endWatchThingId], db)
+    return execution
   } catch (error) {
     if (error instanceof CommitOutcomeUnknownError) {
       return resolveUncertainCommit(actionId, input.actorHandle, input.action, error, db, rollLog)

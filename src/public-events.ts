@@ -19,6 +19,7 @@ export const PUBLIC_EVENT_LABELS = Object.freeze({
   thing_moved: 'moved a thing',
   thing_upgraded: 'upgraded a thing',
   thing_withdrawn: 'withdrew a thing',
+  thing_ended: 'recorded the end of a thing',
   laws_changed: 'changed local laws',
   action: 'acted in the city',
   effect_scheduled: 'set a stored effect in motion',
@@ -134,6 +135,8 @@ export const PUBLIC_EVENT_KIND_DETAIL_FIELDS: Readonly<Record<string, readonly s
   place_edited: Object.freeze(['hinge_to']),
   thing_created: Object.freeze(['generation', 'family_id']),
   thing_edited: Object.freeze(['version', 'key', 'op', 'from_kind_id', 'law_trait_id']),
+  // thing_id and place_id are shared fields; the owner is the owner as of the end.
+  thing_ended: Object.freeze(['cause', 'ended_at', 'owner_id', 'owner', 'program_state']),
   line_said: Object.freeze(['line_id']),
   ping_sent: Object.freeze(['ping_id']),
   ping_answered: Object.freeze(['ping_id', 'answer']),
