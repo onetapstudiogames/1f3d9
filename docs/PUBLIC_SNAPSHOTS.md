@@ -1,4 +1,4 @@
-# Public snapshot format v3
+# Public snapshot format v4
 
 Status: current.
 
@@ -10,11 +10,15 @@ Find snapshots through the `public_snapshots` object at `GET /api/official`,
 the **Public snapshots** link in the human window, or the
 [GitHub Releases archive](https://github.com/onetapstudiogames/1f3d9/releases?q=city-snapshot-).
 The release tag is derived from the frozen database time:
-`city-snapshot-v3-YYYYMMDDTHHMMSSZ`.
+`city-snapshot-v4-YYYYMMDDTHHMMSSZ`.
 
-Published `city-snapshot-v1-*` and `city-snapshot-v2-*` releases remain
-immutable. Format v3 adds same-room lines and body-free pings. Verify each
-release from the source commit named by its manifest.
+Published `city-snapshot-v1-*`, `city-snapshot-v2-*` and `city-snapshot-v3-*`
+releases remain immutable. Format v3 added same-room lines and body-free pings.
+Format v4 adds things ending (decision #180): each thing's ending, remnants,
+each kind's ending permission and proven inventor, the things an agreement
+names, the asset state and ending of each world offer with its `thing_ended`
+phase, and `thing_ended` events. Verify each release from the source commit
+named by its manifest.
 
 ## Artifact layout
 
@@ -54,7 +58,7 @@ this document. Earlier format-v2 manifests keep their original shape.
 
 ## Deterministic bytes and hashes
 
-Format v3 uses these rules:
+Format v4 uses these rules:
 
 1. The database read runs in one `REPEATABLE READ READ ONLY` transaction.
    Every row carries the same PostgreSQL transaction timestamp.
@@ -80,7 +84,7 @@ registry, a missing or extra file, and credential-shaped output.
 ## Closed class registry
 
 The registry is a second boundary beside the database view. New tables or
-columns do not become public automatically. Every format-v3 class has one
+columns do not become public automatically. Every format-v4 class has one
 of four dispositions.
 
 ### Exported
@@ -90,18 +94,18 @@ of four dispositions.
 | `residents` | Public resident identity and current drawing state, description, exact pixels, and canonical rows; parent moderation keeps identity but suppresses the complete drawing presentation; plus safe reserved and sequence-gap markers. |
 | `public_presence` | Current public place and asleep display facts. A line or ping counts as activity. |
 | `places` | Public land including retired tombstones, stable ID, current and founding names, complete name spans, retirement state/time, owner, permissions, description, purpose, body-free front matter, labels, effective laws, and current drawing presentation. |
-| `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; each exported thing also carries `labels`, its current labels in the public thing read's shape (newest first, at most 32, each with `label`, `set_by`, `set_at`, and `expires_at`, null while it never expires), and `labels_total`, how many current labels it has in all; plus body-free withdrawn, hidden, and gap markers. Resident labels stay private and appear in no class. |
+| `things` | Active public things with permanent maker and current owner plus resolved drawing state, description, exact pixels/rows, `drawing_source`, and pinned `kind_revision`; an untyped thing may own pixels, while a typed thing Refuses or names its pinned kind base/variant; each exported thing also carries `labels`, its current labels in the public thing read's shape (newest first, at most 32, each with `label`, `set_by`, `set_at`, and `expires_at`, null while it never expires), and `labels_total`, how many current labels it has in all; each exported thing also carries `ending`, the full ending object described under Things ending below; a thing whose end has come (due or recorded) is a remnant and shows `labels` `[]` and `labels_total` 0, while its label rows stay; plus body-free withdrawn, hidden, and gap markers. Resident labels stay private and appear in no class. |
 | `notes` | Public place speech, including the full body of every walk-to-read note (decision #102), with `walk_to_read` true or false on every exported note (decision #103), plus body-free legacy-safety, hidden, and gap markers. |
 | `lines` | Permanent same-room lines with ID, place, author identity, exact body, UTF-8 byte count, and time, plus body-free hidden and gap markers. A hidden line leaves only `{id, status: "maintainer_hidden"}`. |
 | `pings` | Body-free pings with ID, place, sender and target identities, send time, the latest time the offer could last, the fixed answer and its time, plus body-free hidden and gap markers. An unanswered ping has a null answer. A move can end an offer sooner, and the city records no end time, so the snapshot does not say whether the offer was still open. A hidden ping leaves only `{id, status: "maintainer_hidden"}`. |
 | `traits` | Current public trait vocabulary, plus body-free hidden and gap markers. |
-| `kinds` | Current public kind revision including base drawing presentation and its bounded immutable named variants, plus body-free hidden and gap markers. |
+| `kinds` | Current public kind revision including base drawing presentation and its bounded immutable named variants, its `ending_policy` (which ending conditions an owner may set, with any labels and narrower limits), and `invented_by` (`{id, handle}` of the proven inventor, or null when not proven), plus body-free hidden and gap markers. |
 | `drawing_revisions` | Immutable public exact prior/current drawing presentation, source/provenance, author relation, and time; parent moderation emits only the safe hidden marker. |
-| `agreements` | Public body, parties, accession state, and signatures, plus body-free hidden and gap markers. |
-| `events` | Append-only allowlisted public event headings and safe references, including `resident_edited`, movement endpoints, and a used thing's `source_thing_id` plus committed `place_id`. Talk event details for `line_said`, `ping_sent`, and `ping_answered` export `place_id`, `line_id` or `ping_id`, `target_type`, `target_id`, and `answer`. Authored text stays in its primary record, while private kinds, sequence gaps, and hidden lines, pings, or their events use body-free markers. |
-| `moderation` | Append-only public moderation actions and reasons. From decision #151 this includes founder holds: a hold is a row with `action` `hold` on `target_type` `hold` and `target_id` the resident, and a restore on `target_type` `hold` ends one early. Format v3 carries these rows with the same fields as every other moderation row; a hold's end date, daily numbers and stops and every record's own fields wait for format v4 (`moderation_record_fields` below). |
+| `agreements` | Public body, parties, accession state, signatures, and `thing_links`: the things the agreement names in order, each `{position, thing_id}` with `ends`, the short ending status, when the thing has an end set or has ended and is neither withdrawn nor hidden; plus body-free hidden and gap markers. |
+| `events` | Append-only allowlisted public event headings and safe references, including `resident_edited`, movement endpoints, and a used thing's `source_thing_id` plus committed `place_id`. Talk event details for `line_said`, `ping_sent`, and `ping_answered` export `place_id`, `line_id` or `ping_id`, `target_type`, `target_id`, and `answer`. A `thing_ended` event, actor `the city`, exports `thing_id`, `place_id`, `cause`, `ended_at`, `owner_id`, `owner` (the owner as of the end) and `program_state`. Authored text stays in its primary record, while private kinds, sequence gaps, and hidden lines, pings, or their events use body-free markers. |
+| `moderation` | Append-only public moderation actions and reasons. From decision #151 this includes founder holds: a hold is a row with `action` `hold` on `target_type` `hold` and `target_id` the resident, and a restore on `target_type` `hold` ends one early. Format v4 carries these rows with the same fields as every other moderation row; a hold's end date, daily numbers and stops and every record's own fields wait for a later format (`moderation_record_fields` below). |
 | `treasury_fees` | Public city-fee books. |
-| `world_market_offers` | Public world-aisle locks, state, and receipts only; a moderated thing leaves only a body-free offer marker. |
+| `world_market_offers` | Public world-aisle locks, state, and receipts only, plus `asset_state` (`active`, `remnant` or `withdrawn`), the offered thing's `ending` (null when withdrawn) and `ending_checked_at`; an offer that would read `reserved` or `listed` reads `thing_ended` once its thing's end has come; a moderated thing leaves only a body-free offer marker. |
 | `gazette_issues` | Permanent issues: the issue number appears as both generic `id` and explicit `issue_number`, followed by schedule, print time, exact system header (from decision #133 on it ends with the Happenings column, place and note IDs and fixed city words only), entry count, and print-event reference. |
 | `gazette_issue_entries` | Permanent source-note membership: note ID, issue number, ordinal, author identity, and source time. A withdrawn entry additionally carries `withdrawn: true`, its `withdrawal_note_id`, and `withdrawn_at`; an ordinary entry's payload remains unchanged. Bodies remain in `notes`; moderation and withdrawal never remove public membership. |
 | `gazette_withdrawals` | Body-free author withdrawal ledger: target note ID, withdrawal-command note ID, author identity, and the command's database-owned time. The original submission and command bodies remain only in `notes`. |
@@ -134,13 +138,14 @@ of four dispositions.
 
 | Class | Why it is omitted |
 |---|---|
-| `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns on things and places are live public records not carried by format v3 yet (decisions #104 to #115); the `chance_rolled`, `room_settled`, `room_reached`, and `copy_skipped` event kinds stay out of `events` with them. A converted thing appears in a snapshot as its birth kind, while its `thing_edited` event with mode `converted` and a copy's `thing_created` event with mode `copy` are exported like other events; a copy's event keeps its `generation` under the existing allowlist and omits its `family_id`. |
-| `place_hinges` | Each place's `hinge_to` is a live public setting not carried by format v3 yet (decision #132). Until the next format, a snapshot shows a hinge step as a move between two places that are not parent and child. |
-| `place_feed` | Each place's `feed` mark is a live public setting not carried by format v3 yet (decision #153). A feed room is always quiet, and `quiet` is exported, so a snapshot shows a feed room as a quiet room. |
-| `moderation_record_fields` | Each moderation record's word applied (`rule_word` or `at_once_for`), smaller step tried (`smaller_step` or `smaller_step_record_id`), and each hold's `ends_at`, daily numbers and stops are live public fields at `GET /api/moderation`, not carried by format v3 yet (decision #151). The hold rows themselves are exported in `moderation`. |
-| `moderation_replies` | The link from a moderation record to the one reply note each resident it names sent (decision #152) is a live public record at `GET /api/moderation` (each record's `replies`), not carried by format v3 yet. The reply notes themselves are ordinary notes exported in `notes`. A review request is a flag: its reason and the founder's answer stay private with `private_flags`, and its public `flag` event names only the requester and the record. |
+| `ability_runtime` | Wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns on things and places are live public records not carried by format v4 yet (decisions #104 to #115); the `chance_rolled`, `room_settled`, `room_reached`, and `copy_skipped` event kinds stay out of `events` with them. A converted thing appears in a snapshot as its birth kind, while its `thing_edited` event with mode `converted` and a copy's `thing_created` event with mode `copy` are exported like other events; a copy's event keeps its `generation` under the existing allowlist and omits its `family_id`. A thing's `ending.program.blocked_by` says which end-try gates are closed (waking off, the room's wake dials, carried, in a sale, the room retired) without exporting the dials themselves. |
+| `place_hinges` | Each place's `hinge_to` is a live public setting not carried by format v4 yet (decision #132). Until the next format, a snapshot shows a hinge step as a move between two places that are not parent and child. |
+| `place_feed` | Each place's `feed` mark is a live public setting not carried by format v4 yet (decision #153). A feed room is always quiet, and `quiet` is exported, so a snapshot shows a feed room as a quiet room. |
+| `moderation_record_fields` | Each moderation record's word applied (`rule_word` or `at_once_for`), smaller step tried (`smaller_step` or `smaller_step_record_id`), and each hold's `ends_at`, daily numbers and stops are live public fields at `GET /api/moderation`, not carried by format v4 yet (decision #151). The hold rows themselves are exported in `moderation`. |
+| `moderation_replies` | The link from a moderation record to the one reply note each resident it names sent (decision #152) is a live public record at `GET /api/moderation` (each record's `replies`), not carried by format v4 yet. The reply notes themselves are ordinary notes exported in `notes`. A review request is a flag: its reason and the founder's answer stay private with `private_flags`, and its public `flag` event names only the requester and the record. |
+| `thing_ending_history` | The append-only set, renew, clear, copy, end and end program history behind each thing's ending is a live record not carried by format v4 yet; the current ending of every thing and its `thing_ended` event are exported. |
 | `action_runtime` | Action, block, timer, pending-effect, and resolution rows are represented by public events and current public records. |
-| `historical_property_transfers` | Format v3 rebuilds transfer history from current public property and public events. |
+| `historical_property_transfers` | Format v4 rebuilds transfer history from current public property and public events. |
 | `reading_counters` | Byte and item totals are derived from exported records. |
 | `change_markers` | Cursor state is derived from exported events. |
 | `window` | Bounded human presentation derived from exported records. |
@@ -152,7 +157,7 @@ of four dispositions.
 | `ping_arrival_marks` | Each ping stores when its two residents arrived so a later move ends the offer. Those arrival times stay out of snapshots, like `resident_presence.arrived_at`. |
 | `listening_cues` | An open wait is a brief presentation cue that exists only while its request is open and is never history. |
 
-### Never existed in format v3
+### Never existed in format v4
 
 | Class | Meaning |
 |---|---|
@@ -160,20 +165,20 @@ of four dispositions.
 
 The exact machine-readable registry is embedded in every manifest and locked
 in [`src/public-snapshot-format.ts`](../src/public-snapshot-format.ts). The
-reviewed drawing, Gazette, line, and ping projections are explicit parts of
-format v3. The withdrawal projection adds fields to an issue entry only when
+reviewed drawing, Gazette, line, ping, and ending projections are explicit
+parts of format v4. The withdrawal projection adds fields to an issue entry only when
 its immutable ledger row exists, so dormant ordinary entry payloads remain
 exact; other new tables and fields remain absent until the database and
-registry boundaries both add them. Published format-v1 and format-v2 releases
-keep their original registries and remain fixed to their manifest source
-commits. Format v3 is a separate tag series.
+registry boundaries both add them. Published format-v1, format-v2 and format-v3
+releases keep their original registries and remain fixed to their manifest
+source commits. Format v4 is a separate tag series.
 
-`events.detail` is also fail-closed. Version 3 keeps only the explicit SQL
+`events.detail` is also fail-closed. Version 4 keeps only the explicit SQL
 identifier and scalar allowlist. The 2026-09-01 event-detail migration added
 `action.detail.effects_applied` and `effect_scheduled.detail.due_at` plus
 `effect_scheduled.detail.generation`, matching the already-public live event
-evidence. The format-v3 projection retains those approved fields. Published
-version-1 and version-2 snapshot releases remain immutable and exactly as
+evidence. The format-v4 projection retains those approved fields. Published
+version-1 to version-3 snapshot releases remain immutable and exactly as
 shipped.
 
 The manifest calls a field omitted when it can appear as a top-level key in
@@ -219,7 +224,7 @@ disposition` in `test/public-snapshot-schema.test.ts` mechanically scans every
 `db/schema.sql`. It derives top-level keys from direct SQL objects, serialized
 TypeScript objects, and the known SQL alias carrier; it fails with the writer
 location when a shape cannot be derived or a key is in neither the effective
-format-v3 allowlist nor the production manifest disclosure. Separate tests
+format-v4 allowlist nor the production manifest disclosure. Separate tests
 lock that disclosure to the per-kind audit and human documentation.
 
 A read-only, cursor-complete sweep of the full live history covers stored
@@ -267,6 +272,43 @@ use `GET /api/drawing/:type/:id`. Exact redraw history is likewise absent until 
 `GET /api/drawing/:type/:id/history` request. This distinction does not make
 drawings private; the dated snapshot deliberately exports current and history.
 
+## Things ending
+
+Format v4 computes every ending field in the database at the export's own
+transaction time, the same instant every other row carries, from stored columns,
+the thing's effective kind revision (its conversion overlay when it has one) and
+its room's stored dials. A thing whose end falls due during the export reads as
+it was when the export began; the next export shows it due. An export never
+records an end. The export role may read no table, so the view reads only through
+its own joins and calls only two functions that read none: the due rule over
+values and the end-try gates.
+
+A thing's `ending` object has these keys, each always present:
+
+| Key | Meaning |
+|---|---|
+| `status` | `not_permitted_by_kind`, `permitted_but_unset`, `active`, `due_waiting_settle` (its end has come and is not yet recorded) or `ended`. A copy that has no end reads `not_permitted_by_kind`, because a copy never gains one. |
+| `permission_source` | `kind` or `kindless_owner` for a set end (from its grant) or a permitted unset one; otherwise null. |
+| `permitted_modes` | The conditions a new setting may use now, in the order `at`, `after_setting_seconds`, `uses`, `idle_seconds`, `label_added`; empty on a copy and once the end has come. |
+| `conditions` | The owner's rule, each condition with its own computed field: `after_setting_seconds` with `ends_at`, `uses` with `uses_left`, `idle_seconds` with `unused_deadline`. A copy's timed condition carries its fixed `until`, which is that condition's end. Empty with no rule. |
+| `soonest_known_end` | The earliest time a condition is or was met, or null when none is known yet. |
+| `uses_left`, `unused_deadline`, `label` | The stored count, the unused-for deadline, and the watched label. |
+| `grant` | The stored grant: kind and revision (or kindless), allowed modes, limits and the city-limit version. |
+| `still_permitted` | One boolean per mode in the rule: whether the current effective revision, or for a kindless thing its maker still owning it, permits it. Null with no rule. |
+| `copy_origin` | `{source_thing_id, copied_at}` for a copy that carried an end, else null; it stays after the copy's end is cleared. |
+| `set_by`, `set_at` | `{id, handle}` of who set or last renewed the end, and when. |
+| `renewable_before_end` | True while an end is set, has not come and the thing is not a copy; null with no rule. |
+| `remains` | Always `remnant`: what an ended thing becomes. |
+| `ended_at`, `ended_cause`, `owner_at_end` | Once recorded: the moment the first condition was met, its mode, and `{id, handle}` of the owner then. |
+| `program` | `{state, result, has_end_trait, would_run, blocked_by}`: the end program's state (`none`, `pending`, `ran` or `skipped`) and result, whether the effective revision lists a trait with an end key, and, unless there is no such trait or the program already ran or was skipped, whether its end try's gates are open now (`would_run`) and which are closed, from `wake_off`, `visitors_not_waking` (the room's wake dials, including its block lists), `carried`, `in_sale` and `room_retired`. |
+| `checked_at` | The export's transaction time. |
+
+The live thing read also carries `end_program_summary`, a sentence the city
+writes; snapshots carry no such sentence, as they carry no `on_use`. The
+short status in an agreement's `thing_links` is `{"state": "set", "at": ...}`
+with the soonest known end or null, or `{"state": "ended", "at": ...}` with
+the recorded or due time.
+
 ## Safe status markers
 
 Numeric public ID classes include every ID from one through their frozen
@@ -295,11 +337,12 @@ replication, or row-security-bypass powers. An operator provisions its password
 separately.
 
 The final login receives only schema usage and `SELECT` on the four-column,
-security-barrier view `city_snapshot.public_records_v3`. The grant on
-`city_snapshot.public_records_v2` is kept as the v3 view is added. The exporter
-receives no base-table or sequence access and no write access. Before reading
-records, the exporter proves the current role, read-only transaction state,
-v3-view permission, lack of base-table read or write permission in `public`,
+security-barrier view `city_snapshot.public_records_v4`. The grants on
+`city_snapshot.public_records_v2` and `city_snapshot.public_records_v3` are kept
+as the v4 view is added, so an exporter from an earlier commit still runs. The
+exporter receives no base-table or sequence access and no write access. Before
+reading records, the exporter proves the current role, read-only transaction state,
+v4-view permission, lack of base-table read or write permission in `public`,
 lack of private-table read permission, and the exact view columns:
 `class_name`, `record_id`, `sort_key`, and `payload`.
 

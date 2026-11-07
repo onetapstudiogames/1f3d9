@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import type { Pool } from 'pg'
 import { runTalkNoteAction } from '../../../src/note-action.ts'
-import { activationDdl, gazetteRuntime, migrationDdl, preGazetteSchemaDdl, sameRoomTalkMigrationDdl, taggedFor, withdrawalActivationDdl, withdrawalMigrationDdl } from '../../helpers/gazette-fixtures/postgres.ts'
+import { activationDdl, gazetteRuntime, migrationDdl, preGazetteSchemaDdl, sameRoomTalkMigrationDdl, taggedFor, thingEndingsMigrationDdl, withdrawalActivationDdl, withdrawalMigrationDdl } from '../../helpers/gazette-fixtures/postgres.ts'
 
 export async function registerUpgradeTests(
   database: Pool,
@@ -247,4 +247,11 @@ export async function registerUpgradeTests(
   assert.deepEqual((await database.query(`
     SELECT to_regclass('city_snapshot.public_records_v3') IS NOT NULL AS v3_installed
   `)).rows[0], { v3_installed: true })
+
+  // Thing endings (20261106) follow same-room talk and build format v4 on v3.
+  await database.query(thingEndingsMigrationDdl)
+  assert.deepEqual((await database.query(`
+    SELECT to_regclass('city_snapshot.public_records_v4') IS NOT NULL AS v4_installed,
+      has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v4', 'SELECT') AS v4_granted
+  `)).rows[0], { v4_installed: true, v4_granted: true })
 }

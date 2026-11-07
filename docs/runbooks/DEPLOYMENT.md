@@ -1505,9 +1505,17 @@ and `transfer_offers` briefly while `things` is held, so an open payment transac
 waiting on `things` can deadlock with the run; PostgreSQL aborts one side or the 5s lock
 timeout fires, the payment side rolls back whole and its recovery replays it, and the
 migration takes the path in "When a migration times out".
-A guard block comes first and a closing shape
+It adds public snapshot format 4, the security-barrier view
+`city_snapshot.public_records_v4` built on `city_snapshot.public_records_v3`, granted
+`SELECT` to `city_snapshot_export` only, with the two functions it calls, which read no
+table: `thing_end_due_from(...)`, the due rule over values (`thing_end_due_at_row` now calls
+it), and `thing_end_try_blocked_by(...)`, the end-try gates. No earlier `city_snapshot`
+view is replaced and the v2 and v3 grants stay, so the exporter of the deployed commit keeps
+publishing v3 until the merge; the first v4 bundle is the daily run after the deploy.
+A guard block comes first and also needs the v3 view and the export role; a closing shape
 block raises if a column, check, key, index, function or trigger is missing or not validated,
-or if a guard is disabled or out of order.
+if a guard is disabled or out of order, or if v4 is missing, not a security barrier, has
+other columns, or is readable by anyone but its owner and the export role.
 A rerun keeps an existing check or index as it is, so if a fix changes one after a Preview
 run, reset that Preview branch before applying the fixed migration.
 
@@ -1519,7 +1527,9 @@ validated with `end` and `wake_end` in the widened ones, both indexes, the funct
 volatility, each guard present, enabled and in order (`things_aa_ending_owner_change`
 before the two owner-change triggers, `things_zz_ending_freeze` last among the
 `BEFORE UPDATE` triggers on `things`), the kinds with and without an inventor (list the
-empty ones for the owner), and
+empty ones for the owner), `city_snapshot.public_records_v4` present and granted only to
+`city_snapshot_export`, every other `city_snapshot` view's `pg_get_viewdef` hash unchanged
+against the hashes taken before the first run (the shared base views included), and
 unchanged row counts and newest ids of `things`, `kinds`, `kind_revisions`, `events`,
 `active_labels`, `wake_tries` and `thing_state_changes`. Take the required Production
 snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-20261106`, apply

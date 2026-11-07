@@ -7,15 +7,16 @@ SET LOCAL statement_timeout = '120s';
 -- permits; the first condition met ends it, and it stays at its id as a remnant. This adds
 -- the empty columns on things, the inventor on kinds, the permission on kind revisions, two
 -- append-only tables, the due functions, two partial indexes, the end reason in the wake
--- vocabularies, and the guards: things_aa_ending_owner_change, things_zz_ending_freeze and
--- four insert guards, which read the transaction-local writer setting city.ending_writer.
--- Every new column is empty or at its default, so no thing, revision, event or label row
--- changes; only kinds gain an inventor, and only from exactly one provable kind_invented
--- event. The whole migration holds the things lock until it commits; NOT VALID then
--- VALIDATE does not shorten it in one transaction. Creating the guards also locks
--- active_labels, thing_later_holder_marks and transfer_offers briefly while things is
--- held. It is safe to run again, and running it again fills the inventor of kinds
--- invented since the last run.
+-- vocabularies, the guards: things_aa_ending_owner_change, things_zz_ending_freeze and
+-- four insert guards, which read the transaction-local writer setting city.ending_writer,
+-- and public snapshot format 4, city_snapshot.public_records_v4, built on v3 for the export
+-- role only; v1 to v3 and their base views are not replaced. Every new column is empty or
+-- at its default, so no thing, revision, event or label row changes; only kinds gain an
+-- inventor, and only from exactly one provable kind_invented event. The whole migration
+-- holds the things lock until it commits; NOT VALID then VALIDATE does not shorten it in
+-- one transaction. Creating the guards also locks active_labels, thing_later_holder_marks
+-- and transfer_offers briefly while things is held. It is safe to run again, and running
+-- it again fills the inventor of kinds invented since the last run.
 DO $thing_endings_guard$
 BEGIN
   IF to_regclass('public.things') IS NULL OR to_regclass('public.kinds') IS NULL
@@ -29,6 +30,10 @@ BEGIN
   END IF;
   IF to_regprocedure('public.deny_history_mutation()') IS NULL THEN
     RAISE EXCEPTION 'thing endings migration needs the deny_history_mutation function';
+  END IF;
+  IF to_regclass('city_snapshot.public_records_v3') IS NULL
+    OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'city_snapshot_export') THEN
+    RAISE EXCEPTION 'thing endings migration needs the city_snapshot.public_records_v3 view and the city_snapshot_export role';
   END IF;
   -- The owner-change guard must fire before the two triggers that turn a thing's switches
   -- off as it changes hands, and the freeze guard after them, so both must exist.
@@ -330,23 +335,38 @@ CREATE TRIGGER agreement_thing_links_append_only BEFORE UPDATE OR DELETE ON agre
 -- the moment its uses ran out, and the first label row with its watched label created
 -- after the end was set. A label row counts even if it has since expired or been ended,
 -- so a thing never flips back from due. Callers pass transaction_timestamp(). The rule is
--- written once, over a row, so the guards judge a row as it was before a write by the
--- same rule the id form reads.
+-- written once, over values, so the guards judge a row as it was before a write, the id
+-- form reads the stored row, and snapshot format 4 reads its own joins, all by one rule.
+CREATE OR REPLACE FUNCTION thing_end_due_from(
+  has_rule boolean, deadline timestamptz, idle_anchor timestamptz, idle_seconds integer,
+  uses_spent_at timestamptz, first_label_at timestamptz
+) RETURNS timestamptz
+LANGUAGE sql STABLE AS $thing_end_due_from$
+  SELECT CASE WHEN has_rule THEN LEAST(
+    deadline,
+    idle_anchor + make_interval(secs => idle_seconds),
+    uses_spent_at,
+    first_label_at
+  ) END
+$thing_end_due_from$;
+
 CREATE OR REPLACE FUNCTION thing_end_due_at_row(thing things) RETURNS timestamptz
 LANGUAGE sql STABLE AS $thing_end_due_at_row$
-  SELECT CASE WHEN thing.ending_rule IS NULL THEN NULL ELSE LEAST(
+  SELECT thing_end_due_from(
+    thing.ending_rule IS NOT NULL,
     thing.ending_deadline,
-    thing.ending_idle_anchor + make_interval(secs => thing.ending_idle_seconds),
+    thing.ending_idle_anchor,
+    thing.ending_idle_seconds,
     thing.ending_uses_spent_at,
-    (
+    CASE WHEN thing.ending_rule IS NOT NULL THEN (
       SELECT min(label.created_at)
       FROM active_labels AS label
       WHERE label.target_type = 'thing'
         AND label.target_id = thing.id
         AND label.label = thing.ending_label
         AND label.created_at > thing.ending_set_at
-    )
-  ) END
+    ) END
+  )
 $thing_end_due_at_row$;
 
 CREATE OR REPLACE FUNCTION thing_end_due_at(thing_id integer) RETURNS timestamptz
@@ -599,6 +619,320 @@ DROP TRIGGER IF EXISTS transfer_offers_ending_guard ON transfer_offers;
 CREATE TRIGGER transfer_offers_ending_guard BEFORE INSERT ON transfer_offers
   FOR EACH ROW EXECUTE FUNCTION guard_thing_ending_offer();
 
+-- The gates an end try must pass, written once over values and reading no table: waking
+-- on for the thing, the room's wake dials letting it wake (its owner is the room's owner,
+-- the room wakes visitors' things, or the thing is pinned, and neither the thing nor its
+-- owner is on the room's block lists), not carried, not in a sale, and the room not
+-- retired. It returns the closed gates in this fixed order, and an empty list when the
+-- try would run. Snapshot format v4 and the settle step's end try call the same function.
+CREATE OR REPLACE FUNCTION thing_end_try_blocked_by(
+  wake_enabled boolean, carried boolean, in_sale boolean, room_retired boolean,
+  thing_id integer, owner_id integer, room_owner_id integer, wake_visitors boolean,
+  wake_pins integer[], blocked_thing_ids integer[], blocked_resident_ids integer[]
+) RETURNS text[]
+LANGUAGE sql IMMUTABLE AS $thing_end_try_blocked_by$
+  SELECT array_remove(ARRAY[
+    CASE WHEN NOT coalesce(wake_enabled, false) THEN 'wake_off' END,
+    CASE WHEN coalesce(thing_id = ANY (blocked_thing_ids), false)
+      OR coalesce(owner_id = ANY (blocked_resident_ids), false)
+      OR NOT (
+        coalesce(owner_id = room_owner_id, false)
+        OR coalesce(wake_visitors, false)
+        OR coalesce(thing_id = ANY (wake_pins), false)
+      ) THEN 'visitors_not_waking' END,
+    CASE WHEN coalesce(carried, false) THEN 'carried' END,
+    CASE WHEN coalesce(in_sale, false) THEN 'in_sale' END,
+    CASE WHEN coalesce(room_retired, false) THEN 'room_retired' END
+  ]::text[], NULL)
+$thing_end_try_blocked_by$;
+
+-- Public snapshot format v4 (decision #180): format v3 unchanged except that thing rows
+-- carry each thing's ending and a thing whose end has come shows no current labels (its
+-- label rows stay), kind rows carry their ending permission and inventor, agreement rows
+-- carry their thing links, world-offer rows carry the asset state, the ending and the
+-- thing_ended phase, and thing_ended events are exported with safe references. Every
+-- field is computed here at the export's own transaction time. The export role may read
+-- no table and a function runs with its caller's rights, so v4 reads tables only through
+-- its own joins and calls only thing_end_due_from and thing_end_try_blocked_by, which
+-- read none. The v2 and v3 grants stay so an exporter from an earlier commit still runs.
+CREATE OR REPLACE VIEW city_snapshot.public_records_v4
+WITH (security_barrier = true)
+AS
+WITH ending_events AS MATERIALIZED (
+  SELECT event.id, event.at, event.kind, event.actor, event.detail
+  FROM public.events event
+  WHERE event.kind IN ('thing_ended')
+),
+thing_end_facts AS MATERIALIZED (
+  SELECT thing.id AS thing_id,
+    thing.withdrawn_at IS NOT NULL AS withdrawn,
+    judged.reached,
+    CASE
+      WHEN thing.ended_at IS NOT NULL THEN jsonb_build_object('state', 'ended', 'at', thing.ended_at)
+      WHEN judged.reached THEN jsonb_build_object('state', 'ended', 'at', judged.due_at)
+      WHEN thing.ending_rule IS NOT NULL THEN jsonb_build_object('state', 'set', 'at', judged.due_at)
+    END AS ends,
+    jsonb_build_object(
+      'status', stated.status,
+      'permission_source', CASE
+        WHEN thing.ending_rule IS NOT NULL THEN
+          CASE WHEN thing.ending_grant ? 'kindless' THEN 'kindless_owner' ELSE 'kind' END
+        WHEN stated.status = 'permitted_but_unset' THEN
+          CASE WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN 'kindless_owner' ELSE 'kind' END
+      END,
+      'permitted_modes', CASE
+        WHEN thing.parent_thing_id IS NOT NULL OR judged.reached THEN '[]'::jsonb
+        ELSE (
+          SELECT coalesce(jsonb_agg(to_jsonb(mode.name) ORDER BY mode.position), '[]'::jsonb)
+          FROM unnest(ARRAY['at', 'after_setting_seconds', 'uses', 'idle_seconds', 'label_added'])
+            WITH ORDINALITY mode(name, position)
+          WHERE permitted.allowed ? mode.name
+        )
+      END,
+      'conditions', rule.conditions,
+      'soonest_known_end', judged.due_at,
+      'uses_left', thing.ending_uses_left,
+      'unused_deadline', rule.unused_deadline,
+      'label', thing.ending_label,
+      'grant', thing.ending_grant,
+      'still_permitted', rule.still_permitted,
+      'copy_origin', CASE WHEN thing.ending_copied_from IS NOT NULL THEN jsonb_build_object(
+        'source_thing_id', thing.ending_copied_from,
+        'copied_at', thing.ending_copied_at
+      ) END,
+      'set_by', CASE WHEN setter.id IS NOT NULL THEN jsonb_build_object(
+        'id', setter.id, 'handle', setter.handle
+      ) END,
+      'set_at', thing.ending_set_at,
+      'renewable_before_end', CASE WHEN thing.ending_rule IS NOT NULL
+        THEN NOT judged.reached AND thing.parent_thing_id IS NULL END,
+      'remains', 'remnant',
+      'ended_at', thing.ended_at,
+      'ended_cause', thing.ended_cause,
+      'owner_at_end', CASE WHEN end_owner.id IS NOT NULL THEN jsonb_build_object(
+        'id', end_owner.id, 'handle', end_owner.handle
+      ) END,
+      'program', jsonb_build_object(
+        'state', thing.end_program_state,
+        'result', thing.end_program_result,
+        'has_end_trait', end_trait.present,
+        'would_run', CASE WHEN gates.blocked_by IS NOT NULL THEN cardinality(gates.blocked_by) = 0 END,
+        'blocked_by', to_jsonb(gates.blocked_by)
+      ),
+      'checked_at', transaction_timestamp()
+    ) AS ending
+  FROM public.things thing
+  LEFT JOIN public.kind_revisions policy_revision
+    ON policy_revision.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+    AND policy_revision.revision = coalesce(thing.as_revision, thing.current_revision)
+  LEFT JOIN public.places room ON room.id = thing.place_id
+  LEFT JOIN public.residents setter ON setter.id = thing.ending_set_by
+  LEFT JOIN public.residents end_owner ON end_owner.id = thing.ended_owner_id
+  CROSS JOIN LATERAL (
+    SELECT thing_end_due_from(
+      thing.ending_rule IS NOT NULL, thing.ending_deadline, thing.ending_idle_anchor,
+      thing.ending_idle_seconds, thing.ending_uses_spent_at,
+      CASE WHEN thing.ending_rule IS NOT NULL THEN (
+        SELECT min(label.created_at)
+        FROM public.active_labels label
+        WHERE label.target_type = 'thing'
+          AND label.target_id = thing.id
+          AND label.label = thing.ending_label
+          AND label.created_at > thing.ending_set_at
+      ) END
+    ) AS due_at
+  ) due
+  CROSS JOIN LATERAL (
+    SELECT due.due_at,
+      thing.ended_at IS NOT NULL OR coalesce(due.due_at <= transaction_timestamp(), false) AS reached
+  ) judged
+  CROSS JOIN LATERAL (
+    SELECT CASE
+      WHEN coalesce(thing.as_kind_id, thing.kind_id) IS NULL THEN CASE
+        WHEN thing.owner_id = thing.maker_id
+          THEN '["at", "after_setting_seconds", "uses", "idle_seconds", "label_added"]'::jsonb
+        ELSE '[]'::jsonb
+      END
+      WHEN jsonb_typeof(policy_revision.ending_policy -> 'allowed') = 'array'
+        THEN policy_revision.ending_policy -> 'allowed'
+      ELSE '[]'::jsonb
+    END AS allowed
+  ) permitted
+  CROSS JOIN LATERAL (
+    SELECT CASE
+      WHEN thing.ended_at IS NOT NULL THEN 'ended'
+      WHEN thing.ending_rule IS NOT NULL AND judged.reached THEN 'due_waiting_settle'
+      WHEN thing.ending_rule IS NOT NULL THEN 'active'
+      WHEN thing.parent_thing_id IS NOT NULL THEN 'not_permitted_by_kind'
+      WHEN jsonb_array_length(permitted.allowed) > 0 THEN 'permitted_but_unset'
+      ELSE 'not_permitted_by_kind'
+    END AS status
+  ) stated
+  CROSS JOIN LATERAL (
+    SELECT
+      coalesce(jsonb_agg(item.value || item.computed ORDER BY item.position), '[]'::jsonb) AS conditions,
+      jsonb_object_agg(item.mode, permitted.allowed ? item.mode)
+        FILTER (WHERE item.mode IS NOT NULL) AS still_permitted,
+      (array_agg(item.computed -> 'unused_deadline' ORDER BY item.position)
+        FILTER (WHERE item.computed ? 'unused_deadline'))[1] AS unused_deadline
+    FROM (
+      SELECT condition.value, condition.position,
+        (
+          SELECT mode.name
+          FROM unnest(ARRAY['at', 'after_setting_seconds', 'uses', 'idle_seconds', 'label_added'])
+            WITH ORDINALITY mode(name, position)
+          WHERE condition.value ? mode.name
+          ORDER BY mode.position
+          LIMIT 1
+        ) AS mode,
+        CASE
+          WHEN condition.value ? 'after_setting_seconds' THEN jsonb_build_object('ends_at', CASE
+            WHEN jsonb_typeof(condition.value -> 'until') = 'string'
+              THEN to_jsonb((condition.value ->> 'until')::timestamptz)
+            WHEN thing.ending_copied_from IS NOT NULL THEN NULL
+            WHEN jsonb_typeof(condition.value -> 'after_setting_seconds') = 'number'
+              AND condition.value ->> 'after_setting_seconds' ~ '^[0-9]{1,9}$'
+              THEN to_jsonb(thing.ending_set_at
+                + make_interval(secs => (condition.value ->> 'after_setting_seconds')::integer))
+          END)
+          WHEN condition.value ? 'uses' THEN jsonb_build_object('uses_left', thing.ending_uses_left)
+          WHEN condition.value ? 'idle_seconds' THEN jsonb_build_object('unused_deadline', CASE
+            WHEN jsonb_typeof(condition.value -> 'until') = 'string'
+              THEN to_jsonb((condition.value ->> 'until')::timestamptz)
+            WHEN thing.ending_copied_from IS NOT NULL THEN NULL
+            ELSE to_jsonb(thing.ending_idle_anchor + make_interval(secs => thing.ending_idle_seconds))
+          END)
+          ELSE '{}'::jsonb
+        END AS computed
+      FROM jsonb_array_elements(CASE
+        WHEN jsonb_typeof(thing.ending_rule -> 'any') = 'array' THEN thing.ending_rule -> 'any'
+        ELSE '[]'::jsonb
+      END) WITH ORDINALITY condition(value, position)
+      WHERE jsonb_typeof(condition.value) = 'object'
+    ) item
+  ) rule
+  CROSS JOIN LATERAL (
+    SELECT EXISTS (
+      SELECT 1
+      FROM public.kind_revision_traits link
+      JOIN public.traits trait ON trait.id = link.trait_id
+      WHERE link.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
+        AND link.revision = coalesce(thing.as_revision, thing.current_revision)
+        AND trait.recipe ? 'end'
+    ) AS present
+  ) end_trait
+  CROSS JOIN LATERAL (
+    SELECT CASE WHEN end_trait.present AND thing.end_program_state IN ('none', 'pending')
+      THEN thing_end_try_blocked_by(
+        thing.wake_enabled,
+        thing.held_by IS NOT NULL,
+        thing.active_offer_id IS NOT NULL OR EXISTS (
+          SELECT 1 FROM public.transfer_offers sale
+          WHERE sale.asset_type = 'thing' AND sale.asset_id = thing.id AND sale.status = 'open'
+        ),
+        room.retired_at IS NOT NULL,
+        thing.id,
+        thing.owner_id,
+        room.owner_id,
+        room.wake_visitors,
+        room.wake_pins,
+        room.wake_block_thing_ids,
+        room.wake_block_resident_ids
+      )
+    END AS blocked_by
+  ) gates
+)
+SELECT v3.class_name, v3.record_id, v3.sort_key,
+  CASE
+    WHEN v3.payload->>'status' IS DISTINCT FROM 'exported' THEN v3.payload
+    WHEN v3.class_name = 'things' AND own_end.thing_id IS NOT NULL THEN
+      v3.payload || jsonb_build_object('ending', own_end.ending) || CASE
+        WHEN own_end.reached THEN jsonb_build_object('labels', '[]'::jsonb, 'labels_total', 0)
+        ELSE '{}'::jsonb
+      END
+    WHEN v3.class_name = 'world_market_offers' AND offer_end.thing_id IS NOT NULL THEN
+      v3.payload || jsonb_build_object(
+        'phase', CASE
+          WHEN v3.payload->>'phase' IN ('reserved', 'listed') AND offer_end.reached THEN 'thing_ended'
+          ELSE v3.payload->>'phase'
+        END,
+        'asset_state', CASE
+          WHEN offer_end.withdrawn THEN 'withdrawn'
+          WHEN offer_end.reached THEN 'remnant'
+          ELSE 'active'
+        END,
+        'ending', CASE WHEN offer_end.withdrawn THEN NULL ELSE offer_end.ending END,
+        'ending_checked_at', transaction_timestamp()
+      )
+    WHEN v3.class_name = 'kinds' AND kind.id IS NOT NULL THEN
+      v3.payload || jsonb_build_object(
+        'ending_policy', kind_definition.ending_policy,
+        'invented_by', CASE WHEN inventor.id IS NOT NULL THEN jsonb_build_object(
+          'id', inventor.id, 'handle', inventor.handle
+        ) END
+      )
+    WHEN v3.class_name = 'agreements' AND agreement.id IS NOT NULL THEN
+      v3.payload || jsonb_build_object('thing_links', coalesce((
+        SELECT jsonb_agg(
+          jsonb_build_object('position', link.position, 'thing_id', link.thing_id) || CASE
+            WHEN linked.ends IS NULL OR linked.withdrawn OR linked_hidden.removed THEN '{}'::jsonb
+            ELSE jsonb_build_object('ends', linked.ends)
+          END ORDER BY link.position
+        )
+        FROM public.agreement_thing_links link
+        LEFT JOIN thing_end_facts linked ON linked.thing_id = link.thing_id
+        CROSS JOIN LATERAL (
+          SELECT coalesce((
+            SELECT moderation.action
+            FROM public.moderation_actions moderation
+            WHERE moderation.target_type = 'thing' AND moderation.target_id = link.thing_id
+            ORDER BY moderation.created_at DESC, moderation.id DESC
+            LIMIT 1
+          ), 'restore') = 'remove' AS removed
+        ) linked_hidden
+        WHERE link.agreement_id = agreement.id
+      ), '[]'::jsonb))
+    ELSE v3.payload
+  END AS payload
+FROM city_snapshot.public_records_v3 v3
+LEFT JOIN thing_end_facts own_end
+  ON v3.class_name = 'things' AND own_end.thing_id::TEXT = v3.record_id
+LEFT JOIN thing_end_facts offer_end
+  ON v3.class_name = 'world_market_offers' AND offer_end.thing_id::TEXT = v3.payload->>'asset_id'
+LEFT JOIN public.kinds kind
+  ON v3.class_name = 'kinds' AND kind.id::TEXT = v3.record_id
+LEFT JOIN public.kind_revisions kind_definition
+  ON kind_definition.kind_id = kind.id AND kind_definition.revision = kind.current_revision
+LEFT JOIN public.residents inventor ON inventor.id = kind.invented_by
+LEFT JOIN public.agreements agreement
+  ON v3.class_name = 'agreements' AND agreement.id::TEXT = v3.record_id
+WHERE NOT (v3.class_name = 'events' AND v3.sort_key IN (SELECT ended.id FROM ending_events ended))
+
+UNION ALL
+
+SELECT 'events'::TEXT, ended.id::TEXT, ended.id::BIGINT,
+  jsonb_build_object(
+    'id', ended.id,
+    'status', 'exported',
+    'at', ended.at,
+    'kind', ended.kind,
+    'actor', ended.actor,
+    'detail', jsonb_strip_nulls(jsonb_build_object(
+      'thing_id', ended.detail->'thing_id',
+      'place_id', ended.detail->'place_id',
+      'cause', ended.detail->'cause',
+      'ended_at', ended.detail->'ended_at',
+      'owner_id', ended.detail->'owner_id',
+      'owner', ended.detail->'owner',
+      'program_state', ended.detail->'program_state'
+    )),
+    'detail_policy', 'safe references only; authored text is in its primary exported record'
+  )
+FROM ending_events ended;
+
+REVOKE ALL ON city_snapshot.public_records_v4 FROM PUBLIC;
+GRANT SELECT ON city_snapshot.public_records_v4 TO city_snapshot_export;
+
 DO $thing_endings_shape$
 DECLARE
   missing TEXT;
@@ -775,6 +1109,32 @@ BEGIN
     OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_reached(integer)')) IS DISTINCT FROM 's'
     OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_ending_writer(integer)')) IS DISTINCT FROM 's' THEN
     RAISE EXCEPTION 'thing endings guard functions are missing or have the wrong volatility';
+  END IF;
+  IF (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure(
+      'public.thing_end_due_from(boolean, timestamptz, timestamptz, integer, timestamptz, timestamptz)')) IS DISTINCT FROM 's'
+    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure(
+      'public.thing_end_try_blocked_by(boolean, boolean, boolean, boolean, integer, integer, integer, boolean, integer[], integer[], integer[])'))
+      IS DISTINCT FROM 'i' THEN
+    RAISE EXCEPTION 'thing endings value functions are missing or have the wrong volatility';
+  END IF;
+  -- Format 4 is a security barrier the export role alone may read, with the four columns
+  -- the exporter attests, and the v2 and v3 grants stay for an exporter from an earlier commit.
+  IF to_regclass('city_snapshot.public_records_v4') IS NULL
+    OR NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('city_snapshot.public_records_v4')
+      AND relkind = 'v' AND reloptions @> ARRAY['security_barrier=true'])
+    OR NOT has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v4', 'SELECT')
+    OR EXISTS (SELECT 1 FROM pg_class relation
+      CROSS JOIN LATERAL aclexplode(relation.relacl) AS acl
+      WHERE relation.oid = to_regclass('city_snapshot.public_records_v4')
+        AND acl.grantee <> relation.relowner
+        AND (acl.grantee <> 'city_snapshot_export'::regrole OR acl.privilege_type <> 'SELECT'))
+    OR (SELECT array_agg(column_row.attname::text ORDER BY column_row.attnum) FROM pg_attribute AS column_row
+      WHERE column_row.attrelid = to_regclass('city_snapshot.public_records_v4')
+        AND column_row.attnum > 0 AND NOT column_row.attisdropped)
+      IS DISTINCT FROM ARRAY['class_name', 'record_id', 'sort_key', 'payload']
+    OR NOT has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v3', 'SELECT')
+    OR NOT has_table_privilege('city_snapshot_export', 'city_snapshot.public_records_v2', 'SELECT') THEN
+    RAISE EXCEPTION 'thing endings snapshot format 4 view is missing, or readable by more than the export role';
   END IF;
 END
 $thing_endings_shape$;

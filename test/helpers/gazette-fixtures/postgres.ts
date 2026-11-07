@@ -40,9 +40,28 @@ assert.ok(
 const showingRoomMigrationDdl = (await readFile(
   new URL('../../../db/migrations/20261027_showing_room.sql', import.meta.url), 'utf8',
 )).replaceAll('\r\n', '\n')
-const postGazetteSchemaDdl = (schemaBeforeActivity.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
+// Thing endings (20261106) build the format-v4 snapshot view on the format-v3 view that
+// same-room talk created, so a pre-Gazette database cannot hold them either; the upgrade
+// test applies them after same-room talk, as production does.
+export const thingEndingsMigrationDdl = await readFile(
+  new URL('../../../db/migrations/20261106_thing_endings.sql', import.meta.url),
+  'utf8',
+)
+const normalizedThingEndings = thingEndingsMigrationDdl.replaceAll('\r\n', '\n')
+const thingEndingsBody = normalizedThingEndings.slice(
+  normalizedThingEndings.indexOf('DO $thing_endings_guard$'),
+  normalizedThingEndings.lastIndexOf('COMMIT;'),
+).trimEnd()
+const postGazetteWithThingEndings = (schemaBeforeActivity.slice(postGazetteSchemaOffset, sameRoomTalkSchemaOffset)
   + schemaBeforeActivity.slice(sameRoomTalkSchemaOffset + normalizedTalkMigration.length))
   .replace(showingRoomMigrationDdl, '')
+assert.equal(
+  postGazetteWithThingEndings.indexOf(thingEndingsBody),
+  postGazetteWithThingEndings.lastIndexOf(thingEndingsBody),
+  'schema must carry the thing endings statements once',
+)
+assert.ok(postGazetteWithThingEndings.includes(thingEndingsBody), 'schema must carry the thing endings statements')
+const postGazetteSchemaDdl = postGazetteWithThingEndings.replace(thingEndingsBody, '')
 export const preGazetteSchemaDdl = schemaBeforeActivity.slice(0, gazetteSchemaOffset)
   + postGazetteSchemaDdl
 assert.doesNotMatch(preGazetteSchemaDdl, /gazette_/iu)
@@ -51,6 +70,7 @@ assert.doesNotMatch(
   /public_records_v2/u,
   'the format-v2 snapshot view arrives with the Gazette; a pre-Gazette schema cannot depend on it',
 )
+assert.doesNotMatch(preGazetteSchemaDdl, /public_records_v4/u)
 export const migrationDdl = await readFile(
   new URL('../../../db/migrations/20260827_gazette.sql', import.meta.url),
   'utf8',

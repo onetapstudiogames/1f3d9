@@ -211,8 +211,10 @@ test('showing room storage installs dormant, stays private, and activates only a
 
   await t.test('unpublished prompt bytes stay outside the export view', async () => {
     await database.query("INSERT INTO showing_room_contests (request_id,request_hash,title,prompt) VALUES ('private-canary','hash','Synthetic prompt','SHOWING_PRIVATE_CANARY_42819')")
-    const exported = await database.query("SELECT count(*)::integer AS count FROM city_snapshot.public_records_v3 record WHERE row_to_json(record)::text LIKE '%SHOWING_PRIVATE_CANARY_42819%'")
-    assert.equal(exported.rows[0].count, 0)
+    for (const view of ['public_records_v3', 'public_records_v4']) {
+      const exported = await database.query(`SELECT count(*)::integer AS count FROM city_snapshot.${view} record WHERE row_to_json(record)::text LIKE '%SHOWING_PRIVATE_CANARY_42819%'`)
+      assert.equal(exported.rows[0].count, 0, view)
+    }
   })
 
   await t.test('activation needs a verified commit and preserves showing room description', async () => {

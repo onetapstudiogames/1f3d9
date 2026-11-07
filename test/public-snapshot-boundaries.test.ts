@@ -293,7 +293,7 @@ test('snapshot record files reject truncation, bad JSON, bad fingerprints, and u
 
 test('snapshot constants remain explicit and versioned', () => {
   assert.equal(PUBLIC_SNAPSHOT_FORMAT_NAME, '1f3d9-public-snapshot')
-  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 3)
+  assert.equal(PUBLIC_SNAPSHOT_FORMAT_VERSION, 4)
 })
 
 test('stored activity does not expand frozen public snapshots', async () => {

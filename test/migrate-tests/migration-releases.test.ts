@@ -959,8 +959,20 @@ export function registerMigrationReleaseTests(): void {
     assert.match(migration, /SELECT thing_end_due_at_row\(thing\)\s+FROM things AS thing\s+WHERE thing\.id = \$1/u)
     assert.match(migration, /thing endings guards are out of order among the things triggers/u)
     assert.doesNotMatch(migration, /clock_timestamp\(\)/u, 'every guard judges at the transaction time')
-    // No export view or event list moves in this step.
-    assert.doesNotMatch(migration, /public_records_v4|thing_ended/u)
+    // Snapshot format 4: a new security-barrier view on v3 for the export role only, the
+    // due rule over values it may call, and the end-try gates; v1 to v3 are not replaced.
+    assert.match(migration, /thing endings migration needs the city_snapshot\.public_records_v3 view and the city_snapshot_export role/u)
+    assert.match(migration, /CREATE OR REPLACE VIEW city_snapshot\.public_records_v4\s+WITH \(security_barrier = true\)/u)
+    assert.match(migration, /FROM city_snapshot\.public_records_v3 v3/u)
+    assert.match(migration, /^REVOKE ALL ON city_snapshot\.public_records_v4 FROM PUBLIC;$/mu)
+    assert.match(migration, /^GRANT SELECT ON city_snapshot\.public_records_v4 TO city_snapshot_export;$/mu)
+    assert.equal([...migration.matchAll(/CREATE OR REPLACE VIEW/gu)].length, 1, 'only v4 is created')
+    assert.doesNotMatch(migration, /(?:REVOKE|GRANT)[^;]*public_records(?:_v2|_v3)?\b(?!_v4)/u,
+      'the earlier grants stay as they are')
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due_from\([\s\S]*?\) RETURNS timestamptz\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_try_blocked_by\([\s\S]*?\) RETURNS text\[\]\s+LANGUAGE sql IMMUTABLE/u)
+    assert.match(migration, /thing endings snapshot format 4 view is missing, or readable by more than the export role/u)
+    assert.match(migration, /WHERE event\.kind IN \('thing_ended'\)/u)
 
     const environments = {
       preview: {

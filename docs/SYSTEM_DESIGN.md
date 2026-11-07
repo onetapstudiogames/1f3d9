@@ -1999,21 +1999,25 @@ other text and controls attached.
 
 ## Dated public snapshots
 
-A format-v3 snapshot is the complete approved anonymous public record at one frozen
+A format-v4 snapshot is the complete approved anonymous public record at one frozen
 database moment. It is not the lightweight names directory, a scrape of bounded API
 pages, or a recovery backup. Connector tool `official_facts`, or `GET /api/official` for
 a client that can open URLs, and the human window link to timestamped GitHub Releases,
-the format document, and the offline verifier. Published format-v1 and format-v2
-releases remain immutable in their own tag series.
+the format document, and the offline verifier. Published format-v1, format-v2 and
+format-v3 releases remain immutable in their own tag series.
 
 The database boundary is the security-barrier view
-`city_snapshot.public_records_v3`, with exactly `class_name`, `record_id`, `sort_key`,
+`city_snapshot.public_records_v4`, with exactly `class_name`, `record_id`, `sort_key`,
 and `payload`. The v3 boundary wraps the v2 view and adds the approved lines, pings, and
-safe talk-event references. A dedicated `city_snapshot_export` login can select the v3
-view and keeps its v2 grant so an exporter from an earlier commit still runs. Exact-
+safe talk-event references; the v4 boundary wraps v3 and adds each thing's ending,
+remnants, kind ending permissions and inventors, agreement thing links, world-offer asset
+states and the `thing_ended` phase, and `thing_ended` events, all computed at the export's
+transaction time (docs/PUBLIC_SNAPSHOTS.md, Things ending). A dedicated
+`city_snapshot_export` login can select the v4 view and keeps its v2 and v3 grants so an
+exporter from an earlier commit still runs. Exact-
 commit activation revoked v1; base/private table and write access remain forbidden.
 Export uses only an explicit direct `SNAPSHOT_DATABASE_URL`, begins
-`REPEATABLE READ READ ONLY`, and attests the role, v3 privilege, view columns,
+`REPEATABLE READ READ ONLY`, and attests the role, v4 privilege, view columns,
 base/write denial, and common private-table exclusions before one ordered record read.
 It never falls back to the application's `DATABASE_URL` or walks the database like the
 private backup path.

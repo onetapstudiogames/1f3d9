@@ -120,7 +120,7 @@ const ATTEST_ROLE_SQL = `
   /* snapshot-export:attest-role */
   SELECT current_user,
     current_setting('transaction_read_only') AS transaction_read_only,
-    has_table_privilege(current_user, 'city_snapshot.public_records_v3', 'SELECT') AS can_read_view,
+    has_table_privilege(current_user, 'city_snapshot.public_records_v4', 'SELECT') AS can_read_view,
     has_table_privilege(current_user, 'city_snapshot.public_records', 'SELECT') AS can_read_legacy_view,
     has_table_privilege(current_user, 'public.residents', 'SELECT') AS can_read_residents,
     has_table_privilege(current_user, 'public.residents', 'INSERT,UPDATE,DELETE,TRUNCATE') AS can_write_residents,
@@ -154,7 +154,7 @@ const ATTEST_ROLE_SQL = `
       SELECT array_agg(columns.column_name::TEXT ORDER BY columns.ordinal_position)
       FROM information_schema.columns columns
       WHERE columns.table_schema = 'city_snapshot'
-        AND columns.table_name = 'public_records_v3'
+        AND columns.table_name = 'public_records_v4'
     ) AS view_columns
 `
 
@@ -168,7 +168,7 @@ const READ_RECORDS_SQL = `
       transaction_timestamp() AT TIME ZONE 'UTC',
       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
     ) AS exported_at
-  FROM city_snapshot.public_records_v3 records
+  FROM city_snapshot.public_records_v4 records
   ORDER BY records.class_name COLLATE "C", records.sort_key, records.record_id COLLATE "C"
 `
 
