@@ -339,6 +339,7 @@ test('thing endings at the gift, withdraw, mark and offer doors, against Postgre
       const now = new Date()
       mountWorldMarketRoutes(listing, {
         query: async (text, params) => (await db.query(text, [...params])).rows,
+        readOnlyTransaction: async () => { throw new Error('unused: this suite reads no offer batch') },
         authenticate: async () => ({ id: KEEPER.id, handle: KEEPER.handle }),
         now: () => new Date(),
         marketOrigin: 'https://1f3ea.com',

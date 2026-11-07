@@ -4,6 +4,7 @@ import { registerPaymentTests } from './world-market-tests/payment.test.ts'
 import { registerReconciliationTests } from './world-market-tests/reconciliation.test.ts'
 import { registerCancellationTests } from './world-market-tests/cancellation.test.ts'
 import { registerOfferBatchTests } from './world-market-tests/offers-batch.test.ts'
+import { registerThingEndedOfferTests } from './world-market-tests/thing-ended.test.ts'
 
 registerListingAndPublicRecordTests()
 registerReservationTests()
@@ -11,3 +12,4 @@ registerPaymentTests()
 registerReconciliationTests()
 registerCancellationTests()
 registerOfferBatchTests()
+registerThingEndedOfferTests()

@@ -121,6 +121,7 @@ import {
 } from './walk-to-read.ts'
 
 import { giveEndingRefusal, readDoorEndFacts } from './thing-ending-doors.ts'
+import { readThingEnding } from './thing-ending-read.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
 
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
@@ -990,6 +991,10 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
     if (!offer) return err(c, 500, 'transfer offer result is unavailable after the city write; re-read the asset lock and recipient before deciding whether to retry')
+    // A thing's offer shows its end before payment; places and kinds cannot end.
+    const ending = type === 'thing'
+      ? await readThingEnding((text, params) => sql.query(text, [...params]) as Promise<Record<string, unknown>[]>, id)
+      : null
     return c.json({ offer: {
       ...offer,
       type: offer.type ?? type,
@@ -1000,6 +1005,7 @@ export function mountSocietyRoutes(app: Hono): void {
       seller_wallet: offer.seller_wallet ?? wallet,
       status: offer.status ?? 'open',
       reserved_until: offer.reserved_until ?? null,
+      ...(ending ?? {}),
     } }, 201)
   })
 

@@ -7,8 +7,8 @@ import { BUYER_WALLET, MARKET, NOW, openOffer, type FakeOffer } from '../helpers
 
 type Statement = Parameters<WorldMarketDependencies['readOnlyTransaction']>[0][number]
 
-const LISTED_BODY = '{"offer":{"id":101,"channel":"world","phase":"listed","asset_type":"thing","asset_id":41,"asset_name":"porch lantern","maker_id":6,"made_by":"old-maker","current_owner_id":7,"current_owner":"tiny-lantern","locked":true,"seller":"tiny-lantern","buyer":null,"price_usdc":2,"seller_wallet":"0x1111111111111111111111111111111111111111","market_origin":"https://1f3ea.com","market_draft_id":71,"market_listing_id":null,"market_checkout_id":null,"market_buyer":null,"pending_x402_tx_hash":null,"pending_x402_at":null,"x402_invalid_reason":null,"x402_invalid_at":null,"reserved_at":null,"reserved_until":null,"created_at":"2026-08-12T11:30:00.000Z","claimed_at":null,"canceled_at":null,"tx_hash":null,"buyer_wallet":null,"verified_via":null,"block_time":null,"from":null,"to":null}}'
-const RESERVED_BODY = '{"offer":{"id":101,"channel":"world","phase":"reserved","asset_type":"thing","asset_id":41,"asset_name":"porch lantern","maker_id":6,"made_by":"old-maker","current_owner_id":7,"current_owner":"tiny-lantern","locked":true,"seller":"tiny-lantern","buyer":"neighbor","price_usdc":2,"seller_wallet":"0x1111111111111111111111111111111111111111","market_origin":"https://1f3ea.com","market_draft_id":71,"market_listing_id":91,"market_checkout_id":81,"market_buyer":"market-buyer","pending_x402_tx_hash":null,"pending_x402_at":null,"x402_invalid_reason":null,"x402_invalid_at":null,"reserved_at":"2026-08-12T12:00:00.000Z","reserved_until":"2026-08-12T12:05:00.000Z","created_at":"2026-08-12T11:30:00.000Z","claimed_at":null,"canceled_at":null,"tx_hash":null,"buyer_wallet":"0x2222222222222222222222222222222222222222","verified_via":null,"block_time":null,"from":null,"to":null}}'
+const LISTED_BODY = '{"offer":{"id":101,"channel":"world","phase":"listed","asset_type":"thing","asset_id":41,"asset_name":"porch lantern","maker_id":6,"made_by":"old-maker","current_owner_id":7,"current_owner":"tiny-lantern","locked":true,"seller":"tiny-lantern","buyer":null,"price_usdc":2,"seller_wallet":"0x1111111111111111111111111111111111111111","market_origin":"https://1f3ea.com","market_draft_id":71,"market_listing_id":null,"market_checkout_id":null,"market_buyer":null,"pending_x402_tx_hash":null,"pending_x402_at":null,"x402_invalid_reason":null,"x402_invalid_at":null,"reserved_at":null,"reserved_until":null,"created_at":"2026-08-12T11:30:00.000Z","claimed_at":null,"canceled_at":null,"tx_hash":null,"buyer_wallet":null,"verified_via":null,"block_time":null,"from":null,"to":null,"asset_state":"active","ending":null,"end_program_summary":null,"ending_checked_at":"2026-08-12T12:00:00.000Z"}}'
+const RESERVED_BODY = '{"offer":{"id":101,"channel":"world","phase":"reserved","asset_type":"thing","asset_id":41,"asset_name":"porch lantern","maker_id":6,"made_by":"old-maker","current_owner_id":7,"current_owner":"tiny-lantern","locked":true,"seller":"tiny-lantern","buyer":"neighbor","price_usdc":2,"seller_wallet":"0x1111111111111111111111111111111111111111","market_origin":"https://1f3ea.com","market_draft_id":71,"market_listing_id":91,"market_checkout_id":81,"market_buyer":"market-buyer","pending_x402_tx_hash":null,"pending_x402_at":null,"x402_invalid_reason":null,"x402_invalid_at":null,"reserved_at":"2026-08-12T12:00:00.000Z","reserved_until":"2026-08-12T12:05:00.000Z","created_at":"2026-08-12T11:30:00.000Z","claimed_at":null,"canceled_at":null,"tx_hash":null,"buyer_wallet":"0x2222222222222222222222222222222222222222","verified_via":null,"block_time":null,"from":null,"to":null,"asset_state":"active","ending":null,"end_program_summary":null,"ending_checked_at":"2026-08-12T12:00:00.000Z"}}'
 const LIMIT_REFUSAL = 'world offer ids were rejected because one read takes at most 50 ids, repeats included; split them into reads of 50 or fewer and retry'
 
 function offerFor(id: number, overrides: Partial<FakeOffer> = {}): FakeOffer {
@@ -53,6 +53,7 @@ function batchApp(offers: readonly FakeOffer[], hiddenThingIds: readonly number[
     findPayment: async () => { throw new Error('unexpected payment read') },
     runPayment: async () => { throw new Error('unexpected payment') },
     resumePayment: async () => { throw new Error('unexpected payment') },
+    recordEnds: async () => { throw new Error('an offer read never records an end') },
   }
   const app = new Hono()
   mountWorldMarketRoutes(app, dependencies)
@@ -215,7 +216,9 @@ export function registerOfferBatchTests(): void {
     assertOneBoundedRead(city.transactions(), [101])
   })
 
-  test('the single world offer read answers byte for byte as before', async () => {
+  // C0 pinned the single read byte for byte; T12 (thing endings) adds the four end fields
+  // after the offer's own fields and sends no-store on every single read, as the batch does.
+  test('the single world offer read answers byte for byte as before, plus the end fields', async () => {
     const reservedOffer = openOffer({
       buyer_id: 8,
       buyer: 'neighbor',
@@ -258,7 +261,7 @@ export function registerOfferBatchTests(): void {
       const harness = makeHarness(entry.patch)
       const response = await harness.app.request(entry.path)
       assert.equal(response.status, entry.status, entry.path)
-      assert.deepEqual([...response.headers.entries()], [['content-type', 'application/json']], entry.path)
+      assert.deepEqual([...response.headers.entries()], [['cache-control', 'no-store'], ['content-type', 'application/json']], entry.path)
       assert.equal(await response.text(), entry.body, entry.path)
     }
   })

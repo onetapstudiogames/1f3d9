@@ -213,6 +213,24 @@ jobs:
                   and (.handle | type == "string"))))
           ' >/dev/null || { echo "kind ending policy or inventor shape wrong: $KINDS"; exit 1; }
 
+      - name: world offers carry their thing's end before payment
+        run: |
+          # Every city offer read shows the offered thing's end before payment (things
+          # ending). Read-only: one public batch read of the sold offer 4, nothing reserved
+          # or paid. It checks the shape only, because the thing's owner may later withdraw
+          # it or give it an end.
+          OFFERS=$(curl -sf --max-time 20 "https://1f3d9.com/api/world/offers?ids=4")
+          echo "$OFFERS" | jq -e '
+            (.offers | length == 1)
+            and (.offers[0] | (.id == 4)
+              and (.phase | type == "string")
+              and (.asset_state | IN("active", "remnant", "withdrawn"))
+              and has("ending")
+              and (.ending == null or (.ending | type == "object" and (.status | type == "string")))
+              and (.end_program_summary == null or (.end_program_summary | type == "string"))
+              and (.ending_checked_at | type == "string"))
+          ' >/dev/null || { echo "world offer end shape wrong: $OFFERS"; exit 1; }
+
       - name: the edge-stripped body class stays fixed (webhook canary)
         run: |
           # An unverifiable-but-well-formed webhook body must be refused for

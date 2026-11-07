@@ -207,6 +207,7 @@ test('thing endings in the room settle, against PostgreSQL', { timeout: 900_000 
       const now = new Date()
       mountWorldMarketRoutes(listing, {
         query: async (text, params) => (await db.query(text, [...params])).rows,
+        readOnlyTransaction: async () => { throw new Error('unused: this suite reads no offer batch') },
         authenticate: async () => ({ id: KEEPER.id, handle: KEEPER.handle }),
         now: () => new Date(),
         marketOrigin: 'https://1f3ea.com',

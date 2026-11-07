@@ -28,6 +28,13 @@ import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
 import { THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
+import {
+  THING_ENDING_READ_COLUMNS,
+  THING_ENDING_READ_JOIN,
+  thingEndingFields,
+  thingEndingRead,
+  type ThingEndingRead,
+} from './thing-ending-read.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
@@ -121,6 +128,8 @@ interface OfferRecord {
   block_time: string | null
   from: string | null
   to: string | null
+  /** The thing's end as of the read, judged at the database's time; never part of validity. */
+  end: ThingEndingRead
 }
 
 export interface WorldMarketDependencies {
@@ -443,6 +452,7 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     block_time: isoTimestamp(row.block_time),
     from,
     to,
+    end: thingEndingRead(row),
   }
 }
 
@@ -464,14 +474,14 @@ const OFFER_SELECT = `
         AND thing.withdrawn_at IS NULL AND thing.active_offer_id = o.id
       ) AS locked,
       payment.tx_hash, payment.verified_via, payment.block_time,
-      lower(payment.payer_wallet) AS "from", lower(payment.payee_wallet) AS "to"
+      lower(payment.payer_wallet) AS "from", lower(payment.payee_wallet) AS "to",${THING_ENDING_READ_COLUMNS}
     FROM transfer_offers o
     JOIN things thing ON thing.id = o.asset_id
     JOIN residents maker ON maker.id = thing.maker_id
     JOIN residents current_owner ON current_owner.id = thing.owner_id
     JOIN residents seller ON seller.id = o.seller_id
     LEFT JOIN residents buyer ON buyer.id = o.buyer_id
-    LEFT JOIN sale_payments payment ON payment.offer_id = o.id`
+    LEFT JOIN sale_payments payment ON payment.offer_id = o.id${THING_ENDING_READ_JOIN}`
 
 async function readOffer(
   dependencies: WorldMarketDependencies,
@@ -583,6 +593,8 @@ function publicOffer(offer: OfferRecord, now: Date) {
       : offer.x402_evidence_state === 'founder_review' ? 'founder_review'
       : offer.x402_evidence_state === 'expired' ? 'payment_expired'
       : offer.pending_x402_tx_hash != null ? 'payment_pending'
+      // A due or ended thing: no new payment may start, so the end wins over a window.
+      : offer.end.reached ? 'thing_ended'
       : reservationActive(offer, now) ? 'reserved' : 'listed'
   return {
     id: offer.id,
@@ -620,6 +632,7 @@ function publicOffer(offer: OfferRecord, now: Date) {
     block_time: offer.block_time,
     from: offer.from,
     to: offer.to,
+    ...thingEndingFields(offer.end),
   }
 }
 
@@ -705,6 +718,7 @@ export function mountWorldMarketRoutes(
   })
 
   app.get('/api/world/offer/:offerId', async c => {
+    c.header('Cache-Control', 'no-store')
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const offerId = positiveId(c.req.param('offerId'))
@@ -1277,6 +1291,11 @@ export function mountWorldMarketRoutes(
     let offer = await readOffer(dependencies, offerId)
     if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (offer.seller_id !== seller.id) return err(c, 403, 'only the seller may cancel this world offer')
+    // A due end is recorded first; the cancel goes on either way, so a remnant's lock can
+    // always be released once no payment window is open.
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
+    }
     if (offer.status === 'canceled') return c.json({ offer: publicOffer(offer, dependencies.now()) })
     if (offer.status === 'claimed') {
       return err(c, 409, 'claimed world offer cannot be canceled; the completed sale is permanent, so list another owned thing instead')
@@ -1288,7 +1307,8 @@ export function mountWorldMarketRoutes(
       return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
     }
 
-    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled', 'sold'])
+    // thing_ended: the market ended the listing because the city thing's end came.
+    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled', 'sold', 'thing_ended'])
     const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
       ? new Set([...endedStates, 'stale'])
       : endedStates

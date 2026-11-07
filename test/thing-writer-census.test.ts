@@ -76,7 +76,7 @@ const WRITE_SITES: Readonly<Record<string, Decision>> = Object.freeze({
   'src/world-market.ts POST /api/world/listing UPDATE#1':
     'records first: list_world records the thing and refuses E7',
   'src/world-market.ts POST /api/world/offer/:offerId/cancel UPDATE#1':
-    'guarded: cancel_world only releases the sale lock (active_offer_id to NULL), which the guard allows on a remnant; T12 adds its recording',
+    'records first: cancel_world records the thing and proceeds; releasing the sale lock passes the guard',
   'src/world.ts upgradeConvertedThing UPDATE#1':
     'records first: thing_upgrade records and refuses E7',
   'src/world.ts PATCH /api/thing/:id UPDATE#1':

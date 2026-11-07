@@ -25,6 +25,7 @@ export function makeHarness(
 ) {
   let state = initialState(patch)
   const runPaymentInputs: Parameters<WorldMarketDependencies['runPayment']>[0][] = []
+  const recordEndCalls: number[][] = []
   if (state.offer?.pending_payment_attempt_id && state.paymentAttempt == null) {
     const attempt = fakePaymentAttempt(state.now)
     const request = worldRequestForOffer(state.offer)
@@ -587,8 +588,11 @@ export function makeHarness(
         paymentResponseHeader: SETTLED_RESPONSE,
       }
     },
-    // No fixture thing has an end set, so nothing is ever recorded.
-    recordEnds: async () => [],
+    // The fake records nothing; each call is kept so a test can see which doors record.
+    recordEnds: async thingIds => {
+      recordEndCalls.push([...thingIds])
+      return []
+    },
   }
 
   const app = new Hono()
@@ -598,6 +602,7 @@ export function makeHarness(
     app,
     getState: () => state,
     getRunPaymentInputs: () => [...runPaymentInputs],
+    getRecordEndCalls: () => recordEndCalls.map(ids => [...ids]),
     setState: (patcher: (current: FakeState) => FakeState) => { state = patcher(state) },
   }
 }

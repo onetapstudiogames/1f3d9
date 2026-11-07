@@ -80,6 +80,11 @@ export interface FakeOffer {
   block_time: string | null
   from: string | null
   to: string | null
+  // The thing's end facts the offer read selects (thing-ending-read.ts); no end by default.
+  thing_ending_facts: unknown
+  thing_ending_reached: boolean
+  thing_ending_withdrawn: boolean
+  thing_ending_checked_at: string
 }
 
 export interface FakeState {
@@ -193,6 +198,10 @@ export function openOffer(overrides: Partial<FakeOffer> = {}): FakeOffer {
     block_time: null,
     from: null,
     to: null,
+    thing_ending_facts: null,
+    thing_ending_reached: false,
+    thing_ending_withdrawn: false,
+    thing_ending_checked_at: NOW.toISOString(),
     ...overrides,
   }
   const withBuyer = overrides.market_buyer === undefined && offer.buyer_id != null
