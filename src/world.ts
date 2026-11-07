@@ -30,8 +30,9 @@ import {
   ENDING_REMNANT_CHANGE_REFUSAL,
   THING_REMNANT_REFUSAL,
 } from './thing-ending-refusals.ts'
-import { applyOwnerEnding, endingField, endingShapeRefusal } from './thing-ending-owner.ts'
+import { applyOwnerEnding, endingField, endingShapeRefusal, type EndingField } from './thing-ending-owner.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
 import {
   DEFAULT_ENDING_POLICY,
   isDefaultEndingPolicy,
@@ -607,6 +608,26 @@ async function mapForReader<T>(
   const filter = readFilter(reader, judge)
   const body = mark(judge, filter)
   return { reader, body, hidden: mutedFrontMatter(judge, rows), filtered: filterFields(filter) }
+}
+
+/**
+ * The made thing as make answers it: with the short status, key ends, when an end was
+ * sent, judged in SQL as every list judges it; without it when none was. The thing is
+ * already made, so a failed read answers the thing without ends rather than an error.
+ */
+async function withMadeThingEnds<T extends { id: number }>(thing: T, ending: EndingField): Promise<T> {
+  if (!ending.supplied || ending.value == null) return thing
+  try {
+    const rows = await sql.query(`
+      /* thing-endings:make-ends */
+      SELECT ${thingShortEndsSql('thing')} AS ends FROM things thing WHERE thing.id = $1::integer
+    `, [thing.id]) as Array<{ ends: unknown }>
+    const ends = publicShortEnds(rows[0]?.ends)
+    return ends === null ? thing : Object.freeze({ ...thing, ends })
+  } catch (error) {
+    console.error('make end read failed', error)
+    return thing
+  }
 }
 
 export function mountWorldRoutes(app: Hono): void {
@@ -2522,9 +2543,10 @@ export function mountWorldRoutes(app: Hono): void {
     })
     if (!made.ok) return err(c, made.status, made.error)
     const readingCost = await safeReadingCostMeter(placeId, made.thing.body)
+    const thing = await withMadeThingEnds(made.thing, ending)
     return c.json(made.consumedIngredientIds === null
-      ? { thing: made.thing, reading_cost: readingCost }
-      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
+      ? { thing, reading_cost: readingCost }
+      : { thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
   })
 
   app.patch('/api/thing/:id', async c => {
