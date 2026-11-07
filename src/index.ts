@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Hono, type Context } from 'hono'
 import { cors } from 'hono/cors'
 import { declaredBodyLength } from './bounded-body.ts'
+import { agreementThingLinks, agreementThingLinksSql } from './agreement-thing-links.ts'
 import { sql } from './db.ts'
 import { parseRollId, readChanceDays, readPublicRoll, ROLL_ID_ERROR } from './engine-chance.ts'
 import { settleRoom, type SettleSummary } from './engine-settle.ts'
@@ -1414,7 +1415,8 @@ app.get('/api/me', async c => {
         COALESCE(NOT p.named, false) AS acceded,
         EXISTS(SELECT 1 FROM agreement_accession_openings opening
           WHERE opening.agreement_id = a.id) AS accession_open,
-        (s.resident_id IS NOT NULL) AS signed
+        (s.resident_id IS NOT NULL) AS signed,
+        ${agreementThingLinksSql('a.id')} AS thing_links
       FROM agreements a
       LEFT JOIN agreement_parties p
         ON p.agreement_id = a.id AND p.resident_id = $1::integer
@@ -1598,7 +1600,8 @@ app.get('/api/me', async c => {
     places: places.items,
     things: things.items,
     kinds: kinds.items,
-    agreements: agreements.items,
+    // Each linked thing's status as of this read (#179).
+    agreements: agreements.items.map(row => ({ ...row, thing_links: agreementThingLinks(row.thing_links) })),
     notes: meNotes,
     ...(reading === null ? {} : { reading }),
     offers: offers.items,

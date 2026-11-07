@@ -57,6 +57,7 @@ const MODERATION_READERS: Readonly<Record<string, string>> = Object.freeze({
   'src/engine-reach.ts': 'exempt: world mechanics; a mute never changes what the world does',
   'src/engine-end-try.ts': 'exempt: world mechanics; a mute never changes what the world does',
   'src/thing-ending-read.ts': 'exempt: the end facts of one thing for the read that names it; that read is placed itself',
+  'src/agreement-thing-links.ts': 'exempt: the status of each thing an agreement links, for the agreement read that names them; that read is placed itself',
   'src/engine-settle.ts': 'exempt: world mechanics; a mute never changes what the world does',
   'src/place-hinges.ts': 'exempt: world mechanics; a mute never changes what the world does',
   'src/talk-event-targets.ts': 'exempt: world mechanics; a mute never changes what the world does',

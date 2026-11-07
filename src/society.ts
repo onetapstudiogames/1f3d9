@@ -126,7 +126,8 @@ import {
   readClaimEndFacts,
   readDoorEndFacts,
 } from './thing-ending-doors.ts'
-import { ENDING_PURCHASE_REFUSAL } from './thing-ending-refusals.ts'
+import { ENDING_PURCHASE_REFUSAL, THING_LINKS_REFUSAL } from './thing-ending-refusals.ts'
+import { agreementThingLinks, agreementThingLinksSql, parseThingLinks } from './agreement-thing-links.ts'
 import { readThingEnding } from './thing-ending-read.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
 
@@ -282,6 +283,8 @@ function agreementState(row: Record<string, unknown>) {
     signatures,
     open: typeof row.open === 'boolean' ? row.open : signatures.length < parties.length,
     accession_open: row.accession_open === true,
+    // Each linked thing's status as of this read (#179); a link records no end.
+    thing_links: agreementThingLinks(row.thing_links),
   }
 }
 
@@ -485,7 +488,7 @@ export function mountSocietyRoutes(app: Hono): void {
     const resident = await auth(c)
     if (!resident) return err(c, 401, RESIDENT_AUTH_REFUSAL)
     const body = await jsonObject(c)
-    if (!body || !hasOnly(body, ['parties', 'body', 'accession_open']))
+    if (!body || !hasOnly(body, ['parties', 'body', 'accession_open', 'thing_links']))
       return err(c, 400, 'need parties and body')
     const parties = partyHandles(body.parties)
     const accessionOpen = body.accession_open === undefined ? false : body.accession_open
@@ -494,8 +497,10 @@ export function mountSocietyRoutes(app: Hono): void {
     if (typeof accessionOpen !== 'boolean') return err(c, 400, 'accession_open must be true or false')
     if (!parties || text == null)
       return err(c, 400, `parties: 1-${MAX_PARTIES} unique resident handles; body: 1 byte-64 KB`)
+    const thingLinks = parseThingLinks(body.thing_links)
+    if (!thingLinks) return err(c, 400, THING_LINKS_REFUSAL)
 
-    const result = await createAgreementAction({ resident, parties, text, accessionOpen })
+    const result = await createAgreementAction({ resident, parties, text, accessionOpen, thingLinks })
     if (!result.ok) return err(c, result.status, result.error)
     return c.json({ agreement: result.agreement }, 201)
   })
@@ -584,6 +589,7 @@ export function mountSocietyRoutes(app: Hono): void {
       )
       SELECT page.id, page.body, page.created_by, page.parties, page.acceded,
         page.signatures, page.accession_open, page.open, page.created_at,
+        ${agreementThingLinksSql('page.id')} AS thing_links,
         totals.total_items, totals.total_text_bytes
       FROM totals
       LEFT JOIN LATERAL (

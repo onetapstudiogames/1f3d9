@@ -2,6 +2,14 @@ import { postgresErrorCode, QUOTAS } from './core.ts'
 import { engineSql, type TaggedSql } from './engine.ts'
 import { missingRecordRefusal } from './refusal-text.ts'
 import { dailyLimit, holdLimitRefusal, type DailyLimit } from './resident-hold.ts'
+import {
+  agreementLinkSql,
+  agreementThingLinks,
+  agreementThingLinksJson,
+  withAgreementLinkSql,
+  type AgreementThingLink,
+} from './agreement-thing-links.ts'
+import { THING_LINKS_REFUSAL } from './thing-ending-refusals.ts'
 
 interface AgreementActor {
   readonly id: number
@@ -50,16 +58,34 @@ type CreateAgreementActionResult = AgreementActionFailure | Readonly<{
     signatures: readonly AgreementSignature[]
     open: true
     accession_open: boolean
+    thing_links: readonly AgreementThingLink[]
     created_at?: string
   }>
 }>
+
+// The new agreement's links read back in its own statement: the rows new_links returns,
+// judged against the things as the statement found them.
+const NEW_LINKS_JSON = agreementLinkSql(agreementThingLinksJson('SELECT position, thing_id FROM new_links'))
+
+/** True when every linked id names a thing that exists and is not withdrawn. */
+async function thingLinksExist(thingLinks: readonly number[], database: TaggedSql): Promise<boolean> {
+  if (thingLinks.length === 0) return true
+  const rows = await database`
+    SELECT count(*)::int AS n FROM things
+    WHERE id = ANY(${thingLinks}::int[]) AND withdrawn_at IS NULL
+  ` as { n?: number }[]
+  return Number(rows[0]?.n) === thingLinks.length
+}
 
 export async function createAgreementAction(input: Readonly<{
   resident: AgreementActor
   parties: readonly string[]
   text: string
   accessionOpen: boolean
+  /** 0 to 16 different thing ids, already shaped by parseThingLinks; none when left out. */
+  thingLinks?: readonly number[]
 }>, database: TaggedSql = engineSql): Promise<CreateAgreementActionResult> {
+  const thingLinks = input.thingLinks ?? []
   const knownRows = await database`
     SELECT id, handle FROM residents WHERE handle = ANY(${input.parties}::text[])
   ` as { id: number; handle: string }[]
@@ -75,19 +101,31 @@ export async function createAgreementAction(input: Readonly<{
     )
   }
 
+  // A link names a thing that exists and is not withdrawn when the agreement is written;
+  // a remnant may be linked, and linking never records its end.
+  if (!await thingLinksExist(thingLinks, database)) return failure(404, THING_LINKS_REFUSAL)
+
   const limit = await dailyLimit(input.resident.id, 'agreements', database)
   const quota = agreementQuotaPrecheck(input.resident, limit)
   if (quota) return quota
 
-  const rows = await database`
+  const rows = await withAgreementLinkSql(database)`
     WITH named_parties AS (
       SELECT id, handle FROM residents WHERE handle = ANY(${input.parties}::text[])
     ), complete_parties AS (
       SELECT count(*)::int AS n FROM named_parties HAVING count(*) = ${input.parties.length}
+    ), requested_links AS (
+      SELECT requested.thing_id, (requested.ordinality - 1)::smallint AS position
+      FROM unnest(${thingLinks}::int[]) WITH ORDINALITY AS requested(thing_id, ordinality)
+    ), complete_links AS (
+      SELECT 1 FROM requested_links requested
+      LEFT JOIN things linked ON linked.id = requested.thing_id AND linked.withdrawn_at IS NULL
+      HAVING count(linked.id) = ${thingLinks.length}
     ), spent_quota AS (
       UPDATE residents SET agreement_actions_today = agreement_actions_today + 1
       WHERE id = ${input.resident.id} AND agreement_actions_today < ${limit.limit}
         AND EXISTS (SELECT 1 FROM complete_parties)
+        AND EXISTS (SELECT 1 FROM complete_links)
       RETURNING id
     ), new_agreement AS (
       INSERT INTO agreements (created_by_id, body)
@@ -97,6 +135,11 @@ export async function createAgreementAction(input: Readonly<{
       INSERT INTO agreement_parties (agreement_id, resident_id, named)
       SELECT a.id, p.id, true FROM new_agreement a CROSS JOIN named_parties p
       RETURNING agreement_id
+    ), new_links AS (
+      INSERT INTO agreement_thing_links (agreement_id, position, thing_id)
+      SELECT a.id, requested.position, requested.thing_id
+      FROM new_agreement a CROSS JOIN requested_links requested
+      RETURNING position, thing_id
     ), initial_opening AS (
       INSERT INTO agreement_accession_openings (agreement_id, opened_by_id)
       SELECT a.id, a.created_by_id FROM new_agreement a
@@ -111,12 +154,18 @@ export async function createAgreementAction(input: Readonly<{
       ) FROM new_agreement a
     )
     SELECT a.id, a.body, a.created_at,
-      EXISTS (SELECT 1 FROM initial_opening) AS accession_open
+      EXISTS (SELECT 1 FROM initial_opening) AS accession_open,
+      ${NEW_LINKS_JSON} AS thing_links
     FROM new_agreement a
     WHERE (SELECT count(*) FROM new_parties) = ${input.parties.length}
-  ` as { id: number; body?: string; accession_open?: boolean; created_at?: string }[]
+      AND (SELECT count(*) FROM new_links) = ${thingLinks.length}
+  ` as { id: number; body?: string; accession_open?: boolean; thing_links?: unknown; created_at?: string }[]
   const agreement = rows[0]
-  if (!agreement) return quotaFailure(limit)
+  if (!agreement) {
+    // A linked thing withdrawn between the check and the write refuses as E15, not as quota.
+    if (!await thingLinksExist(thingLinks, database)) return failure(404, THING_LINKS_REFUSAL)
+    return quotaFailure(limit)
+  }
   return Object.freeze({
     ok: true,
     agreement: Object.freeze({
@@ -128,6 +177,7 @@ export async function createAgreementAction(input: Readonly<{
       signatures: Object.freeze([]),
       open: true,
       accession_open: agreement.accession_open ?? input.accessionOpen,
+      thing_links: agreementThingLinks(agreement.thing_links),
       ...(agreement.created_at ? { created_at: agreement.created_at } : {}),
     }),
   })

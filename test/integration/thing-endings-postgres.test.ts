@@ -952,6 +952,152 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       assert.equal(marked.json.error, THING_REMNANT_REFUSAL)
       assert.equal((await one<Json>('SELECT name FROM things WHERE id = $1', [thingId])).name, 'an ending lamp')
     })
+
+    // T14: an agreement may link up to 16 things (#179). A link moves nothing, records no
+    // end and enforces nothing; every agreement read shows each linked thing's status now.
+    await t.test('an agreement links 0 to 16 things and every agreement read shows each status', async () => {
+      const { THING_LINKS_REFUSAL } = await import('../../src/thing-ending-refusals.ts')
+      await reset()
+      const agree = (body: Json) => call(app, OWNER.secret, 'POST', '/api/agreement', {
+        parties: [VISITOR.handle], body: 'we keep these lamps lit', ...body,
+      })
+      const agreementCount = () => count('SELECT count(*) AS n FROM agreements')
+      const linkCount = () => count('SELECT count(*) AS n FROM agreement_thing_links')
+      const actionsToday = async () => Number((await one<Json>(
+        'SELECT agreement_actions_today AS n FROM residents WHERE id = $1', [OWNER.id],
+      )).n)
+
+      const none = await agree({ thing_links: [] })
+      assert.equal(none.status, 201, JSON.stringify(none.json))
+      assert.deepEqual((none.json.agreement as Json).thing_links, [])
+      const omitted = await agree({})
+      assert.equal(omitted.status, 201, JSON.stringify(omitted.json))
+      assert.deepEqual((omitted.json.agreement as Json).thing_links, [])
+
+      const sixteen: number[] = []
+      for (let index = 0; index < 17; index += 1) sixteen.push(await seedThing(room, { name: `linked lamp ${index}` }))
+      const seventeen = [...sixteen]
+      sixteen.pop()
+      const withdrawn = await seedThing(room, { name: 'a withdrawn lamp' })
+      await db.query('UPDATE things SET withdrawn_at = now() WHERE id = $1', [withdrawn])
+      const missing = Number((await one<Json>('SELECT coalesce(max(id), 0) + 1000 AS n FROM things')).n)
+
+      const before = { agreements: await agreementCount(), links: await linkCount(), actions: await actionsToday() }
+      for (const [label, thingLinks, status] of [
+        ['seventeen links', seventeen, 400],
+        ['a duplicate', [sixteen[0], sixteen[1], sixteen[0]], 400],
+        ['not a list', sixteen[0], 400],
+        ['not an id', [sixteen[0], 'lamp'], 400],
+        ['a zero id', [0], 400],
+        ['a withdrawn thing', [sixteen[0], withdrawn], 404],
+        ['a thing that does not exist', [missing], 404],
+      ] as const) {
+        const refused = await agree({ thing_links: thingLinks })
+        assert.equal(refused.status, status, `${label}: ${JSON.stringify(refused.json)}`)
+        // The same refusal sent twice in a row names itself as a repeat after a blank line.
+        assert.equal(String(refused.json.error).split('\n')[0], THING_LINKS_REFUSAL, label)
+      }
+      assert.deepEqual(
+        { agreements: await agreementCount(), links: await linkCount(), actions: await actionsToday() },
+        before,
+        'a refused list writes nothing and spends no agreement action',
+      )
+
+      const full = await agree({ thing_links: sixteen })
+      assert.equal(full.status, 201, JSON.stringify(full.json))
+      const fullId = Number((full.json.agreement as Json).id)
+      assert.deepEqual(
+        (await db.query('SELECT position, thing_id FROM agreement_thing_links WHERE agreement_id = $1 ORDER BY position', [fullId])).rows,
+        sixteen.map((thingId, position) => ({ position, thing_id: thingId })),
+      )
+      assert.deepEqual(
+        ((full.json.agreement as Json).thing_links as Json[]).map(link => [link.position, link.thing_id, link.asset_state]),
+        sixteen.map((thingId, position) => [position, thingId, 'active']),
+      )
+
+      // One of each status: active, ends on, a recorded remnant, a due thing not yet
+      // recorded, one withdrawn after the agreement was written, and one hidden by a maintainer.
+      const plain = await seedThing(room, { name: 'a plain lamp' })
+      const endsOn = await seedThing(room, { name: 'a lamp that ends later' })
+      await setEnd(endsOn, { at: '10 days' })
+      const remnant = await seedThing(room, { name: 'a remnant lamp' })
+      await setEnd(remnant, { at: '-10 minutes' })
+      assert.deepEqual(await recordDueEnd([remnant]), [remnant])
+      const due = await seedThing(room, { name: 'a due lamp' })
+      await setEnd(due, { at: '-5 minutes' })
+      const laterWithdrawn = await seedThing(room, { name: 'a lamp withdrawn later' })
+      await setEnd(laterWithdrawn, { at: '10 days' })
+      const hidden = await seedThing(room, { name: 'a hidden lamp' })
+      await setEnd(hidden, { at: '10 days' })
+      const linked = [plain, endsOn, remnant, due, laterWithdrawn, hidden]
+      const thingRowsBefore = (await db.query('SELECT * FROM things WHERE id = ANY($1::int[]) ORDER BY id', [linked])).rows
+      const eventsBefore = await count('SELECT count(*) AS n FROM events')
+
+      const mixed = await agree({ thing_links: linked })
+      assert.equal(mixed.status, 201, JSON.stringify(mixed.json))
+      const mixedId = Number((mixed.json.agreement as Json).id)
+      // Linking records no end and changes no thing; the agreement writes its own one event.
+      assert.deepEqual((await db.query('SELECT * FROM things WHERE id = ANY($1::int[]) ORDER BY id', [linked])).rows, thingRowsBefore)
+      assert.equal((await ending(due)).ended_at, null, 'a link never records an end')
+      assert.equal((await endedEvents(due)).length, 0)
+      assert.equal(await count('SELECT count(*) AS n FROM events'), eventsBefore + 1)
+
+      await db.query('UPDATE things SET withdrawn_at = now() WHERE id = $1', [laterWithdrawn])
+      await db.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('thing', $1, 'remove', 1, 'agreement link test')
+      `, [hidden])
+      const times = await one<{ ends_on: Date; remnant: Date; due: Date }>(`
+        SELECT
+          (SELECT date_trunc('milliseconds', thing_end_due_at(id)) FROM things WHERE id = $1) AS ends_on,
+          (SELECT date_trunc('milliseconds', ended_at) FROM things WHERE id = $2) AS remnant,
+          (SELECT date_trunc('milliseconds', thing_end_due_at(id)) FROM things WHERE id = $3) AS due
+      `, [endsOn, remnant, due])
+      const expected = [
+        { position: 0, thing_id: plain, asset_state: 'active' },
+        { position: 1, thing_id: endsOn, asset_state: 'active', ends: { state: 'set', at: times.ends_on.toISOString() } },
+        { position: 2, thing_id: remnant, asset_state: 'remnant', ends: { state: 'ended', at: times.remnant.toISOString() } },
+        { position: 3, thing_id: due, asset_state: 'remnant', ends: { state: 'ended', at: times.due.toISOString() } },
+        { position: 4, thing_id: laterWithdrawn, asset_state: 'withdrawn' },
+        { position: 5, thing_id: hidden },
+      ]
+
+      const listed = await call(app, null, 'GET', `/api/agreements?before_id=${mixedId + 1}&limit=1`)
+      assert.equal(listed.status, 200, JSON.stringify(listed.json))
+      const listedAgreement = (listed.json.agreements as Json[])[0]!
+      assert.equal(listedAgreement.id, mixedId)
+      assert.deepEqual(listedAgreement.thing_links, expected)
+      const all = await call(app, null, 'GET', '/api/agreements?limit=10')
+      assert.equal(all.status, 200, JSON.stringify(all.json))
+      const byId = new Map((all.json.agreements as Json[]).map(row => [Number(row.id), row]))
+      assert.deepEqual(byId.get(Number((none.json.agreement as Json).id))?.thing_links, [])
+      assert.equal((byId.get(fullId)?.thing_links as Json[]).length, 16)
+
+      // Agreement reads never record an end (#37). GET /api/me below settles the reader's
+      // room, which may record the due lamp; its end time is the same either way.
+      assert.equal((await ending(due)).ended_at, null)
+      assert.equal((await endedEvents(due)).length, 0)
+
+      const me = await call(app, OWNER.secret, 'GET', '/api/me?agreement_limit=1')
+      assert.equal(me.status, 200, JSON.stringify(me.json))
+      const mine = (me.json.agreements as Json[])[0]!
+      assert.equal(mine.id, mixedId)
+      assert.deepEqual(mine.thing_links, expected)
+
+      const window = await call(app, null, 'GET', `/api/window?collection=agreements&before_id=${mixedId + 1}&limit=1`)
+      assert.equal(window.status, 200, JSON.stringify(window.json))
+      const windowAgreement = (window.json.items as Json[] ?? window.json.agreements as Json[])[0]!
+      assert.equal(windowAgreement.id, mixedId)
+      assert.deepEqual(windowAgreement.thing_links, expected)
+
+
+      // The links ride inside the five agreement actions a day.
+      await db.query('UPDATE residents SET agreement_actions_today = $2 WHERE id = $1', [OWNER.id, 5])
+      const linksBeforeQuota = await linkCount()
+      const overQuota = await agree({ thing_links: [plain] })
+      assert.equal(overQuota.status, 429, JSON.stringify(overQuota.json))
+      assert.equal(await linkCount(), linksBeforeQuota)
+    })
   } finally {
     await postgres.stop()
   }

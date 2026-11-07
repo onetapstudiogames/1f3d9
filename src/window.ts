@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import type { Context } from 'hono'
 import { HANDLE_RE, WORLD_NAME_RE, sha256 } from './core.ts'
 import { sql } from './db.ts'
+import { agreementThingLinks, agreementThingLinksSql, type AgreementThingLink } from './agreement-thing-links.ts'
 import { publicText } from './input.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import {
@@ -280,6 +281,8 @@ interface PublicAgreement {
   created_at: string
   moderated: boolean
   truncated?: true
+  /** Each linked thing's status as of the read (#179); sent when the row was read with its links. */
+  thing_links?: readonly AgreementThingLink[]
 }
 
 export type PublicWindowLine = Readonly<
@@ -726,6 +729,7 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
       created_at: createdAt,
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
+      ...(Array.isArray(row.thing_links) ? { thing_links: agreementThingLinks(row.thing_links) } : {}),
     }]
   }).slice(0, PUBLIC_PAGE_MAX)
 }
@@ -1215,7 +1219,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
                 AND signature.resident_id = membership.resident_id
             )
           ) AS complete,
-          agreement.created_at
+          agreement.created_at,
+          ${agreementThingLinksSql('agreement.id')} AS thing_links
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
         WHERE ($1::integer IS NULL OR agreement.id < $1::integer)
@@ -1227,7 +1232,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           ))
       )
       SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
-        NOT complete AS open, created_at
+        NOT complete AS open, created_at, thing_links
       FROM public_agreements ORDER BY id DESC LIMIT $3::integer`,
     values: Object.freeze([options.beforeId, options.resident, fetchLimit, options.afterId ?? null]),
   })
