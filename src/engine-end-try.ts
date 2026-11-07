@@ -1,5 +1,5 @@
 /**
- * The settle step of things ending (decisions #106 and #175): a room settle records up to
+ * The settle step of things ending (decisions #106 and #173): a room settle records up to
  * 64 ends that came in the room, then runs each recorded thing's end program once, as an
  * end try beside the wake tries, under the same gates and inside the same budget. A write
  * from anywhere else only records the end; the program waits for a resident in the room.

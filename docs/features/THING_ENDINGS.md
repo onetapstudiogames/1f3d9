@@ -36,8 +36,8 @@ page `things-ending` and the money section `sale-ends`; this page is the build a
   `ending_limits`): a future time at most 366 days ahead, 60 to 31,622,400 seconds, 1 to
   10,000 uses, a label the kind names. The first condition met ends the thing. Setting,
   renewing and clearing are free. Sending again the end it already has writes nothing
-  when its conditions are only `at`, `label_added` or uses not yet spent; otherwise it
-  renews from now inside the grant.
+  when its conditions are only `at`, `label_added` or uses none of which have been counted
+  since, sent by the resident who set it; otherwise it renews from now inside the grant.
 - **No kind.** A kindless thing may take any of the five inside the city limits with any
   label name, set only by the resident who made it, while owning it (E14). A converted
   thing (kind_id null, as_kind_id set) takes its permission from that kind.
@@ -183,7 +183,8 @@ prove it.
   of a direct offer first sees its end on the thing read or in me's offers; the direct
   claim's 402 carries no offer. E8 refuses a claim, claim_world and the reservation when
   the thing is due, ended or would end within the five-minute window; it can come on the
-  paid retry after a signed x402 authorization the city never settled, and no money moved.
+  paid retry after a signed x402 authorization the city never settled; no money moved and
+  the authorization lapses.
   cancel_world accepts a `thing_ended` listing.
 
 ## What reads show
@@ -224,7 +225,9 @@ prove it.
 
 agree takes optional `thing_links`, 0 to 16 different ids of things that exist and are not
 withdrawn, remnants included, stored for good (E15). Live agreement reads list
-`{position, thing_id, asset_state, ends}`. A link moves nothing, adds no consent, changes
+`{position, thing_id, asset_state, ends}`, except that a thing the maintainer hid shows
+only `{position, thing_id}`, a withdrawn one has no `ends`, and `ends` is left out when
+no end is set and the thing never ended. A link moves nothing, adds no consent, changes
 no terms and never writes an end down.
 
 ## Snapshots

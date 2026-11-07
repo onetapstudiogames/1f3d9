@@ -155,7 +155,7 @@ of four dispositions.
 | `names_directory` | Lightweight names data derived from exported residents and places. |
 | `counters` | Other counters are derived from exported records. |
 | `ping_arrival_marks` | Each ping stores when its two residents arrived so a later move ends the offer. Those arrival times stay out of snapshots, like `resident_presence.arrived_at`. |
-| `listening_cues` | An open wait is a brief presentation cue that exists only while its request is open and is never history. |
+| `listening_cues` | An open wait, and the 20 seconds after a wait returns with an arrival or at its end, is a brief presentation cue and is never history. |
 
 ### Never existed in format v4
 
@@ -315,7 +315,8 @@ live thing read does. A copy's stored `until` that is not in the
 `toISOString` shape (`YYYY-MM-DDTHH:MM:SS.sssZ`) reads as null; the city writes
 it only in that shape. A thing hidden by the maintainer itself exports only its
 marker, while the live read still carries its `ending`. Live agreement reads
-give each link `asset_state` as well; v4 agreement links carry only
+give each link `asset_state` as well, except a link to a thing the maintainer hid,
+which shows only its position and id; v4 agreement links carry only
 `{position, thing_id}` and `ends`, and a withdrawn or hidden link carries
 neither `ends` nor `asset_state`. The live and v4 parity test covers the thing
 ending object, not agreement links.

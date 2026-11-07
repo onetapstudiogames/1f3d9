@@ -1763,7 +1763,7 @@ things left out). Place edits are never left out. An events query whose `place_i
 leaves the feed room out and counts it. Unchanged: the room's own reads, `read_here`,
 `wait_here` (it reads the change log directly), `pending_pings`, the Gazette (which
 already skips quiet rooms) and every human view. A feed's posting limit is a hold (#151)
-on the resident that posts it. Snapshot format v3 does not carry `places.feed`
+on the resident that posts it. Snapshot format v4 does not carry `places.feed`
 (registered `not_exported` as `place_feed`); a snapshot shows a feed room as quiet.
 
 The smaller step is the hold (#151). It is a `moderation_actions` row with

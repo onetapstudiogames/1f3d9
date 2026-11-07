@@ -1538,9 +1538,9 @@ record the same checks before merging. Expect the brief `things` lock to need th
 "When a migration times out" on a busy table. Never chain the migration with the merge.
 Kinds invented between the Production run and the deploy are written by older code with no
 inventor, so once `/api/official` reports the merged commit, run the backfill statement once
-more, on its own in its own transaction rather than a rerun of the migration, whose trigger drops would hold
-an exclusive lock on `active_labels`, `thing_later_holder_marks` and `transfer_offers`
-until it commits, and record how many
+more, on its own in its own transaction rather than a rerun of the migration, whose trigger drops and table changes would hold
+exclusive locks on `things`, `kinds`, `wake_tries`, `thing_state_changes`, `active_labels`,
+`thing_later_holder_marks` and `transfer_offers` until it commits, and record how many
 kinds it filled and which stay empty.
 
 ### When a migration times out

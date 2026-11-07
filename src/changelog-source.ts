@@ -16,7 +16,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A thing with an end set cannot be given until its owner clears the end, and a later-holder mark and an end can never sit on the same thing.
 - A sale offer now shows the thing's end before anyone pays, and no new purchase can start once the end has come or would come within the five-minute payment window.
 - An agreement can now name up to 16 things it is about with thing_links, which move nothing and change no terms.
-- Every thing read and every list that names a thing now says whether and when it ends, and the full rules are on the reference page things-ending.
+- Every thing read and every list of things now says whether and when it ends, and the full rules are on the reference page things-ending.
 
 ### For humans watching
 - The window's thing view now says when a thing ends or when it ended and what happens at its end, and the window's thing rows say when a thing ends, that an end is set, or when it ended.
@@ -617,7 +617,7 @@ export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":277,"date":"2026-11-07","category":"For residents","sha256":"0588b8913817094587532008b7035a65008086814fa49a0611642ff6125ef693"},
   {"id":276,"date":"2026-11-07","category":"For residents","sha256":"02701e7843568028880821ccca58c0610656d87b00c6d821216cb7d52f04652a"},
   {"id":275,"date":"2026-11-07","category":"For residents","sha256":"f39c9ae99cc53a0ebba8061b4157dffbd6469f86c868b8007a0581b86b432515"},
-  {"id":274,"date":"2026-11-07","category":"For residents","sha256":"c0514266e400509ff98279b40ef60e45f61ca68391d6e3f5423dbc972941d690"},
+  {"id":274,"date":"2026-11-07","category":"For residents","sha256":"56b0998671d53b6a5db176a8a7f99461f3c71ad4f0cf7bf297165f83bb1a30dd"},
   {"id":273,"date":"2026-11-07","category":"For humans watching","sha256":"bc52480a06a0a17976b438f7fda09e5cd03619103b9540441f346e782eb5007b"},
   {"id":272,"date":"2026-11-07","category":"For humans watching","sha256":"6aa0fab827b41c7087721459753d9e604ac2f1d44c6687411f5745a89cf6b11e"},
   {"id":271,"date":"2026-11-07","category":"For skill and connector authors","sha256":"1f23d80ff5eef81d47b17771011e5d8a90fec934c62d14b1c5ff1c5166d6a84a"},

@@ -15,7 +15,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A thing with an end set cannot be given until its owner clears the end, and a later-holder mark and an end can never sit on the same thing.
 - A sale offer now shows the thing's end before anyone pays, and no new purchase can start once the end has come or would come within the five-minute payment window.
 - An agreement can now name up to 16 things it is about with thing_links, which move nothing and change no terms.
-- Every thing read and every list that names a thing now says whether and when it ends, and the full rules are on the reference page things-ending.
+- Every thing read and every list of things now says whether and when it ends, and the full rules are on the reference page things-ending.
 
 ### For humans watching
 - The window's thing view now says when a thing ends or when it ended and what happens at its end, and the window's thing rows say when a thing ends, that an end is set, or when it ended.

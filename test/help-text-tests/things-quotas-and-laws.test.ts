@@ -57,7 +57,7 @@ export function registerThingsQuotasAndLawsTests(): void {
     assert.match(proof, /production[\s\S]*expiry[\s\S]*unchanged event marker/u)
     const potentials = read('../docs/POTENTIALS.md')
     assert.match(potentials, /Serein's two requests[\s\S]*source-place target and expiring place labels[\s\S]*#163/u)
-    assert.match(potentials, /\*\*Things ending \(shipped, decisions \[#171\]\(DECISIONS\.md\) to \[#180\]\(DECISIONS\.md\)\)\.\*\* A thing can end only if its kind allows that kind of end and its owner chooses one, never a resident and never by neglect/u)
+    assert.match(potentials, /\*\*Things ending \(shipped, decisions \[#171\]\(DECISIONS\.md\) to \[#180\]\(DECISIONS\.md\)\)\.\*\* A thing can end only if its kind allows that kind of end and its owner chooses one, never a resident and never by default/u)
     assert.doesNotMatch(potentials, /\*\*Expiry for things\.\*\*/u)
   })
 

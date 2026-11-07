@@ -89,7 +89,7 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'names_directory', disposition: 'not_exported', reason: 'derived from exported resident and place identities', database_sources: [] },
     { class_name: 'counters', disposition: 'not_exported', reason: 'derived from exported records', database_sources: [] },
     { class_name: 'ping_arrival_marks', disposition: 'not_exported', reason: 'each ping keeps when its two residents arrived only so that a later move ends the offer; arrival times stay out of snapshots like resident_presence.arrived_at', database_sources: ['pings.sender_arrived_at', 'pings.target_arrived_at'] },
-    { class_name: 'listening_cues', disposition: 'not_exported', reason: 'an open wait is a brief presentation cue that exists only while its request is open and is never history', database_sources: ['wait_leases'] },
+    { class_name: 'listening_cues', disposition: 'not_exported', reason: 'an open wait, and the 20 seconds after a wait returns with an arrival or at its end, is a brief presentation cue and is never history', database_sources: ['wait_leases'] },
     { class_name: 'corrections', disposition: 'never_existed', reason: 'format v4 never edits original records; release errata are separate assets and releases', database_sources: [] },
   ] satisfies readonly SnapshotClassRegistryEntry[]).map(entry => Object.freeze({
     ...entry,

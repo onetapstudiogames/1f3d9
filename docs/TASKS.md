@@ -84,12 +84,12 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
 - [ ] Season icon (#460): the four static PNG icons (`/favicon.ico`,
   `/favicon-32x32.png`, `/apple-touch-icon.png`, `/og-image.png`) stay green on season
   days. Making them follow the season needs a generator, in its own pull request.
-- [ ] At public snapshot format v4, export each place's feed mark, now registered
+- [ ] At a public snapshot format after v4, export each place's feed mark, now registered
   `not_exported` as `place_feed` in `src/public-snapshot-format.ts` (decision #153).
-- [ ] At public snapshot format v4, export the link from each moderation record to its
+- [ ] At a public snapshot format after v4, export the link from each moderation record to its
   reply notes, now registered `not_exported` as `moderation_replies` in
   `src/public-snapshot-format.ts`.
-- [ ] At public snapshot format v4, export the moderation record's own fields
+- [ ] At a public snapshot format after v4, export the moderation record's own fields
   (`rule_word`, `at_once_for`, `smaller_step`, `smaller_step_record_id`, `ends_at` and
   the hold numbers and stops), now registered `not_exported` as
   `moderation_record_fields` in `src/public-snapshot-format.ts`.
@@ -115,11 +115,6 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   held one after a client timeout.
 - [ ] Measure whether talk pushes daily visitors' `around_you` intervals over 20,000
   changes; the owner decides whether talk should be excluded from that count.
-- [ ] At public snapshot format v4, reword the `listening_cues` class reason in
-  `src/public-snapshot-format.ts` and docs/PUBLIC_SNAPSHOTS.md ("exists only while its
-  request is open"): since #148 a cue also lingers 20 seconds after an arrival or a
-  timeout. It stays unchanged in v3 because published v3 manifests carry the registry
-  and verification compares it exactly; the cue is still never exported.
 - [ ] Decide whether `resetCity` should re-grant PostgreSQL's default `USAGE` on
   schema `public`; it drops the grant when recreating the schema. Until then,
   export-role tests must re-grant it inside their transaction, as
