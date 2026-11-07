@@ -657,12 +657,15 @@ existing one keeps its own; null means none, and on an existing thing clears it.
 The kind's maker may have set smaller limits. The first condition met ends the thing.
 official_facts states the same limits as ending_limits: {{ENDING_LIMITS}}
 
-Setting, renewing and clearing an end are free, and sending exactly the end it already has
-writes nothing. A use counts when it applied, even if it changed nothing; a refused or
-failed use counts nothing. Unused is measured from the last counted use or your last
-setting; reads, visits, waking and moving do not count. A label counts only when it was put
-on after the end was set, and it still counts after that label expires or is ended, so an
-end never comes undone. Anyone whose thing can put that label on this thing can end it.
+Setting, renewing and clearing an end are free. Sending again the end it already has
+writes nothing when its conditions are only at, label_added or uses not yet spent.
+Otherwise it renews: a time after setting and a time unused count again from now, and uses
+start again at the number sent, inside the grant. A use counts when it applied, even if it
+changed nothing; a refused or failed use counts nothing. Unused is measured from the last
+counted use or your last setting; reads, visits, waking and moving do not count. A label
+counts only when it was put on after the end was set, and it still counts after that label
+expires or is ended, so an end never comes undone. Anyone whose thing can put that label
+on this thing can end it.
 
 Each setting stores a grant: the kind and revision it was taken under (or no kind), the
 ways it allowed and the limits. Setting the same thing again must fit that grant, even after
@@ -766,21 +769,22 @@ arrives with waking off, so they are skipped; withdrawing it first cancels them.
 end_program_summary names them in this form:
 "When this ends it becomes a remnant, then, if waking is on for it and its room lets it
 wake, the next time a resident is in its room it runs <trait>'s end steps once: ..."
-followed, in step order, by: writes its own state box; makes a copy of itself; puts a label
-on things in its room, on residents in its room, or on its room; may do more (for chance
-and check_label); reaches things in its room; turns things it reaches into its kind; moves
-things it reaches; destroys things it reaches; blocks residents it reaches. "may" marks a
-step inside chance, check_label or reach. The sentence stops at 300 characters with "and
-more." physics lists the end key beside the wake key.
+followed, in step order, by: writes its own state box; makes a copy of itself; puts a
+label on things in its room, on residents in its room, or on its room; may do more (for
+chance and check_label); reaches things in its room or reaches residents in its room;
+turns things it reaches into its kind; moves things it reaches; destroys things it
+reaches; blocks residents it reaches. "may" marks a step inside chance, check_label or
+reach. The sentence stops at 300 characters with "and more." physics lists the end key
+beside the wake key.
 
 AGREEMENT THING LINKS
 ~~~~~~~~~~~~~~~~~~~~~
 agree takes optional thing_links: 0 to 16 different ids of things that exist and are not
 withdrawn when the agreement is written, remnants included. They are stored with the
-agreement for good, inside its five daily agreement actions. Every agreement read lists
-them as {position, thing_id, asset_state, ends}: asset_state active, remnant or withdrawn,
-and ends as on any row. A link moves nothing, adds no consent, changes no terms and never
-writes an end down.
+agreement for good, at no agreement action beyond the agreement's own. Every agreement
+read lists them as {position, thing_id, asset_state, ends}: asset_state active, remnant or
+withdrawn, and ends as on any row. A link moves nothing, adds no consent, changes no terms
+and never writes an end down.
 
 THE WORLD AND WALKING
 ---------------------
@@ -3463,10 +3467,10 @@ named variants use the authoring limits above. revise_kind also costs exactly $1
 requires an owned kind_id, retains omitted drawing fields and variant set, while explicit
 empty drawing_variants publishes none. A revision must change something: one identical to
 the current revision, the same description, traits in the same order, recipe, drawing,
-and drawing_variants, including one that sends no revision field, is refused before any
-fee. revise_kind's traits replaces the whole trait list: to add a trait, send the current
-traits with it, and the answer's dropped_traits names, in a plain sentence too, any trait
-the new list left out. Before either
+drawing_variants, and ending_policy, including one that sends no revision field, is
+refused before any fee. revise_kind's traits replaces the whole trait list: to add a
+trait, send the current traits with it, and the answer's dropped_traits names, in a plain
+sentence too, any trait the new list left out. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; invent_kind and
@@ -3613,10 +3617,10 @@ Things include their resolved drawing and drawing_source from their own override
 kind revision. Ordinary map, room, window, directory, and census reads still omit drawings.
 Each exported thing also carries labels and labels_total exactly as the thing read shows
 them; resident labels stay out of every class. From format 4, each exported thing carries
-ending, the same end object the thing read shows except end_program_summary, worked out at
-the snapshot's own moment, and each agreement carries the short status of the things it
-links (things-ending). The history behind each end is not exported yet; its thing_ended
-events are. Snapshots already published keep their own format.
+ending, the same end object the thing read shows, worked out at the snapshot's own moment
+and with no end_program_summary beside it, and each agreement carries the short status of
+the things it links (things-ending). The history behind each end is not exported yet; its
+thing_ended events are. Snapshots already published keep their own format.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
 resident homes and quotas, resident label holdings, flag report text, payment attempts,
