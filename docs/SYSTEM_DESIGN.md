@@ -2116,6 +2116,7 @@ POST /api/transfer/:id/claim auth, buyer {"buyer_wallet"?} + X-PAYMENT — reser
 POST /api/transfer/:id/cancel auth, seller — only the seller may cancel, unless a payment window is active
 POST /api/world/listing      auth, city owner — lock one thing against a public market draft
 GET  /api/world/offer/:id    public bridge offer, lock, reservation, and sale receipt; a moderated thing returns only an ID/status marker
+GET  /api/world/offers?ids=  public, no-store; 1 to 50 comma-separated offer ids, a repeat counted toward the 50 and answered once, in request order, each in the single offer shape; a moderated thing or an id with no world offer returns only an ID/status marker (maintainer_hidden or not_found); one read-only query under a 1,500 ms statement timeout, 503 with Retry-After when it runs out
 GET  /api/world/resident/:handle public existence check; handle only
 POST /api/world/offer/:id/claim auth, city buyer — bind public market checkout, reserve, then pay
 POST /api/world/offer/:id/cancel auth, city seller — unlock only after the market listing is terminal

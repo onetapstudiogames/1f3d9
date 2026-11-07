@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Hono } from 'hono'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 import { findPaymentAttempt } from '../../src/payment-attempts.ts'
 import {
   resumeDurableX402,
@@ -70,6 +70,37 @@ async function startPostgres(): Promise<{ database: Pool; containerName: string 
   } catch (error) {
     spawnSync('docker', ['stop', '--time', '0', containerName], { encoding: 'utf8' })
     throw error
+  }
+}
+
+// The same shape as the Neon read-only transaction the city uses in production:
+// BEGIN READ ONLY, each statement in order, COMMIT. inside runs before COMMIT and
+// after runs on the same connection once the transaction has ended.
+function readOnlyTransaction(
+  database: Pool,
+  hooks: Readonly<{
+    inside?: (client: PoolClient) => Promise<void>
+    after?: (client: PoolClient) => Promise<void>
+  }> = {},
+): WorldMarketDependencies['readOnlyTransaction'] {
+  return async statements => {
+    const client = await database.connect()
+    try {
+      await client.query('BEGIN READ ONLY')
+      const results: Record<string, unknown>[][] = []
+      for (const statement of statements) {
+        results.push((await client.query(statement.text, [...statement.params])).rows)
+      }
+      await hooks.inside?.(client)
+      await client.query('COMMIT')
+      await hooks.after?.(client)
+      return results
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
   }
 }
 
@@ -188,6 +219,7 @@ test('world offer PostgreSQL Date milliseconds reach the parked payment attempt'
       (await database.query(text, [...params])).rows
     const dependencies: WorldMarketDependencies = {
       query,
+      readOnlyTransaction: readOnlyTransaction(database),
       authenticate: async c => c.req.header('authorization') === BUYER_SECRET
         ? { id: 2, handle: 'buyer' }
         : null,
@@ -274,6 +306,160 @@ test('world offer PostgreSQL Date milliseconds reach the parked payment attempt'
     assert.equal(completed.rows[0]!.attempt_status, 'completed')
     assert.equal(completed.rows[0]!.owner_id, 2)
     assert.ok(completed.rows[0]!.finalized_at > attempt.rows[0]!.end_time)
+  } finally {
+    await postgres.database.end().catch(() => undefined)
+    spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })
+  }
+})
+
+test('the world offer batch reads 50 offers in one read-only query under its 1,500 ms timeout', async t => {
+  const postgres = await startPostgres()
+  try {
+    const database = postgres.database
+    await database.query(schemaDdl)
+    await database.query(`
+      INSERT INTO residents (id, handle, model, secret_hash) VALUES
+        (1, 'seller', 'integration-test', repeat('1', 64)),
+        (2, 'buyer', 'integration-test', repeat('2', 64))
+    `)
+    const place = await database.query<{ id: number }>(`
+      INSERT INTO places (parent_id, place_kind, name, owner_id)
+      SELECT id, 'continent', 'batch test place', 1
+      FROM places WHERE place_kind = 'world'
+      RETURNING id
+    `)
+    // 60 listed world offers, each locking its own thing; the read asks for 50 of them.
+    await database.query(`
+      INSERT INTO things (id, place_id, name, owner_id, maker_id)
+      SELECT 3000 + n, $1, 'batch thing ' || n, 1, 1
+      FROM generate_series(1, 61) AS n
+    `, [place.rows[0]!.id])
+    await database.query(`
+      INSERT INTO transfer_offers (
+        channel, asset_type, asset_id, seller_id, price_usdc, seller_wallet, market_draft_id
+      )
+      SELECT 'world', 'thing', 3000 + n, 1, n, $1, 500 + n
+      FROM generate_series(1, 60) AS n
+    `, [SELLER_WALLET])
+    await database.query(`
+      UPDATE things thing SET active_offer_id = offer.id
+      FROM transfer_offers offer
+      WHERE offer.asset_id = thing.id AND offer.channel = 'world'
+    `)
+    const direct = await database.query<{ id: number }>(`
+      INSERT INTO transfer_offers (channel, asset_type, asset_id, seller_id, buyer_id, price_usdc, seller_wallet)
+      VALUES ('direct', 'thing', 3061, 1, 2, 1, $1)
+      RETURNING id
+    `, [SELLER_WALLET])
+    const offers = (await database.query<{ id: number; asset_id: number }>(`
+      SELECT id, asset_id FROM transfer_offers WHERE channel = 'world' ORDER BY id
+    `)).rows
+    assert.equal(offers.length, 60)
+    const hiddenOffer = offers[7]!
+    const restoredOffer = offers[8]!
+    await database.query(`
+      INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason, created_at) VALUES
+        ('thing', $1, 'remove', 1, 'batch test removal', now() - interval '2 minutes'),
+        ('thing', $2, 'remove', 1, 'batch test removal', now() - interval '2 minutes'),
+        ('thing', $2, 'restore', 1, 'batch test restore', now() - interval '1 minute')
+    `, [hiddenOffer.asset_id, restoredOffer.asset_id])
+
+    const observed: Array<{ statement_timeout: string; transaction_read_only: string }> = []
+    const timeoutAfterCommit: string[] = []
+    const sent: string[][] = []
+    const baseTransaction = readOnlyTransaction(database, {
+      inside: async client => {
+        observed.push({
+          statement_timeout: (await client.query<{ statement_timeout: string }>('SHOW statement_timeout')).rows[0]!.statement_timeout,
+          transaction_read_only: (await client.query<{ transaction_read_only: string }>('SHOW transaction_read_only')).rows[0]!.transaction_read_only,
+        })
+      },
+      after: async client => {
+        timeoutAfterCommit.push((await client.query<{ statement_timeout: string }>('SHOW statement_timeout')).rows[0]!.statement_timeout)
+      },
+    })
+    const plainQueries: string[] = []
+    const dependencies: WorldMarketDependencies = {
+      query: async (text, params) => {
+        plainQueries.push(text)
+        return (await database.query(text, [...params])).rows
+      },
+      readOnlyTransaction: async statements => {
+        sent.push(statements.map(statement => statement.text))
+        return baseTransaction(statements)
+      },
+      authenticate: async () => null,
+      now: () => new Date(),
+      marketOrigin: MARKET,
+      marketGet: async path => { throw new Error(`unexpected market read: ${path}`) },
+      findPayment: findPaymentAttempt,
+      runPayment: async () => { throw new Error('unexpected payment') },
+      resumePayment: async () => { throw new Error('unexpected payment') },
+    }
+    const app = new Hono()
+    app.onError(error => { throw error })
+    mountWorldMarketRoutes(app, dependencies)
+
+    // Fifty ids in a mixed order, newest first then oldest, with the hidden and restored offers inside.
+    const requested = [...offers.slice(30, 55).reverse(), ...offers.slice(0, 25)].map(offer => offer.id)
+    assert.equal(requested.length, 50)
+    assert.ok(requested.includes(hiddenOffer.id) && requested.includes(restoredOffer.id))
+    const startedAt = Date.now()
+    const response = await app.request(`/api/world/offers?ids=${requested.join(',')}`)
+    const elapsedMs = Date.now() - startedAt
+    assert.equal(response.status, 200, await response.clone().text())
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    const payload = await response.json() as { offers: Array<Record<string, unknown>> }
+    assert.deepEqual(payload.offers.map(offer => offer.id), requested)
+    assert.ok(elapsedMs < 1_500, `50 ids answered in ${elapsedMs} ms`)
+    t.diagnostic(`50 ids answered in ${elapsedMs} ms`)
+    assert.equal(sent.length, 1, 'one transaction')
+    assert.equal(sent[0]!.length, 2, 'the timeout and one query')
+    assert.equal(sent[0]![0], "SET LOCAL statement_timeout = '1500ms'")
+    assert.match(sent[0]![1]!, /world-market:offer-batch/u)
+    assert.deepEqual(observed, [{ statement_timeout: '1500ms', transaction_read_only: 'on' }])
+    assert.deepEqual(timeoutAfterCommit, ['0'], 'the timeout ends with the transaction')
+    assert.deepEqual(plainQueries, [], 'the batch never reads outside its bounded query')
+
+    for (const [index, id] of requested.entries()) {
+      const single = await app.request(`/api/world/offer/${id}`)
+      assert.equal(single.status, 200)
+      assert.deepEqual(payload.offers[index], (await single.json() as { offer: unknown }).offer, `offer ${id}`)
+    }
+    assert.deepEqual(payload.offers[requested.indexOf(hiddenOffer.id)], { id: hiddenOffer.id, status: 'maintainer_hidden' })
+    assert.equal(payload.offers[requested.indexOf(restoredOffer.id)]!.phase, 'listed')
+    assert.equal(payload.offers[requested.indexOf(restoredOffer.id)]!.locked, true)
+
+    // A missing id and a direct-sale offer id read as not_found, as the single read answers 404.
+    const missingId = offers.at(-1)!.id + 1_000
+    const mixed = await app.request(`/api/world/offers?ids=${offers[0]!.id},${missingId},${direct.rows[0]!.id}`)
+    assert.equal(mixed.status, 200)
+    assert.deepEqual((await mixed.json() as { offers: unknown[] }).offers.slice(1), [
+      { id: missingId, status: 'not_found' },
+      { id: direct.rows[0]!.id, status: 'not_found' },
+    ])
+    assert.equal((await app.request(`/api/world/offer/${direct.rows[0]!.id}`)).status, 404)
+
+    // A read that cannot finish in 1,500 ms is canceled by PostgreSQL and answers busy.
+    // The wait is measured on the database clock, the clock the timeout itself runs on.
+    const holder = await database.connect()
+    const databaseNow = async () => (await holder.query<{ now: Date }>('SELECT clock_timestamp() AS now')).rows[0]!.now
+    try {
+      await holder.query('BEGIN')
+      await holder.query('LOCK TABLE transfer_offers IN ACCESS EXCLUSIVE MODE')
+      const blockedAt = await databaseNow()
+      const blocked = await app.request(`/api/world/offers?ids=${requested.join(',')}`)
+      const waitedMs = (await databaseNow()).getTime() - blockedAt.getTime()
+      assert.equal(blocked.status, 503, await blocked.clone().text())
+      assert.equal(blocked.headers.get('cache-control'), 'no-store')
+      assert.equal(blocked.headers.get('retry-after'), '1')
+      assert.deepEqual(await blocked.json(), { error: 'world offers are temporarily busy; retry the same read' })
+      assert.ok(waitedMs >= 1_500 && waitedMs < 10_000, `the canceled read waited ${waitedMs} database ms`)
+      t.diagnostic(`the canceled read answered busy after ${waitedMs} database ms`)
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined)
+      holder.release()
+    }
   } finally {
     await postgres.database.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })

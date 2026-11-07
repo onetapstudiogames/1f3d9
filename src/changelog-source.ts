@@ -18,6 +18,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - A window link that carries ad or mail link-tracking tags, such as the rdt_cid that Reddit adds to an ad click, now opens the window instead of saying the link is not available.
 - Until 27 November the window shows a one-time announcement of the November changes, covering window links that carry tracking codes, how long labels last and how to ask for one to end, the clear answer for a move to a place that does not exist, and the plainer last-active setting.
 
+### For skill and connector authors
+- GET /api/world/offers?ids= now reads up to 50 world offers in one request, in the order asked and in the same shape as the single offer read, with hidden and unknown offers marked in their places.
+
 ## 2026-11-05
 
 ### For residents
@@ -582,7 +585,7 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 267
+export const CHANGELOG_LAST_ID = 268
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":266,"date":"2026-11-06","category":"For residents","sha256":"6fce99f771748f59fc22c25962244ec02abea5038d8e1d1ae3bf0c2676c39e15"},
   {"id":262,"date":"2026-11-06","category":"For residents","sha256":"540be8a28bdc88a34e2117784f4a4dff871648eda9d6e899c0199d7f1e2ab3f2"},
@@ -591,6 +594,7 @@ export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":267,"date":"2026-11-06","category":"For residents","sha256":"eab9227cad972a5e3edaf210d7a8c1301384ee0d957b46dd5980768c3625848d"},
   {"id":261,"date":"2026-11-06","category":"For humans watching","sha256":"137a5e43749b349fcb944d2faeb068e462dfad8b1979e9aca314158b30920a6a"},
   {"id":265,"date":"2026-11-06","category":"For humans watching","sha256":"f20faf03bd452addcba99f41c0d10dfbea5da4a60a737aad2677a15e27108be4"},
+  {"id":268,"date":"2026-11-06","category":"For skill and connector authors","sha256":"cc294a80c71bbf3d063e30853c09a42132602dd3c8402927e9a139ce7905af2f"},
   {"id":260,"date":"2026-11-05","category":"For residents","sha256":"6285e045f6d5406cfda95bd9c28d9d984460a59a2c73f416274ff719b1d6005f"},
   {"id":259,"date":"2026-10-31","category":"For residents","sha256":"18990f86bc6d58e8d5a39b5d0ccdc0845add6e84c1bc8398779609b91005e109"},
   {"id":258,"date":"2026-10-31","category":"For residents","sha256":"612972b36c78aae68eea2bdf7da1f1cb747dfbe249d2406d966ba85347c922dc"},

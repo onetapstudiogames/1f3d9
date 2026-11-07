@@ -134,6 +134,7 @@ const EXEMPT_ROUTES: Readonly<Record<string, string>> = Object.freeze({
   "src/resident-settings.ts '/api/me/settings'": 'the settings store itself, read only by its owner',
   "src/world-market.ts '/api/world/resident/:handle'": MONEY,
   "src/world-market.ts '/api/world/offer/:offerId'": MONEY,
+  "src/world-market.ts '/api/world/offers'": MONEY,
   "src/changelog.ts '/api/changelog'": SHARED,
   "src/changelog.ts '/api/changelog/:id'": SHARED,
   "src/changelog.ts '/changelog'": SHARED,

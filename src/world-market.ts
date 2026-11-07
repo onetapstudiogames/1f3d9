@@ -33,9 +33,20 @@ const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
 const MARKET_RESPONSE_BYTES = 256 * 1024
 const MARKET_TIMEOUT_MS = 4_000
 const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; use GET /api/world-market if your client can open URLs, and retry with a current offer_id'
+const WORLD_OFFER_BATCH_MAX = 50
+const WORLD_OFFER_BATCH_STATEMENT_TIMEOUT = '1500ms'
+const WORLD_OFFER_ID_TEXT = /^[1-9][0-9]*$/u
+const WORLD_OFFER_IDS_REFUSAL = 'world offer ids were rejected because ids must appear once and list positive whole numbers separated by commas with no spaces; retry with ids such as ids=101,102'
+const WORLD_OFFER_IDS_LIMIT_REFUSAL = `world offer ids were rejected because one read takes at most ${WORLD_OFFER_BATCH_MAX} ids, repeats included; split them into reads of ${WORLD_OFFER_BATCH_MAX} or fewer and retry`
+const WORLD_OFFER_BATCH_BUSY_REFUSAL = 'world offers are temporarily busy; retry the same read'
 
 type JsonObject = Record<string, unknown>
 type QueryRow = Record<string, unknown>
+
+interface QueryStatement {
+  readonly text: string
+  readonly params: readonly unknown[]
+}
 
 interface BridgeResident {
   id: number
@@ -112,6 +123,8 @@ interface OfferRecord {
 
 export interface WorldMarketDependencies {
   query: (text: string, params: readonly unknown[]) => Promise<QueryRow[]>
+  /** Runs the statements in order in one read-only transaction and returns each one's rows. */
+  readOnlyTransaction: (statements: readonly QueryStatement[]) => Promise<QueryRow[][]>
   authenticate: (c: Context) => Promise<BridgeResident | null>
   now: () => Date
   marketOrigin: string
@@ -429,12 +442,8 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
   }
 }
 
-async function readOffer(
-  dependencies: WorldMarketDependencies,
-  offerId: number,
-): Promise<OfferRecord | null> {
-  const rows = await dependencies.query(`
-    /* world-market:read-offer */
+// The public offer columns, shared by the single read and the batch read.
+const OFFER_SELECT = `
     SELECT o.id, o.channel, o.asset_type, o.asset_id, thing.name AS asset_name,
       thing.maker_id, maker.handle AS made_by,
       thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
@@ -458,10 +467,66 @@ async function readOffer(
     JOIN residents current_owner ON current_owner.id = thing.owner_id
     JOIN residents seller ON seller.id = o.seller_id
     LEFT JOIN residents buyer ON buyer.id = o.buyer_id
-    LEFT JOIN sale_payments payment ON payment.offer_id = o.id
+    LEFT JOIN sale_payments payment ON payment.offer_id = o.id`
+
+async function readOffer(
+  dependencies: WorldMarketDependencies,
+  offerId: number,
+): Promise<OfferRecord | null> {
+  const rows = await dependencies.query(`
+    /* world-market:read-offer */${OFFER_SELECT}
     WHERE o.id = $1 AND o.channel = 'world' AND o.asset_type = 'thing'
   `, [offerId])
   return offerRecord(rows[0])
+}
+
+// The batch read: the single read's offer columns plus its maintainer-hidden check
+// (the newest moderation action on the thing is a removal), as one statement.
+const OFFER_BATCH_READ = `
+    /* world-market:offer-batch */
+    SELECT offer.*, coalesce(moderation.action = 'remove', false) AS maintainer_hidden
+    FROM (${OFFER_SELECT}
+      WHERE o.id = ANY($1::integer[]) AND o.channel = 'world' AND o.asset_type = 'thing'
+    ) offer
+    LEFT JOIN LATERAL (
+      SELECT action
+      FROM moderation_actions
+      WHERE target_type = 'thing' AND target_id = offer.asset_id
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    ) moderation ON true
+  `
+
+interface BatchOfferRead {
+  readonly offer: OfferRecord
+  readonly hidden: boolean
+}
+
+async function readOfferBatch(
+  dependencies: WorldMarketDependencies,
+  offerIds: readonly number[],
+): Promise<ReadonlyMap<number, BatchOfferRead>> {
+  const [, rows = []] = await dependencies.readOnlyTransaction([
+    { text: `SET LOCAL statement_timeout = '${WORLD_OFFER_BATCH_STATEMENT_TIMEOUT}'`, params: [] },
+    { text: OFFER_BATCH_READ, params: [offerIds] },
+  ])
+  const found = new Map<number, BatchOfferRead>()
+  for (const row of rows) {
+    const offer = offerRecord(row)
+    if (offer) found.set(offer.id, { offer, hidden: row.maintainer_hidden === true })
+  }
+  return found
+}
+
+// ids as sent: 1 to WORLD_OFFER_BATCH_MAX entries, each a plain positive whole number.
+// A repeated id counts toward the limit and is read once, where it first appears.
+function worldOfferIds(values: readonly string[] | undefined): readonly number[] | 'invalid' | 'too_many' {
+  if (values?.length !== 1) return 'invalid'
+  const entries = values[0]!.split(',')
+  if (entries.length > WORLD_OFFER_BATCH_MAX) return 'too_many'
+  const ids = entries.map(entry => WORLD_OFFER_ID_TEXT.test(entry) ? positiveId(entry) : null)
+  if (ids.some(id => id == null)) return 'invalid'
+  return [...new Set(ids as number[])]
 }
 
 async function publicOfferIsHidden(
@@ -599,6 +664,9 @@ function defaultDependencies(): WorldMarketDependencies {
   const marketOrigin = configuredMarketOrigin()
   return {
     query: (text, params) => sql.query(text, params as unknown[]),
+    readOnlyTransaction: async statements => await sql.transaction(transaction => (
+      statements.map(statement => transaction.query(statement.text, [...statement.params]))
+    ), { readOnly: true }) as QueryRow[][],
     authenticate: auth,
     now: () => new Date(),
     marketOrigin,
@@ -642,6 +710,31 @@ export function mountWorldMarketRoutes(
       return publicJson(c, { offer: { id: offer.id, status: 'maintainer_hidden' } })
     }
     return publicJson(c, { offer: publicOffer(offer, dependencies.now()) })
+  })
+
+  app.get('/api/world/offers', async c => {
+    c.header('Cache-Control', 'no-store')
+    const allowed = allowedPublicQuery(c.req.queries(), ['ids'])
+    if (!allowed.ok) return err(c, 400, allowed.error)
+    const offerIds = worldOfferIds(c.req.queries('ids'))
+    if (offerIds === 'too_many') return err(c, 400, WORLD_OFFER_IDS_LIMIT_REFUSAL)
+    if (offerIds === 'invalid') return err(c, 400, WORLD_OFFER_IDS_REFUSAL)
+    let found: ReadonlyMap<number, BatchOfferRead>
+    try {
+      found = await readOfferBatch(dependencies, offerIds)
+    } catch (error) {
+      if (postgresErrorCode(error) !== '57014') throw error
+      c.header('Retry-After', '1')
+      return err(c, 503, WORLD_OFFER_BATCH_BUSY_REFUSAL)
+    }
+    const now = dependencies.now()
+    return publicJson(c, {
+      offers: offerIds.map(id => {
+        const read = found.get(id)
+        if (!read) return { id, status: 'not_found' }
+        return read.hidden ? { id, status: 'maintainer_hidden' } : publicOffer(read.offer, now)
+      }),
+    })
   })
 
   app.post('/api/world/listing', async c => {

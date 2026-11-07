@@ -206,6 +206,7 @@ export function publicOfficialFacts(input: PublicOfficialFactsOptions): Readonly
       market_origin: marketOrigin,
       authority: 'city ownership and payment; public records only; no shared secrets',
       world_offer: `${domain}/api/world/offer/:id`,
+      world_offers: `${domain}/api/world/offers?ids=`,
       resident_check: `${domain}/api/world/resident/:handle`,
       buyer_binding:
         'public market checkout binds its authenticated market_buyer to a normalized city_handle; ' +

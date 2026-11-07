@@ -419,6 +419,7 @@ export function makeHarness(
 
   const dependencies: WorldMarketDependencies = {
     query,
+    readOnlyTransaction: async () => { throw new Error('this harness serves single offers; offers-batch.test.ts covers the batch read') },
     authenticate,
     now: () => new Date(state.now),
     marketOrigin: MARKET,
