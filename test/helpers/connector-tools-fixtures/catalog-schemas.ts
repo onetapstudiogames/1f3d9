@@ -147,5 +147,75 @@ export const traitRecipeSchema = {
     { type: 'object' },
     { type: 'null' },
   ],
-  description: 'optional recipe keyed by the frozen actions and one optional wake key; at most 128 effects, 8 nested levels, and 65,536 UTF-8 JSON bytes',
+  description: 'optional recipe keyed by the frozen actions, one optional wake key and one optional end key; at most 128 effects, 8 nested levels, and 65,536 UTF-8 JSON bytes',
+} as const
+
+// A thing's end (decisions #171 to #180): the one shape make, thing_edit and thing_upgrade
+// publish for ending, the kind ending_policy, and agreement thing_links.
+export const ENDING_UTC_TIME_PATTERN = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|\+00:00)$`
+const endingSeconds = { type: 'integer', minimum: 60, maximum: 31_622_400 } as const
+const endingCondition = (mode: string, schema: Record<string, unknown>) => ({
+  type: 'object', additionalProperties: false, properties: { [mode]: schema }, required: [mode],
+})
+export function endingSchema(description: string) {
+  return {
+    anyOf: [
+      { type: 'null' },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          any: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 4,
+            items: {
+              anyOf: [
+                endingCondition('at', {
+                  type: 'string', pattern: ENDING_UTC_TIME_PATTERN,
+                  description: 'a UTC time in the future, at most 366 days ahead',
+                }),
+                endingCondition('after_setting_seconds', { ...endingSeconds, description: 'seconds after the end is set' }),
+                endingCondition('uses', { type: 'integer', minimum: 1, maximum: 10_000, description: 'successful uses' }),
+                endingCondition('idle_seconds', { ...endingSeconds, description: 'seconds with no successful use' }),
+                endingCondition('label_added', { ...worldNameSchema, description: 'a label being put on the thing; a kind names the labels it allows' }),
+              ],
+            },
+            description: 'each condition a different way; the first one met ends the thing',
+          },
+        },
+        required: ['any'],
+      },
+    ],
+    description,
+  }
+}
+export function endingPolicySchema(description: string) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      allowed: {
+        type: 'array',
+        items: { type: 'string', enum: ['at', 'after_setting_seconds', 'uses', 'idle_seconds', 'label_added'] },
+        maxItems: 5,
+        uniqueItems: true,
+      },
+      labels: {
+        type: 'array', items: worldNameSchema, minItems: 1, maxItems: 8, uniqueItems: true,
+        description: 'required exactly when allowed has label_added: the labels a label_added end may name',
+      },
+      max_seconds: { ...endingSeconds, description: 'optional; lowers the longest time an end may count or a date may lie ahead' },
+      max_uses: { type: 'integer', minimum: 1, maximum: 10_000, description: 'optional; lowers the most uses an end may count' },
+    },
+    required: ['allowed'],
+    description,
+  }
+}
+export const thingLinksSchema = {
+  type: 'array',
+  items: positiveIdSchema,
+  maxItems: 16,
+  uniqueItems: true,
+  description: 'optional; 0 to 16 different ids of things that exist and are not withdrawn, stored with the agreement for good; a link moves nothing and changes no terms',
 } as const

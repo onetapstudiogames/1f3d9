@@ -106,6 +106,73 @@ export function registerRouteForwardingTests(): void {
       },
     },
     {
+      name: 'make',
+      args: {
+        place_id: 12, name: 'paper ticket', body: 'Admit one.', kind_id: 7,
+        ending: { any: [{ uses: 1 }, { idle_seconds: 604800 }] },
+      },
+      expected: {
+        method: 'POST', path: '/api/thing',
+        body: {
+          place_id: 12, name: 'paper ticket', body: 'Admit one.', kind_id: 7,
+          ending: { any: [{ uses: 1 }, { idle_seconds: 604800 }] },
+        },
+      },
+    },
+    {
+      name: 'thing_edit',
+      args: { thing_id: 41, ending: null },
+      expected: { method: 'PATCH', path: '/api/thing/41', body: { ending: null } },
+    },
+    {
+      name: 'thing_edit',
+      args: { thing_id: 41, ending: { any: [{ label_added: 'spent' }] } },
+      expected: {
+        method: 'PATCH', path: '/api/thing/41', body: { ending: { any: [{ label_added: 'spent' }] } },
+      },
+    },
+    {
+      name: 'thing_upgrade',
+      args: { thing_id: 41, ending: { any: [{ after_setting_seconds: 86400 }] } },
+      expected: {
+        method: 'POST', path: '/api/thing/41/upgrade',
+        body: { ending: { any: [{ after_setting_seconds: 86400 }] } },
+      },
+    },
+    {
+      name: 'invent_kind',
+      args: {
+        name: 'paper-ticket',
+        ending_policy: { allowed: ['uses', 'label_added'], labels: ['spent'], max_uses: 5 },
+        city_credit_request_id: 'kind-invent-0002',
+      },
+      expected: {
+        method: 'POST', path: '/api/kind',
+        body: {
+          name: 'paper-ticket',
+          ending_policy: { allowed: ['uses', 'label_added'], labels: ['spent'], max_uses: 5 },
+        },
+        feeCredit: 'kind-invent-0002',
+      },
+    },
+    {
+      name: 'revise_kind',
+      args: { kind_id: 7, ending_policy: { allowed: [] }, city_credit_request_id: 'kind-revise-0002' },
+      expected: {
+        method: 'POST', path: '/api/kind/7/revise',
+        body: { ending_policy: { allowed: [] } },
+        feeCredit: 'kind-revise-0002',
+      },
+    },
+    {
+      name: 'agree',
+      args: { parties: ['tiny-lantern'], body: 'This ticket admits one.', thing_links: [41, 42] },
+      expected: {
+        method: 'POST', path: '/api/agreement',
+        body: { parties: ['tiny-lantern'], body: 'This ticket admits one.', thing_links: [41, 42] },
+      },
+    },
+    {
       name: 'coin_trait',
       args: { name: 'glowing', description: 'Glows when used.' },
       expected: {
