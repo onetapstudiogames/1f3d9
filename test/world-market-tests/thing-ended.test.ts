@@ -131,6 +131,17 @@ export function registerThingEndedOfferTests(): void {
     assert.equal(ending.checked_at, NOW.toISOString(), 'the end is judged at the database time of the read')
     assert.equal(activeOffer.end_program_summary, 'When this ends it becomes a remnant.')
 
+    // A maintainer-hidden kind names none of its traits: the end still reads, the summary is null.
+    const hiddenKind = (await readOffer(openOffer({
+      thing_ending_facts: dueFacts({
+        ending_rule: { any: [{ at: '2026-08-20T00:00:00.000Z' }] },
+        ending_deadline: '2026-08-20T00:00:00.000Z',
+        kind_hidden: true,
+      }),
+    }))).body.offer as Json
+    assert.equal((hiddenKind.ending as Json).status, 'active')
+    assert.equal(hiddenKind.end_program_summary, null)
+
     const hidden = makeHarness({ offer: openOffer(), thingLocked: true, thingModerated: true })
     const hiddenResponse = await hidden.app.request('/api/world/offer/101')
     assert.equal(hiddenResponse.headers.get('cache-control'), 'no-store')

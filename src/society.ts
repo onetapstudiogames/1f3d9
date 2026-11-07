@@ -991,10 +991,16 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, actionGate.httpStatus as 400 | 403 | 404 | 409 | 500, actionGate.error)
     }
     if (!offer) return err(c, 500, 'transfer offer result is unavailable after the city write; re-read the asset lock and recipient before deciding whether to retry')
-    // A thing's offer shows its end before payment; places and kinds cannot end.
-    const ending = type === 'thing'
-      ? await readThingEnding((text, params) => sql.query(text, [...params]) as Promise<Record<string, unknown>[]>, id)
-      : null
+    // A thing's offer shows its end before payment; places and kinds cannot end. The offer
+    // is already committed, so a failed end read answers the 201 without the end fields.
+    let ending: Awaited<ReturnType<typeof readThingEnding>> = null
+    if (type === 'thing') {
+      try {
+        ending = await readThingEnding((text, params) => sql.query(text, [...params]) as Promise<Record<string, unknown>[]>, id)
+      } catch (error) {
+        console.error('transfer offer end read failed', error)
+      }
+    }
     return c.json({ offer: {
       ...offer,
       type: offer.type ?? type,

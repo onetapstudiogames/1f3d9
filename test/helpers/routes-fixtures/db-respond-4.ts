@@ -131,6 +131,9 @@ export function respondToDatabaseStage4(
     }]
   }
   if (q.includes('insert into action_runs')) return [{ id: 101 }]
+  if (q.includes('/* thing-endings:read */') && fixtureState.current.thingEndReadFails) {
+    throw new Error('connection reset while reading the thing end')
+  }
   // Thing endings: no fixture thing has an end set, so nothing is due and no use counts.
   if (q.includes('/* thing-endings:due-ids */') || q.includes('/* thing-endings:use-count */')
     || q.includes('/* thing-endings:room-due */') || q.includes('/* thing-endings:read */')) return []

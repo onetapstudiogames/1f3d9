@@ -256,6 +256,8 @@ interface FakeState {
   nextNoteId: number
   residentRefusalStates: Map<number, FakeResidentRefusalState>
   actionResolved?: boolean
+  // The thing end read after a committed direct offer throws, as a database hiccup would.
+  thingEndReadFails?: boolean
 }
 
 const initialState = (): FakeState => ({

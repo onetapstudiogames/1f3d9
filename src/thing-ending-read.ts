@@ -273,7 +273,8 @@ function endingObject(facts: UnknownRecord, reached: boolean, checkedAt: Date): 
 
 /**
  * The end fields of a row read with THING_ENDING_READ_COLUMNS. asset_state comes from
- * the two database booleans; a withdrawn thing carries no ending and no summary. It never
+ * the two database booleans; a withdrawn thing carries no ending and no summary, and a
+ * thing of a maintainer-hidden kind carries no summary. It never
  * throws: an end it cannot read gives ending and end_program_summary null.
  */
 export function thingEndingRead(row: QueryRow | undefined): ThingEndingRead {
@@ -287,7 +288,8 @@ export function thingEndingRead(row: QueryRow | undefined): ThingEndingRead {
   if (!withdrawn && isRecord(facts) && checkedAt) {
     try {
       ending = endingObject(facts, reached, checkedAt)
-      summary = ending ? endProgramStatement(traitsOf(facts.traits)) : null
+      // A maintainer-hidden kind names none of its traits, so its summary is null too.
+      summary = ending && facts.kind_hidden !== true ? endProgramStatement(traitsOf(facts.traits)) : null
     } catch {
       ending = null
       summary = null

@@ -259,6 +259,19 @@ test('thing endings on the city offer reads and cancel_world, against PostgreSQL
       assert.ok(summary.includes(`${MODERATED_TEXT}'s end steps`), summary)
     })
 
+    await t.test('a thing of a maintainer-hidden kind reads its end with no summary', async () => {
+      await reset()
+      await db.query(`
+        INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+        VALUES ('kind', $1, 'remove', 1, 'offer read test')
+      `, [fixture.kinds.lamp])
+      const offer = (await read(fixture.offers.active)).offer
+      assert.equal(offer.asset_state, 'active')
+      const ending = offer.ending as Json
+      assert.equal(ending.label, MODERATED_TEXT)
+      assert.equal(offer.end_program_summary, null)
+    })
+
     await t.test('cancel_world records a due end first, waits out a payment window, then unlocks on thing_ended', async () => {
       await reset()
       const { offers, things } = fixture
@@ -287,7 +300,7 @@ test('thing endings on the city offer reads and cancel_world, against PostgreSQL
       assert.equal((offer.ending as Json).status, 'ended')
       const thing = await one('SELECT active_offer_id, end_program_state FROM things WHERE id = $1', [things.due])
       assert.equal(thing.active_offer_id, null)
-      assert.equal(thing.end_program_state, 'pending', 'its end try waits; the open sale closes its gate (in_sale)')
+      assert.equal(thing.end_program_state, 'pending', 'the sale is cancelled first, so its end steps run when its room next settles')
       assert.equal(await endedEvents(things.due), 1, 'one thing_ended event')
       assert.equal(Number((await one(`SELECT count(*) AS n FROM events WHERE kind = 'world_cancel'`)).n), 1)
     })
