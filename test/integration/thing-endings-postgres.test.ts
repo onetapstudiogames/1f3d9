@@ -922,20 +922,34 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
         $$
       `)
       await db.query('CREATE TRIGGER test_force_thing_ending_guard BEFORE UPDATE ON things FOR EACH ROW EXECUTE FUNCTION test_force_thing_ending_guard()')
+      // The mark route refuses a remnant itself (T9), so its guard mapping is forced the same way.
+      await db.query(`
+        CREATE FUNCTION test_force_mark_ending_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'forced' USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+        END
+        $$
+      `)
+      await db.query('CREATE TRIGGER test_force_mark_ending_guard BEFORE INSERT ON thing_later_holder_marks FOR EACH ROW EXECUTE FUNCTION test_force_mark_ending_guard()')
       try {
         const edited = await call(app, OWNER.secret, 'PATCH', `/api/thing/${active}`, { name: 'a forced name' })
         assert.equal(edited.status, 409, JSON.stringify(edited.json))
         assert.equal(edited.json.error, THING_ENDING_CHANGED_REFUSAL)
+        const forcedMark = await call(app, OWNER.secret, 'POST', `/api/thing/${active}/mark`, { action: 'mark' })
+        assert.equal(forcedMark.status, 409, JSON.stringify(forcedMark.json))
+        assert.equal(forcedMark.json.error, THING_ENDING_CHANGED_REFUSAL)
       } finally {
         await db.query('DROP TRIGGER test_force_thing_ending_guard ON things')
         await db.query('DROP FUNCTION test_force_thing_ending_guard()')
+        await db.query('DROP TRIGGER test_force_mark_ending_guard ON thing_later_holder_marks')
+        await db.query('DROP FUNCTION test_force_mark_ending_guard()')
       }
       const remnantEdit = await call(app, OWNER.secret, 'PATCH', `/api/thing/${thingId}`, { name: 'a renamed lamp' })
       assert.equal(remnantEdit.status, 409, JSON.stringify(remnantEdit.json))
       assert.equal(remnantEdit.json.error, THING_REMNANT_REFUSAL)
       const marked = await call(app, OWNER.secret, 'POST', `/api/thing/${thingId}/mark`, { action: 'mark' })
       assert.equal(marked.status, 409, JSON.stringify(marked.json))
-      assert.equal(marked.json.error, THING_ENDING_CHANGED_REFUSAL)
+      assert.equal(marked.json.error, THING_REMNANT_REFUSAL)
       assert.equal((await one<Json>('SELECT name FROM things WHERE id = $1', [thingId])).name, 'an ending lamp')
     })
   } finally {

@@ -587,6 +587,8 @@ export function makeHarness(
         paymentResponseHeader: SETTLED_RESPONSE,
       }
     },
+    // No fixture thing has an end set, so nothing is ever recorded.
+    recordEnds: async () => [],
   }
 
   const app = new Hono()

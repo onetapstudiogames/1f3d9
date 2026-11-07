@@ -27,6 +27,8 @@ import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import { THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -132,6 +134,8 @@ export interface WorldMarketDependencies {
   findPayment: typeof findPaymentAttempt
   runPayment: typeof runDurableX402
   resumePayment: typeof resumeDurableX402
+  /** Records each due end among these things and returns the ids it recorded (never throws). */
+  recordEnds: (thingIds: readonly number[]) => Promise<readonly number[]>
 }
 
 class MarketReadError extends Error {
@@ -674,6 +678,7 @@ function defaultDependencies(): WorldMarketDependencies {
     findPayment: findPaymentAttempt,
     runPayment: runDurableX402,
     resumePayment: resumeDurableX402,
+    recordEnds: thingIds => recordDueEndQuietly(thingIds),
   }
 }
 
@@ -759,15 +764,20 @@ export function mountWorldMarketRoutes(
       draft.expiresAt <= now || draft.createdAt > new Date(now.getTime() + 60_000)
     ) return err(c, 409, 'market draft must be pending, unexpired, and not yet listed; open a fresh draft before listing this thing')
 
+    // A due end is recorded first, so a thing whose end has come refuses E7 by name.
+    await dependencies.recordEnds([thingId])
     const thingRows = await dependencies.query(`
       /* world-market:thing */
-      SELECT id, name, owner_id, withdrawn_at, active_offer_id, held_by
+      SELECT id, name, owner_id, withdrawn_at, active_offer_id, held_by,
+        thing_end_reached(id) AS end_reached
       FROM things WHERE id = $1
     `, [thingId])
     const thing = thingRows[0]
     if (!thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${thingId}`))
     if (integerValue(thing.owner_id) !== seller.id) return err(c, 403, 'only the thing owner may list it')
     if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed; choose another active thing because withdrawal is permanent')
+    // A thing whose end is still to come may be listed; a remnant may not.
+    if (thing.end_reached === true) return err(c, 409, THING_REMNANT_REFUSAL)
     if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer; close its current offer before listing it again')
     if (thing.held_by != null) return err(c, 409, HELD_THING_ERROR)
 

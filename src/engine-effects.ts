@@ -14,7 +14,7 @@ import {
   type TaggedSql,
 } from './engine.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
-import { THING_ENDED_SKIP_REASON } from './thing-ending-refusals.ts'
+import { ENDING_GIVE_REFUSAL, THING_ENDED_SKIP_REASON, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 import { giftsWaitFor, holdTransfer, type WaitingNote } from './waiting-transfers.ts'
 import {
   MAX_EFFECT_GENERATIONS,
@@ -118,6 +118,13 @@ export interface EffectExecutionContext {
    * copy steps re-read due from the database before they run.
    */
   readonly endingThingIds?: readonly number[]
+  /**
+   * True only on the context give itself builds for its own hand-over, never for a
+   * program step: that give may move an older remnant, which every transfer step skips.
+   */
+  readonly intrinsicGive?: boolean
+  /** The things this request's recorder ended a moment ago: no give may move them. */
+  readonly recordedThingIds?: readonly number[]
 }
 
 /**
@@ -801,6 +808,8 @@ async function executeEffectWithOutcome(
     const target = await requireTarget(resolved, db)
     const recipientId = effect.to === 'actor' ? context.actorId : context.recipientId
     if (recipientId === null) throw new EngineError(400, 'transfer effect needs a recipient; send one current resident in to_handle')
+    const ended = await transferEndingSkip(target, recipientId, effect, context, db)
+    if (ended !== null) return effectExecutionOutcome(0, false, destroyedThingIds, [ended])
     // A transfer effect's event sits beside the action's row; only give's own
     // transfer stands in for its row, and give decides that itself. A transfer to a
     // resident that muted the giver waits for its yes instead (decision #158).
@@ -1139,12 +1148,51 @@ async function moveThing(
   if (!rows[0]) throw new EngineError(409, 'thing or destination changed before the move; re-read both and retry')
 }
 
+/**
+ * A transfer of a thing the actor owns, judged by its end under the row lock, before it is
+ * held or moved. While an end is set and the thing is not yet a recorded remnant, it never
+ * changes hands: E9 while the end is still to come. A step inside a program skips a thing
+ * whose end has come. Give's own hand-over may move an older remnant, but refuses E7 for
+ * one this request recorded or whose end came unrecorded. A give to yourself moves nothing.
+ */
+async function transferEndingSkip(
+  target: RuntimeTarget,
+  recipientId: number,
+  effect: Effect,
+  context: EffectExecutionContext,
+  db: TaggedSql,
+): Promise<SkippedEffect | null> {
+  if (target.type !== 'thing' || recipientId === context.actorId) return null
+  const thing = await thingState(target.id, db, { forUpdate: true })
+  if (!thing || thing.withdrawnAt !== null || thing.ownerId !== context.actorId) return null
+  if (!thing.endReached) {
+    if (thing.endingSet) throw new EngineError(409, ENDING_GIVE_REFUSAL)
+    return null
+  }
+  if (context.intrinsicGive === true) {
+    if (thing.endedAt === null || context.recordedThingIds?.includes(thing.id) === true) {
+      throw new EngineError(409, THING_REMNANT_REFUSAL)
+    }
+    return null
+  }
+  return Object.freeze({
+    effect: effect.effect,
+    target: 'target' in effect ? effect.target : 'source' as const,
+    sourceTrait: context.sourceTraitName ?? null,
+    sourceTraitId: context.sourceTraitId,
+    sourcePlaceId: context.originPlaceId ?? null,
+    reason: THING_ENDED_SKIP_REASON,
+  })
+}
+
 /** True when the asset would move now: the actor owns it, it is active, unheld and has no open offer. */
 async function transferableNow(target: RuntimeTarget, actorId: number, db: TaggedSql): Promise<boolean> {
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db, { forUpdate: true })
+    // An end set and not yet recorded keeps the thing with its owner (E9 or E7 below).
     return thing !== null && thing.ownerId === actorId && thing.withdrawnAt === null
       && thing.activeOfferId === null && !thing.hasOpenOffer && thing.heldBy === null
+      && !(thing.endingSet && thing.endedAt === null)
   }
   const rows = target.type === 'place'
     ? await queryRows<Record<string, unknown>>(db`
@@ -1212,6 +1260,7 @@ async function transferAsset(
         WHERE things.id = ${target.id} AND things.owner_id = ${actorId}
            AND things.withdrawn_at IS NULL AND things.active_offer_id IS NULL
            AND things.held_by IS NULL
+           AND (things.ending_rule IS NULL OR things.ended_at IS NOT NULL)
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers offer
             WHERE offer.asset_type = 'thing' AND offer.asset_id = things.id
@@ -1286,6 +1335,9 @@ async function throwTransferFailure(target: RuntimeTarget, actorId: number, db: 
     const thing = await thingState(target.id, db)
     if (!thing || thing.withdrawnAt !== null) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
     if (thing.ownerId !== actorId) throw new EngineError(403, 'you cannot transfer this asset because you do not own it; choose an asset you own')
+    if (thing.endingSet && thing.endedAt === null) {
+      throw new EngineError(409, thing.endReached ? THING_REMNANT_REFUSAL : ENDING_GIVE_REFUSAL)
+    }
     if (thing.activeOfferId !== null || thing.hasOpenOffer) {
       throw new EngineError(409, 'asset has an open transfer offer; cancel the offer or choose another owned asset')
     }

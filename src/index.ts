@@ -166,6 +166,7 @@ import {
 } from './gazette-delivery.ts'
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { THING_ENDING_GUARD_STATUS, thingEndingGuardRefusal } from './thing-ending-refusals.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 import {
   listGazetteIssues,
   readCompleteGazetteIssue,
@@ -251,6 +252,7 @@ import {
   createLaterHolderCursorCodec,
   LaterHolderCursorError,
   LaterHolderMarkEligibilityError,
+  LaterHolderMarkEndingError,
   LaterHolderHeldThingError,
   LATER_HOLDER_SINGULAR_QUESTION,
   parseLaterHolderMarkInput,
@@ -1642,6 +1644,8 @@ app.post('/api/thing/:id/mark', async c => {
   if (!thingId) return err(c, 400, 'thing id must be a positive integer')
   const input = parseLaterHolderMarkInput(await c.req.json().catch(() => null))
   if (!input.ok) return err(c, 400, input.error)
+  // A due end is recorded before marking, so the answer names a remnant; unmarking records nothing.
+  if (input.action === 'mark') await recordDueEndQuietly([thingId])
   try {
     return c.json(await setLaterHolderMark(
       executeLaterHolderQuery,
@@ -1651,6 +1655,7 @@ app.post('/api/thing/:id/mark', async c => {
     ))
   } catch (error) {
     if (error instanceof LaterHolderHeldThingError) return err(c, 409, error.message)
+    if (error instanceof LaterHolderMarkEndingError) return err(c, 409, error.message)
     // The ending guard also raises 23514; it names its own words, never the eligibility rule.
     const endingGuardError = thingEndingGuardRefusal(error)
     if (endingGuardError) return err(c, THING_ENDING_GUARD_STATUS, endingGuardError)

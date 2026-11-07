@@ -229,6 +229,7 @@ test('world offer PostgreSQL Date milliseconds reach the parked payment attempt'
       findPayment: findPaymentAttempt,
       runPayment: input => runDurableX402(input, paymentDependencies),
       resumePayment: input => resumeDurableX402(input, paymentDependencies),
+      recordEnds: async () => [],
     }
     const app = new Hono()
     app.onError(error => { throw error })

@@ -3222,11 +3222,14 @@ export function mountWorldRoutes(app: Hono): void {
     ) {
       return err(c, 400, 'withdraw body must contain exactly thing_name with the thing\'s exact current name')
     }
+    // A due end is recorded first; withdrawThing refuses E7 for a thing recorded just now.
+    const recorded = await recordDueEndQuietly([id])
     const withdrawn = await withdrawThing(
       resident,
       id,
       'withdrawn',
       (body as Record<string, string>).thing_name,
+      recorded,
     )
     if ('error' in withdrawn) return err(c, withdrawn.status as 403 | 404 | 409, withdrawn.error)
     return c.json({ thing: withdrawn })

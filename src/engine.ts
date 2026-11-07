@@ -1648,6 +1648,7 @@ async function intrinsicAction(
   actionId: number,
   db: TaggedSql,
   abilityLog: AbilityLog,
+  recordedThingIds: ReadonlySet<number>,
 ): Promise<IntrinsicActionOutcome> {
   if (input.primitiveHandledByCaller) return intrinsicActionOutcome(false, false)
   if (input.action === 'move') {
@@ -1666,7 +1667,11 @@ async function intrinsicAction(
       effect: 'transfer',
       target: input.sourceThingId === null ? 'target' : 'source',
       to: 'recipient',
-    }], actionContext(0, input, null, newRollLog(), abilityLog), db)
+    }], {
+      ...actionContext(0, input, null, newRollLog(), abilityLog),
+      intrinsicGive: true,
+      recordedThingIds: [...recordedThingIds],
+    }, db)
     return intrinsicActionOutcome(true, input.recipientId !== input.actorId)
   }
   return intrinsicActionOutcome(false, false)
@@ -1972,7 +1977,7 @@ export async function runAction(
         transaction,
         input.primitiveHandledByCaller,
         async () => {
-          const intrinsic = await intrinsicAction(input, actionId, transaction, abilityLog)
+          const intrinsic = await intrinsicAction(input, actionId, transaction, abilityLog, recordedThingIds)
           const base = { ...actionContext(actionId, input, sharedSourceThingId, rollLog, abilityLog),
             reservedPlaceIds, reservedResidentIds,
             endingThingIds: endingSource && source ? [source.id] : [] }

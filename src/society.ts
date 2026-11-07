@@ -120,6 +120,9 @@ import {
   WALK_TO_READ_TYPE_REFUSAL,
 } from './walk-to-read.ts'
 
+import { giveEndingRefusal, readDoorEndFacts } from './thing-ending-doors.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
+
 const DOMAIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 export { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS }
 const AGREEMENT_ID_REFUSAL = 'agreement id was rejected because it must be a positive whole number; call browse with view agreements, or use GET /api/agreements if your client can open URLs, and retry with a current agreement id'
@@ -653,6 +656,8 @@ export function mountSocietyRoutes(app: Hono): void {
     acceptingWaitingId: number | null,
   ): Promise<GiveOutcome> {
     const refused = (response: Response): GiveOutcome => Object.freeze({ kind: 'refused', response })
+    // A thing's due end is recorded before any answer, so the refusals below name a remnant.
+    const recordedThingIds = type === 'thing' ? await recordDueEndQuietly([id]) : []
     const asset = await ownerOf(type, id)
     if (!asset) return refused(err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`))
     if (type === 'place' && asset.owner_id === null) return refused(err(c, 403, WORLD_TRANSIT_ONLY_ERROR))
@@ -663,6 +668,15 @@ export function mountSocietyRoutes(app: Hono): void {
     const recipient = await residentId(toHandle)
     if (!recipient) return refused(err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`))
     if (recipient === resident.id) return refused(err(c, 400, 'you already own this asset; send a different current resident in to_handle'))
+    if (type === 'thing') {
+      // E7 for a thing that just became a remnant; E9 while its end is still to come, or
+      // E9b when the recipient accepts a held gift, so the recipient reads its own words.
+      const refusal = giveEndingRefusal(await readDoorEndFacts(id), {
+        thingId: id, actorId: resident.id, recipientId: recipient,
+        recorded: recordedThingIds, accepting: acceptingWaitingId !== null,
+      })
+      if (refusal !== null) return refused(err(c, 409, refusal))
+    }
     if (acceptingWaitingId === null) {
       // Decision #158: nothing moves, no event is written, no law runs, no room settles.
       try {
@@ -685,6 +699,7 @@ export function mountSocietyRoutes(app: Hono): void {
       target: { type, id },
       recipientId: recipient,
       payload: { mode: 'gift' },
+      recordedThingIds,
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
@@ -897,6 +912,9 @@ export function mountSocietyRoutes(app: Hono): void {
     if (price == null) return err(c, 400, `price_usdc must be greater than 0 and at most ${USDC_AMOUNT_MAX}; the city rounds it to 6 decimals`)
     if (!wallet) return err(c, 400, 'seller_wallet must be a Base address')
 
+    // Recorded first, so the refusals below name a remnant; the engine refuses E7 for any
+    // thing whose end has come, and a thing whose end is still to come may be offered.
+    const recordedThingIds = type === 'thing' ? await recordDueEndQuietly([id]) : []
     const asset = await ownerOf(type, id)
     if (!asset) return err(c, 404, `${type}_id ${id} was not found; re-read the public ${type} record and send a current id`)
     if (type === 'place' && asset.owner_id === null) return err(c, 403, WORLD_TRANSIT_ONLY_ERROR)
@@ -919,6 +937,7 @@ export function mountSocietyRoutes(app: Hono): void {
       target: { type, id },
       recipientId: buyerId,
       payload: { mode: 'offer' },
+      recordedThingIds,
       primitiveHandledByCaller: true,
       primitiveEmitsTypedEvent: true,
       performPrimitive: async transaction => {
@@ -1219,6 +1238,8 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!offer) return err(c, 404, `transfer offer_id ${offerId} was not found; ask the seller for its current offer_id before retrying`)
     const type = assetType(offer.asset_type)
     if (!type) return err(c, 409, 'offer refers to an unsupported asset type; choose another offer and ask the city owner to inspect this record')
+    // A due end is recorded and the cancel goes on: a remnant's sale lock may always be released.
+    if (type === 'thing') await recordDueEndQuietly([offer.asset_id])
     if (offer.seller_id !== resident.id) return err(c, 403, 'only the seller may cancel this offer')
     if (offer.status !== 'open') return err(c, 409, `offer is already ${offer.status}; choose an open offer because this one cannot be canceled again`)
     const reservedUntil = offer.reserved_until ? new Date(offer.reserved_until) : null
@@ -1317,6 +1338,8 @@ export function mountSocietyRoutes(app: Hono): void {
     if (!waitingId) return err(c, 400, WAITING_ID_REFUSAL)
     const waiting = await readWaiting(waitingId, resident.id, sql)
     if (!waiting) return err(c, 404, waitingNotFound(waitingId))
+    // A due end is recorded and the decline goes on; declining moves nothing.
+    if (waiting.type === 'thing') await recordDueEndQuietly([waiting.assetId])
     if (waiting.answer !== null || !await answerWaiting(waitingId, 'declined', 'declined; nothing moved', sql)) {
       const now = waiting.answer === null ? await readWaiting(waitingId, resident.id, sql) : waiting
       return err(c, 409, waitingAlreadyAnswered(waitingId, now?.answer ?? 'answered'))
