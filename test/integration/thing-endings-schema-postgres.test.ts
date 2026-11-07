@@ -15,11 +15,14 @@ const migrationDdl = await readFile(
 )
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const SECTION_MARKER = '\n-- Thing endings, the same statements as\n'
-/** The city's schema as it is before this migration: everything before its section. */
+const NEXT_SECTION_MARKER = '\n-- Stored public activity summaries, decision #166.\n'
+/** The city's schema as it is before this migration: db/schema.sql with its section removed. */
 function schemaBeforeThingEndings(): string {
   const start = schemaDdl.indexOf(SECTION_MARKER)
   assert.ok(start > 0 && start === schemaDdl.lastIndexOf(SECTION_MARKER), 'one thing endings section')
-  const before = schemaDdl.slice(0, start)
+  const end = schemaDdl.indexOf(NEXT_SECTION_MARKER, start)
+  assert.ok(end > start && end === schemaDdl.lastIndexOf(NEXT_SECTION_MARKER), 'the thing endings section ends at the next one')
+  const before = schemaDdl.slice(0, start) + schemaDdl.slice(end)
   assert.doesNotMatch(before, /thing_end_due|ending_policy|invented_by|thing_ending_changes/u)
   return before
 }

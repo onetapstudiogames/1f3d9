@@ -9,8 +9,8 @@ SET LOCAL statement_timeout = '120s';
 -- append-only tables, the due functions, two partial indexes, and the end reason in the
 -- wake vocabularies. Every new column is empty or at its default, so no thing, revision,
 -- event or label row changes; only kinds gain an inventor, and only from exactly one
--- provable kind_invented event. New checks are added NOT VALID and then validated, so the
--- busy things table is never scanned under its exclusive lock. It is safe to run again,
+-- provable kind_invented event. The whole migration holds the things lock until it commits;
+-- NOT VALID then VALIDATE does not shorten it in one transaction. It is safe to run again,
 -- and running it again fills the inventor of kinds invented since the last run.
 DO $thing_endings_guard$
 BEGIN

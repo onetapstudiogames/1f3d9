@@ -986,7 +986,10 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(body.length > 10_000)
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the thing endings statements')
     assert.equal(schemaDdl.indexOf(body), schemaDdl.lastIndexOf(body))
-    assert.ok(schemaDdl.trimEnd().endsWith(body), 'the thing endings section is the last one in db/schema.sql')
+    assert.ok(
+      schemaDdl.includes(`${body}\n\n-- Stored public activity summaries, decision #166.\n`),
+      'the thing endings section sits directly before the stored public activity section in db/schema.sql',
+    )
   })
 
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {

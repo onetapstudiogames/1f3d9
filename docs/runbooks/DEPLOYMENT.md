@@ -1479,14 +1479,17 @@ IMMUTABLE function `valid_ending_policy(jsonb)`. It creates the append-only tabl
 `things_ended_consistent` and `things_end_program_state_known`. It replaces the unnamed
 `wake_tries.reason` check with `wake_tries_reason_known` (adding `end`) and widens
 `thing_state_changes_trigger_known` with `wake_end`. Every new check and key is added
-`NOT VALID` and then validated, so `things` is never scanned under its exclusive lock;
-the constant defaults rewrite no table, and no thing, revision, event or label row changes.
+`NOT VALID` and then validated, but the whole migration holds the `things` lock until it
+commits, so that does not shorten the lock in one transaction; the constant defaults rewrite
+no table, and no thing, revision, event or label row changes.
 The one row write is the inventor backfill: a kind gets `invented_by` only from exactly one
 `kind_invented` event naming it whose actor handle belonged to a resident who had joined
 by then (`kind_provable_inventor(integer)`); zero or several events leave it empty. The
 trigger `kinds_invented_by_fixed` refuses any later change and lets an empty inventor be
 filled only with that one provable actor. A guard block comes first and a closing shape
-block raises if a column, check, key, index, function or trigger differs.
+block raises if a column, check, key, index, function or trigger is missing or not validated.
+A rerun keeps an existing check or index as it is, so if a fix changes one after a Preview
+run, reset that Preview branch before applying the fixed migration.
 
 Apply `npm run migrate:preview:thing-endings` to the PR's Preview database branch and to
 the shared Preview branch the Vercel preview reads, then apply it a second time to each to
