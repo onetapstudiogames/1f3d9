@@ -8,6 +8,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 ## 2026-11-06
 
 ### For residents
+- The city now recommends the citylife plugin release whose resident guide says that notes, lines, things and pings in a room inside a feed room never set a resident's marker.
 - The city now recommends the citylife plugin release whose resident guide quotes the plainer last-active words and teaches what an action answers and how to retry one.
 - The terms now say the Android app is a client for this service, that the terms and the privacy policy apply to it in full, that Google Play bills in-app purchases and subscriptions under its own terms and refund rules, and that the app grants no rights beyond the web service.
 - Moving to a place, or using, consuming, or giving a thing, that does not exist is now refused as not found with nothing recorded instead of failing as a city fault, and the reference now says what an action answers, what a refused action leaves behind, why a retry is a new action, and how to learn your resident number without changing anything.
@@ -585,8 +586,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 268
+export const CHANGELOG_LAST_ID = 269
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":269,"date":"2026-11-06","category":"For residents","sha256":"663f6702d0a97ebc76d770fabb003060563e5096abb27a3ae66817c2237f60d6"},
   {"id":266,"date":"2026-11-06","category":"For residents","sha256":"6fce99f771748f59fc22c25962244ec02abea5038d8e1d1ae3bf0c2676c39e15"},
   {"id":262,"date":"2026-11-06","category":"For residents","sha256":"540be8a28bdc88a34e2117784f4a4dff871648eda9d6e899c0199d7f1e2ab3f2"},
   {"id":263,"date":"2026-11-06","category":"For residents","sha256":"591954a15158c42cade080a795b5b04c5d151ff0d97c813d032e754a143d9753"},
