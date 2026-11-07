@@ -1010,4 +1010,80 @@ test('format v4 carries ends, remnants, links and the thing_ended phase, compute
       await admin.query('ROLLBACK')
     }
   })
+
+  const v4Things = async (ids: readonly number[]): Promise<Map<number, Record<string, unknown>>> => {
+    await admin.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    try {
+      await admin.query('SET LOCAL ROLE city_snapshot_export')
+      const rows = (await admin.query<V4Record>(`
+        SELECT class_name, record_id, payload FROM city_snapshot.public_records_v4
+        WHERE class_name IN ('things', 'world_market_offers')
+      `)).rows
+      return new Map(rows
+        .map(row => [row.class_name === 'things' ? Number(row.record_id) : -Number(row.record_id), row.payload] as const)
+        .filter(([id]) => ids.includes(id)))
+    } finally {
+      await admin.query('ROLLBACK')
+    }
+  }
+
+  await t.test('an until that is not the toISOString shape of a real time reads as null and never stops the view', async () => {
+    const odd = Number((await admin.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, parent_thing_id, family_id, generation)
+      VALUES ($1, 'odd copy', 'holds untils no copy rule writes', 2, 2, $2, $2, 1) RETURNING id
+    `, [fixture.rooms.home, things.kindlessUnset])).rows[0]!.id)
+    await admin.query(`
+      UPDATE things SET
+        ending_rule = '{"any": [{"after_setting_seconds": 600, "until": "2026-02-31T10:00:00.000Z"}, {"idle_seconds": 3600, "until": "not a time"}]}'::jsonb,
+        ending_grant = '{"kindless": true, "allowed": ["at", "after_setting_seconds", "uses", "idle_seconds", "label_added"], "limits": {"max_seconds": 31622400, "max_uses": 10000, "labels": null}, "city_limits_version": 1}'::jsonb,
+        ending_set_by = 2, ending_set_at = now(), ending_deadline = now() + interval '1 day',
+        ending_copied_from = $2, ending_copied_at = now()
+      WHERE id = $1
+    `, [odd, things.kindlessUnset])
+    const payload = (await v4Things([odd])).get(odd)!
+    assert.equal(payload.status, 'exported')
+    const odded = payload.ending as Ending
+    assert.equal(odded.status, 'active')
+    assert.equal(odded.conditions[0]!.ends_at, null)
+    assert.equal(odded.conditions[1]!.unused_deadline, null)
+    assert.equal(odded.unused_deadline, null)
+    assert.equal(odded.conditions[1]!.until, 'not a time', 'the stored condition is exported as stored')
+  })
+
+  await t.test('a maintainer-hidden kind shows the removal marker for its own label words, nothing else changes', async () => {
+    const before = await v4Things([things.active, things.unset, things.notPermitted, -fixture.offers.active])
+    await admin.query(`
+      INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+      VALUES ('kind', $1, 'remove', 1, 'five-states hidden kind')
+    `, [fixture.kinds.lamp])
+    const after = await v4Things([things.active, things.unset, things.notPermitted, -fixture.offers.active])
+    const shown = before.get(things.active)!.ending as Ending
+    const hidden = after.get(things.active)!.ending as Ending
+    assert.equal(after.get(things.active)!.kind, '[removed by maintainer]', 'the base view hides the kind name')
+    assert.equal(shown.label, 'spent')
+    assert.equal(hidden.label, '[removed by maintainer]')
+    assert.deepEqual((hidden.grant as { limits: { labels: unknown } }).limits.labels, ['[removed by maintainer]'])
+    assert.deepEqual(hidden.grant, {
+      ...(shown.grant as Record<string, unknown>),
+      limits: { ...(shown.grant as { limits: Record<string, unknown> }).limits, labels: ['[removed by maintainer]'] },
+    })
+    assert.deepEqual(hidden.conditions[2], { label_added: '[removed by maintainer]' })
+    assert.deepEqual(hidden.permitted_modes, shown.permitted_modes)
+    assert.deepEqual(hidden.still_permitted, shown.still_permitted)
+    assert.deepEqual(hidden.program, shown.program)
+    const rest = (ending: Ending) => ({ ...ending, label: null, grant: null, conditions: [], checked_at: null })
+    assert.deepEqual(rest(hidden), rest(shown))
+    // The world offer on the counting lamp carries the same object.
+    const offerEnding = after.get(-fixture.offers.active)!.ending as Ending
+    assert.equal(offerEnding.label, '[removed by maintainer]')
+    assert.deepEqual(offerEnding.conditions, hidden.conditions)
+    assert.deepEqual(offerEnding.grant, hidden.grant)
+    // Null stays null, and another kind's things are untouched.
+    assert.equal((after.get(things.unset)!.ending as Ending).label, null)
+    assert.equal((after.get(things.unset)!.ending as Ending).grant, null)
+    assert.deepEqual(
+      { ...(after.get(things.notPermitted)!.ending as Ending), checked_at: null },
+      { ...(before.get(things.notPermitted)!.ending as Ending), checked_at: null },
+    )
+  })
 })

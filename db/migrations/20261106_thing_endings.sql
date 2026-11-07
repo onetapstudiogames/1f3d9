@@ -539,6 +539,13 @@ BEGIN
     RAISE EXCEPTION 'thing % end program cannot move from % to %', OLD.id, OLD.end_program_state, NEW.end_program_state
       USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
   END IF;
+  -- A withdrawal writes a result only as it skips a pending program; a program that
+  -- already ran or was skipped keeps its result.
+  IF writer = 'withdraw' AND NEW.end_program_result IS DISTINCT FROM OLD.end_program_result
+    AND NOT (OLD.end_program_state = 'pending' AND NEW.end_program_state = 'skipped') THEN
+    RAISE EXCEPTION 'thing % keeps its end program result; a withdrawal writes one only as it skips a pending program', OLD.id
+      USING ERRCODE = '23514', CONSTRAINT = 'thing_ending_guard';
+  END IF;
   RETURN NEW;
 END
 $$;
@@ -693,8 +700,13 @@ thing_end_facts AS MATERIALIZED (
       'soonest_known_end', judged.due_at,
       'uses_left', thing.ending_uses_left,
       'unused_deadline', rule.unused_deadline,
-      'label', thing.ending_label,
-      'grant', thing.ending_grant,
+      'label', CASE WHEN kind_hidden.removed AND thing.ending_label IS NOT NULL
+        THEN '[removed by maintainer]' ELSE thing.ending_label END,
+      'grant', CASE
+        WHEN kind_hidden.removed AND jsonb_typeof(thing.ending_grant -> 'limits' -> 'labels') = 'array'
+          THEN jsonb_set(thing.ending_grant, '{limits,labels}', '["[removed by maintainer]"]'::jsonb)
+        ELSE thing.ending_grant
+      END,
       'still_permitted', rule.still_permitted,
       'copy_origin', CASE WHEN thing.ending_copied_from IS NOT NULL THEN jsonb_build_object(
         'source_thing_id', thing.ending_copied_from,
@@ -728,6 +740,17 @@ thing_end_facts AS MATERIALIZED (
   LEFT JOIN public.places room ON room.id = thing.place_id
   LEFT JOIN public.residents setter ON setter.id = thing.ending_set_by
   LEFT JOIN public.residents end_owner ON end_owner.id = thing.ended_owner_id
+  -- A maintainer-hidden effective kind: its author's label words read the removal marker.
+  CROSS JOIN LATERAL (
+    SELECT coalesce((
+      SELECT moderation.action
+      FROM public.moderation_actions moderation
+      WHERE moderation.target_type = 'kind'
+        AND moderation.target_id = coalesce(thing.as_kind_id, thing.kind_id)
+      ORDER BY moderation.created_at DESC, moderation.id DESC
+      LIMIT 1
+    ), 'restore') = 'remove' AS removed
+  ) kind_hidden
   CROSS JOIN LATERAL (
     SELECT thing_end_due_from(
       thing.ending_rule IS NOT NULL, thing.ending_deadline, thing.ending_idle_anchor,
@@ -770,7 +793,11 @@ thing_end_facts AS MATERIALIZED (
   ) stated
   CROSS JOIN LATERAL (
     SELECT
-      coalesce(jsonb_agg(item.value || item.computed ORDER BY item.position), '[]'::jsonb) AS conditions,
+      coalesce(jsonb_agg(item.value || item.computed || CASE
+        WHEN kind_hidden.removed AND jsonb_typeof(item.value -> 'label_added') = 'string'
+          THEN jsonb_build_object('label_added', '[removed by maintainer]')
+        ELSE '{}'::jsonb
+      END ORDER BY item.position), '[]'::jsonb) AS conditions,
       jsonb_object_agg(item.mode, permitted.allowed ? item.mode)
         FILTER (WHERE item.mode IS NOT NULL) AS still_permitted,
       (array_agg(item.computed -> 'unused_deadline' ORDER BY item.position)
@@ -787,8 +814,7 @@ thing_end_facts AS MATERIALIZED (
         ) AS mode,
         CASE
           WHEN condition.value ? 'after_setting_seconds' THEN jsonb_build_object('ends_at', CASE
-            WHEN jsonb_typeof(condition.value -> 'until') = 'string'
-              THEN to_jsonb((condition.value ->> 'until')::timestamptz)
+            WHEN condition.value ? 'until' THEN to_jsonb(stored_until.at)
             WHEN thing.ending_copied_from IS NOT NULL THEN NULL
             WHEN jsonb_typeof(condition.value -> 'after_setting_seconds') = 'number'
               AND condition.value ->> 'after_setting_seconds' ~ '^[0-9]{1,9}$'
@@ -797,8 +823,7 @@ thing_end_facts AS MATERIALIZED (
           END)
           WHEN condition.value ? 'uses' THEN jsonb_build_object('uses_left', thing.ending_uses_left)
           WHEN condition.value ? 'idle_seconds' THEN jsonb_build_object('unused_deadline', CASE
-            WHEN jsonb_typeof(condition.value -> 'until') = 'string'
-              THEN to_jsonb((condition.value ->> 'until')::timestamptz)
+            WHEN condition.value ? 'until' THEN to_jsonb(stored_until.at)
             WHEN thing.ending_copied_from IS NOT NULL THEN NULL
             ELSE to_jsonb(thing.ending_idle_anchor + make_interval(secs => thing.ending_idle_seconds))
           END)
@@ -808,6 +833,21 @@ thing_end_facts AS MATERIALIZED (
         WHEN jsonb_typeof(thing.ending_rule -> 'any') = 'array' THEN thing.ending_rule -> 'any'
         ELSE '[]'::jsonb
       END) WITH ORDINALITY condition(value, position)
+      -- A copy's until is read only in the shape copyRuleFrom writes (toISOString) and only
+      -- when it names a real time; any other value reads as null, so one bad row never
+      -- stops the export. CASE fixes the order: the day is checked before the cast.
+      CROSS JOIN LATERAL (
+        SELECT CASE
+          WHEN jsonb_typeof(condition.value -> 'until') = 'string'
+            AND condition.value ->> 'until' ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]{3}Z$'
+          THEN CASE
+            WHEN substring(condition.value ->> 'until' FROM 9 FOR 2)::integer <= extract(day FROM
+              (substring(condition.value ->> 'until' FROM 1 FOR 7) || '-01')::date
+                + interval '1 month' - interval '1 day')::integer
+            THEN (condition.value ->> 'until')::timestamptz
+          END
+        END AS at
+      ) stored_until
       WHERE jsonb_typeof(condition.value) = 'object'
     ) item
   ) rule
@@ -959,7 +999,10 @@ BEGIN
     ('things', 'end_program_result', 'jsonb', FALSE, NULL),
     ('kinds', 'invented_by', 'integer', FALSE, NULL),
     ('kind_revisions', 'ending_policy', 'jsonb', TRUE, '''{"allowed": []}''::jsonb'),
-    ('thing_ending_changes', 'id', 'bigint', TRUE, 'nextval(''thing_ending_changes_id_seq''::regclass)'),
+    -- The id default names its sequence the way pg_get_expr prints it under the current
+    -- search_path (qualified only when not visible), so the check holds on any search_path.
+    ('thing_ending_changes', 'id', 'bigint', TRUE, 'nextval(' || quote_literal(coalesce(
+      to_regclass('public.thing_ending_changes_id_seq')::text, 'public.thing_ending_changes_id_seq')) || '::regclass)'),
     ('thing_ending_changes', 'thing_id', 'integer', TRUE, NULL),
     ('thing_ending_changes', 'change', 'text', TRUE, NULL),
     ('thing_ending_changes', 'actor_id', 'integer', FALSE, NULL),
@@ -1104,8 +1147,8 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'thing endings guards are out of order among the things triggers';
   END IF;
-  IF to_regprocedure('public.thing_end_due_at_row(things)') IS NULL
-    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_due_at_row(things)')) IS DISTINCT FROM 's'
+  IF to_regprocedure('public.thing_end_due_at_row(public.things)') IS NULL
+    OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_due_at_row(public.things)')) IS DISTINCT FROM 's'
     OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_end_reached(integer)')) IS DISTINCT FROM 's'
     OR (SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('public.thing_ending_writer(integer)')) IS DISTINCT FROM 's' THEN
     RAISE EXCEPTION 'thing endings guard functions are missing or have the wrong volatility';

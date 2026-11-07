@@ -19,6 +19,20 @@ const migrationDdl = await readFile(
   new URL('../../db/migrations/20260922_abilities_wake_chance_write.sql', import.meta.url),
   'utf8',
 )
+// Snapshot format 4 (thing endings) reads things.wake_enabled and the places wake dials,
+// so the setup drops that one view first and recreates it, from the thing endings
+// migration's own statements, once the abilities columns are back.
+const thingEndingsDdl = await readFile(
+  new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url),
+  'utf8',
+)
+const V4_VIEW_START = 'CREATE OR REPLACE VIEW city_snapshot.public_records_v4'
+const V4_VIEW_END = 'GRANT SELECT ON city_snapshot.public_records_v4 TO city_snapshot_export;'
+const snapshotV4Ddl = thingEndingsDdl.slice(
+  thingEndingsDdl.indexOf(V4_VIEW_START),
+  thingEndingsDdl.indexOf(V4_VIEW_END) + V4_VIEW_END.length,
+)
+assert.ok(snapshotV4Ddl.startsWith(V4_VIEW_START) && snapshotV4Ddl.endsWith(V4_VIEW_END), 'the v4 view statements are found')
 
 const FOUNDER = Object.freeze({ id: 1, handle: 'founder', secret: `1f3d9_sk_${'1'.repeat(48)}` })
 const MAKER = Object.freeze({ id: 2, handle: 'bell-maker', secret: `1f3d9_sk_${'2'.repeat(48)}` })
@@ -108,6 +122,7 @@ async function ageRoom(placeId: number, seconds: number): Promise<void> {
 // Put the database back to how it stood before this change, so the migration meets
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
+  DROP VIEW city_snapshot.public_records_v4;
   DROP TABLE thing_conversions, family_growth_marks, place_copy_counts;
   DROP TABLE thing_state_changes, chance_rolls, chance_days, wake_tries, wake_settles, thing_wake_state;
   DROP SEQUENCE chance_rolls_id_seq;
@@ -139,6 +154,8 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
 
       await db.query(migrationDdl)
       await db.query(migrationDdl)
+      await db.query(snapshotV4Ddl)
+      assert.equal((await db.query(`SELECT to_regclass('city_snapshot.public_records_v4') IS NOT NULL AS present`)).rows[0]!.present, true)
 
       const thing = (await db.query(`
         SELECT wake_enabled, state, state_version FROM things WHERE id = $1

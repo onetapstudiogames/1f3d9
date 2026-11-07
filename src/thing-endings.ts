@@ -9,6 +9,7 @@ import {
   ENDING_POLICY_MIN_LABELS,
 } from './engine-limits.ts'
 import { worldName } from './input.ts'
+import { MODERATED_TEXT } from './moderation.ts'
 import {
   ENDING_NOT_ALLOWED_REFUSAL,
   ENDING_POLICY_REFUSAL,
@@ -133,6 +134,19 @@ function toDate(value: EndingTime | null | undefined): Date | null {
 
 function toIso(value: EndingTime | null | undefined): string | null {
   return toDate(value)?.toISOString() ?? null
+}
+
+/**
+ * A copy's stored until, read only in the shape copyRuleFrom writes (toISOString:
+ * YYYY-MM-DDTHH:MM:SS.sssZ) and only when it names a real time; any other value reads as
+ * null, as snapshot v4 reads it, so one bad row never stops a read.
+ */
+const STORED_UNTIL_SHAPE = /^[1-9]\d{3}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+
+function storedUntil(value: unknown): Date | null {
+  if (typeof value !== 'string' || !STORED_UNTIL_SHAPE.test(value)) return null
+  const date = new Date(value)
+  return !Number.isNaN(date.getTime()) && date.toISOString() === value ? date : null
 }
 
 function plusSeconds(value: EndingTime | null | undefined, seconds: number | null | undefined): Date | null {
@@ -597,11 +611,15 @@ export const THING_FIRST_LABEL_AT_SQL = `(
     AND label.created_at > thing.ending_set_at
 )`
 
-/** A label row counts only when it was created strictly after the end was set. */
+/**
+ * A label row counts only when it was created strictly after the end was set. The loader's
+ * fragment already keeps only those rows, compared in microseconds; the driver cuts both
+ * times to milliseconds, so the recheck here drops only a value strictly before set_at.
+ */
 function countedLabelAt(row: EndingDueRow): Date | null {
   const labelAt = toDate(row.first_label_at)
   const setAt = toDate(row.ending_set_at)
-  return labelAt && (!setAt || labelAt.getTime() > setAt.getTime()) ? labelAt : null
+  return labelAt && (!setAt || labelAt.getTime() >= setAt.getTime()) ? labelAt : null
 }
 
 /**
@@ -629,11 +647,11 @@ export function endingReached(row: EndingDueRow, now: Date): boolean {
 function conditionTime(condition: EndingCondition, row: EndingDueRow, isCopy: boolean): Date | null {
   if ('at' in condition) return toDate(condition.at)
   if ('after_setting_seconds' in condition) {
-    if (typeof condition.until === 'string') return toDate(condition.until)
+    if ('until' in condition) return storedUntil(condition.until)
     return isCopy ? null : plusSeconds(row.ending_set_at, condition.after_setting_seconds)
   }
   if ('idle_seconds' in condition) {
-    if (typeof condition.until === 'string') return toDate(condition.until)
+    if ('until' in condition) return storedUntil(condition.until)
     return isCopy ? null : plusSeconds(row.ending_idle_anchor, row.ending_idle_seconds)
   }
   if ('uses' in condition) return toDate(row.ending_uses_spent_at)
@@ -691,8 +709,8 @@ export function copyRuleFrom(parent: EndingCopyParent, copiedAt: Date, copyOwner
   const copyRule: EndingRule = { any: conditions }
   const deadline = soonest(conditions.map(condition => (
     'at' in condition ? toDate(condition.at)
-      : ('after_setting_seconds' in condition || 'idle_seconds' in condition) && typeof condition.until === 'string'
-        ? toDate(condition.until)
+      : ('after_setting_seconds' in condition || 'idle_seconds' in condition) && 'until' in condition
+        ? storedUntil(condition.until)
         : null
   )))
   return {
@@ -832,6 +850,11 @@ export interface ThingEndingRow extends EndingPermissionThing, EndingDueRow {
   readonly owner_at_end: ResidentRef | null
   /** A trait with an end key is linked to the effective kind revision. */
   readonly has_end_trait: boolean
+  /**
+   * The effective kind's latest moderation is remove: the kind author's label words
+   * (ending.label, the label_added condition, grant.limits.labels) read the removal marker.
+   */
+  readonly kind_hidden: boolean
 }
 
 export interface EndingProgramObject {
@@ -884,6 +907,22 @@ function computedCondition(condition: EndingCondition, row: ThingEndingRow): Rea
   return { ...condition }
 }
 
+/** A maintainer-hidden kind's label words read the removal marker; null stays null. */
+function shownLabel(label: string | null, row: ThingEndingRow): string | null {
+  return row.kind_hidden && label != null ? MODERATED_TEXT : label
+}
+
+function shownCondition(condition: Readonly<Record<string, unknown>>, row: ThingEndingRow): Readonly<Record<string, unknown>> {
+  return row.kind_hidden && typeof condition.label_added === 'string'
+    ? { ...condition, label_added: MODERATED_TEXT }
+    : condition
+}
+
+function shownGrant(grant: unknown, row: ThingEndingRow): unknown {
+  if (!row.kind_hidden || !isRecord(grant) || !isRecord(grant.limits) || !Array.isArray(grant.limits.labels)) return grant
+  return { ...grant, limits: { ...grant.limits, labels: [MODERATED_TEXT] } }
+}
+
 function endingStatusName(row: ThingEndingRow, reached: boolean, allowed: readonly string[]): EndingStatusName {
   if (row.ended_at != null) return 'ended'
   if (row.ending_rule != null && reached) return 'due_waiting_settle'
@@ -909,7 +948,7 @@ export function endingStatus(row: ThingEndingRow, policy: unknown, gates: EndTry
     : status === 'permitted_but_unset'
       ? (effectiveKind(row) ? 'kind' : 'kindless_owner')
       : null
-  const conditions = (rule?.any ?? []).map(condition => computedCondition(condition, row))
+  const conditions = (rule?.any ?? []).map(condition => shownCondition(computedCondition(condition, row), row))
   const modes = (rule?.any ?? []).map(conditionMode).filter((mode): mode is EndingMode => mode !== null)
   const idleCondition = conditions.find(condition => Object.hasOwn(condition, 'unused_deadline'))
   return {
@@ -920,8 +959,8 @@ export function endingStatus(row: ThingEndingRow, policy: unknown, gates: EndTry
     soonest_known_end: toIso(endingDueAt(row)),
     uses_left: row.ending_uses_left,
     unused_deadline: (idleCondition?.unused_deadline as string | null | undefined) ?? null,
-    label: row.ending_label,
-    grant: row.ending_grant,
+    label: shownLabel(row.ending_label, row),
+    grant: shownGrant(row.ending_grant, row),
     still_permitted: modes.length > 0
       ? Object.fromEntries(modes.map(mode => [mode, allowed.includes(mode)]))
       : null,

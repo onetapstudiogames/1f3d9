@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { EngineError } from '../src/engine.ts'
+import { MODERATED_TEXT } from '../src/moderation.ts'
 import {
   ENDING_MAX_SECONDS,
   ENDING_MAX_USES,
@@ -498,10 +499,11 @@ test('endingDueAt is the soonest condition and dueCause names it', () => {
   const early = thingRow({ ...labelled, first_label_at: new Date(SET_AT.getTime() - 1) })
   assert.equal(endingDueAt(early)?.toISOString(), at(3_600))
   assert.equal(dueCause(early), 'idle_seconds')
-  // The boundary is strict, as in SQL: a row created at the same instant as set_at never counts.
+  // SQL keeps only rows strictly after set_at in microseconds and the driver cuts both
+  // times to milliseconds, so a value equal to set_at in milliseconds is a row SQL counts.
   const same = thingRow({ ...labelled, first_label_at: SET_AT })
-  assert.equal(endingDueAt(same)?.toISOString(), at(3_600))
-  assert.equal(dueCause(same), 'idle_seconds')
+  assert.equal(endingDueAt(same)?.toISOString(), SET_AT.toISOString())
+  assert.equal(dueCause(same), 'label_added')
   const after = thingRow({
     ending_rule: { any: [{ after_setting_seconds: 600 }] },
     ending_set_at: SET_AT,
@@ -592,6 +594,7 @@ function thingRow(extra: Partial<ThingEndingRow>): ThingEndingRow {
     set_by: null,
     owner_at_end: null,
     has_end_trait: false,
+    kind_hidden: false,
     ...extra,
   }
 }
@@ -764,6 +767,89 @@ test('endingStatus: due_waiting_settle and ended, and the short status of each',
     shortEndingStatus(thingRow({ ending_rule: { any: [{ label_added: 'spent' }] }, ending_set_at: SET_AT, ending_label: 'spent' }), NOW),
     { state: 'set', at: null },
   )
+})
+
+// The shape copyRuleFrom writes: Date.prototype.toISOString, milliseconds and Z.
+const ISO_UNTIL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u
+
+test('copyRuleFrom always writes until as toISOString, whatever shape the parent times came in', () => {
+  const parents = [
+    parentRow({ any: [{ after_setting_seconds: DAY }] }, { ending_set_at: '2026-11-06T11:00:00+00:00' }),
+    parentRow({ any: [{ after_setting_seconds: DAY }] }, { ending_set_at: new Date('2026-11-06T11:00:00.123Z') }),
+    parentRow({ any: [{ idle_seconds: 3_600 }] }, { ending_idle_seconds: 3_600, ending_idle_anchor: '2026-11-06T11:30:00Z' }),
+    parentRow({ any: [{ idle_seconds: 3_600, until: at(600) }] }, { ending_copied_from: 49 }),
+  ]
+  for (const parent of parents) {
+    const copy = copyRuleFrom(parent, COPY_AT, 3)!
+    const conditions = (copy.ending_rule as unknown as { any: Record<string, unknown>[] }).any
+    const untils = conditions.map(condition => condition.until)
+    assert.equal(untils.length, 1)
+    assert.equal(typeof untils[0], 'string')
+    assert.match(untils[0] as string, ISO_UNTIL)
+    assert.equal(new Date(untils[0] as string).toISOString(), untils[0])
+  }
+})
+
+test('an until that is not the toISOString shape of a real time reads as null, as in snapshot v4', () => {
+  for (const until of ['not a time', '2026-11-20', '2026-11-20T10:00:00Z', '2026-02-31T10:00:00.000Z', '2026-11-20T10:00:00.000+00:00', 7]) {
+    const row = thingRow({
+      id: 52,
+      parent_thing_id: 50,
+      ending_rule: { any: [{ after_setting_seconds: DAY, until }, { idle_seconds: 3_600, until }] },
+      ending_grant: LAMP_GRANT,
+      ending_set_by: 2,
+      ending_set_at: SET_AT,
+      ending_copied_from: 50,
+      ending_copied_at: SET_AT,
+    })
+    const status = endingStatus(row, LAMP_POLICY, NO_GATES, NOW)
+    assert.equal(status.conditions[0]!.ends_at, null, String(until))
+    assert.equal(status.conditions[1]!.unused_deadline, null, String(until))
+    assert.equal(status.unused_deadline, null, String(until))
+    assert.equal(dueCause(row), null, String(until))
+    const copy = copyRuleFrom(row, COPY_AT, 3)!
+    assert.deepEqual(copy.ending_rule, { any: [{ after_setting_seconds: DAY }, { idle_seconds: 3_600 }] }, String(until))
+  }
+  const good = at(600)
+  const row = thingRow({
+    id: 52, parent_thing_id: 50, ending_rule: { any: [{ idle_seconds: 3_600, until: good }] },
+    ending_grant: LAMP_GRANT, ending_set_by: 2, ending_set_at: SET_AT, ending_copied_from: 50, ending_copied_at: SET_AT,
+  })
+  assert.equal(endingStatus(row, LAMP_POLICY, NO_GATES, NOW).unused_deadline, good)
+})
+
+test('a maintainer-hidden kind shows the removal marker for its own label words, nothing else changes', () => {
+  // The five-states counting lamp: a date, uses and the watched label 'spent', with the
+  // kind's grant naming that label, and a remove moderation on the lamp kind.
+  const counting = {
+    ending_rule: { any: [{ at: at(10 * DAY) }, { uses: 5 }, { label_added: 'spent' }] },
+    ending_grant: LAMP_GRANT,
+    ending_set_by: 2,
+    ending_set_at: SET_AT,
+    ending_deadline: at(10 * DAY),
+    ending_uses_left: 3,
+    ending_label: 'spent',
+    has_end_trait: true,
+  } as const
+  const shown = endingStatus(thingRow(counting), LAMP_POLICY, NO_GATES, NOW)
+  const hidden = endingStatus(thingRow({ ...counting, kind_hidden: true }), LAMP_POLICY, NO_GATES, NOW)
+  assert.equal(shown.label, 'spent')
+  assert.equal(hidden.label, MODERATED_TEXT)
+  assert.deepEqual((hidden.grant as EndingGrant).limits.labels, [MODERATED_TEXT])
+  assert.deepEqual(hidden.grant, { ...LAMP_GRANT, limits: { ...LAMP_GRANT!.limits, labels: [MODERATED_TEXT] } })
+  assert.deepEqual(hidden.conditions[2], { label_added: MODERATED_TEXT })
+  assert.deepEqual(hidden.permitted_modes, shown.permitted_modes)
+  assert.deepEqual(hidden.still_permitted, shown.still_permitted)
+  assert.deepEqual(hidden.program, shown.program)
+  assert.deepEqual({ ...hidden, label: null, grant: null, conditions: [] }, { ...shown, label: null, grant: null, conditions: [] })
+  // Null stays null: no watched label, and a grant whose labels are any.
+  const anyLabels = { ...LAMP_GRANT, limits: { ...LAMP_GRANT!.limits, labels: null } }
+  const quiet = endingStatus(thingRow({
+    ...counting, ending_rule: { any: [{ uses: 5 }] }, ending_label: null, ending_grant: anyLabels, kind_hidden: true,
+  }), LAMP_POLICY, NO_GATES, NOW)
+  assert.equal(quiet.label, null)
+  assert.deepEqual(quiet.grant, anyLabels)
+  assert.deepEqual(endingStatus(thingRow({ kind_hidden: true }), LAMP_POLICY, NO_GATES, NOW).grant, null)
 })
 
 // ---------------------------------------------------------------------------

@@ -408,12 +408,16 @@ test('thing endings stores against real PostgreSQL 17', { timeout: 900_000 }, as
       assert.equal(await dueNow(unset), false, 'no end is never due, and never null')
       assert.deepEqual((await db.query('SELECT thing_end_due(-1, now()) AS due')).rows, [{ due: false }])
 
+      // Future times are computed from now, so these cases never age into being due.
+      const future = Math.floor(Date.now() / 1000) * 1000 + 30 * 86_400_000
+      const inFuture = (seconds: number): string => new Date(future + seconds * 1000).toISOString()
+
       const dated = await newThing()
-      await setEnd(dated, `ending_set_at = '2026-11-01T00:00:00Z', ending_deadline = '2030-01-01T00:00:00Z'`)
-      assert.equal(await dueAt(dated), '2030-01-01T00:00:00.000Z')
+      await setEnd(dated, `ending_set_at = '2026-11-01T00:00:00Z', ending_deadline = $2`, [inFuture(0)])
+      assert.equal(await dueAt(dated), inFuture(0))
       assert.equal(await dueNow(dated), false)
-      assert.equal(await dueBy(dated, '2029-12-31T23:59:59Z'), false)
-      assert.equal(await dueBy(dated, '2030-01-01T00:00:00Z'), true)
+      assert.equal(await dueBy(dated, inFuture(-1)), false)
+      assert.equal(await dueBy(dated, inFuture(0)), true)
 
       const afterSetting = await newThing()
       await setEnd(afterSetting, `ending_set_at = now() - interval '10 minutes', ending_deadline = now() - interval '5 minutes'`)
@@ -422,8 +426,8 @@ test('thing endings stores against real PostgreSQL 17', { timeout: 900_000 }, as
       // Nothing may be written to a thing once its end has come (the guards), so each case
       // writes while the thing is not yet due and reads the due time after.
       const idle = await newThing()
-      await setEnd(idle, `ending_set_at = '2026-11-01T00:00:00Z', ending_idle_seconds = 3600, ending_idle_anchor = '2031-01-01T00:00:00Z'`)
-      assert.equal(await dueAt(idle), '2031-01-01T01:00:00.000Z')
+      await setEnd(idle, `ending_set_at = '2026-11-01T00:00:00Z', ending_idle_seconds = 3600, ending_idle_anchor = $2`, [inFuture(0)])
+      assert.equal(await dueAt(idle), inFuture(3_600))
       assert.equal(await dueNow(idle), false)
       await db.query(`UPDATE things SET ending_idle_anchor = '2026-11-01T00:00:00Z' WHERE id = $1`, [idle])
       assert.equal(await dueAt(idle), '2026-11-01T01:00:00.000Z', 'the anchor moves the unused deadline')

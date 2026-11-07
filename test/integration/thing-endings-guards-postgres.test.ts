@@ -308,6 +308,30 @@ test('thing endings guards against real PostgreSQL 17', { timeout: 900_000 }, as
 
       const quiet = await thingIn(db, roomId, 'recorded')
       await asWriter(db, `withdraw:${quiet}`, 'UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [quiet])
+
+      // The result changes only in the write that moves a pending program to skipped; a
+      // program that already ran or was skipped keeps its result, and so does a pending one
+      // that is withdrawn without being skipped.
+      const resultSql = `UPDATE things SET withdrawn_at = clock_timestamp(), end_program_result = '{"overwritten": true}' WHERE id = $1`
+      const ran = await thingIn(db, roomId, 'recorded', 'pending')
+      await asWriter(db, `end_try:${ran}`, `UPDATE things SET end_program_state = 'ran', end_program_result = '{"try_id": 7}' WHERE id = $1`, [ran])
+      const skipped = await thingIn(db, roomId, 'recorded', 'pending')
+      await asWriter(db, `end_try:${skipped}`,
+        `UPDATE things SET end_program_state = 'skipped', end_program_result = '{"skipped": "waking is off for this thing"}' WHERE id = $1`, [skipped])
+      const stillPending = await thingIn(db, roomId, 'recorded', 'pending')
+      const none = await thingIn(db, roomId, 'recorded')
+      for (const [thingId, name] of [[ran, 'ran'], [skipped, 'skipped'], [stillPending, 'pending'], [none, 'none']] as const) {
+        await assert.rejects(asWriter(db, `withdraw:${thingId}`, resultSql, [thingId]), refusedByGuard, name)
+      }
+      await asWriter(db, `withdraw:${ran}`, 'UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [ran])
+      await assertRow(db, ran, { withdrawn: true, end_program_state: 'ran', end_program_result: { try_id: 7 } })
+      await asWriter(db, `withdraw:${skipped}`, 'UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [skipped])
+      await assertRow(db, skipped, {
+        withdrawn: true, end_program_state: 'skipped', end_program_result: { skipped: 'waking is off for this thing' },
+      })
+      await asWriter(db, `withdraw:${stillPending}`, withdrawSql, [stillPending])
+      await assertRow(db, stillPending, { withdrawn: true, end_program_state: 'skipped', end_program_result: { skipped: 'withdrawn' } })
+
       // A due thing is recorded before it is withdrawn, so a missed recorder call fails loudly.
       const due = await thingIn(db, roomId, 'due')
       await assert.rejects(asWriter(db, `withdraw:${due}`, 'UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [due]),

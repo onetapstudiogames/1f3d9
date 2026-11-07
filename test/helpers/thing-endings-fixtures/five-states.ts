@@ -277,7 +277,8 @@ export async function seedFiveStates(db: FixtureQueryable): Promise<FiveStatesFi
   const remnant = await lamp('copied lamp', { room: room.visitors, parent: active })
   await label(db, remnant, 'old')
   const remnantAt = await dbTime(db, '-30 minutes')
-  const remnantUntil = await dbTime(db, '-20 minutes')
+  // A copy's until is always written as copyRuleFrom writes it (toISOString, milliseconds).
+  const remnantUntil = new Date(await dbTime(db, '-20 minutes')).toISOString()
   const copiedAt = await dbTime(db, '-2 hours')
   await setEnd(db, remnant, { any: [{ at: remnantAt }, { idle_seconds: 3_600, until: remnantUntil }] }, {
     grant: lampGrant, setAt: copiedAt, deadline: remnantAt, copiedFrom: active, copiedAt,
