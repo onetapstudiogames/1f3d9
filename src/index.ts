@@ -168,6 +168,7 @@ import {
 import { gazetteRoomLifecycleRefusal } from './gazette-room.ts'
 import { THING_ENDING_GUARD_STATUS, thingEndingGuardRefusal } from './thing-ending-refusals.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
+import { placeRemnantCountSql, thingShortEndsSql, withShortEnds } from './thing-ending-short.ts'
 import {
   listGazetteIssues,
   readCompleteGazetteIssue,
@@ -1379,7 +1380,8 @@ app.get('/api/me', async c => {
       SELECT place.id, place.parent_id, place.name, place.created_at,
         (SELECT count(*)::int FROM things thing
           WHERE thing.place_id = place.id AND thing.withdrawn_at IS NULL) AS thing_count,
-        (SELECT count(*)::int FROM notes note WHERE note.place_id = place.id) AS note_count
+        (SELECT count(*)::int FROM notes note WHERE note.place_id = place.id) AS note_count,
+        ${placeRemnantCountSql('place.id')} AS remnant_count
       FROM places place
       WHERE place.owner_id = $1::integer AND ($2::integer IS NULL OR place.id < $2::integer)
       ORDER BY place.id DESC LIMIT $3::integer
@@ -1393,7 +1395,8 @@ app.get('/api/me', async c => {
         thing.open_to_use, thing.shared_use_may_destroy,
         coalesce(thing.as_kind_id, thing.kind_id) AS kind_id, thing.birth_revision,
         coalesce(thing.as_revision, thing.current_revision) AS current_revision,
-        ${thingBornAsColumnsSql('thing')}, thing.created_at
+        ${thingBornAsColumnsSql('thing')}, thing.created_at,
+        ${thingShortEndsSql('thing')} AS ends
       FROM things thing
       JOIN residents maker ON maker.id = thing.maker_id
       JOIN residents current_owner ON current_owner.id = thing.owner_id
@@ -1436,12 +1439,15 @@ app.get('/api/me', async c => {
     `, [resident.id, noteRequest.cursor, noteRequest.fetchLimit]),
     executePublicQuery(`
       /* public:me_offers */
-      SELECT id, asset_type AS type, asset_id, status, price_usdc::float8 AS price_usdc,
-        reserved_until, created_at
-      FROM transfer_offers
-      WHERE (seller_id = $1::integer OR buyer_id = $1::integer)
-        AND ($2::integer IS NULL OR id < $2::integer)
-      ORDER BY id DESC LIMIT $3::integer
+      SELECT offer.id, offer.asset_type AS type, offer.asset_id, offer.status,
+        offer.price_usdc::float8 AS price_usdc, offer.reserved_until, offer.created_at,
+        ${thingShortEndsSql('offered_thing')} AS ends
+      FROM transfer_offers offer
+      LEFT JOIN things offered_thing
+        ON offer.asset_type = 'thing' AND offered_thing.id = offer.asset_id
+      WHERE (offer.seller_id = $1::integer OR offer.buyer_id = $1::integer)
+        AND ($2::integer IS NULL OR offer.id < $2::integer)
+      ORDER BY offer.id DESC LIMIT $3::integer
     `, [resident.id, offerRequest.cursor, offerRequest.fetchLimit]),
     readCityCreditAccount({ query: sql.query }, resident.id, {
       beforeId: creditRequest.beforeId,
@@ -1456,8 +1462,10 @@ app.get('/api/me', async c => {
   const places = finalizePublicPage(
     placeRows as Array<Record<string, unknown> & { id: number }>, placeRequest.limit,
   )
+  // Each thing's short status as of this read, left out when it has no end (T17a).
   const things = finalizePublicPage(
-    await moderateThingKindHistory(thingRows as Array<Record<string, unknown> & { id: number }>),
+    (await moderateThingKindHistory(thingRows as Array<Record<string, unknown> & { id: number }>))
+      .map(row => withShortEnds(row)),
     thingRequest.limit,
   )
   const kinds = finalizePublicPage(
@@ -1476,7 +1484,8 @@ app.get('/api/me', async c => {
     .map(note => (noteView === 'outline' ? bodyOutline(note) : note))
   const reading = readingBlock(reader, meNotes, ['body'])
   const offers = finalizePublicPage(
-    offerRows as Array<Record<string, unknown> & { id: number }>, offerRequest.limit,
+    (offerRows as Array<Record<string, unknown> & { id: number }>).map(row => withShortEnds(row)),
+    offerRequest.limit,
   )
   // Your current labels and when each ends: null while any current row of it never ends,
   // else its latest end; a label the founder ended at your request is gone (#168, #169).

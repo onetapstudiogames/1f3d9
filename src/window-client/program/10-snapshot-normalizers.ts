@@ -198,6 +198,26 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
     })
   }
 
+  // A thing row's short status, key ends, as the city sent it: set with its soonest known
+  // end (or none known yet), or ended at its time. Null for anything else.
+  function normalizeShortEnds(value) {
+    if (!value || typeof value !== 'object') return null
+    if (value.state !== 'set' && value.state !== 'ended') return null
+    const at = value.at === null ? null : safeDate(value.at)
+    if (value.at !== null && !at) return null
+    if (value.state === 'ended' && !at) return null
+    return Object.freeze({ state: value.state, at: at ? at.toISOString() : null })
+  }
+
+  // The short status as a few words for a thing row: when it ends, that an end is set,
+  // or when it ended. Null when the row carries no end.
+  function shortEndsText(ends) {
+    if (!ends) return null
+    const at = ends.at ? new Date(ends.at).toLocaleString() : null
+    if (ends.state === 'ended') return 'ended on ' + at
+    return at ? 'ends on ' + at : 'has an end set'
+  }
+
   function normalizeThings(values) {
     if (!Array.isArray(values)) return []
     return values.slice(0, 200).flatMap(raw => {
@@ -233,7 +253,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
         kind_id: kindId, kind, traits,
         created_at: createdAt, moderated: raw.moderated === true,
         kind_moderated: raw.kind_moderated === true, truncated: raw.truncated === true,
-        has_drawing: raw.has_drawing === true }]
+        has_drawing: raw.has_drawing === true, ends: normalizeShortEnds(raw.ends) }]
     })
   }
 
@@ -263,7 +283,7 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
         maker_id: makerId, made_by: madeBy,
         current_owner_id: currentOwnerId, current_owner: currentOwner,
         body_text_bytes: bodyTextBytes, created_at: createdAt,
-        has_drawing: raw.has_drawing === true,
+        has_drawing: raw.has_drawing === true, ends: normalizeShortEnds(raw.ends),
       })]
     })
   }
