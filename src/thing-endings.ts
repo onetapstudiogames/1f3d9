@@ -573,12 +573,31 @@ export interface EndingDueRow {
   readonly ending_uses_left?: number | null
   readonly ending_uses_spent_at: EndingTime | null
   readonly ending_label?: string | null
-  /** The created_at of the first label row on the thing with its watched label, expired or not. */
+  /**
+   * The soonest created_at among this thing's active_labels rows with its watched label
+   * created strictly after ending_set_at, expired or not: THING_FIRST_LABEL_AT_SQL, the
+   * subquery thing_end_due_at_row uses. The filter sits inside the min, so an older row
+   * with the same label never hides a newer one. Null when there is none.
+   */
   readonly first_label_at: EndingTime | null
   readonly ended_at?: EndingTime | null
 }
 
-/** The first watched label row counts only when it was created after the end was set. */
+/**
+ * The one SQL fragment a loader selects as first_label_at, the same subquery
+ * thing_end_due_at_row runs. It reads the row under the alias `thing`. A door that only
+ * needs the due time can read thing_end_due_at(id) instead.
+ */
+export const THING_FIRST_LABEL_AT_SQL = `(
+  SELECT min(label.created_at)
+  FROM active_labels AS label
+  WHERE label.target_type = 'thing'
+    AND label.target_id = thing.id
+    AND label.label = thing.ending_label
+    AND label.created_at > thing.ending_set_at
+)`
+
+/** A label row counts only when it was created strictly after the end was set. */
 function countedLabelAt(row: EndingDueRow): Date | null {
   const labelAt = toDate(row.first_label_at)
   const setAt = toDate(row.ending_set_at)

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { EngineError } from '../src/engine.ts'
 import {
   ENDING_MAX_SECONDS,
@@ -22,6 +23,7 @@ import {
   DEFAULT_ENDING_POLICY,
   ENDING_MODES,
   THING_ENDING_LIMITS_VERSION,
+  THING_FIRST_LABEL_AT_SQL,
   assertRenewalFits,
   buildGrant,
   copyRuleFrom,
@@ -491,10 +493,15 @@ test('endingDueAt is the soonest condition and dueCause names it', () => {
   })
   assert.equal(dueCause(labelled), 'label_added')
   assert.equal(endingDueAt(labelled)?.toISOString(), at(-10))
-  // A label row from before the end was set never counts.
+  // The loader's subquery (THING_FIRST_LABEL_AT_SQL) only returns rows created after the
+  // end was set, so a value at or before set_at is a broken loader; the rule still ignores it.
   const early = thingRow({ ...labelled, first_label_at: new Date(SET_AT.getTime() - 1) })
   assert.equal(endingDueAt(early)?.toISOString(), at(3_600))
   assert.equal(dueCause(early), 'idle_seconds')
+  // The boundary is strict, as in SQL: a row created at the same instant as set_at never counts.
+  const same = thingRow({ ...labelled, first_label_at: SET_AT })
+  assert.equal(endingDueAt(same)?.toISOString(), at(3_600))
+  assert.equal(dueCause(same), 'idle_seconds')
   const after = thingRow({
     ending_rule: { any: [{ after_setting_seconds: 600 }] },
     ending_set_at: SET_AT,
@@ -783,4 +790,13 @@ test('the ending words carry no dashes or curly quotes and E17 names both traits
   for (const words of [ENDING_POLICY_REFUSAL, ENDING_NOT_ALLOWED_REFUSAL, ENDING_SHAPE_REFUSAL, ENDING_COPY_FIXED_REFUSAL, KINDLESS_ENDING_REFUSAL]) {
     assert.doesNotMatch(words, /[\u2013\u2014\u2018\u2019\u201C\u201D]/u)
   }
+})
+
+test('THING_FIRST_LABEL_AT_SQL is the label subquery thing_end_due_at_row runs', () => {
+  const flat = (text: string): string => text.replace(/\s+/gu, ' ').trim()
+  const migration = readFileSync(new URL('../db/migrations/20261106_thing_endings.sql', import.meta.url), 'utf8')
+  const body = migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION thing_end_due_at_row'))
+  const fn = body.slice(0, body.indexOf('$thing_end_due_at_row$;'))
+  assert.ok(flat(fn).includes(flat(THING_FIRST_LABEL_AT_SQL)))
+  assert.ok(flat(THING_FIRST_LABEL_AT_SQL).includes('AND label.created_at > thing.ending_set_at )'))
 })
