@@ -188,12 +188,18 @@ export function makeHarness(
           : {}),
       }]
     }
+    if (text.includes('/* thing-endings:claim-window */')) {
+      const reached = state.claimEnd?.reached ?? state.offer?.thing_ending_reached === true
+      const afterRefusedReserve = state.reserveEndRefused === true
+        && state.queries.some(query => query.text.includes('world-market:reserve'))
+      return [{ reached, within_window: afterRefusedReserve || (state.claimEnd?.within_window ?? reached) }]
+    }
     if (text.includes('world-market:public-moderation')) {
       return state.thingModerated ? [{ action: 'remove' }] : []
     }
     if (text.includes('world-market:reserve')) {
       const offer = state.offer
-      if (!offer || offer.status !== 'open') return []
+      if (!offer || offer.status !== 'open' || state.reserveEndRefused === true) return []
       const active = offer.reserved_until != null && Date.parse(offer.reserved_until) > Date.parse(state.now)
       if (active) return []
       const buyerId = Number(params[1])

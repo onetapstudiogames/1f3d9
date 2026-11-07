@@ -62,3 +62,50 @@ export function giveEndingRefusal(facts: DoorEndFacts | null, check: GiveEndingC
   if (!facts.endingSet || facts.endReached || check.recipientId === check.actorId) return null
   return check.accepting === true ? ENDING_GIFT_ACCEPT_REFUSAL : ENDING_GIVE_REFUSAL
 }
+
+/** What a claim door reads about a thing's end before it opens a reservation or takes a payment. */
+export interface ClaimEndFacts {
+  /** The end has come: recorded, or due at the transaction time. */
+  readonly reached: boolean
+  /** The end has come, or comes before this many seconds pass on the database clock. */
+  readonly withinWindow: boolean
+}
+
+type PositionalQuery = (text: string, params: readonly unknown[]) => Promise<unknown>
+
+// The clock is the one the reservation UPDATE uses for its window, so a claim refused here
+// is the claim the UPDATE's own end clause would refuse.
+const CLAIM_END_SQL = `
+  /* thing-endings:claim-window */
+  SELECT thing_end_reached($1::integer) AS reached,
+    coalesce(thing_end_due_at($1::integer) <= clock_timestamp() + make_interval(secs => $2::integer), false)
+      AS within_window
+`
+
+/**
+ * The end facts a claim door judges by. A thing with no end, or no such thing, reads neither.
+ * Pass the window the door's reservation would open for.
+ */
+export async function readClaimEndFacts(
+  query: PositionalQuery,
+  thingId: number,
+  windowSeconds: number,
+): Promise<ClaimEndFacts> {
+  const found = await query(CLAIM_END_SQL, [thingId, windowSeconds])
+  const row = Array.isArray(found) ? found[0] as Record<string, unknown> | undefined : undefined
+  const reached = row?.reached === true
+  return Object.freeze({ reached, withinWindow: reached || row?.within_window === true })
+}
+
+/** Payment attempt statuses that hold no evidence: a new payment would start from nothing. */
+const SPENT_ATTEMPT_STATUSES: ReadonlySet<string> = new Set(['invalid', 'expired'])
+
+/**
+ * True when a claim may still answer E8: no payment attempt, or only one that holds no
+ * evidence. A claim with a settling, pending, review or completed attempt, or with payment
+ * evidence on its offer, never answers E8, so accepted evidence keeps its sale (#32).
+ */
+export function claimMayRefuseForEnd(attemptStatus: string | null | undefined, evidencePending = false): boolean {
+  if (evidencePending) return false
+  return attemptStatus == null || SPENT_ATTEMPT_STATUSES.has(attemptStatus)
+}

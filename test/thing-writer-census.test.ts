@@ -62,9 +62,9 @@ const WRITE_SITES: Readonly<Record<string, Decision>> = Object.freeze({
   'src/payment-sale-operation-sql.ts CLOSE_SALE_TARGET_SQL UPDATE#1':
     'guarded: payment recovery may release an open sale lock (active_offer_id to NULL); it never records an end (#167)',
   'src/payment-sale-operation-sql.ts DIRECT_COMPLETION_SQL UPDATE#1':
-    'guarded: closing a sale already open may change the owner as active_offer_id turns NULL (#32); the claim doors record first in T13',
+    'guarded: closing a sale already open may change the owner as active_offer_id turns NULL (#32); the claim doors record first and refuse a new reservation or payment (E8)',
   'src/payment-sale-operation-sql.ts WORLD_COMPLETION_SQL UPDATE#1':
-    'guarded: closing a sale already open may change the owner as active_offer_id turns NULL (#32); the claim doors record first in T13',
+    'guarded: closing a sale already open may change the owner as active_offer_id turns NULL (#32); the claim doors record first and refuse a new reservation or payment (E8)',
   'src/thing-ending-owner.ts writeOwnerEnding UPDATE#1':
     'records first: thing_edit and thing_upgrade record first; its WHERE refuses a reached thing (E5 or E16)',
   'src/thing-ending-record.ts RECORD_SQL UPDATE#1':
@@ -300,4 +300,17 @@ test('the census scanner names a site by its code, not by its line', () => {
     }
   }
   assert.deepEqual(names, ['sample UPDATE#1', 'sample UPDATE#2', 'PATCH /api/sample/:id INSERT#1'])
+})
+
+test('payment recovery and the stored sale completions never record an end (#167, #32)', () => {
+  for (const file of [
+    'src/payment-sale-operation-sql.ts',
+    'src/payment-sale-operations.ts',
+    'src/payment-recovery-runtime.ts',
+    'src/payment-recovery.ts',
+    'src/payment-recovery-routes.ts',
+  ]) {
+    const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(text, /thing-ending|recordDueEnd|ending_writer/u, `${file} names no ending code`)
+  }
 })

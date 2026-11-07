@@ -27,7 +27,8 @@ import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
-import { THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
+import { claimMayRefuseForEnd, readClaimEndFacts } from './thing-ending-doors.ts'
+import { ENDING_PURCHASE_REFUSAL, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 import {
   THING_ENDING_READ_COLUMNS,
   THING_ENDING_READ_JOIN,
@@ -43,6 +44,8 @@ const MARKET_RESPONSE_BYTES = 256 * 1024
 const MARKET_TIMEOUT_MS = 4_000
 const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; use GET /api/world-market if your client can open URLs, and retry with a current offer_id'
 const WORLD_OFFER_BATCH_MAX = 50
+// The reservation window, the same length as the literal interval '5 minutes' in the reserve UPDATE.
+const WORLD_CLAIM_WINDOW_SECONDS = 300
 const WORLD_OFFER_BATCH_STATEMENT_TIMEOUT = '1500ms'
 const WORLD_OFFER_ID_TEXT = /^[1-9][0-9]*$/u
 const WORLD_OFFER_IDS_REFUSAL = 'world offer ids were rejected because ids must appear once and list positive whole numbers separated by commas with no spaces; retry with ids such as ids=101,102'
@@ -929,6 +932,12 @@ export function mountWorldMarketRoutes(
     if (offer.status === 'canceled') return err(c, 409, 'world offer is canceled; choose an active market listing instead')
     if (!offer.locked) return err(c, 409, 'the thing is not locked by this world offer; the seller must list it again from its matching market draft')
     if (offer.seller_id === buyer.id) return err(c, 400, 'you cannot buy your own thing; choose an active offer from another seller')
+    // A due end is recorded first; the claim then judges the end by the database: no new
+    // reservation or payment starts once it has come, or when it would come inside the window.
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
+    }
+    const claimEnd = (thingId: number) => readClaimEndFacts(dependencies.query, thingId, WORLD_CLAIM_WINDOW_SECONDS)
 
     const now = dependencies.now()
     const pendingAtStart = paymentPending(offer)
@@ -958,6 +967,7 @@ export function mountWorldMarketRoutes(
       if (!checkoutId || !requestedWallet) {
         return err(c, 400, 'first claim call requires market_checkout_id and buyer_wallet')
       }
+      if ((await claimEnd(offer.asset_id)).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
 
       const checkoutPayload = await getMarket(c, dependencies, `/api/world/checkout/${checkoutId}`)
       if (isResponse(checkoutPayload)) return checkoutPayload
@@ -1014,6 +1024,8 @@ export function mountWorldMarketRoutes(
               WHERE things.id = transfer_offers.asset_id
                 AND things.owner_id = transfer_offers.seller_id
                 AND things.withdrawn_at IS NULL AND things.active_offer_id = transfer_offers.id
+                AND things.ended_at IS NULL
+                AND coalesce(thing_end_due_at_row(things) > clock_timestamp() + interval '5 minutes', true)
             )
           RETURNING id
         `, [
@@ -1027,6 +1039,7 @@ export function mountWorldMarketRoutes(
           checkout.marketBuyer,
         ])
         if (!rows[0]) {
+          if ((await claimEnd(offer.asset_id)).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
           const raced = await readOffer(dependencies, offer.id)
           if (
             raced && reservationActive(raced, dependencies.now()) && raced.buyer_id === buyer.id &&
@@ -1057,7 +1070,14 @@ export function mountWorldMarketRoutes(
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
         return err(c, 409, 'buyer_wallet does not match the active reservation; re-read the offer and resend its reserved buyer wallet')
       }
-      if (!hasPayment && !existingAttempt) return challenge(c, offer)
+      if (!hasPayment && !existingAttempt) {
+        return offer.end.reached ? err(c, 409, ENDING_PURCHASE_REFUSAL) : challenge(c, offer)
+      }
+    }
+    // Inside an open window only a use or a label can bring the end, and that makes it due
+    // at once, so a new payment is judged by whether it has come. Evidence goes on (#32).
+    if (hasPayment && offer.end.reached && claimMayRefuseForEnd(existingAttempt?.status, pendingAtStart)) {
+      return err(c, 409, ENDING_PURCHASE_REFUSAL)
     }
 
     const reservedAt = timestamp(offer.reserved_at)!
@@ -1193,6 +1213,10 @@ export function mountWorldMarketRoutes(
     if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (actor.id !== offer.seller_id && actor.id !== offer.buyer_id) {
       return err(c, 403, 'only this offer seller or buyer may reconcile its payment')
+    }
+    // A due end is recorded; accepted evidence still settles the sale (#32).
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
     }
     if (offer.status === 'claimed' || offer.status === 'canceled' || paymentInvalid(offer)) {
       return c.json({ offer: publicOffer(offer, dependencies.now()) })

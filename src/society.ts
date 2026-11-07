@@ -120,7 +120,13 @@ import {
   WALK_TO_READ_TYPE_REFUSAL,
 } from './walk-to-read.ts'
 
-import { giveEndingRefusal, readDoorEndFacts } from './thing-ending-doors.ts'
+import {
+  claimMayRefuseForEnd,
+  giveEndingRefusal,
+  readClaimEndFacts,
+  readDoorEndFacts,
+} from './thing-ending-doors.ts'
+import { ENDING_PURCHASE_REFUSAL } from './thing-ending-refusals.ts'
 import { readThingEnding } from './thing-ending-read.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
 
@@ -1080,6 +1086,12 @@ export function mountSocietyRoutes(app: Hono): void {
       return err(c, 409, `offer is ${offer.status}; choose an open offer or ask its seller to create a new one`)
     }
     if (offer.buyer_id !== resident.id) return err(c, 403, 'only the named buyer may claim this offer')
+    // A due end is recorded first. The claim then judges the end by the database: no new
+    // reservation or payment starts once it has come, or when it would come inside the window.
+    if (type === 'thing') await recordDueEndQuietly([offer.asset_id])
+    const claimEnd = () => type === 'thing'
+      ? readClaimEndFacts((text, params) => sql.query(text, [...params]), offer.asset_id, CLAIM_WINDOW_SECONDS)
+      : Promise.resolve({ reached: false, withinWindow: false })
     const owner = await ownerOf(type, offer.asset_id)
     if (!owner || owner.owner_id !== offer.seller_id)
       return err(c, 409, 'seller no longer owns this asset; choose an offer whose seller still owns its asset')
@@ -1119,6 +1131,7 @@ export function mountSocietyRoutes(app: Hono): void {
         return err(c, 400, 'first claim call requires buyer_wallet to open a five-minute reservation')
       if (paymentHeader)
         return err(c, 409, 'no active reservation; open one before sending payment')
+      if ((await claimEnd()).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
 
       const reservedRows = await sql.query(`
         UPDATE transfer_offers SET
@@ -1132,6 +1145,11 @@ export function mountSocietyRoutes(app: Hono): void {
             SELECT 1 FROM ${table}
             WHERE id = $5 AND owner_id = $4 AND active_offer_id = $3${transferable}
           )
+          AND ($6 <> 'thing' OR NOT EXISTS (
+            SELECT 1 FROM things ending
+            WHERE ending.id = $5 AND (ending.ended_at IS NOT NULL
+              OR thing_end_due_at_row(ending) <= clock_timestamp() + make_interval(secs => $2))
+          ))
           AND NOT EXISTS (
             SELECT 1 FROM transfer_offers conflict
             WHERE conflict.asset_type = $6 AND conflict.asset_id = $5
@@ -1142,8 +1160,10 @@ export function mountSocietyRoutes(app: Hono): void {
         resident.id, CLAIM_WINDOW_SECONDS, offerId, offer.seller_id,
         offer.asset_id, type, requestedWallet,
       ]) as { id: number; reserved_until: string }[]
-      if (!reservedRows[0])
+      if (!reservedRows[0]) {
+        if ((await claimEnd()).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
         return err(c, 409, 'offer, reservation, withdrawal, or ownership changed; re-read the offer')
+      }
       return challenge402(
         c,
         accepted,
@@ -1154,6 +1174,10 @@ export function mountSocietyRoutes(app: Hono): void {
     const buyerWallet = offer.buyer_wallet!.toLowerCase()
     if (requestedWallet && requestedWallet !== buyerWallet)
       return err(c, 409, 'buyer_wallet does not match the active reservation; re-read the offer and resend its reserved buyer wallet')
+    // Inside an open window only a use or a label can bring the end, and that makes it due
+    // at once, so these judge whether it has come. An attempt holding evidence goes on (#32).
+    if (claimMayRefuseForEnd(existingAttempt?.status) && (paymentHeader || !existingAttempt)
+      && (await claimEnd()).reached) return err(c, 409, ENDING_PURCHASE_REFUSAL)
     if (!paymentHeader && !existingAttempt)
       return challenge402(
         c,
