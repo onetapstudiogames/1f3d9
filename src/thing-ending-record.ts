@@ -24,13 +24,13 @@ function thingIdList(thingIds: readonly number[]): number[] {
   return [...new Set(thingIds.filter(id => Number.isSafeInteger(id) && id > 0))].sort((a, b) => a - b)
 }
 
-/** The ids among these whose end has come and is not yet recorded. */
+/** The ids among these whose end has come and is not yet recorded. A withdrawn thing is never recorded. */
 async function dueUnrecorded(ids: readonly number[], db: TaggedSql): Promise<number[]> {
   const found = await rows(db`
     /* thing-endings:due-ids */
     SELECT id FROM things
     WHERE id = ANY(${ids}::int[]) AND ending_rule IS NOT NULL AND ended_at IS NULL
-      AND thing_end_due(id, transaction_timestamp())
+      AND withdrawn_at IS NULL AND thing_end_due(id, transaction_timestamp())
     ORDER BY id
   `)
   return found.map(row => Number(row.id)).filter(id => Number.isSafeInteger(id) && id > 0)
@@ -40,7 +40,7 @@ const LOCK_SQL = `
   /* thing-endings:record-lock */
   SELECT thing.ending_rule, thing.ending_set_at, thing.ending_deadline, thing.ending_idle_seconds,
     thing.ending_idle_anchor, thing.ending_uses_left, thing.ending_uses_spent_at, thing.ending_label,
-    thing.ending_copied_from, thing.ended_at,
+    thing.ending_copied_from, thing.ended_at, thing.withdrawn_at,
     ${THING_FIRST_LABEL_AT_SQL} AS first_label_at,
     thing_end_due(thing.id, transaction_timestamp()) AS due
   FROM things thing
@@ -75,6 +75,7 @@ const RECORD_SQL = `
       ) THEN 'pending' ELSE 'none' END
     WHERE thing.id = $1::integer
       AND thing.ended_at IS NULL
+      AND thing.withdrawn_at IS NULL
       AND thing_end_due(thing.id, transaction_timestamp())
       AND (SELECT set_config('city.ending_writer', 'record:' || $1::text, true)) IS NOT NULL
     RETURNING thing.id, thing.place_id, thing.ended_at, thing.ended_cause, thing.ended_owner_id,
@@ -107,7 +108,7 @@ async function recordOne(thingId: number, db: TaggedSql): Promise<boolean> {
       throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
     }
     const locked = (await rows(transaction.query(LOCK_SQL, [thingId])))[0]
-    if (!locked || locked.due !== true || locked.ended_at != null) return false
+    if (!locked || locked.due !== true || locked.ended_at != null || locked.withdrawn_at != null) return false
     const cause = dueCause(locked as unknown as EndingDueRow & Readonly<{ ending_copied_from?: number | null }>)
     if (cause === null) {
       // SQL says due but no condition names a time: the stored rule is unreadable.
@@ -122,7 +123,8 @@ async function recordOne(thingId: number, db: TaggedSql): Promise<boolean> {
 
 /**
  * Record each due end among these things, one short transaction per thing. Returns the
- * ids recorded in this call: none when nothing was due or each was already recorded. A
+ * ids recorded in this call: none when nothing was due, each was already recorded, or the
+ * thing was withdrawn (a withdrawn thing is never recorded and returns no id). A
  * door tells a thing that just became a remnant (refuse E7) from one that already was
  * only by this value. Pass engineSql or the request's sql, never a wrapped executor.
  */

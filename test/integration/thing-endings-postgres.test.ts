@@ -248,6 +248,24 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       assert.deepEqual((await one<Json>('SELECT last_public_action_at FROM residents WHERE id = $1', [OWNER.id])).last_public_action_at, stampedBefore)
     })
 
+    await t.test('a thing withdrawn before its end came is never recorded, and a use of it answers 404', async sub => {
+      await reset()
+      const thingId = await seedThing(room, { openToUse: true })
+      await setEnd(thingId, { at: '1 day' })
+      await db.query(`UPDATE things SET ending_deadline = clock_timestamp() + interval '1500 milliseconds' WHERE id = $1`, [thingId])
+      await db.query('UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [thingId])
+      await delay(2_000)
+      assert.equal((await one<Json>('SELECT thing_end_due(id, now()) AS due FROM things WHERE id = $1', [thingId])).due, true)
+      const logged = sub.mock.method(console, 'error', () => undefined)
+      assert.deepEqual(await recordDueEnd([thingId]), [])
+      const used = await act(VISITOR.secret, { action: 'use', thing_id: thingId })
+      assert.equal(used.status, 404, JSON.stringify(used.json))
+      const failures = logged.mock.calls.filter(entry => String(entry.arguments[0]).includes('record failed'))
+      assert.equal(failures.length, 0, 'no failing record transaction')
+      assert.equal((await ending(thingId)).ended_at, null)
+      assert.equal((await endedEvents(thingId)).length, 0)
+    })
+
     await t.test('ended_cause names the condition met first, for each mode and a copy', async () => {
       await reset()
       const cases: Array<readonly [string, EndSpec]> = [
