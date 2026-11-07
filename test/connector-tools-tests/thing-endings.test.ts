@@ -62,7 +62,7 @@ const CLAUSES: Readonly<Record<string, readonly string[]>> = {
     'Endings: front_door section things-ending.',
   ],
   thing_upgrade: [
-    'ending may set, renew or clear its end in the same upgrade, under the revision it reaches. A remnant cannot be upgraded.',
+    'ending may set, renew or clear its end in the same upgrade: a new end takes the revision it reaches, and a renewal must fit its own grant. A remnant cannot be upgraded.',
   ],
   coin_trait: [
     'with one optional wake key {on, every_seconds, then} and one optional end key {then}.',

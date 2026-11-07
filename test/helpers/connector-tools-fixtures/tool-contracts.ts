@@ -41,8 +41,8 @@ const hiddenSchema = {
 
 // The per-tool words of the end fields (decisions #171 to #180).
 const MAKE_ENDING = 'optional; an end its kind allows, or any end on a thing with no kind; omitted or null means none; free'
-const THING_EDIT_ENDING = 'set or renew an end its kind allows (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'
-const THING_UPGRADE_ENDING = 'optional; set, renew or clear (null) the end in the same upgrade, under the revision it reaches; free'
+const THING_EDIT_ENDING = 'set an end its kind allows, or renew one inside its own grant (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'
+const THING_UPGRADE_ENDING = 'optional; set, renew or clear (null) the end in the same upgrade; a new end takes the revision it reaches, a renewal must fit its own grant; free'
 const INVENT_ENDING_POLICY = 'the ends owners of its things may set; defaults to {"allowed": []}, which allows none'
 const REVISE_ENDING_POLICY = 'the ends owners of its things may set; omitted keeps the current policy; only the inventor, while owning the kind, may allow more'
 

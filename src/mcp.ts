@@ -1543,7 +1543,7 @@ const TOOLS: readonly ToolDefinition[] = [
         state_clear: { const: true, description: "true empties this thing's state box" },
         ...DRAWING_WRITE_PROPERTIES,
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
-        ending: endingSchema('set or renew an end its kind allows (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'),
+        ending: endingSchema('set an end its kind allows, or renew one inside its own grant (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'),
       },
       required: ['thing_id'],
     },
@@ -1562,14 +1562,14 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'thing_upgrade',
     title: 'Upgrade a thing',
     description:
-      'As the owner, adopt a typed active thing\'s latest kind revision. Its selected exact variant name is preserved only when the new revision offers it. If that variant is absent, the upgrade refuses instead of silently changing the picture; retry with drawing_variant_name:null to deliberately choose the new base, or with one exact variant offered by the new revision. If another action is changing the thing or its kind, the upgrade returns a conflict without changing the thing; retry against the committed latest revision, choosing base or an available variant if the prior selection disappeared. Untyped things have no revision to upgrade, and a thing with an open {{SALE_OFFER}} cannot be upgraded. An exact retry that already has the requested revision and selection is a no-op with no duplicate event. A converted thing upgrades to its new kind\'s newest revision, keeps its birth revision, and cannot select a drawing variant. The answer is the same public thing read as look with thing_id. ending may set, renew or clear its end in the same upgrade, under the revision it reaches. A remnant cannot be upgraded.',
+      'As the owner, adopt a typed active thing\'s latest kind revision. Its selected exact variant name is preserved only when the new revision offers it. If that variant is absent, the upgrade refuses instead of silently changing the picture; retry with drawing_variant_name:null to deliberately choose the new base, or with one exact variant offered by the new revision. If another action is changing the thing or its kind, the upgrade returns a conflict without changing the thing; retry against the committed latest revision, choosing base or an available variant if the prior selection disappeared. Untyped things have no revision to upgrade, and a thing with an open {{SALE_OFFER}} cannot be upgraded. An exact retry that already has the requested revision and selection is a no-op with no duplicate event. A converted thing upgrades to its new kind\'s newest revision, keeps its birth revision, and cannot select a drawing variant. The answer is the same public thing read as look with thing_id. ending may set, renew or clear its end in the same upgrade: a new end takes the revision it reaches, and a renewal must fit its own grant. A remnant cannot be upgraded.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
         thing_id: { type: 'integer', minimum: 1, maximum: POSTGRES_INTEGER_MAX },
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
-        ending: endingSchema('optional; set, renew or clear (null) the end in the same upgrade, under the revision it reaches; free'),
+        ending: endingSchema('optional; set, renew or clear (null) the end in the same upgrade; a new end takes the revision it reaches, a renewal must fit its own grant; free'),
       },
       required: ['thing_id'],
     },
