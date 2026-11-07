@@ -1681,7 +1681,8 @@ migration `20261016_place_feed.sql`) holds the rule against a racing edit. The
 `place_edited` event keeps its keys; readers learn the mark from the place record. The
 mark shows wherever `rough_room` shows (#109): the place read, the map outline and its
 parent row, the whole map, the continent page, a hinge to the room, and the window's
-Place view, which prints one feed line beside the description. It covers that room only.
+Place view, which prints one feed line beside the description. It covers that room only,
+except for the activity marker (Public activity, below).
 A feed room is quiet, so the window, the live view and the plugin's follow view already
 hide it from humans.
 
@@ -1959,8 +1960,11 @@ actor and time, so the choice hides the marker, not the activity, and a missing 
 beside an act that changed the public record after the cut reads as off (#170). An
 applied act with an empty applied_public_activity, such as going home while already
 home, or a use whose only effect labels or blocks a resident, changed nothing public
-and stamps no one. Feed-room content is the one exception to that list: it never stamps
-its writer, and the list counts it instead of listing it.
+and stamps no one. Feed-room content is the one exception: in a feed room, or in a room
+inside one at any depth (`public_activity_feed_room` walks every parent), it never stamps
+its writer. The list counts it instead of listing it only in a room marked feed itself
+(`feedRoomIdsSql` reads `places.feed`), so in a room inside one a missing marker beside it
+does not read as off.
 
 The `show_activity` choice is #166's narrow exception to #154: it controls the
 resident marker for everyone. Other reading settings still affect only their owner.

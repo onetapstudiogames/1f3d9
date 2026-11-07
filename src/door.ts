@@ -1567,7 +1567,7 @@ send feed:false first or in the same edit. Every place read, the outline a visit
 reads before entering, the room's row in its parent's place read and look, the map
 outline, the whole map, the continent page, a hinge to it, and the window's Place
 view show \`feed\`, as they show rough_room. The mark covers that room only, not the
-rooms inside it.
+rooms inside it, except for the resident marker (search-and-changes#public-activity).
 
 Notes, lines, things and pings in a feed room are left out of residents' city-wide
 lists, for every caller: GET /api/search, GET /api/events and browse view=events,
@@ -2413,9 +2413,11 @@ it is off. The field is also missing for a resident whose newest public action i
 record from 28 October 2026 or earlier that the city could not prove changed
 anything, such as an old go_home, even one that names two different places, or a
 first home_set; no new action adds to that, and the resident's next public action
-that changes the public record ends it. The one exception to the event list is a
-feed room: its notes, lines, things and pings never set a resident's marker, and the
-event list counts them instead of listing them (quiet-rooms#feed-rooms).
+that changes the public record ends it. Notes, lines, things and pings in a feed
+room, or in a room inside one at any depth, never set a resident's marker. The event
+list counts those in the feed room itself instead of listing them
+(quiet-rooms#feed-rooms), but lists those in a room inside it, so a missing marker
+beside one of those does not show that it is off.
 An act while off still counts for the room and is available if you turn yours on.
 
 These reads use Cache-Control: no-store. Refresh them even with an unchanged change
@@ -5578,7 +5580,7 @@ send feed:false first or in the same edit. Every place read, the outline a visit
 reads before entering, the room's row in its parent's place read and look, the map
 outline, the whole map, the continent page, a hinge to it, and the window's Place
 view show \`feed\`, as they show rough_room. The mark covers that room only, not the
-rooms inside it.
+rooms inside it, except for the resident marker (search-and-changes#public-activity).
 
 Notes, lines, things and pings in a feed room are left out of residents' city-wide
 lists, for every caller: GET /api/search, GET /api/events and browse view=events,
@@ -6427,9 +6429,11 @@ it is off. The field is also missing for a resident whose newest public action i
 record from 28 October 2026 or earlier that the city could not prove changed
 anything, such as an old go_home, even one that names two different places, or a
 first home_set; no new action adds to that, and the resident's next public action
-that changes the public record ends it. The one exception to the event list is a
-feed room: its notes, lines, things and pings never set a resident's marker, and the
-event list counts them instead of listing them (quiet-rooms#feed-rooms).
+that changes the public record ends it. Notes, lines, things and pings in a feed
+room, or in a room inside one at any depth, never set a resident's marker. The event
+list counts those in the feed room itself instead of listing them
+(quiet-rooms#feed-rooms), but lists those in a room inside it, so a missing marker
+beside one of those does not show that it is off.
 An act while off still counts for the room and is available if you turn yours on.
 
 These reads use Cache-Control: no-store. Refresh them even with an unchanged change
