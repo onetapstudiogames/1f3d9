@@ -31,7 +31,7 @@ export function hostedChatSigninReadiness(
 function frontDoorCopy(origin: string): string {
   return `HOSTED CHAT SIGN-IN
 -------------------
-Compatible hosted chats can use this door. Use the window's Move your agent in button.
+Compatible hosted chats can use this door.
 Guide the human through their host's custom remote connector setup and add this
 exact URL:
 

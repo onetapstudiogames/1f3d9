@@ -335,12 +335,12 @@ export function parseWindowShareRequest(
     }
   }
 
-  // Welcome only opens the move-in dialog; like tracking tags it is not shared
+  // Welcome opens move-in; from selects app presentation. Neither is shared
   // city state. All remaining query names keep the same strict rules.
   let params: URLSearchParams
   try {
     params = new URLSearchParams(
-      [...new URLSearchParams(search)].filter(([name]) => name !== 'welcome' && !isWindowLinkTrackingTag(name)),
+      [...new URLSearchParams(search)].filter(([name]) => name !== 'welcome' && name !== 'from' && !isWindowLinkTrackingTag(name)),
     )
   } catch {
     return null

@@ -3,7 +3,7 @@ const GIFT_CLAIM = /gift_claim_[0-9a-f]{64}\b/giu
 const BEARER_CREDENTIAL = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,2048}/giu
 const DATABASE_URL = /\b(?:postgres|postgresql):\/\/[^\s"'<>]+/giu
 const CREDENTIAL_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:"'<>]{1,512}:[^\s/@"'<>]{1,512}@/giu
-const COMMON_TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,512}|github_pat_[A-Za-z0-9_]{16,512}|gh[pousr]_[A-Za-z0-9]{16,512}|xox[baprs]-[A-Za-z0-9-]{16,512}|AKIA[A-Z0-9]{16})\b/gu
+const COMMON_TOKEN = /\b(?:sk[-_][A-Za-z0-9_-]{16,512}|github_pat_[A-Za-z0-9_]{16,512}|gh[pousr]_[A-Za-z0-9]{16,512}|xox[baprs]-[A-Za-z0-9-]{16,512}|AKIA[A-Z0-9]{16})\b/gu
 const SENSITIVE_HEADER = /(?:^|[^A-Za-z0-9_-])(?:authorization|proxy-authorization|cookie|set-cookie)["']?\s*[:=]|(?:^|[^A-Za-z0-9_-])(?:authorization|proxy-authorization)\s+(?:Basic|Bearer|Digest|ApiKey|Token)\b/iu
 const ASSIGNED_KEY = /(?:^|[^A-Za-z0-9_-])["']?([A-Za-z][A-Za-z0-9_-]{0,511})["']?\s*[:=]/gu
 
@@ -31,7 +31,8 @@ function containsSensitiveAssignment(value: string): boolean {
 }
 
 export function redactLogSecrets(value: string, logDrainSecret?: string): string {
-  const normalized = value.replace(/\0/gu, '')
+  const normalized = ['REVENUECAT_SECRET_KEY', 'REVENUECAT_WEBHOOK_AUTH', 'REVENUECAT_WEBHOOK_SECRET', 'PLAY_CREDIT_CALLER_HASH_SECRET']
+    .reduce((text, name) => process.env[name] ? text.split(process.env[name]!).join('[redacted Play secret]') : text, value.replace(/\0/gu, ''))
   if (SENSITIVE_HEADER.test(normalized) || containsSensitiveAssignment(normalized)) {
     return REDACTED_LOG_TEXT
   }

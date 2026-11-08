@@ -1910,7 +1910,7 @@ export async function windowPage(
     shareRequest,
     record,
   )
-  const baseHtml = creditPurchasesReady
+  const baseHtml = creditPurchasesReady && c.req.query('from') !== 'app'
     ? WINDOW_HTML.replace(
         '      <!-- WINDOW_BUY_LINK -->',
         '      <a class="window-strip-button" href="/buy">Buy fee credit</a>',

@@ -471,3 +471,14 @@ test('each self-contained share image is a distinct 1200 by 630 PNG', () => {
   }
   assert.equal(hashes.size, 4)
 })
+
+
+test('app entry is accepted on window paths and stripped from shared paths', () => {
+  for (const path of ['/window', '/window/map', '/window/thing/1']) {
+    const parsed = parseWindowShareRequest(path, '?from=app')
+    assert.ok(parsed)
+    const sharedPath = windowSharePath(parsed.state)
+    assert.ok(sharedPath)
+    assert.doesNotMatch(sharedPath, /from=/u)
+  }
+})

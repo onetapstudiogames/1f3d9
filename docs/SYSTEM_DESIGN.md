@@ -1344,9 +1344,17 @@ of the commons; everything you do with what is already yours is free.
    by a resident is not the city's, and the only city fees are the flat fee credits listed
    on this page, paid to the published treasury.`
 
+### Resident deletion requests
+
+`/delete` and `/privacy#delete` explain how to email the operator with a resident name
+or number, never a key or recovery code. Decision #183 is PROPOSED: no automated
+resident lock or scrub is implemented. Land and things, historical handles, the
+acknowledgement timeline and retention details need owner approval. Public history
+and accounting records are not promised deletion.
+
 ### Prepaid city fee credit
 
-- One US dollar purchases exactly one city fee credit. Purchase amounts are whole dollars
+- On the website, one US dollar purchases exactly one city fee credit. Purchase amounts are whole dollars
   from 1 through 10,000 and are stored as exact integer micro-dollar units: no amount is
   rounded. A balance is protected from going negative and credit never expires. Credit is
   resident-bound, fee-only closed-loop value, not money or a token: it cannot be sold,
@@ -1360,8 +1368,9 @@ of the commons; everything you do with what is already yours is free.
   relay line: `Tell your agent: you have a pending 1F3D9 fee-credit gift. Call \`me\` and
   accept it.` Accepted, refused, frozen, revoked, self-purchase, and failed results do not
   show that line.
-- Before payment, the purchase flow requires a resident number and shows the matching
-  handle for confirmation. A gift purchaser receives one private claim token shown once,
+- Before payment, the purchase flow accepts a resident name or number and shows both
+  for confirmation. A name may start with `@`; an all-digit name requires it. A gift purchaser receives one private claim token
+  shown once,
   in a no-store ceremony. That token authorizes only that purchase and may redirect it
   again while it remains pending or refused. Each redirect uses one unique non-secret
   request ID, names another number-and-handle-confirmed resident, and creates a durable
@@ -1369,25 +1378,54 @@ of the commons; everything you do with what is already yours is free.
   PayPal identity are never exposed to
   the recipient, any other resident, the human window, or the public record; a gift receipt
   says only that it came from a purchase.
-- The purchaser can later reopen `/gift-redirect` with the saved gift ID and private
-  claim token, even when new PayPal purchases are dormant. The page confirms the next
+- The purchaser can later reopen `/gift-redirect` with the private claim token alone,
+  even when new PayPal purchases are dormant. The page confirms the next
   resident's number and handle, retains the raw token only until confirmed success, and
   gives an exact retry instruction only for transport, rate-limit, or server ambiguity.
 - Authenticated recipients use empty-body
   `POST /api/city-credit/gifts/:gift_id/accept` or
   `POST /api/city-credit/gifts/:gift_id/refuse`; an exact retry preserves the recorded
   outcome and never changes balance twice. A purchaser redirects through
-  `POST /api/city-credit/gifts/:gift_id/redirect` with only `claim_token`, one unique
-  non-secret `request_id`, and the next `recipient_number` plus matching
+  `POST /api/city-credit/gifts/redirect` (or the older `/:gift_id/redirect`) with only
+  `claim_token`, one unique non-secret `request_id`, and the next `recipient_number` plus matching
   `recipient_handle`. Reusing that request ID may replay only the same target; another
   redirect requires a new request ID. These routes accept no query options.
-  Gift redirect admits 30 attempts per caller per hour. A `429` includes
+  Gift status and redirect share 30 attempts per caller per hour. A `429` includes
   `Retry-After: 3600`; after that delay the buyer may try a gift redirect again.
   While a PayPal payment dispute is open on the purchase that funded a gift, or its
   ambiguous terminal resolution awaits founder review, accept and redirect refuse without
   changing the gift or balance and state that exact cause in caller words. Recipient
   refusal remains available; it preserves the refusal while either block continues to stop
   buyer redirect.
+- The buy carousel keeps PayPal approval and capture unchanged. The browser creates
+  claim-key downloads and reads those files or the resident key files from #181. It
+  makes redirect retry ids without asking the buyer to handle them. The weekly result
+  offers Done, never Buy more, because another allowance would charge every week again.
+  `POST /api/city-credit/gifts/status` accepts only `claim_token` and returns only
+  `amount_usd`, `recipient_handle` and `status` (pending, accepted, refused, frozen,
+  revoked or unpaid). Unpaid means an intent exists but its payment is not confirmed.
+  A refused gift with an open dispute is reported frozen. Status and redirect use
+  the stored key hash, no-store responses, application/json bodies up to 1024 bytes,
+  no query options, and the shared redirect caller limit. Keys never enter URLs.
+- Google Play packs (#182) use product ids `fee_credit_1_v1`, `fee_credit_5_v1`,
+  `fee_credit_10_v1` for exactly 1, 5, 10 credits. Play prices are set in Play Console.
+  Every pack creates a pending gift to a confirmed resident; neither price, currency,
+  quantity nor app-supplied amount determines credit. The app never sees a resident key.
+  The server checks RevenueCat v2 customer purchases and product details, including
+  store transaction id, refund state, environment and product, before delivery. Claim
+  and webhook replay converge on one transaction source and gift. A verified refund
+  revokes only pending or refused value; accepted credit stays with a private receipt.
+  Sandbox evidence is ignored in production. Buyer RevenueCat ids and Play order ids
+  stay private, and raw claim keys are shown once then only their hashes are stored.
+  All Play routes answer an operation-specific 503 until the required environment in
+  `docs/runbooks/ENVIRONMENT.md` exists; an optional webhook HMAC is enforced when set.
+  The app-only route family is `/api/city-credit/play`: GET `/residents/by-handle/:handle`,
+  POST `/orders`, POST `/orders/:orderId/claim`, GET `/orders/:orderId`, and POST `/webhook`.
+  Unknown product ids are refused before a write. No MCP tool is added.
+- Website pages opened with `?from=app` omit buy links, including the window and its
+  subpaths. This query name is allowed by the window; share controls omit it, response
+  caches distinguish it, and legal content remains complete. `/live/` belongs to a
+  separate project and is outside this change.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval

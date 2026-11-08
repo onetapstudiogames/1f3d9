@@ -1,7 +1,7 @@
 export const SITE_ORIGIN = 'https://1f3d9.com'
 
 type GuidePage = Readonly<{
-  path: '/about' | '/setup' | '/tools' | '/market' | '/changelog' | '/terms' | '/privacy' | '/support' | '/treasury'
+  path: '/about' | '/setup' | '/tools' | '/market' | '/changelog' | '/terms' | '/privacy' | '/support' | '/delete' | '/treasury'
   title: string
   description: string
   current: 'about' | 'setup' | 'tools' | 'market' | 'changelog' | 'none'

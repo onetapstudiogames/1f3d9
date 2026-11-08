@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool, type PoolClient } from 'pg'
+import { Hono } from 'hono'
+import { mountPrepaidCreditGiftRoutes } from '../../src/prepaid-credit-routes.ts'
 import { deliverPayPalCredit } from '../../src/paypal-credit-delivery.ts'
 import { acceptCreditGift } from '../../src/prepaid-credit.ts'
 import {
@@ -18,7 +20,7 @@ import {
   type PayPalCreditStoreDatabase,
 } from '../../src/paypal-credit-store.ts'
 
-const POSTGRES_IMAGE = 'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
+const POSTGRES_IMAGE = 'postgres:17'
 const POSTGRES_DATABASE = 'paypal_credit_integration'
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
 const migrationDdl = await readFile(
@@ -109,6 +111,48 @@ async function reset(client: Pool): Promise<void> {
       (1, 'founder', 'paypal-credit-test', repeat('1', 64)),
       (2, 'recipient-two', 'paypal-credit-test', repeat('2', 64))
   `)
+}
+
+async function verifyClaimKeyFlow(db: PayPalCreditStoreDatabase): Promise<void> {
+  const app = new Hono()
+  mountPrepaidCreditGiftRoutes(app, { database: db, authenticate: async () => null, environment: {} })
+  const intent = await beginPayPalCreditIntent(db, {
+    requestId: 'postgres-key-only-status-0001', intentKind: 'order', delivery: 'gift',
+    recipientId: 2, amountUnits: 5_000_000n, paypalEnvironment: 'sandbox',
+  })
+  const post = (path: string, body: unknown) => app.request(`/api/city-credit/gifts/${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const status = async () => {
+    const response = await post('status', { claim_token: intent.claimToken })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    return response.json()
+  }
+  assert.deepEqual(await status(), { amount_usd: '5.00', recipient_handle: 'recipient-two', status: 'unpaid' })
+  const attached = await attachPayPalOrder(db, { purchaseId: intent.purchaseId, orderId: 'KEY-ONLY-ORDER-0001' })
+  await deliverPayPalCredit(db, {
+    intent: { ...intent, ...attached, remoteOrderId: attached.orderId },
+    sourceKey: 'paypal:capture:KEY-ONLY-CAPTURE-0001', purchaseKind: 'paypal',
+    eventId: 'api-capture:KEY-ONLY-CAPTURE-0001', eventKind: 'PAYMENT.CAPTURE.COMPLETED',
+    remoteResourceId: 'KEY-ONLY-CAPTURE-0001',
+  })
+  assert.deepEqual(await status(), { amount_usd: '5.00', recipient_handle: 'recipient-two', status: 'pending' })
+  const move = { claim_token: intent.claimToken, recipient_number: 1, recipient_handle: 'founder', request_id: 'postgres-key-only-move-0001' }
+  const first = await post('redirect', move)
+  assert.equal(first.status, 200)
+  const result = await first.json() as { gift_id: string }
+  const retry = await post('redirect', move)
+  assert.equal(retry.status, 200)
+  assert.deepEqual(await retry.json(), result)
+  assert.deepEqual(await status(), { amount_usd: '5.00', recipient_handle: 'founder', status: 'pending' })
+  const receipts = await db.query(`SELECT count(*)::integer AS count FROM city_credit_entries WHERE request_id = $1`, [move.request_id])
+  assert.equal(receipts[0]?.count, 1)
+  await acceptCreditGift(db, { residentId: 1, giftId: result.gift_id })
+  assert.deepEqual(await status(), { amount_usd: '5.00', recipient_handle: 'founder', status: 'accepted' })
+  assert.equal((await post('redirect', { ...move, recipient_number: 2, recipient_handle: 'recipient-two', request_id: 'postgres-key-only-move-0002' })).status, 409)
+  const lookup = await app.request('/api/city-credit/gifts/residents/recipient-two')
+  assert.deepEqual(await lookup.json(), { resident_number: 2, resident_handle: 'recipient-two' })
 }
 
 test('PayPal intent, capture, event, catalog, allowance, and limit replays stay exact in PostgreSQL', {
@@ -657,6 +701,7 @@ test('PayPal intent, capture, event, catalog, allowance, and limit replays stay 
       assert.equal(await takePayPalCreditRateLimit(db, webhookCallerHash, 300), true)
     }
     assert.equal(await takePayPalCreditRateLimit(db, webhookCallerHash, 300), false)
+    await verifyClaimKeyFlow(db)
   } finally {
     await postgres.client.end().catch(() => undefined)
     spawnSync('docker', ['stop', '--time', '0', postgres.containerName], { encoding: 'utf8' })

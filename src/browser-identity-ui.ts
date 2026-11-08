@@ -6,8 +6,8 @@ function escaped(value: string): string {
   })[character]!)
 }
 
-export function credentialFileInput(kind: 'key' | 'codes', target: string): string {
-  const label = kind === 'key' ? 'Pick key file' : 'Pick recovery codes file'
+export function credentialFileInput(kind: 'key' | 'codes' | 'claim', target: string): string {
+  const label = kind !== 'codes' ? 'Pick key file' : 'Pick recovery codes file'
   return `<label for="${target}_file">${label}</label><input id="${target}_file" type="file" accept=".txt,text/plain" data-file-kind="${kind}" data-file-target="${target}">
 ${kind === 'codes' ? `<label for="${target}_choice" hidden>Choose an unused code from the file</label><select id="${target}_choice" data-code-choice="${target}" hidden></select>` : ''}
 <p class="muted">City text file, up to 64 KB. Read here in your browser.</p><p data-file-status="${target}" role="status"></p>`
@@ -66,6 +66,7 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
       const status = document.querySelector('[data-file-status="' + target.id + '"]');
       const choice = document.querySelector('[data-code-choice="' + target.id + '"]');
       target.value = '';
+      target.dispatchEvent(new Event('input', { bubbles: true }));
       if (choice) { choice.replaceChildren(); choice.hidden = true; choice.previousElementSibling.hidden = true; }
       status.textContent = '';
       const file = picker.files[0];
@@ -74,9 +75,9 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
         if (file.size > 65536) throw new Error('file');
         const text = await file.text();
         if (version !== readVersion) return;
-        const pattern = picker.dataset.fileKind === 'key' ? new RegExp('^' + ['1f3d9', 'sk', ''].join('_') + '[0-9a-fA-F]{48}$') : new RegExp('^' + ['1f3d9', 'rc', ''].join('_') + '[0-9a-fA-F]{64}$');
+        const pattern = picker.dataset.fileKind === 'claim' ? /^gift_claim_[0-9a-f]{64}$/ : picker.dataset.fileKind === 'key' ? new RegExp('^' + ['1f3d9', 'sk', ''].join('_') + '[0-9a-fA-F]{48}$') : new RegExp('^' + ['1f3d9', 'rc', ''].join('_') + '[0-9a-fA-F]{64}$');
         const values = [...new Set(text.split(/\r?\n/).map(line => line.trim()).filter(line => pattern.test(line)))];
-        if (!values.length || (picker.dataset.fileKind === 'key' && values.length !== 1)) throw new Error('file');
+        if (!values.length || (picker.dataset.fileKind !== 'codes' && values.length !== 1)) throw new Error('file');
         if (choice) {
           choice.append(new Option('Choose one code', ''));
           values.forEach((value, index) => choice.append(new Option('Code ' + (index + 1), value)));
@@ -84,7 +85,7 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
           choice.previousElementSibling.hidden = false;
           choice.onchange = () => { target.value = choice.value.toLowerCase(); };
           status.textContent = 'Choose one unused code. Only that code is sent.';
-        } else { target.value = values[0].toLowerCase(); status.textContent = 'Key ready.'; }
+        } else { target.value = values[0].toLowerCase(); status.textContent = 'Key ready.'; target.dispatchEvent(new Event('input', { bubbles: true })); }
       } catch {
         if (version === readVersion) status.textContent = 'Could not read that file. Pick the city text file, or type the value below.';
       }

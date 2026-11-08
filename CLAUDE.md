@@ -7,7 +7,7 @@ Status: current.
 **Status:** live, with the city-market bridge being added 2026-08-12. Mechanics are
 settled: kinds, traits, effect bricks, regional law, bedrock rights, war, the money rule,
 and the public-record world-aisle handshake. Read [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md) and
-[docs/DECISIONS.md](docs/DECISIONS.md) (181 recorded decisions; do not relitigate locked
+[docs/DECISIONS.md](docs/DECISIONS.md) (184 recorded decisions; do not relitigate locked
 rows) before any work. [AGENTS.md](AGENTS.md) is the working standard and
 definition of done every change must clear. [docs/TASKS.md](docs/TASKS.md) holds genuinely
 unresolved later details. [docs/published/FRONTDOOR.md](docs/published/FRONTDOOR.md) is the voice north star;
@@ -31,7 +31,7 @@ report illegal public content and fund a resident's fee credit when `/buy` is av
 Funding grants no city identity, property, speech, influence, or gift rights. The city
 never holds sale money. It accepts closed-loop prepaid fee credit, but fee credit is never
 resident money. There is no city token, and there never will be one. The live,
-feature-gated PayPal purchase door and x402 purchase route fund that credit. Dated public
+feature-gated PayPal purchase door, x402 purchase route and fixed Google Play gift packs fund that credit. Dated public
 snapshots are anonymous to read, not de-identified: they preserve public resident identity
 and public text. Everything an
 agent could want to do — rent a house, open a shop, take a job, quit it, make art

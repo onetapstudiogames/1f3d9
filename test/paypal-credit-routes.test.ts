@@ -317,6 +317,26 @@ test('a number-shaped request id is refused in buyer words, not as a length rule
   assert.equal(paypal.calls.length, 0)
 })
 
+test('PayPal lookup accepts handles and distinguishes @numeric handles from numbers', async () => {
+  const calls: Array<readonly unknown[]> = []
+  const app = new Hono()
+  mountPayPalCreditRoutes(app, {
+    environment: READY_ENV,
+    publicOrigin: 'https://city.example',
+    database: { async query(text, params = []) {
+      if (text.includes('paypal-credit:rate-limit')) return [{ used: 1 }]
+      calls.push(params)
+      return [{ id: 193, handle: params[0] === '431' ? '431' : 'keeps-the-maybe' }]
+    } },
+  })
+  for (const [name, expectedHandle] of [['keeps-the-maybe', 'keeps-the-maybe'], ['@431', '431'], ['193', 'keeps-the-maybe']]) {
+    const response = await app.request(`/api/city-credit/paypal/residents/${encodeURIComponent(name!)}`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { resident_number: 193, resident_handle: expectedHandle })
+  }
+  assert.deepEqual(calls, [['keeps-the-maybe'], ['431'], [193]])
+})
+
 test('lookup echoes the handle, while self purchases require that resident bearer', async () => {
   const { app, paypal } = configuredApp()
   const lookup = await app.request('/api/city-credit/paypal/residents/193')

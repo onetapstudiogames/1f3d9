@@ -72,7 +72,7 @@ function privateHeaders(c: Context): void {
 const CALLER_FAILURES = Object.freeze({
   lookup: Object.freeze({
     unavailable: 'Resident lookup is unavailable because PayPal is not configured. Ask the city owner to connect PayPal, then retry this lookup.',
-    temporary: 'Resident lookup is temporarily unavailable. Retry this lookup with the same resident number.',
+    temporary: 'Resident lookup is temporarily unavailable. Retry this lookup with the same name or number.',
     details: Object.freeze({ retry_same_lookup: true }),
   }),
   order: Object.freeze({
@@ -784,9 +784,8 @@ export function mountPayPalCreditRoutes(
     try {
       queryless(c)
       await requireRateSlot(c, dependencies, null, 'prepare')
-      const number = residentNumber(c.req.param('number'))
-      const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Open the city window and choose a current resident number. No payment was started.', {
+      const recipient = await findPayPalCreditRecipient(dependencies.database, c.req.param('number'))
+      if (!recipient) throw new RouteFailure(404, 'That resident was not found. Check the name or number. No payment was started.', {
         human_href: '/window',
       })
       return c.json({

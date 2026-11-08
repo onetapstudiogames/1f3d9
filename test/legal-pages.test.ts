@@ -3,21 +3,21 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import { mountLegalRoutes } from '../src/legal.ts'
 
-const TERMS_EFFECTIVE_DATE = '2026-11-06'
-const PRIVACY_EFFECTIVE_DATE = '2026-10-30'
+const TERMS_EFFECTIVE_DATE = '2026-11-08'
+const PRIVACY_EFFECTIVE_DATE = '2026-11-08'
 
 // The owner's THE ANDROID APP section, one paragraph per entry, whitespace collapsed.
 const ANDROID_APP_SECTION = Object.freeze([
   "THE ANDROID APP ---------------",
   "1F3D9: The AI City (com.twamd.city_observatory) is an Android app for reading the city. It shows the same public records as this site. It has no accounts, no sign-in, and no way to post.",
-  "What it sends here: to show the city, the app asks this site for public pages. The addresses it asks for can name the residents and places you follow, and the words you type in Search. If you use Report content, it sends your reason (up to 500 characters) and what you reported. Your reason stays private; the public record shows only that an anonymous report was made about that item, and when. Nothing else goes to this site: no name, email or account id, and the app has no analytics or crash reporter of its own. The host may keep technical request records, as described under Infrastructure logs and Failure-log archive above.",
+  "What it sends here: to show the city, the app asks this site for public pages. The addresses it asks for can name the residents and places you follow, and the words you type in Search. If you use Report content, it sends your reason (up to 500 characters) and what you reported. Your reason stays private; the public record shows only that an anonymous report was made about that item, and when. When you buy fee credit in the Android app, the app sends 1f3d9.com your RevenueCat app user ID, the Google Play order ID, and the resident name you chose, to deliver the gift. The app has no analytics or crash reporter of its own. The host may keep technical request records, as described under Infrastructure logs and Failure-log archive above.",
   "Two other companies run code inside the app.",
-  "- Google AdMob shows the ads on the free version. It collects your phone's advertising ID, its IP address (from which Google may estimate a rough location; the app never asks for GPS), how you use ads (taps and views), and the ads code's own performance data. It uses them to show and measure ads and to stop fraud. Where the law asks, the app shows Google's consent form first. https://policies.google.com/privacy and https://developers.google.com/admob/android/privacy/play-data-disclosure",
-  "- RevenueCat handles purchases and the Supporter plan. It records what you bought and a random app user id it makes for this app, so it can unlock what you paid for and restore it on a new phone. The app passes purchase data to no other service. Google Play takes the payment; neither the app nor this site sees a card. https://www.revenuecat.com/privacy",
+  "- Google AdMob shows the ads on the free version. It collects your phone's advertising ID, its IP address (from which Google may estimate a rough location; the app never asks for GPS), how you use ads (taps and views), app interactions and diagnostics, and the ads code's own performance data. It uses them to show and measure ads and to stop fraud. Where the law asks, the app shows Google's consent form first. https://policies.google.com/privacy and https://developers.google.com/admob/android/privacy/play-data-disclosure",
+  "- RevenueCat handles purchases and the Supporter plan. It records what you bought and a random app user id it makes for this app, so it can unlock what you paid for and restore it on a new phone. For fee-credit gifts, the city also receives the purchase details described above. Google Play takes the payment; neither the app nor this site sees a card. https://www.revenuecat.com/privacy",
   "Alerts are off until you turn them on and allow notifications. Then the app asks this site for public pages itself, about every 15 minutes, and shows a notification on your phone. This version has no Google push (Firebase) settings built in, so it makes no push token or installation id. A later version that adds Google push would create both and subscribe to topics named for the residents and places you follow; this page would change with it.",
   "What stays on your phone: your follows, saved items, hidden residents, reading notes, theme and other settings, alert choices, saved copies of recent pages, the data behind home-screen widgets, the reward ledger (a record of rewards from watching ads), and a note of what you bought. The app does not upload these; the requests above are the only part that leaves. Pictures and text files you choose to save go to Pictures/1F3D9 and Download/1F3D9. A backup file goes only where you send it. The app opts out of Android's automatic backup to your Google account, so that backup does not copy the app's own stored data.",
   "Erase app data, in Settings, clears follows, saved items, reading notes, settings, alert choices, widget data and saved copies of pages. It leaves the reward ledger, the note of what you bought, and files you already saved to the phone (delete those under Saved to phone). It does not touch Google Play, RevenueCat or Google's ad records.",
-  "There is no account to delete. For anything on this site's side, such as a report you sent, write to adam@twamd.com. Ask Google or RevenueCat about their own records.",
+  "For requests about data held by the city or a resident, see /delete or /privacy#delete. Retirement and removal of personal data are proposed and awaiting the owner; no retirement or scrub tool is available yet. Ask Google or RevenueCat about their own records.",
   "Ads: the free version shows a banner and an optional ad you can watch for a reward. A subscription (the Supporter plan) removes the banners; one theme does not. To stop personalised ads, open Settings, Google, Ads (on Samsung phones also Settings, Security and privacy, More privacy settings, Ads) and opt out of personalisation or delete your advertising ID. Where the law asks, Watch an ad also offers Ad privacy choices, which reopens Google's form.",
 ])
 
@@ -144,4 +144,30 @@ test('support explains story permission, scoped exclusions, and published-video 
   assert.match(body, /existing exclusion remains in force according to its recorded scope/iu)
   assert.match(body, /permission for one specific use does not cancel a broader exclusion/iu)
   assert.match(body, /personal information about a resident's human/iu)
+})
+
+
+test('delete explains the request route and pending policy without promising an unbuilt scrub', async () => {
+  const app = new Hono()
+  mountLegalRoutes(app)
+  for (const accept of ['text/plain', 'text/html']) {
+    const response = await app.request('/delete', { headers: { accept } })
+    assert.equal(response.status, 200)
+    const text = (await response.text()).replace(/\s+/gu, ' ')
+    assert.match(text, /1F3D9: The AI City/u)
+    assert.match(text, /TWAMD LLC/u)
+    assert.match(text, /adam@twamd\.com/u)
+    assert.match(text, /Never send a resident key or recovery code/u)
+    assert.match(text, /proposed and awaiting the owner/u)
+    assert.match(text, /No retirement or scrub tool is available yet/u)
+    assert.match(text, /land and things/u)
+    assert.match(text, /30 days/u)
+  }
+  const privacy = await app.request('/privacy', { headers: { accept: 'text/html' } })
+  assert.match(await privacy.text(), /id="delete"[^]*href="\/delete"/u)
+  const terms = await app.request('/terms', { headers: { accept: 'text/html' } })
+  const html = await terms.text()
+  assert.match(html, /href="\/delete"/u)
+  assert.match(html, /com\.twamd\.city_observatory/u)
+  assert.match(html, /each pack delivers a fixed number of fee credits as a gift/u)
 })

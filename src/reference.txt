@@ -883,7 +883,7 @@ PREPAID FEE CREDIT
 ~~~~~~~~~~~~~~~~~~
 Prepaid fee credit is the primary way to keep those three one-dollar actions
 ready: frontier founding, kind invention, and kind revision. One whole US
-dollar buys exactly one credit, from 1 through 10,000 at a
+dollar buys exactly one credit on the website, from 1 through 10,000 at a
 time. There is no rounding, a balance can never go negative, and credit never
 expires. The city never holds sale money. It accepts closed-loop prepaid fee credit,
 but fee credit is never resident money. There is no city token, and there never will
@@ -897,7 +897,10 @@ adds no balance and confers no debt, access, influence, control, or other right
 until that resident accepts it; the resident may refuse. The purchaser receives
 one private claim token, shown once, for that purchase. While the gift is pending
 or refused, the same token can redirect it again to another resident whose number
-and handle match. Redirect never refunds or leaves the closed loop. The city never
+and handle match. The buyer can paste the saved claim key or pick its downloaded
+file to see the amount, recipient and status, then move an eligible gift. The gift
+receipt id is not needed. The file is made and read in the browser; keep the key
+out of chat. Redirect never refunds or leaves the closed loop. The city never
 shows the purchaser's identity to a resident or the public; the arrival says only
 that it came from a purchase. A credit gift is never held by a mute, since its buyer is
 secret; it waits only for the recipient's own accept or refuse.
@@ -929,6 +932,65 @@ public `payment_repair` record with only the decision action
 `credit_dispute_seller_favour` or `credit_dispute_buyer_favour`; no provider, dispute,
 capture, purchase, or gift identifier becomes public. Credit already accepted or
 self-funded is never removed, and no dispute message reveals the purchaser.
+
+Google Play gift packs (decision #182). In the Android app, fee_credit_1_v1,
+fee_credit_5_v1 and fee_credit_10_v1 give exactly 1, 5 and 10 credits. Play prices
+are set in Play Console. Price, currency and buyer-supplied amounts never set the
+credit count. Every pack is a gift to the named resident; the app never receives
+a resident key. A verified refund revokes pending or refused value, while an
+accepted gift stays. The buyer's RevenueCat id and Play order id stay private.
+Play routes are app-only, not MCP tools, and return 503 until configured. A
+server check with RevenueCat must confirm the purchase before one gift is made;
+webhook and claim retries cannot make a second gift. Sandbox never mints in
+production. Pages opened with ?from=app leave out web buy links; shared city
+links leave out that marker. The separate /live/ project is outside this change.
+
+Play app HTTP doors, all under /api/city-credit/play:
+- GET /residents/by-handle/:handle returns resident_number and resident_handle;
+  use the exact handle, without @, and confirm it before buying.
+- POST /orders takes exactly request_id, resident_number, resident_handle,
+  product_id and rc_app_user_id. The request id uses the same city credit request-id
+  rule below (8..128 ASCII characters), never a plain number or amount; make a new
+  one for each purchase. The number is a positive integer
+  no larger than 2147483647 and must match the exact handle. The handle is 1..64
+  characters and the RevenueCat id 1..1500, with no spaces or control characters.
+  Never send a resident key. The result is order_id, resident_number,
+  resident_handle, credits and claim_token. Save that key outside chat before
+  paying. An exact retry returns the same order with claim_token null, never the
+  key again; changed terms with the same request id return 409. If the key was not
+  saved, create a new order before paying and do not buy through the old one.
+- POST /orders/:orderId/claim takes exactly transaction_id, the Google Play id
+  starting GPA. followed by letters, digits, dots or hyphens, at most 128
+  characters total. It must have been bought on or after order creation. The server
+  checks it with RevenueCat, searching at most 1000 purchases for that buyer.
+  Retry the same order
+  and transaction after uncertainty; never pay twice.
+- GET /orders/:orderId and a successful claim return only status,
+  resident_handle and credits. The order id is the opaque city_play_ id returned
+  by creation; it never contains a key. Status is open, delivered, revoked or
+  ignored. Delivered means the gift was made, not that the resident accepted it.
+- POST /webhook takes RevenueCat's event object for NON_RENEWING_PURCHASE or
+  CANCELLATION. It requires the configured Authorization value, and a valid
+  timestamped signature within five minutes if HMAC is configured; wrong or
+  missing auth is 401.
+  A verified purchase matches one open order by buyer aliases and product. Zero
+  or several matches record unmatched, never a guessed recipient; an explicit
+  order claim can resolve several possible orders. Event ids and
+  transaction ids prevent duplicate delivery. A refund waits for RevenueCat's
+  refund evidence before it revokes unaccepted value. A refund recorded before
+  delivery blocks a later mint. The server finishes durable recording before 200;
+  provider reads share a 15-second deadline, and failed reads ask for a retry.
+
+All Play answers are no-store; no query options are accepted. POST bodies must be
+application/json, at most 2048 bytes (webhook: 1048576 bytes). Content-Length may
+be omitted; if sent it must be a decimal byte count within that bound. The four
+buyer routes share 30 calls per caller per hour, then 429 with Retry-After: 3600.
+Unknown products or invalid fields return 400 before an order is written;
+unknown residents/orders return 404, conflicting orders or unconfirmed purchases
+409, and missing configuration or unavailable verification 503. The allowed
+products are exactly the three ids above; extra order fields, including amount,
+price, quantity and resident keys, are refused. The webhook ignores other event
+types. These app doors do not create any MCP tool.
 
 RECEIPTS AND WHAT ME REPORTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2695,14 +2757,16 @@ owner clears the end, and a remnant may still be given: things-ending#end-copies
   GET  /api/city-credit/preflight exact fee, before/after, pending gift count; passive
   POST /api/city-credit/gifts/:id/accept    recipient accepts; empty body
   POST /api/city-credit/gifts/:id/refuse    recipient refuses; empty body
-  POST /api/city-credit/gifts/:id/redirect  purchaser claim token redirects it
+  POST /api/city-credit/gifts/status        private claim token reads gift status
+  POST /api/city-credit/gifts/redirect      claim token alone finds and moves a gift
+  POST /api/city-credit/gifts/:id/redirect  older gift-id links still work
   GET  /api/payment-attempt/:id   privately inspect your recorded paid action
   POST /api/payment-attempt/:id/recheck  empty body; check or safely no-op every state
 
 Accept and refuse require the recipient's resident key and the pending gift ID shown
 by GET /api/me. Pending gifts page independently with before_gift_id and gift_limit
-(1..50), continuing from pages.pending_gifts.next_before_gift_id. Redirect needs only
-that gift ID plus the once-shown claim_token, one
+(1..50), continuing from pages.pending_gifts.next_before_gift_id. Redirect needs the
+once-shown claim_token, one
 new non-secret request_id you make up for this one redirect and never a number or an
 amount, and the next recipient_number and matching recipient_handle.
 The same token remains bound to that one purchase and may redirect it more than once
@@ -2717,10 +2781,25 @@ result awaiting founder review, GET /api/me keeps it
 visible with refusal as its only recipient action. Accept and redirect refuse in caller
 words until a seller-favor resolution restores originally pending value; an against-seller
 resolution revokes the gift permanently.
-Gift redirect admits 30 attempts per caller per hour. A 429 includes
+Gift status and redirect share 30 attempts per caller per hour. A 429 includes
 Retry-After: 3600; wait for that delay before trying a gift redirect again.
 The human `/gift-redirect` recovery door remains available for an existing gift; it
 keeps the claim token only in that page and clears it after confirmed success.
+The browser makes the retry id and can read a downloaded claim-key file.
+POST /api/city-credit/gifts/status accepts exactly {"claim_token":"<saved key>"}
+and answers only amount_usd, recipient_handle and status. Status is pending,
+accepted, refused, frozen, revoked or unpaid; unpaid means payment is not yet
+confirmed, so do not pay again. Frozen also covers a refused gift whose funding
+purchase is disputed. Only pending or refused gifts without a dispute can move.
+POST /api/city-credit/gifts/redirect accepts exactly claim_token, request_id,
+recipient_number and recipient_handle; the older /:id/redirect route remains.
+Both POST routes accept application/json, at most 1024 bytes, and no query
+options. Answers are no-store. The claim key never goes in a URL. Bad fields
+return 400, an unknown key or mismatched recipient returns 404, an ineligible
+move returns 409, and the shared caller limit returns 429.
+GET /api/city-credit/gifts/residents/:number and the PayPal equivalent also
+accept a handle, with optional @. Plain digits mean a resident number; use
+@ before an all-digit handle. Confirm both the returned name and number.
 
 A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. A buyer creates the five-minute reservation before payment by calling claim with buyer_wallet; only the seller may cancel, and not during that payment window.
 Repeating sign returns the existing signature with its original signed_at and uses no

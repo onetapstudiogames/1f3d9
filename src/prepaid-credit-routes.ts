@@ -2,11 +2,12 @@ import { createHash } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { declaredBodyLength } from './bounded-body.ts'
 import { HANDLE_RE, RESIDENT_AUTH_REFUSAL } from './core.ts'
-import { takePayPalCreditRateLimit } from './paypal-credit-store.ts'
+import { findPayPalCreditRecipient, takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
   acceptCreditGift,
   PrepaidCreditConflictError,
   redirectCreditGift,
+  readCreditGiftStatus,
   refuseCreditGift,
 } from './prepaid-credit.ts'
 import type { CityCreditDatabase } from './city-credit.ts'
@@ -207,19 +208,35 @@ export function mountPrepaidCreditGiftRoutes(
     privateHeaders(c)
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return c.json({ error: allowed.error }, 400)
-    const number = positiveResidentNumber(c.req.param('number'))
-    if (number == null) {
-      return c.json({ error: 'resident number must be one positive integer' }, 400)
+    try {
+      const resident = await findPayPalCreditRecipient(deps.database, c.req.param('number'))
+      if (!resident) return c.json({ error: 'That resident was not found. Check the name or number.' }, 404)
+      return c.json({ resident_number: resident.residentNumber, resident_handle: resident.residentHandle })
+    } catch (error) {
+      return conflictResponse(c, error)
     }
-    const rows = await deps.database.query(`
-      /* prepaid-credit-routes:resident-lookup */
-      SELECT id, handle FROM residents WHERE id = $1::integer LIMIT 1
-    `, [number]) as readonly Record<string, unknown>[]
-    const row = rows[0]
-    if (Number(row?.id) !== number || typeof row?.handle !== 'string' || !HANDLE_RE.test(row.handle)) {
-      return c.json({ error: 'that resident number was not found; use the current number from the public resident list before retrying the redirect' }, 404)
+  })
+
+  app.post('/api/city-credit/gifts/status', async c => {
+    privateHeaders(c)
+    const allowed = allowedPublicQuery(c.req.queries(), [])
+    if (!allowed.ok) return c.json({ error: allowed.error }, 400)
+    const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
+    if (rateLimitResponse) return rateLimitResponse
+    const body = await boundedBody(c)
+    if (body.state !== 'ok') return bodyBoundFailure(c, body.state)
+    let input: unknown
+    try { input = JSON.parse(body.raw) } catch { input = null }
+    if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'claim_token')) {
+      return c.json({ error: 'Gift status needs only claim_token in the request body.' }, 400)
     }
-    return c.json({ resident_number: number, resident_handle: row.handle })
+    try {
+      const result = await readCreditGiftStatus(deps.database, (input as { claim_token: unknown }).claim_token)
+      return result ? c.json(result) : c.json({ error: 'That claim key did not find a gift. Check the saved key.' }, 404)
+    } catch (error) {
+      return conflictResponse(c, error)
+    }
   })
 
   for (const action of ['accept', 'refuse'] as const) {
@@ -246,12 +263,13 @@ export function mountPrepaidCreditGiftRoutes(
     })
   }
 
-  app.post('/api/city-credit/gifts/:giftId/redirect', async c => {
+  const redirect = async (c: Context) => {
     privateHeaders(c)
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return c.json({ error: allowed.error }, 400)
-    const giftId = safeGiftId(c.req.param('giftId'))
-    if (!giftId) return c.json({
+    const suppliedId = c.req.param('giftId')
+    const giftId = suppliedId === undefined ? undefined : safeGiftId(suppliedId)
+    if (giftId === null) return c.json({
       error: 'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id',
     }, 400)
     const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
@@ -276,7 +294,7 @@ export function mountPrepaidCreditGiftRoutes(
     }
     try {
       const result = await redirectCreditGift(deps.database, {
-        giftId,
+        ...(giftId === undefined ? {} : { giftId }),
         claimToken: input.claimToken,
         residentId: target,
         requestId: input.requestId,
@@ -285,5 +303,7 @@ export function mountPrepaidCreditGiftRoutes(
     } catch (error) {
       return conflictResponse(c, error)
     }
-  })
+  }
+  app.post('/api/city-credit/gifts/redirect', redirect)
+  app.post('/api/city-credit/gifts/:giftId/redirect', redirect)
 }

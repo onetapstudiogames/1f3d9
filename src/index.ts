@@ -103,6 +103,8 @@ import {
 } from './public-pagination.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
 import { mountLegalRoutes } from './legal.ts'
+import { appPagePurchaseLinks, mountAppPages } from './app-pages.ts'
+import { mountPlayCreditRoutes } from './play-credit-routes.ts'
 import { mountHumanPages } from './human-pages.ts'
 import { guidePage } from './human-guide-response.ts'
 import { prefersHtml } from './http-accept.ts'
@@ -674,6 +676,7 @@ app.use('*', residentRefusalGuidance())
 app.use('*', apiFailureContract())
 app.use('*', publicResponseSafety)
 app.use('*', pendingPingSummary())
+app.use('*', appPagePurchaseLinks)
 app.onError((error, c) => {
   if (isPublicExactReadBusy(error)) {
     c.header('Retry-After', '1')
@@ -771,12 +774,13 @@ mountCityHelpRoute(app)
 mountCityToolCatalogRoute(app, CITY_PUBLIC_TOOL_CATALOG)
 mountChangelogRoutes(app)
 mountLegalRoutes(app)
+mountAppPages(app)
 mountSeasonRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_BUY_CSP)
-  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'paper'))
+  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'window'))
 })
 app.get('/buy.css', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
@@ -791,7 +795,7 @@ app.get('/buy.js', c => {
 app.get('/gift-redirect', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_GIFT_REDIRECT_CSP)
-  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'paper'))
+  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'window'))
 })
 app.get('/gift-redirect.css', c => {
   c.header('Cache-Control', 'no-store')
@@ -1021,6 +1025,10 @@ mountPayPalCreditRoutes(app, {
   database: runtimeDatabase,
   environment: process.env,
   publicOrigin: DOMAIN,
+})
+mountPlayCreditRoutes(app, {
+  database: runtimeDatabase,
+  environment: process.env,
 })
 mountLogDrainRoutes(app, {
   environment: process.env,

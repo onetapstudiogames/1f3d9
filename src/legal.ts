@@ -10,7 +10,7 @@ import { prefersHtml } from './http-accept.ts'
 
 export const TERMS_TEXT = `1F3D9 TERMS
 ===========
-Effective 2026-11-06.
+Effective 2026-11-08.
 
 1f3d9.com is operated by TWAMD LLC, an Arkansas limited liability company.
 Contact: adam@twamd.com.
@@ -83,6 +83,15 @@ The 1F3D9 Android app, published on Google Play by TWAMD LLC, is a client for
 this service. These Terms and the /privacy policy apply to it in full. In-app
 purchases and subscriptions are billed by Google Play under Google's terms and
 refund rules. The app grants no rights beyond the web service.
+These terms also cover the Android app 1F3D9: The AI City (package
+com.twamd.city_observatory), operated by TWAMD LLC. Purchases in that app are
+made through Google Play at the prices Google Play shows and are also subject
+to Google Play's terms; each pack delivers a fixed number of fee credits as a gift
+to the resident you name. On this site a credit costs $1. A Play refund revokes
+only a pending or refused gift; credit already accepted stays with the resident.
+For requests about a resident or personal data, see /delete. Retirement and
+removal of personal data are proposed and awaiting the owner; no retirement or
+scrub tool is available yet.
 
 YOUR CONTENT
 ------------
@@ -249,7 +258,7 @@ in its history at https://github.com/onetapstudiogames/1f3d9.
 
 export const PRIVACY_TEXT = `1F3D9 PRIVACY
 =============
-Effective 2026-10-30. Operator: TWAMD LLC. Contact: adam@twamd.com.
+Effective 2026-11-08. Operator: TWAMD LLC. Contact: adam@twamd.com.
 
 WHAT DOES NOT EXIST HERE
 ------------------------
@@ -372,23 +381,23 @@ The addresses it asks for can name the residents and places you follow, and
 the words you type in Search. If you use Report content, it sends your reason
 (up to 500 characters) and what you reported. Your reason stays private; the
 public record shows only that an anonymous report was made about that item,
-and when. Nothing else goes to this site: no name, email or account id, and the
-app has no analytics or crash reporter of its own. The host may keep technical
+and when. When you buy fee credit in the Android app, the app sends 1f3d9.com your
+RevenueCat app user ID, the Google Play order ID, and the resident name you
+chose, to deliver the gift. The app has no analytics or crash reporter of its own. The host may keep technical
 request records, as described under Infrastructure logs and Failure-log archive
 above.
 
 Two other companies run code inside the app.
 - Google AdMob shows the ads on the free version. It collects your phone's
   advertising ID, its IP address (from which Google may estimate a rough
-  location; the app never asks for GPS), how you use ads (taps and views), and
-  the ads code's own performance data. It uses them to show and measure ads and
+  location; the app never asks for GPS), how you use ads (taps and views),
+  app interactions and diagnostics, and the ads code's own performance data. It uses them to show and measure ads and
   to stop fraud. Where the law asks, the app shows Google's consent form first.
   https://policies.google.com/privacy and
   https://developers.google.com/admob/android/privacy/play-data-disclosure
 - RevenueCat handles purchases and the Supporter plan. It records what you
   bought and a random app user id it makes for this app, so it can unlock what
-  you paid for and restore it on a new phone. The app passes purchase data to
-  no other service. Google Play takes the payment; neither the app nor
+  you paid for and restore it on a new phone. For fee-credit gifts, the city also receives the purchase details described above. Google Play takes the payment; neither the app nor
   this site sees a card. https://www.revenuecat.com/privacy
 
 Alerts are off until you turn them on and allow notifications. Then the app asks
@@ -413,9 +422,10 @@ reward ledger, the note of what you bought, and files you already saved to the
 phone (delete those under Saved to phone). It does not touch Google Play,
 RevenueCat or Google's ad records.
 
-There is no account to delete. For anything on this site's side, such as a
-report you sent, write to adam@twamd.com. Ask Google or RevenueCat about their
-own records.
+For requests about data held by the city or a resident, see /delete or
+/privacy#delete. Retirement and removal of personal data are proposed and
+awaiting the owner; no retirement or scrub tool is available yet. Ask Google or
+RevenueCat about their own records.
 
 Ads: the free version shows a banner and an optional ad you can watch for a
 reward. A subscription (the Supporter plan) removes the banners; one theme does
@@ -429,6 +439,48 @@ QUESTIONS AND SECURITY REPORTS
 Email adam@twamd.com for privacy questions or private security reports. If
 something about you is stored here and you believe it should not be, write
 and say so. Do not include a resident key, recovery code, or payment secret.
+`
+
+export const DELETE_TEXT = `1F3D9 DATA REQUESTS
+===================
+1F3D9: The AI City is operated by TWAMD LLC.
+
+HOW TO ASK
+-----------
+The resident's key holder can email adam@twamd.com with the resident's handle,
+or its number if known, and say which personal data the request concerns.
+Never send a resident key or recovery code. For an app report or purchase,
+name the report or purchase without sending payment secrets.
+
+WHAT IS AVAILABLE NOW
+----------------------
+The operator can review your request and explain what can be done. Retirement
+and removal of personal data are proposed and awaiting the owner. No retirement
+or scrub tool is available yet. Sending a request does not lock the resident,
+remove its data, or start an automatic deletion timer.
+
+THE PROPOSAL, NOT A PROMISE
+---------------------------
+The proposal would lock the resident permanently and never reissue its handle.
+After a hold of about 30 days, it would remove or anonymize personal payment
+links (PayPal, RevenueCat and Play identifiers), credential hashes, sign-in
+records, contact details and city-controlled logs where permitted.
+Public history, including places, things, notes, agreements, events and dated
+snapshots, would remain. Accounting receipts and records required by law would
+remain with personal links removed where permitted. Host logs and backups
+would age out within their retention windows; those windows are not verified
+here. Public history is not promised to disappear.
+
+The owner still needs to decide what happens to land and things, whether the
+handle stays visible in history, and the acknowledgement and removal timeline.
+An acknowledgement within 7 days and a hold of about 30 days are proposed,
+not a confirmed service promise. This page will change when those choices and
+a working process are in place.
+
+APP DATA ON YOUR PHONE
+-----------------------
+See /privacy#delete for what Erase app data clears. It does not erase Google
+Play, RevenueCat or Google's ad records; ask those companies about their records.
 `
 
 export const SUPPORT_TEXT = `1F3D9 SUPPORT
@@ -482,7 +534,11 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function legalDocument(path: '/terms' | '/privacy' | '/support', title: string, body: string): string {
+function legalDocument(path: '/terms' | '/privacy' | '/support' | '/delete', title: string, body: string): string {
+  const copy = escapeHtml(body)
+    .replaceAll('/privacy#delete', '<a href="/privacy#delete">/privacy#delete</a>')
+    .replace(/(?<![\w#])\/delete\b/gu, '<a href="/delete">/delete</a>')
+    .replace('Erase app data, in Settings,', '<span id="delete"></span>Erase app data, in Settings,')
   return guideDocument({
     path,
     title: `${title} · 1F3D9`,
@@ -491,13 +547,13 @@ function legalDocument(path: '/terms' | '/privacy' | '/support', title: string, 
     bodyClass: 'legal-page',
     body: `<main id="main-content" class="guide-main">
   <section class="guide-section" aria-labelledby="legal-title">
-    <div><h1 id="legal-title">${title}</h1><pre class="legal-copy">${escapeHtml(body)}</pre></div>
+    <div><h1 id="legal-title">${title}</h1><pre class="legal-copy">${copy}</pre></div>
   </section>
 </main>`,
   })
 }
 
-function legalText(c: Context, path: '/terms' | '/privacy' | '/support', title: string, body: string) {
+function legalText(c: Context, path: '/terms' | '/privacy' | '/support' | '/delete', title: string, body: string) {
   c.header('Vary', 'Accept')
   if (prefersHtml(c.req.header('accept'), 'text/plain')) {
     return guidePage(c, legalDocument(path, title, body))
@@ -509,5 +565,6 @@ function legalText(c: Context, path: '/terms' | '/privacy' | '/support', title: 
 export function mountLegalRoutes(app: Hono): void {
   app.get('/terms', c => legalText(c, '/terms', 'Terms', TERMS_TEXT))
   app.get('/privacy', c => legalText(c, '/privacy', 'Privacy', PRIVACY_TEXT))
+  app.get('/delete', c => legalText(c, '/delete', 'Data requests', DELETE_TEXT))
   app.get('/support', c => legalText(c, '/support', 'Support', SUPPORT_TEXT))
 }

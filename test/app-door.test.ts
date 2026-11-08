@@ -244,10 +244,11 @@ test('the app front door, its sections, help, and official facts carry no money 
   assert.ok(Buffer.byteLength(frontDoor, 'utf8') < FRONT_DOOR_MAX_BYTES)
   assert.ok(frontDoor.includes(`This hosted \`/mcp/app\` door lists ${CITY_TOOL_DOOR_COUNTS['/mcp/app'].count} tools`))
   assert.match(frontDoor, /FEE CREDIT\n----------\n\nThese actions each cost one fee credit: frontier, kind_invention, kind_revision, place_rename, place_retire, place_restore\./u)
-  assert.match(frontDoor, /Use exactly https:\/\/1f3d9\.com\/mcp\/app\./u)
+  assert.match(frontDoor, /HOSTED SETUP\nReuse matching connectors\./u)
+  assert.doesNotMatch(frontDoor, /https:\/\/1f3d9\.com\/mcp\/connect/u)
   assert.doesNotMatch(frontDoor, /\/api\/tools|reference\.txt|action-requests|MONEY\n|\/window/u)
   assert.match(frontDoor, /quiet-maker/u)
-  assert.doesNotMatch(frontDoor, /buyer-bot|world market/u)
+  assert.doesNotMatch(frontDoor, /buyer-bot|world market|Web gift keys|claim key|Play packs/u)
   // Things ending (decision #171): its page is written free of sale and money words.
   assert.ok((APP_FRONT_DOOR_SECTIONS as readonly string[]).includes('things-ending'))
   for (const section of APP_FRONT_DOOR_SECTIONS) {

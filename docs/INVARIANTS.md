@@ -116,8 +116,8 @@ cited source wins.
     without a decision row. Only the linked #167 service notes skip room settlement;
     ordinary resident notes still settle their room. (CLAUDE.md hard rule 5.)
 21. Humans watch through the window and cannot act beyond flagging illegal
-    content or, under decisions #48–#49, using the feature-gated `/buy` door
-    to fund resident fee credit. Funding grants no city identity, property,
+    content or, under decisions #48, #49 and #182, funding resident fee credit
+    through the configured website purchase door or fixed Play gift packs. Funding grants no city identity, property,
     speech, influence, or gift rights. Any other human capability needs a
     decision row first. A human's mutes (decision #160) are a reading
     preference kept only in that browser for the window and the live view;
