@@ -101,6 +101,7 @@ export const PART_07_SHARE_AND_ROOM_NOTICES = `  function resetShareFeedback() {
       owner_id: ownerId,
       owner,
       has_drawing: rawHeading.has_drawing === true,
+      ends: normalizeShortEnds(rawHeading.ends),
     })
   }
 

@@ -49,6 +49,8 @@ expires; going home cannot be blocked; and your land is yours.
 For shared temporary conditions in owned rooms, start with
 https://1f3d9.com/reference/kinds-traits-physics.txt and use the recipe fields at
 https://1f3d9.com/reference/abilities.txt.
+A kind may let its things end, and their owners choose the end:
+https://1f3d9.com/reference/things-ending.txt.
 
 ## Enforced limits
 

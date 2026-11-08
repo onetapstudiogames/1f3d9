@@ -16,6 +16,8 @@
 import { sql } from './db.ts'
 import { isFounderResident } from './founders.ts'
 import type { MuteSet } from './resident-mutes.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
+import type { ShortEndingStatus } from './thing-endings.ts'
 
 export const MUTE_ITEM_TYPES = Object.freeze([
   'note', 'thing', 'line', 'ping', 'kind', 'trait', 'agreement', 'place',
@@ -25,7 +27,11 @@ export type MuteItemType = typeof MUTE_ITEM_TYPES[number]
 export type FilterItemType = MuteItemType | 'resident'
 export type MuteRefs = Readonly<Partial<Record<MuteItemType, readonly number[]>>>
 
-/** A hidden item as its outline: never its body or its name. */
+/**
+ * A hidden item as its outline: never its body or its name. A thing's outline also
+ * carries its short status, ends, when it has an end set or has ended (T17a); it is
+ * left out otherwise, so every other outline keeps exactly its seven fields.
+ */
 export type HiddenOutline = Readonly<{
   id: number
   type: string
@@ -34,6 +40,7 @@ export type HiddenOutline = Readonly<{
   size: number
   date: string | null
   place_id: number | null
+  ends?: ShortEndingStatus
 }>
 
 type Facts = Readonly<{
@@ -45,6 +52,7 @@ type Facts = Readonly<{
   ownerId: number | null
   size: number
   date: string | null
+  ends: ShortEndingStatus | null
 }>
 
 type FactsQuery = (text: string, params: readonly unknown[]) => Promise<Record<string, unknown>[]>
@@ -55,36 +63,36 @@ const defaultFactsQuery: FactsQuery = async (text, params) => (
 const FACTS_SQL = `/* private:reader-mute-facts */
   SELECT 'note'::text AS type, note.id, note.author_id, author.handle AS author, note.place_id,
     NULL::integer AS kind_id, NULL::text AS kind, NULL::integer AS owner_id,
-    octet_length(note.body)::integer AS size, note.created_at AS date
+    octet_length(note.body)::integer AS size, note.created_at AS date, NULL::jsonb AS ends
   FROM notes note JOIN residents author ON author.id = note.author_id
   WHERE note.id = ANY($1::integer[])
   UNION ALL
   SELECT 'thing', thing.id, thing.maker_id, maker.handle, thing.place_id,
     coalesce(thing.as_kind_id, thing.kind_id), kind.name, thing.owner_id,
-    octet_length(thing.body)::integer, thing.created_at
+    octet_length(thing.body)::integer, thing.created_at, ${thingShortEndsSql('thing')}
   FROM things thing JOIN residents maker ON maker.id = thing.maker_id
   LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
   WHERE thing.id = ANY($2::integer[])
   UNION ALL
   SELECT 'line', line.id, line.resident_id, author.handle, line.place_id,
-    NULL, NULL, NULL, line.body_bytes::integer, line.created_at
+    NULL, NULL, NULL, line.body_bytes::integer, line.created_at, NULL
   FROM room_lines line JOIN residents author ON author.id = line.resident_id
   WHERE line.id = ANY($3::integer[])
   UNION ALL
   SELECT 'ping', ping.id, ping.sender_id, sender.handle, ping.place_id,
-    NULL, NULL, NULL, 0, ping.sent_at
+    NULL, NULL, NULL, 0, ping.sent_at, NULL
   FROM pings ping JOIN residents sender ON sender.id = ping.sender_id
   WHERE ping.id = ANY($4::integer[])
   UNION ALL
   SELECT 'kind', kind.id, kind.owner_id, owner.handle, NULL,
-    kind.id, kind.name, kind.owner_id, coalesce(octet_length(revision.description), 0)::integer, kind.created_at
+    kind.id, kind.name, kind.owner_id, coalesce(octet_length(revision.description), 0)::integer, kind.created_at, NULL
   FROM kinds kind JOIN residents owner ON owner.id = kind.owner_id
   LEFT JOIN kind_revisions revision
     ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
   WHERE kind.id = ANY($5::integer[])
   UNION ALL
   SELECT 'trait', trait.id, trait.coiner_id, coiner.handle, NULL,
-    NULL, NULL, NULL, octet_length(trait.description)::integer, trait.created_at
+    NULL, NULL, NULL, octet_length(trait.description)::integer, trait.created_at, NULL
   FROM traits trait JOIN residents coiner ON coiner.id = trait.coiner_id
   WHERE trait.id = ANY($6::integer[])
   UNION ALL
@@ -94,12 +102,12 @@ const FACTS_SQL = `/* private:reader-mute-facts */
       SELECT 1 FROM agreement_parties party
       WHERE party.agreement_id = agreement.id AND party.resident_id = $9::integer
     ) THEN $9::integer END,
-    octet_length(agreement.body)::integer, agreement.created_at
+    octet_length(agreement.body)::integer, agreement.created_at, NULL
   FROM agreements agreement JOIN residents creator ON creator.id = agreement.created_by_id
   WHERE agreement.id = ANY($7::integer[])
   UNION ALL
   SELECT 'place', place.id, place.owner_id, owner.handle, place.id,
-    NULL, NULL, place.owner_id, octet_length(place.description)::integer, place.created_at
+    NULL, NULL, place.owner_id, octet_length(place.description)::integer, place.created_at, NULL
   FROM places place LEFT JOIN residents owner ON owner.id = place.owner_id
   WHERE place.id = ANY($8::integer[])
 `
@@ -135,6 +143,7 @@ async function loadFacts(
     ownerId: nullableNumber(row.owner_id),
     size: Number(row.size ?? 0),
     date: dateText(row.date),
+    ends: publicShortEnds(row.ends),
   })]))
 }
 
@@ -289,6 +298,7 @@ function judgeOverFacts(set: MuteSet, facts: ReadonlyMap<string, Facts>, query: 
     },
     outline(type: MuteItemType, id: number): HiddenOutline {
       const known = factsOf(type, id)
+      const ends = type === 'thing' ? known?.ends ?? null : null
       return Object.freeze({
         id,
         type,
@@ -297,6 +307,7 @@ function judgeOverFacts(set: MuteSet, facts: ReadonlyMap<string, Facts>, query: 
         size: known?.size ?? 0,
         date: known?.date ?? null,
         place_id: known?.placeId ?? null,
+        ...(ends === null ? {} : { ends }),
       })
     },
     eventOutline,

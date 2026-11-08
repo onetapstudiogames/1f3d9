@@ -326,6 +326,8 @@ export function registerModerationAndHistoryTests(): void {
       accession_open: false,
       signed: false,
       created_at: '2026-08-11T00:00:00.000Z',
+      // An agreement with no thing links reads an empty list (#179).
+      thing_links: [],
     })
 
     const queries = sqlCalls().map(call => (call.query ?? '').replace(/\s+/g, ' ').toLowerCase())

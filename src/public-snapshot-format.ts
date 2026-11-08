@@ -9,7 +9,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { containsPublicCredential } from './credential-safety.ts'
 
-export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 3 as const
+export const PUBLIC_SNAPSHOT_FORMAT_VERSION = 4 as const
 export const PUBLIC_SNAPSHOT_FORMAT_NAME = '1f3d9-public-snapshot' as const
 
 export type SnapshotClassDisposition =
@@ -26,10 +26,10 @@ export type SnapshotClassRegistryEntry = Readonly<{
 }>
 
 /**
- * Version 3 is the closed registry. A new public or private class must be named
+ * Version 4 is the closed registry. A new public or private class must be named
  * here before a later exporter can describe it. The database view remains an
  * independent explicit-column allowlist, so a new table or column is never
- * included merely because it exists. Published version-1 and version-2 bundles
+ * included merely because it exists. Published version-1 to version-3 bundles
  * stay immutable and verify from the source commit in their manifest.
  */
 export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry[] =
@@ -37,18 +37,18 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'residents', disposition: 'exported', reason: 'anonymous public identity', database_sources: ['residents', 'resident_id_allocator'] },
     { class_name: 'public_presence', disposition: 'exported', reason: 'anonymous current-place and asleep display facts', database_sources: ['residents', 'resident_presence', 'events'] },
     { class_name: 'places', disposition: 'exported', reason: 'anonymous public land, orientation, labels, and effective laws', database_sources: ['places', 'active_labels', 'place_law_changes', 'traits', 'things', 'moderation_actions'] },
-    { class_name: 'things', disposition: 'exported', reason: 'active public things with their current labels plus body-free withdrawn, hidden, and gap markers', database_sources: ['things', 'residents', 'kinds', 'active_labels', 'moderation_actions'] },
+    { class_name: 'things', disposition: 'exported', reason: 'public things with their current labels and each thing\'s ending, remnants whose end has come with no current labels and their label rows kept, plus body-free withdrawn, hidden, and gap markers', database_sources: ['things', 'residents', 'kinds', 'active_labels', 'moderation_actions', 'kind_revisions', 'kind_revision_traits', 'traits', 'places', 'transfer_offers'] },
     { class_name: 'notes', disposition: 'exported', reason: 'public speech plus legacy-body, hidden, and gap markers', database_sources: ['notes', 'residents', 'moderation_actions'] },
     { class_name: 'lines', disposition: 'exported', reason: 'public same-room lines plus hidden and gap markers', database_sources: ['room_lines', 'residents', 'moderation_actions'] },
     { class_name: 'pings', disposition: 'exported', reason: 'public body-free pings with their fixed answers plus hidden and gap markers', database_sources: ['pings', 'residents', 'moderation_actions'] },
     { class_name: 'traits', disposition: 'exported', reason: 'current public trait vocabulary plus hidden and gap markers', database_sources: ['traits', 'residents', 'moderation_actions'] },
-    { class_name: 'kinds', disposition: 'exported', reason: 'current public kind definitions plus hidden and gap markers', database_sources: ['kinds', 'kind_revisions', 'residents', 'moderation_actions'] },
-    { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, and signatures', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions'] },
+    { class_name: 'kinds', disposition: 'exported', reason: 'current public kind definitions with their ending permission and proven inventor plus hidden and gap markers', database_sources: ['kinds', 'kind_revisions', 'residents', 'moderation_actions'] },
+    { class_name: 'agreements', disposition: 'exported', reason: 'public agreements, parties, openings, signatures, and the things each names with their short ending status', database_sources: ['agreements', 'agreement_parties', 'agreement_accession_openings', 'agreement_signatures', 'residents', 'moderation_actions', 'agreement_thing_links', 'things', 'active_labels'] },
     { class_name: 'events', disposition: 'exported', reason: 'append-only approved public event headings and safe references plus body-free private-or-gap and hidden markers', database_sources: ['events', 'gazette_issues', 'moderation_actions'] },
     { class_name: 'moderation', disposition: 'exported', reason: 'append-only public moderation history', database_sources: ['moderation_actions', 'residents'] },
     { class_name: 'drawing_revisions', disposition: 'exported', reason: 'deliberately fetched immutable owner-authored drawing history with parent moderation', database_sources: ['drawing_revisions', 'residents', 'places', 'things', 'kinds', 'moderation_actions'] },
     { class_name: 'treasury_fees', disposition: 'exported', reason: 'public city-fee books', database_sources: ['fees', 'residents'] },
-    { class_name: 'world_market_offers', disposition: 'exported', reason: 'public world-aisle locks and receipts only', database_sources: ['transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions'] },
+    { class_name: 'world_market_offers', disposition: 'exported', reason: 'public world-aisle locks and receipts only, with the asset state and ending of each offered thing', database_sources: ['transfer_offers', 'things', 'residents', 'sale_payments', 'moderation_actions', 'active_labels', 'kind_revisions', 'kind_revision_traits', 'traits', 'places'] },
     { class_name: 'gazette_issues', disposition: 'exported', reason: 'permanent public Gazette issue ledger', database_sources: ['gazette_issues'] },
     { class_name: 'gazette_issue_entries', disposition: 'exported', reason: 'permanent issue membership with public source-note identity and conditional body-free withdrawal facts', database_sources: ['gazette_issue_entries', 'gazette_withdrawals', 'notes', 'residents'] },
     { class_name: 'gazette_withdrawals', disposition: 'exported', reason: 'body-free author withdrawal record for a permanent Gazette submission', database_sources: ['gazette_withdrawals', 'notes', 'residents'] },
@@ -72,13 +72,14 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'waiting_transfers', disposition: 'not_public', reason: 'a transfer held for a recipient that muted its giver is private between that giver and that recipient until it is accepted, when the ordinary public transfer is recorded; the home of the giver never appears in it (decision #158)', database_sources: ['waiting_transfers'] },
     { class_name: 'ping_receipts', disposition: 'not_public', reason: 'each pinged resident keeps private pending, seen, and dismissed receipt state', database_sources: ['ping_receipts'] },
     { class_name: 'talk_requests', disposition: 'not_public', reason: 'line and ping request_id replay records and their stored first answers are private', database_sources: ['room_lines.request_id', 'ping_operations'] },
-    { class_name: 'ability_runtime', disposition: 'not_exported', reason: 'wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns are live public records not carried by format v3 yet', database_sources: ['wake_settles', 'wake_tries', 'chance_rolls', 'thing_state_changes', 'thing_wake_state', 'thing_conversions', 'place_copy_counts', 'family_growth_marks', 'things.wake_enabled', 'things.state', 'things.state_version', 'things.generation', 'things.parent_thing_id', 'things.family_id', 'things.copies_made', 'things.open_to_reach', 'things.open_to_convert', 'things.as_kind_id', 'things.as_revision', 'places.wake_visitors', 'places.wake_pins', 'places.wake_block_thing_ids', 'places.wake_block_resident_ids', 'places.wake_random_cap', 'places.wake_label_seconds', 'places.rough_room', 'places.rough_since', 'resident_presence.arrived_at', 'places.growth_cap_per_day', 'places.growth_share_per_family', 'places.allow_arriving_copies'] },
-    { class_name: 'place_hinges', disposition: 'not_exported', reason: 'each place hinge_to is a live public place setting not carried by format v3 yet (decision #132); a hinge step is exported as an ordinary move event', database_sources: ['places.hinge_to'] },
-    { class_name: 'place_feed', disposition: 'not_exported', reason: 'each place feed mark is a live public place setting not carried by format v3 yet (decision #153); a feed room is quiet, and quiet is exported', database_sources: ['places.feed'] },
-    { class_name: 'moderation_record_fields', disposition: 'not_exported', reason: 'the word applied, at-once case, and smaller step of each moderation record, and the end date, daily numbers, and stops of each hold, are live public fields not carried by format v3 yet (decision #151); hold records themselves export in the moderation class with the v3 fields', database_sources: ['moderation_actions.rule_word', 'moderation_actions.at_once_for', 'moderation_actions.smaller_step', 'moderation_actions.smaller_step_record_id', 'moderation_actions.ends_at', 'moderation_actions.hold_notes', 'moderation_actions.hold_lines', 'moderation_actions.hold_things', 'moderation_actions.hold_agreements', 'moderation_actions.hold_stops_pings', 'moderation_actions.hold_stops_building'] },
-    { class_name: 'moderation_replies', disposition: 'not_exported', reason: 'the link from a moderation record to the one reply note each named resident sent is a live public record not carried by format v3 yet (decision #152); the reply notes themselves export in the notes class', database_sources: ['moderation_replies'] },
+    { class_name: 'ability_runtime', disposition: 'not_exported', reason: 'wake settles and tries, public chance rolls, state-box history, wake anchors, conversion memory, growth counts and marks, and the ability columns are live public records not carried by format v4 yet; v4 reads the waking switch, the holder, the copy parent, the converted kind and the room wake dials only to derive the ending of each thing (its status, permission, modes and end-try gates in program.would_run and program.blocked_by), without exporting the columns themselves', database_sources: ['wake_settles', 'wake_tries', 'chance_rolls', 'thing_state_changes', 'thing_wake_state', 'thing_conversions', 'place_copy_counts', 'family_growth_marks', 'things.wake_enabled', 'things.state', 'things.state_version', 'things.generation', 'things.parent_thing_id', 'things.family_id', 'things.copies_made', 'things.open_to_reach', 'things.open_to_convert', 'things.as_kind_id', 'things.as_revision', 'places.wake_visitors', 'places.wake_pins', 'places.wake_block_thing_ids', 'places.wake_block_resident_ids', 'places.wake_random_cap', 'places.wake_label_seconds', 'places.rough_room', 'places.rough_since', 'resident_presence.arrived_at', 'places.growth_cap_per_day', 'places.growth_share_per_family', 'places.allow_arriving_copies'] },
+    { class_name: 'place_hinges', disposition: 'not_exported', reason: 'each place hinge_to is a live public place setting not carried by format v4 yet (decision #132); a hinge step is exported as an ordinary move event', database_sources: ['places.hinge_to'] },
+    { class_name: 'place_feed', disposition: 'not_exported', reason: 'each place feed mark is a live public place setting not carried by format v4 yet (decision #153); a feed room is quiet, and quiet is exported', database_sources: ['places.feed'] },
+    { class_name: 'moderation_record_fields', disposition: 'not_exported', reason: 'the word applied, at-once case, and smaller step of each moderation record, and the end date, daily numbers, and stops of each hold, are live public fields not carried by format v4 yet (decision #151); hold records themselves export in the moderation class with the v4 fields', database_sources: ['moderation_actions.rule_word', 'moderation_actions.at_once_for', 'moderation_actions.smaller_step', 'moderation_actions.smaller_step_record_id', 'moderation_actions.ends_at', 'moderation_actions.hold_notes', 'moderation_actions.hold_lines', 'moderation_actions.hold_things', 'moderation_actions.hold_agreements', 'moderation_actions.hold_stops_pings', 'moderation_actions.hold_stops_building'] },
+    { class_name: 'moderation_replies', disposition: 'not_exported', reason: 'the link from a moderation record to the one reply note each named resident sent is a live public record not carried by format v4 yet (decision #152); the reply notes themselves export in the notes class', database_sources: ['moderation_replies'] },
+    { class_name: 'thing_ending_history', disposition: 'not_exported', reason: "the append-only set, renew, clear, copy, end and end program history behind each thing's ending is a live record not carried by format v4 yet; the current ending of every thing and its thing_ended event are exported", database_sources: ['thing_ending_changes'] },
     { class_name: 'action_runtime', disposition: 'not_exported', reason: 'runtime action, block, timer, and resolution rows are represented by exported public events and current records', database_sources: ['active_blocks', 'action_runs', 'action_resolutions', 'pending_effects', 'effect_resolutions'] },
-    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v3', database_sources: ['transfers', 'sale_payments'] },
+    { class_name: 'historical_property_transfers', disposition: 'not_exported', reason: 'transfer and sale-payment tables are rebuildable from current public property and exported event records in format v4', database_sources: ['transfers', 'sale_payments'] },
     { class_name: 'reading_counters', disposition: 'not_exported', reason: 'derived byte and item counters can be reproduced from exported records', database_sources: ['place_reading_totals'] },
     { class_name: 'change_markers', disposition: 'not_exported', reason: 'derived cursor state can be rebuilt from exported events', database_sources: ['public_change_state', 'public_change_log'] },
     { class_name: 'window', disposition: 'not_exported', reason: 'derived bounded human presentation', database_sources: [] },
@@ -88,8 +89,8 @@ export const PUBLIC_SNAPSHOT_CLASS_REGISTRY: readonly SnapshotClassRegistryEntry
     { class_name: 'names_directory', disposition: 'not_exported', reason: 'derived from exported resident and place identities', database_sources: [] },
     { class_name: 'counters', disposition: 'not_exported', reason: 'derived from exported records', database_sources: [] },
     { class_name: 'ping_arrival_marks', disposition: 'not_exported', reason: 'each ping keeps when its two residents arrived only so that a later move ends the offer; arrival times stay out of snapshots like resident_presence.arrived_at', database_sources: ['pings.sender_arrived_at', 'pings.target_arrived_at'] },
-    { class_name: 'listening_cues', disposition: 'not_exported', reason: 'an open wait is a brief presentation cue that exists only while its request is open and is never history', database_sources: ['wait_leases'] },
-    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v3 never edits original records; release errata are separate assets and releases', database_sources: [] },
+    { class_name: 'listening_cues', disposition: 'not_exported', reason: 'an open wait, and the 20 seconds after a wait returns with an arrival or at its end, is a brief presentation cue and is never history', database_sources: ['wait_leases'] },
+    { class_name: 'corrections', disposition: 'never_existed', reason: 'format v4 never edits original records; release errata are separate assets and releases', database_sources: [] },
   ] satisfies readonly SnapshotClassRegistryEntry[]).map(entry => Object.freeze({
     ...entry,
     database_sources: Object.freeze([...entry.database_sources]),
@@ -121,6 +122,8 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'commitment',
     'current_revision',
     'day',
+    'end_tries',
+    'ended',
     'error',
     'family_id',
     'fee_tx_hash',
@@ -145,6 +148,7 @@ export const PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS = Object.fr
     'moderated',
     'moderation',
     'more',
+    'more_due',
     'name',
     'op',
     'outcome',

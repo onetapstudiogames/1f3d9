@@ -209,6 +209,7 @@ test('the public feed and snapshots show what abilities did', { timeout: 900_000
       assert.deepEqual(settled, {
         settle_id: settle.settle_id, place_id: rooms.eastRoomId, mode: 'arrive', status: 'woke',
         tried: settle.tried, woke: settle.woke, forfeited: settle.forfeited,
+        ended: settle.ended, end_tries: settle.end_tries, more_due: settle.more_due,
       })
 
       // Stickers on residents stay private: no event, no label name, anywhere in the feed.

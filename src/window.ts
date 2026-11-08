@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import type { Context } from 'hono'
 import { HANDLE_RE, WORLD_NAME_RE, sha256 } from './core.ts'
 import { sql } from './db.ts'
+import { agreementThingLinks, agreementThingLinksSql, type AgreementThingLink } from './agreement-thing-links.ts'
 import { publicText } from './input.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import {
@@ -82,6 +83,8 @@ import {
   type WindowShareDetail,
 } from './window-sharing.ts'
 import { thingBornAsColumnsSql } from './thing-kind-read.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
+import type { ShortEndingStatus } from './thing-endings.ts'
 import { seasonNowMs } from './season/clock.ts'
 import { stampSeason } from './season/stamp.ts'
 import { announcementIsActive, WINDOW_ANNOUNCEMENT } from './window-client/announcement.ts'
@@ -247,6 +250,8 @@ interface PublicThing {
   kind_moderated: boolean
   has_drawing: boolean
   truncated?: true
+  /** The short status; left out when no end is set and the thing never ended. */
+  ends?: ShortEndingStatus
 }
 
 export interface PublicThingHeading {
@@ -264,6 +269,8 @@ export interface PublicThingHeading {
   body_text_bytes: number
   created_at: string
   has_drawing: boolean
+  /** The short status; left out when no end is set and the thing never ended. */
+  ends?: ShortEndingStatus
 }
 
 interface PublicAgreement {
@@ -280,6 +287,8 @@ interface PublicAgreement {
   created_at: string
   moderated: boolean
   truncated?: true
+  /** Each linked thing's status as of the read (#179); sent when the row was read with its links. */
+  thing_links?: readonly AgreementThingLink[]
 }
 
 export type PublicWindowLine = Readonly<
@@ -376,6 +385,12 @@ function publicBornAs(value: unknown): PublicBornAs | null | undefined {
   return kind && kindId && revision ? { kind, kind_id: kindId, revision } : undefined
 }
 
+/** The ends key of a window thing row, kept only when it reads as a short status. */
+function shortEndsField(value: unknown): { ends?: ShortEndingStatus } {
+  const ends = publicShortEnds(value)
+  return ends === null ? {} : { ends }
+}
+
 function thingGeneration(value: unknown): number | null {
   const generation = Number(value ?? 0)
   return Number.isSafeInteger(generation) && generation >= 0 ? generation : null
@@ -426,6 +441,7 @@ function safeFrontMatterHeading(value: unknown): PublicFrontMatterHeading | null
     owner_id: ownerId,
     owner,
     has_drawing: row.has_drawing === true,
+    ...shortEndsField(row.ends),
   })
 }
 
@@ -642,6 +658,7 @@ export function publicWindowThings(values: unknown[]): PublicThing[] {
       kind_moderated: row.kind_moderated === true,
       has_drawing: row.has_drawing === true,
       ...(body.truncated ? { truncated: true as const } : {}),
+      ...shortEndsField(row.ends),
     }]
   }).slice(0, PUBLIC_PAGE_MAX)
 }
@@ -687,6 +704,7 @@ export function publicWindowThingHeadings(values: unknown[]): PublicThingHeading
       body_text_bytes: bodyTextBytes,
       created_at: createdAt,
       has_drawing: row.has_drawing === true,
+      ...shortEndsField(row.ends),
     })]
   }).slice(0, PUBLIC_PAGE_MAX)
 }
@@ -726,6 +744,7 @@ export function publicWindowAgreements(values: unknown[]): PublicAgreement[] {
       created_at: createdAt,
       moderated: row.moderated === true,
       ...(body.truncated ? { truncated: true as const } : {}),
+      ...(Array.isArray(row.thing_links) ? { thing_links: agreementThingLinks(row.thing_links) } : {}),
     }]
   }).slice(0, PUBLIC_PAGE_MAX)
 }
@@ -1116,7 +1135,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
             thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
             octet_length(thing.body)::integer AS body_text_bytes,
             ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
-            thing.created_at
+            thing.created_at,
+            ${thingShortEndsSql('thing')} AS ends
           FROM things thing
           JOIN residents maker ON maker.id = thing.maker_id
           JOIN residents current_owner ON current_owner.id = thing.owner_id
@@ -1160,7 +1180,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           coalesce(thing.as_revision, thing.current_revision) AS current_revision, kind.name AS kind,
           ${thingBornAsColumnsSql('thing')},
           coalesce(revision.traits, '{}'::text[]) AS traits,
-          ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at
+          ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing, thing.created_at,
+          ${thingShortEndsSql('thing')} AS ends
         FROM things thing
         JOIN residents maker ON maker.id = thing.maker_id
         JOIN residents current_owner ON current_owner.id = thing.owner_id
@@ -1215,7 +1236,8 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
                 AND signature.resident_id = membership.resident_id
             )
           ) AS complete,
-          agreement.created_at
+          agreement.created_at,
+          ${agreementThingLinksSql('agreement.id')} AS thing_links
         FROM agreements agreement
         JOIN residents creator ON creator.id = agreement.created_by_id
         WHERE ($1::integer IS NULL OR agreement.id < $1::integer)
@@ -1227,7 +1249,7 @@ export function windowCollectionStatement(options: WindowHistoryQuery): WindowCo
           ))
       )
       SELECT id, body, created_by, parties, party_count, acceded, signatures, accession_open,
-        NOT complete AS open, created_at
+        NOT complete AS open, created_at, thing_links
       FROM public_agreements ORDER BY id DESC LIMIT $3::integer`,
     values: Object.freeze([options.beforeId, options.resident, fetchLimit, options.afterId ?? null]),
   })

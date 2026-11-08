@@ -1,6 +1,8 @@
 import { positiveId, publicText } from './input.ts'
 import type { PublicQueryExecutor } from './public-pagination.ts'
 import { PUBLIC_THING_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
+import type { ShortEndingStatus } from './thing-endings.ts'
 
 export const PLACE_PURPOSE_MAX_CHARACTERS = 280
 export const PLACE_FRONT_MATTER_SHAPE =
@@ -18,6 +20,8 @@ export interface PublicFrontMatterHeading {
   readonly owner_id: number
   readonly owner: string
   readonly has_drawing: boolean
+  /** The short status; left out when no end is set and the thing never ended. */
+  readonly ends?: ShortEndingStatus
 }
 
 export function parsePlacePurpose(value: unknown): string | null | undefined {
@@ -66,6 +70,7 @@ function publicHeading(row: Readonly<Record<string, unknown>>): PublicFrontMatte
   if (!id || !name || !Number.isSafeInteger(bodyTextBytes) || bodyTextBytes < 0
       || row.type !== 'thing' || !makerId || !madeBy || !currentOwnerId || !currentOwner
       || !ownerId || !owner || ownerId !== currentOwnerId || owner !== currentOwner) return null
+  const ends = publicShortEnds(row.ends)
   return Object.freeze({
     id,
     type: 'thing' as const,
@@ -78,6 +83,7 @@ function publicHeading(row: Readonly<Record<string, unknown>>): PublicFrontMatte
     owner_id: ownerId,
     owner,
     has_drawing: row.has_drawing === true,
+    ...(ends === null ? {} : { ends }),
   })
 }
 
@@ -95,7 +101,8 @@ export async function loadPublicPlaceFrontMatter(
       thing.maker_id, maker.handle AS made_by,
       thing.owner_id AS current_owner_id, current_owner.handle AS current_owner,
       thing.owner_id, current_owner.handle AS owner,
-      ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing
+      ${PUBLIC_THING_HAS_DRAWING_SQL} AS has_drawing,
+      ${thingShortEndsSql('thing')} AS ends
     FROM places place
     CROSS JOIN LATERAL unnest(place.front_matter_thing_ids)
       WITH ORDINALITY AS selected(thing_id, position)

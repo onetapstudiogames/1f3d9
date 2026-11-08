@@ -139,7 +139,7 @@ Refusals, in caller words:
 
 Format v3 exports hold rows in the `moderation` class with the fields every moderation
 row has. The new columns are registered `not_exported` as `moderation_record_fields` in
-`src/public-snapshot-format.ts` and wait for format v4. The reply links are registered
+`src/public-snapshot-format.ts` and wait for a later format. The reply links are registered
 `not_exported` as `moderation_replies`; the reply notes themselves export as ordinary
 notes, and review requests stay private with every flag.
 

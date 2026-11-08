@@ -1325,11 +1325,11 @@ const SAFE_REQUEST_KEYS: Readonly<Record<PaymentAttemptRecord['operation'], read
   ],
   kind_invention: [
     'name', 'description', 'traits', 'recipe',
-    'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+    'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
   ],
   kind_revision: [
     'kind_id', 'description', 'traits', 'recipe',
-    'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+    'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
   ],
   place_rename: ['place_id', 'name'],
   place_retire: ['place_id'],

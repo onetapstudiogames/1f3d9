@@ -7,11 +7,14 @@ It never creates or restores a private recovery backup. Read the format and
 class registry in [`../PUBLIC_SNAPSHOTS.md`](../PUBLIC_SNAPSHOTS.md) before
 enabling publication.
 
-Published format-v1 and format-v2 releases are immutable. Format v2 begins a
-separate tag series and adds the permanent Gazette issue and membership
+Published format-v1, format-v2 and format-v3 releases are immutable. Format v2
+begins a separate tag series and adds the permanent Gazette issue and membership
 classes. Format v3 begins a separate tag series,
 `city-snapshot-v3-YYYYMMDDTHHMMSSZ`, and adds same-room lines and body-free
-pings.
+pings. Format v4 begins a separate tag series,
+`city-snapshot-v4-YYYYMMDDTHHMMSSZ`, and adds things ending: each thing's
+ending, remnants, kind ending permissions and inventors, agreement thing links,
+world-offer asset states and the `thing_ended` phase, and `thing_ended` events.
 
 ## 1. Install the restricted database projection
 
@@ -20,13 +23,19 @@ review window.
 
 1. Review `db/migrations/20260823_public_snapshots.sql`,
    `db/migrations/20260827_gazette.sql`, the separately guarded Gazette
-   activation, and `db/migrations/20260924_same_room_talk.sql`. The first
+   activation, `db/migrations/20260924_same_room_talk.sql`, and
+   `db/migrations/20261106_thing_endings.sql`. The first
    supplies v1. The dormant Gazette migration adds one explicit four-column
    `city_snapshot.public_records_v2` security-barrier view and grants v2 while
    retaining v1 for the still-deployed exporter. Exact-commit room activation
    performs the final v1 revoke in its opening transaction. The same-room-talk
    migration adds `city_snapshot.public_records_v3` and grants v3 while keeping
-   the v2 grant in place.
+   the v2 grant in place. The thing endings migration adds
+   `city_snapshot.public_records_v4` and grants v4 while keeping the v2 and v3
+   grants in place, so the exporter of the commit still deployed keeps running
+   between the Production migration and the merge. `public_records_v4` depends on
+   the `things` columns it reads (`wake_enabled` and the ending columns among them),
+   so a later migration that drops or retypes one of them must drop and recreate v4.
 2. On a new target, install the base snapshot projection first. On every target,
    apply the Gazette migration in Preview before Production with the normal
    target proof:
@@ -35,6 +44,7 @@ review window.
    npm run migrate:preview:public-snapshots
    npm run migrate:preview:gazette
    npm run migrate:preview:same-room-talk
+   npm run migrate:preview:thing-endings
    ```
 
 3. Provision a strong password for `city_snapshot_export` through the database
@@ -103,8 +113,9 @@ The export proves all of these before it reads the four-column view:
 
 - Current login is `city_snapshot_export`.
 - The transaction is read-only and has one repeatable-read moment.
-- The account can read `city_snapshot.public_records_v3`; the same-room-talk
-  migration leaves its `city_snapshot.public_records_v2` grant in place. During
+- The account can read `city_snapshot.public_records_v4`; the thing endings
+  migration leaves its `city_snapshot.public_records_v2` and
+  `city_snapshot.public_records_v3` grants in place. During
   the documented dormant Gazette transition it may also read the safe v1 view;
   exact-commit room activation revokes that v1 grant.
 - The account cannot read or write any base relation in `public`.

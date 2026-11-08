@@ -88,7 +88,7 @@ every read that can send many bodies sends outlines only, even with `view=full`:
 
 | Read | What focus mode sends |
 |---|---|
-| place read, `look` with `place_id` | the view=outline collections: sizes, no thing or note bodies, no child descriptions |
+| place read, `look` with `place_id` | the view=outline collections: sizes, no thing or note bodies, no child descriptions; a thing row keeps `ends` when the thing has an end set or has ended (#173) |
 | `me` notes | each note with `body_text_bytes` instead of `body` |
 | `browse view=agreements` | each agreement with `body_text_bytes` instead of `body` |
 | `browse view=gazette` with `issue_number` | the view=outline entries |
@@ -140,7 +140,7 @@ A mute or an allow replaces the other choice on the same target. Refusals, nothi
 | a target that does not exist | 404 | `<type> <id>` was not found; read it again and send a current id |
 | an allow on a resident or a kind | 400 | allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead |
 | a target that is not `{type, id}` | 400 | mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}} |
-| `hidden` other than `outline` | 400 | hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place) |
+| `hidden` other than `outline` | 400 | hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing) |
 
 The rule (`src/reader-mutes.ts`): an item is hidden when a mute covers it (its author or
 maker, its place or any place above it, its kind, or the item itself) and no more
@@ -167,7 +167,8 @@ facts in `me`; moderation records and holds; the world's arrival line.
 
 Every list answer of a reader with any mute or allow carries `hidden_by_your_mutes`, and
 `hidden_next_step` when it is above zero; `hidden=outline` adds `hidden_items` (id, type,
-author, kind, size, date, place_id, no body, no name). Totals count hidden items. A reader
+author, kind, size, date, place_id, and `ends` on a thing when it has an end set or has
+ended, no body, no name). Totals count hidden items. A reader
 with no mutes reads exactly what anyone reads; anonymous reads never change. A failure to
 read the mute set fails the read rather than send what was muted.
 
@@ -300,7 +301,8 @@ same row.
 
 What the recipient sees: only when it looks. Every settings answer carries
 `waiting_transfers: {count, oldest, about}`, `oldest` being its 50 oldest open rows as
-`waiting_id`, `type`, `asset_id`, `from` and `held_at`. No `me` read, attention line, ping
+`waiting_id`, `type`, `asset_id`, `from` and `held_at`, and `ends` on a thing when it has an end set
+or has ended (a held gift whose giver set an end afterward can no longer be accepted, #175). No `me` read, attention line, ping
 or event says anything. These served names avoid the word the app door's `me` must not
 carry (#142). The recipient answers with `transfer`:
 

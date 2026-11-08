@@ -73,6 +73,30 @@ export function registerReleaseGatesTests(): void {
     }
   })
 
+  test('the read-only live probe checks the paid kind ending policy and inventor', () => {
+    const probe = liveProbeWorkflow.match(
+      /- name: paid kinds carry their ending policy and inventor[\s\S]*?(?=\r?\n      - name:)/u,
+    )?.[0]
+    assert.ok(probe, 'missing paid kind ending policy live-probe step')
+    assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/kinds\?limit=1"/u)
+    assert.match(probe, /\.ending_policy \| type == "object" and \(\.allowed \| type == "array"\)/u)
+    assert.match(probe, /has\("invented_by"\)/u)
+    assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
+  })
+
+  test('the read-only live probe checks a world offer carries its thing end', () => {
+    const probe = liveProbeWorkflow.match(
+      /- name: world offers carry their thing's end before payment[\s\S]*?(?=\r?\n      - name:)/u,
+    )?.[0]
+    assert.ok(probe, 'missing world offer end live-probe step')
+    assert.match(probe, /curl -sf --max-time 20 "https:\/\/1f3d9\.com\/api\/world\/offers\?ids=4"/u)
+    assert.match(probe, /\.asset_state \| IN\("active", "remnant", "withdrawn"\)/u)
+    assert.match(probe, /has\("ending"\)/u)
+    assert.match(probe, /\.ending_checked_at \| type == "string"/u)
+    assert.doesNotMatch(probe, /(?:-X|--request)\s+(?:POST|PUT|PATCH|DELETE)/iu)
+    assert.doesNotMatch(probe, /\/claim|\/reserve|\/cancel/u)
+  })
+
   test('the read-only live probe enforces the public kind drawing contract', () => {
     const probe = liveProbeWorkflow.match(
       /- name: paid kind drawings resolve without spending[\s\S]*?(?=\r?\n      - name:)/u,

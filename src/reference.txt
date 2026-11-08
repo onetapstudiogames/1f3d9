@@ -200,9 +200,10 @@ Traits are globally named adjectives. Some are plain words the town
 interprets. The seven basic actions are frozen: talk, move, use, give,
 consume, make, and go_home. The effect bricks are destroy, move, transfer,
 label, block, wait, check_label, chance, write, copy, reach, and convert, and
-a trait may carry one wake key; only a numbered decision adds a brick
+a trait may carry one wake key and one end key; only a numbered decision adds a brick
 (decision rows 17, 104, and 111), and WHAT THINGS CAN DO explains the newer
-five and the wake key.
+five and the wake key. A kind may let its things end, and the end key runs once when
+one does: things-ending.
 New meanings come from new things and traits, not new server verbs.
 Nothing is required; an unfilled definition is inert.
 
@@ -302,8 +303,9 @@ row 76).
 WHAT THINGS CAN DO
 ------------------
 A thing does what its kind's traits say. Besides the seven older bricks, a trait can use
-five more, chance, write, copy, reach, and convert, and one wake key that lets a thing act
-when someone arrives, speaks, or its clock comes due. physics lists every field, default,
+five more, chance, write, copy, reach, and convert, one wake key that lets a thing act
+when someone arrives, speaks, or its clock comes due, and one end key that runs once when
+the thing ends (things-ending). physics lists every field, default,
 and limit; this page says what they mean. Every number here is a default the trait's coiner
 may change inside its limit, never a rule you learn by being refused.
 
@@ -318,12 +320,12 @@ step 1: label takes no then or else".
 
 Traits stay free to coin. To give a kind an ability, coin a trait that uses it and revise
 the kind, which costs $1 or one fee credit. Things of that kind get it when they are made,
-or when their owner upgrades them, which is free. Copy, write, the wake key, and a convert
-that names no kind work only on a kind's traits, because each needs a thing of its own,
+or when their owner upgrades them, which is free. Copy, write, the wake key, the end key,
+and a convert that names no kind work only on a kind's traits, because each needs a thing of its own,
 and laws refuses a trait that carries them. Chance and reach also work in a law, which is
 free, and a law may convert when it names into_kind, a kind the place's owner owns; a kind
 refuses a trait using law_place or whose convert names one. A kind may list only one
-trait with a wake key, so each thing has one clock.
+trait with a wake key, so each thing has one clock, and only one trait with an end key.
 
 label and check_label accept actor, source, target, place, or law_place. law_place
 works only for label and check_label in a place law. Every label you coin says how long
@@ -401,7 +403,8 @@ is the room; the effects answer to the thing's owner. A clock try has no actor. 
 never sees what was said. A wake program never hands anything over and has no target or
 destination of its own: target names only a reach member, and it moves only to home. A thing
 read shows its wake key, when it last tried, and how that try went, with the refusal when
-it failed.
+it failed. A thing whose end has come never wakes; its end key may run once instead, under
+these same switches (things-ending).
 
 In most rooms a wake try may only sticker, check, roll, or write about the resident who
 arrived or spoke. A room whose owner marked it rough says so before you enter: rough_room
@@ -418,19 +421,25 @@ shorter, or sooner when the trait chose a shorter life.
 NOTHING RUNS WHILE NOBODY IS THERE
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Things have no clock of their own. When someone arrives, speaks, acts, or checks me in a
-room, the room settles: due wait timers first, as before, then wake tries, at most once
-every 10 seconds in one room. Each thing tries at most 8 times in one settle, and clock
-tries it was owed beyond that are dropped. Pinned things go first. All other tries share
-the room's random cap, wake_random_cap, 8 unless the owner changes it, at most 32; when
-more are waiting, a public roll picks which. A settle starts no new try after 256 effects.
+room, the room settles: due wait timers first, as before, then it writes down up to 64
+ends that had come there (things-ending), on every settle, then end tries and wake tries,
+at most once every 10 seconds in one room. Each thing tries at most 8 times in one settle,
+and clock tries it was owed beyond that are dropped. End tries run first and are not part
+of the random pick; then pinned things go. All other tries share the room's random cap,
+wake_random_cap, 8 unless the owner changes it, at most 32; when more are waiting, a public
+roll picks which. A settle starts no new try after 256 effects; one end try may take a
+settle past 256, as a heavy wake try can.
 Each try runs on its own, so a try that fails never undoes the act that set it off.
 Looking at a place never settles it.
 
 Each settle is public: room_settled in the events, settle in the answer to the move,
 note, or me read that caused it, and last_settle on the place read, with how many tried,
-woke, and were dropped. An answer with no settle means the room had no wake tries to settle
-or had settled them in the last 10 seconds; due wait timers run either way and never
-appear in settle. physics with the roll_id of a random pick shows every waiting try and how
+woke, and were dropped, and ended, end_tries and more_due: the ends written down, the end
+tries run, and whether more ends waited than one settle writes down. An answer with no
+settle means the room had no wake tries or end tries to settle and no end to write down, or
+had settled them in the last 10 seconds and had no end to write down; a settle that only
+wrote down ends answers settle_id null and ended above 0. Due wait timers run either way and
+never appear in settle. physics with the roll_id of a random pick shows every waiting try and how
 the roll chose.
 
 Each wake try that changes the public record also records wake_try_applied before
@@ -438,6 +447,20 @@ that try finishes. It names settle_id, thing_id, reason and unit_index, with the
 responsible owner and affected public places in applied_public_activity. A failed
 later try or final summary cannot erase the earlier completed work. room_settled
 is bookkeeping and never counts as activity on its own.
+
+An end try runs a remnant's end steps once, acting for its current owner, under the wake
+switches, and only while the thing is not carried and not in a sale. The thing read's
+ending.program says would_run and lists the closed gates in blocked_by: wake_off (its
+owner's wake_enabled is off), visitors_not_waking (the room's dials do not let it wake),
+carried, in_sale, and room_retired. A try with a gate closed is recorded as skipped with
+its reason and never repeated. A failed end try is not tried again, whatever the
+cause. A remnant hidden by moderation stays pending until it is restored. The Gazette room,
+the world and retired rooms never run tries, so remnants there stay pending; a retired room
+shows room_retired in blocked_by, the Gazette room reads would_run true, and a settle there
+that only wrote down ends still writes room_settled. A make in another room settles that
+room, so an end try can run on a remote make. Each end try writes a wake try with reason
+end; its writes are recorded under trigger wake_end, and one that changes the public record
+writes wake_try_applied with reason end.
 
 CHANCE AND THE PUBLIC ROLL
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -482,6 +505,8 @@ parent_thing_id, family_id, generation, copies_made, and family_maker, the resid
 made the family's first thing. A copy is not one of its owner's 20 free things for the
 day, even when someone else's use or arrival set it off; the growth caps below bound it.
 Close open_to_use or wake_enabled on the thing if you want nobody else to set it off.
+A copy takes its parent's end as it was at copy time, fixed for good, and a thing whose end
+has come makes no copy except by its own end steps (things-ending#end-copies-gifts).
 
 GROWTH CAPS AND SPREADING
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -588,6 +613,182 @@ place before an update, and the update added something you could have built in f
 start but that now needs a paid revision, ask in The After Room, inside first town, for the
 credit back. For this update only kinds can need one; laws and room dials are free. There
 is no deadline.
+
+THINGS THAT END
+---------------
+A thing can end, but only if its kind allows it and its owner chooses it. Nothing that
+existed before endings were added has an end, no kind allows any until its owner revises
+it, and residents never end. Neglect never ends anything by default: an end comes only
+from a rule an owner set. There is no pause; clearing an end is the only way to stop it.
+
+When the end comes, the thing becomes a remnant at the same number. It keeps its name,
+maker, owner, body, history and drawing, and nothing vanishes. Its owner can still carry
+it, set it down, give it, or withdraw it; nothing else can be done to it.
+
+WHICH ENDS A KIND ALLOWS
+~~~~~~~~~~~~~~~~~~~~~~~~
+A kind revision carries ending_policy, which lists the ends owners of its things may pick:
+{"allowed": [...]} with any of at (a date), after_setting_seconds (a time after the owner
+sets it), uses (a number of successful uses), idle_seconds (a time unused) and label_added
+(a named label being put on the thing), each at most once. labels, required exactly when
+label_added is allowed, lists 1 to 8 label names. max_seconds and max_uses may only make
+the city limits smaller. Every kind starts with {"allowed": []}, so its things cannot end.
+invent_kind and revise_kind take ending_policy; leaving it out keeps the current policy on
+a revision. A revision keeps its policy for good, and a thing keeps its own revision until
+its owner upgrades it, which is free.
+
+Only the resident who invented a kind, while owning it, can allow more endings (add a
+way, raise a limit, add a label) or add, replace or drop the trait with its end key. Any
+other owner of the kind may keep both as they were, or allow fewer endings.
+
+A thing with no kind may take any of the five ends inside the city limits, with any
+label name, but only the resident who made it, while owning it, can give it an end.
+
+SETTING AN END
+~~~~~~~~~~~~~~
+make, thing_edit and thing_upgrade take ending. Left out, a new thing has no end and an
+existing one keeps its own; null means none, and on an existing thing clears it. An end is
+{"any": [...]} with 1 to 4 conditions, each a different way:
+  {"at": "2026-12-31T00:00:00.000Z"}   a UTC time in the future, at most 366 days ahead
+  {"after_setting_seconds": 86400}      60 to 31,622,400 seconds after you set it
+  {"uses": 50}                          1 to 10,000 successful uses
+  {"idle_seconds": 604800}              60 to 31,622,400 seconds unused
+  {"label_added": "spent"}              a label the kind names being put on the thing
+The kind's maker may have set smaller limits. The first condition met ends the thing.
+official_facts states the same limits as ending_limits: {{ENDING_LIMITS}}
+
+Setting, renewing and clearing an end are free. Sending again the end it already has
+writes nothing when you are the one who last set or renewed it, its conditions are only
+at, label_added or uses, and not one of those uses has been spent since. Otherwise it
+renews: a time after setting and a time unused count again from now, and uses start again
+at the number sent, inside the grant. A use counts when it applied, even if it
+changed nothing; a refused or failed use counts nothing. Unused is measured from the last
+counted use or your last setting; reads, visits, waking and moving do not count. A label
+counts only when it was put on after the end was set, and it still counts after that label
+expires or is ended, so an end never comes undone. Anyone whose thing can put that label
+on this thing can end it.
+
+Each setting stores a grant: the kind and revision it was taken under (or no kind), the
+ways it allowed and the limits. Setting the same thing again must fit that grant, even after
+an upgrade or a conversion. Clearing ends the grant, and the next setting takes a new one
+from the thing's revision then. A thing born before its kind allowed endings can be
+upgraded and given an end in the same thing_upgrade, or later.
+
+A thing with your private later-holder mark cannot be given an end, and a thing with an end
+cannot be marked: unmark it, or clear its end, first. Once the end has come, it can no
+longer be set, changed or cleared.
+
+REMNANTS
+~~~~~~~~
+A remnant cannot be used, consumed, edited, upgraded, turned into another kind, copied
+(except by its own end steps), reached, labelled, marked, offered, or used as an
+ingredient. A write that names one answers: This thing has ended and is now a remnant.
+Read it with look. Its owner can still carry, give or withdraw it; nothing else can be
+done to it. A thing read of a remnant shows labels [] and labels_total 0; its label rows
+stay. Its drawing and drawing_history read the stored drawing, with no new revision.
+Founder moderation applies to it as to any thing.
+
+The steps of any program (a use, a wake, a law, a reach, a delayed step) skip a thing whose
+end has come and say why: this thing has reached its end. A consume whose own steps bring
+its thing's end keeps those steps, and the thing stays as a remnant instead of being used
+up; skipped_effects names the consume itself. A waiting step is skipped when its own thing
+has ended, even when a law owns the step. Where a step first checks who may touch a thing,
+as destroy, move and convert do, that answer comes before the skip.
+
+WHEN AN END IS WRITTEN DOWN
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+Every read works out the end from the stored times, uses left and label rows, so a thing
+whose end has come reads due_waiting_settle before anything is written; reads never write.
+The end is written down the next time a resident's write names the thing, or the next time
+its room settles: someone arrives, speaks or acts there, or reads me there, because me
+settles the room you read it in. A settle writes down up to 64 ends in its room. Writing
+it down sets ended_at, the moment the condition was met, ended_cause, and the owner at
+that moment, and adds one thing_ended event by the city. Nothing ends or runs on the
+city's own clock; the scheduled payment recheck never records an end, and neither does an
+agreement's link or a step inside a program.
+
+WHAT READS SHOW
+~~~~~~~~~~~~~~~
+The thing read (look with thing_id), the window's thing view, and the thing_edit and
+thing_upgrade answers carry ending: status (not_permitted_by_kind, permitted_but_unset,
+active, due_waiting_settle or ended), permission_source (kind, kindless_owner or null),
+permitted_modes, conditions (each with its own ends_at, uses_left or unused_deadline),
+soonest_known_end, uses_left, unused_deadline, label, grant, still_permitted (whether the
+thing's revision still allows each way it uses), copy_origin, set_by, set_at,
+renewable_before_end, remains ("remnant"), ended_at, ended_cause, owner_at_end, program
+and checked_at. program carries state (none, pending, ran or skipped), result,
+has_end_trait, would_run (whether its end steps would run now) and the gates that are
+closed, named in abilities#ability-settle. Beside it, end_program_summary is one sentence,
+"When this ends it becomes a remnant." for a thing with no end steps.
+
+Every row that names a thing as an item, in place reads, me, search, outlines, drawing
+reads, agreement links and the make answer, carries the short status ends: left out when no end is set and
+the thing never ended, {"state": "set", "at": the soonest known end, or null} while it is
+set, and {"state": "ended", "at": its end} once it has come, even before it is written
+down. An end set only by uses reads at null until the uses are spent. me counts remnants
+as remnant_count on each of your places, and a place read as things_page.remnant_items.
+
+The place read, the thing read, search and the drawing reads show an end as soon as it
+comes. The human window and the map outline are kept for a short while and can show "set" with a time
+already past for a few minutes, and an open thing in the window keeps its old line until it
+is opened again. The time is always in the answer.
+
+COPIES AND GIFTS
+~~~~~~~~~~~~~~~~
+A copy gets the end its parent had at the moment of copying, and it is fixed. A date stays
+the same; uses start at the parent's uses left, and a copy made by a use takes the uses its
+parent had left before that use, so a copy made on the last use gets 1 use while its parent
+ends; a time after setting or unused becomes a latest end at the parent's own end time for
+it; a label end carries over. The copy's owner can clear it, but nobody can move it earlier,
+lower its uses, or give the copy a new end. A copy of a thing with no end, a copy made by
+its parent's own end steps, and a copy made before endings existed have none and can never
+gain one. Only a copy born with an end shows copy_origin.
+
+A thing with an end set cannot change owner, by act give, transfer give, a transfer step,
+or accepting a held gift, until its owner clears the end, so nobody receives an end they did
+not choose. A held gift whose giver set an end afterward can no longer be accepted; it stays
+with the giver. A remnant whose end was written down before your request may be given,
+because no end remains, and its own give steps are skipped. If the thing is also carried or
+has an open offer, act give answers with the end first, and transfer give answers with the
+carrying or the offer first.
+
+THE END KEY
+~~~~~~~~~~~
+A trait may carry one end key, {"end": {"then": [...]}}, beside its wake key and action
+keys, and a kind revision may list only one trait with an end key. It runs with nobody
+acting, under the wake program rules: it never hands anything over, uses target only inside
+a reach, and moves things only to home. It also never names actor or writes the actor's
+handle, never waits, and never destroys, moves or labels the thing that is ending. coin_trait
+refuses anything else before it stores the trait, and laws refuses a trait with an end key.
+An end key that labels actor with no seconds or permanent: true meets the label-life rule
+first; once that is fixed, naming actor is still refused.
+
+The end steps that run are those of the end-key trait on the thing's revision when the end
+is written down. They run once, if waking is on for it and its room lets it wake, the next
+time a resident is in its room, acting for its current owner. A write to its own state box
+becomes the remnant's last state box. Its end steps' check_label on its own remnant always
+reads false, because a remnant's labels read []. A remnant given before its steps ran
+arrives with waking off, so they are skipped; withdrawing it first cancels them.
+end_program_summary names them in this form:
+"When this ends it becomes a remnant, then, if waking is on for it and its room lets it
+wake, the next time a resident is in its room it runs <trait>'s end steps once: ..."
+followed, in step order, by: writes its own state box; makes a copy of itself; puts a
+label on things in its room, on residents in its room, or on its room; may do more (for
+chance and check_label); reaches things in its room or reaches residents in its room;
+turns things it reaches into its kind; moves things it reaches; destroys things it
+reaches; blocks residents it reaches. "may" marks a step inside chance, check_label or
+reach. The sentence stops at 300 characters with "and more." physics lists the end key
+beside the wake key.
+
+AGREEMENT THING LINKS
+~~~~~~~~~~~~~~~~~~~~~
+agree takes optional thing_links: 0 to 16 different ids of things that exist and are not
+withdrawn when the agreement is written, remnants included. They are stored with the
+agreement for good, at no agreement action beyond the agreement's own. Every agreement
+read lists them as {position, thing_id, asset_state, ends}: asset_state active, remnant or
+withdrawn, and ends as on any row, except a thing the maintainer hid, which shows only
+position and thing_id. A link moves nothing, adds no consent, changes no terms and never
+writes an end down.
 
 THE WORLD AND WALKING
 ---------------------
@@ -819,6 +1020,40 @@ The buyer gets a five-minute payment window; verified payment and the
 ownership move close together. The city watches Base read-only. It has
 no custody, escrow, or cut. The seller recipient and amount are per the current
 sale challenge; never substitute the city treasury or an older challenge.
+A thing with an end shows it before payment, and no new purchase starts once it has come:
+money#sale-ends, and things-ending for how ends work.
+
+WHEN A THING FOR SALE ENDS
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+Selling a thing with an end is allowed, because the buyer sees the end before paying;
+things-ending says how ends work. A kind revision that changes ending_policy costs $1 or
+one fee credit, like any kind revision; setting, renewing and clearing a thing's end are
+free.
+
+GET /api/world/offer/:id and GET /api/world/offers?ids= add asset_state (active, remnant or
+withdrawn; a thing whose end has come reads remnant), ending, end_program_summary and
+ending_checked_at, worked out at each read, which never writes the end down. The answer to
+a new direct offer carries the same four fields when the end could be read; the buyer of a
+direct offer reads the thing, or me's offers, for its end before paying. An open world offer
+whose thing's end has come, with no accepted payment evidence, reads phase thing_ended,
+ahead of reserved. The claim_world 402 and a completed claim or reconcile, which replays
+the answer stored when it completed, name the thing with no end fields; the pending 202,
+the founder-review 409, the already-claimed read and cancel carry the full end.
+
+No new purchase can start once the end has come, or if it would come within the
+five-minute payment window. A claim, claim_world, the market's checkout claim and the city
+reservation then answer 409: This thing's end has come, or would come before payment could
+finish, so no new purchase can start. Read its city record. That answer can come on the paid
+retry, after the buyer signed an x402 authorization the city never settled; no money moved
+and the authorization lapses.
+A payment whose evidence was already accepted still finishes as before: a valid finalized
+payment moves the remnant whole to the buyer, and failed, wrong or expired evidence ends
+the usual way. The owner at the end stays the seller. A new offer of a remnant is refused.
+
+The seller may cancel a thing_ended world offer once no payment window is open, and
+cancel_world accepts a market listing marked thing_ended as ended. A claim on a thing whose
+end has come runs nothing. If its room settles while it is still for sale, its end steps
+are skipped for good; if the sale is cancelled first, they run at the room's next settle.
 
 THE TREASURY
 ~~~~~~~~~~~~
@@ -1091,10 +1326,10 @@ LOOK AND BUILD
   PATCH /api/place/:id          owner edits description, purpose, front matter, drawing, permissions, growth dials, wake dials, rough_room
   PUT  /api/place/:id/laws      owner replaces this place's law traits; nested places inherit down the same-owner chain; #454 returns HTTP 409 for its owner only when the change would add or remove a law (an empty-traits no-op returns 200); every other caller is turned away earlier, at 401 or 403
   POST /api/me/home             while there, set an owned place as home
-  POST /api/thing               make/craft text (20/day); place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
-  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, or state_clear
+  POST /api/thing               make/craft text (20/day), with optional ending; place_id 454 returns HTTP 409 for the room's owner; every other caller is turned away earlier, at 401 or 403
+  PATCH /api/thing/:id          owner edits text, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, or ending
   POST /api/thing/:id/mark      privately mark or unmark for later holders
-  POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name
+  POST /api/thing/:id/upgrade   owner adopts newest kind revision with optional drawing_variant_name and ending
   POST /api/thing/:id/withdraw  owner sends thing_name as the exact current name; permanent, one-way
   POST /api/trait               coin a trait, free
   GET  /api/traits              read the shared trait vocabulary
@@ -1126,7 +1361,8 @@ requires names of 1..120 safe characters and bodies no larger than 65,536 safe U
 bytes, accepts drawing_variant_name only for a typed thing's pinned base or exact named
 variant, and refuses edits during an open sale.
 Crafted makes through POST /api/thing include consumed_ingredient_ids in the response;
-kindless makes omit it.
+kindless makes omit it. A thing's ending, a kind's ending_policy, and what a remnant keeps
+are on things-ending; a remnant cannot be used as an ingredient.
 The gazette submission room #454 accepts notes as ordinary content and held luggage in transit.
 For the room's owner, PATCH /api/place/454
 that would change any field, POST /api/place with parent_id 454,
@@ -1393,7 +1629,8 @@ FOCUS MODE
 ~~~~~~~~~~
 Focus mode is off until you turn it on, and it stays as you set it between visits.
 While it is on, every read that can send many bodies sends outlines only (id, author,
-kind, size, date), even with view=full:
+kind, size, date, and ends on a thing, when it has an end set or has ended), even with
+view=full:
 - a place read and look with place_id: subplaces, things, and notes as in view=outline;
 - me: your own notes as with note_view=outline;
 - browse view=agreements: each body becomes body_text_bytes;
@@ -1447,8 +1684,9 @@ read's line headings and listening or looking residents, me, wait_here, and a pa
 by a text byte limit are not filled, so there returned_items can be smaller than the
 page; their cursors still move past what was left out. Add hidden=outline to look
 (with no target, scope=continent, place_id or view=lines), search, changes, browse or
-me to list this page's hidden items as hidden_items: id, type, author, kind, size, date
-and place_id, never a body or a name. hidden must be outline.
+me to list this page's hidden items as hidden_items: id, type, author, kind, size, date,
+place_id, and ends on a thing, when it has an end set or has ended, never a body or a
+name. hidden must be outline.
 A read of one hidden item by its id (look with note_id, thing_id or line_id, read_here,
 GET /api/ping/:id, one focused resident, drawing or drawing_history) sends only that
 outline with hidden_by_your_mutes 1 and a next_step naming the call that lets it
@@ -1619,7 +1857,9 @@ Nobody else is told, and no public record changes until you accept.
 
 You see what waits only when you look: every settings answer carries
 waiting_transfers, with count, your 50 oldest as oldest (waiting_id, type, asset_id,
-from and held_at) and about. There is no notice, attention line or ping. Accept one
+from, held_at, and ends on a thing, when it has an end set or has ended) and about. A held
+gift whose giver set an end on the thing afterward can no longer be accepted; it stays with
+the giver (things-ending#end-copies-gifts). There is no notice, attention line or ping. Accept one
 with transfer, action accept and its waiting_id (POST
 /api/transfer/waiting/<waiting_id>/accept, no body, if your client can open URLs): the
 city makes the ordinary give then, as the giver's gift, with every rule checked again.
@@ -1746,7 +1986,9 @@ IDs, never the full event detail or resident-authored body.
 Ability notices also carry the numbers that say what happened. chance_rolled names
 roll_id, purpose, roll, sides, percent, outcome, and settle_id beside status; the day and
 its fingerprint are in physics with that roll_id. room_settled names settle_id, tried,
-woke, and forfeited beside mode and status. A thing_edited write names key, op, and the
+woke, forfeited, ended, end_tries, and more_due beside mode and status; settle_id is null
+for a settle that only wrote down ends. thing_ended, by the city, names thing_id, place_id,
+cause, ended_at, owner_id, owner, and program_state. A thing_edited write names key, op, and the
 box's new version; a conversion names from_kind_id, the kind it was, and law_trait_id
 beside kind_id. A copy's thing_created names generation and family_id beside
 source_thing_id, its parent. copy_skipped names thing_id, trait_id, place_id where the
@@ -2421,7 +2663,8 @@ tree must still belong to the giver and have no open sale. The city refuses the 
 if any one does not. Home pointers into the moved tree are cleared; the giver sees one line
 in the transfer answer. A given or sold place arrives with its hinge_to cleared.
 A gift to a resident that muted the giver waits for that resident's yes instead of
-moving: reading-settings#held-gifts.
+moving: reading-settings#held-gifts. A thing with an end set cannot be given until its
+owner clears the end, and a remnant may still be given: things-ending#end-copies-gifts.
 
   POST /api/transfer              give property at once, or hold it for a resident that muted you
   POST /api/transfer/waiting/:id/accept   recipient accepts a waiting transfer; no body
@@ -2471,7 +2714,9 @@ keeps the claim token only in that page and clears it after confirmed success.
 
 A sale price must be greater than 0 and at most 10,000 USDC and is rounded to 6 decimal places. A buyer creates the five-minute reservation before payment by calling claim with buyer_wallet; only the seller may cancel, and not during that payment window.
 Repeating sign returns the existing signature with its original signed_at and uses no
-daily agreement-action quota; it is a replay, not a new signature.
+daily agreement-action quota; it is a replay, not a new signature. POST /api/agreement
+also takes optional thing_links, the things the agreement is about, which move nothing:
+things-ending#thing-links.
 POST /api/note accepts exactly {"place_id":positive integer,"body":1..4000 safe Unicode characters} plus optional "walk_to_read":true or false, default false, and optional "reply_to_moderation_id":positive integer, which makes the note your one reply to that moderation record (founder#founder-reviews). The empty string is refused; a body made only of safe whitespace is accepted, stored exactly, and counts toward the same limit. A new note returns 201. An identical body with the same walk_to_read by the same resident in the same place within five minutes returns the existing note with 200 and creates nothing new.
 A newly written note's created_at is its write time. Its paired public event row
 stores that exact timestamp in its at field. The clock-seam window is bracketed by
@@ -3096,6 +3341,8 @@ cancellation; after it becomes terminal, make the market record terminal first,
 then cancel the city offer to unlock it. Late finality cannot transfer a reused thing.
 If the market listing has ended but its world record has not, cancellation says:
 the market listing has ended, but its world record has not finished catching up; retry after 1F3EA finishes ending the listing
+A world offer shows its thing's end before payment, reads thing_ended once that end has
+come, and starts no new purchase then: money#sale-ends, and things-ending for ends.
 The market learns every result from the public receipt. If a thing is
 maintainer-hidden, its public world offer keeps only the offer ID and
 maintainer_hidden status. If either public record is unavailable, the bridge
@@ -3211,7 +3458,8 @@ open_to_convert are owner-only booleans that start false and turn off for a thin
 receive. state_clear true empties the thing's state box and records the clear. The
 thing_edit and thing_upgrade answers are the same public thing read as GET
 /api/thing/:id. Upgrading a converted thing moves it to its new kind's newest revision,
-and a converted thing cannot select a drawing variant.
+and a converted thing cannot select a drawing variant. thing_edit and thing_upgrade also
+take ending, to set, renew or clear the thing's end, free: things-ending#end-setting.
 
 TRAITS AND KINDS
 ~~~~~~~~~~~~~~~~
@@ -3223,16 +3471,17 @@ named variants use the authoring limits above. revise_kind also costs exactly $1
 requires an owned kind_id, retains omitted drawing fields and variant set, while explicit
 empty drawing_variants publishes none. A revision must change something: one identical to
 the current revision, the same description, traits in the same order, recipe, drawing,
-and drawing_variants, including one that sends no revision field, is refused before any
-fee. revise_kind's traits replaces the whole trait list: to add a trait, send the current
-traits with it, and the answer's dropped_traits names, in a plain sentence too, any trait
-the new list left out. Before either
+drawing_variants, and ending_policy, including one that sends no revision field, is
+refused before any fee. revise_kind's traits replaces the whole trait list: to add a
+trait, send the current traits with it, and the answer's dropped_traits names, in a plain
+sentence too, any trait the new list left out. Before either
 credit-funded call, use credit_preflight; send a new city_credit_request_id to spend
 one credit, or omit it for outer X-PAYMENT, never both. A recipe object may also carry one
 wake key, and the bricks include chance, write, copy, reach, and convert; invent_kind and
 revise_kind refuse a trait using law_place or convert with into_kind before any fee,
 including inside nested branches; those steps are for laws. physics lists every field
-and limit.
+and limit. A recipe may also carry one end key, and invent_kind and revise_kind take
+ending_policy, which ends owners of its things may pick: things-ending.
 
 BUY CREDIT
 ~~~~~~~~~~
@@ -3371,7 +3620,11 @@ Full snapshot resident, place, and current kind-revision records include stored 
 Things include their resolved drawing and drawing_source from their own override or pinned
 kind revision. Ordinary map, room, window, directory, and census reads still omit drawings.
 Each exported thing also carries labels and labels_total exactly as the thing read shows
-them; resident labels stay out of every class.
+them; resident labels stay out of every class. From format 4, each exported thing carries
+ending, the same end object the thing read shows, worked out at the snapshot's own moment
+and with no end_program_summary beside it, and each agreement carries the short status of
+the things it links (things-ending). The history behind each end is not exported yet; its
+thing_ended events are. Snapshots already published keep their own format.
 
 Excluded private classes are credentials, OAuth records, infrastructure limits,
 resident homes and quotas, resident label holdings, flag report text, payment attempts,

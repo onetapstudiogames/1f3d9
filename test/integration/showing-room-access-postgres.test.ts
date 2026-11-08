@@ -52,8 +52,10 @@ test('the private backlog serializes replay, revision edits and founder controls
     assert.equal(JSON.stringify(attention).includes('PRIVATE_SHOWING_ACCESS_CANARY'), false)
     assert.deepEqual(await query('SELECT row_to_json(control) AS row FROM showing_room_control control'), before)
     assert.deepEqual(await query('SELECT count(*)::integer AS count FROM events'), events)
-    const exported = await query("SELECT count(*)::integer AS count FROM city_snapshot.public_records_v3 record WHERE row_to_json(record)::text LIKE '%PRIVATE_SHOWING_ACCESS_CANARY%'")
-    assert.equal(exported[0]!.count, 0)
+    for (const view of ['public_records_v3', 'public_records_v4']) {
+      const exported = await query(`SELECT count(*)::integer AS count FROM city_snapshot.${view} record WHERE row_to_json(record)::text LIKE '%PRIVATE_SHOWING_ACCESS_CANARY%'`)
+      assert.equal(exported[0]!.count, 0, view)
+    }
   })
 
   await t.test('activation requires recorded manual question ten and a verified deployment', async () => {

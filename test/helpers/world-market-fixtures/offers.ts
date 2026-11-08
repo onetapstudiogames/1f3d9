@@ -80,6 +80,11 @@ export interface FakeOffer {
   block_time: string | null
   from: string | null
   to: string | null
+  // The thing's end facts the offer read selects (thing-ending-read.ts); no end by default.
+  thing_ending_facts: unknown
+  thing_ending_reached: boolean
+  thing_ending_withdrawn: boolean
+  thing_ending_checked_at: string
 }
 
 export interface FakeState {
@@ -101,6 +106,10 @@ export interface FakeState {
   facilitatorSettlements: number
   paymentAttempt: PaymentAttemptRecord | null
   databaseReturnsTimestampDates: boolean
+  /** The claim door's end read (thing-ending-doors.ts); when unset, reached follows the offer's thing_ending_reached. */
+  claimEnd?: Readonly<{ reached: boolean; within_window: boolean }>
+  /** The end comes between the claim door's read and the reserve UPDATE: the UPDATE writes nothing. */
+  reserveEndRefused?: boolean
   now: string
   queries: Array<{ text: string; params: readonly unknown[] }>
 }
@@ -193,6 +202,10 @@ export function openOffer(overrides: Partial<FakeOffer> = {}): FakeOffer {
     block_time: null,
     from: null,
     to: null,
+    thing_ending_facts: null,
+    thing_ending_reached: false,
+    thing_ending_withdrawn: false,
+    thing_ending_checked_at: NOW.toISOString(),
     ...overrides,
   }
   const withBuyer = overrides.market_buyer === undefined && offer.buyer_id != null

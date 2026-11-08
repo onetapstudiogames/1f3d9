@@ -4,6 +4,7 @@ import { EngineError, runAction, type ActionExecution, type TaggedSql } from './
 import type { ThingRow } from './world-support.ts'
 import { placePermission, withPlacePermission } from './place-permission.ts'
 import { dailyLimit, holdLimitRefusal, type DailyLimit } from './resident-hold.ts'
+import { newThingEnding, transactionNow, type EndingField } from './thing-ending-owner.ts'
 
 type MakeFailureStatus = 400 | 403 | 404 | 409 | 429 | 500
 
@@ -21,6 +22,8 @@ export interface MakeThingInput {
   readonly wakeEnabled?: boolean
   readonly kindId: number | null
   readonly ingredientIds: unknown
+  /** The owner's end for the new thing: omitted or null means none. */
+  readonly ending?: EndingField
 }
 
 export type MakeThingResult =
@@ -98,6 +101,7 @@ async function makeCraftedThing(input: MakeThingInput): Promise<MakeThingResult>
         openToConvert: input.openToConvert === true,
         wakeEnabled: input.wakeEnabled !== false,
         ingredientIds: input.ingredientIds,
+        ending: input.ending,
       }, { dailyThingLimit: things.limit })
       if (!result.ok) {
         if (result.status === 429 && things.hold) {
@@ -129,6 +133,13 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
     primitiveEmitsTypedEvent: true,
     performPrimitive: async transaction => {
       const things = await thingsLimit(input, transaction)
+      // A kindless thing's maker owns it at birth, so the kindless maker rule grants its end.
+      const end = input.ending?.supplied === true && input.ending.value !== null
+        ? newThingEnding(input.ending, {
+          kind_id: null, current_revision: null, owner_id: input.actor.id, maker_id: input.actor.id,
+        }, null, await transactionNow(transaction))
+        : null
+      const columns = end?.columns ?? null
       const rows = (await withPlacePermission(transaction)`
         WITH permitted_place AS (
           SELECT place.id
@@ -147,14 +158,26 @@ async function makeKindlessThing(input: MakeThingInput): Promise<MakeThingResult
         ), new_thing AS (
           INSERT INTO things (
             place_id, name, body, owner_id, maker_id, open_to_use, shared_use_may_destroy,
-            open_to_reach, open_to_convert, wake_enabled
+            open_to_reach, open_to_convert, wake_enabled,
+            ending_rule, ending_grant, ending_set_by, ending_set_at, ending_deadline,
+            ending_idle_seconds, ending_idle_anchor, ending_uses_left, ending_label
           )
           SELECT permitted_place.id, ${input.name}, ${input.body}, quota_spend.id,
             quota_spend.id, ${input.openToUse === true}, ${input.sharedUseMayDestroy === true},
             ${input.openToReach === true}, ${input.openToConvert === true},
-            ${input.wakeEnabled !== false}
+            ${input.wakeEnabled !== false},
+            ${columns ? JSON.stringify(columns.ending_rule) : null}::jsonb,
+            ${columns ? JSON.stringify(columns.ending_grant) : null}::jsonb,
+            ${columns?.ending_set_by ?? null}::integer, ${columns?.ending_set_at ?? null}::timestamptz,
+            ${columns?.ending_deadline ?? null}::timestamptz, ${columns?.ending_idle_seconds ?? null}::integer,
+            ${columns?.ending_idle_anchor ?? null}::timestamptz, ${columns?.ending_uses_left ?? null}::integer,
+            ${columns?.ending_label ?? null}::text
           FROM permitted_place CROSS JOIN quota_spend
           RETURNING *
+        ), ending_change AS (
+          INSERT INTO thing_ending_changes (thing_id, change, actor_id, rule, "grant")
+          SELECT new_thing.id, 'set', new_thing.maker_id, new_thing.ending_rule, new_thing.ending_grant
+          FROM new_thing WHERE new_thing.ending_rule IS NOT NULL
         ), new_event AS (
           INSERT INTO events (kind, actor, detail)
           SELECT 'thing_created', quota_spend.handle, jsonb_build_object(

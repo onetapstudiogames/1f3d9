@@ -93,14 +93,15 @@ async function lawConversion(
 
 /**
  * Convert one target thing. Returns false when it already is that kind at that
- * revision, which changes nothing and counts no application.
+ * revision, which changes nothing and counts no application, and 'ended' when the
+ * thing's end has come, which the step skips with its reason.
  */
 export async function convertThing(
   effect: ConvertEffect,
   thingId: number,
   context: EffectExecutionContext,
   db: TaggedSql,
-): Promise<boolean> {
+): Promise<boolean | 'ended'> {
   if (thingId === context.sourceThingId || thingId === context.originThingId) {
     throw new EngineError(400, CONVERT_SELF_ERROR)
   }
@@ -113,6 +114,8 @@ export async function convertThing(
       coalesce(thing.as_revision, thing.current_revision) AS revision_now,
       thing.drawing_variant_name, thing.generation, coalesce(thing.family_id, thing.id) AS family_id,
       thing.wake_enabled, thing.open_to_convert,
+      (thing.ended_at IS NOT NULL
+        OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
       EXISTS (
         SELECT 1 FROM transfer_offers offer
         WHERE offer.asset_type = 'thing' AND offer.asset_id = thing.id AND offer.status = 'open'
@@ -122,6 +125,10 @@ export async function convertThing(
   ` as Array<Record<string, unknown>>
   const target = rows[0]
   if (!target) throw new EngineError(404, 'thing target was not found; choose a current active thing_id')
+  // A thing whose end has come, which this program could otherwise convert, is left as it is;
+  // one that never agreed keeps the refusals below.
+  const ownersOwn = Number(target.owner_id) === context.actorId && context.ownProgram === true
+  if (target.end_reached === true && (target.open_to_convert === true || ownersOwn)) return 'ended'
   if (target.held_by != null) throw new EngineError(409, HELD_THING_ERROR)
   if (target.active_offer_id != null || target.has_open_offer === true) {
     throw new EngineError(409, OFFERED_THING_ERROR)
@@ -129,7 +136,6 @@ export async function convertThing(
   if (target.kind_id == null) {
     throw new EngineError(409, `convert changes only things made from a kind; thing ${thingId} has no kind, so it stays as its owner made it`)
   }
-  const ownersOwn = Number(target.owner_id) === context.actorId && context.ownProgram === true
   if (target.open_to_convert !== true && !ownersOwn) {
     throw new EngineError(403, `thing ${thingId} has not agreed to be converted; its owner can set open_to_convert with thing_edit`)
   }

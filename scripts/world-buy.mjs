@@ -47,6 +47,7 @@ const TERMINAL_WORLD_STATES = new Set([
   'needs_review',
   'canceled',
   'withdrawn',
+  'thing_ended',
 ])
 const PENDING_WORLD_STATES = new Set([
   'claimed',

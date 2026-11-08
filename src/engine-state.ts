@@ -22,7 +22,7 @@ const KIND_ONLY_BRICK_ERROR =
 
 // The triggers that run a thing's own kind traits, directly or through its timers.
 const THING_PROGRAM_TRIGGERS = new Set([
-  'use', 'consume', 'give', 'timer', 'wake_arrive', 'wake_talk', 'wake_clock',
+  'use', 'consume', 'give', 'timer', 'wake_arrive', 'wake_talk', 'wake_clock', 'wake_end',
 ])
 
 /**

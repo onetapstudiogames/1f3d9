@@ -17,13 +17,15 @@ import {
   type TargetType,
 } from './engine.ts'
 import { isBasicAction, type BasicAction } from './physics.ts'
-import { settleRoom, type SettleSummary } from './engine-settle.ts'
+import { settleRoom, settleRoomAndRecord, type SettleSummary } from './engine-settle.ts'
 import { positiveId } from './input.ts'
 import { describeUnsupportedFields } from './world-support.ts'
 import { isOtherCityToolName } from './city-facts.ts'
 import { holdTransferIfWaiting } from './engine-effects.ts'
 import { waitingAnswer } from './waiting-transfers.ts'
 import { missingActiveThingRefusal } from './refusal-text.ts'
+import { giveEndingRefusal, readDoorEndFacts } from './thing-ending-doors.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -253,6 +255,17 @@ async function runResidentAction(
     // no law or trait runs, and no room settles; the answer says it is held.
     // give moves its thing_id when it names one, as runAction does, else its target.
     const given = thingId !== null ? Object.freeze({ type: 'thing' as const, id: thingId }) : transferTarget
+    // A given thing's due end is recorded first. A thing that just became a remnant
+    // refuses E7, and one whose end is set and still to come refuses E9 before anything
+    // is held; an older remnant may be given. A stranger's thing is left to the engine.
+    let recordedThingIds: readonly number[] = []
+    if (action === 'give' && given?.type === 'thing') {
+      recordedThingIds = await recordDueEndQuietly([given.id])
+      const refusal = giveEndingRefusal(await readDoorEndFacts(given.id), {
+        thingId: given.id, actorId: resident.id, recipientId: toResidentId, recorded: recordedThingIds,
+      })
+      if (refusal !== null) return err(c, 409, refusal)
+    }
     const held = action === 'give' && given !== null && toResidentId !== null
       ? await holdTransferIfWaiting(given, resident.id, toResidentId)
       : null
@@ -270,7 +283,9 @@ async function runResidentAction(
         },
       })
     }
-    await settleRoom(before.currentPlaceId, 'act', resident.id)
+    // A thing the settle itself recorded just ended in this request, as the door's own record.
+    const settled = await settleRoomAndRecord(before.currentPlaceId, 'act', resident.id)
+    recordedThingIds = [...recordedThingIds, ...settled.recordedThingIds]
     const result = await runAction({
       actorId: resident.id,
       actorHandle: resident.handle,
@@ -281,6 +296,7 @@ async function runResidentAction(
       carryThingId,
       recipientId: toResidentId,
       payload: {},
+      recordedThingIds,
     })
     const { placeId, settle } = await observePlaceAfterAction(
       resident.id, action, result, before, destinationPlaceId,

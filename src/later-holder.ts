@@ -3,6 +3,7 @@ import { redactResidentCredentialText } from './credential-safety.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import { LATER_HOLDER_PAGE_DEFAULT, LATER_HOLDER_PAGE_MAX } from './read-limits.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { ENDING_MARKED_REFUSAL, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 
 const UNSUPPORTED_FIELD_ECHO_LIMIT = 5
 const UNSUPPORTED_FIELD_NAME_MAX_CHARS = 64
@@ -87,6 +88,14 @@ export class LaterHolderHeldThingError extends Error {
   constructor() {
     super(HELD_THING_ERROR)
     this.name = 'LaterHolderHeldThingError'
+  }
+}
+
+/** A mark asked for on a thing of your own whose end is set (E4) or has come (E7); both answer 409. */
+export class LaterHolderMarkEndingError extends Error {
+  constructor(endReached: boolean) {
+    super(endReached ? THING_REMNANT_REFUSAL : ENDING_MARKED_REFUSAL)
+    this.name = 'LaterHolderMarkEndingError'
   }
 }
 
@@ -415,6 +424,7 @@ export async function setLaterHolderMark(
         AND thing.maker_id = $1::integer
         AND thing.owner_id = $1::integer
         AND thing.withdrawn_at IS NULL AND thing.held_by IS NULL
+        AND thing.ending_rule IS NULL
         AND NOT EXISTS (SELECT 1 FROM existing)
         AND coalesce((
           SELECT moderation.action
@@ -449,11 +459,26 @@ export async function setLaterHolderMark(
     row = concurrent[0]
   }
   if (!row) {
+    // The eligible row is locked, so an end set meanwhile is seen there; this read only
+    // chooses the words. A remnant keeps its rule, so a set rule covers active and ended.
     const current = await execute(`
-      SELECT held_by, owner_id, maker_id FROM things WHERE id = $1::integer
+      SELECT /* private:later-holder-mark-refusal */ held_by, owner_id, maker_id, withdrawn_at,
+        ending_rule IS NOT NULL AS ending_set, thing_end_reached(id) AS end_reached,
+        coalesce((
+          SELECT moderation.action
+          FROM moderation_actions moderation
+          WHERE moderation.target_type = 'thing' AND moderation.target_id = things.id
+          ORDER BY moderation.created_at DESC, moderation.id DESC
+          LIMIT 1
+        ), 'restore') = 'remove' AS removed
+      FROM things WHERE id = $1::integer
     `, [thingId])
-    if (current[0]?.held_by != null && current[0].owner_id === residentId
-      && current[0].maker_id === residentId) throw new LaterHolderHeldThingError()
+    const thing = current[0]
+    const yours = thing?.owner_id === residentId && thing.maker_id === residentId
+    if (yours && thing?.held_by != null) throw new LaterHolderHeldThingError()
+    if (yours && thing?.withdrawn_at == null && thing?.removed !== true && thing?.ending_set === true) {
+      throw new LaterHolderMarkEndingError(thing.end_reached === true)
+    }
     throw new LaterHolderMarkEligibilityError()
   }
   return Object.freeze({

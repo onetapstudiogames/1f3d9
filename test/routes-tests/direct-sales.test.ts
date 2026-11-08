@@ -49,6 +49,21 @@ export function registerDirectSalesTests(): void {
   })
 
 
+  test('a committed thing offer still answers 201 when its end read fails', async () => {
+    reset({ scenario: 'offer lock', thingEndReadFails: true })
+    const offered = await app.request('/api/transfer/offer', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({
+        type: 'thing', id: 41, to_handle: 'neighbor', price_usdc: 2, seller_wallet: SELLER_WALLET,
+      }),
+    })
+    assert.equal(offered.status, 201, await offered.clone().text())
+    const offer = (await offered.json() as { offer: Record<string, unknown> }).offer
+    assert.equal(offer.status, 'open')
+    assert.equal(Object.hasOwn(offer, 'asset_state'), false, 'no end fields when the end cannot be read')
+  })
+
+
   test('a gift moves immediately, while an open sale offer locks the asset', async () => {
     reset({ scenario: 'transfers' })
     const gift = await app.request('/api/transfer', {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { getRoutesTestContext } from '../helpers/routes-fixtures/context.ts'
 import { missingActiveThingRefusal } from '../../src/refusal-text.ts'
+import { placeRemnantCountSql } from '../../src/thing-ending-short.ts'
 
 
 export function registerPlaceReadingTests(): void {
@@ -88,7 +89,13 @@ export function registerPlaceReadingTests(): void {
       [2, null, 11, null, 11, null, 11],
     )
     assert.match(collectionReads[0]?.query ?? '', /from\s+place_reading_totals/i)
-    assert.doesNotMatch(collectionReads[0]?.query ?? '', /count\s*\(\s*\*\s*\)/i)
+    // The live remnant count (thing endings, section 0) is the one count the read makes;
+    // every other total still comes from place_reading_totals.
+    assert.equal((collectionReads[0]?.query ?? '').split(placeRemnantCountSql('$1::integer')).length, 2)
+    assert.doesNotMatch(
+      (collectionReads[0]?.query ?? '').replace(placeRemnantCountSql('$1::integer'), ''),
+      /count\s*\(\s*\*\s*\)/i,
+    )
 
     fixtureState.current = { ...fixtureState.current, calls: [] }
     const secondResponse = await app.request(

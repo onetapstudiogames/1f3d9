@@ -13,6 +13,11 @@ import {
 } from '../../scripts/export-public-snapshot.ts'
 import { PUBLIC_SNAPSHOT_CLASS_REGISTRY } from '../../src/public-snapshot-format.ts'
 import { AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS } from '../fixtures/public-snapshot-event-detail-contract.ts'
+import {
+  FIVE_STATES_PAYMENT_CANARY,
+  FIVE_STATES_WALLET,
+  seedFiveStates,
+} from '../helpers/thing-endings-fixtures/five-states.ts'
 
 const POSTGRES_IMAGE =
   'postgres@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317'
@@ -667,7 +672,7 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
       [nextDirectory, next, ['snapshot-permanent']],
     ] as const) {
       const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')) as { format_version: number }
-      assert.equal(manifest.format_version, 3)
+      assert.equal(manifest.format_version, 4)
       const places = (await readFile(join(directory, 'places.ndjson'), 'utf8'))
         .trimEnd().split('\n').map(line => JSON.parse(line) as { record: Record<string, unknown> })
       assert.deepEqual(places.find(line => line.record.id === room.id)?.record.labels, expected,
@@ -679,5 +684,406 @@ test('the real snapshot role sees one frozen public allowlist and cannot reach b
     }
     assert.deepEqual(await storedLabels(), stored, 'neither export deletes or rewrites an expired label')
     assert.deepEqual((await administrator!.query('SELECT count(*)::int AS count FROM events')).rows, eventsBefore)
+  })
+})
+
+type V4Record = Readonly<{ class_name: string; record_id: string; payload: Record<string, unknown> }>
+type Ending = Readonly<Record<string, unknown> & {
+  status: string
+  program: Readonly<Record<string, unknown>>
+  conditions: readonly Record<string, unknown>[]
+}>
+
+const sameInstant = (actual: unknown, expected: unknown, message: string) => assert.equal(
+  new Date(String(actual instanceof Date ? actual.toISOString() : actual)).getTime(),
+  new Date(String(expected instanceof Date ? expected.toISOString() : expected)).getTime(),
+  message,
+)
+
+test('format v4 carries ends, remnants, links and the thing_ended phase, computed at the export time', async t => {
+  const runId = `${process.pid}-${randomBytes(5).toString('hex')}`
+  const container = `1f3d9-public-snapshot-v4-${runId}`
+  const administratorPassword = randomBytes(24).toString('hex')
+  const snapshotPassword = randomBytes(24).toString('hex')
+  const outputRoot = await mkdtemp(join(tmpdir(), '1f3d9-public-snapshot-v4-'))
+  let administrator: Client | undefined
+  t.after(async () => {
+    await administrator?.end().catch(() => undefined)
+    await rm(outputRoot, { force: true, recursive: true })
+    docker(['rm', '--force', container], true)
+  })
+  docker([
+    'run', '--detach', '--name', container,
+    '--label', `com.1f3d9.test=${runId}`,
+    '--publish', '127.0.0.1::5432',
+    '--env', `POSTGRES_PASSWORD=${administratorPassword}`,
+    '--env', `POSTGRES_DB=${POSTGRES_DATABASE}`,
+    POSTGRES_IMAGE,
+  ])
+  const port = Number(docker(['port', container, '5432/tcp']).match(/:(\d+)\s*$/u)?.[1])
+  assert.ok(Number.isSafeInteger(port) && port > 0)
+  administrator = await connect({
+    host: '127.0.0.1', port, user: 'postgres', password: administratorPassword,
+    database: POSTGRES_DATABASE, ssl: false,
+  })
+  await administrator.query(schemaDdl)
+  await administrator.query(`ALTER ROLE city_snapshot_export PASSWORD '${snapshotPassword}'`)
+  const admin = administrator
+  const fixture = await seedFiveStates(admin)
+  const things = fixture.things
+  const snapshotUrl =
+    `postgresql://city_snapshot_export:${snapshotPassword}@127.0.0.1:${port}/${POSTGRES_DATABASE}`
+
+  // A thing whose date falls a moment after the export transaction opens reads as active
+  // in that export and as due in the next one.
+  const edge = Number((await admin.query<{ id: number }>(`
+    INSERT INTO things (place_id, name, body, owner_id, maker_id, kind_id, birth_revision, current_revision, wake_enabled)
+    VALUES ($1, 'edge lamp', 'falls due during the export', 2, 2, $2, 1, 1, TRUE) RETURNING id
+  `, [fixture.rooms.home, fixture.kinds.lamp])).rows[0]!.id)
+  await admin.query(`INSERT INTO active_labels (target_type, target_id, label, actor_id) VALUES ('thing', $1, 'lit', 2)`, [edge])
+  await admin.query(`
+    UPDATE things SET
+      ending_rule = jsonb_build_object('any', jsonb_build_array(jsonb_build_object('at', now() + interval '3 seconds'))),
+      ending_grant = jsonb_build_object('kind_id', kind_id, 'revision', 1, 'allowed', jsonb_build_array('at'),
+        'limits', '{}'::jsonb, 'city_limits_version', 1),
+      ending_set_by = 2, ending_set_at = now(), ending_deadline = now() + interval '3 seconds'
+    WHERE id = $1
+  `, [edge])
+  const edgeDeadline = (await admin.query<{ at: Date }>('SELECT ending_deadline AS at FROM things WHERE id = $1', [edge])).rows[0]!.at
+
+  const frozenClient = new Client({ connectionString: snapshotUrl, ssl: false })
+  let crossed = false
+  const frozenDirectory = join(outputRoot, 'frozen')
+  const frozen = await exportPublicSnapshot({
+    outputDirectory: frozenDirectory,
+    databaseUrl: snapshotUrl,
+    sourceCommit: 'c'.repeat(40),
+    client: {
+      connect: () => frozenClient.connect(),
+      end: () => frozenClient.end(),
+      query: async (text, values) => {
+        if (text.includes('snapshot-export:records')) {
+          const opened = (await frozenClient.query<{ at: Date }>('SELECT transaction_timestamp() AS at')).rows[0]!.at
+          assert.ok(opened < edgeDeadline, 'the export opened before the edge lamp fell due')
+          await admin.query(
+            'SELECT pg_sleep(GREATEST(0, extract(epoch FROM $1::timestamptz - clock_timestamp())) + 0.05)',
+            [edgeDeadline],
+          )
+          crossed = true
+        }
+        return frozenClient.query(text, values ? [...values] : undefined)
+      },
+    },
+  })
+  assert.equal(crossed, true)
+  const nextDirectory = join(outputRoot, 'next')
+  await exportPublicSnapshot({
+    outputDirectory: nextDirectory,
+    databaseUrl: snapshotUrl,
+    sourceCommit: 'c'.repeat(40),
+    client: new Client({ connectionString: snapshotUrl, ssl: false }),
+  })
+
+  const read = async (directory: string, className: string): Promise<Map<string, Record<string, unknown>>> => {
+    const text = await readFile(join(directory, `${className}.ndjson`), 'utf8')
+    const lines = text.trimEnd().split('\n').filter(line => line.length > 0)
+      .map(line => JSON.parse(line) as { record: Record<string, unknown> })
+    return new Map(lines.map(line => [String(line.record.id), line.record]))
+  }
+  const manifest = JSON.parse(await readFile(join(frozenDirectory, 'manifest.json'), 'utf8')) as {
+    format_version: number
+  }
+  assert.equal(manifest.format_version, 4)
+  assert.match(frozen.tag, /^city-snapshot-v4-/u)
+
+  const thingRecords = await read(frozenDirectory, 'things')
+  const ending = (id: number): Ending => thingRecords.get(String(id))?.ending as Ending
+  const stored = async (id: number) => (await admin.query('SELECT * FROM things WHERE id = $1', [id])).rows[0]!
+
+  await t.test('every exported thing carries its ending status', () => {
+    const expected: Record<string, string> = {
+      notPermitted: 'not_permitted_by_kind', unset: 'permitted_but_unset',
+      kindlessUnset: 'permitted_but_unset', kindlessGiven: 'not_permitted_by_kind',
+      active: 'active', activeTimed: 'active', due: 'due_waiting_settle', remnant: 'ended', ran: 'ended',
+      wakeOff: 'permitted_but_unset', carried: 'permitted_but_unset', visiting: 'permitted_but_unset',
+      blocked: 'permitted_but_unset', retiredRoom: 'permitted_but_unset',
+    }
+    for (const [name, status] of Object.entries(expected)) {
+      const id = things[name as keyof typeof things]
+      assert.equal(ending(id)?.status, status, name)
+      assert.equal(ending(id)?.remains, 'remnant', name)
+      assert.equal(Object.hasOwn(ending(id), 'end_program_summary'), false, `${name}: the summary sentence is a live-read field`)
+    }
+    assert.equal(ending(edge).status, 'active', 'the export judges the edge lamp at its own transaction time')
+    assert.equal(ending(things.kindlessUnset).permission_source, 'kindless_owner')
+    assert.deepEqual(ending(things.kindlessUnset).permitted_modes,
+      ['at', 'after_setting_seconds', 'uses', 'idle_seconds', 'label_added'])
+    assert.equal(ending(things.kindlessGiven).permission_source, null)
+    assert.deepEqual(ending(things.kindlessGiven).permitted_modes, [])
+    assert.equal(ending(things.unset).permission_source, 'kind')
+    assert.deepEqual(ending(things.unset).permitted_modes,
+      ['at', 'after_setting_seconds', 'uses', 'idle_seconds', 'label_added'], 'canonical mode order')
+    assert.deepEqual(ending(things.notPermitted).conditions, [])
+    assert.equal(ending(things.notPermitted).still_permitted, null)
+    assert.equal(ending(things.notPermitted).renewable_before_end, null)
+  })
+
+  await t.test('an active end shows its conditions, counts and grant, and keeps its labels', async () => {
+    const row = await stored(things.active)
+    const active = ending(things.active)
+    assert.deepEqual(active.conditions.map(condition => Object.keys(condition).sort()),
+      [['at'], ['uses', 'uses_left'], ['label_added']])
+    assert.equal(active.conditions[1]!.uses_left, 3)
+    sameInstant(active.soonest_known_end, row.ending_deadline, 'soonest end is the date')
+    assert.equal(active.uses_left, 3)
+    assert.equal(active.label, 'spent')
+    assert.deepEqual(active.grant, row.ending_grant)
+    assert.deepEqual(active.still_permitted, { at: true, uses: true, label_added: true })
+    assert.deepEqual(active.set_by, { id: 2, handle: 'ending-maker' })
+    sameInstant(active.set_at, row.ending_set_at, 'set_at')
+    assert.equal(active.renewable_before_end, true)
+    assert.equal(active.copy_origin, null)
+    assert.deepEqual(active.program, {
+      state: 'none', result: null, has_end_trait: true, would_run: false, blocked_by: ['in_sale'],
+    })
+    assert.equal(thingRecords.get(String(things.active))?.labels_total, 1)
+
+    const timedRow = await stored(things.activeTimed)
+    const timed = ending(things.activeTimed)
+    sameInstant(timed.conditions[0]!.ends_at, new Date(timedRow.ending_set_at.getTime() + 86_400_000), 'ends_at')
+    const unused = new Date(timedRow.ending_idle_anchor.getTime() + 3_600_000)
+    sameInstant(timed.conditions[1]!.unused_deadline, unused, 'unused deadline')
+    sameInstant(timed.unused_deadline, unused, 'top-level unused deadline')
+    sameInstant(timed.soonest_known_end, unused, 'the soonest of the two')
+    assert.deepEqual(timed.program, { state: 'none', result: null, has_end_trait: true, would_run: true, blocked_by: [] })
+  })
+
+  await t.test('a due or ended thing shows no current labels while its label rows stay', async () => {
+    const labelRows = (await admin.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM active_labels
+      WHERE target_type = 'thing' AND target_id = ANY($1::int[]) GROUP BY target_id ORDER BY target_id
+    `, [[things.due, things.remnant]])).rows
+    assert.deepEqual(labelRows.map(row => row.count), [1, 1])
+    for (const id of [things.due, things.remnant, things.ran]) {
+      assert.deepEqual(thingRecords.get(String(id))?.labels, [], String(id))
+      assert.equal(thingRecords.get(String(id))?.labels_total, 0, String(id))
+    }
+    const due = ending(things.due)
+    sameInstant(due.soonest_known_end, (await stored(things.due)).ending_deadline, 'due at its date')
+    assert.equal(due.ended_at, null)
+    assert.deepEqual(due.permitted_modes, [])
+    assert.equal(due.renewable_before_end, false)
+
+    const remnantRow = await stored(things.remnant)
+    const remnant = ending(things.remnant)
+    sameInstant(remnant.ended_at, remnantRow.ended_at, 'ended_at')
+    assert.equal(remnant.ended_cause, 'at')
+    assert.deepEqual(remnant.owner_at_end, { id: 2, handle: 'ending-maker' })
+    assert.deepEqual(remnant.grant, remnantRow.ending_grant)
+    const origin = remnant.copy_origin as Record<string, unknown>
+    assert.equal(origin.source_thing_id, things.active)
+    sameInstant(origin.copied_at, remnantRow.ending_copied_at, 'copied_at')
+    assert.equal(remnant.renewable_before_end, false)
+    sameInstant(remnant.conditions[1]!.unused_deadline, remnant.conditions[1]!.until,
+      'a copy keeps its fixed unused-for end')
+    assert.deepEqual(remnant.program, {
+      state: 'pending', result: null, has_end_trait: true, would_run: false, blocked_by: ['visitors_not_waking'],
+    })
+    assert.deepEqual(ending(things.ran).program, {
+      state: 'ran', result: { effects_applied: 0 }, has_end_trait: true, would_run: null, blocked_by: null,
+    })
+  })
+
+  await t.test('each closed end-try gate is named', () => {
+    for (const [id, gate] of [
+      [things.wakeOff, 'wake_off'], [things.carried, 'carried'], [things.visiting, 'visitors_not_waking'],
+      [things.blocked, 'visitors_not_waking'], [things.retiredRoom, 'room_retired'], [things.due, 'in_sale'],
+    ] as const) {
+      assert.equal(ending(id).program.would_run, false, gate)
+      assert.deepEqual(ending(id).program.blocked_by, [gate], gate)
+    }
+    assert.deepEqual(ending(things.unset).program,
+      { state: 'none', result: null, has_end_trait: true, would_run: true, blocked_by: [] })
+    assert.deepEqual(ending(things.notPermitted).program,
+      { state: 'none', result: null, has_end_trait: false, would_run: null, blocked_by: null })
+  })
+
+  await t.test('kinds, agreements, offers and thing_ended events carry their v4 fields', async () => {
+    const kinds = await read(frozenDirectory, 'kinds')
+    assert.deepEqual(kinds.get(String(fixture.kinds.lamp))?.ending_policy, {
+      allowed: ['uses', 'at', 'after_setting_seconds', 'idle_seconds', 'label_added'], labels: ['spent'],
+    })
+    assert.deepEqual(kinds.get(String(fixture.kinds.lamp))?.invented_by, { id: 2, handle: 'ending-maker' })
+    assert.deepEqual(kinds.get(String(fixture.kinds.stone))?.ending_policy, { allowed: [] })
+    assert.equal(kinds.get(String(fixture.kinds.stone))?.invented_by, null)
+
+    const agreement = (await read(frozenDirectory, 'agreements')).get(String(fixture.agreementId))!
+    const links = agreement.thing_links as Record<string, unknown>[]
+    assert.deepEqual(links.map(link => [
+      link.position, link.thing_id, (link.ends as Record<string, unknown> | undefined)?.state ?? null,
+    ]), [
+      [0, things.active, 'set'], [1, things.remnant, 'ended'], [2, things.notPermitted, null], [3, things.due, 'ended'],
+    ])
+    assert.equal(Object.hasOwn(links[2]!, 'ends'), false, 'no end set and never ended: the short status is omitted')
+
+    const offers = await read(frozenDirectory, 'world_market_offers')
+    const activeOffer = offers.get(String(fixture.offers.active))!
+    assert.equal(activeOffer.phase, 'listed')
+    assert.equal(activeOffer.asset_state, 'active')
+    assert.equal((activeOffer.ending as Ending).status, 'active')
+    assert.ok(activeOffer.ending_checked_at)
+    const dueOffer = offers.get(String(fixture.offers.due))!
+    assert.equal(dueOffer.phase, 'thing_ended')
+    assert.equal(dueOffer.asset_state, 'remnant')
+    assert.equal((dueOffer.ending as Ending).status, 'due_waiting_settle')
+    assert.equal(dueOffer.seller_wallet, FIVE_STATES_WALLET, 'public receipts and locks stay')
+
+    const events = await read(frozenDirectory, 'events')
+    for (const eventId of fixture.endedEventIds) {
+      const event = events.get(String(eventId))!
+      assert.equal(event.status, 'exported')
+      assert.equal(event.kind, 'thing_ended')
+      assert.equal(event.actor, 'the city')
+      assert.deepEqual(Object.keys(event.detail as object).sort(),
+        ['cause', 'ended_at', 'owner', 'owner_id', 'place_id', 'program_state', 'thing_id'])
+    }
+  })
+
+  await t.test('the next export judges the edge lamp due, and nothing private is exported', async () => {
+    const next = await read(nextDirectory, 'things')
+    assert.equal((next.get(String(edge))?.ending as Ending).status, 'due_waiting_settle')
+    assert.deepEqual(next.get(String(edge))?.labels, [])
+    assert.equal((await admin.query('SELECT ended_at FROM things WHERE id = $1', [edge])).rows[0]!.ended_at, null,
+      'an export never records an end')
+    const publicBytes = (await Promise.all(frozen.files.map(file =>
+      readFile(join(frozenDirectory, file.path), 'utf8')))).join('')
+    assert.doesNotMatch(publicBytes, new RegExp(FIVE_STATES_PAYMENT_CANARY, 'u'))
+    // The later-holder mark on the plain stone, and the change history, leave no trace in
+    // any database record (the manifest's registry names the tables, so it is set aside).
+    assert.deepEqual(Object.keys(thingRecords.get(String(things.notPermitted))!).filter(key => /mark|holder/u.test(key)), [])
+    const recordBytes = (await Promise.all(frozen.files
+      .filter(file => file.path.endsWith('.ndjson') && !['official.ndjson', 'physics.ndjson'].includes(file.path))
+      .map(file => readFile(join(frozenDirectory, file.path), 'utf8')))).join('')
+    assert.doesNotMatch(recordBytes, /marked_at|thing_ending_changes|request_json|later_holder/u)
+  })
+
+  await t.test('v4 equals v3 outside its own fields, read by the export role in one snapshot', async () => {
+    await admin.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    try {
+      await admin.query("SET LOCAL TIME ZONE 'UTC'")
+      await admin.query('SET LOCAL ROLE city_snapshot_export')
+      const select = (view: string) => admin.query<V4Record>(
+        `SELECT class_name, record_id, payload FROM city_snapshot.${view}
+         ORDER BY class_name COLLATE "C", sort_key, record_id COLLATE "C"`,
+      )
+      const v3 = (await select('public_records_v3')).rows
+      const v4 = (await select('public_records_v4')).rows
+      assert.deepEqual(
+        v4.map(row => `${row.class_name}:${row.record_id}`),
+        v3.map(row => `${row.class_name}:${row.record_id}`),
+      )
+      const own: Record<string, readonly string[]> = {
+        things: ['ending', 'labels', 'labels_total'],
+        world_market_offers: ['phase', 'asset_state', 'ending', 'ending_checked_at'],
+        kinds: ['ending_policy', 'invented_by'],
+        agreements: ['thing_links'],
+      }
+      const ended = new Set(fixture.endedEventIds.map(String))
+      for (const [index, row] of v4.entries()) {
+        const before = v3[index]!
+        if (row.class_name === 'events' && ended.has(row.record_id)) {
+          assert.deepEqual(before.payload, { id: Number(row.record_id), status: 'not_public_or_sequence_gap' })
+          continue
+        }
+        const without = (payload: Record<string, unknown>) => Object.fromEntries(Object.entries(payload)
+          .filter(([key]) => !(own[row.class_name] ?? []).includes(key)))
+        assert.deepEqual(without(row.payload), without(before.payload), `${row.class_name}:${row.record_id}`)
+        if (row.class_name === 'world_market_offers' && row.payload.phase !== 'thing_ended') {
+          assert.equal(row.payload.phase, before.payload.phase)
+        }
+        if (row.class_name === 'things' && row.payload.status === 'exported'
+          && !['due_waiting_settle', 'ended'].includes((row.payload.ending as Ending).status)) {
+          assert.deepEqual(row.payload.labels, before.payload.labels, `${row.record_id}: labels kept`)
+        }
+      }
+    } finally {
+      await admin.query('ROLLBACK')
+    }
+  })
+
+  const v4Things = async (ids: readonly number[]): Promise<Map<number, Record<string, unknown>>> => {
+    await admin.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    try {
+      await admin.query('SET LOCAL ROLE city_snapshot_export')
+      const rows = (await admin.query<V4Record>(`
+        SELECT class_name, record_id, payload FROM city_snapshot.public_records_v4
+        WHERE class_name IN ('things', 'world_market_offers')
+      `)).rows
+      return new Map(rows
+        .map(row => [row.class_name === 'things' ? Number(row.record_id) : -Number(row.record_id), row.payload] as const)
+        .filter(([id]) => ids.includes(id)))
+    } finally {
+      await admin.query('ROLLBACK')
+    }
+  }
+
+  await t.test('an until that is not the toISOString shape of a real time reads as null and never stops the view', async () => {
+    const odd = Number((await admin.query<{ id: number }>(`
+      INSERT INTO things (place_id, name, body, owner_id, maker_id, parent_thing_id, family_id, generation)
+      VALUES ($1, 'odd copy', 'holds untils no copy rule writes', 2, 2, $2, $2, 1) RETURNING id
+    `, [fixture.rooms.home, things.kindlessUnset])).rows[0]!.id)
+    await admin.query(`
+      UPDATE things SET
+        ending_rule = '{"any": [{"after_setting_seconds": 600, "until": "2026-02-31T10:00:00.000Z"}, {"idle_seconds": 3600, "until": "not a time"}]}'::jsonb,
+        ending_grant = '{"kindless": true, "allowed": ["at", "after_setting_seconds", "uses", "idle_seconds", "label_added"], "limits": {"max_seconds": 31622400, "max_uses": 10000, "labels": null}, "city_limits_version": 1}'::jsonb,
+        ending_set_by = 2, ending_set_at = now(), ending_deadline = now() + interval '1 day',
+        ending_copied_from = $2, ending_copied_at = now()
+      WHERE id = $1
+    `, [odd, things.kindlessUnset])
+    const payload = (await v4Things([odd])).get(odd)!
+    assert.equal(payload.status, 'exported')
+    const odded = payload.ending as Ending
+    assert.equal(odded.status, 'active')
+    assert.equal(odded.conditions[0]!.ends_at, null)
+    assert.equal(odded.conditions[1]!.unused_deadline, null)
+    assert.equal(odded.unused_deadline, null)
+    assert.equal(odded.conditions[1]!.until, 'not a time', 'the stored condition is exported as stored')
+  })
+
+  await t.test('a maintainer-hidden kind shows the removal marker for its own label words, nothing else changes', async () => {
+    const before = await v4Things([things.active, things.unset, things.notPermitted, -fixture.offers.active])
+    await admin.query(`
+      INSERT INTO moderation_actions (target_type, target_id, action, actor_id, reason)
+      VALUES ('kind', $1, 'remove', 1, 'five-states hidden kind')
+    `, [fixture.kinds.lamp])
+    const after = await v4Things([things.active, things.unset, things.notPermitted, -fixture.offers.active])
+    const shown = before.get(things.active)!.ending as Ending
+    const hidden = after.get(things.active)!.ending as Ending
+    assert.equal(after.get(things.active)!.kind, '[removed by maintainer]', 'the base view hides the kind name')
+    assert.equal(shown.label, 'spent')
+    assert.equal(hidden.label, '[removed by maintainer]')
+    assert.deepEqual((hidden.grant as { limits: { labels: unknown } }).limits.labels, ['[removed by maintainer]'])
+    assert.deepEqual(hidden.grant, {
+      ...(shown.grant as Record<string, unknown>),
+      limits: { ...(shown.grant as { limits: Record<string, unknown> }).limits, labels: ['[removed by maintainer]'] },
+    })
+    assert.deepEqual(hidden.conditions[2], { label_added: '[removed by maintainer]' })
+    assert.deepEqual(hidden.permitted_modes, shown.permitted_modes)
+    assert.deepEqual(hidden.still_permitted, shown.still_permitted)
+    assert.deepEqual(hidden.program, shown.program)
+    const rest = (ending: Ending) => ({ ...ending, label: null, grant: null, conditions: [], checked_at: null })
+    assert.deepEqual(rest(hidden), rest(shown))
+    // The world offer on the counting lamp carries the same object.
+    const offerEnding = after.get(-fixture.offers.active)!.ending as Ending
+    assert.equal(offerEnding.label, '[removed by maintainer]')
+    assert.deepEqual(offerEnding.conditions, hidden.conditions)
+    assert.deepEqual(offerEnding.grant, hidden.grant)
+    // Null stays null, and another kind's things are untouched.
+    assert.equal((after.get(things.unset)!.ending as Ending).label, null)
+    assert.equal((after.get(things.unset)!.ending as Ending).grant, null)
+    assert.deepEqual(
+      { ...(after.get(things.notPermitted)!.ending as Ending), checked_at: null },
+      { ...(before.get(things.notPermitted)!.ending as Ending), checked_at: null },
+    )
   })
 })

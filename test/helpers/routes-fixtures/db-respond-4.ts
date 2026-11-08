@@ -131,6 +131,13 @@ export function respondToDatabaseStage4(
     }]
   }
   if (q.includes('insert into action_runs')) return [{ id: 101 }]
+  if (q.includes('/* thing-endings:read */') && fixtureState.current.thingEndReadFails) {
+    throw new Error('connection reset while reading the thing end')
+  }
+  // Thing endings: no fixture thing has an end set, so nothing is due and no use counts.
+  if (q.includes('/* thing-endings:due-ids */') || q.includes('/* thing-endings:use-count */')
+    || q.includes('/* thing-endings:room-due */') || q.includes('/* thing-endings:read */')
+    || q.includes('/* thing-endings:claim-window */')) return []
   if (q.includes('as place_pending')) return [{ place_pending: 0, actor_pending: 0 }]
   if (q.includes('pg_advisory_xact_lock')) return []
   if (q.includes('from active_blocks')) return fixtureState.current.actionBlocked ? [{
@@ -383,6 +390,9 @@ export function respondToDatabaseStage4(
     && !q.includes('/* public:map-continent */')
     && !q.includes('far.hinge_to =')
     && !q.includes('as has_drawing')
+    // Agreement thing links (#179) read a linked thing's hidden marker inside the agreement
+    // statement itself; those statements are answered by the agreement fixtures below.
+    && !q.includes('agreement_thing_links')
   ) {
     const targetType = String(params.find(value => (
       value === 'place' || value === 'thing' || value === 'kind' || value === 'trait'

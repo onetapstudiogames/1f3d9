@@ -46,11 +46,15 @@ const SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS = new Set([
 // Unlike the ability kinds above, these ARE in dated snapshots through the v3
 // talk_events branch, not the v1 or v2 VALUES allowlists.
 const V3_TALK_BRANCH_EVENT_KINDS = new Set(Object.keys(TALK_EVENT_TARGETS))
+// Like the talk kinds, thing_ended is in dated snapshots only through its own format-v4
+// branch (decision #180), never the v1 or v2 VALUES allowlists or the v3 talk branch.
+const V4_ENDING_BRANCH_EVENT_KINDS = new Set(['thing_ended'])
 const currentPublicEventKinds = (PUBLIC_EVENT_KINDS.includes('resident_edited')
   ? [...PUBLIC_EVENT_KINDS]
   : [...PUBLIC_EVENT_KINDS.slice(0, 2), 'resident_edited', ...PUBLIC_EVENT_KINDS.slice(2)])
   .filter(kind => !SNAPSHOT_ABSENT_ABILITY_EVENT_KINDS.has(kind)
-    && !V3_TALK_BRANCH_EVENT_KINDS.has(kind))
+    && !V3_TALK_BRANCH_EVENT_KINDS.has(kind)
+    && !V4_ENDING_BRANCH_EVENT_KINDS.has(kind))
 const PLACE_LIFECYCLE_EVENT_KINDS = new Set([
   'place_renamed', 'place_retired', 'place_restored',
 ])
@@ -80,6 +84,13 @@ const EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
   'line_id',
   'ping_id',
   'answer',
+].sort()
+// The fields the format-v4 thing_ended branch exports, beside every effective v3 field.
+const V4_ENDING_EVENT_DETAIL_FIELDS = [
+  'thing_id', 'place_id', 'cause', 'ended_at', 'owner_id', 'owner', 'program_state',
+] as const
+const EFFECTIVE_V4_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS = [
+  ...new Set([...EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS, ...V4_ENDING_EVENT_DETAIL_FIELDS]),
 ].sort()
 
 function snapshotEventDetailFields(projection: string): string[] {
@@ -223,6 +234,52 @@ for (const [name, url] of [
       view,
       /FROM city_snapshot\.public_records_v2 v2\s+WHERE NOT \(v2\.class_name = 'events' AND v2\.sort_key IN \(SELECT talk\.id FROM talk_events talk\)\)/iu,
     )
+  })
+}
+
+for (const [name, url] of [
+  ['thing endings migration', new URL('../db/migrations/20261106_thing_endings.sql', import.meta.url)],
+  ['fresh schema', schemaUrl],
+] as const) {
+  test(`${name} exports thing_ended events and ends through the format-v4 branch`, async () => {
+    const sql = await readFile(url, 'utf8')
+    const viewStart = sql.search(/CREATE OR REPLACE VIEW city_snapshot\.public_records_v4/iu)
+    const viewEnd = sql.indexOf('GRANT SELECT ON city_snapshot.public_records_v4', viewStart)
+    assert.ok(viewStart >= 0 && viewEnd > viewStart, `${name}: format-v4 view`)
+    const view = sql.slice(viewStart, viewEnd)
+    assert.match(view, /WITH \(security_barrier = true\)/iu)
+    assert.match(sql, /REVOKE ALL ON city_snapshot\.public_records_v4 FROM PUBLIC;/iu)
+    assert.match(sql, /GRANT SELECT ON city_snapshot\.public_records_v4 TO city_snapshot_export;/iu)
+
+    const endingKinds = view.match(
+      /ending_events AS MATERIALIZED \([\s\S]*?WHERE event\.kind IN \(([^)]*)\)/iu,
+    )?.[1]
+    assert.ok(endingKinds, `${name}: ending_events kinds`)
+    assert.deepEqual(
+      [...endingKinds.matchAll(/'([a-z_]+)'/gu)].map(match => match[1]!),
+      [...V4_ENDING_BRANCH_EVENT_KINDS],
+    )
+    assert.match(
+      view,
+      /FROM city_snapshot\.public_records_v3 v3[\s\S]+WHERE NOT \(v3\.class_name = 'events' AND v3\.sort_key IN \(SELECT ended\.id FROM ending_events ended\)\)/iu,
+    )
+    const branch = view.slice(view.lastIndexOf("SELECT 'events'::TEXT"))
+    assert.deepEqual(
+      [...branch.matchAll(/'([a-z_]+)',\s*ended\.detail->'\1'/gu)].map(match => match[1]!).sort(),
+      [...V4_ENDING_EVENT_DETAIL_FIELDS].sort(),
+    )
+    // The export role may read no table, so v4 calls only the two functions that read none.
+    const called = [...view.matchAll(/\b([a-z_][a-z0-9_]*)\(/gu)].map(match => match[1]!)
+      .filter(name => name.startsWith('thing_'))
+    assert.deepEqual([...new Set(called)].sort(), ['thing_end_due_from', 'thing_end_try_blocked_by'])
+    assert.doesNotMatch(view, /\bthing_end_due_at\b|\bthing_end_reached\b|\bthing_ending_writer\b|\bkind_provable_inventor\b/u)
+    assert.doesNotMatch(view, /to_jsonb\((?:place|room|resident|owner|setter|inventor)\)|row_to_json/iu,
+      'no whole-row value of a place or resident')
+    for (const privateTable of [
+      'payment_attempts', 'payment_uses', 'thing_later_holder_marks', 'thing_ending_changes',
+      'city_credit_entries', 'city_credit_last_me_reads', 'resident_settings',
+    ]) assert.equal(new RegExp(`\\b${privateTable}\\b`, 'u').test(view), false, privateTable)
+    assert.doesNotMatch(view, /clock_timestamp\(\)/u, 'v4 judges every end at the export transaction time')
   })
 }
 
@@ -441,8 +498,8 @@ for (const [name, url] of [
   })
 }
 
-test('the audited live-detail inventory exactly names fields absent from format v3 events', () => {
-  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 71)
+test('the audited live-detail inventory exactly names fields absent from format v4 events', () => {
+  assert.equal(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.length, 74)
   assert.deepEqual(
     [...new Set(Object.values(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS_BY_KIND).flat())].sort(),
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS,
@@ -453,13 +510,13 @@ test('the audited live-detail inventory exactly names fields absent from format 
       .filter(kind => !publicKinds.has(kind)),
     [],
   )
-  const effectiveV3Fields = new Set(EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
+  const effectiveV4Fields = new Set(EFFECTIVE_V4_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS)
   assert.deepEqual(
     AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS.filter(
-      field => effectiveV3Fields.has(field) && field !== 'name',
+      field => effectiveV4Fields.has(field) && field !== 'name',
     ),
     [],
-    'a field exported by effective format v3 must not remain in the omission disclosure',
+    'a field exported by effective format v4 must not remain in the omission disclosure',
   )
   const omittedFields = new Set<string>(AUDITED_OMITTED_LIVE_EVENT_DETAIL_FIELDS)
   for (const required of [
@@ -480,7 +537,7 @@ test('every source-written event-detail field has an export or disclosure dispos
   assert.ok(scan.writerCount >= 46, `the source scan must find real writers, saw ${scan.writerCount}`)
 
   assertEveryEventDetailFieldClassified(scan.fields, [
-    ...EFFECTIVE_V3_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
+    ...EFFECTIVE_V4_PUBLIC_SNAPSHOT_EVENT_DETAIL_FIELDS,
     ...PUBLIC_SNAPSHOT_DELIBERATELY_OMITTED_LIVE_DETAIL_FIELDS.events,
   ])
 })

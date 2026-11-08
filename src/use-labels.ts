@@ -8,6 +8,7 @@
 import {
   EMPTY_EFFECTS,
   RESIDENT_ABILITY_LABEL_SECONDS,
+  endProgramOf,
   loadTraitRecipe,
   type Effect,
 } from './physics.ts'
@@ -84,4 +85,112 @@ export function useLabelStatement(storedRecipes: readonly unknown[]): string {
     ? phrases[0]
     : `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]}`
   return `Using it ${joined}.`
+}
+
+/** The longest end_program_summary a read carries. */
+export const END_PROGRAM_SUMMARY_MAX_CHARACTERS = 300
+
+const NO_END_PROGRAM = 'When this ends it becomes a remnant.'
+
+/** One fixed phrase per brick an end program uses: the certain form, then the "may" form. */
+type EndPhrase = Readonly<{ key: string; plain: string; may: string }>
+
+function endPhrase(key: string, plain: string, may: string): EndPhrase {
+  return Object.freeze({ key, plain, may })
+}
+
+const MAY_DO_MORE = endPhrase('more', 'may do more', 'may do more')
+
+const END_PHRASES = Object.freeze({
+  write: endPhrase('write', 'writes its own state box', 'may write its own state box'),
+  copy: endPhrase('copy', 'makes a copy of itself', 'may make a copy of itself'),
+  labelThings: endPhrase('label_things', 'puts a label on things in its room', 'may put a label on things in its room'),
+  labelResidents: endPhrase('label_residents', 'puts a label on residents in its room', 'may put a label on residents in its room'),
+  labelRoom: endPhrase('label_room', 'puts a label on its room', 'may put a label on its room'),
+  reachThings: endPhrase('reach_things', 'reaches things in its room', 'may reach things in its room'),
+  reachResidents: endPhrase('reach_residents', 'reaches residents in its room', 'may reach residents in its room'),
+  convert: endPhrase('convert', 'turns things it reaches into its kind', 'may turn things it reaches into its kind'),
+  move: endPhrase('move', 'moves things it reaches', 'may move things it reaches'),
+  destroy: endPhrase('destroy', 'destroys things it reaches', 'may destroy things it reaches'),
+  block: endPhrase('block', 'blocks residents it reaches', 'may block residents it reaches'),
+})
+
+type EndReach = 'none' | 'things' | 'residents'
+
+function phraseOf(effect: Effect, reach: EndReach): EndPhrase | null {
+  if (effect.effect === 'write') return END_PHRASES.write
+  if (effect.effect === 'copy') return END_PHRASES.copy
+  if (effect.effect === 'label') {
+    if (effect.target === 'place' || effect.target === 'law_place') return END_PHRASES.labelRoom
+    return reach === 'residents' ? END_PHRASES.labelResidents : END_PHRASES.labelThings
+  }
+  if (effect.effect === 'check_label' || effect.effect === 'chance') return MAY_DO_MORE
+  if (effect.effect === 'reach') return effect.over === 'residents' ? END_PHRASES.reachResidents : END_PHRASES.reachThings
+  if (effect.effect === 'convert') return END_PHRASES.convert
+  if (effect.effect === 'move') return END_PHRASES.move
+  if (effect.effect === 'destroy') return END_PHRASES.destroy
+  if (effect.effect === 'block') return END_PHRASES.block
+  // An end program never waits or hands anything over, so those bricks have no phrase.
+  return null
+}
+
+type UsedPhrase = Readonly<{ phrase: EndPhrase; may: boolean }>
+
+/** Every phrase a program uses, depth first in step order; inside chance, check_label, or reach it is "may". */
+function usedPhrases(effects: readonly Effect[], may: boolean, reach: EndReach): readonly UsedPhrase[] {
+  return effects.flatMap((effect): readonly UsedPhrase[] => {
+    const phrase = phraseOf(effect, reach)
+    const own: readonly UsedPhrase[] = phrase ? [{ phrase, may }] : []
+    if (effect.effect === 'reach') return [...own, ...usedPhrases(effect.then, true, effect.over)]
+    if (effect.effect === 'chance' || effect.effect === 'check_label') {
+      return [
+        ...own,
+        ...usedPhrases(effect.then, true, reach),
+        ...usedPhrases(effect.else ?? EMPTY_EFFECTS, true, reach),
+      ]
+    }
+    return own
+  })
+}
+
+/** Each phrase once, at its first place, certain when any of its uses is certain. */
+function phraseWords(effects: readonly Effect[]): readonly string[] {
+  const order: string[] = []
+  const found = new Map<string, UsedPhrase>()
+  for (const used of usedPhrases(effects, false, 'none')) {
+    const seen = found.get(used.phrase.key)
+    if (!seen) order.push(used.phrase.key)
+    found.set(used.phrase.key, { phrase: used.phrase, may: (seen?.may ?? true) && used.may })
+  }
+  return order.map(key => {
+    const used = found.get(key)!
+    return used.may ? used.phrase.may : used.phrase.plain
+  })
+}
+
+function joinPhrases(phrases: readonly string[]): string {
+  return phrases.length === 1
+    ? phrases[0]!
+    : `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]}`
+}
+
+/**
+ * The sentence a thing read carries as end_program_summary, from its kind traits in kind
+ * order: what happens when it ends, and what the first trait with an end key does then,
+ * one fixed phrase per brick used. A stored end key that breaks the rules is inert, so it
+ * reads as none. At most 300 characters; phrases that do not fit become "and more".
+ */
+export function endProgramStatement(traits: readonly Readonly<{ name: string; recipe: unknown }>[]): string {
+  const trait = traits.find(candidate => endProgramOf(candidate.recipe) !== null)
+  if (!trait) return NO_END_PROGRAM
+  const head = `When this ends it becomes a remnant, then, if waking is on for it and its room lets it wake, the next time a resident is in its room it runs ${trait.name}'s end steps once`
+  const phrases = phraseWords(endProgramOf(trait.recipe)!.then)
+  if (phrases.length === 0) return `${head}.`
+  const whole = `${head}: ${joinPhrases(phrases)}.`
+  if (whole.length <= END_PROGRAM_SUMMARY_MAX_CHARACTERS) return whole
+  for (let kept = phrases.length - 1; kept >= 1; kept -= 1) {
+    const cut = `${head}: ${phrases.slice(0, kept).join(', ')} and more.`
+    if (cut.length <= END_PROGRAM_SUMMARY_MAX_CHARACTERS) return cut
+  }
+  return `${head}.`
 }

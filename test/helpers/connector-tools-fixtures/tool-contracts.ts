@@ -13,9 +13,12 @@ import {
   drawingVariantsSchema,
   drawingWriteConditions,
   drawingWriteProperties,
+  endingPolicySchema,
+  endingSchema,
   handleSchema,
   kindRecipeSchema,
   positiveIdSchema,
+  thingLinksSchema,
   traitRecipeSchema,
   worldNameSchema,
 } from './catalog-schemas.ts'
@@ -33,8 +36,15 @@ const showEverythingSchema = {
 const hiddenSchema = {
   type: 'string',
   enum: ['outline'],
-  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place), never a body, so you can allow one; no effect without mutes',
+  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing), never a body, so you can allow one; no effect without mutes',
 } as const
+
+// The per-tool words of the end fields (decisions #171 to #180).
+const MAKE_ENDING = 'optional; an end its kind allows, or any end on a thing with no kind; omitted or null means none; free'
+const THING_EDIT_ENDING = 'set an end its kind allows, or renew one inside its own grant (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'
+const THING_UPGRADE_ENDING = 'optional; set, renew or clear (null) the end in the same upgrade; a new end takes the revision it reaches, a renewal must fit its own grant; free'
+const INVENT_ENDING_POLICY = 'the ends owners of its things may set; defaults to {"allowed": []}, which allows none'
+const REVISE_ENDING_POLICY = 'the ends owners of its things may set; omitted keeps the current policy; only the inventor, while owning the kind, may allow more'
 
 export const expectedToolContracts: Readonly<Record<string, Readonly<{
   title: string
@@ -185,6 +195,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         state_clear: { const: true, description: "true empties this thing's state box" },
         ...drawingWriteProperties,
         drawing_variant_name: drawingSelectionSchema,
+        ending: endingSchema(THING_EDIT_ENDING),
       },
       required: ['thing_id'],
     },
@@ -195,10 +206,77 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: { thing_id: positiveIdSchema, drawing_variant_name: drawingSelectionSchema },
+      properties: {
+        thing_id: positiveIdSchema,
+        drawing_variant_name: drawingSelectionSchema,
+        ending: endingSchema(THING_UPGRADE_ENDING),
+      },
       required: ['thing_id'],
     },
     annotations: PLACE_EDIT_ANNOTATIONS,
+  },
+  make: {
+    title: 'Make a thing',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        place_id: { type: 'integer', minimum: 1 },
+        name: { type: 'string', minLength: 1, maxLength: 120 },
+        body: { type: 'string', description: 'the thing, at most 64 KB of UTF-8 text' },
+        open_to_use: {
+          type: 'boolean', default: false,
+          description: 'optional; defaults false; let colocated visitors use this thing without owning it',
+        },
+        shared_use_may_destroy: {
+          type: 'boolean', default: false,
+          description: "optional; defaults false; let a visitor's use destroy this thing, which only matters while open_to_use is true",
+        },
+        open_to_reach: {
+          type: 'boolean', default: false,
+          description: "optional; defaults false; let other residents' things and laws reach this thing with a harder step",
+        },
+        open_to_convert: {
+          type: 'boolean', default: false,
+          description: "optional; defaults false; let other residents' things and laws turn this thing into another kind",
+        },
+        wake_enabled: {
+          type: 'boolean', default: true,
+          description: 'optional; defaults true; let this thing wake when its kind carries a wake key and its room allows it',
+        },
+        kind_id: { type: 'integer', minimum: 1, description: 'optional invented kind whose current revision is pinned at birth' },
+        ingredient_ids: {
+          type: 'array',
+          items: { type: 'integer', minimum: 1 },
+          maxItems: 1024,
+          uniqueItems: true,
+          description: 'must be empty unless kind_id is supplied; otherwise, owned active things that exactly satisfy the kind recipe and are permanently withdrawn on success',
+        },
+        ending: endingSchema(MAKE_ENDING),
+      },
+      required: ['place_id', 'name', 'body'],
+    },
+    annotations: WRITE_ANNOTATIONS,
+  },
+  agree: {
+    title: 'Write an agreement',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        parties: {
+          type: 'array', items: handleSchema, minItems: 1, maxItems: 32, uniqueItems: true,
+        },
+        body: { type: 'string', description: '1 byte to 64 KB of safe UTF-8 text' },
+        accession_open: {
+          type: 'boolean',
+          description: 'Optional; closed by default. Set true to permanently allow later signers to accede when they sign.',
+        },
+        thing_links: thingLinksSchema,
+      },
+      required: ['parties', 'body'],
+    },
+    annotations: ADDITIVE_WRITE_ANNOTATIONS,
   },
   coin_trait: {
     title: 'Coin a trait',
@@ -229,6 +307,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         recipe: { ...kindRecipeSchema, default: [] },
         ...drawingWriteProperties,
         drawing_variants: drawingVariantsSchema,
+        ending_policy: endingPolicySchema(INVENT_ENDING_POLICY),
         city_credit_request_id: cityCreditRequestSchema,
       },
       required: ['name'],
@@ -248,6 +327,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         recipe: kindRecipeSchema,
         ...drawingWriteProperties,
         drawing_variants: drawingVariantsSchema,
+        ending_policy: endingPolicySchema(REVISE_ENDING_POLICY),
         city_credit_request_id: cityCreditRequestSchema,
       },
       required: ['kind_id'],

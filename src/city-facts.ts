@@ -29,6 +29,16 @@ import {
   MAX_PENDING_EFFECTS_PER_ACTOR,
   MAX_PENDING_EFFECTS_PER_PLACE,
 } from './engine-limits.ts'
+import {
+  ENDING_MAX_CONDITIONS,
+  ENDING_MAX_SECONDS,
+  ENDING_MAX_USES,
+  ENDING_MIN_SECONDS,
+  ENDING_MIN_USES,
+  ENDING_POLICY_MAX_LABELS,
+  ENDING_POLICY_MIN_LABELS,
+} from './engine-limits.ts'
+import { MAX_AGREEMENT_THING_LINKS } from './agreement-thing-links.ts'
 import { IDENTITY_LIMITS } from './identity-limits.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
 import { AGREEMENT_BYTES, MAX_PARTIES, NOTE_CHARACTERS } from './society-limits.ts'
@@ -153,7 +163,7 @@ export { HANDLE_RULE }
 export const CITY_FEE_RAILS_LINE =
   `City fee rails: ${CLAIM_FEE_USDC.toFixed(6)} USDC or one fee credit for ${DUAL_RAIL_PAID_ACTIONS.join(', ')}. The fee is one prepaid credit for ${CREDIT_ONLY_PAID_ACTIONS.join(', ')}; those actions reject direct x402 payment.`
 export const PAYMENT_TERMINAL_STATES_LINE =
-  'In the public world-offer record, canonical finalized failed or wrong evidence becomes payment_invalid. A recovery deadline without an ownership transfer becomes payment_expired. Payment evidence retained for human review becomes founder_review. All three are terminal no-sale results. Do not pay again.'
+  'In the public world-offer record, canonical finalized failed or wrong evidence becomes payment_invalid. A recovery deadline without an ownership transfer becomes payment_expired. Payment evidence retained for human review becomes founder_review. All three are terminal no-sale results. Do not pay again. An open offer whose thing has reached its end, with no accepted payment evidence, reads thing_ended instead, and no new purchase can start.'
 
 export const ACT_TOOL_ACTIONS = Object.freeze([
   'move', 'use', 'give', 'consume', 'go_home',
@@ -252,6 +262,12 @@ export const CITY_LIMIT_LINES = Object.freeze([
   `Private reads: me credit/gift 1..${CITY_CREDIT_HISTORY_MAX}, later-holder 1..${LATER_HOLDER_PAGE_MAX}, replay ${PUBLIC_REPLAY_ROW_CEILING} rows/${PUBLIC_REPLAY_NOTE_LINES_MAX_BYTES} note bytes.`,
   `Around-you: ${AROUND_YOU_CHANGE_LIMIT} changes, admission from ${AROUND_YOU_ADMISSION_CHANGE_THRESHOLD}, ${AROUND_YOU_SUMMARY_SLOTS} slots, ${AROUND_YOU_STATEMENT_TIMEOUT_MS} ms.`,
 ] as const)
+
+// Things ending (decision #171): the limits of an end, served in official facts as
+// ending_limits and on the things-ending page. The front door's 10 KB budget has no room
+// for one more line, so it is not one of CITY_LIMIT_LINES; physics carries the same numbers.
+export const ENDING_LIMITS_LINE =
+  `Endings: 1..${ENDING_MAX_CONDITIONS} conditions; a date up to ${ENDING_MAX_SECONDS / 86_400} days ahead; ${ENDING_MIN_SECONDS}..${ENDING_MAX_SECONDS} seconds after setting or unused; ${ENDING_MIN_USES}..${ENDING_MAX_USES} uses; ${ENDING_POLICY_MIN_LABELS}..${ENDING_POLICY_MAX_LABELS} label names on a kind; one end-key trait per kind; agreement thing_links 0..${MAX_AGREEMENT_THING_LINKS}.`
 
 // The /mcp/app door (decision 142) states the same limits without the fee rails, credit
 // buys, sales, and gifts lines; its fee is one fee credit, stated in its own words.
@@ -435,6 +451,7 @@ export function renderCityFactTokens(document: string): string {
     .replaceAll('{{PUBLIC_CONTENT_RETELLING}}', PUBLIC_CONTENT_RETELLING_LINE)
     .replaceAll('{{SKILL_VERSIONS}}', `city ${SKILL_VERSION_RECOMMENDED.city}, market ${SKILL_VERSION_RECOMMENDED.market}`)
     .replaceAll('{{CITY_LIMITS}}', renderCityLimitsText())
+    .replaceAll('{{ENDING_LIMITS}}', ENDING_LIMITS_LINE)
     .replaceAll('{{TALK_LINE_RULE}}', TALK_LINE_RULE)
     .replaceAll('{{TALK_PING_RULE}}', TALK_PING_RULE)
     .replaceAll('{{TALK_WAIT_RULE}}', TALK_WAIT_RULE)

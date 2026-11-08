@@ -42,6 +42,9 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
       if (thing.open_to_use && thing.shared_use_may_destroy) {
         thingMeta.append(document.createTextNode(' · a visitor may end it'))
       }
+      // Thing endings: when it ends or that it ended, as the city's short status says.
+      const endsText = shortEndsText(thing.ends)
+      if (endsText) thingMeta.append(element('span', 'thing-ends', ' · ' + endsText))
       const location = windowPlaceLabel(
         thing.place_id,
         placeOf ? placeOf(thing.place_id) : null,
@@ -542,6 +545,8 @@ export const PART_31_THINGS_NOTES_AND_PLACE = `  // Decision #75: quiet resolves
         ),
         document.createTextNode(' · ' + String(heading.body_text_bytes) + ' UTF-8 bytes'),
       )
+      const headingEnds = shortEndsText(heading.ends)
+      if (headingEnds) meta.append(element('span', 'thing-ends', ' · ' + headingEnds))
       const title = element('span', 'front-matter-title')
       title.append(portraitNode('thing', heading.id, heading.name, heading.has_drawing), link)
       item.append(title, meta)

@@ -155,6 +155,10 @@ export const PART_30_DETAIL_RENDER_AND_BODIES = `  function renderDetail() {
         if (record.kind === 'thing' && record.onUse) {
           parts.splice(1, 0, element('p', 'record-detail-meta', record.onUse))
         }
+        if (record.kind === 'thing' && record.endLine) {
+          parts.splice(record.onUse ? 2 : 1, 0, element('p', 'record-detail-meta', record.endLine),
+            ...(record.endProgram ? [element('p', 'record-detail-meta', record.endProgram)] : []))
+        }
         if (record.kind === 'thing') {
           parts.push(drawingDetailNode('thing', record.id, record.name))
         }

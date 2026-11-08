@@ -5,7 +5,6 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
 import {
   FOUNDER, GROWER, NEIGHBOUR, addRevision, call, coin, seedKind, seedThing, traitId, use,
   type CityApp, type Json,
@@ -17,6 +16,7 @@ import {
   standIn,
   startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
+import { waitPastPendingEffects } from '../helpers/database-clock.ts'
 import { issueCredit } from '../helpers/city-credit-postgres-fixtures/ledger.ts'
 // Loaded only after the fixture points src/db.ts at the test container.
 const { rollValue } = await import('../../src/engine-chance.ts')
@@ -56,6 +56,12 @@ const sameRoomTalkDdl = await readFile(
 )
 const storedPublicActivityDdl = await readFile(
   new URL('../../db/migrations/20261028_stored_public_activity.sql', import.meta.url),
+  'utf8',
+)
+// Thing endings add columns, checks, indexes and guard triggers on things after this one,
+// so the upgraded database takes that migration too before the catalogs are compared.
+const thingEndingsDdl = await readFile(
+  new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url),
   'utf8',
 )
 // db/schema.sql ends with this change's statements; everything before them is the
@@ -213,6 +219,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query(residentSettingsDdl)
       await db.query(sameRoomTalkDdl)
       await db.query(storedPublicActivityDdl)
+      await db.query(thingEndingsDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })
@@ -259,7 +266,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       for (const name of ['sprout', 'blight']) {
         const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
         assert.equal(law.status, 400, name)
-        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+        assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
       }
       const reachLaw = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: ['drizzle'] })
       assert.equal(reachLaw.status, 200, 'reach works as a law')
@@ -331,7 +338,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
           const law = await call(app, GROWER.secret, 'PUT', `/api/place/${rooms.eastRoomId}/laws`, { traits: [name] })
           if ('wake' in recipe) {
             assert.equal(law.status, 400, 'a mixed wake and law_place trait cannot be a law')
-            assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
+            assert.equal(law.json.error, `trait ${name} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`)
           } else {
             assert.equal(law.status, 200, JSON.stringify(law.json))
           }
@@ -671,7 +678,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       const seedId = await seedThing(GROWER.id, rooms.eastRoomId, seed, 'a slow seed')
       const planted = await use(app, GROWER.secret, seedId)
       assert.equal(planted.status, 200, JSON.stringify(planted.json))
-      await delay(1_200)
+      await waitPastPendingEffects(db, [seedId])
       await call(app, GROWER.secret, 'GET', '/api/me')
       const resolution = (await db.query(`
         SELECT resolution.status, resolution.detail FROM effect_resolutions resolution
@@ -723,7 +730,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       // Consent is read again when the delayed step fires.
       await db.query('UPDATE things SET open_to_reach = FALSE WHERE id = $1', [theirsOpen])
       await db.query('UPDATE things SET owner_id = $2 WHERE id = $1', [mineClosed, FOUNDER.id])
-      await delay(1_200)
+      await waitPastPendingEffects(db, [sourceId])
       assert.equal((await call(app, GROWER.secret, 'GET', '/api/me')).status, 200)
       const scorched = (await db.query(`
         SELECT target_id FROM active_labels WHERE label = 'scorched' ORDER BY target_id
@@ -1138,7 +1145,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(badConvert.json.error, 'open_to_convert must be boolean when present')
       const unknown = await make({ open_to_all: true })
       assert.equal(unknown.status, 400)
-      assert.match(String(unknown.json.error), /send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids/)
+      assert.match(String(unknown.json.error), /send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, ingredient_ids, and optional ending/)
 
       const closed = await make({})
       assert.equal(closed.status, 201, JSON.stringify(closed.json))
@@ -1168,7 +1175,7 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       assert.equal(badEdit.json.error, 'open_to_convert must be boolean when present')
       const unknownEdit = await call(app, GROWER.secret, 'PATCH', `/api/thing/${closedId}`, { open_to_everyone: true })
       assert.equal(unknownEdit.status, 400)
-      assert.equal(unknownEdit.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      assert.equal(unknownEdit.json.error, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, and ending are editable; birth_revision is permanent')
     })
 
     await t.test('place_edit sets the growth dials, the place read shows them, and a changed dial clears the marks', async () => {

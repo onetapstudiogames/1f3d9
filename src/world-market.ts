@@ -27,6 +27,16 @@ import { publicJson } from './public-output.ts'
 import { allowedPublicQuery } from './public-pagination.ts'
 import { isoTimestamp } from './timestamp.ts'
 import { HELD_THING_ERROR, missingActiveThingRefusal } from './refusal-text.ts'
+import { claimMayRefuseForEnd, readClaimEndFacts } from './thing-ending-doors.ts'
+import { ENDING_PURCHASE_REFUSAL, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
+import {
+  THING_ENDING_READ_COLUMNS,
+  THING_ENDING_READ_JOIN,
+  thingEndingFields,
+  thingEndingRead,
+  type ThingEndingRead,
+} from './thing-ending-read.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
 
 const CITY_ORIGIN = process.env.PUBLIC_ORIGIN ?? 'https://1f3d9.com'
 const DEFAULT_MARKET_ORIGIN = 'https://1f3ea.com'
@@ -34,6 +44,8 @@ const MARKET_RESPONSE_BYTES = 256 * 1024
 const MARKET_TIMEOUT_MS = 4_000
 const WORLD_OFFER_ID_REFUSAL = 'world offer id was rejected because it must be a positive whole number; use GET /api/world-market if your client can open URLs, and retry with a current offer_id'
 const WORLD_OFFER_BATCH_MAX = 50
+// The reservation window, the same length as the literal interval '5 minutes' in the reserve UPDATE.
+const WORLD_CLAIM_WINDOW_SECONDS = 300
 const WORLD_OFFER_BATCH_STATEMENT_TIMEOUT = '1500ms'
 const WORLD_OFFER_ID_TEXT = /^[1-9][0-9]*$/u
 const WORLD_OFFER_IDS_REFUSAL = 'world offer ids were rejected because ids must appear once and list positive whole numbers separated by commas with no spaces; retry with ids such as ids=101,102'
@@ -119,6 +131,8 @@ interface OfferRecord {
   block_time: string | null
   from: string | null
   to: string | null
+  /** The thing's end as of the read, judged at the database's time; never part of validity. */
+  end: ThingEndingRead
 }
 
 export interface WorldMarketDependencies {
@@ -132,6 +146,8 @@ export interface WorldMarketDependencies {
   findPayment: typeof findPaymentAttempt
   runPayment: typeof runDurableX402
   resumePayment: typeof resumeDurableX402
+  /** Records each due end among these things and returns the ids it recorded (never throws). */
+  recordEnds: (thingIds: readonly number[]) => Promise<readonly number[]>
 }
 
 class MarketReadError extends Error {
@@ -439,6 +455,7 @@ function offerRecord(row: QueryRow | undefined): OfferRecord | null {
     block_time: isoTimestamp(row.block_time),
     from,
     to,
+    end: thingEndingRead(row),
   }
 }
 
@@ -460,14 +477,14 @@ const OFFER_SELECT = `
         AND thing.withdrawn_at IS NULL AND thing.active_offer_id = o.id
       ) AS locked,
       payment.tx_hash, payment.verified_via, payment.block_time,
-      lower(payment.payer_wallet) AS "from", lower(payment.payee_wallet) AS "to"
+      lower(payment.payer_wallet) AS "from", lower(payment.payee_wallet) AS "to",${THING_ENDING_READ_COLUMNS}
     FROM transfer_offers o
     JOIN things thing ON thing.id = o.asset_id
     JOIN residents maker ON maker.id = thing.maker_id
     JOIN residents current_owner ON current_owner.id = thing.owner_id
     JOIN residents seller ON seller.id = o.seller_id
     LEFT JOIN residents buyer ON buyer.id = o.buyer_id
-    LEFT JOIN sale_payments payment ON payment.offer_id = o.id`
+    LEFT JOIN sale_payments payment ON payment.offer_id = o.id${THING_ENDING_READ_JOIN}`
 
 async function readOffer(
   dependencies: WorldMarketDependencies,
@@ -579,6 +596,8 @@ function publicOffer(offer: OfferRecord, now: Date) {
       : offer.x402_evidence_state === 'founder_review' ? 'founder_review'
       : offer.x402_evidence_state === 'expired' ? 'payment_expired'
       : offer.pending_x402_tx_hash != null ? 'payment_pending'
+      // A due or ended thing: no new payment may start, so the end wins over a window.
+      : offer.end.reached ? 'thing_ended'
       : reservationActive(offer, now) ? 'reserved' : 'listed'
   return {
     id: offer.id,
@@ -616,6 +635,7 @@ function publicOffer(offer: OfferRecord, now: Date) {
     block_time: offer.block_time,
     from: offer.from,
     to: offer.to,
+    ...thingEndingFields(offer.end),
   }
 }
 
@@ -674,6 +694,7 @@ function defaultDependencies(): WorldMarketDependencies {
     findPayment: findPaymentAttempt,
     runPayment: runDurableX402,
     resumePayment: resumeDurableX402,
+    recordEnds: thingIds => recordDueEndQuietly(thingIds),
   }
 }
 
@@ -700,6 +721,7 @@ export function mountWorldMarketRoutes(
   })
 
   app.get('/api/world/offer/:offerId', async c => {
+    c.header('Cache-Control', 'no-store')
     const allowed = allowedPublicQuery(c.req.queries(), [])
     if (!allowed.ok) return err(c, 400, allowed.error)
     const offerId = positiveId(c.req.param('offerId'))
@@ -759,15 +781,20 @@ export function mountWorldMarketRoutes(
       draft.expiresAt <= now || draft.createdAt > new Date(now.getTime() + 60_000)
     ) return err(c, 409, 'market draft must be pending, unexpired, and not yet listed; open a fresh draft before listing this thing')
 
+    // A due end is recorded first, so a thing whose end has come refuses E7 by name.
+    await dependencies.recordEnds([thingId])
     const thingRows = await dependencies.query(`
       /* world-market:thing */
-      SELECT id, name, owner_id, withdrawn_at, active_offer_id, held_by
+      SELECT id, name, owner_id, withdrawn_at, active_offer_id, held_by,
+        thing_end_reached(id) AS end_reached
       FROM things WHERE id = $1
     `, [thingId])
     const thing = thingRows[0]
     if (!thing) return err(c, 404, missingActiveThingRefusal(`thing_id ${thingId}`))
     if (integerValue(thing.owner_id) !== seller.id) return err(c, 403, 'only the thing owner may list it')
     if (thing.withdrawn_at != null) return err(c, 409, 'a withdrawn thing cannot be listed; choose another active thing because withdrawal is permanent')
+    // A thing whose end is still to come may be listed; a remnant may not.
+    if (thing.end_reached === true) return err(c, 409, THING_REMNANT_REFUSAL)
     if (thing.active_offer_id != null) return err(c, 409, 'this thing is already locked by an offer; close its current offer before listing it again')
     if (thing.held_by != null) return err(c, 409, HELD_THING_ERROR)
 
@@ -905,6 +932,12 @@ export function mountWorldMarketRoutes(
     if (offer.status === 'canceled') return err(c, 409, 'world offer is canceled; choose an active market listing instead')
     if (!offer.locked) return err(c, 409, 'the thing is not locked by this world offer; the seller must list it again from its matching market draft')
     if (offer.seller_id === buyer.id) return err(c, 400, 'you cannot buy your own thing; choose an active offer from another seller')
+    // A due end is recorded first; the claim then judges the end by the database: no new
+    // reservation or payment starts once it has come, or when it would come inside the window.
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
+    }
+    const claimEnd = (thingId: number) => readClaimEndFacts(dependencies.query, thingId, WORLD_CLAIM_WINDOW_SECONDS)
 
     const now = dependencies.now()
     const pendingAtStart = paymentPending(offer)
@@ -934,6 +967,7 @@ export function mountWorldMarketRoutes(
       if (!checkoutId || !requestedWallet) {
         return err(c, 400, 'first claim call requires market_checkout_id and buyer_wallet')
       }
+      if ((await claimEnd(offer.asset_id)).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
 
       const checkoutPayload = await getMarket(c, dependencies, `/api/world/checkout/${checkoutId}`)
       if (isResponse(checkoutPayload)) return checkoutPayload
@@ -990,6 +1024,8 @@ export function mountWorldMarketRoutes(
               WHERE things.id = transfer_offers.asset_id
                 AND things.owner_id = transfer_offers.seller_id
                 AND things.withdrawn_at IS NULL AND things.active_offer_id = transfer_offers.id
+                AND things.ended_at IS NULL
+                AND coalesce(thing_end_due_at_row(things) > clock_timestamp() + interval '5 minutes', true)
             )
           RETURNING id
         `, [
@@ -1003,6 +1039,7 @@ export function mountWorldMarketRoutes(
           checkout.marketBuyer,
         ])
         if (!rows[0]) {
+          if ((await claimEnd(offer.asset_id)).withinWindow) return err(c, 409, ENDING_PURCHASE_REFUSAL)
           const raced = await readOffer(dependencies, offer.id)
           if (
             raced && reservationActive(raced, dependencies.now()) && raced.buyer_id === buyer.id &&
@@ -1033,7 +1070,14 @@ export function mountWorldMarketRoutes(
       if (requestedWallet != null && requestedWallet !== offer.buyer_wallet) {
         return err(c, 409, 'buyer_wallet does not match the active reservation; re-read the offer and resend its reserved buyer wallet')
       }
-      if (!hasPayment && !existingAttempt) return challenge(c, offer)
+      if (!hasPayment && !existingAttempt) {
+        return offer.end.reached ? err(c, 409, ENDING_PURCHASE_REFUSAL) : challenge(c, offer)
+      }
+    }
+    // Inside an open window only a use or a label can bring the end, and that makes it due
+    // at once, so a new payment is judged by whether it has come. Evidence goes on (#32).
+    if (hasPayment && offer.end.reached && claimMayRefuseForEnd(existingAttempt?.status, pendingAtStart)) {
+      return err(c, 409, ENDING_PURCHASE_REFUSAL)
     }
 
     const reservedAt = timestamp(offer.reserved_at)!
@@ -1170,6 +1214,10 @@ export function mountWorldMarketRoutes(
     if (actor.id !== offer.seller_id && actor.id !== offer.buyer_id) {
       return err(c, 403, 'only this offer seller or buyer may reconcile its payment')
     }
+    // A due end is recorded; accepted evidence still settles the sale (#32).
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
+    }
     if (offer.status === 'claimed' || offer.status === 'canceled' || paymentInvalid(offer)) {
       return c.json({ offer: publicOffer(offer, dependencies.now()) })
     }
@@ -1267,6 +1315,11 @@ export function mountWorldMarketRoutes(
     let offer = await readOffer(dependencies, offerId)
     if (!offer) return err(c, 404, `world offer_id ${offerId} was not found; re-read the 1F3EA listing and send its current city offer_id`)
     if (offer.seller_id !== seller.id) return err(c, 403, 'only the seller may cancel this world offer')
+    // A due end is recorded first; the cancel goes on either way, so a remnant's lock can
+    // always be released once no payment window is open.
+    if ((await dependencies.recordEnds([offer.asset_id])).length > 0) {
+      offer = await readOffer(dependencies, offer.id) ?? offer
+    }
     if (offer.status === 'canceled') return c.json({ offer: publicOffer(offer, dependencies.now()) })
     if (offer.status === 'claimed') {
       return err(c, 409, 'claimed world offer cannot be canceled; the completed sale is permanent, so list another owned thing instead')
@@ -1278,7 +1331,8 @@ export function mountWorldMarketRoutes(
       return err(c, 409, 'the buyer has an active five-minute payment window; let the buyer finish or retry cancellation after the window ends')
     }
 
-    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled', 'sold'])
+    // thing_ended: the market ended the listing because the city thing's end came.
+    const endedStates = new Set(['withdrawn', 'removed', 'expired', 'canceled', 'sold', 'thing_ended'])
     const listingEndedStates = paymentInvalid(offer) || paymentTerminal(offer)
       ? new Set([...endedStates, 'stale'])
       : endedStates

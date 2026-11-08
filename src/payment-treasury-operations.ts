@@ -233,11 +233,16 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
         WHERE key <> ALL(ARRAY[
           'name', 'description', 'traits', 'recipe',
-          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants'
+          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+          'ending_policy'
         ]::text[])
       )
       AND jsonb_typeof(attempt.request_json->'name') = 'string'
       AND (attempt.request_json->>'name') ~ '^[a-z0-9][a-z0-9_-]{0,63}$'
+      -- A stored ending_policy must be one the kind_revisions check accepts, so a bad
+      -- one is a changed target here and never a raise inside the completion.
+      AND (NOT attempt.request_json ? 'ending_policy'
+        OR valid_ending_policy(attempt.request_json->'ending_policy'))
       AND jsonb_typeof(attempt.request_json->'description') = 'string'
       AND char_length(attempt.request_json->>'description') <= 4000
       AND octet_length(attempt.request_json->>'description') <= 65536
@@ -340,15 +345,16 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
       )
       AND attempt.target_key = 'kind-invention:' || (attempt.request_json->>'name')
   ), new_kind AS (
-    INSERT INTO kinds (name, owner_id, current_revision)
-    SELECT request.request_json->>'name', request.actor_id, 1
+    -- The inventor is the paying actor, the same resident the kind_invented event names.
+    INSERT INTO kinds (name, owner_id, current_revision, invented_by)
+    SELECT request.request_json->>'name', request.actor_id, 1, request.actor_id
     FROM kind_invention_shaped request
     ON CONFLICT DO NOTHING
     RETURNING *
   ), new_kind_revision AS (
     INSERT INTO kind_revisions (
       kind_id, revision, description, traits, recipe,
-      drawing, drawing_state, drawing_description, drawing_variants
+      drawing, drawing_state, drawing_description, drawing_variants, ending_policy
     )
     SELECT kind.id, 1, request.request_json->>'description',
       ARRAY(
@@ -382,10 +388,12 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           FROM jsonb_array_elements(request.request_json->'drawing_variants')
             WITH ORDINALITY variant(value, position)
         ) END
+      -- A request stored before endings has no policy and takes the column default.
+      , coalesce(request.request_json->'ending_policy', '{"allowed": []}'::jsonb)
     FROM new_kind kind
     JOIN kind_invention_shaped request ON true
     RETURNING kind_id, revision, description, traits, recipe,
-      drawing, drawing_state, drawing_description, drawing_variants
+      drawing, drawing_state, drawing_description, drawing_variants, ending_policy
   ), new_kind_drawing_revisions AS (
     INSERT INTO drawing_revisions (
       target_type, target_id, slot_variant_name,
@@ -437,6 +445,8 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'drawing_state', revision.drawing_state,
         'drawing_description', revision.drawing_description,
         'drawing_variants', revision.drawing_variants,
+        'ending_policy', revision.ending_policy,
+        'invented_by', jsonb_build_object('id', request.actor_id, 'handle', request.actor_handle),
         'created_at', kind.created_at
       )) || CASE WHEN request.method = 'x402'
         THEN jsonb_build_object('fee_tx', request.tx_hash)
@@ -462,13 +472,16 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         SELECT 1 FROM jsonb_object_keys(attempt.request_json) key
         WHERE key <> ALL(ARRAY[
           'kind_id', 'description', 'traits', 'recipe',
-          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants'
+          'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+          'ending_policy'
         ]::text[])
       )
       AND jsonb_typeof(attempt.request_json->'kind_id') = 'number'
       AND (attempt.request_json->>'kind_id') ~ '^[1-9][0-9]*$'
       AND (attempt.request_json->>'kind_id')::numeric <= 2147483647
       AND attempt.asset_id = (attempt.request_json->>'kind_id')::integer
+      AND (NOT attempt.request_json ? 'ending_policy'
+        OR valid_ending_policy(attempt.request_json->'ending_policy'))
       AND jsonb_typeof(attempt.request_json->'description') = 'string'
       AND char_length(attempt.request_json->>'description') <= 4000
       AND octet_length(attempt.request_json->>'description') <= 65536
@@ -583,7 +596,7 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
   ), revised_kind_revision AS (
     INSERT INTO kind_revisions (
       kind_id, revision, description, traits, recipe,
-      drawing, drawing_state, drawing_description, drawing_variants
+      drawing, drawing_state, drawing_description, drawing_variants, ending_policy
     )
     SELECT kind.id, kind.current_revision + 1,
       request.request_json->>'description',
@@ -618,11 +631,12 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
           FROM jsonb_array_elements(request.request_json->'drawing_variants')
             WITH ORDINALITY variant(value, position)
         ) END
+      , coalesce(request.request_json->'ending_policy', '{"allowed": []}'::jsonb)
     FROM locked_kind kind
     JOIN kind_revision_shaped request ON request.public_id = kind.attempt_id
     ON CONFLICT DO NOTHING
     RETURNING kind_id, revision, description, traits, recipe,
-      drawing, drawing_state, drawing_description, drawing_variants
+      drawing, drawing_state, drawing_description, drawing_variants, ending_policy
   ), changed_kind AS (
     UPDATE kinds kind SET current_revision = revision.revision
     FROM revised_kind_revision revision
@@ -731,6 +745,11 @@ const COMPLETE_TREASURY_PAYMENT_SQL = `
         'drawing_state', revision.drawing_state,
         'drawing_description', revision.drawing_description,
         'drawing_variants', revision.drawing_variants,
+        'ending_policy', revision.ending_policy,
+        'invented_by', (
+          SELECT jsonb_build_object('id', inventor.id, 'handle', inventor.handle)
+          FROM residents inventor WHERE inventor.id = kind.invented_by
+        ),
         'created_at', kind.created_at
       )) || jsonb_build_object('dropped_traits', to_jsonb(dropped.names))
       || CASE WHEN cardinality(dropped.names) = 0 THEN '{}'::jsonb

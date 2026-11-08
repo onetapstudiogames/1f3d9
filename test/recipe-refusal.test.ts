@@ -13,7 +13,7 @@ import {
 import { publicPhysicsFacts } from '../src/public-reference-facts.ts'
 import { recipeGrammarWords, recipeRefusalWords } from '../src/recipe-refusal.ts'
 
-const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, and wake'
+const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, wake, and end'
 const LIST_RULE = 'steps must be a list'
 const LABEL_RULE = 'label takes target (actor, source, target, place, or law_place), label (a world name), and how long it lasts: on actor and target exactly one of seconds (1 to 86400) or permanent: true; on source and place optional seconds, permanent when omitted; on law_place required seconds'
 const CHECK_LABEL_RULE = 'check_label takes target (actor, source, target, place, or law_place), label (a world name), required then, and optional else; it takes no seconds'

@@ -309,10 +309,30 @@ export async function moderatePublicKinds<T extends object>(rows: readonly T[]):
     const row = kind as Record<string, unknown>
     const traits = redactNameList(row.traits, traitOverlays)
     const recipe = redactIngredientNames(row.recipe, ingredientOverlays)
-    return traits === row.traits && recipe === row.recipe
+    // A removed kind's policy labels are its author's words, hidden as its name is (and as v4 does).
+    const removed = kindOverlays.get(Number(row.id))?.action === 'remove'
+    const endingPolicy = removed ? redactPolicyLabels(row.ending_policy) : row.ending_policy
+    return traits === row.traits && recipe === row.recipe && endingPolicy === row.ending_policy
       ? kind
-      : Object.freeze({ ...row, traits, recipe }) as unknown as T
+      : Object.freeze({
+          ...row,
+          traits,
+          recipe,
+          ...(endingPolicy === undefined ? {} : { ending_policy: endingPolicy }),
+        }) as unknown as T
   }))
+}
+
+/**
+ * A kind's ending_policy with its label names replaced by one removal marker, keeping its
+ * allowed modes and limits, which are city facts. A policy without labels is unchanged.
+ */
+function redactPolicyLabels(policy: unknown): unknown {
+  if (policy === null || typeof policy !== 'object' || Array.isArray(policy)) return policy
+  const record = policy as Readonly<Record<string, unknown>>
+  return Array.isArray(record.labels)
+    ? Object.freeze({ ...record, labels: Object.freeze([MODERATED_TEXT]) })
+    : policy
 }
 
 /** Remove authored display text duplicated into event details, while retaining the event. */

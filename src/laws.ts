@@ -79,7 +79,7 @@ export async function replacePlaceLaws(
   })
   if (kindOnly !== undefined) {
     return Object.freeze({
-      error: `trait ${kindOnly} carries copy, write, a wake key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`,
+      error: `trait ${kindOnly} carries copy, write, a wake key, an end key, or a convert without into_kind, which work only in a kind's traits; put it on a kind, or adopt a law trait without them`,
       status: 400,
     })
   }

@@ -22,6 +22,25 @@ import {
 } from './physics.ts'
 import { recipeRefusalWords } from './recipe-refusal.ts'
 import { WAKE_HAND_OVER_ERROR, WAKE_SCOPE_ERROR } from './wake-guard.ts'
+import {
+  END_KEY_REFUSAL,
+  ENDING_POLICY_REFUSAL,
+  ENDING_POLICY_WIDEN_REFUSAL,
+  endTraitConflictRefusal,
+  ENDING_REMNANT_CHANGE_REFUSAL,
+  THING_REMNANT_REFUSAL,
+} from './thing-ending-refusals.ts'
+import { applyOwnerEnding, endingField, endingShapeRefusal, type EndingField } from './thing-ending-owner.ts'
+import { recordDueEndQuietly } from './thing-ending-record.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
+import {
+  DEFAULT_ENDING_POLICY,
+  isDefaultEndingPolicy,
+  parseEndingPolicy,
+  policyWidens,
+  storedEndingPolicy,
+  type EndingPolicy,
+} from './thing-endings.ts'
 import { clearStateBox } from './engine-state.ts'
 import { convertedVariantRefusal } from './engine-convert.ts'
 import { settleRoom } from './engine-settle.ts'
@@ -46,10 +65,12 @@ import {
 } from './moderation-store.ts'
 import { appendThingPresentationRevision, readThingPresentation } from './thing-presentation.ts'
 import {
+  EngineError,
   effectiveLaws,
   engineSql,
   residentPresence,
   withEngineTransaction,
+  type TaggedSql,
 } from './engine.ts'
 import { withdrawThing } from './withdrawal.ts'
 import { lawNames, replacePlaceLaws } from './laws.ts'
@@ -250,13 +271,17 @@ function variantRequestRows(
   })))
 }
 
-/** Everything a kind revision stores, in one comparable shape. */
+/**
+ * Everything a kind revision stores, in one comparable shape. Both policies must be
+ * canonical (parseEndingPolicy or storedEndingPolicy), so jsonb key order never matters.
+ */
 function kindRevisionContent(
   description: string,
   traits: readonly string[],
   recipe: unknown,
   drawing: DrawingValue,
   variants: readonly DrawingVariant[],
+  endingPolicy: EndingPolicy,
 ): Readonly<Record<string, unknown>> {
   return Object.freeze({
     description,
@@ -264,7 +289,34 @@ function kindRevisionContent(
     recipe,
     ...drawingRequestFields(drawing),
     drawing_variants: variantRequestRows(variants),
+    ending_policy: endingPolicy,
   })
+}
+
+type EndingPolicyField =
+  | Readonly<{ ok: true; supplied: boolean; policy: EndingPolicy }>
+  | Readonly<{ ok: false }>
+
+/**
+ * The ending_policy a kind body sent: not supplied (the caller keeps or defaults it), a
+ * canonical policy, or not ok, which the route answers with E1. null is refused, never a clear.
+ */
+function endingPolicyField(body: Readonly<Record<string, unknown>>): EndingPolicyField {
+  if (!Object.hasOwn(body, 'ending_policy')) return { ok: true, supplied: false, policy: DEFAULT_ENDING_POLICY }
+  try {
+    return { ok: true, supplied: true, policy: parseEndingPolicy(body.ending_policy) }
+  } catch (error) {
+    if (error instanceof EngineError) return { ok: false }
+    throw error
+  }
+}
+
+/**
+ * A kind fee request carries ending_policy only when it is not the default, so a stored
+ * request from before endings and a new one with the default hash the same way.
+ */
+function endingPolicyRequestFields(policy: EndingPolicy): Readonly<{ ending_policy?: EndingPolicy }> {
+  return isDefaultEndingPolicy(policy) ? {} : { ending_policy: policy }
 }
 
 function storedDrawingValue(row: Readonly<{
@@ -353,17 +405,32 @@ async function traitRecipes(names: readonly string[]): Promise<ReadonlyMap<strin
 }
 
 /**
+ * The trait in a list that carries an end key, or null. It uses the same test as
+ * kindTraitRefusal (loadTraitRecipe), so the two always agree. A stored end key that
+ * fails to parse or breaks the end rules loads as no end key at all, while the SQL
+ * has_end_trait (`recipe ? 'end'`, snapshot v4 and the live thing read) still counts it;
+ * no read relies on the two agreeing for such a row. None can be stored today: the only
+ * traits insert writes parseTraitRecipe's canonical output.
+ */
+export function endTraitName(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
+  return names.find(name => loadTraitRecipe(recipes.get(name)).end !== undefined) ?? null
+}
+
+/**
  * A kind revision may list only one trait with a wake key, so a thing has one
- * clock, and no trait using law_place or convert with into_kind, which are law-only.
+ * clock, only one trait with an end key, so a thing has one end program, and no
+ * trait using law_place or convert with into_kind, which are law-only.
  * It reads recipes already loaded, so the refusal census can follow each sentence
  * from the caller's err().
  */
-function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
+export function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string, unknown>): string | null {
   const recipeOf = (name: string) => loadTraitRecipe(recipes.get(name))
   const waking = names.filter(name => recipeOf(name).wake !== undefined)
   if (waking.length > 1) {
     return `a kind may list only one trait with a wake key; ${waking[0]} and ${waking[1]} both carry one, so keep one of them`
   }
+  const ending = names.filter(name => recipeOf(name).end !== undefined)
+  if (ending.length > 1) return endTraitConflictRefusal(ending[0]!, ending[1]!)
   const lawOnly = names.find(name => recipeUsesLawOnlyAbility(recipeOf(name)))
   return lawOnly === undefined
     ? null
@@ -375,7 +442,11 @@ function kindTraitRefusal(names: readonly string[], recipes: ReadonlyMap<string,
  * and revision never change, a family's open growth marks clear, and a changed
  * presentation is appended to its drawing history.
  */
-async function upgradeConvertedThing(id: number, resident: Resident): Promise<void> {
+async function upgradeConvertedThing(
+  id: number,
+  resident: Resident,
+  afterUpgrade?: (transaction: TaggedSql) => Promise<unknown>,
+): Promise<void> {
   await withEngineTransaction(engineSql, async transaction => {
     await transaction`SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE`
     const lockedRooms = await transaction`SELECT place.id FROM places place
@@ -407,6 +478,8 @@ async function upgradeConvertedThing(id: number, resident: Resident): Promise<vo
     if (changed.length > 0 && shownBefore) {
       await appendThingPresentationRevision(id, shownBefore, { id: resident.id, relation: 'owner' }, transaction)
     }
+    // An end sent with the upgrade is judged against the revision just reached.
+    if (afterUpgrade) await afterUpgrade(transaction)
   })
 }
 
@@ -535,6 +608,26 @@ async function mapForReader<T>(
   const filter = readFilter(reader, judge)
   const body = mark(judge, filter)
   return { reader, body, hidden: mutedFrontMatter(judge, rows), filtered: filterFields(filter) }
+}
+
+/**
+ * The made thing as make answers it: with the short status, key ends, when an end was
+ * sent, judged in SQL as every list judges it; without it when none was. The thing is
+ * already made, so a failed read answers the thing without ends rather than an error.
+ */
+async function withMadeThingEnds<T extends { id: number }>(thing: T, ending: EndingField): Promise<T> {
+  if (!ending.supplied || ending.value == null) return thing
+  try {
+    const rows = await sql.query(`
+      /* thing-endings:make-ends */
+      SELECT ${thingShortEndsSql('thing')} AS ends FROM things thing WHERE thing.id = $1::integer
+    `, [thing.id]) as Array<{ ends: unknown }>
+    const ends = publicShortEnds(rows[0]?.ends)
+    return ends === null ? thing : Object.freeze({ ...thing, ends })
+  } catch (error) {
+    console.error('make end read failed', error)
+    return thing
+  }
 }
 
 export function mountWorldRoutes(app: Hono): void {
@@ -1023,6 +1116,8 @@ export function mountWorldRoutes(app: Hono): void {
       things_page: {
         total_items: collections.totals.things.items,
         total_text_bytes: collections.totals.things.textBytes,
+        // Remnants stay items above; this live count says how many of them have ended.
+        remnant_items: collections.thingRemnants,
         returned_items: mutedThings.shown.length,
         returned_text_bytes: thingsPage.returnedTextBytes
           - (view === 'full' ? utf8TextBytes(storedRowsOf(thingsPage.items, mutedThings.hiddenRows), 'body') : 0),
@@ -1828,15 +1923,20 @@ export function mountWorldRoutes(app: Hono): void {
           ON revision.kind_id = kind.id AND revision.revision = kind.current_revision
       )
       SELECT page.id, page.name, page.owner_id, page.owner,
-        page.revision, page.description, page.traits, page.recipe, page.created_at,
+        page.revision, page.description, page.traits, page.recipe,
+        page.ending_policy, page.invented_by, page.created_at,
         totals.total_items, totals.total_text_bytes
       FROM totals
       LEFT JOIN LATERAL (
         SELECT k.id, k.name, k.owner_id, owner.handle AS owner,
           revision.revision, revision.description, revision.traits, revision.recipe,
+          revision.ending_policy,
+          CASE WHEN inventor.id IS NULL THEN NULL
+            ELSE jsonb_build_object('id', inventor.id, 'handle', inventor.handle) END AS invented_by,
           k.created_at
         FROM kinds k
         JOIN residents owner ON owner.id = k.owner_id
+        LEFT JOIN residents inventor ON inventor.id = k.invented_by
         JOIN kind_revisions revision
           ON revision.kind_id = k.id AND revision.revision = k.current_revision
         WHERE ($1::integer IS NULL OR k.id < $1::integer)
@@ -1901,13 +2001,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'name', 'description', 'traits', 'recipe',
-        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind body does not accept ${describeUnsupportedFields(rejected)}; send only name, description, traits, recipe, drawing, drawing_state, drawing_description, drawing_variants, and ending_policy`)
       }
     }
+    const requestedPolicy = endingPolicyField(body)
+    if (!requestedPolicy.ok) return err(c, 400, ENDING_POLICY_REFUSAL)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariants = drawingVariantsField(body)
@@ -1948,6 +2050,7 @@ export function mountWorldRoutes(app: Hono): void {
           ...(requestedVariants.supplied
             ? { drawing_variants: variantRequestRows(requestedVariants.variants) }
             : {}),
+          ...endingPolicyRequestFields(requestedPolicy.policy),
         },
       },
     )
@@ -2034,13 +2137,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'description', 'traits', 'recipe',
-        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants',
+        'drawing', 'drawing_state', 'drawing_description', 'drawing_variants', 'ending_policy',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, and drawing_variants`)
+        return err(c, 400, `kind revision does not accept ${describeUnsupportedFields(rejected)}; send only description, traits, recipe, drawing, drawing_state, drawing_description, drawing_variants, and ending_policy`)
       }
     }
+    const requestedPolicy = endingPolicyField(body)
+    if (!requestedPolicy.ok) return err(c, 400, ENDING_POLICY_REFUSAL)
     const requestedDrawing = drawingWriteField(body)
     if (!requestedDrawing.ok) return err(c, 400, requestedDrawing.error)
     const requestedVariants = drawingVariantsField(body)
@@ -2057,6 +2162,7 @@ export function mountWorldRoutes(app: Hono): void {
       SELECT k.id, k.name, k.owner_id, k.current_revision AS revision,
         revision.description, revision.traits, revision.recipe, revision.drawing,
         revision.drawing_state, revision.drawing_description, revision.drawing_variants,
+        revision.ending_policy, k.invented_by,
         k.active_offer_id, (offer.id IS NOT NULL) AS has_open_offer
       FROM kinds k
       JOIN kind_revisions revision
@@ -2064,7 +2170,11 @@ export function mountWorldRoutes(app: Hono): void {
       LEFT JOIN transfer_offers offer ON offer.asset_type = 'kind'
         AND offer.asset_id = k.id AND offer.status = 'open'
       WHERE k.id = ${id}
-    `) as Array<KindRow & { active_offer_id: number | null; has_open_offer?: boolean }>
+    `) as Array<Omit<KindRow, 'invented_by'> & {
+      invented_by: number | null
+      active_offer_id: number | null
+      has_open_offer?: boolean
+    }>
     const current = currentRows[0]
     if (!current) return err(c, 404, `kind_id ${id} was not found; call browse with view kinds, or use GET /api/kinds if your client can open URLs, and send a current kind_id`)
     if (current.owner_id !== resident.id) return err(c, 403, 'only the kind owner may revise it')
@@ -2092,8 +2202,20 @@ export function mountWorldRoutes(app: Hono): void {
     if (!await everyTraitExists(traits)) {
       return err(c, 400, 'kind revision names an unknown or duplicate trait; call coin_trait for each missing trait, or use POST /api/trait if your client can open URLs')
     }
-    const traitConflict = kindTraitRefusal(traits, await traitRecipes(traits))
+    const recipes = await traitRecipes(traits)
+    const traitConflict = kindTraitRefusal(traits, recipes)
     if (traitConflict) return err(c, 400, traitConflict)
+    // An omitted ending_policy keeps the current one, as an omitted drawing does.
+    const currentPolicy = storedEndingPolicy(current.ending_policy)
+    const revisionPolicy = requestedPolicy.supplied ? requestedPolicy.policy : currentPolicy
+    // Only the kind's inventor, while owning it, may allow more endings or add, replace or
+    // drop its end trait (E19). invented_by never changes once set, and the completion still
+    // requires this owner at the next revision number, so this check cannot go stale.
+    const changesEndings = policyWidens(currentPolicy, revisionPolicy)
+      || endTraitName(current.traits, await traitRecipes(current.traits)) !== endTraitName(traits, recipes)
+    if (changesEndings && (current.invented_by == null || Number(current.invented_by) !== resident.id)) {
+      return err(c, 403, ENDING_POLICY_WIDEN_REFUSAL)
+    }
     const revisionDrawing = requestedDrawing.supplied
       ? requestedDrawing.value
       : currentDrawing
@@ -2103,13 +2225,13 @@ export function mountWorldRoutes(app: Hono): void {
     // A revision must change something the revision stores; an identical one would
     // charge the fee for nothing, so it is refused before any payment or credit.
     if (isDeepStrictEqual(
-      kindRevisionContent(description, traits, recipe, revisionDrawing, revisionVariants),
+      kindRevisionContent(description, traits, recipe, revisionDrawing, revisionVariants, revisionPolicy),
       kindRevisionContent(
         current.description, current.traits, parseKindRecipe(current.recipe),
-        currentDrawing, currentVariants,
+        currentDrawing, currentVariants, currentPolicy,
       ),
     )) {
-      return err(c, 409, `this revision is identical to the current revision ${current.revision} of kind ${id}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, or drawing_variants before revising`)
+      return err(c, 409, `this revision is identical to the current revision ${current.revision} of kind ${id}, so there is nothing to pay for and nothing was charged; change the description, traits, recipe, drawing, drawing_variants, or ending_policy before revising`)
     }
 
     const fee = await treasuryFee(
@@ -2130,6 +2252,7 @@ export function mountWorldRoutes(app: Hono): void {
           ...(requestedVariants.supplied || revisionVariants.length > 0
             ? { drawing_variants: variantRequestRows(revisionVariants) }
             : {}),
+          ...endingPolicyRequestFields(revisionPolicy),
         },
       },
     )
@@ -2294,6 +2417,7 @@ export function mountWorldRoutes(app: Hono): void {
       const fault = traitRecipeFault(body.recipe)
       if (fault === 'wake_hand_over') return err(c, 400, WAKE_HAND_OVER_ERROR)
       if (fault === 'wake_scope') return err(c, 400, WAKE_SCOPE_ERROR)
+      if (fault === 'end_key') return err(c, 400, END_KEY_REFUSAL)
       const grammar = recipeRefusalWords(body.recipe)
       return err(c, 400, `recipe refused at ${grammar.where}: ${grammar.rule}; call physics for every brick's fields, defaults, and limits`)
     }
@@ -2334,13 +2458,15 @@ export function mountWorldRoutes(app: Hono): void {
     {
       const fields = [
         'place_id', 'name', 'body', 'open_to_use', 'shared_use_may_destroy',
-        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids',
+        'open_to_reach', 'open_to_convert', 'wake_enabled', 'kind_id', 'ingredient_ids', 'ending',
       ] as const
       if (!hasOnly(body, fields)) {
         const rejected = unsupportedFields(body, fields)
-        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, and ingredient_ids`)
+        return err(c, 400, `thing body does not accept ${describeUnsupportedFields(rejected)}; send only place_id, name, body, optional open_to_use, optional shared_use_may_destroy, optional open_to_reach, optional open_to_convert, optional wake_enabled, optional kind_id, ingredient_ids, and optional ending`)
       }
     }
+    const ending = endingField(body)
+    const endingShapeError = endingShapeRefusal(ending)
     const placeId = positiveId(body.place_id)
     const name = publicLabel(body.name)
     if (containsBearerSecret(body.body) || containsBearerSecret(body.name)) return err(c, 400, SECRET_REJECTION)
@@ -2376,6 +2502,7 @@ export function mountWorldRoutes(app: Hono): void {
     if (kindId == null && (!Array.isArray(ingredientIds) || ingredientIds.length > 0)) {
       return err(c, 400, 'ingredient_ids must be empty unless kind_id is supplied')
     }
+    if (endingShapeError) return err(c, 400, endingShapeError)
 
     const placeRows = (await withPlacePermission(sql)`
       SELECT place.id, place.parent_id, place.place_kind, place.owner_id,
@@ -2412,12 +2539,14 @@ export function mountWorldRoutes(app: Hono): void {
       wakeEnabled,
       kindId,
       ingredientIds,
+      ending,
     })
     if (!made.ok) return err(c, made.status, made.error)
     const readingCost = await safeReadingCostMeter(placeId, made.thing.body)
+    const thing = await withMadeThingEnds(made.thing, ending)
     return c.json(made.consumedIngredientIds === null
-      ? { thing: made.thing, reading_cost: readingCost }
-      : { thing: made.thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
+      ? { thing, reading_cost: readingCost }
+      : { thing, consumed_ingredient_ids: made.consumedIngredientIds, reading_cost: readingCost }, 201)
   })
 
   app.patch('/api/thing/:id', async c => {
@@ -2435,10 +2564,11 @@ export function mountWorldRoutes(app: Hono): void {
     if (!hasOnly(body, [
       'name', 'body', 'open_to_use', 'shared_use_may_destroy',
       'drawing', 'drawing_state', 'drawing_description', 'drawing_variant_name',
-      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear',
+      'open_to_reach', 'open_to_convert', 'wake_enabled', 'state_clear', 'ending',
     ]) || Object.keys(body).length === 0) {
-      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, and state_clear are editable; birth_revision is permanent')
+      return err(c, 400, 'only name, body, drawing, drawing_variant_name, open_to_use, shared_use_may_destroy, open_to_reach, open_to_convert, wake_enabled, state_clear, and ending are editable; birth_revision is permanent')
     }
+    const ending = endingField(body)
     if (body.state_clear !== undefined && body.state_clear !== true) {
       return err(c, 400, 'state_clear must be true when present')
     }
@@ -2479,13 +2609,18 @@ export function mountWorldRoutes(app: Hono): void {
     if (wakeEnabled === null) return err(c, 400, 'wake_enabled must be boolean when present')
     if (openToReach === null) return err(c, 400, 'open_to_reach must be boolean when present')
     if (openToConvert === null) return err(c, 400, 'open_to_convert must be boolean when present')
+    const endingShapeError = endingShapeRefusal(ending)
+    if (endingShapeError) return err(c, 400, endingShapeError)
+    // A due end is written down before anything else touches the thing.
+    await recordDueEndQuietly([id], engineSql)
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.current_revision,
         thing.as_kind_id IS NOT NULL AS converted,
         thing.drawing_state, thing.drawing_variant_name, pinned.drawing_variants,
         thing.active_offer_id,
-        (offer.id IS NOT NULL) AS has_open_offer
+        (offer.id IS NOT NULL) AS has_open_offer,
+        thing_end_reached(thing.id) AS end_reached
       FROM things thing
       LEFT JOIN kind_revisions pinned
         ON pinned.kind_id = coalesce(thing.as_kind_id, thing.kind_id)
@@ -2504,10 +2639,14 @@ export function mountWorldRoutes(app: Hono): void {
       drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
+      end_reached?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may edit it')
+    if (existing.end_reached === true) {
+      return err(c, 409, ending.supplied ? ENDING_REMNANT_CHANGE_REFUSAL : THING_REMNANT_REFUSAL)
+    }
     if (existing.converted === true && requestedVariant !== undefined) {
       return err(c, 409, convertedVariantRefusal(id))
     }
@@ -2541,7 +2680,9 @@ export function mountWorldRoutes(app: Hono): void {
         : `drawing_variant_name is not offered by this pinned kind revision; choose base with null or an available variant: ${choices.join(', ')}`)
     }
 
-    const rows = (await sql`
+    // One statement for every edit; an end sent with it was written just before, in the
+    // same transaction, and counts as the edit when nothing else changed.
+    const editStatement = (db: TaggedSql, endingChanged: boolean) => db`
       WITH activity_actor AS MATERIALIZED (
         SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
       ), activity_room AS MATERIALIZED (
@@ -2729,10 +2870,6 @@ export function mountWorldRoutes(app: Hono): void {
             OR prior.drawing_variant_name IS DISTINCT FROM current.drawing_variant_name
           )
         RETURNING id
-      ), new_event AS (
-        INSERT INTO events (kind, actor, detail)
-        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id, 'place_id', place_id)
-        FROM changed
       ), result AS (
         SELECT changed.* FROM changed
         UNION ALL
@@ -2740,6 +2877,11 @@ export function mountWorldRoutes(app: Hono): void {
         FROM things thing
         JOIN editable ON editable.id = thing.id
         WHERE NOT EXISTS (SELECT 1 FROM changed)
+      ), new_event AS (
+        INSERT INTO events (kind, actor, detail)
+        SELECT 'thing_edited', ${resident.handle}, jsonb_build_object('thing_id', id, 'place_id', place_id)
+        FROM result
+        WHERE EXISTS (SELECT 1 FROM changed) OR ${endingChanged}::boolean
       )
       SELECT result.*, maker.handle AS made_by,
         result.owner_id AS current_owner_id,
@@ -2751,7 +2893,24 @@ export function mountWorldRoutes(app: Hono): void {
       JOIN residents current_owner ON current_owner.id = result.owner_id
       LEFT JOIN kinds kind_definition
         ON kind_definition.id = coalesce(result.as_kind_id, result.kind_id)
-    `) as ThingRow[]
+    `
+    let rows: ThingRow[]
+    if (!ending.supplied) {
+      rows = (await editStatement(engineSql, false)) as ThingRow[]
+    } else {
+      try {
+        rows = await withEngineTransaction(engineSql, async transaction => {
+          const endingChanged = await applyOwnerEnding(transaction, id, resident.id, ending.value, { lock: true })
+          const edited = (await editStatement(transaction, endingChanged)) as ThingRow[]
+          // The end stays unwritten when the edit itself found the thing changed.
+          if (!edited[0]) throw new EngineError(409, 'thing changed or received an open sale offer; retry')
+          return edited
+        })
+      } catch (error) {
+        if (error instanceof EngineError) return err(c, error.status, error.message)
+        throw error
+      }
+    }
     const written = rows[0]
     if (!written) return err(c, 409, 'thing changed or received an open sale offer; retry')
     // The owner empties the state box; values are never written by hand.
@@ -2777,18 +2936,23 @@ export function mountWorldRoutes(app: Hono): void {
         : err(c, 400, decoded.error)
     }
     {
-      const fields = ['drawing_variant_name'] as const
+      const fields = ['drawing_variant_name', 'ending'] as const
       if (!hasOnly(decoded.body, fields)) {
         const rejected = unsupportedFields(decoded.body, fields)
-        return err(c, 400, `thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name`)
+        return err(c, 400, `thing upgrade body does not accept ${describeUnsupportedFields(rejected)}; send only optional drawing_variant_name and optional ending`)
       }
     }
+    const ending = endingField(decoded.body)
+    const endingShapeError = endingShapeRefusal(ending)
     const requestedVariant = Object.hasOwn(decoded.body, 'drawing_variant_name')
       ? drawingVariantName(decoded.body.drawing_variant_name)
       : undefined
     if (requestedVariant === 'invalid') {
       return err(c, 400, `drawing_variant_name must be null or a safe one-line label of 1-${DRAWING_VARIANT_NAME_MAX_BYTES} UTF-8 bytes`)
     }
+    if (endingShapeError) return err(c, 400, endingShapeError)
+    // A due end is written down before anything else touches the thing.
+    await recordDueEndQuietly([id], engineSql)
 
     const existingRows = (await sql`
       SELECT thing.id, thing.owner_id, thing.kind_id, thing.birth_revision,
@@ -2797,7 +2961,8 @@ export function mountWorldRoutes(app: Hono): void {
         thing.drawing_state, thing.drawing_variant_name,
         latest.drawing_variants AS latest_drawing_variants,
         thing.active_offer_id,
-        (offer.id IS NOT NULL) AS has_open_offer
+        (offer.id IS NOT NULL) AS has_open_offer,
+        thing_end_reached(thing.id) AS end_reached
       FROM things thing
       LEFT JOIN kinds kind ON kind.id = thing.kind_id
       LEFT JOIN kind_revisions latest
@@ -2814,17 +2979,29 @@ export function mountWorldRoutes(app: Hono): void {
       drawing_variants?: unknown
       active_offer_id: number | null
       has_open_offer?: boolean
+      end_reached?: boolean
     }>
     const existing = existingRows[0]
     if (!existing) return err(c, 404, missingActiveThingRefusal(`thing_id ${id}`))
     if (existing.owner_id !== resident.id) return err(c, 403, 'only the thing owner may upgrade it')
+    if (existing.end_reached === true) return err(c, 409, THING_REMNANT_REFUSAL)
+    // An end sent with the upgrade is set, renewed or cleared in the upgrade's own
+    // transaction, after it, so a new end takes its grant from the revision reached.
+    const endingAfterUpgrade = ending.supplied
+      ? async (transaction: TaggedSql) => applyOwnerEnding(transaction, id, resident.id, ending.value, { lock: true })
+      : undefined
     if (existing.kind_id == null) return err(c, 409, 'an untyped thing has no kind revision to upgrade; edit its instance fields instead of calling upgrade')
     if (existing.active_offer_id != null || openOffer(existing)) {
       return err(c, 409, 'thing cannot be upgraded while it has an open sale offer; close that offer before upgrading the thing')
     }
     if (existing.as_kind_id != null) {
       if (requestedVariant !== undefined) return err(c, 409, convertedVariantRefusal(id))
-      await upgradeConvertedThing(id, resident)
+      try {
+        await upgradeConvertedThing(id, resident, endingAfterUpgrade)
+      } catch (error) {
+        if (error instanceof EngineError) return err(c, error.status, error.message)
+        throw error
+      }
       const converted = await loadPublicThingRecord(id)
       if (!converted) return err(c, 409, 'thing changed or received an open sale offer; retry')
       return c.json({ thing: converted })
@@ -2847,8 +3024,7 @@ export function mountWorldRoutes(app: Hono): void {
     }
 
     let rows: ThingRow[]
-    try {
-      rows = (await sql`
+    const upgradeStatement = (db: TaggedSql) => db`
         WITH activity_actor AS MATERIALIZED (
           SELECT id FROM residents WHERE id = ${resident.id} FOR NO KEY UPDATE
         ), activity_room AS MATERIALIZED (
@@ -3036,11 +3212,22 @@ export function mountWorldRoutes(app: Hono): void {
         JOIN residents maker ON maker.id = changed.maker_id
         JOIN residents current_owner ON current_owner.id = changed.owner_id
         LEFT JOIN kinds kind_definition ON kind_definition.id = changed.kind_id
-      `) as ThingRow[]
+      `
+    try {
+      rows = endingAfterUpgrade
+        ? await withEngineTransaction(engineSql, async transaction => {
+          const upgraded = (await upgradeStatement(transaction)) as ThingRow[]
+          // Without the upgrade nothing is written, the end included.
+          if (!upgraded[0]) return upgraded
+          await endingAfterUpgrade(transaction)
+          return upgraded
+        })
+        : (await upgradeStatement(engineSql)) as ThingRow[]
     } catch (error) {
       if (postgresErrorCode(error) === '55P03') {
         return err(c, 409, 'another action is changing this thing or kind; retry this thing upgrade')
       }
+      if (error instanceof EngineError) return err(c, error.status, error.message)
       throw error
     }
     if (!rows[0]) return err(c, 409, 'thing changed or received an open sale offer; retry')
@@ -3063,11 +3250,14 @@ export function mountWorldRoutes(app: Hono): void {
     ) {
       return err(c, 400, 'withdraw body must contain exactly thing_name with the thing\'s exact current name')
     }
+    // A due end is recorded first; withdrawThing refuses E7 for a thing recorded just now.
+    const recorded = await recordDueEndQuietly([id])
     const withdrawn = await withdrawThing(
       resident,
       id,
       'withdrawn',
       (body as Record<string, string>).thing_name,
+      recorded,
     )
     if ('error' in withdrawn) return err(c, withdrawn.status as 403 | 404 | 409, withdrawn.error)
     return c.json({ thing: withdrawn })

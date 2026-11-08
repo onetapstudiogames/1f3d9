@@ -56,6 +56,9 @@ async function loadMembers(
     LEFT JOIN kinds kind ON kind.id = coalesce(thing.as_kind_id, thing.kind_id)
     WHERE thing.place_id = ${context.placeId} AND thing.withdrawn_at IS NULL
       AND thing.held_by IS NULL
+      -- A thing whose end has come is no member; a thing with no end costs no more.
+      AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
+        AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
       AND NOT (thing.id = ANY(${excluded}::int[]))
       AND (${effect.kind ?? null}::text IS NULL OR kind.name = ${effect.kind ?? null}::text)
       AND coalesce((

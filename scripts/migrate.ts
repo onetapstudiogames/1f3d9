@@ -102,6 +102,7 @@ type RemoteMigration =
   | 'showing-room'
   | 'showing-room-activation'
   | 'label-endings'
+  | 'thing-endings'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -133,6 +134,7 @@ export type MigrationFile =
   | 'db/migrations/20261018_waiting_transfers.sql'
   | 'db/migrations/20261028_stored_public_activity.sql'
   | 'db/migrations/20261031_label_endings.sql'
+  | 'db/migrations/20261106_thing_endings.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -325,6 +327,7 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'showing-room': 'db/migrations/20261027_showing_room.sql',
   'showing-room-activation': 'db/migrations/20261027_showing_room_activation.sql',
   'label-endings': 'db/migrations/20261031_label_endings.sql',
+  'thing-endings': 'db/migrations/20261106_thing_endings.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

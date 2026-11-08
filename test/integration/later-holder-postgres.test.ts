@@ -24,7 +24,15 @@ const CURSOR_KEY = '11'.repeat(32)
 const cursorFor = (residentId: number) => createLaterHolderCursorCodec(CURSOR_KEY, residentId)
 const MIGRATION_URL = new URL('../../db/migrations/20260822_later_holder_marks.sql', import.meta.url)
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
-const preWave3SchemaDdl = schemaDdl.replace(
+// Thing endings come after later-holder marks and guard them, so the schema before those
+// marks leaves the thing endings section out, and the upgrade replays its migration after.
+const THING_ENDINGS_URL = new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url)
+const THING_ENDINGS_START = '-- Thing endings, the same statements as'
+const THING_ENDINGS_END = '$thing_endings_shape$;'
+const thingEndingsStart = schemaDdl.indexOf(THING_ENDINGS_START)
+const thingEndingsEnd = schemaDdl.indexOf(THING_ENDINGS_END, thingEndingsStart) + THING_ENDINGS_END.length
+assert.ok(thingEndingsStart >= 0 && thingEndingsEnd > thingEndingsStart, 'the thing endings section is found')
+const preWave3SchemaDdl = (schemaDdl.slice(0, thingEndingsStart) + schemaDdl.slice(thingEndingsEnd)).replace(
   /-- A deliberate private pointer[\s\S]*?(?=CREATE OR REPLACE FUNCTION set_thing_maker_on_insert)/u,
   '',
 )
@@ -161,6 +169,7 @@ test('later-holder marks keep deliberate order and end exactly with ownership', 
       )).rows[0]!.table_name, null)
       await postgres.client.query(migrationDdl)
       await postgres.client.query(migrationDdl)
+      await postgres.client.query(await readFile(THING_ENDINGS_URL, 'utf8'))
       const columns = (await postgres.client.query<{ column_name: string }>(`
         SELECT column_name FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'thing_later_holder_marks'

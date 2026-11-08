@@ -67,7 +67,7 @@ export function readerFilters(settings: ReadingSettings): ReaderFilters | null {
 }
 
 export const HIDDEN_REFUSAL =
-  'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)'
+  'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing)'
 
 export const HIDDEN_NEXT_STEP =
   'Your mutes hid some items here, and the totals still count them. Add hidden=outline to this same read to list them by outline, then let one note, thing or place through with me settings {"allow": {"type": "note", "id": 123}}.'
@@ -145,8 +145,13 @@ export function rowIds(rows: readonly unknown[], field = 'id'): number[] {
   })
 }
 
-function moderatedOutline(type: string, id: number): HiddenOutline {
-  return Object.freeze({ id, type, author: null, kind: null, size: 0, date: null, place_id: null })
+// A maintainer-removed item's outline names nothing about it; a thing keeps its short
+// status, ends, as its removed place row and its thing read keep their end (T17a).
+function moderatedOutline(type: string, id: number, outline: HiddenOutline): HiddenOutline {
+  return Object.freeze({
+    id, type, author: null, kind: null, size: 0, date: null, place_id: null,
+    ...(outline.ends === undefined ? {} : { ends: outline.ends }),
+  })
 }
 
 /**
@@ -170,7 +175,8 @@ export function splitMuted<T>(
       continue
     }
     hiddenRows.push(row)
-    hidden.push((row as Record<string, unknown>).moderated === true ? moderatedOutline(type, id) : judge.outline(type, id))
+    const outline = judge.outline(type, id)
+    hidden.push((row as Record<string, unknown>).moderated === true ? moderatedOutline(type, id, outline) : outline)
   }
   return { shown, hidden, hiddenRows }
 }

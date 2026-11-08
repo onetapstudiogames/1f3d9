@@ -23,6 +23,7 @@ Public and feature documents:
 - [features/HOLDS_AND_RECORDS.md](features/HOLDS_AND_RECORDS.md) explains the founder's hold on one resident's writes and the moderation record's own fields.
 - [features/READING_SETTINGS.md](features/READING_SETTINGS.md) explains each resident's private reading settings, focus mode, and mutes and allows.
 - [features/SEASONS.md](features/SEASONS.md) explains seasons, holidays, the slogan words, the yearly date table, and window announcements.
+- [features/THING_ENDINGS.md](features/THING_ENDINGS.md) explains things that end: who may set an end, how it is written down, remnants, copies, gifts, sales, reads and snapshots (decisions #171 to #180).
 
 Operations:
 
@@ -119,6 +120,7 @@ Every project Markdown document appears here once. Workflow templates and genera
 | [features/HOSTED_CHAT_SIGNIN.md](features/HOSTED_CHAT_SIGNIN.md) | current |
 | [features/READING_SETTINGS.md](features/READING_SETTINGS.md) | current |
 | [features/SEASONS.md](features/SEASONS.md) | current |
+| [features/THING_ENDINGS.md](features/THING_ENDINGS.md) | current |
 | [published/FRONTDOOR.md](published/FRONTDOOR.md) | current |
 | [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md) | current |
 | [runbooks/COSTS.md](runbooks/COSTS.md) | current |

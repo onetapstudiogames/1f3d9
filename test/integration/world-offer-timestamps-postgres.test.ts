@@ -229,6 +229,7 @@ test('world offer PostgreSQL Date milliseconds reach the parked payment attempt'
       findPayment: findPaymentAttempt,
       runPayment: input => runDurableX402(input, paymentDependencies),
       resumePayment: input => resumeDurableX402(input, paymentDependencies),
+      recordEnds: async () => [],
     }
     const app = new Hono()
     app.onError(error => { throw error })
@@ -395,6 +396,7 @@ test('the world offer batch reads 50 offers in one read-only query under its 1,5
       findPayment: findPaymentAttempt,
       runPayment: async () => { throw new Error('unexpected payment') },
       resumePayment: async () => { throw new Error('unexpected payment') },
+      recordEnds: async () => [],
     }
     const app = new Hono()
     app.onError(error => { throw error })
@@ -409,8 +411,18 @@ test('the world offer batch reads 50 offers in one read-only query under its 1,5
     const elapsedMs = Date.now() - startedAt
     assert.equal(response.status, 200, await response.clone().text())
     assert.equal(response.headers.get('cache-control'), 'no-store')
-    const payload = await response.json() as { offers: Array<Record<string, unknown>> }
+    const bodyText = await response.text()
+    const payload = JSON.parse(bodyText) as { offers: Array<Record<string, unknown>> }
     assert.deepEqual(payload.offers.map(offer => offer.id), requested)
+    t.diagnostic(`50 ids answered with ${Buffer.byteLength(bodyText, 'utf8')} bytes`)
+    // Each offer carries its thing's end (things ending): these kindless things are owned by
+    // their maker, so an end is permitted and none is set.
+    for (const offer of payload.offers.filter(entry => entry.status !== 'maintainer_hidden')) {
+      assert.equal(offer.asset_state, 'active', `offer ${offer.id}`)
+      assert.equal((offer.ending as Record<string, unknown>).status, 'permitted_but_unset', `offer ${offer.id}`)
+      assert.equal(offer.end_program_summary, 'When this ends it becomes a remnant.')
+      assert.equal(typeof offer.ending_checked_at, 'string')
+    }
     assert.ok(elapsedMs < 1_500, `50 ids answered in ${elapsedMs} ms`)
     t.diagnostic(`50 ids answered in ${elapsedMs} ms`)
     assert.equal(sent.length, 1, 'one transaction')
@@ -421,10 +433,17 @@ test('the world offer batch reads 50 offers in one read-only query under its 1,5
     assert.deepEqual(timeoutAfterCommit, ['0'], 'the timeout ends with the transaction')
     assert.deepEqual(plainQueries, [], 'the batch never reads outside its bounded query')
 
+    // Each read judges the end at its own database time, so the check times differ.
+    const unchecked = (offer: unknown): unknown => {
+      if (!offer || typeof offer !== 'object' || !('ending_checked_at' in offer)) return offer
+      const { ending_checked_at: _checkedAt, ending, ...rest } = offer as Record<string, unknown>
+      const { checked_at: _endingCheckedAt, ...endingRest } = (ending ?? {}) as Record<string, unknown>
+      return { ...rest, ending: ending == null ? ending : endingRest }
+    }
     for (const [index, id] of requested.entries()) {
       const single = await app.request(`/api/world/offer/${id}`)
       assert.equal(single.status, 200)
-      assert.deepEqual(payload.offers[index], (await single.json() as { offer: unknown }).offer, `offer ${id}`)
+      assert.deepEqual(unchecked(payload.offers[index]), unchecked((await single.json() as { offer: unknown }).offer), `offer ${id}`)
     }
     assert.deepEqual(payload.offers[requested.indexOf(hiddenOffer.id)], { id: hiddenOffer.id, status: 'maintainer_hidden' })
     assert.equal(payload.offers[requested.indexOf(restoredOffer.id)]!.phase, 'listed')

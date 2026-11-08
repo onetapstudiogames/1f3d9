@@ -10,6 +10,7 @@
 // served names avoid the word the app door's me must not carry (#142): waiting_transfers
 // and waiting_id. This module imports no engine code, so the engine can call it.
 import { isFounderResident } from './founders.ts'
+import { thingShortEndsSql, withShortEnds } from './thing-ending-short.ts'
 
 export const WAITING_ASSET_TYPES = Object.freeze(['thing', 'kind', 'place'] as const)
 export type WaitingAssetType = typeof WAITING_ASSET_TYPES[number]
@@ -187,25 +188,43 @@ export async function answerWaiting(
   return ended.length > 0
 }
 
-/** The recipient's open waiting transfers for its settings answer: a count and the oldest. */
-export async function listWaitingTransfers(recipientId: number, db: Query): Promise<Readonly<Record<string, unknown>>> {
-  const found = await rows(db`/* private:waiting-transfers-list */
+// The open list's text around its two values (the recipient and the cap), with each held
+// thing's short status, key ends, written in as fixed SQL (src/thing-ending-short.ts).
+const WAITING_LIST_TEXTS = Object.freeze([
+  `/* private:waiting-transfers-list */
     SELECT waiting.id, waiting.asset_type, waiting.asset_id, giver.handle AS giver_handle,
-      waiting.created_at, count(*) OVER () AS total
+      waiting.created_at, count(*) OVER () AS total,
+      ${thingShortEndsSql('waiting_thing')} AS ends
     FROM waiting_transfers waiting
     JOIN residents giver ON giver.id = waiting.giver_id
-    WHERE waiting.recipient_id = ${recipientId} AND waiting.answer IS NULL
+    LEFT JOIN things waiting_thing
+      ON waiting.asset_type = 'thing' AND waiting_thing.id = waiting.asset_id
+    WHERE waiting.recipient_id = `,
+  `
+      AND waiting.answer IS NULL
     ORDER BY waiting.id
-    LIMIT ${WAITING_TRANSFERS_LISTED}
-  `)
+    LIMIT `,
+  '',
+])
+const WAITING_LIST_TEMPLATE = Object.freeze(Object.assign([...WAITING_LIST_TEXTS], {
+  raw: Object.freeze([...WAITING_LIST_TEXTS]),
+})) as unknown as TemplateStringsArray
+
+/**
+ * The recipient's open waiting transfers for its settings answer: a count and the oldest.
+ * A held thing carries its short status, ends, left out when it has no end (T17a).
+ */
+export async function listWaitingTransfers(recipientId: number, db: Query): Promise<Readonly<Record<string, unknown>>> {
+  const found = await rows(db(WAITING_LIST_TEMPLATE, recipientId, WAITING_TRANSFERS_LISTED))
   return Object.freeze({
     count: found.length === 0 ? 0 : Number(found[0]!.total),
-    oldest: found.map(row => Object.freeze({
+    oldest: found.map(row => withShortEnds({
       waiting_id: Number(row.id),
       type: String(row.asset_type),
       asset_id: Number(row.asset_id),
       from: String(row.giver_handle),
       held_at: stamp(row.created_at),
+      ends: row.ends,
     })),
     about: WAITING_TRANSFERS_ABOUT,
   })

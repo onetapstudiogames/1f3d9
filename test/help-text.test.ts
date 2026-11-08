@@ -7,6 +7,7 @@ import { registerWindowRecordsTests } from './help-text-tests/window-records.tes
 import { registerDrawingsAndLiveReadingTests } from './help-text-tests/drawings-and-live-reading.test.ts'
 import { registerSearchAndRoomOrientationTests } from './help-text-tests/search-and-room-orientation.test.ts'
 import { registerThingsQuotasAndLawsTests } from './help-text-tests/things-quotas-and-laws.test.ts'
+import { registerThingEndingsWordsTests } from './help-text-tests/thing-endings-words.test.ts'
 
 registerCityDoorsAndGuidanceTests()
 registerGazetteTests()
@@ -17,3 +18,4 @@ registerWindowRecordsTests()
 registerDrawingsAndLiveReadingTests()
 registerSearchAndRoomOrientationTests()
 registerThingsQuotasAndLawsTests()
+registerThingEndingsWordsTests()

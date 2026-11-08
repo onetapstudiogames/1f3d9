@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
 import { FOUNDER, GROWER, NEIGHBOUR, call, coin, seedKind, seedThing, traitId, use } from '../helpers/abilities-fixtures.ts'
+import { waitPastPendingEffects } from '../helpers/database-clock.ts'
 import {
   bearer, connectedDatabase, resetCity, standIn, startNoteSuiteDatabase,
 } from '../helpers/note-suite-fixtures/postgres.ts'
@@ -214,7 +214,7 @@ test('public activity uses provable historical room evidence', { timeout: 600_00
       assert.equal(used.status, 200, JSON.stringify(used.json))
       await db.query('UPDATE things SET open_to_reach = false WHERE id = $1', [skipped])
       await clearStamps()
-      await delay(1_200)
+      await waitPastPendingEffects(db, [source])
       const read = await call(app, NEIGHBOUR.secret, 'GET', '/api/me')
       assert.equal(read.status, 200, JSON.stringify(read.json))
       assert.deepEqual((await db.query(`SELECT target_id FROM active_labels WHERE label = 'later-public-label' ORDER BY target_id`)).rows,

@@ -88,7 +88,7 @@ export const LABEL_LIFE_TARGETS = Object.freeze(['actor', 'target'] as const)
 export const MAX_EFFECT_GENERATIONS = 8
 export const MAX_KIND_INGREDIENTS = 64
 export const MAX_CRAFT_INGREDIENTS = 1_024
-/** Each action key and the wake program may weigh at most this many effect applications. */
+/** Each action key, the wake program, and the end program may weigh at most this many effect applications. */
 export const MAX_APPLICATIONS_PER_PROGRAM = 512
 export const CHANCE_PERCENT_MIN = 1
 export const CHANCE_PERCENT_MAX = 99
@@ -245,20 +245,31 @@ export interface WakeProgram {
   readonly then: readonly Effect[]
 }
 
+/**
+ * What a thing runs once when its end comes, with nobody acting: the end key of a kind's
+ * trait. It has no dials; its steps follow the wake program rules plus the end-only rules.
+ */
+export interface EndProgram {
+  readonly then: readonly Effect[]
+}
+
 export type TraitRecipe = Readonly<Partial<Record<BasicAction, readonly Effect[]>> & {
   wake?: WakeProgram
+  end?: EndProgram
 }>
 
 /**
- * Why a new recipe was refused: a grammar fault, or one of the wake key's two
+ * Why a new recipe was refused: a grammar fault, one of the wake key's two
  * coining rules (a wake program never hands a thing over, and it has no target
- * or destination of its own outside a reach).
+ * or destination of its own outside a reach), or the end key breaking the wake
+ * program rules or the end-only rules (it never names actor, never waits, and
+ * never destroys, moves or labels the thing that is ending).
  */
-export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope'
+export type RecipeFault = 'grammar' | 'wake_hand_over' | 'wake_scope' | 'end_key'
 
 /** Where a refused recipe stopped reading: the action key and step path, and the rule it met. */
 export type RecipeGrammarFault = Readonly<
-  | { where: string; code: 'top' | 'list' | 'count' | 'depth' | 'weight' | 'bytes' | 'step' | 'reach_steps' | 'wake' | 'label_life' }
+  | { where: string; code: 'top' | 'list' | 'count' | 'depth' | 'weight' | 'bytes' | 'step' | 'reach_steps' | 'wake' | 'end' | 'label_life' }
   | { where: string; code: 'shape'; brick: EffectBrick; hasThen: boolean; hasElse: boolean }
 >
 
@@ -282,7 +293,7 @@ const TRANSFER_RECIPIENT_SET: ReadonlySet<string> = new Set(TRANSFER_RECIPIENTS)
 const WAKE_EVENT_SET: ReadonlySet<string> = new Set(WAKE_EVENTS)
 const WRITE_OP_SET: ReadonlySet<string> = new Set(WRITE_OPS)
 const WRITE_FROM_SET: ReadonlySet<string> = new Set(WRITE_FROM)
-const RECIPE_KEY_SET: ReadonlySet<string> = new Set([...BASIC_ACTIONS, 'wake'])
+const RECIPE_KEY_SET: ReadonlySet<string> = new Set([...BASIC_ACTIONS, 'wake', 'end'])
 const COPY_DESTINATION_SET: ReadonlySet<string> = new Set(COPY_DESTINATIONS)
 const COPY_INHERITABLE_SET: ReadonlySet<string> = new Set(COPY_INHERITABLE)
 const REACH_OVER_SET: ReadonlySet<string> = new Set(REACH_OVER)
@@ -687,6 +698,36 @@ function wakeFault(effects: readonly Effect[]): RecipeFault | null {
   return wakeReachesOutside(effects, false) ? 'wake_scope' : null
 }
 
+/** Names the resident who acts: actor as a target, or a write of the actor's handle. */
+function namesActor(effect: Effect): boolean {
+  if ('target' in effect && effect.target === 'actor') return true
+  return effect.effect === 'write' && typeof effect.value === 'object' && effect.value.from === 'actor'
+}
+
+/** Destroys, moves or labels source, which in an end program is the thing that is ending. */
+function touchesEndingThing(effect: Effect): boolean {
+  return (effect.effect === 'destroy' || effect.effect === 'move' || effect.effect === 'label')
+    && effect.target === 'source'
+}
+
+/** The three rules an end key keeps on top of the wake program rules, as physics states them. */
+export const END_ONLY_RULES = Object.freeze([
+  "never names actor or writes the actor's handle",
+  'never waits',
+  'never destroys, moves or labels the thing that is ending',
+] as const)
+
+/**
+ * An end program runs once with nobody acting, so on top of the wake program rules it
+ * never names actor, never waits, and never destroys, moves or labels its own thing.
+ */
+function endFault(effects: readonly Effect[]): RecipeFault | null {
+  if (wakeFault(effects) !== null) return 'end_key'
+  return someEffect(effects, effect => (
+    effect.effect === 'wait' || namesActor(effect) || touchesEndingThing(effect)
+  )) ? 'end_key' : null
+}
+
 function parseWakeEvents(value: unknown): readonly WakeEvent[] | null {
   if (!isDenseArray(value) || value.length < 1 || value.length > WAKE_EVENTS.length) return null
   const chosen = value.map(event => canonicalToken(event, WAKE_EVENT_SET))
@@ -705,6 +746,12 @@ function parseWake(value: unknown, state: ParseState): WakeProgram | null {
   if (!on || everySeconds === null) return refuse(state, 'wake', 'wake')
   const then = parseEffectList(value.then, 1, state, 'wake, then')
   return then ? Object.freeze({ on, every_seconds: everySeconds, then }) : null
+}
+
+function parseEnd(value: unknown, state: ParseState): EndProgram | null {
+  if (!isRecord(value) || !hasExactKeys(value, ['then'])) return refuse(state, 'end', 'end')
+  const then = parseEffectList(value.then, 1, state, 'end, then')
+  return then ? Object.freeze({ then }) : null
 }
 
 type RecipeParse = Readonly<{
@@ -759,6 +806,14 @@ function parseRecipe(value: unknown, authoring: boolean): RecipeParse {
       if (fault) return Object.freeze({ recipe: null, fault, grammar: null })
       canonical.wake = wake
     }
+    if (Object.hasOwn(input, 'end')) {
+      const end = parseEnd(input.end, state)
+      if (!end) return grammarFault(state, 'end', 'end')
+      if (programWeight(end.then) > MAX_APPLICATIONS_PER_PROGRAM) return grammarFault(state, 'end', 'weight')
+      const fault = endFault(end.then)
+      if (fault) return Object.freeze({ recipe: null, fault, grammar: null })
+      canonical.end = end
+    }
     const recipe: TraitRecipe = Object.freeze(canonical)
     return isWithinJsonBudget(recipe)
       ? Object.freeze({ recipe, fault: null, grammar: null })
@@ -787,14 +842,15 @@ export function traitRecipeGrammarFault(value: unknown): RecipeGrammarFault | nu
 function recipeHasEffect(recipe: TraitRecipe, matches: (effect: Effect) => boolean): boolean {
   return BASIC_ACTIONS.some(action => someEffect(recipe[action] ?? EMPTY_EFFECTS, matches))
     || someEffect(recipe.wake?.then ?? EMPTY_EFFECTS, matches)
+    || someEffect(recipe.end?.then ?? EMPTY_EFFECTS, matches)
 }
 
 /**
- * Copy, write, the wake key, and a convert without into_kind need a thing of
- * their own, so they work only in a kind's traits.
+ * Copy, write, the wake key, the end key, and a convert without into_kind need a
+ * thing of their own, so they work only in a kind's traits.
  */
 export function recipeUsesKindOnlyAbility(recipe: TraitRecipe): boolean {
-  if (recipe.wake) return true
+  if (recipe.wake || recipe.end) return true
   return recipeHasEffect(recipe, effect => (
     effect.effect === 'write'
     || effect.effect === 'copy'
@@ -823,6 +879,11 @@ export function recipeIntoKinds(recipe: TraitRecipe): readonly string[] {
 /** The stored wake program of a trait, or null when it has none or is malformed. */
 export function wakeProgramOf(value: unknown): WakeProgram | null {
   return loadTraitRecipe(value).wake ?? null
+}
+
+/** The stored end program of a trait, or null when it has none or is malformed. */
+export function endProgramOf(value: unknown): EndProgram | null {
+  return loadTraitRecipe(value).end ?? null
 }
 
 /**

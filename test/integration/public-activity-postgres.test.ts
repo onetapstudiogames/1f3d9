@@ -372,11 +372,19 @@ test('public activity routes and MCP use fresh applied facts with a whole privat
     await t.test('snapshot export records and grants exclude private settings and every derived band', async () => {
       const rooms = await resetCity(RESIDENTS)
       await action(NEIGHBOUR.handle, rooms.eastRoomId, '30 minutes')
+      // Format v4 stamps its own read time on each ending, so that stamp is set aside.
+      const v4Sql = `SELECT class_name, record_id, sort_key,
+          payload - 'ending_checked_at' #- '{ending,checked_at}' AS payload
+        FROM city_snapshot.public_records_v4 ORDER BY class_name, record_id`
       const before = (await db.query('SELECT * FROM city_snapshot.public_records_v3 ORDER BY class_name, record_id')).rows
+      const beforeV4 = (await db.query(v4Sql)).rows
       await toggle(app, NEIGHBOUR.secret, false)
       const after = (await db.query('SELECT * FROM city_snapshot.public_records_v3 ORDER BY class_name, record_id')).rows
+      const afterV4 = (await db.query(v4Sql)).rows
       assert.deepEqual(after, before)
+      assert.deepEqual(afterV4, beforeV4)
       assertNoActivity(after)
+      assertNoActivity(afterV4)
       const grant = await db.query("SELECT has_table_privilege('city_snapshot_export', 'resident_settings', 'SELECT') AS allowed")
       assert.equal(grant.rows[0]!.allowed, false)
     })

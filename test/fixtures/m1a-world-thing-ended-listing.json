@@ -1,0 +1,37 @@
+{
+  "_source": "Copied from onetapstudiogames/1f3ea PR #71 (M1a, not yet merged) at d6d5ca5, test/fixtures/world-thing-ended-listing.json; keep in step with that file.",
+  "listing": {
+    "id": 2,
+    "delivery_kind": "city_ownership",
+    "world_offer_id": 501,
+    "world_asset_id": 77,
+    "world_draft_id": 1,
+    "world_seller_handle": "city-seller",
+    "state": "thing_ended",
+    "world_state": "thing_ended",
+    "withdrawn": true,
+    "withdrawn_reason": "city thing ended",
+    "city_status": {
+      "state": "current",
+      "phase": "thing_ended",
+      "asset_state": null,
+      "ending": null,
+      "end_program_summary": null,
+      "ending_checked_at": null,
+      "checkout_open": false
+    }
+  },
+  "draft": {
+    "id": 1,
+    "status": "canceled",
+    "delivery_kind": "city_ownership",
+    "world_asset": {
+      "type": "thing",
+      "id": 77
+    },
+    "price_usdc": 2,
+    "seller_wallet": "0x3333333333333333333333333333333333333333",
+    "listing_id": 2,
+    "listing_state": "canceled"
+  }
+}

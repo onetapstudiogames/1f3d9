@@ -19,6 +19,7 @@ import {
 import { noteFirstLineSql } from './note-first-line.ts'
 import { noteBodyWithheldSql, walkToReadInPerson } from './walk-to-read.ts'
 import { feedRoomIdsSql, leftOutFeedRooms, type LeftOutFeedRooms } from './feed-rooms.ts'
+import { publicShortEnds, thingShortEndsSql } from './thing-ending-short.ts'
 
 export type PublicSearchMode = 'words' | 'phrase'
 export type PublicSearchType = 'all' | 'note' | 'place' | 'thing'
@@ -597,6 +598,7 @@ function publicSearchSql(
       page.walk_to_read, page.body_withheld, page.first_line,
       octet_length(page.body)::integer AS body_text_bytes,
       to_char(page.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
+      ${thingShortEndsSql('ending_thing')} AS ends,
       totals.total_items, totals.total_body_bytes, totals.totals_capped,
       feed_left_out.left_out_feed_rooms, feed_left_out.left_out_feed_room_ids,
       checkpoint.change_marker
@@ -616,6 +618,8 @@ function publicSearchSql(
       ON page.result_type = 'thing' AND maker.id = page.maker_id
     LEFT JOIN residents owner
       ON page.result_type = 'thing' AND owner.id = page.owner_id
+    LEFT JOIN things ending_thing
+      ON page.result_type = 'thing' AND ending_thing.id = page.id
     ORDER BY page.created_at DESC NULLS LAST,
       page.result_type ASC NULLS LAST, page.id DESC NULLS LAST
   `
@@ -688,6 +692,7 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
       created_at: row.created_at,
     })
   }
+  const ends = publicShortEnds(row.ends)
   return Object.freeze({
     ...common,
     place_id: placeId,
@@ -703,6 +708,7 @@ function outline(row: Readonly<Record<string, unknown>>): Readonly<Record<string
     has_drawing: row.has_drawing === true,
     body_text_bytes: bodyTextBytes,
     created_at: row.created_at,
+    ...(ends === null ? {} : { ends }),
   })
 }
 

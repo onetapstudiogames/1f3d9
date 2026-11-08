@@ -64,7 +64,7 @@ test('place hinges are recorded as not exported in the snapshot registry', () =>
     {
       class_name: 'place_hinges',
       disposition: 'not_exported',
-      reason: 'each place hinge_to is a live public place setting not carried by format v3 yet (decision #132); a hinge step is exported as an ordinary move event',
+      reason: 'each place hinge_to is a live public place setting not carried by format v4 yet (decision #132); a hinge step is exported as an ordinary move event',
       database_sources: ['places.hinge_to'],
     },
   )

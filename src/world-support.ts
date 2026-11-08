@@ -124,6 +124,10 @@ export interface KindRow {
   drawing_variants?: readonly DrawingVariant[] | unknown
   traits: string[]
   recipe: unknown
+  /** The revision's kind_revisions.ending_policy, on reads that select it. */
+  ending_policy?: unknown
+  /** The proven inventor as {id, handle}, or null, on reads that select it. */
+  invented_by?: Readonly<{ id: number; handle: string }> | null
   created_at: string
 }
 

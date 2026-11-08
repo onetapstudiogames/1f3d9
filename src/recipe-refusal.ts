@@ -17,7 +17,7 @@ import {
   type RecipeGrammarFault,
 } from './physics.ts'
 
-const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, and wake'
+const TOP_RULE = 'a recipe is a list of steps, or an object whose only keys are talk, move, use, give, consume, make, go_home, wake, and end'
 
 function grammarRule(fault: RecipeGrammarFault): string {
   if (fault.code === 'shape') {
@@ -50,6 +50,7 @@ function grammarRule(fault: RecipeGrammarFault): string {
   if (fault.code === 'bytes') return `a recipe may be at most ${MAX_RECIPE_BYTES.toLocaleString('en-US')} bytes as JSON`
   if (fault.code === 'step') return 'each step is an object whose effect is destroy, move, transfer, label, block, wait, check_label, chance, write, copy, reach, or convert'
   if (fault.code === 'label_life') return `a label on actor or target must say how long it lasts: add seconds, a whole number from ${MIN_TIMER_SECONDS} to ${MAX_LABEL_LIFE_SECONDS}, or permanent: true`
+  if (fault.code === 'end') return 'end takes only then, a list of steps'
   if (fault.code === 'reach_steps') return 'a reach never holds block, copy, or another reach, and never moves actor; over residents it holds only label, check_label, chance, and write'
   return `wake takes then and optional on (a list of ${WAKE_EVENTS[0]}, ${WAKE_EVENTS[1]}, and ${WAKE_EVENTS[2]}) and every_seconds (${WAKE_MIN_EVERY_SECONDS} to ${WAKE_MAX_EVERY_SECONDS})`
 }

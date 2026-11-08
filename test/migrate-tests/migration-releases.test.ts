@@ -896,6 +896,130 @@ export function registerMigrationReleaseTests(): void {
     assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the label endings statements')
   })
 
+  test('the thing endings migration is one guarded, additive, transactional preview or production migration', () => {
+    const migrationFile = 'db/migrations/20261106_thing_endings.sql' as const
+    assert.ok(existsSync(new URL(`../../${migrationFile}`, import.meta.url)), 'the thing endings migration exists')
+    const migration = migrationDdl(migrationFile)
+    assert.match(migration, /^BEGIN;\s+SET LOCAL lock_timeout = '5s';\s+SET LOCAL statement_timeout = '120s';/u)
+    assert.match(migration, /COMMIT;\s*$/u)
+    assert.equal(prepareMigrationExecution(migrationFile, migration).mode, 'transactional')
+    assert.match(migration, /thing endings migration needs the things, kinds, kind_revisions/u)
+    for (const column of [
+      'ending_rule JSONB', 'ending_grant JSONB', 'ending_set_by INTEGER', 'ending_set_at TIMESTAMPTZ',
+      'ending_deadline TIMESTAMPTZ', 'ending_idle_seconds INTEGER', 'ending_idle_anchor TIMESTAMPTZ',
+      'ending_uses_left INTEGER', 'ending_uses_spent_at TIMESTAMPTZ', 'ending_label TEXT',
+      'ending_copied_from INTEGER', 'ending_copied_at TIMESTAMPTZ', 'ended_at TIMESTAMPTZ',
+      'ended_cause TEXT', 'ended_owner_id INTEGER', "end_program_state TEXT NOT NULL DEFAULT 'none'",
+      'end_program_result JSONB',
+    ]) assert.ok(migration.includes(`ADD COLUMN IF NOT EXISTS ${column}`), `things gains ${column}`)
+    assert.match(migration, /ALTER TABLE kinds ADD COLUMN IF NOT EXISTS invented_by INTEGER;/u)
+    assert.match(migration, /ALTER TABLE kind_revisions ADD COLUMN IF NOT EXISTS ending_policy JSONB NOT NULL\s+DEFAULT '\{"allowed": \[\]\}'::jsonb;/u)
+    // Every new check on a busy table is added NOT VALID, then validated on its own.
+    for (const name of [
+      'kind_revisions_ending_policy_valid', 'kinds_invented_by_fkey', 'things_ending_set_by_fkey',
+      'things_ended_owner_id_fkey', 'things_ending_copied_from_fkey', 'things_ending_rule_shape',
+      'things_ending_uses_range', 'things_ending_idle_range', 'things_ended_consistent',
+      'things_end_program_state_known', 'wake_tries_reason_known', 'thing_state_changes_trigger_known',
+    ]) {
+      assert.match(migration, new RegExp(String.raw`ADD CONSTRAINT ${name}\b[\s\S]*?NOT VALID;`, 'u'), `${name} is added NOT VALID`)
+      assert.match(migration, new RegExp(String.raw`VALIDATE CONSTRAINT ${name};`, 'u'), `${name} is validated`)
+    }
+    assert.match(migration, /'wake_arrive', 'wake_talk', 'wake_clock', 'wake_end', 'copy', 'owner'/u)
+    assert.match(migration, /CHECK \(reason IN \('arrive', 'talk', 'clock', 'end'\)\)/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS thing_ending_changes \(/u)
+    assert.match(migration, /CREATE TABLE IF NOT EXISTS agreement_thing_links \(/u)
+    assert.match(migration, /CREATE TRIGGER thing_ending_changes_append_only BEFORE UPDATE OR DELETE ON thing_ending_changes/u)
+    assert.match(migration, /CREATE TRIGGER agreement_thing_links_append_only BEFORE UPDATE OR DELETE ON agreement_thing_links/u)
+    assert.match(migration, /CREATE TRIGGER kinds_invented_by_fixed BEFORE UPDATE OF invented_by ON kinds/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION valid_ending_policy\(policy jsonb\) RETURNS boolean\s+LANGUAGE sql IMMUTABLE/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due_at\(thing_id integer\) RETURNS timestamptz\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due\(thing_id integer, at timestamptz\) RETURNS boolean\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /CREATE INDEX IF NOT EXISTS things_ending_open ON things \(place_id, id\)\s+WHERE ending_rule IS NOT NULL AND ended_at IS NULL AND withdrawn_at IS NULL;/u)
+    assert.match(migration, /CREATE INDEX IF NOT EXISTS things_end_try_pending ON things \(place_id, id\)\s+WHERE end_program_state = 'pending';/u)
+    assert.match(migration, /CREATE INDEX IF NOT EXISTS things_remnant ON things \(place_id\)\s+WHERE ended_at IS NOT NULL AND withdrawn_at IS NULL;/u)
+    assert.match(migration, /inventor\.handle = invention\.actor\s+AND inventor\.joined_at <= invention\.at/u)
+    assert.match(migration, /thing endings columns differ from the reviewed shape/u)
+    // Additive: no table or column is dropped, no row deleted; the only drops are the
+    // narrower wake vocabulary checks being widened.
+    assert.doesNotMatch(migration, /DROP\s+(?:TABLE|COLUMN|INDEX|FUNCTION)|DELETE\s+FROM|TRUNCATE/iu)
+    assert.equal([...migration.matchAll(/DROP CONSTRAINT/gu)].length, 2)
+    assert.equal([...migration.matchAll(/^UPDATE /gmu)].length, 1, 'the only row write is the inventor backfill')
+    assert.match(migration, /^UPDATE kinds AS kind SET invented_by = proof\.inventor_id/mu)
+    // The guards: the owner-change guard, the freeze, and the four insert guards, all
+    // reading the transaction-local writer setting and refusing as thing_ending_guard.
+    for (const trigger of [
+      'things_aa_ending_owner_change BEFORE UPDATE OF owner_id ON things',
+      'things_zz_ending_freeze BEFORE UPDATE ON things',
+      'things_ending_parent_guard BEFORE INSERT ON things',
+      'active_labels_ending_guard BEFORE INSERT ON active_labels',
+      'thing_later_holder_marks_ending_guard BEFORE INSERT ON thing_later_holder_marks',
+      'transfer_offers_ending_guard BEFORE INSERT ON transfer_offers',
+    ]) assert.ok(migration.includes(`CREATE TRIGGER ${trigger}`), trigger)
+    assert.match(migration, /current_setting\('city\.ending_writer', true\)/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due_at_row\(thing things\) RETURNS timestamptz\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /SELECT thing_end_due_at_row\(thing\)\s+FROM things AS thing\s+WHERE thing\.id = \$1/u)
+    assert.match(migration, /thing endings guards are out of order among the things triggers/u)
+    assert.doesNotMatch(migration, /clock_timestamp\(\)/u, 'every guard judges at the transaction time')
+    // Snapshot format 4: a new security-barrier view on v3 for the export role only, the
+    // due rule over values it may call, and the end-try gates; v1 to v3 are not replaced.
+    assert.match(migration, /thing endings migration needs the city_snapshot\.public_records_v3 view and the city_snapshot_export role/u)
+    assert.match(migration, /CREATE OR REPLACE VIEW city_snapshot\.public_records_v4\s+WITH \(security_barrier = true\)/u)
+    assert.match(migration, /FROM city_snapshot\.public_records_v3 v3/u)
+    assert.match(migration, /^REVOKE ALL ON city_snapshot\.public_records_v4 FROM PUBLIC;$/mu)
+    assert.match(migration, /^GRANT SELECT ON city_snapshot\.public_records_v4 TO city_snapshot_export;$/mu)
+    assert.equal([...migration.matchAll(/CREATE OR REPLACE VIEW/gu)].length, 1, 'only v4 is created')
+    assert.doesNotMatch(migration, /(?:REVOKE|GRANT)[^;]*public_records(?:_v2|_v3)?\b(?!_v4)/u,
+      'the earlier grants stay as they are')
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_due_from\([\s\S]*?\) RETURNS timestamptz\s+LANGUAGE sql STABLE/u)
+    assert.match(migration, /CREATE OR REPLACE FUNCTION thing_end_try_blocked_by\([\s\S]*?\) RETURNS text\[\]\s+LANGUAGE sql IMMUTABLE/u)
+    assert.match(migration, /thing endings snapshot format 4 view is missing, or readable by more than the export role/u)
+    assert.match(migration, /WHERE event\.kind IN \('thing_ended'\)/u)
+
+    const environments = {
+      preview: {
+        CONFIRM_PREVIEW_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_ISOLATED_PREVIEW',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PREVIEW_BRANCH_ID: 'branch-preview',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PREVIEW_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+      },
+      production: {
+        CONFIRM_PRODUCTION_MIGRATION: 'APPLY_ADDITIVE_SCHEMA_TO_PRODUCTION',
+        NEON_API_KEY: 'secret-neon-key',
+        NEON_PROJECT_ID: 'project-one',
+        NEON_PRODUCTION_BRANCH_ID: 'branch-production',
+        PRODUCTION_DATABASE_URL_UNPOOLED: 'postgres://role@example.neon.tech/db',
+        PRODUCTION_SNAPSHOT_NAME: 'pre-thing-endings-20261106',
+      },
+    } as const
+    for (const target of ['preview', 'production'] as const) {
+      const run = resolveMigrationRun(['--target', target, '--migration', 'thing-endings'], environments[target])
+      assert.equal(run.migrationFile, migrationFile)
+      assert.equal(run.executionMode, 'transactional')
+    }
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+    assert.equal(packageJson.scripts?.['migrate:preview:thing-endings'],
+      'node --experimental-strip-types scripts/migrate.ts --target preview --migration thing-endings')
+    assert.equal(packageJson.scripts?.['migrate:production:thing-endings'],
+      'node --experimental-strip-types scripts/migrate.ts --target production --migration thing-endings')
+
+    // db/schema.sql carries the same statements, byte for byte, once.
+    const body = migration.slice(
+      migration.indexOf('DO $thing_endings_guard$'),
+      migration.lastIndexOf('COMMIT;'),
+    ).trimEnd()
+    assert.ok(body.length > 10_000)
+    assert.ok(schemaDdl.includes(body), 'db/schema.sql mirrors the thing endings statements')
+    assert.equal(schemaDdl.indexOf(body), schemaDdl.lastIndexOf(body))
+    assert.ok(
+      schemaDdl.includes(`${body}\n\n-- Stored public activity summaries, decision #166.\n`),
+      'the thing endings section sits directly before the stored public activity section in db/schema.sql',
+    )
+  })
+
   test('prepaid city credit is an explicitly selected transactional payment migration', () => {
     const migrationFile = 'db/migrations/20260826_prepaid_city_credit.sql' as const
     const migration = readFileSync(new URL(`../../${migrationFile}`, import.meta.url), 'utf8')

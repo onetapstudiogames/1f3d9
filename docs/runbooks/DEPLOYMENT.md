@@ -1462,6 +1462,101 @@ before the deploy. An older build reads any trait coined with `seconds` or `perm
 actor, target or source as doing nothing, so once residents coin such traits, roll forward
 with a fix rather than reverting this change.
 
+### Thing endings prerequisite
+
+Thing endings need `db/migrations/20261106_thing_endings.sql`
+before the change merges. It adds seventeen empty ending columns to `things` (the owner's
+`ending_rule` and `ending_grant`, who set it and when, the deadline, the unused length and
+anchor, uses left and when they ran out, the watched label, the copy origin, `ended_at`,
+`ended_cause`, `ended_owner_id`, and `end_program_state`, default `none`, with its result),
+`kinds.invented_by`, and `kind_revisions.ending_policy` with the default
+`{"allowed": []}` and the check `kind_revisions_ending_policy_valid`, which calls the
+IMMUTABLE function `valid_ending_policy(jsonb)`. It creates the append-only tables
+`thing_ending_changes` and `agreement_thing_links`, the STABLE functions
+`thing_end_due_at(integer)` and `thing_end_due(integer, timestamptz)` (both over the one
+rule `thing_end_due_at_row(things)`), the partial indexes
+`things_ending_open`, `things_end_try_pending` and `things_remnant`, and the named checks
+`things_ending_rule_shape`, `things_ending_uses_range`, `things_ending_idle_range`,
+`things_ended_consistent` and `things_end_program_state_known`. It replaces the unnamed
+`wake_tries.reason` check with `wake_tries_reason_known` (adding `end`) and widens
+`thing_state_changes_trigger_known` with `wake_end`. Every new check and key is added
+`NOT VALID` and then validated, but the whole migration holds the `things` lock until it
+commits, so that does not shorten the lock in one transaction; the constant defaults rewrite
+no table, and no thing, revision, event or label row changes.
+The one row write is the inventor backfill: a kind gets `invented_by` only from exactly one
+`kind_invented` event naming it whose actor handle belonged to a resident who had joined
+by then (`kind_provable_inventor(integer)`); zero or several events leave it empty. The
+trigger `kinds_invented_by_fixed` refuses any later change and lets an empty inventor be
+filled only with that one provable actor.
+It also installs the guards that keep a thing whose end has come (due, or recorded as
+ended) as it was. `things_aa_ending_owner_change` lets a thing with an end set and not yet
+recorded change hands only by closing a sale already open. `things_zz_ending_freeze`,
+which sorts after every other `BEFORE UPDATE` trigger on `things`, refuses any change to a
+due or ended thing except carrying, setting down, giving, and clearing an open sale, and
+lets only the recorder write an end. `things_ending_parent_guard`,
+`active_labels_ending_guard`, `thing_later_holder_marks_ending_guard` and
+`transfer_offers_ending_guard` refuse a new thing born ended, a copy, a label, a mark or a
+new offer on such a thing. Three writers pass more, each for one thing and only inside its
+own transaction, through the transaction-local setting `city.ending_writer`:
+`record:<id>`, `end_try:<id>` and `withdraw:<id>`. Every guard judges at the transaction
+time, except that a spent last use counts as reached whatever the clock, and refuses with
+the constraint name `thing_ending_guard`; no existing row is changed by them. On a first
+run every lock the migration takes is held until it commits:
+ACCESS EXCLUSIVE on `things`, `kinds`, `kind_revisions`, `wake_tries` and
+`thing_state_changes`, and SHARE ROW EXCLUSIVE on `residents` and `agreements` (from the
+new foreign keys) and on `active_labels`, `thing_later_holder_marks` and `transfer_offers`
+(from the guards' triggers). So every resident write that touches one of them waits for
+the run, registration and the daily quota updates on `residents` included, bounded by the
+5s lock timeout and the path in "When a migration times out". Deadlocks can follow, and
+these are examples, not the whole list: an open payment transaction waiting on `things`,
+and a request that has written `things` and then updates `residents`, because the run
+locks `residents` before `things`. The run also locks `kinds` and `kind_revisions`
+before `things`, so any transaction that touched `things` and then reads `kinds` or
+`kind_revisions` can deadlock the same way. In every case PostgreSQL aborts one side or
+the 5s lock timeout fires; the other side rolls back whole (a payment's recovery replays
+it), and the migration takes the path in "When a migration times out".
+It adds public snapshot format 4, the security-barrier view
+`city_snapshot.public_records_v4` built on `city_snapshot.public_records_v3`, granted
+`SELECT` to `city_snapshot_export` only, with the two functions it calls, which read no
+table: `thing_end_due_from(...)`, the due rule over values (`thing_end_due_at_row` now calls
+it), and `thing_end_try_blocked_by(...)`, the end-try gates. No earlier `city_snapshot`
+view is replaced and the v2 and v3 grants stay, so the exporter of the deployed commit keeps
+publishing v3 until the merge; the first v4 bundle is the daily run after the deploy.
+A guard block comes first and also needs the v3 view and the export role; a closing shape
+block raises if a column, check, key, index, function or trigger is missing or not validated,
+if a guard is disabled or out of order, or if v4 is missing, not a security barrier, has
+other columns, or is readable by anyone but its owner and the export role.
+A rerun keeps an existing check or index as it is, so if a fix changes one after a Preview
+run, reset that Preview branch before applying the fixed migration.
+
+Apply `npm run migrate:preview:thing-endings` to the PR's Preview database branch and to
+the shared Preview branch the Vercel preview reads, then apply it a second time to each to
+prove it is safe to repeat. After each pass verify zero things with any ending column set,
+every revision at `{"allowed": []}`, both new tables empty, each named check present and
+validated with `end` and `wake_end` in the widened ones, the three indexes, the functions'
+volatility, each guard present, enabled and in order (`things_aa_ending_owner_change`
+before the two owner-change triggers, `things_zz_ending_freeze` last among the
+`BEFORE UPDATE` triggers on `things`), the kinds with and without an inventor (list the
+empty ones for the owner), `city_snapshot.public_records_v4` present and granted only to
+`city_snapshot_export`, every other `city_snapshot` view's `pg_get_viewdef` hash unchanged
+against the hashes taken before the first run (the shared base views included), and
+unchanged row counts and newest ids of `things`, `kinds`, `kind_revisions`, `events`,
+`active_labels`, `wake_tries` and `thing_state_changes`. Take the required Production
+snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-20261106`, apply
+`npm run migrate:production:thing-endings` from a fresh clone of the reviewed head, and
+record the same checks before merging. Expect these locks to need the path in
+"When a migration times out" on a busy table. Never chain the migration with the merge.
+Kinds invented between the Production run and the deploy are written by older code with no
+inventor, so once `/api/official` reports the merged commit, run the backfill statement once
+more, on its own in its own transaction rather than a rerun of the migration, and record how
+many kinds it filled and which stay empty. A rerun would hold until it commits an ACCESS
+EXCLUSIVE lock on `things`, `kinds` and `kind_revisions` (their `ADD COLUMN IF NOT EXISTS`
+takes it even when the column exists) and on every table whose triggers it drops and
+recreates: `things`, `kinds`, `active_labels`, `thing_later_holder_marks`,
+`transfer_offers`, `thing_ending_changes` and `agreement_thing_links`. On `wake_tries` and
+`thing_state_changes` it would only take SHARE UPDATE EXCLUSIVE, from revalidating their
+checks, because their changes sit behind `IF NOT EXISTS` tests that a rerun skips.
+
 ### When a migration times out
 
 Normal migrations run inside one transaction that the runner starts with
