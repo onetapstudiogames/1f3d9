@@ -13092,11 +13092,14 @@ LANGUAGE sql STABLE AS $thing_ending_writer$
   END
 $thing_ending_writer$;
 
--- Whether a thing's end has come: recorded, or due now. False for no such thing.
+-- Whether a thing's end has come: recorded, due now, or its last use spent, whatever this
+-- transaction's clock says (a use stamped later than this transaction began may have spent
+-- it). False for no such thing.
 CREATE OR REPLACE FUNCTION thing_end_reached(target_thing_id integer) RETURNS boolean
 LANGUAGE sql STABLE AS $thing_end_reached$
   SELECT coalesce(bool_or(
     thing.ended_at IS NOT NULL
+    OR coalesce(thing.ending_rule IS NOT NULL AND thing.ending_uses_left = 0, false)
     OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)
   ), false)
   FROM things AS thing
@@ -13155,7 +13158,9 @@ BEGIN
     END IF;
   END IF;
 
-  IF OLD.ended_at IS NULL AND (due_at IS NULL OR due_at > transaction_timestamp()) THEN
+  -- A spent last use is an end that has come, even to a transaction that began before it.
+  IF OLD.ended_at IS NULL AND NOT coalesce(OLD.ending_rule IS NOT NULL AND OLD.ending_uses_left = 0, false)
+    AND (due_at IS NULL OR due_at > transaction_timestamp()) THEN
     RETURN NEW;
   END IF;
 

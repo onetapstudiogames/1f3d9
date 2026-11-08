@@ -5,11 +5,11 @@
 // falls due during its own use never fails that use; and a guard refusal answers 409.
 // T8: owners set, renew and clear ends through make, thing_edit and thing_upgrade.
 import assert from 'node:assert/strict'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import type { PoolClient } from 'pg'
 import { completeDirectSalePayment } from '../../src/payment-sale-operations.ts'
 import { saleDatabase, seedRecoverableSale } from '../helpers/payment-postgres-fixtures/sales.ts'
+import { waitPastDatabaseTime } from '../helpers/database-clock.ts'
 import {
   bearer,
   connectedDatabase,
@@ -255,7 +255,7 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       await setEnd(thingId, { at: '1 day' })
       await db.query(`UPDATE things SET ending_deadline = clock_timestamp() + interval '1500 milliseconds' WHERE id = $1`, [thingId])
       await db.query('UPDATE things SET withdrawn_at = clock_timestamp() WHERE id = $1', [thingId])
-      await delay(2_000)
+      await waitPastDatabaseTime(db, (await one<{ d: Date }>('SELECT ending_deadline AS d FROM things WHERE id = $1', [thingId])).d)
       assert.equal((await one<Json>('SELECT thing_end_due(id, now()) AS due FROM things WHERE id = $1', [thingId])).due, true)
       const logged = sub.mock.method(console, 'error', () => undefined)
       assert.deepEqual(await recordDueEnd([thingId]), [])
@@ -482,6 +482,7 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       const thingId = await seedThing(room)
       await setEnd(thingId, { uses: 5, at: '1 day' })
       await db.query(`UPDATE things SET ending_deadline = clock_timestamp() + interval '1500 milliseconds' WHERE id = $1`, [thingId])
+      const deadline = (await one<{ d: Date }>('SELECT ending_deadline AS d FROM things WHERE id = $1', [thingId])).d
       let delayed = false
       setEngineTransactionRunnerForTests(async (_ignored, work) => {
         const client: PoolClient = await db.connect()
@@ -490,7 +491,7 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
           await client.query('SELECT transaction_timestamp()')
           if (!delayed) {
             delayed = true
-            await delay(2_000)
+            await waitPastDatabaseTime(db, deadline)
           }
           const tagged = Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
             const text = strings.reduce((sql, part, index) => sql + part + (index < values.length ? `$${index + 1}` : ''), '')
@@ -521,6 +522,130 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       const row = await ending(thingId)
       assert.equal(row.ending_uses_left, 4, 'counted at the transaction time, before the end')
       assert.equal(row.ended_cause, 'at', 'recorded after the use committed')
+    })
+
+    // T20: a request whose transaction began before another one spent the last use.
+    const taggedClient = (client: PoolClient) => Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const text = strings.reduce((sql, part, index) => sql + part + (index < values.length ? `$${index + 1}` : ''), '')
+      return (await client.query(text, values)).rows
+    }, { query: async (text: string, values: readonly unknown[] = []) => (await client.query(text, [...values])).rows })
+    /**
+     * The next engine transaction begins, fixes its transaction time, and waits until it is
+     * released; later ones run at once. No host clock is involved.
+     */
+    const holdNextTransaction = () => {
+      let release = () => undefined as void
+      let begun = () => undefined as void
+      const released = new Promise<void>(resolve => { release = resolve })
+      const started = new Promise<void>(resolve => { begun = resolve })
+      let held = false
+      setEngineTransactionRunnerForTests(async (_ignored, work) => {
+        const client: PoolClient = await db.connect()
+        try {
+          await client.query('BEGIN')
+          await client.query('SELECT transaction_timestamp()')
+          if (!held) {
+            held = true
+            begun()
+            await released
+          }
+          const result = await work(taggedClient(client), true)
+          await client.query('COMMIT')
+          return result
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined)
+          throw error
+        } finally {
+          client.release()
+        }
+      })
+      return Object.freeze({ started, release })
+    }
+    /** Another use spends the last use and commits, stamped later than the held transaction. */
+    const spendLastUse = async (thingId: number) => {
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        const spent = await client.query(`
+          UPDATE things SET
+            ending_uses_left = ending_uses_left - 1,
+            ending_uses_spent_at = CASE WHEN ending_uses_left = 1 THEN transaction_timestamp() ELSE ending_uses_spent_at END
+          WHERE id = $1 AND ending_uses_left = 1 AND NOT thing_end_due(id, transaction_timestamp())
+          RETURNING id
+        `, [thingId])
+        assert.equal(spent.rowCount, 1)
+        await client.query('COMMIT')
+      } finally {
+        client.release()
+      }
+    }
+
+    await t.test('two uses racing for the last use: the later one answers E7, never an internal failure', async sub => {
+      await reset()
+      const thingId = await seedThing(room, { openToUse: true })
+      await setEnd(thingId, { uses: 1, at: '5 days' })
+      const logged = sub.mock.method(console, 'error', () => undefined)
+      const held = holdNextTransaction()
+      const loser = runAction({
+        actorId: VISITOR.id, actorHandle: VISITOR.handle, action: 'use', placeId: room, sourceThingId: thingId, payload: {},
+      })
+      await held.started
+      await spendLastUse(thingId)
+      held.release()
+      const result = await loser
+      assert.equal(result.httpStatus, 409, JSON.stringify(result))
+      assert.equal(result.error, THING_REMNANT_REFUSAL)
+      const unrecognized = logged.mock.calls.filter(entry => /unrecognized/u.test(String(entry.arguments[0])))
+      assert.equal(unrecognized.length, 0, 'no unrecognized failure was logged')
+      const row = await ending(thingId)
+      assert.equal(row.ending_uses_left, 0, 'never below zero')
+      assert.deepEqual(await recordDueEnd([thingId]), [thingId])
+      assert.equal((await ending(thingId)).ended_cause, 'uses')
+      assert.equal(await count(`SELECT count(*) AS n FROM thing_ending_changes WHERE thing_id = $1 AND change = 'end'`, [thingId]), 1)
+    })
+
+    await t.test('an owner renewing while another use spends the last use is refused, and the spent end stays', async () => {
+      await reset()
+      const { ENDING_REMNANT_CHANGE_REFUSAL: remnantChange } = await import('../../src/thing-ending-refusals.ts')
+      const thingId = await seedThing(room, { openToUse: true })
+      await setEnd(thingId, { uses: 3, usesLeft: 1, at: '5 days' })
+      const held = holdNextTransaction()
+      const renew = call(app, OWNER.secret, 'PATCH', `/api/thing/${thingId}`, { ending: { any: [{ uses: 5 }] } })
+      await held.started
+      await spendLastUse(thingId)
+      held.release()
+      const renewed = await renew
+      assert.equal(renewed.status, 409, JSON.stringify(renewed.json))
+      assert.equal(renewed.json.error, remnantChange)
+      const row = await ending(thingId)
+      assert.equal(row.ending_uses_left, 0, 'the spent end is not erased')
+      assert.notEqual(row.ending_uses_spent_at, null)
+      assert.equal(await count(`SELECT count(*) AS n FROM thing_ending_changes WHERE thing_id = $1 AND change = 'renew'`, [thingId]), 0)
+      if (row.ended_at === null) assert.deepEqual(await recordDueEnd([thingId]), [thingId])
+      assert.equal((await ending(thingId)).ended_cause, 'uses')
+    })
+
+    await t.test('a consume whose own step labels its thing with its end label keeps the step and leaves a remnant', async () => {
+      await reset()
+      await coin('self-consumer', { consume: [{ effect: 'label', target: 'source', label: 'spent' }] })
+      const thingId = await seedThing(room, { kindId: await seedKind('consumed-lamps', ['self-consumer']) })
+      await setEnd(thingId, { label: 'spent' })
+      const consumed = await act(OWNER.secret, { action: 'consume', thing_id: thingId })
+      assert.equal(consumed.status, 200, JSON.stringify(consumed.json))
+      const action = consumed.json.action as Json
+      assert.equal(action.status, 'applied')
+      assert.equal(action.effects_applied, 1, 'the label step applied')
+      assert.deepEqual((action.skipped_effects as Json[]).map(skip => [skip.effect, skip.target, skip.reason]), [
+        ['consume', 'source', THING_ENDED_SKIP_REASON],
+      ])
+      const row = await one<Json>('SELECT withdrawn_at, ended_cause FROM things WHERE id = $1', [thingId])
+      assert.equal(row.withdrawn_at, null, 'a remnant is never used up')
+      assert.equal(row.ended_cause, 'label_added', 'recorded right after the consume')
+      assert.equal(await count(`SELECT count(*) AS n FROM events WHERE kind = 'thing_withdrawn' AND detail->>'thing_id' = $1::text`, [thingId]), 0)
+      assert.equal(await count(`SELECT count(*) AS n FROM active_labels WHERE target_type = 'thing' AND target_id = $1 AND label = 'spent'`, [thingId]), 1)
+      const again = await act(OWNER.secret, { action: 'consume', thing_id: thingId })
+      assert.equal(again.status, 409)
+      assert.equal(again.json.error, THING_REMNANT_REFUSAL)
     })
 
     await t.test('the change feed carries thing_ended with its details, and leaves out feed rooms', async () => {

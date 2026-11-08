@@ -44,7 +44,7 @@ test('the mute refusals are stated in caller words', () => {
     'mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}}',
   )
   assert.equal(muteTargetNotFound('thing', 12), 'thing 12 was not found; read it again and send a current id')
-  assert.equal(HIDDEN_REFUSAL, 'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)')
+  assert.equal(HIDDEN_REFUSAL, 'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing)')
   assert.equal(
     settingsChangeRefusal({ focus: true }),
     'settings changes must be an object with one of focus_mode (true or false), show_activity (true or false), mute, unmute, allow, unallow, filters or muted_words, like {"focus_mode": true}, {"show_activity": false}, {"mute": {"type": "resident", "id": 12}} or {"filters": {"links": "describe"}}; send settings "show" to read your settings',

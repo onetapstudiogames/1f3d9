@@ -173,8 +173,9 @@ export const SKIP_REASONS = Object.freeze([
 export type SkipReason = typeof SKIP_REASONS[number]
 /** Which limit stopped a copy: the family's depth or count, no open destination, or a place cap. */
 export type GrowthCap = 'generations' | 'copies' | 'no_arrivals' | 'place_daily' | 'family_share'
+/** A skipped brick, or a consume's own using-up skipped because the thing's end came. */
 export interface SkippedEffect {
-  readonly effect: Effect['effect']
+  readonly effect: Effect['effect'] | 'consume'
   readonly target: SymbolicTarget
   readonly sourceTrait: string | null
   readonly sourceTraitId: number | null
@@ -514,6 +515,7 @@ export async function thingState(
         thing.ending_rule IS NOT NULL AS ending_set, thing.ended_at,
         thing_end_due_at_row(thing) AS end_due_at,
         (thing.ended_at IS NOT NULL
+          OR coalesce(thing.ending_rule IS NOT NULL AND thing.ending_uses_left = 0, false)
           OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers offer
@@ -531,6 +533,7 @@ export async function thingState(
         thing.ending_rule IS NOT NULL AS ending_set, thing.ended_at,
         thing_end_due_at_row(thing) AS end_due_at,
         (thing.ended_at IS NOT NULL
+          OR coalesce(thing.ending_rule IS NOT NULL AND thing.ending_uses_left = 0, false)
           OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers offer

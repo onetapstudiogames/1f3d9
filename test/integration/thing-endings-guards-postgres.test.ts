@@ -5,7 +5,6 @@
 // statements run through the guards unchanged.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import type { Pool, PoolClient } from 'pg'
 import {
@@ -15,6 +14,7 @@ import {
   invalidateSalePaymentTarget,
 } from '../../src/payment-sale-operations.ts'
 import { saleDatabase, seedRecoverableSale } from '../helpers/payment-postgres-fixtures/sales.ts'
+import { waitPastDatabaseTime } from '../helpers/database-clock.ts'
 import {
   connectedDatabase,
   startNoteSuiteDatabase,
@@ -449,9 +449,10 @@ test('thing endings guards against real PostgreSQL 17', { timeout: 900_000 }, as
           ending_set_by = 1, ending_set_at = now(), ending_deadline = clock_timestamp() + interval '1500 milliseconds'
         WHERE id = $1
       `, [thingId])
+      const deadline = (await db.query<{ d: Date }>('SELECT ending_deadline AS d FROM things WHERE id = $1', [thingId])).rows[0]!.d
       await inTransaction(db, async client => {
         await client.query('SELECT transaction_timestamp()')
-        await delay(2_000)
+        await waitPastDatabaseTime(db, deadline)
         assert.deepEqual((await client.query('SELECT clock_timestamp() > ending_deadline AS passed FROM things WHERE id = $1', [thingId])).rows,
           [{ passed: true }])
         await client.query(`UPDATE things SET name = 'begun before the end' WHERE id = $1`, [thingId])

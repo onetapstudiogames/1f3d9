@@ -1145,8 +1145,8 @@ function skippedEffectsFromDetail(detail: Readonly<Record<string, unknown>>): re
     const row = objectRecord(value)
     if (!row) return []
     const effect = typeof row.effect === 'string'
-      && EFFECT_BRICKS.includes(row.effect as Effect['effect'])
-      ? row.effect as Effect['effect'] : null
+      && (EFFECT_BRICKS.includes(row.effect as Effect['effect']) || row.effect === 'consume')
+      ? row.effect as SkippedEffect['effect'] : null
     const target = typeof row.target === 'string'
       && SYMBOLIC_TARGETS.includes(row.target as SymbolicTarget)
       ? row.target as SymbolicTarget : null
@@ -1810,10 +1810,31 @@ function remnantProgramSkips(programs: readonly StoredProgram[]): readonly Skipp
   })))
 }
 
+/** Whether the thing's end has come by now in this transaction, read in a fresh statement. */
+async function endReachedNow(thingId: number, db: TaggedSql): Promise<boolean> {
+  const rows = await queryRows<Record<string, unknown>>(db`
+    SELECT thing_end_reached(${thingId}::integer) AS reached
+  `)
+  return rows[0]?.reached === true
+}
+
+/** The consume's own using-up, skipped because its steps brought the thing's end. */
+function consumeEndedSkip(): SkippedEffect {
+  return {
+    effect: 'consume',
+    target: 'source',
+    sourceTrait: null,
+    sourceTraitId: null,
+    sourcePlaceId: null,
+    reason: THING_ENDED_SKIP_REASON,
+  }
+}
+
 /**
  * A successful use lowers the uses left (stamping the moment they run out with this
  * transaction's time) and moves the unused clock. It writes nothing on a thing that fell
- * due during the use, so it never meets the guard.
+ * due during the use, or whose last use another use already spent, so it never meets the
+ * guard and never counts below zero.
  */
 async function countEndingUse(thingId: number, db: TaggedSql): Promise<void> {
   await queryRows(db`
@@ -1824,6 +1845,7 @@ async function countEndingUse(thingId: number, db: TaggedSql): Promise<void> {
       ending_idle_anchor = CASE WHEN ending_idle_seconds IS NULL THEN ending_idle_anchor ELSE transaction_timestamp() END
     WHERE id = ${thingId} AND withdrawn_at IS NULL AND ending_rule IS NOT NULL AND ended_at IS NULL
       AND (ending_uses_left IS NOT NULL OR ending_idle_seconds IS NOT NULL)
+      AND coalesce(ending_uses_left, 1) > 0
       AND NOT thing_end_due(id, transaction_timestamp())
     RETURNING id
   `)
@@ -2026,13 +2048,20 @@ export async function runAction(
             if (input.sourceThingId === null) {
               throw new EngineError(400, 'consume needs a source thing; send thing_id for one active thing')
             }
-            await withdrawOwnedThing(
-              input.sourceThingId,
-              input.actorId,
-              input.actorHandle,
-              transaction,
-            )
-            emittedTypedPublicEvent = true
+            // A consume whose own steps brought the thing's end keeps those steps; the
+            // thing stays as a remnant, which is never used up, and the recorder after the
+            // commit writes its end down.
+            if (endingSource && await endReachedNow(input.sourceThingId, transaction)) {
+              skippedEffects = [...skippedEffects, consumeEndedSkip()]
+            } else {
+              await withdrawOwnedThing(
+                input.sourceThingId,
+                input.actorId,
+                input.actorHandle,
+                transaction,
+              )
+              emittedTypedPublicEvent = true
+            }
           }
           return {
             effectsApplied,

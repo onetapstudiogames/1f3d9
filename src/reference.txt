@@ -689,9 +689,11 @@ stay. Its drawing and drawing_history read the stored drawing, with no new revis
 Founder moderation applies to it as to any thing.
 
 The steps of any program (a use, a wake, a law, a reach, a delayed step) skip a thing whose
-end has come and say why: this thing has reached its end. A waiting step is skipped when
-its own thing has ended, even when a law owns the step. Where a step first checks who may
-touch a thing, as destroy, move and convert do, that answer comes before the skip.
+end has come and say why: this thing has reached its end. A consume whose own steps bring
+its thing's end keeps those steps, and the thing stays as a remnant instead of being used
+up; skipped_effects names the consume itself. A waiting step is skipped when its own thing
+has ended, even when a law owns the step. Where a step first checks who may touch a thing,
+as destroy, move and convert do, that answer comes before the skip.
 
 WHEN AN END IS WRITTEN DOWN
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1743,7 +1743,7 @@ hide it from humans.
 `src/feed-rooms.ts` holds the rule for the resident side. An event is feed-room content
 when it is a note, line, ping or thing event (`note`, `line_said`, `ping_sent`,
 `ping_answered`, `thing_created`, `thing_crafted`, `thing_edited`, `thing_moved`,
-`thing_upgraded`, `thing_withdrawn`) and its room, the `place_id` it names or else the
+`thing_upgraded`, `thing_withdrawn`, `thing_ended`) and its room, the `place_id` it names or else the
 thing's current place, is a feed room. Each city-wide list reads every feed room's id once
 per statement and leaves that content out, for every caller, and answers
 `left_out_feed_rooms` (`count`, the number of items left out, not of rooms, at most 10

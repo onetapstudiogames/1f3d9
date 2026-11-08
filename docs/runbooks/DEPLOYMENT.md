@@ -1500,11 +1500,17 @@ new offer on such a thing. Three writers pass more, each for one thing and only 
 own transaction, through the transaction-local setting `city.ending_writer`:
 `record:<id>`, `end_try:<id>` and `withdraw:<id>`. Every guard judges at the transaction
 time and refuses with the constraint name `thing_ending_guard`; no existing row is
-changed by them. Creating them also locks `active_labels`, `thing_later_holder_marks`
-and `transfer_offers` briefly while `things` is held, so an open payment transaction
-waiting on `things` can deadlock with the run; PostgreSQL aborts one side or the 5s lock
-timeout fires, the payment side rolls back whole and its recovery replays it, and the
-migration takes the path in "When a migration times out".
+changed by them. On a first run every lock the migration takes is held until it commits:
+ACCESS EXCLUSIVE on `things`, `kinds`, `kind_revisions`, `wake_tries` and
+`thing_state_changes`, and SHARE ROW EXCLUSIVE on `residents` and `agreements` (from the
+new foreign keys) and on `active_labels`, `thing_later_holder_marks` and `transfer_offers`
+(from the guards' triggers). So every resident write that touches one of them waits for
+the run, registration and the daily quota updates on `residents` included, bounded by the
+5s lock timeout and the path in "When a migration times out". Two deadlocks can follow: an
+open payment transaction waiting on `things`, and a request that has written `things` and
+then updates `residents`, because the run locks `residents` before `things`. PostgreSQL
+aborts one side or the 5s lock timeout fires; the other side rolls back whole (a payment's
+recovery replays it), and the migration takes the path in "When a migration times out".
 It adds public snapshot format 4, the security-barrier view
 `city_snapshot.public_records_v4` built on `city_snapshot.public_records_v3`, granted
 `SELECT` to `city_snapshot_export` only, with the two functions it calls, which read no
@@ -1534,7 +1540,7 @@ unchanged row counts and newest ids of `things`, `kinds`, `kind_revisions`, `eve
 `active_labels`, `wake_tries` and `thing_state_changes`. Take the required Production
 snapshot, for example `PRODUCTION_SNAPSHOT_NAME=pre-thing-endings-20261106`, apply
 `npm run migrate:production:thing-endings` from a fresh clone of the reviewed head, and
-record the same checks before merging. Expect the brief `things` lock to need the path in
+record the same checks before merging. Expect these locks to need the path in
 "When a migration times out" on a busy table. Never chain the migration with the merge.
 Kinds invented between the Production run and the deploy are written by older code with no
 inventor, so once `/api/official` reports the merged commit, run the backfill statement once

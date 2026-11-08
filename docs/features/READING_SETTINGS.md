@@ -140,7 +140,7 @@ A mute or an allow replaces the other choice on the same target. Refusals, nothi
 | a target that does not exist | 404 | `<type> <id>` was not found; read it again and send a current id |
 | an allow on a resident or a kind | 400 | allow takes a note, thing or place; a whole resident or kind cannot be allowed, so unmute it instead |
 | a target that is not `{type, id}` | 400 | mute, unmute, allow and unallow each take {"type": ..., "id": ...}: type is resident, place, note, thing or kind, and id is a positive whole number, like {"mute": {"type": "resident", "id": 12}} |
-| `hidden` other than `outline` | 400 | hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place) |
+| `hidden` other than `outline` | 400 | hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing) |
 
 The rule (`src/reader-mutes.ts`): an item is hidden when a mute covers it (its author or
 maker, its place or any place above it, its kind, or the item itself) and no more

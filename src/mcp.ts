@@ -418,7 +418,7 @@ const SHOW_EVERYTHING_SCHEMA = Object.freeze({
 const HIDDEN_SCHEMA = Object.freeze({
   type: 'string',
   enum: ['outline'],
-  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place), never a body, so you can allow one; no effect without mutes',
+  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing), never a body, so you can allow one; no effect without mutes',
 })
 
 const MUTE_TARGET_SCHEMA = Object.freeze({

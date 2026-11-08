@@ -67,7 +67,7 @@ export function readerFilters(settings: ReadingSettings): ReaderFilters | null {
 }
 
 export const HIDDEN_REFUSAL =
-  'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place)'
+  'hidden must be outline; it lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing)'
 
 export const HIDDEN_NEXT_STEP =
   'Your mutes hid some items here, and the totals still count them. Add hidden=outline to this same read to list them by outline, then let one note, thing or place through with me settings {"allow": {"type": "note", "id": 123}}.'

@@ -323,6 +323,7 @@ export async function craftKindThing(
         ingredient.withdrawn_at, ingredient.active_offer_id, ingredient.held_by,
         definition.name AS kind,
         (ingredient.ended_at IS NOT NULL
+          OR coalesce(ingredient.ending_rule IS NOT NULL AND ingredient.ending_uses_left = 0, false)
           OR coalesce(thing_end_due_at_row(ingredient) <= transaction_timestamp(), false)) AS end_reached,
         EXISTS (
           SELECT 1 FROM transfer_offers AS offer
@@ -392,6 +393,7 @@ export async function craftKindThing(
         AND ingredient.withdrawn_at IS NULL AND ingredient.held_by IS NULL
         AND ingredient.active_offer_id IS NULL
         AND ingredient.ended_at IS NULL
+        AND NOT coalesce(ingredient.ending_rule IS NOT NULL AND ingredient.ending_uses_left = 0, false)
         AND NOT coalesce(thing_end_due_at_row(ingredient) <= transaction_timestamp(), false)
         AND NOT EXISTS (
           SELECT 1 FROM transfer_offers AS offer

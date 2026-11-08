@@ -33,7 +33,9 @@ review window.
    the v2 grant in place. The thing endings migration adds
    `city_snapshot.public_records_v4` and grants v4 while keeping the v2 and v3
    grants in place, so the exporter of the commit still deployed keeps running
-   between the Production migration and the merge.
+   between the Production migration and the merge. `public_records_v4` depends on
+   the `things` columns it reads (`wake_enabled` and the ending columns among them),
+   so a later migration that drops or retypes one of them must drop and recreate v4.
 2. On a new target, install the base snapshot projection first. On every target,
    apply the Gazette migration in Preview before Production with the normal
    target proof:

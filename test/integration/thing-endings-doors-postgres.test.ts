@@ -5,9 +5,9 @@
 // refuses E7 for a thing that has just become a remnant; an older remnant may still be
 // given, carried, set down or withdrawn. Withdrawing a remnant skips its waiting end try.
 import assert from 'node:assert/strict'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Hono } from 'hono'
+import { waitPastDatabaseTime } from '../helpers/database-clock.ts'
 import {
   call,
   coin,
@@ -414,7 +414,7 @@ test('thing endings at the gift, withdraw, mark and offer doors, against Postgre
       const ticking = await thing('a ticking lantern')
       await setEnd(ticking, '10 seconds')
       assert.equal((await act({ action: 'move', to_place_id: closed, carry_thing_id: ticking })).status, 200)
-      await delay(10_500)
+      await waitPastDatabaseTime(connectedDatabase(), (await one<{ d: Date }>('SELECT ending_deadline AS d FROM things WHERE id = $1', [ticking])).d)
       assert.equal((await one<Json>('SELECT thing_end_due(id, now()) AS due FROM things WHERE id = $1', [ticking])).due, true)
       const onward = await act({ action: 'move', to_place_id: inner })
       assert.equal(onward.status, 200, JSON.stringify(onward.json))

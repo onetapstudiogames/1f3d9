@@ -36,7 +36,7 @@ const showEverythingSchema = {
 const hiddenSchema = {
   type: 'string',
   enum: ['outline'],
-  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place), never a body, so you can allow one; no effect without mutes',
+  description: 'outline lists the items your mutes hid on this page by outline (id, type, author, kind, size, date, place, and ends on a thing), never a body, so you can allow one; no effect without mutes',
 } as const
 
 // The per-tool words of the end fields (decisions #171 to #180).

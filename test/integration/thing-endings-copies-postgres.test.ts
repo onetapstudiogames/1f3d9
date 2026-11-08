@@ -6,8 +6,8 @@
 // and the copy's owner may only clear its end. A parent whose end has come is skipped by
 // the copy step, except by its own end try, whose copy starts with no end.
 import assert from 'node:assert/strict'
-import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
+import { waitPastDatabaseTime } from '../helpers/database-clock.ts'
 import {
   call,
   coin,
@@ -206,7 +206,7 @@ test('thing endings and copies, against PostgreSQL', { timeout: 600_000 }, async
       assert.deepEqual(row.ending_rule, { any: [{ at }, { idle_seconds: 60, until }] })
       assert.equal(iso(row.ending_deadline), until)
 
-      await delay(Math.max(0, new Date(until).getTime() - Date.now()) + 1_500)
+      await waitPastDatabaseTime(connectedDatabase(), new Date(until))
       assert.deepEqual(await recordDueEnd([copy, parent]), [copy], 'only the copy fell due; the use moved the parent clock')
       const ended = await endColumns(copy)
       assert.equal(ended.ended_cause, 'idle_seconds', 'the copy rule keeps the mode')

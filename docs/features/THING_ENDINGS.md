@@ -150,7 +150,13 @@ remnant is refused with E7. Program steps skip a due or ended thing with
 a law owns it, and where destroy, move and convert first check who may touch a thing, that
 answer comes before the skip. A transfer step on a stranger's remnant keeps the existing
 403. A transfer step on a thing with an end set fails with E9 through the usual transfer
-failure.
+failure. A consume whose own steps bring its thing's end keeps those steps, and the thing
+stays as a remnant instead of being used up: `skipped_effects` names the consume itself
+(`effect` `consume`, `target` `source`) with `THING_ENDED_SKIP_REASON`, no `thing_withdrawn`
+event is written, and the recorder writes the end down after the commit. A uses end whose
+last use is spent counts as come at once, even to a request whose transaction began before
+that use, so a use racing for the last use is refused with E7 and the count never goes
+below zero.
 
 ## Copies
 

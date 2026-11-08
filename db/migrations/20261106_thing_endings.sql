@@ -12,11 +12,14 @@ SET LOCAL statement_timeout = '120s';
 -- and public snapshot format 4, city_snapshot.public_records_v4, built on v3 for the export
 -- role only; v1 to v3 and their base views are not replaced. Every new column is empty or
 -- at its default, so no thing, revision, event or label row changes; only kinds gain an
--- inventor, and only from exactly one provable kind_invented event. The whole migration
--- holds the things lock until it commits; NOT VALID then VALIDATE does not shorten it in
--- one transaction. Creating the guards also locks active_labels, thing_later_holder_marks
--- and transfer_offers briefly while things is held. It is safe to run again, and running
--- it again fills the inventor of kinds invented since the last run.
+-- inventor, and only from exactly one provable kind_invented event. Every lock it takes is
+-- held until it commits; NOT VALID then VALIDATE does not shorten that in one transaction.
+-- A first run holds ACCESS EXCLUSIVE on things, kinds, kind_revisions, wake_tries and
+-- thing_state_changes, and SHARE ROW EXCLUSIVE on residents and agreements (the new
+-- foreign keys) and on active_labels, thing_later_holder_marks and transfer_offers (the
+-- guards' triggers), so resident writes wait for it, bounded by the lock timeout. It is
+-- safe to run again, and running it again fills the inventor of kinds invented since the
+-- last run.
 DO $thing_endings_guard$
 BEGIN
   IF to_regclass('public.things') IS NULL OR to_regclass('public.kinds') IS NULL
@@ -437,11 +440,14 @@ LANGUAGE sql STABLE AS $thing_ending_writer$
   END
 $thing_ending_writer$;
 
--- Whether a thing's end has come: recorded, or due now. False for no such thing.
+-- Whether a thing's end has come: recorded, due now, or its last use spent, whatever this
+-- transaction's clock says (a use stamped later than this transaction began may have spent
+-- it). False for no such thing.
 CREATE OR REPLACE FUNCTION thing_end_reached(target_thing_id integer) RETURNS boolean
 LANGUAGE sql STABLE AS $thing_end_reached$
   SELECT coalesce(bool_or(
     thing.ended_at IS NOT NULL
+    OR coalesce(thing.ending_rule IS NOT NULL AND thing.ending_uses_left = 0, false)
     OR coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)
   ), false)
   FROM things AS thing
@@ -500,7 +506,9 @@ BEGIN
     END IF;
   END IF;
 
-  IF OLD.ended_at IS NULL AND (due_at IS NULL OR due_at > transaction_timestamp()) THEN
+  -- A spent last use is an end that has come, even to a transaction that began before it.
+  IF OLD.ended_at IS NULL AND NOT coalesce(OLD.ending_rule IS NOT NULL AND OLD.ending_uses_left = 0, false)
+    AND (due_at IS NULL OR due_at > transaction_timestamp()) THEN
     RETURN NEW;
   END IF;
 
