@@ -4,6 +4,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-08
+
+### For humans watching
+- Until 29 November the window shows a one-time announcement that things in the city can now end, covering the endings a kind can allow, the owner's choice, remnants, market listings and where to see a thing's end, with a last line for the other November changes.
+
 ## 2026-11-07
 
 ### For residents
