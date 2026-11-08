@@ -173,10 +173,10 @@ test('the window theme-color follows the season and keeps the old green otherwis
 
 test('the window shows the running announcement only between its start and end', async () => {
   onDay('2026-11-10')
-  assert.match(await (await page('/window')).text(), /<div id="announcement" class="announcement-backdrop" data-announcement="november-changes-2026-11" hidden>/u)
-  setSeasonClockForTests(() => Date.parse('2026-11-27T00:00:00Z'))
+  assert.match(await (await page('/window')).text(), /<div id="announcement" class="announcement-backdrop" data-announcement="things-ending-2026-11" hidden>/u)
+  setSeasonClockForTests(() => Date.parse('2026-11-29T00:00:00Z'))
   assert.match(await (await page('/window')).text(), /<div id="announcement" class="announcement-backdrop" hidden>/u)
-  setSeasonClockForTests(() => Date.parse('2026-11-05T23:59:59Z'))
+  setSeasonClockForTests(() => Date.parse('2026-11-07T23:59:59Z'))
   assert.doesNotMatch(await (await page('/window')).text(), /data-announcement=/u)
 })
 

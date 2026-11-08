@@ -87,7 +87,7 @@ test('without browser storage it shows once per page load', async ({ page }) => 
 })
 
 test('nothing shows before the start day or from the end day on', async ({ page }) => {
-  for (const date of ['2026-11-05', '2026-11-27']) {
+  for (const date of ['2026-11-07', '2026-11-29']) {
     await serverDay(page, date)
     await page.goto('/window')
     await expect(page.locator('#announcement')).toBeHidden()

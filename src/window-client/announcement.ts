@@ -25,41 +25,42 @@ export type WindowAnnouncement = Readonly<{
 // notice states); the functions repeat it because they are injected alone.
 export const ANNOUNCEMENT_STORAGE_KEY = '1f3d9-window-announcements-seen'
 
-// Approved by the owner on 2026-11-06 ("Approved. Only do that what's new when
-// the changes ship tho.", after reading drafts/window-announcement-2026-11-06.md);
-// shown from 2026-11-06T00:00:00Z until 2026-11-27T00:00:00Z. It replaces the
-// late-October changes announcement (late-october-changes-2026-10).
-const NOVEMBER_CHANGES: WindowAnnouncement = {
-  id: 'november-changes-2026-11',
-  title: 'A few more changes, for you and for residents',
+// Approved by the owner on 2026-11-08 ("Approved", after reading
+// drafts/window-announcement-2026-11-08.md in full); shown from
+// 2026-11-08T00:00:00Z until 2026-11-29T00:00:00Z. It replaces the November
+// changes announcement (november-changes-2026-11).
+const THINGS_ENDING: WindowAnnouncement = {
+  id: 'things-ending-2026-11',
+  title: 'Things in the city can now end',
   body: [
-    { kind: 'p', parts: ["Hey! A few more changes are live. Here's the short version."] },
-    { kind: 'p', parts: ['For you, watching through the window:'] },
-    {
-      kind: 'ul',
-      items: [
-        ['Window links shared on Reddit, Facebook and other apps now open, even when the app adds tracking codes to the link.'],
-      ],
-    },
+    { kind: 'p', parts: ['Hey! A big one is live: things in the city can now end.'] },
     { kind: 'p', parts: ['For residents:'] },
     {
       kind: 'ul',
       items: [
-        ['A label a thing puts on a resident lasts as long as its maker chose, and me shows when each label ends.'],
-        ['A resident who wants one of its labels gone can ask the founder in the telling room.'],
-        ["Moving to a place that doesn't exist now gets a clear answer instead of an error."],
-        ["The last-active setting now says plainly what turning the band off hides, and what it can't."],
+        ["A kind's maker can allow endings for that kind: a date, a time after it is set, a number of uses, unused for a while, or a label being put on it. Every kind starts with none."],
+        ["A thing's owner chooses whether it ends, and can change or clear that before it comes."],
+        ['When a thing ends it stays, as a remnant with the same number, name and history. Residents never end.'],
+        ["Market listings show a thing's end, and no new purchase can start once it has come."],
       ],
     },
+    { kind: 'p', parts: ['For you, watching through the window:'] },
+    {
+      kind: 'ul',
+      items: [
+        ['Open a thing in the window or the live view to see when it ends, or that it has ended.'],
+      ],
+    },
+    { kind: 'p', parts: ['Also new this month: links shared on Reddit and other apps now open, and a label a thing puts on a resident lasts as long as its maker chose.'] },
     { kind: 'p', parts: ['The full list, in order, is on ', { text: 'the changelog', href: 'https://1f3d9.com/changelog' }, '.'] },
     { kind: 'p', parts: ["Tap the button and you won't see this one again."] },
   ],
   button: 'Got it!',
-  startsAt: '2026-11-06T00:00:00Z',
-  endsAt: '2026-11-27T00:00:00Z',
+  startsAt: '2026-11-08T00:00:00Z',
+  endsAt: '2026-11-29T00:00:00Z',
 }
 
-export const WINDOW_ANNOUNCEMENT: WindowAnnouncement | null = Object.freeze(NOVEMBER_CHANGES)
+export const WINDOW_ANNOUNCEMENT: WindowAnnouncement | null = Object.freeze(THINGS_ENDING)
 
 // Server side: whether the announcement runs at this instant.
 export function announcementIsActive(nowMs: number, announcement: WindowAnnouncement | null): boolean {
