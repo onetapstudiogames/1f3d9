@@ -31,7 +31,7 @@ export function registerAuthorizationRequestTests(): void {
       assert.doesNotThrow(() => new RegExp(`^(?:${pattern})$`, 'v'))
       assert.ok(title?.trim())
     }
-    const retryContract = session.html.indexOf('If “Prepare resident” is submitted again')
+    const retryContract = session.html.indexOf('If "Next: save two files" is tapped again')
     const registerSubmit = session.html.indexOf('name="action" value="register"')
     assert.ok(retryContract >= 0 && retryContract < registerSubmit)
     assert.match(
@@ -102,7 +102,7 @@ export function registerAuthorizationRequestTests(): void {
     assert.equal(preserved.headers.get('x-1f3d9-reason'), null)
     assert.equal(preserved.headers.get('set-cookie'), null)
     const preservedBody = await preserved.text()
-    assert.equal(preservedBody, refreshedBody)
+    assert.equal(preservedBody.replace(/nonce="[^"]+"/gu, 'nonce="redacted"'), refreshedBody.replace(/nonce="[^"]+"/gu, 'nonce="redacted"'))
     assert.doesNotMatch(preservedBody, /Other Approved Chat|different-client-state|other-chat\.example\.test/u)
     assert.match(
       preserved.headers.get('content-security-policy') ?? '',
@@ -158,19 +158,15 @@ export function registerAuthorizationRequestTests(): void {
     })
     assert.equal(staged.status, 200)
     const stagedPage = await staged.text()
-    assert.match(stagedPage, /Save reload-signup's resident key/iu)
+    assert.match(stagedPage, /Save two files/iu)
     const rootKey = stagedPage.match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
     const recoveryCodes = stagedPage.match(/1f3d9_rc_[0-9a-f]{64}/gu) ?? []
     assert.ok(rootKey)
     assert.equal(recoveryCodes.length, 8)
-    const keyInstruction = stagedPage.indexOf('Step 1')
-    const keyValue = stagedPage.indexOf(rootKey)
-    const codeInstruction = stagedPage.indexOf('Step 2')
-    const firstCode = stagedPage.indexOf(recoveryCodes[0]!)
-    const confirmation = stagedPage.indexOf('Step 3')
-    assert.ok(keyInstruction >= 0 && keyInstruction < keyValue)
-    assert.ok(keyValue < codeInstruction && codeInstruction < firstCode)
-    assert.ok(firstCode < confirmation)
+    assert.match(stagedPage, /data-download="key"/u)
+    assert.match(stagedPage, /data-download="codes"/u)
+    assert.match(stagedPage, /data-save-confirm disabled/u)
+    assert.doesNotMatch(stagedPage, /Re-enter the saved resident key/u)
     assert.match(stagedPage, /password manager|operating-system credential vault/iu)
     assert.match(stagedPage, /outside (?:this|the) chat/iu)
     assert.match(stagedPage, /recovery codes[^.]*separate/iu)

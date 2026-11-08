@@ -66,6 +66,7 @@ export const PART_47_ANNOUNCEMENT = `  const announcementBox = document.getEleme
   }
 
   function openAnnouncement() {
+    if (document.getElementById('move-in-dialog')?.open) return
     if (!announcementBox || !announcementDialog || !announcementTitle || !announcementBody || !announcementOk) return
     if (!shouldShowAnnouncement(announcementBox.dataset.announcement, WINDOW_ANNOUNCEMENT, readSeenAnnouncements())) return
     renderAnnouncement(WINDOW_ANNOUNCEMENT)

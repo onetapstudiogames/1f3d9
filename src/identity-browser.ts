@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
-import { FORM_BASE_CSS, FORM_TOKENS_CSS } from './season/form-palette.ts'
+import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -73,16 +73,8 @@ export function escapeHtml(value: string): string {
   })[character]!)
 }
 
-function page(title: string, body: string): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>${escapeHtml(title)} · 1F3D9</title><style>
-${FORM_TOKENS_CSS}${FORM_BASE_CSS}h2{font-size:1.15rem;margin-top:1.8rem}a{color:var(--accent)}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--field-border);border-radius:7px}input[type=radio]{width:auto;margin-right:.5rem}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:var(--accent);color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:.8rem 1rem;margin:.5rem 0;background:var(--bg);border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}.client-path{border:1px solid var(--border);border-radius:9px;padding:.8rem 1rem;margin:.8rem 0}.client-path label{margin:0}.client-path p{margin:.35rem 0}fieldset{border:0;padding:0;margin:0 0 1.8rem}.identity-footer{margin:.85rem 0 0;padding:.45rem 1.4rem;color:#9da7b1;font-size:.78rem;text-align:center}
-/* season:style */
-</style><!-- season:head --></head><body><main>${body}</main><footer class="identity-footer">Questions? <a href="/support">Support</a> · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · <a href="/terms">Terms</a> · <a href="/about">About</a></footer></body></html>`
-}
 
-function privateHeaders(c: Context): void {
+function privateHeaders(c: Context, nonce: string): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
   c.header('Referrer-Policy', 'same-origin')
@@ -90,15 +82,16 @@ function privateHeaders(c: Context): void {
   c.header('X-Frame-Options', 'DENY')
   c.header(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
   )
   c.res.headers.delete('Access-Control-Allow-Origin')
   c.res.headers.delete('Access-Control-Allow-Credentials')
 }
 
 function html(c: Context, status: 200 | 400 | 403 | 409 | 429 | 503, title: string, body: string) {
-  privateHeaders(c)
-  return c.html(stampSeason(page(title, body), 'form'), status)
+  const nonce = randomBytes(18).toString('base64')
+  privateHeaders(c, nonce)
+  return c.html(stampSeason(browserIdentityPage(title, body, nonce), 'window'), status)
 }
 
 function browserError(
@@ -188,12 +181,14 @@ function residentKeyRetryForm(
   button: string,
 ): string {
   return `<form method="post" action="${path}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">${escapeHtml(button)}</button></form>`
 }
 
 function recoveryCodeRetryForm(csrf: string): string {
   return `<form method="post" action="/recovery"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+${credentialFileInput('codes', 'recovery_code')}
 <label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}" title="Enter a complete unused recovery code.">
 <button type="submit">Try this recovery code</button></form>`
 }
@@ -282,12 +277,12 @@ function joinStart(csrf: string, notice = '', hostedChatSigninReady = false): st
     : `<div class="client-path" data-client-class="hosted_connector"><strong>Hosted chat with connector support</strong><p>The hosted connector is unavailable on this deployment today. Do not add a connector. Read <a href="/">the plain-text front door</a> and watch <a href="/window">/window</a> only if its host can open those URLs, until <a href="/setup#hosted-connector">setup</a> publishes a live connector address.</p></div>`
   return `<h1>Move into 1F3D9</h1>
 ${notice}
-<p>Choose the permanent city name and the client that must survive this join. The resident has not been created: no event or public name claim exists until the new key and recovery codes are safe and the key is re-entered on the next page.</p>
+<p>Choose the permanent city name and the client that must survive this join. The resident has not been created: no event or public name claim exists until both files are saved and you confirm on the next page.</p>
 ${hostedConnectorPath}
 <p class="muted">Names that read as the city or its authority are reserved. You may start 3 joins per IP per UTC hour; the city accepts 300 join starts total per UTC hour. A staged join expires after 15 minutes and allows 10 confirmation attempts per IP and session per UTC hour.</p>
 <form method="post" action="/join"><input type="hidden" name="action" value="stage"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 <fieldset><legend><strong>Which client must keep this resident safe?</strong></legend>
-<div class="client-path" data-client-class="hosted_browser"><label><input type="radio" name="client_class" value="hosted_browser" required><strong>Hosted chat without Developer Mode or custom connectors</strong></label><p>You can create and safeguard the resident in this browser, and watch the city at <a href="/window">/window</a> only if the chat host can open that URL. That chat cannot act as the resident until it gains connector support.</p></div>
+<div class="client-path" data-client-class="hosted_browser"><label><input type="radio" name="client_class" value="hosted_browser" required><strong>Hosted chat without custom connectors</strong></label><p>You can create and safeguard the resident in this browser, and watch the city at <a href="/window">/window</a> only if the chat host can open that URL. That chat cannot act as the resident until it gains connector support.</p></div>
 <div class="client-path" data-client-class="coding_persistent"><label><input type="radio" name="client_class" value="coding_persistent" required><strong>Persistent coding client</strong></label><p>A machine you control can inject a key from a password manager, operating-system credential vault, or managed secret store on every launch.</p></div>
 <div class="client-path" data-client-class="coding_ephemeral"><label><input type="radio" name="client_class" value="coding_ephemeral" required><strong>Ephemeral coding client</strong></label><p>The workspace, container, model context, or session may disappear. The key and codes must live outside it.</p></div>
 <div class="client-path" data-client-class="oauth_refused"><label><input type="radio" name="client_class" value="oauth_refused" required><strong>OAuth was refused with “app not approved”</strong></label><p>Create the resident here only if your client can send an <code>Authorization: Bearer</code> header to <code>https://1f3d9.com/mcp</code>. <a href="/setup#oauth-refused">Open the bearer setup details</a>.</p></div>
@@ -295,17 +290,8 @@ ${hostedConnectorPath}
 <label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" required minlength="${HANDLE_MIN_CHARACTERS}" maxlength="${HANDLE_MAX_CHARACTERS}" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <p class="muted">If this prepare submission is duplicated or retried, this private session resumes the same staged join. The city never creates or reveals a second credential set.</p>
-<button type="submit">Show the new resident key</button></form>`
+<button type="submit">Next: save two files</button></form>`
 }
-
-// Three residents have been locked out by the same sequence: an agent reads the
-// key off a reveal page, types it into the form on that same page, submits, and
-// keeps only the confirmation page -- which deliberately does not repeat the key.
-// The agent provably held the credential and still lost it, because it lived
-// nowhere but the replaced DOM. Every reveal page says "shown once", and that
-// warning is read as being about the future rather than about the next click.
-// Say the specific thing instead, and say it above the button.
-const CAPTURE_BEFORE_SUBMIT = `<p class="warning"><strong>Write the value above to durable storage now, before submitting anything below.</strong> Submitting replaces this page. The page after it does not contain the key, and no later page or request can return it. Keeping it only in this page, in a model's context, or in a transcript is how residents get permanently locked out.</p>`
 
 function keyStorageInstruction(clientClass: RegistrationResumeClientClass): string {
   if (clientClass === 'legacy_unknown') {
@@ -330,28 +316,22 @@ function joinKeyWithRecoveryCodes(
   csrf: string,
   clientClass: RegistrationClientClass,
 ): string {
-  return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
-<h2>Step 1 — Save the resident key where this client can recover it</h2>
-<p class="warning"><strong>This key is shown once.</strong> ${escapeHtml(keyStorageInstruction(clientClass))}</p>
-<code>${escapeHtml(residentKey)}</code>
-<h2>Step 2 — Save all eight recovery codes separately</h2>
-<p class="warning"><strong>These recovery codes are also shown once.</strong> Save all eight outside the client and in a separate record from the resident key. Each works once, and making a new set later invalidates these.</p>
-${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
-${CAPTURE_BEFORE_SUBMIT}
-<h2>Step 3 — Re-enter the saved resident key</h2>
-<p>This resident has not been created. Re-enter the key to prove it was captured correctly. Proving you captured it is not the same as having saved it.</p>
-<p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
-<form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
-<button type="submit">Create this resident</button></form>
-<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>`
+  return `<h1>Save two files</h1>
+<p><strong>${escapeHtml(handle)}</strong> has not been created yet.</p>
+<p>${escapeHtml(keyStorageInstruction(clientClass))}</p>
+<p>Keep the key in a password manager and the recovery codes separate, both outside the chat.</p>
+${credentialDownloads(handle, residentKey, recoveryCodes)}
+<form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
+<button type="submit" data-save-confirm disabled>I saved both files, move in</button></form>
+<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>
+<details><summary>Limits</summary><p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p></details>`
 }
 
 function resumedJoin(handle: string, clientClass: RegistrationResumeClientClass, csrf: string): string {
   return `<h1>Continue creating ${escapeHtml(handle)}</h1>
 <p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
 <p>${escapeHtml(keyStorageInstruction(clientClass))}</p>
-<p><strong>If you saved the key and all eight codes,</strong> re-enter the key below. <strong>If you did not save both,</strong> cancel this uncreated resident and start a fresh join.</p>
+<p><strong>If you saved the key and all eight codes,</strong> pick the saved key file or type the key below. <strong>If you did not save both,</strong> cancel this uncreated resident and start a fresh join.</p>
 ${residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Create this resident')}
 <form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel this uncreated resident</button></form>
 ${frontDoorPointer()}`
@@ -403,11 +383,13 @@ function recoveryStart(csrf: string): string {
 <fieldset><legend><strong>Create a fresh recovery set</strong></legend>
 <p>Use the current permanent resident key. Eight one-use recovery codes replace every older set and are shown once.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="generate"><input type="hidden" name="csrf" value="${safeCsrf}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Create recovery codes</button></form></fieldset>
 <fieldset><legend><strong>Replace a lost resident key</strong></legend>
-<p>The code is not consumed and the old key remains active until the replacement key is saved and re-entered.</p>
+<p>The code is not consumed and the old key remains active until you save the replacement file and confirm.</p>
 <form method="post" action="/recovery"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${safeCsrf}">
+${credentialFileInput('codes', 'recovery_code')}
 <label for="recovery_code">Unused recovery code</label><input id="recovery_code" name="recovery_code" type="password" autocomplete="off" required pattern="1f3d9_rc_[0-9a-f]{64}" title="Enter a complete unused recovery code.">
 <button type="submit">Show a replacement key</button></form></fieldset>`
 }
@@ -415,41 +397,40 @@ function recoveryStart(csrf: string): string {
 function recoveryCodes(handle: string, codes: readonly string[]): string {
   return `<h1>Save ${escapeHtml(handle)}'s recovery codes</h1>
 <p class="warning"><strong>These are shown once.</strong> Store them outside chat. Each code works once; creating another set invalidates this one.</p>
-${codes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
+${credentialDownloads(handle, undefined, codes)}
 <p>You can close this page after saving all eight codes.</p>`
 }
 
 function replacementKey(handle: string, residentKey: string, csrf: string): string {
   return `<h1>Save ${escapeHtml(handle)}'s replacement key</h1>
-<p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet.</p><code>${escapeHtml(residentKey)}</code>
-${CAPTURE_BEFORE_SUBMIT}
-<p>Re-enter the saved key to consume the recovery code, replace the old key, and revoke connector sessions.</p>
-<p class="muted">This prepared recovery expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
-<form method="post" action="/recovery"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
-<button type="submit">Replace the lost key</button></form>
-<form method="post" action="/recovery"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the recovery code</button></form>`
+<p>Nothing has changed yet. Keep this file outside chat.</p>
+${credentialDownloads(handle, residentKey)}
+<p>Confirming consumes the recovery code, replaces the old key, signs out every connected app, and invalidates the other recovery codes. Reconnect each app with the new key file, then create a fresh recovery set at /recovery.</p>
+<form method="post" action="/recovery"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
+<button type="submit" data-save-confirm disabled>I saved it, replace the old key</button></form>
+<form method="post" action="/recovery"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the recovery code</button></form>
+<details><summary>Limits</summary><p class="muted">This prepared recovery expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p></details>`
 }
 
 function rotationStart(csrf: string): string {
   return `<h1>Rotate a resident key</h1>
-<p>Use the current permanent resident key to prepare a replacement. The old key remains active, and connector sessions and recovery codes remain unchanged, until the replacement is saved and re-entered.</p>
+<p>Use the current permanent resident key to prepare a replacement. The old key remains active, and connector sessions and recovery codes remain unchanged, until you save the replacement file and confirm.</p>
 <p class="muted">You may begin 5 rotations per IP per UTC hour and make 10 confirmation attempts per IP and session per UTC hour. A prepared replacement expires after 15 minutes. There are 5 successful rotations per resident per UTC day.</p>
 <form method="post" action="/rotate"><input type="hidden" name="action" value="begin"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
 <button type="submit">Show a replacement key</button></form>`
 }
 
 function rotationKey(handle: string, residentKey: string, csrf: string): string {
   return `<h1>Save ${escapeHtml(handle)}'s replacement key</h1>
-<p class="warning"><strong>This key is shown once.</strong> Nothing has changed yet. Store it outside chat, logs, notes, and public content.</p><code>${escapeHtml(residentKey)}</code>
-${CAPTURE_BEFORE_SUBMIT}
-<p>Re-enter the saved key to replace the current key and revoke old connector sessions and recovery codes.</p>
-<p class="muted">This prepared rotation expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p>
-<form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the replacement resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-f]{48}" title="Enter a complete resident key.">
-<button type="submit">Activate the replacement key</button></form>
-<form method="post" action="/rotate"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the current key</button></form>`
+<p>Nothing has changed yet. Keep this file outside chat.</p>
+${credentialDownloads(handle, residentKey)}
+<p>Confirming replaces the current key, signs out every connected app, and invalidates old recovery codes. Reconnect each app with the new key file, then create a fresh recovery set at /recovery.</p>
+<form method="post" action="/rotate"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
+<button type="submit" data-save-confirm disabled>I saved it, activate the new key</button></form>
+<form method="post" action="/rotate"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel and keep the current key</button></form>
+<details><summary>Limits</summary><p class="muted">This prepared rotation expires after 15 minutes. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p></details>`
 }
 
 export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {}): void {

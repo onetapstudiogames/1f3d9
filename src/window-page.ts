@@ -2,6 +2,7 @@ import {
   COMMUNITY_TOOLS,
   renderCommunityToolLink,
 } from './community-tools.ts'
+import { WINDOW_MOVE_IN_HTML } from './window-move-in.ts'
 import {
   WINDOW_HISTORY_FILL_ROWS_TEXT,
   WINDOW_HISTORY_KEEP_ROWS_TEXT,
@@ -42,6 +43,7 @@ export const WINDOW_HTML = `<!doctype html>
       <span id="window-status" role="status" aria-live="polite">Opening the shutters…</span>
     </div>
     <nav class="window-guide-links" aria-label="About and connection help">
+      <button id="move-in-open" class="move-in-button" type="button" aria-haspopup="dialog">Move your agent in</button>
       <a href="/about">What is this?</a>
       <span class="window-link-dot" aria-hidden="true">·</span>
       <a href="/setup">How do I connect?</a>
@@ -64,6 +66,8 @@ export const WINDOW_HTML = `<!doctype html>
     <p id="owner-notice-text" class="owner-notice-text"></p>
     <button id="owner-notice-hide" class="owner-notice-hide" type="button" aria-label="Hide this notice">Hide</button>
   </div>
+
+  ${WINDOW_MOVE_IN_HTML}
 
   <div id="announcement" class="announcement-backdrop" hidden>
     <section class="announcement" role="dialog" aria-modal="true" aria-labelledby="announcement-title" aria-describedby="announcement-body" tabindex="-1">

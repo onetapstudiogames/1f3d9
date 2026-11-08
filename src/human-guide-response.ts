@@ -30,9 +30,10 @@ export function guideHeaders(c: Context): void {
 export function guidePage(
   c: Context,
   html: string,
-  options: Readonly<{ cacheControl?: string }> = {},
+  options: Readonly<{ cacheControl?: string; scripts?: boolean }> = {},
 ): Response {
   guideHeaders(c)
+  if (options.scripts) c.header('Content-Security-Policy', GUIDE_CSP.replace("script-src 'none'", "script-src 'self'"))
   if (options.cacheControl) c.header('Cache-Control', options.cacheControl)
   return c.html(stampSeason(html, 'paper'))
 }

@@ -14,21 +14,22 @@ for (const [client, device] of [
       hasTouch: device.hasTouch,
     })
 
-    test('setup and join render all five client paths without hiding a next step', async ({ page }) => {
+    test('setup keeps nine sections closed and opens only the linked topic', async ({ page }) => {
       await page.goto('/setup')
-      for (const id of [
-        'hosted-connector',
-        'hosted-browser',
-        'coding-persistent',
-        'coding-ephemeral',
-        'oauth-refused',
-      ]) {
+      await expect(page.locator('.help-sec')).toHaveCount(9)
+      await expect(page.locator('.help-sec[open]')).toHaveCount(0)
+      for (const id of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'coding-persistent', 'coding-ephemeral']) {
+        await page.goto(`/setup#${id}`)
+        await page.reload()
         await expect(page.locator(`#${id}`)).toBeVisible()
+        await expect(page.locator('.help-sec[open]')).toHaveCount(1)
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await page.goto('/setup')
+      for (const summary of await page.locator('.help-sec > summary').all()) await summary.click()
+      await expect(page.locator('.help-sec[open]')).toHaveCount(9)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
-      await page.locator('#hosted-browser').getByRole('link', { name: /watch the window/iu }).click()
-      await expect(page).toHaveURL(/\/window\/map$/u)
       await page.goto('/join')
       for (const clientClass of [
         'hosted_connector',
@@ -82,17 +83,13 @@ for (const [client, device] of [
 
       const chatGptGuide = page.locator('#chatgpt')
       const claudeGuide = page.locator('#claude')
-      await expect(chatGptGuide).not.toContainText('turn on Developer mode')
-      await expect(chatGptGuide).not.toContainText('Open the Plugins tab')
-      await expect(claudeGuide).not.toContainText('Add custom connector')
-
       for (const guide of [chatGptGuide, claudeGuide]) {
+        await guide.locator('summary').click()
         await expect(guide).toContainText('unavailable on this deployment today')
-        await expect(guide.getByRole('link', { name: /hosted-chat-without-Developer-Mode path/iu })).toHaveAttribute('href', '#hosted-browser')
-        await expect(guide.getByRole('link', { name: /plain-text front door/iu })).toHaveAttribute('href', '/')
-        await expect(guide.getByRole('link', { name: /watch the window/iu })).toHaveAttribute('href', '/window')
-        await expect(guide.getByRole('link', { name: /browser join/iu })).toHaveAttribute('href', '/join')
+        await expect(guide.getByRole('link', { name: 'the front door', exact: true })).toHaveAttribute('href', '/')
+        await expect(guide.getByRole('link', { name: 'the window', exact: true })).toHaveAttribute('href', '/window')
       }
+      await expect(page.locator('a[href*="chatgpt.com"], a[href*="claude.ai"]')).toHaveCount(0)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     })
   })
@@ -145,13 +142,15 @@ test('a human can understand the city, open setup, and return to the window', as
 
   await page.getByRole('link', { name: 'About', exact: true }).click()
   await expect(page).toHaveURL(/\/about$/u)
-  await page.getByRole('link', { name: 'Connect your agent', exact: true }).click()
+  await expect(page.getByRole('link', { name: 'Move your agent in', exact: true })).toHaveAttribute('href', '/window#move-in')
+  await page.getByRole('link', { name: 'Connect', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/u)
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Connect your agent to 1F3D9.')
-  await expect(page.locator('#permanent-facts')).toContainText('https://1f3d9.com/mcp/connect')
-  await expect(page.locator('#permanent-facts')).toContainText('https://1f3d9.com/mcp')
-  await expect(page.locator('.trouble-list')).toContainText('look is public')
-  await expect(page.locator('.trouble-list')).toContainText('me is the real check')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('How do I connect?')
+  await expect(page.locator('.help-sec')).toHaveCount(9)
+  await expect(page.locator('.help-sec[open]')).toHaveCount(0)
+  await page.locator('#chatgpt > summary').click()
+  await expect(page.locator('#chatgpt')).toContainText('save both files')
+  await expect(page.locator('#chatgpt a').first()).toHaveAttribute('href', 'https://chatgpt.com/plugins?directoryTab=personal')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
   await page.getByRole('link', { name: 'Window', exact: true }).click()

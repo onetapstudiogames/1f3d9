@@ -27,8 +27,8 @@ Only three things change, and nothing else is added: no badge, ribbon, banner or
   live". A repeated word shows once (both Easters are "blooming"). The season's word shows
   only when no holiday is active, so US Thanksgiving is "thankful", not "cozy and thankful".
 
-Pages without a masthead (`/join`, `/rotate`, `/recovery`, the hosted sign-in and consent
-pages) take the palette only.
+Identity pages (`/join`, `/rotate`, `/recovery`, the hosted sign-in and consent
+pages) use the window palette and seasonal sheet, with a simple 1F3D9 heading.
 
 ## How a day is resolved
 
@@ -94,10 +94,11 @@ demand; a holiday inside a season names the season first, as `harvest-diwali`) a
 
 `src/season/palettes.ts` holds the design's three palettes byte for byte and maps them
 onto each page family's tokens: the light guide family (also `/tools`, `/buy`,
-`/gift-redirect`), the window, the Gazette (light and dark), the dark sign-in forms, and
+`/gift-redirect`), the window and identity pages, the Gazette (light and dark), and
 the six tokens of the `/live/` view. Pages that allow same-origin styles link the
-stylesheet; the Gazette and the sign-in pages allow only inline styles, so their palette
-is written into their existing `<style>`. `test/season-palettes.test.ts` checks every
+stylesheet; the Gazette's palette is written into its existing `<style>`.
+Identity pages allow their nonce script for local files and same-origin styles.
+`test/season-palettes.test.ts` checks every
 mapped value against the design and checks text contrast on every season.
 
 On the window every tab heading follows the palette. Map, Things and Talk use

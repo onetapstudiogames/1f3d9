@@ -22,11 +22,11 @@ const { treasuryDocument } = await import('../src/treasury-page.ts')
 const { authorizationUrl, fixture } = await import('./oauth-flow-tests/fixture.ts')
 
 const GUIDE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'none'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'none'; manifest-src 'none'"
-// Each page's policy exactly as main served it before seasons. Only /gift-redirect
-// gains img-src 'self', so its masthead can show the city's own icon.
+// Identity pages allow only their nonce script and the city's own seasonal sheets.
+const IDENTITY_CSP = /^default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-[A-Za-z0-9+/=]+'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'$/u
 const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/about': GUIDE_CSP,
-  '/setup': GUIDE_CSP,
+  '/setup': GUIDE_CSP.replace("script-src 'none'", "script-src 'self'"),
   '/market': GUIDE_CSP,
   '/changelog': GUIDE_CSP,
   '/terms': GUIDE_CSP,
@@ -39,19 +39,19 @@ const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/gazette/7': /^default-src 'none'; base-uri 'none'; object-src 'self'; frame-ancestors 'none'; form-action 'none'; script-src 'sha256-[A-Za-z0-9+/=]+'; style-src 'unsafe-inline' https:\/\/fonts\.googleapis\.com; font-src https:\/\/fonts\.gstatic\.com; img-src 'self'; connect-src 'none'; manifest-src 'none'$/u,
   '/buy': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   '/gift-redirect': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-  '/join': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  '/rotate': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  '/recovery': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  oauth: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chat.example.test; base-uri 'none'; frame-ancestors 'none'",
+  '/join': IDENTITY_CSP,
+  '/rotate': IDENTITY_CSP,
+  '/recovery': IDENTITY_CSP,
+  oauth: /^default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-[A-Za-z0-9+/=]+'; form-action 'self' https:\/\/chat.example.test; base-uri 'none'; frame-ancestors 'none'$/u,
 }
 
-type Family = 'paper' | 'window' | 'gazette' | 'form'
+type Family = 'paper' | 'window' | 'gazette'
 const PAGES: readonly (readonly [string, Family, boolean])[] = [
   ['/about', 'paper', true], ['/setup', 'paper', true], ['/market', 'paper', true], ['/changelog', 'paper', true],
   ['/terms', 'paper', true], ['/privacy', 'paper', true], ['/support', 'paper', true], ['/treasury', 'paper', true],
   ['/tools', 'paper', true], ['/window', 'window', true], ['/window/things', 'window', true], ['/gazette/7', 'gazette', true],
   ['/buy', 'paper', true], ['/gift-redirect', 'paper', true],
-  ['/join', 'form', false], ['/rotate', 'form', false], ['/recovery', 'form', false], ['oauth', 'form', false],
+  ['/join', 'window', false], ['/rotate', 'window', false], ['/recovery', 'window', false], ['oauth', 'window', false],
 ]
 
 const extra = new Hono()
@@ -90,7 +90,7 @@ async function season(): Promise<{
   return await (await app.request('/api/season')).json()
 }
 
-test('every human page keeps its Content-Security-Policy, with img-src added only on /gift-redirect', async () => {
+test('every human page keeps its scoped Content-Security-Policy', async () => {
   for (const date of ['2026-07-08', '2027-12-25']) {
     onDay(date)
     for (const [path] of PAGES) {
@@ -118,8 +118,6 @@ test('on a dressed day every page wears the palette, and every page with a masth
     } else if (family === 'gazette') {
       assert.match(html, /:root\{--ground:#eef3f7;--sheet:#ffffff;--line:#8d9caa;--accent:#b3262c\}/u, path)
       assert.match(html, /@media \(prefers-color-scheme:dark\)\{:root\{--ground:#08111e;--sheet:#0f1d30;/u, path)
-    } else {
-      assert.match(html, /:root\{--bg:#08111e;--panel:#0f1d30;--border:#1d3350;--text:#e6eef5;--accent:#f3d27a;--field-border:#8d9caa\}/u, path)
     }
     if (!masthead) {
       assert.doesNotMatch(html, /data-season-icon|season-word/u, path)

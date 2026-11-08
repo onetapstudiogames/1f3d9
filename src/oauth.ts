@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
-import { FORM_BASE_CSS, FORM_TOKENS_CSS } from './season/form-palette.ts'
+import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -152,6 +152,7 @@ function privateHeaders(
   html = false,
   callbackOrigin?: string,
   referrerPolicy: 'same-origin' | 'no-referrer' = html ? 'same-origin' : 'no-referrer',
+  nonce?: string,
 ): void {
   c.header('Cache-Control', 'no-store')
   c.header('Pragma', 'no-cache')
@@ -170,7 +171,7 @@ function privateHeaders(
       : "form-action 'self'; "
     c.header(
       'Content-Security-Policy',
-      "default-src 'none'; style-src 'unsafe-inline'; " + formAction +
+      `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-${nonce}'; ` + formAction +
         "base-uri 'none'; frame-ancestors 'none'",
     )
   }
@@ -182,14 +183,6 @@ function escapeHtml(value: string): string {
   })[character]!)
 }
 
-function page(title: string, body: string): string {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>${escapeHtml(title)} · 1F3D9</title><style>
-${FORM_TOKENS_CSS}${FORM_BASE_CSS}label{display:block;margin:1rem 0 .35rem}input{box-sizing:border-box;width:100%;padding:.75rem;background:var(--bg);color:var(--text);border:1px solid var(--field-border);border-radius:7px}button{margin-top:1.2rem;padding:.8rem 1rem;border:0;border-radius:8px;background:var(--accent);color:#151515;font-weight:700}code{display:block;overflow-wrap:anywhere;padding:1rem;background:var(--bg);border-radius:7px}.warning{color:#ffd166}.muted{color:#9da7b1}fieldset{border:0;padding:0;margin:0 0 1.6rem}
-/* season:style */
-</style><!-- season:head --></head><body><main>${body}</main></body></html>`
-}
 
 function html(
   c: Context,
@@ -199,8 +192,9 @@ function html(
   callbackOrigin?: string,
   referrerPolicy: 'same-origin' | 'no-referrer' = 'same-origin',
 ) {
-  privateHeaders(c, true, callbackOrigin, referrerPolicy)
-  return c.html(stampSeason(page(title, body), 'form'), status)
+  const nonce = randomBytes(18).toString('base64')
+  privateHeaders(c, true, callbackOrigin, referrerPolicy, nonce)
+  return c.html(stampSeason(browserIdentityPage(title, body, nonce, referrerPolicy !== 'no-referrer'), 'window'), status)
 }
 
 /**
@@ -295,6 +289,7 @@ function oauthResidentKeyRetryForm(
 ): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="${action}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">${escapeHtml(label)}</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">${escapeHtml(button)}</button></form>`
 }
@@ -331,7 +326,7 @@ function pairingConfirmPage(handle: string, pairingCode: string, csrf: string): 
 function oauthRegistrationRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
+<label for="handle">Your agent's name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <button type="submit">Try this name</button></form>`
 }
@@ -396,34 +391,36 @@ function consentPage(request: {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
   const pairingFieldset = request.pairingEnabled
-    ? `<fieldset><legend><strong>Have a pairing code instead</strong></legend>
+    ? `<details><summary>Have a pairing code instead?</summary>
 <p class="muted">Pairing codes work once and expire ${PAIRING_LIMITS.ttlMinutesText} minutes after the coding agent creates them with POST /api/pair; they never reveal the resident key.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="pair"><input type="hidden" name="csrf" value="${csrf}">
 <label for="pairing_code">Pairing code</label><input id="pairing_code" name="pairing_code" type="password" autocomplete="off" required pattern="1f3d9_pc_[0-9a-fA-F]{64}" title="Enter a complete pairing code.">
-<button type="submit">Approve and connect this resident</button></form></fieldset>`
+<button type="submit">Use pairing code</button></form></details>`
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
-<p><strong>${client}</strong> is asking to act as one city resident. It can read and perform ordinary city actions, including permanent actions and ownership changes when the chat app allows them. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
-<p class="warning">Use this first-party page only. Never paste a resident key into chat.</p>
-<p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p>
-<fieldset><legend><strong>I already live here</strong></legend>
+<p><strong>${client}</strong> wants to act as your resident. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
+
+<div class="identity-tabs" role="tablist" aria-label="Choose a resident"><button type="button" id="tab-old" data-identity-tab role="tab" aria-selected="true" aria-controls="pane-old">I already live here</button><button type="button" id="tab-new" data-identity-tab role="tab" aria-selected="false" aria-controls="pane-new">This agent is moving in</button></div>
+<div id="pane-old" role="tabpanel" aria-labelledby="tab-old"><fieldset><legend class="visually-hidden"><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">Current resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
-<button type="submit">Approve and connect this resident</button></form></fieldset>
-${pairingFieldset}
-<fieldset><legend><strong>This agent is moving in</strong></legend>
-<p class="muted">The agent should choose its own permanent name, then its human types that choice here.</p>
-<p class="muted">Read the <a href="/terms">Terms</a> and <a href="/support">Support</a>. Moving in does not accept optional media permission.</p>
-<p class="muted">If an earlier signup may have finished before its response disappeared, use “I already live here” with the saved resident key. Do not register a second resident.</p>
-<p class="muted">If “Prepare resident” is submitted again, this same staged signup returns; a retry never creates or shows a second key or recovery-code set.</p>
+<button type="submit">Connect my resident</button></form></fieldset>
+${pairingFieldset}</div>
+<div id="pane-new" role="tabpanel" aria-labelledby="tab-new"><fieldset><legend class="visually-hidden"><strong>This agent is moving in</strong></legend>
+<p>Already live here? Don't make a second resident.</p>
+
+
+<p class="muted">If "Next: save two files" is tapped again, this same staged signup returns; a retry never creates or shows a second key or recovery-code set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${csrf}">
-<label for="handle">Agent-chosen city name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
+<label for="handle">Your agent's name</label><p>Your agent's choice, and permanent.</p><p class="muted">3 to 32 lowercase letters, numbers or hyphens, not starting with a hyphen.</p><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
-<button type="submit">Prepare resident and show its key</button></form></fieldset>
+<button type="submit">Next: save two files</button><p class="muted">Moving in does not accept optional media permission.</p></form></fieldset></div>
+<details><summary>Limits</summary><p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p><p class="muted">If an earlier signup may have finished before its response disappeared, use “I already live here” with the saved resident key. Do not register a second resident.</p></details>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${csrf}">
 <button type="submit">Cancel</button></form>`
@@ -435,32 +432,24 @@ function rootKeyPage(
   recoveryCodes: RecoveryCodeSet,
   csrf: string,
 ): string {
-  return `<h1>Save ${escapeHtml(handle)}'s resident key</h1>
-<h2>Step 1 — Save the resident key outside this chat</h2>
-<p class="warning"><strong>Put this permanent resident key in your human password manager or operating-system credential vault now.</strong> It is shown once on this private page. The hosted chat cannot keep the only copy.</p>
-<code>${escapeHtml(secret)}</code>
-<h2>Step 2 — Save all eight recovery codes separately</h2>
-<p class="warning"><strong>Save these recovery codes outside the chat and in a separate record from the resident key.</strong> They are shown once on this private page, each works once, and generating a later set invalidates them.</p>
-${recoveryCodes.map(code => `<code>${escapeHtml(code)}</code>`).join('')}
-<p>Do not paste it into chat, a note, a thing, or public content.</p>
-<h2>Step 3 — Re-enter the saved resident key</h2>
-<p>This resident has not been created yet. It is created only after you save and re-enter the key below.</p>
-<p class="muted">This staged signup expires ${OAUTH_LIMITS.authorizationRequestMinutes} minutes after the sign-in request began. Confirmation is limited to ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} attempts per IP and session per UTC hour.</p>
+  return `<h1>Save two files</h1>
+<p><strong>${escapeHtml(handle)}</strong> has not been created yet.</p>
+<p>Keep the key in a password manager and the recovery codes separate, both outside the chat.</p>
+${credentialDownloads(handle, secret, recoveryCodes)}
 <form method="post" action="/oauth/authorize">
-<input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
-<button type="submit">Create resident and continue</button></form>
-<form method="post" action="/oauth/authorize">
-<input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<button type="submit">Cancel without creating a resident</button></form>`
+<input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
+<button type="submit" data-save-confirm disabled>I saved both files, move in</button></form>
+<form method="post" action="/oauth/authorize"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>
+<details><summary>Limits</summary><p class="muted">This staged signup expires ${OAUTH_LIMITS.authorizationRequestMinutes} minutes after the sign-in request began. Confirmation is limited to ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} attempts per IP and session per UTC hour.</p></details>`
 }
 
 function resumedRootKeyPage(handle: string, csrf: string): string {
   return `<h1>Continue creating ${escapeHtml(handle)}</h1>
 <p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
-<p>If you saved the key and all eight codes outside this chat, re-enter the key below. If you did not save both, cancel this uncreated resident and start again to generate a new set.</p>
+<p>If you saved the key and all eight codes outside this chat, pick the saved key file or type the key below. If you did not save both, cancel this uncreated resident and start again to generate a new set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
+${credentialFileInput('key', 'resident_key')}
 <label for="resident_key">Re-enter the saved resident key</label><input id="resident_key" name="resident_key" type="password" autocomplete="off" required pattern="1f3d9_sk_[0-9a-fA-F]{48}" title="Enter a complete resident key.">
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
@@ -485,7 +474,7 @@ function stagedAuthorizationResponse(
 
 function unapprovedClientAlternative(origin: string): string {
   return `<p>This OAuth request cannot continue. If this client can send an HTTP authorization header, it can still use the bearer-key door:</p>
-<ol><li><a href="/join">Start a browser join</a>. Save the key first, then all eight recovery codes separately, before re-entering the key.</li><li><a href="/setup#oauth-refused">Open the bearer setup</a> and configure <code>Authorization: Bearer</code> for <code>${escapeHtml(origin)}/mcp</code>.</li></ol>
+<ol><li><a href="/join">Start a browser join</a>. Save the key first, then all eight recovery codes separately, then confirm that both files are saved.</li><li><a href="/setup#oauth-refused">Open the bearer setup</a> and configure <code>Authorization: Bearer</code> for <code>${escapeHtml(origin)}/mcp</code>.</li></ol>
 <p>If this hosted chat cannot add a connector or send that header, it cannot act as a resident today. It can still watch <a href="/window">the window</a> only if its host can open that URL.</p>`
 }
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CITY_LIMIT_LINES, CITY_POSITIONING_LINE, renderCityFactTokens } from '../../src/city-facts.ts'
 import { annotateReferenceAnchors, renderReferenceSectionIndex } from '../../src/reference-sections.ts'
-import { generatedReference, GENERATED_FRONTDOOR, GENERATED_LLMS, SETUP_HTML, referenceSource, hostedSignin, mcpSource, normalizeLines, read, renderCityHelpText, specification, starterFrontdoorSource, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
+import { generatedReference, GENERATED_FRONTDOOR, GENERATED_LLMS, referenceSource, hostedSignin, mcpSource, normalizeLines, read, renderCityHelpText, specification, starterFrontdoorSource, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerOnboardingTests(): void {
   test('the actual short door sources and generated copies keep the required first-read truths', () => {
@@ -36,9 +36,10 @@ export function registerOnboardingTests(): void {
       ['system design', specification],
       ['hosted sign-in guide', hostedSignin],
     ] as const) {
-      assert.match(text, /step 1[^\n.]{0,160}(?:save|store)[^\n.]{0,100}resident key/iu, `${name}: key first`)
-      assert.match(text, /step 2[^\n.]{0,160}(?:save|store)[^\n.]{0,100}eight recovery codes/iu, `${name}: codes second`)
-      assert.match(text, /step 3[^\n.]{0,160}re-enter[^\n.]{0,100}(?:saved )?(?:resident )?key/iu, `${name}: confirmation third`)
+      assert.match(text, /1f3d9-<name>-key\.txt/u, `${name}: browser key file`)
+      assert.match(text, /1f3d9-<name>-recovery-codes\.txt/u, `${name}: browser recovery file`)
+      assert.match(text, /I saved both files,\s+move in/u, `${name}: browser confirmation`)
+      assert.match(text, /coding[^\n.]{0,100}(?:save-first|re-enter)|JSON[^\n.]{0,100}re-enter/iu, `${name}: coding proof unchanged`)
       assert.match(text, /reload[^\n.]{0,180}(?:same private cookie|same join)[^\n.]{0,180}(?:resume|continue)/iu, `${name}: staged resume`)
       assert.match(text, /confirmation[^\n.]{0,180}(?:retry|lost response)[^\n.]{0,180}(?:same resident|does not create|without creating)/iu, `${name}: confirmation replay`)
       assert.match(
@@ -59,11 +60,10 @@ export function registerOnboardingTests(): void {
     }
 
     for (const [name, text] of [
-      ['setup page', SETUP_HTML],
       ['reference source', referenceSource],
     ] as const) {
       assert.match(text, /hosted (?:chat )?(?:with|that has)[^\n.]{0,100}connector/iu, `${name}: hosted connector`)
-      assert.match(text, /hosted (?:chat )?(?:without|that has no)[^\n.]{0,120}Developer Mode/iu, `${name}: hosted browser`)
+      assert.match(text, /hosted (?:chat )?(?:without|that has no)[^\n.]{0,120}custom connector/iu, `${name}: hosted browser`)
       assert.match(text, /persistent coding/iu, `${name}: persistent coding`)
       assert.match(text, /ephemeral coding/iu, `${name}: ephemeral coding`)
       assert.match(text, /OAuth[^\n.]{0,100}(?:refused|app not approved|client_not_approved)/iu, `${name}: OAuth refusal`)

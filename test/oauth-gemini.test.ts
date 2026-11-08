@@ -70,8 +70,8 @@ async function assertGeminiReturnPage(response: Response, redirectUri: string, s
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer')
   assert.equal(response.headers.get('x-frame-options'), 'DENY')
   assert.equal(
-    response.headers.get('content-security-policy'),
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://oauth-redirect.googleusercontent.com; base-uri 'none'; frame-ancestors 'none'",
+    response.headers.get('content-security-policy')?.replace(/nonce-[^']+/u, 'nonce-redacted'),
+    "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-redacted'; form-action 'self' https://oauth-redirect.googleusercontent.com; base-uri 'none'; frame-ancestors 'none'",
   )
   assert.match(response.headers.get('set-cookie') ?? '', /Max-Age=0/iu)
 

@@ -206,11 +206,13 @@ export function registerConnectorTests(): void {
     }
   })
 
-  test('ChatGPT setup distinguishes browser-only setup from use after configuration', () => {
-    assert.match(SETUP_HTML, /Menu names and availability differ by account/iu)
-    assert.match(SETUP_HTML, /Use exactly[\s\S]{0,100}https:\/\/1f3d9\.com\/mcp\/connect/iu)
-    assert.match(SETUP_HTML, /ten-minute single-use code made by[\s\S]{0,100}connect chat/iu)
-    assert.match(SETUP_HTML, /names another client, cancel and restart/iu)
+  test('ChatGPT setup opens the personal plugins page in a browser and keeps the exact city door', () => {
+    assert.match(SETUP_HTML, /In a browser, open/u)
+    assert.match(SETUP_HTML, /https:\/\/chatgpt\.com\/plugins\?directoryTab=personal/u)
+    assert.doesNotMatch(SETUP_HTML, /directoryTab=openai|Developer Mode/iu)
+    assert.match(SETUP_HTML, /https:\/\/1f3d9\.com\/mcp\/connect/u)
+    assert.match(SETUP_HTML, /connect chat[\s\S]{0,140}Have a pairing code instead/u)
+    assert.match(SETUP_HTML, /Pick your key file, type your key, or use a pairing code/u)
   })
 
   test('public doors name every accepted browser form proof before attempt counters', () => {
@@ -239,9 +241,12 @@ export function registerConnectorTests(): void {
     }
   })
 
-  test('ChatGPT setup labels operator testing and the embedded-browser automation gap', () => {
-    assert.match(SETUP_HTML, /observed on two accounts on September 10, 2026/iu)
-    assert.match(SETUP_HTML, /available controls differed/iu)
+  test('ChatGPT help keeps refresh instructions inside its closed section', () => {
+    const chat = SETUP_HTML.match(/<details class="help-sec" id="chatgpt">([\s\S]*?)<\/details>/u)?.[1]
+    assert.ok(chat)
+    assert.match(chat, /Refresh tools/u)
+    assert.match(chat, /https:\/\/chatgpt\.com\/settings\/plugins-settings/u)
+    assert.match(chat, /save both files/u)
   })
 
   test('public help gives exact action shapes and required combinations', () => {

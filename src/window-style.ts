@@ -1,4 +1,6 @@
-export const WINDOW_CSS = `:root {
+import { WINDOW_MOVE_IN_CSS } from './window-move-in-style.ts'
+
+export const WINDOW_CSS = WINDOW_MOVE_IN_CSS + `:root {
   color-scheme: dark;
   --night: #0b1714;
   --night-soft: #14241f;
