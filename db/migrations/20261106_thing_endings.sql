@@ -422,12 +422,13 @@ $thing_endings_wake_reason$;
 ALTER TABLE wake_tries VALIDATE CONSTRAINT wake_tries_reason_known;
 ALTER TABLE thing_state_changes VALIDATE CONSTRAINT thing_state_changes_trigger_known;
 
--- The guards. Every one judges at transaction_timestamp() and refuses with SQLSTATE 23514
--- and the constraint name thing_ending_guard. A thing whose end has come (due, or recorded
--- as ended) keeps everything it had, except what its owner may still do: carry it, set it
--- down, give it, or withdraw it. Three writers may pass more, each only for the one thing
--- it names in the transaction-local setting city.ending_writer: record:<id> writes the
--- end, end_try:<id> runs the end program once, withdraw:<id> withdraws a remnant.
+-- The guards. Every one judges at transaction_timestamp(), except that a spent last use
+-- counts as reached whatever the clock, and refuses with SQLSTATE 23514 and the constraint
+-- name thing_ending_guard. A thing whose end has come (due, recorded as ended, or with its
+-- last use spent) keeps everything it had, except what its owner may still do: carry it,
+-- set it down, give it, or withdraw it. Three writers may pass more, each only for the one
+-- thing it names in the transaction-local setting city.ending_writer: record:<id> writes
+-- the end, end_try:<id> runs the end program once, withdraw:<id> withdraws a remnant.
 
 -- Whether the writer setting names this thing, and as which writer; '' for nothing.
 CREATE OR REPLACE FUNCTION thing_ending_writer(target_thing_id integer) RETURNS text

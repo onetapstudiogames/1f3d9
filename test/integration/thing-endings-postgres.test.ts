@@ -531,25 +531,40 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
     }, { query: async (text: string, values: readonly unknown[] = []) => (await client.query(text, [...values])).rows })
     /**
      * The next engine transaction begins, fixes its transaction time, and waits until it is
-     * released; later ones run at once. No host clock is involved.
+     * released; later ones run at once. No host clock is involved. With `when`, only the
+     * first transaction whose call stack it accepts is held (a make can be preceded by a
+     * room settle's own short transaction). `queries` collects the SQL the held one ran,
+     * so a test can prove which transaction it held.
      */
-    const holdNextTransaction = () => {
+    const holdNextTransaction = (when: (stack: string) => boolean = () => true) => {
       let release = () => undefined as void
       let begun = () => undefined as void
       const released = new Promise<void>(resolve => { release = resolve })
       const started = new Promise<void>(resolve => { begun = resolve })
+      const queries: string[] = []
       let held = false
       setEngineTransactionRunnerForTests(async (_ignored, work) => {
+        const hold = !held && when(String(new Error().stack))
+        if (hold) held = true
         const client: PoolClient = await db.connect()
         try {
           await client.query('BEGIN')
           await client.query('SELECT transaction_timestamp()')
-          if (!held) {
-            held = true
+          if (hold) {
             begun()
             await released
           }
-          const result = await work(taggedClient(client), true)
+          const tagged = taggedClient(client)
+          const watched = hold
+            ? Object.assign(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+              queries.push(strings.join('?'))
+              return tagged(strings, ...values)
+            }, { query: async (text: string, values: readonly unknown[] = []) => {
+              queries.push(text)
+              return tagged.query(text, values)
+            } })
+            : tagged
+          const result = await work(watched, true)
           await client.query('COMMIT')
           return result
         } catch (error) {
@@ -559,7 +574,7 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
           client.release()
         }
       })
-      return Object.freeze({ started, release })
+      return Object.freeze({ started, release, queries })
     }
     /** Another use spends the last use and commits, stamped later than the held transaction. */
     const spendLastUse = async (thingId: number) => {
@@ -623,6 +638,37 @@ test('thing endings, the recorder and the use path, against PostgreSQL', { timeo
       assert.equal(await count(`SELECT count(*) AS n FROM thing_ending_changes WHERE thing_id = $1 AND change = 'renew'`, [thingId]), 0)
       if (row.ended_at === null) assert.deepEqual(await recordDueEnd([thingId]), [thingId])
       assert.equal((await ending(thingId)).ended_cause, 'uses')
+    })
+
+    await t.test('a make whose ingredient lost its last use to another use while the make ran is refused E7', async () => {
+      await reset()
+      const reeds = await seedKind('racing-reeds', [])
+      const baskets = Number((await one<{ id: number }>(
+        'INSERT INTO kinds (name, owner_id) VALUES ($1, $2) RETURNING id', ['racing-baskets', OWNER.id],
+      )).id)
+      await db.query(`INSERT INTO kind_revisions (kind_id, revision, traits, recipe) VALUES ($1, 1, '{}'::text[], $2::jsonb)`, [
+        baskets, JSON.stringify([{ kind: 'racing-reeds', quantity: 1 }]),
+      ])
+      const reed = await seedThing(room, { kindId: reeds })
+      await setEnd(reed, { uses: 1, at: '5 days' })
+      // Hold the make's own transaction, not a settle's that may run before it.
+      const held = holdNextTransaction(stack => stack.includes('makeCraftedThing'))
+      const make = call(app, OWNER.secret, 'POST', '/api/thing', {
+        place_id: room, name: 'a racing basket', body: '', kind_id: baskets, ingredient_ids: [reed],
+      })
+      await held.started
+      await spendLastUse(reed)
+      held.release()
+      const made = await make
+      assert.ok(held.queries.some(text => text.includes('/* crafting:ingredients */')), 'the held transaction is the make')
+      assert.equal(made.status, 409, JSON.stringify(made.json))
+      assert.equal(made.json.error, THING_REMNANT_REFUSAL)
+      const row = await one<Json>('SELECT withdrawn_at, ending_uses_left FROM things WHERE id = $1', [reed])
+      assert.equal(row.withdrawn_at, null, 'the spent ingredient is not used up')
+      assert.equal(row.ending_uses_left, 0)
+      assert.equal(await count('SELECT count(*) AS n FROM things WHERE kind_id = $1', [baskets]), 0, 'no basket was made')
+      if ((await ending(reed)).ended_at === null) assert.deepEqual(await recordDueEnd([reed]), [reed])
+      assert.equal((await ending(reed)).ended_cause, 'uses')
     })
 
     await t.test('a consume whose own step labels its thing with its end label keeps the step and leaves a remnant', async () => {
