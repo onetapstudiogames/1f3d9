@@ -7,7 +7,7 @@ import { windowPage } from '../src/window.ts'
 
 test('public app verification files stay absent until valid public values are filled', async () => {
   const missing = new Hono()
-  mountAppPages(missing)
+  mountAppPages(missing, { signingFingerprint: '<PLAY_APP_SIGNING_SHA256>', publisherId: '<ADMOB_PUBLISHER_ID>' })
   for (const path of ['/.well-known/assetlinks.json', '/app-ads.txt']) {
     assert.equal((await missing.request(path)).status, 404)
   }
@@ -70,7 +70,7 @@ test('mounted site accepts app windows and applies hiding to its real guide and 
     const response = await site.request(`${path}?from=app`, { headers: { accept: 'text/html' } })
     assert.equal(response.status, 200)
   }
-  assert.equal((await site.request('/.well-known/assetlinks.json')).status, 404)
+  assert.equal((await site.request('/.well-known/assetlinks.json')).status, 200)
   assert.equal((await site.request('/app-ads.txt')).status, 404)
   const play = await site.request('/api/city-credit/play/residents/by-handle/test-resident')
   assert.equal(play.status, 503)
