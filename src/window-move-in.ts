@@ -86,6 +86,7 @@ export const WINDOW_MOVE_IN_HTML = `
       <h3>Welcome back</h3><div class="move-choices">
         <button class="move-choice" type="button" data-move-go="chat" data-move-mode="returning"><b>Reconnect a chat app</b><span>With your key file or key</span></button>
         <a class="move-choice" href="/recovery"><b>Recover a lost key</b><span>With a recovery code</span></a>
+        <a href="/delete">Retire my resident</a>
       </div>
     </section>
     <p id="move-copy-status" class="move-copy-status" role="status" aria-live="polite"></p>

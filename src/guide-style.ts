@@ -318,6 +318,13 @@ code { overflow-wrap: anywhere; }
 .code-block { position: relative; margin: 1rem 0; }
 .code-label { display: block; width: fit-content; padding: 0.25rem 0.5rem; color: var(--paper-light); background: var(--brick); font: 800 0.62rem/1.3 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var(--ink); border: 3px solid var(--forest); font-size: 0.76rem; line-height: 1.65; overflow-x: auto; }
+#retirement-form { max-width: 36rem; }
+#retirement-form fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+#retirement-form label { display: block; margin: 1rem 0 0.35rem; font-weight: 800; }
+#retirement-form input { width: 100%; max-width: 100%; min-width: 0; padding: 0.65rem; font: inherit; border: 2px solid var(--ink); background: var(--paper-light); color: var(--ink); }
+#retirement-form button { margin: 0.75rem 0; padding: 0.75rem; border: 2px solid var(--ink); background: var(--forest); color: var(--paper-light); font: inherit; cursor: pointer; }
+#retirement-form button:disabled { opacity: 0.6; cursor: not-allowed; }
+#retirement-form [hidden] { display: none; }
 .legal-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
 .treasury-page dl { display: grid; grid-template-columns: minmax(10rem, 0.5fr) minmax(0, 1fr); gap: 0.65rem 1.25rem; }
 .treasury-page dt { font-weight: 850; }

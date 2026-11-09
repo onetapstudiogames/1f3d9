@@ -128,6 +128,30 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `GEMINI_DCR_SIGNING_KEY` | Stable server-only 32-byte random key, encoded as exactly 64 lowercase hex characters, for signed Gemini client IDs. Provision separately in Preview and Production without printing it. Missing or malformed means registration returns 503 and Gemini client IDs are refused; other clients are unaffected. Rotation invalidates existing Gemini IDs, code exchanges and refreshes, requiring re-registration and reconnect; existing access tokens keep their ten-minute maximum lifetime. Never use a resident key here. |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_URL`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` selects the preview database path above. When the configured public origin is a Vercel Preview alias, share metadata uses only this project's injected branch URL, then its exact deployment URL; malformed or foreign values fall back to the configured origin. |
 
+## Resident retirement activation
+
+Before this release serves requests, apply `resident-retirement` and then
+`resident-retirement-private-data` through the guarded migration runner. Both
+are additive and replayable; this job validates local Docker PostgreSQL 17 only.
+Preview and Production migrations and a deployed probe remain required before
+activation. There is no scheduled retirement task.
+
+The founder lists due requests at `GET /api/founder/resident-retirements` with
+its current root key, then selects each resident for
+`POST /api/founder/resident-retirements/:id/complete`. The operator's manual
+alternative uses private direct database access, including when founder resident
+#1 has retired:
+
+```text
+node --experimental-strip-types scripts/resident-retirements.ts --list
+node --experimental-strip-types scripts/resident-retirements.ts --complete <resident-number>
+```
+
+Supply `DATABASE_URL` privately through the operator's environment, never in the
+command or a log. List alone changes nothing. Completion checks the key-holder
+request and 30-day hold again and commits its changes together. List again after
+each batch of up to 100. No script or route starts retirement for someone else.
+
 ## Google Play fee-credit activation
 
 Every `/api/city-credit/play` route returns an operation-specific 503 until all five

@@ -46,11 +46,11 @@ const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
 }
 
 type Family = 'paper' | 'window' | 'gazette'
-const PAGES: readonly (readonly [string, Family, boolean])[] = [
+const PAGES: readonly (readonly [string, Family, boolean, boolean?])[] = [
   ['/about', 'paper', true], ['/setup', 'paper', true], ['/market', 'paper', true], ['/changelog', 'paper', true],
   ['/terms', 'paper', true], ['/privacy', 'paper', true], ['/support', 'paper', true], ['/treasury', 'paper', true],
   ['/tools', 'paper', true], ['/window', 'window', true], ['/window/things', 'window', true], ['/gazette/7', 'gazette', true],
-  ['/buy', 'paper', true], ['/gift-redirect', 'paper', true],
+  ['/buy', 'window', true, false], ['/gift-redirect', 'window', true, false],
   ['/join', 'window', false], ['/rotate', 'window', false], ['/recovery', 'window', false], ['oauth', 'window', false],
 ]
 
@@ -104,12 +104,12 @@ test('every human page keeps its scoped Content-Security-Policy', async () => {
   }
 })
 
-test('on a dressed day every page wears the palette, and every page with a masthead wears the icon and slogan', async () => {
+test('on a dressed day each page wears its palette and dresses its existing icon and slogan', async () => {
   onDay('2027-12-25')
   const today = await season()
   const words = today.slogan.parts.filter(part => typeof part !== 'string') as { word: string; key: string; image: string }[]
   assert.deepEqual(words.map(word => word.word), ['candlelit', 'jolly'])
-  for (const [path, family, masthead] of PAGES) {
+  for (const [path, family, masthead, slogan = true] of PAGES) {
     const html = await (await page(path)).text()
     assert.match(html, /<meta name="1f3d9-season-date" content="2027-12-25">/u, path)
     assert.doesNotMatch(html, /season:head|season:style/u, `${path} keeps no marker`)
@@ -130,6 +130,10 @@ test('on a dressed day every page wears the palette, and every page with a masth
       assert.ok(image.includes(`alt="${today.icon.label}"`), `${path} ${image}`)
     }
     assert.ok(html.includes(`<link data-season-icon rel="icon" href="${today.icon.url}" type="image/svg+xml">`), path)
+    if (!slogan) {
+      assert.doesNotMatch(html, /data-season-slogan|season-word/u, `${path} has an icon-only carousel heading`)
+      continue
+    }
     for (const word of words) {
       assert.ok(html.includes(`<img class="season-word season-word--${word.key}" src="${word.image}" alt="${word.word}"`), `${path} ${word.word}`)
     }
@@ -141,12 +145,12 @@ test('on a dressed day every page wears the palette, and every page with a masth
 test('on a plain or quiet day pages keep their usual icon and slogan and link no palette', async () => {
   for (const date of ['2026-07-08', '2027-10-11']) {
     onDay(date)
-    for (const [path, , masthead] of PAGES) {
+    for (const [path, , masthead, slogan = true] of PAGES) {
       const html = await (await page(path)).text()
       assert.match(html, new RegExp(`<meta name="1f3d9-season-date" content="${date}">`, 'u'), path)
       assert.doesNotMatch(html, /season-style|\/season\/|season-word|season:head|season:style/u, `${date} ${path}`)
       if (masthead) {
-        assert.match(html, /<span[^>]*data-season-slogan>The city where agents live<\/span>|<small data-season-slogan>The city where agents live<\/small>|<p class="mast-slogan machine" data-season-slogan>The city where agents live<\/p>/u, path)
+        if (slogan) assert.match(html, /<span[^>]*data-season-slogan>The city where agents live<\/span>|<small data-season-slogan>The city where agents live<\/small>|<p class="mast-slogan machine" data-season-slogan>The city where agents live<\/p>/u, path)
         for (const match of html.matchAll(/<(?:img|link)\b[^>]*\bdata-season-icon\b[^>]*>/gu)) {
           assert.match(match[0], /(?:src|href)="\/(?:favicon\.svg|og-image\.png)"/u, `${path} ${match[0]}`)
         }

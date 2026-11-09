@@ -107,9 +107,11 @@ export function mountPlayCreditRoutes(app: Hono, deps: Dependencies): void {
   app.get(`${BASE}/residents/by-handle/:handle`, route('resident lookup', async (c, config) => {
     const handle = playText(c.req.param('handle'), 'resident handle', 64)
     await rate(c, deps, config)
-    const row = (await deps.database.query('SELECT id, handle FROM residents WHERE handle = $1', [handle]))[0]
+    const row = (await deps.database.query('SELECT id, handle, retirement_state FROM residents WHERE handle = $1', [handle]))[0]
     if (!row) throw new PlayCreditFailure(404, 'That resident was not found.')
-    return c.json({ resident_number: row.id, resident_handle: row.handle })
+    return c.json({ resident_number: row.id, resident_handle: row.handle,
+      ...((row.retirement_state === 'retiring' || row.retirement_state === 'retired')
+        ? { display_handle: `${row.handle} (${row.retirement_state})` } : {}) })
   }))
   app.post(`${BASE}/orders`, route('order creation', async (c, config) => {
     const input = json(await body(c))
@@ -122,8 +124,11 @@ export function mountPlayCreditRoutes(app: Hono, deps: Dependencies): void {
     if (!Number.isSafeInteger(input.resident_number) || Number(input.resident_number) < 1 || Number(input.resident_number) > 2_147_483_647) throw new PlayCreditFailure(400, 'Send a positive resident number.')
     const handle = playText(input.resident_handle, 'resident handle', 64)
     await rate(c, deps, config)
-    const resident = (await deps.database.query('SELECT id FROM residents WHERE id = $1 AND handle = $2', [input.resident_number, handle]))[0]
+    const resident = (await deps.database.query('SELECT id, retirement_state FROM residents WHERE id = $1 AND handle = $2', [input.resident_number, handle]))[0]
     if (!resident) throw new PlayCreditFailure(404, 'That resident name and number do not match.')
+    if (resident.retirement_state === 'retiring' || resident.retirement_state === 'retired') {
+      throw new PlayCreditFailure(409, `That resident is ${resident.retirement_state} and cannot receive new fee credit. No Play purchase was started.`)
+    }
     const result = await createPlayOrder(deps.database, { requestId, recipientId: Number(input.resident_number), productId: input.product_id as PlayProduct, appUserId, environment: config.environment })
     return c.json({ order_id: result.order.public_id, resident_number: result.order.recipient_id, resident_handle: handle,
       credits: playCredits(result.order.product_id), claim_token: result.claimToken,
@@ -144,6 +149,9 @@ export function mountPlayCreditRoutes(app: Hono, deps: Dependencies): void {
     await rate(c, deps, config)
     const order = await readPlayOrder(deps.database, id)
     if (!order) throw new PlayCreditFailure(404, 'That Play order was not found.')
+    if (order.resident_retirement_state === 'retiring' || order.resident_retirement_state === 'retired') {
+      throw new PlayCreditFailure(409, `That resident is ${order.resident_retirement_state} and cannot receive new fee credit. Email adam@twamd.com about an earlier payment.`)
+    }
     const verified = await verifyPlayPurchase(config, order.rc_app_user_id, transaction, deps.fetcher)
     if (verified.productId !== order.product_id) throw new PlayCreditFailure(409, 'That Play purchase is for a different pack.')
     const eventType = verified.refunded ? 'CANCELLATION' : 'NON_RENEWING_PURCHASE'

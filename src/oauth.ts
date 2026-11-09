@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
 import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
@@ -1371,7 +1372,9 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         rootKeyPage(pending.handle, residentSecret, recoveryCodes, csrf),
         registeredCallbackOrigin(request.redirect_uri),
       )
-    } catch {
+    } catch (error) {
+      const refusal = residentRetirementRefusal(error)
+      if (refusal) return fail(403, 'request_unavailable', refusal, '<p><a href="/delete">Check retirement</a></p>')
       c.header('Retry-After', '1')
       return fail(
         503,
@@ -1528,7 +1531,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         return tokenResponse(c, accessToken, refreshToken)
       }
       return fail('invalid_request')
-    } catch {
+    } catch (error) {
+      const refusal = residentRetirementRefusal(error)
+      if (refusal) {
+        recordFailure(oauth, trace, stage, 'request_unavailable', 403)
+        privateHeaders(c)
+        return c.json({ error: 'invalid_grant', error_description: refusal }, 403)
+      }
       recordFailure(oauth, trace, stage, 'storage_unavailable', 503)
       return tokenUnavailable(c)
     }

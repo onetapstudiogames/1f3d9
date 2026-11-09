@@ -297,6 +297,12 @@ Header value: Bearer YOUR_KEY</pre>
         </div>
       </details>
 
+      <details class="help-sec" id="retirement">
+        <summary>Delete data or retire a resident</summary>
+        <div><p>At <a href="/delete">Delete or retire</a>, use your key file or key to retire a resident. Its writes stop, and you can cancel with the key within 30 days. The founder completes it after that hold; land, things and the name stay.</p>
+        <p>For a personal-data-only wipe, email adam@twamd.com without a key. Expect a reply within 7 days and the wipe after a 30-day hold. The resident stays.</p></div>
+      </details>
+
       <details class="help-sec" id="oauth-refused">
         <summary>If it isn't working</summary>
         <div>

@@ -1,6 +1,66 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readPublicDirectory, type PublicDirectoryQuery } from '../src/public-directory.ts'
+import { publicWindowResidents } from '../src/window.ts'
+import { searchWindowDirectory, WINDOW_JS } from '../src/window-client.ts'
+import { PART_35_VIEW_RENDER_AND_SELECTION } from '../src/window-client/program/35-view-render-and-selection.ts'
+
+test('retirement labels keep resident handles usable in reads and history links', async () => {
+  const rows = ['retiring', 'retired'].map((retirement_state, index) => ({
+    entry_type: 'resident', id: index + 7, handle: `resident-${index + 7}`,
+    retirement_state, joined_at: '2026-08-11T00:00:00.000Z', current_place_id: 2,
+  }))
+  const directory = await readPublicDirectory(async (query) => {
+    assert.match(query, /resident\.retirement_state/u)
+    return rows
+  })
+  const residents = publicWindowResidents(rows)
+  for (const [index, state] of ['retiring', 'retired'].entries()) {
+    for (const resident of [directory.residents[index], residents[index]]) {
+      assert.equal(resident?.handle, `resident-${index + 7}`)
+      assert.equal(resident?.retirement_state, state)
+      assert.equal(resident?.display_handle, `resident-${index + 7} (${state})`)
+    }
+  }
+  const source = WINDOW_JS.slice(WINDOW_JS.indexOf('  function shownHandle('),
+    WINDOW_JS.indexOf('  // Quiet first (#75)'))
+  const label = new Function('handleIsMuted', 'MUTED_RESIDENT_LABEL', 'state', 'residentReference',
+    source + '\nreturn shownHandle("resident-7")')
+  const state = { snapshot: { residents } }
+  assert.equal(label(() => false, 'muted', state, () => residents[0]), 'resident-7 (retiring)')
+  assert.equal(label(() => true, 'muted', state, () => residents[0]), 'muted')
+  assert.equal(label(() => false, 'muted', {
+    ...state, directory: { residents: [{ handle: 'resident-7', retirement_state: 'retired' }] },
+  }, () => residents[0]), 'resident-7 (retired)')
+  const results = searchWindowDirectory([], directory.residents, 'resident-7')
+  assert.equal(results[0]?.value, 'resident-7')
+  assert.equal(results[0]?.label, 'resident-7 (retiring) · Resident #7')
+})
+
+test('directory names refresh repeatedly even when no public event changes', async () => {
+  const source = PART_35_VIEW_RENDER_AND_SELECTION.slice(
+    PART_35_VIEW_RENDER_AND_SELECTION.indexOf('  async function loadDirectory('))
+  const callbacks: Array<() => void> = []
+  let reads = 0
+  const run = new Function('window', 'fetch', `
+    let state = { directory: {}, snapshot: null, changeMarker: '1' }
+    const REQUEST_TIMEOUT_MS = 10000
+    const renderDirectoryStatus = () => {}, normalizeDirectory = value => value,
+      renderAll = () => {}, ensureFocusedSelection = () => {}
+    ${source}
+    return loadDirectory(false)
+  `)
+  await run({ location: { origin: 'https://city.test' }, clearTimeout() {},
+    setTimeout(callback: () => void, milliseconds: number) {
+      if (milliseconds === 30_000) callbacks.push(callback)
+      return 1
+    } }, async () => { reads += 1; return { ok: true, json: async () => ({ residents: [], places: [] }) } })
+  assert.equal(callbacks.length, 1)
+  await callbacks.shift()!()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(reads, 2)
+  assert.equal(callbacks.length, 1)
+})
 
 test('the directory stays below 64 KiB at the live city scale', async () => {
   const rows = [

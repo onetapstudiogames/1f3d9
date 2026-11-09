@@ -14,7 +14,7 @@ export const CREDIT_BUY_RETURN_CLIENT = String.raw`
       const payload = await postJson(root.dataset.orderPath + '/' + encodeURIComponent(purchaseId) + '/capture', { paypal_order_id: paypalOrderId })
       if (!/^[a-z0-9][a-z0-9-]{2,31}$/.test(payload.resident_handle) || !/^(?:[1-9][0-9]{0,3}|10000)$/.test(payload.amount_dollars) || !['gift','self'].includes(payload.delivery)) throw new Error('The payment receipt could not be read.')
       const amount = payload.amount_dollars
-      const handle = payload.resident_handle
+      const handle = payload.display_handle || payload.resident_handle
       if (payload.delivery === 'gift') {
         if (!/^city_gift_[0-9a-f]{32}$/.test(payload.gift_id) || !['pending','accepted','refused','frozen','revoked'].includes(payload.status)) throw new Error('The gift receipt could not be read.')
         set({ path: 'gift' })

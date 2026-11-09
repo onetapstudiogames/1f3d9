@@ -288,7 +288,7 @@ function sameIntentTerms(
 export async function findPayPalCreditRecipient(
   database: PayPalCreditStoreDatabase,
   residentNumberInput: unknown,
-): Promise<Readonly<{ residentNumber: number; residentHandle: string }> | null> {
+): Promise<Readonly<{ residentNumber: number; residentHandle: string; retirementState?: 'retiring' | 'retired' }> | null> {
   const lookup = typeof residentNumberInput === 'string' ? residentNumberInput : null
   const byHandle = lookup !== null && (lookup.startsWith('@') || !/^[0-9]+$/u.test(lookup))
   if (lookup !== null && !byHandle && !/^[1-9][0-9]{0,9}$/u.test(lookup)) {
@@ -302,7 +302,7 @@ export async function findPayPalCreditRecipient(
     : positiveResidentId(lookup === null ? residentNumberInput : Number(lookup))
   const rows = await database.query(`
     /* paypal-credit:recipient */
-    SELECT id, handle FROM residents WHERE ${byHandle ? 'handle = $1::text' : 'id = $1::integer'} LIMIT 1
+    SELECT id, handle, retirement_state FROM residents WHERE ${byHandle ? 'handle = $1::text' : 'id = $1::integer'} LIMIT 1
   `, [value])
   const row = rows[0]
   if (!row) return null
@@ -311,6 +311,8 @@ export async function findPayPalCreditRecipient(
   return Object.freeze({
     residentNumber: storedNumber,
     residentHandle: safeHandle(row.handle),
+    ...((row.retirement_state === 'retiring' || row.retirement_state === 'retired')
+      ? { retirementState: row.retirement_state } : {}),
   })
 }
 

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
 import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
@@ -160,7 +161,9 @@ async function withJoinStorageErrors(
 ): Promise<Response> {
   try {
     return await handle()
-  } catch {
+  } catch (error) {
+    const refusal = residentRetirementRefusal(error)
+    if (refusal) return browserError(c, 403, 'request_unavailable', refusal, '<p><a href="/delete">Check retirement</a></p>')
     const cookieState = inspectBrowserSessionCookie(c, JOIN_COOKIE)
     return joinStorageUnavailable(
       c,

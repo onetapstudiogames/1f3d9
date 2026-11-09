@@ -6,6 +6,7 @@ import { auth, setOAuthResidentResolver } from '../src/core.ts'
 import { mcp } from '../src/mcp.ts'
 import { mountIdentityRoutes } from '../src/identity-browser.ts'
 import { mountOAuthRoutes, oauthChallenge, residentByOAuthAccessToken } from '../src/oauth.ts'
+import { mountLegalRoutes } from '../src/legal.ts'
 import { mountHumanPages } from '../src/human-pages.ts'
 import {
   CREDIT_BUY_CSP,
@@ -169,6 +170,7 @@ mountHumanPages(featureOffHumanPages, {
   submitCommunityTool: submitCommunityToolForBrowserTest,
 })
 app.route('/feature-off', featureOffHumanPages)
+mountLegalRoutes(app)
 mountHumanPages(app, {
   environment,
   hostedChatSigninReady: () => true,

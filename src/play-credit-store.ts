@@ -8,10 +8,11 @@ export type PlayOrder = Readonly<{
   public_id: string; request_id: string; recipient_id: number; resident_handle: string
   product_id: PlayProduct; amount_units: string; rc_app_user_id: string
   environment: PlayEnvironment; transaction_id: string | null; status: string; created_at: Date | string
+  resident_retirement_state?: string
 }>
 
 export async function readPlayOrder(db: PlayCreditDatabase, orderId: string): Promise<PlayOrder | null> {
-  const rows = await db.query(`SELECT o.*, r.handle AS resident_handle FROM play_credit_orders o
+  const rows = await db.query(`SELECT o.*, r.handle AS resident_handle, r.retirement_state AS resident_retirement_state FROM play_credit_orders o
     JOIN residents r ON r.id = o.recipient_id WHERE o.public_id = $1`, [orderId])
   return rows[0] as PlayOrder | undefined ?? null
 }
@@ -48,5 +49,7 @@ export async function applyPlayPurchase(db: PlayCreditDatabase, input: Readonly<
 }
 
 export function playOrderReceipt(order: PlayOrder) {
-  return { status: order.status, resident_handle: order.resident_handle, credits: playCredits(order.product_id) }
+  return { status: order.status, resident_handle: order.resident_handle, credits: playCredits(order.product_id),
+    ...((order.resident_retirement_state === 'retiring' || order.resident_retirement_state === 'retired')
+      ? { display_handle: `${order.resident_handle} (${order.resident_retirement_state})` } : {}) }
 }

@@ -201,7 +201,7 @@ export function registerAuthBoundaryTests(): void {
         // JSON identity doors as an alternative -- see hosted-chat-discovery.ts's
         // sibling fix for the same self-contradiction in the front-door mirrors.
         assert.match(text, /Browser clients use \/join/iu, `hostedChat=${hostedChatFlag}`)
-        assert.match(text, /coding clients use the enabled JSON identity doors/iu, `hostedChat=${hostedChatFlag}`)
+        assert.match(text, /coding clients still save first, then re-enter the key through the enabled JSON identity doors/iu, `hostedChat=${hostedChatFlag}`)
         assert.doesNotMatch(
           text,
           /Registration, rotation, and recovery remain browser-only and are never MCP tools/i,

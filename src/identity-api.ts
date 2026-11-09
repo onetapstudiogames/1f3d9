@@ -16,6 +16,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Context, Hono } from 'hono'
 import { IDENTITY_LIMITS } from './identity-limits.ts'
+import { residentRetirementRefusal } from './retirement-errors.ts'
 import {
   newBrowserSessionCookie,
   parseSessionToken,
@@ -231,7 +232,9 @@ export async function withIdentityApiStorageErrors(
 ): Promise<Response> {
   try {
     return await operation()
-  } catch {
+  } catch (error) {
+    const refusal = residentRetirementRefusal(error)
+    if (refusal) return jsonError(c, 403, 'request_unavailable', refusal, 'Visit /delete to check retirement.')
     c.header('Retry-After', '1')
     return jsonError(
       c, 503, 'storage_unavailable',

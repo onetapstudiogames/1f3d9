@@ -59,6 +59,7 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
   await box.getByRole('button', { name: '< Back', exact: true }).click()
   await box.getByRole('button', { name: 'Existing resident' }).click()
   await expect(box.getByRole('link', { name: 'Recover a lost key' })).toHaveAttribute('href', '/recovery')
+  await expect(box.getByRole('link', { name: 'Retire my resident' })).toHaveAttribute('href', '/delete')
   await box.getByRole('button', { name: 'Reconnect a chat app' }).click()
   await box.getByRole('button', { name: 'Claude', exact: true }).click()
   await box.getByRole('button', { name: 'Next >', exact: true }).click()

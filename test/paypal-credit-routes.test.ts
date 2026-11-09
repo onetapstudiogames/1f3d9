@@ -17,6 +17,38 @@ import {
   postRaw,
 } from './helpers/paypal-credit-route-fixtures/route-harness.ts'
 
+test('retiring and retired recipients stop new PayPal orders, allowances and captures before provider calls', async () => {
+  class RetiringDatabase extends MemoryPayPalDatabase {
+    retirementState = 'active'
+    override async query(text: string, params: readonly unknown[] = []) {
+      const rows = await super.query(text, params)
+      return text.includes('paypal-credit:recipient')
+        ? rows.map(row => ({ ...row, retirement_state: this.retirementState })) : rows
+    }
+  }
+  for (const state of ['retiring', 'retired']) {
+    const database = new RetiringDatabase()
+    const { app, paypal } = configuredApp(database)
+    const input = { request_id: 'synthetic-retirement-paypal', resident_number: 193,
+      resident_handle: 'keeps-the-maybe', amount_dollars: '3' }
+    const prepared = await app.request('/api/city-credit/paypal/orders', postJson({ ...input, delivery: 'gift' }))
+    assert.equal(prepared.status, 201)
+    const purchase = await prepared.json() as { purchase_id: string }
+    database.retirementState = state
+    const beforeCalls = paypal.calls.length
+    const lookup = await app.request('/api/city-credit/paypal/residents/193')
+    assert.deepEqual(await lookup.json(), { resident_number: 193, resident_handle: 'keeps-the-maybe',
+      display_handle: `keeps-the-maybe (${state})` })
+    for (const [path, body] of [['/orders', { ...input, delivery: 'gift' }], ['/allowances', input],
+      [`/orders/${purchase.purchase_id}/capture`, { paypal_order_id: ORDER_ID }]] as const) {
+      const response = await app.request(`/api/city-credit/paypal${path}`, postJson(body, { authorization: 'Bearer resident-193' }))
+      assert.equal(response.status, 409)
+      assert.match(await response.text(), new RegExp(state))
+    }
+    assert.equal(paypal.calls.length, beforeCalls)
+  }
+})
+
 test('every dormant PayPal route returns a caller-specific config-first 503 without auth, body, DB, or network work', async () => {
   let databaseCalls = 0
   let authCalls = 0
@@ -699,7 +731,8 @@ test('a post-capture resident lookup outage gives a working same-purchase retry'
     override async query(text: string, params: readonly unknown[] = []) {
       if (text.includes('paypal-credit:recipient')) {
         this.recipientLookups += 1
-        if (this.recipientLookups === 2) return []
+        // Creation and pre-capture eligibility checks succeed; the receipt lookup fails.
+        if (this.recipientLookups === 3) return []
       }
       return await super.query(text, params)
     }

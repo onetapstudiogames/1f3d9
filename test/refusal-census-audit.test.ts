@@ -134,6 +134,9 @@ test('the source scan covers every branch of function and arrow typed error buil
     class RouteFailure extends Error {
       constructor(readonly status: number, message: string) { super(message) }
     }
+    class PlayCreditFailure extends Error {
+      constructor(readonly status: number, message: string) { super(message) }
+    }
     function engineBuilder(kind: string): EngineError | null {
       if (kind === 'missing') return new EngineError(404, 'fixture engine missing')
       if (kind === 'busy') return new EngineError(409, \`fixture engine \${kind}\`)
@@ -161,6 +164,9 @@ test('the source scan covers every branch of function and arrow typed error buil
     export function throwDifferentError(): never {
       throw new EngineError(sideValueBuilder().status, 'fixture different thrown refusal')
     }
+    export function throwPlayCredit(): never {
+      throw new PlayCreditFailure(409, 'fixture Play credit conflict')
+    }
   `)
 
   try {
@@ -174,6 +180,7 @@ test('the source scan covers every branch of function and arrow typed error buil
         { adapter: 'RouteFailure returned builder adapter', status: '503', text: 'fixture route unavailable' },
         { adapter: 'EngineError returned builder adapter', status: '409', text: 'fixture aliased builder refusal' },
         { adapter: 'EngineError typed adapter', status: 'expression:sideValueBuilder().status', text: 'fixture different thrown refusal' },
+        { adapter: 'PlayCreditFailure typed adapter', status: '409', text: 'fixture Play credit conflict' },
       ],
     )
     assert.deepEqual(
@@ -226,7 +233,9 @@ test('the refusal census covers every non-identity HTTP and MCP boundary', () =>
   // Decision #167 adds four founder backlog routes and the scheduled close route.
   // Decision #169 adds the founder-only POST /api/founder/labels/end.
   // The world offer batch read adds GET /api/world/offers.
-  assert.equal(http.registrations.length, 164)
+  // Buy and Play add five app assets/pages, five Play routes and two gift routes.
+  // Retirement adds the resident request route and two founder queue/completion routes.
+  assert.equal(http.registrations.length, 179)
   assert.deepEqual(http.globals, ['onError', 'notFound'])
 
   const mcp = discoverMcpBoundaries(projectRoot)

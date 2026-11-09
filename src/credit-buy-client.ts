@@ -76,13 +76,13 @@ export const CREDIT_BUY_JS = BROWSER_IDENTITY_SCRIPT + String.raw`
     $('to-found').hidden = !state.destination
     $('gift-found').hidden = !state.gift
     for (const [prefix, resident] of [['who', state.resident], ['to', state.destination]]) {
-      if (resident) { $(prefix + '-handle').textContent = '@' + resident.handle; $(prefix + '-number').textContent = 'Resident #' + resident.number }
+      if (resident) { $(prefix + '-handle').textContent = '@' + (resident.displayHandle || resident.handle); $(prefix + '-number').textContent = 'Resident #' + resident.number }
     }
-    all('.hname').forEach(el => { el.textContent = state.resident ? '@' + state.resident.handle : 'your resident' })
+    all('.hname').forEach(el => { el.textContent = state.resident ? '@' + (state.resident.displayHandle || state.resident.handle) : 'your resident' })
     all('[data-amt]').forEach(el => { el.setAttribute('aria-pressed', String(el.dataset.amt === state.amount)) })
     all('[data-often]').forEach(el => { el.setAttribute('aria-pressed', String(el.dataset.often === state.often)) })
     $('total').textContent = validAmount(state.amount) ? state.amount + ' credits, $' + state.amount + (state.path === 'own' && state.often === 'weekly' ? ' a week' : '') : 'Pick 1 to 10000, whole numbers.'
-    if (state.gift) { $('gift-summary').textContent = Number(state.gift.amount_usd) + ' credits for @' + state.gift.recipient_handle; $('gift-status').textContent = LABEL[state.gift.status] }
+    if (state.gift) { $('gift-summary').textContent = Number(state.gift.amount_usd) + ' credits for @' + (state.gift.recipient_display_handle || state.gift.recipient_handle); $('gift-status').textContent = LABEL[state.gift.status] }
     all('button,input').forEach(el => { if (!['next','back'].includes(el.id)) el.disabled = busy || (uncertain && !['key-input','key-input_file'].includes(el.id)) })
   }
   const go = screen => { clearError(); set({ screen }); render(); $('carousel-title').focus() }
@@ -104,7 +104,7 @@ export const CREDIT_BUY_JS = BROWSER_IDENTITY_SCRIPT + String.raw`
     const handle = payload.resident_handle
     const matches = /^[1-9][0-9]{0,9}$/.test(query) ? number === query : handle === query.replace(/^@/, '')
     if (!/^[1-9][0-9]{0,9}$/.test(number) || !/^[a-z0-9][a-z0-9-]{2,31}$/.test(handle) || !matches) throw new Error('The resident did not match. Find them again before continuing.')
-    return Object.freeze({ number, handle })
+    return Object.freeze({ number, handle, displayHandle: payload.display_handle || handle })
   }
   const beginApproval = url => {
     $('claim-key').textContent = ''; $('key-input').value = ''; preparedGift = null

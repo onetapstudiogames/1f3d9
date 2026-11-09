@@ -395,7 +395,7 @@ export const PART_29_DETAIL_LOADING_AND_DRAWINGS = `  async function ensureDetai
       )
       return Object.freeze({
         row: resident,
-        title: resident.handle,
+        title: shownHandle(resident.handle),
         meta: 'resident #' + String(resident.id) +
           (resident.asleep ? ' · asleep' : '') +
           (location ? ' · at ' + location : ' · between places'),

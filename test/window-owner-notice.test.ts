@@ -76,7 +76,10 @@ test('the program renders the notice at start and after every city refresh, with
   assert.ok(refreshStart >= 0 && refreshEnd > refreshStart)
   assert.match(WINDOW_JS.slice(refreshStart, refreshEnd),
     /finally \{[\s\S]*settleOvertakenFocusedPlaces\(\)\n\s+scheduleRefresh\(nextDelay\)[\s\S]*?\n {6}renderOwnerNotice\(\)\n\s+void refreshSeasonIfDayChanged\(\)\n\s+\}/u)
-  assert.match(WINDOW_JS, /\n  renderOwnerNotice\(\)\n\n  const announcementBox = /u)
+  const ownerNoticeStart = WINDOW_JS.lastIndexOf('\n  renderOwnerNotice()\n')
+  const moveInStart = WINDOW_JS.indexOf('  const moveDialog = ', ownerNoticeStart)
+  const announcementStart = WINDOW_JS.indexOf('  const announcementBox = ', ownerNoticeStart)
+  assert.ok(ownerNoticeStart >= 0 && moveInStart > ownerNoticeStart && announcementStart > moveInStart)
   assert.match(WINDOW_JS, /text\.indexOf\(OWNER_NOTICE\.linkText\)/u)
   assert.match(WINDOW_JS, /link\.href = OWNER_NOTICE\.url\n\s+link\.target = '_blank'\n\s+link\.rel = 'noopener'\n\s+link\.textContent = OWNER_NOTICE\.linkText/u)
   assert.doesNotMatch(WINDOW_JS, /sessionStorage|document\.cookie/u)

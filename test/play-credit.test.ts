@@ -62,6 +62,36 @@ test('RevenueCat key shapes and configured webhook values are redacted', () => {
 const configured = { REVENUECAT_SECRET_KEY: 'test-key', REVENUECAT_PROJECT_ID: 'proj_test', REVENUECAT_WEBHOOK_AUTH: 'test-auth',
   PLAY_CREDIT_CALLER_HASH_SECRET: 'test-caller', PLAY_CREDIT_ENVIRONMENT: 'production' }
 
+test('retiring and retired recipients cannot create or claim Play orders before provider calls', async () => {
+  for (const state of ['retiring', 'retired']) {
+    let providerCalls = 0
+    const app = new Hono()
+    mountPlayCreditRoutes(app, { environment: configured, database: { async query(sql: string) {
+      if (sql.includes('paypal-credit:rate-limit')) return [{ used: 1 }]
+      if (sql.includes('FROM play_credit_orders')) return [{ public_id: `city_play_${'a'.repeat(32)}`,
+        recipient_id: 2, resident_handle: 'retiring-test', product_id: 'fee_credit_5_v1', status: 'delivered',
+        resident_retirement_state: state, rc_app_user_id: 'synthetic-customer' }]
+      if (sql.includes('FROM residents')) return [{ id: 2, handle: 'retiring-test', retirement_state: state }]
+      throw new Error('No order may be created')
+    } }, fetcher: (async () => { providerCalls += 1; throw new Error('No provider request permitted') }) as typeof fetch })
+    for (const path of ['/residents/by-handle/retiring-test', `/orders/city_play_${'a'.repeat(32)}`]) {
+      const response = await app.request(`/api/city-credit/play${path}`)
+      assert.equal(response.status, 200)
+      const result = await response.json() as Record<string, unknown>
+      assert.equal(result.resident_handle, 'retiring-test')
+      assert.equal(result.display_handle, `retiring-test (${state})`)
+    }
+    for (const [path, body] of [['/orders', { request_id: 'synthetic-retirement-order', resident_number: 2,
+      resident_handle: 'retiring-test', product_id: 'fee_credit_5_v1', rc_app_user_id: 'synthetic-customer' }],
+    [`/orders/city_play_${'a'.repeat(32)}/claim`, { transaction_id: 'GPA.synthetic-retirement' }]] as const) {
+      const response = await app.request(`/api/city-credit/play${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      assert.equal(response.status, 409)
+      assert.match(await response.text(), new RegExp(state))
+    }
+    assert.equal(providerCalls, 0)
+  }
+})
+
 test('provider network and malformed response failures are retryable 503, and production refuses sandbox configuration', async () => {
   const outage = (async () => { throw new TypeError('fetch failed') }) as typeof fetch
   const malformed = (async () => new Response('not-json')) as typeof fetch

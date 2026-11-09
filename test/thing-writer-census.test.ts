@@ -110,6 +110,16 @@ const BRICK_FILES = Object.freeze([
 ])
 
 const SELECTION_SITES: Readonly<Record<string, Decision>> = Object.freeze({
+  'src/engine-effects.ts dueRows SELECT#1': 'exempt: reads the source owner to defer frozen work; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts dueRows SELECT#2': 'exempt: reads the origin owner to defer frozen work; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts dueRows SELECT#3': 'exempt: reads the target owner to defer frozen work; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts lockAndLoadPending SELECT#1': 'exempt: reads the source owner before claiming; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts lockAndLoadPending SELECT#2': 'exempt: reads the origin owner before claiming; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts lockAndLoadPending SELECT#3': 'exempt: reads the target owner before claiming; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts resolveOne SELECT#1': 'exempt: locks the source owner; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts resolveOne SELECT#2': 'exempt: locks the origin owner; timerThingEnds checks endings before execution',
+  'src/engine-effects.ts resolveOne SELECT#3': 'exempt: locks the target owner; timerThingEnds checks endings before execution',
+  'src/engine-settle.ts claimSettle SELECT#1': 'exempt: locks candidate owners before wake anchors; loadCandidates excludes reached endings',
   'src/crafting.ts craftKindThing SELECT#1':
     'records first: the ingredient read gives end_reached and crafting refuses E7',
   'src/crafting.ts craftKindThing SELECT#2':

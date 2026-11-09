@@ -182,12 +182,15 @@ async function confirmedResident(
 ): Promise<number | null> {
   const rows = await database.query(`
     /* prepaid-credit-routes:resident-confirmation */
-    SELECT id, handle
+    SELECT id, handle, retirement_state
     FROM residents
     WHERE id = $1::integer AND handle = $2::text
     LIMIT 1
   `, [number, handle]) as readonly Record<string, unknown>[]
   const row = rows[0]
+  if (row?.retirement_state === 'retiring' || row?.retirement_state === 'retired') {
+    throw new PrepaidCreditConflictError(`That resident is ${row.retirement_state} and cannot receive this gift. Choose an active resident.`)
+  }
   return Number(row?.id) === number && row?.handle === handle ? number : null
 }
 
@@ -211,7 +214,8 @@ export function mountPrepaidCreditGiftRoutes(
     try {
       const resident = await findPayPalCreditRecipient(deps.database, c.req.param('number'))
       if (!resident) return c.json({ error: 'That resident was not found. Check the name or number.' }, 404)
-      return c.json({ resident_number: resident.residentNumber, resident_handle: resident.residentHandle })
+      return c.json({ resident_number: resident.residentNumber, resident_handle: resident.residentHandle,
+        ...(resident.retirementState ? { display_handle: `${resident.residentHandle} (${resident.retirementState})` } : {}) })
     } catch (error) {
       return conflictResponse(c, error)
     }

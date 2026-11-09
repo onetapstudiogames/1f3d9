@@ -43,6 +43,8 @@ import {
   PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS,
   PUBLIC_RESIDENT_ASLEEP_EVENT_KINDS,
   readPublicResidentPage,
+  publicResidentRetirement,
+  type PublicResidentRetirement,
 } from './public-residents.ts'
 import { readResidentLooking, type ResidentLooking } from './resident-looking.ts'
 import { executeBudgetedExactQuery, isPublicExactReadBusy } from './public-exact-query.ts'
@@ -193,7 +195,7 @@ interface PublicPlace {
   children: PublicPlace[]
 }
 
-interface PublicResident {
+interface PublicResident extends PublicResidentRetirement {
   id: number
   handle: string
   current_place_id: number | null
@@ -532,6 +534,7 @@ export function publicWindowResidents(values: unknown[]): PublicResident[] {
     return [{
       id,
       handle,
+      ...publicResidentRetirement(row),
       current_place_id: currentPlaceId,
       joined_at: joinedAt,
       asleep: row.asleep === true,
@@ -1421,7 +1424,7 @@ async function readFullWindowSnapshot() {
       ORDER BY world.path
     `),
     sql`
-      SELECT resident.id, resident.handle, presence.current_place_id, resident.joined_at,
+      SELECT resident.id, resident.handle, resident.retirement_state, presence.current_place_id, resident.joined_at,
         resident.drawing IS NOT NULL AND coalesce((
           SELECT latest.action FROM moderation_actions latest
           WHERE latest.target_type = 'resident' AND latest.target_id = resident.id

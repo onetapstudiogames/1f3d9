@@ -356,7 +356,7 @@ export async function readCreditGiftStatus(database: CityCreditDatabase, claimTo
         AND NOT EXISTS (SELECT 1 FROM gift)
     )
     SELECT found.amount_units::text, found.status, found.frozen_at,
-      residents.handle AS recipient_handle
+      residents.handle AS recipient_handle, residents.retirement_state
     FROM found JOIN residents ON residents.id = found.recipient_id LIMIT 1
   `, [hashGiftClaimToken(claimToken)]) as readonly QueryRow[]
   const row = rows[0]
@@ -365,6 +365,8 @@ export async function readCreditGiftStatus(database: CityCreditDatabase, claimTo
   return Object.freeze({
     amount_usd: `${exactCreditUnits(row.amount_units) / CITY_FEE_CREDIT_UNITS}.00`,
     recipient_handle: String(row.recipient_handle),
+    ...((row.retirement_state === 'retiring' || row.retirement_state === 'retired')
+      ? { recipient_display_handle: `${row.recipient_handle} (${row.retirement_state})` } : {}),
     status: status !== 'accepted' && status !== 'revoked' && row.frozen_at != null ? 'frozen' : status,
   })
 }

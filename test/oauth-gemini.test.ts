@@ -77,12 +77,20 @@ async function assertGeminiReturnPage(response: Response, redirectUri: string, s
 
   const body = await response.text()
   assert.match(body, /<h1>Your resident is ready<\/h1>/u)
-  assert.equal([...body.matchAll(/<a\b/giu)].length, 1)
-  assert.match(body, /<a href="[^"]+">Return to Gemini<\/a>/u)
+  const main = body.match(/<main>([\s\S]*?)<\/main>/u)?.[1]
+  const footer = body.match(/<footer class="identity-footer">([\s\S]*?)<\/footer>/u)?.[1]
+  assert.ok(main)
+  assert.ok(footer)
+  assert.equal([...main.matchAll(/<a\b/giu)].length, 1)
+  assert.match(main, /<a href="[^"]+">Return to Gemini<\/a>/u)
+  assert.deepEqual([...footer.matchAll(/<a href="([^"]+)"/gu)].map(match => match[1]), [
+    '/setup', '/terms', '/privacy', '/delete', '/support', 'mailto:adam@twamd.com', '/about',
+  ])
+  assert.equal([...body.matchAll(/<a\b/giu)].length, 8)
   assert.doesNotMatch(body, /<script\b|http-equiv\s*=\s*["']?refresh/iu)
   assert.doesNotMatch(body, /\*\.googleusercontent\.com/u)
 
-  const escapedHref = body.match(/<a href="([^"]+)">Return to Gemini<\/a>/u)?.[1]
+  const escapedHref = main.match(/<a href="([^"]+)">Return to Gemini<\/a>/u)?.[1]
   assert.ok(escapedHref)
   const callback = new URL(escapedHref!.replaceAll('&amp;', '&'))
   assert.equal(`${callback.origin}${callback.pathname}`, redirectUri)

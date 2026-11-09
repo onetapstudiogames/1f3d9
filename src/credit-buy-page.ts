@@ -27,7 +27,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
 <link data-season-icon rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/${move ? 'gift-redirect' : 'buy'}.css">
 <!-- season:head --><script src="/${move ? 'gift-redirect' : 'buy'}.js" defer></script></head><body>
 <a class="skip-link" href="#buy">Skip to the purchase form</a>
-<main class="page" id="buy" data-credit-buy ${move ? 'data-gift-redirect-page' : ''} data-resident-lookup="${residentLookupPath}" data-order-path="${orderPath}" data-allowance-path="${allowancePath}">
+<main class="page" id="buy" data-credit-buy ${move ? 'data-gift-redirect-page' : ''} data-resident-lookup="${residentLookupPath}"${move ? '' : ` data-order-path="${orderPath}" data-allowance-path="${allowancePath}"`}>
 
   <a href="/window" class="back-link">&lt; City window</a>
   <section class="popup" aria-labelledby="carousel-title">
@@ -230,7 +230,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
 </section>
   <footer class="buy-footer page">
     <p>Fee credit stays inside 1F3D9 and is never cash.</p>
-    <nav aria-label="City policies"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/support">Support</a><a href="/window">Window</a></nav>
+    <nav aria-label="City policies"><a href="/terms">Terms</a><a href="/privacy">Privacy</a> <a href="/delete">Delete or retire</a><a href="/support">Support</a><a href="/window">Window</a></nav>
   </footer>
 </body></html>`
   return options.weeklyAllowanceEnabled === false ? html.replace(/<button type="button" data-often="weekly"[^>]*>Every week<\/button>/u, '') : html

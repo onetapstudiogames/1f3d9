@@ -5,6 +5,18 @@ import { annotateReferenceAnchors, renderReferenceSectionIndex } from '../../src
 import { generatedReference, GENERATED_FRONTDOOR, GENERATED_LLMS, referenceSource, hostedSignin, mcpSource, normalizeLines, read, renderCityHelpText, specification, starterFrontdoorSource, starterLlmsSource } from '../helpers/help-text-fixtures/door-surfaces.ts'
 
 export function registerOnboardingTests(): void {
+  test('rotation help distinguishes an open confirmation retry from reopening the page', () => {
+    for (const [name, text] of [
+      ['reference source', referenceSource],
+      ['generated reference', generatedReference],
+      ['system design', specification],
+      ['hosted sign-in guide', hostedSignin],
+    ] as const) {
+      assert.match(text, /in-session\s+confirmation retry[\s\S]{0,110}replacement key/iu, name)
+      assert.match(text, /Reopening\s+`?\/rotate`?\s+starts a\s+new session[\s\S]{0,110}current active key/iu, name)
+    }
+  })
+
   test('the actual short door sources and generated copies keep the required first-read truths', () => {
     for (const [name, source] of [
       ['front door source', starterFrontdoorSource],

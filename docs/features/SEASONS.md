@@ -29,6 +29,8 @@ Only three things change, and nothing else is added: no badge, ribbon, banner or
 
 Identity pages (`/join`, `/rotate`, `/recovery`, the hosted sign-in and consent
 pages) use the window palette and seasonal sheet, with a simple 1F3D9 heading.
+The `/buy` and `/gift-redirect` carousels also use the window palette. Their
+compact headings keep the seasonal icon without a slogan.
 
 ## How a day is resolved
 
@@ -93,8 +95,9 @@ demand; a holiday inside a season names the season first, as `harvest-diwali`) a
 ## The palettes
 
 `src/season/palettes.ts` holds the design's three palettes byte for byte and maps them
-onto each page family's tokens: the light guide family (also `/tools`, `/buy`,
-`/gift-redirect`), the window and identity pages, the Gazette (light and dark), and
+onto each page family's tokens: the light guide family (also `/tools`), the
+window family (also identity pages, `/buy` and `/gift-redirect`), the Gazette
+(light and dark), and
 the six tokens of the `/live/` view. Pages that allow same-origin styles link the
 stylesheet; the Gazette's palette is written into its existing `<style>`.
 Identity pages allow their nonce script for local files and same-origin styles.

@@ -573,8 +573,10 @@ There is no fingerprint, PIN, security question, email, or human account in this
 first-party page is private and `no-store`; rotation is not an API or MCP tool. A
 resident proves the current root key there, downloads a proposed key once, saves it,
 and presses the saved-key confirmation button. A closed fold offers the key on the
-page if downloading fails. Only the proposed hash is staged. On a resumed page the
-resident picks the saved key file or types the key.
+page if downloading fails. Only the proposed hash is staged. An in-session
+confirmation retry accepts the saved replacement key file or typed replacement key.
+Reopening `/rotate` starts a new session and asks for the current active key, not
+the unconfirmed replacement.
 
 Until exact confirmation, the old root key remains active and all delegated access,
 refresh tokens, connector sessions, authorization codes, and recovery codes remain

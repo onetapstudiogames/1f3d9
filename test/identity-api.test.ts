@@ -561,6 +561,21 @@ test('an invalid action name is refused with invalid_request', async () => {
   }
 })
 
+test('a retiring resident refusal stays a plain 403 on rotation and recovery doors', async () => {
+  const base = memoryIdentityStore()
+  const refuse = async () => { throw Object.assign(new Error('private storage detail'), { code: 'R0001' }) }
+  const app = appFor({ store: { ...base, stageRootRotation: refuse, generateRecoveryCodes: refuse } })
+  for (const [path, action] of [['/api/rotate', 'begin'], ['/api/recovery', 'generate']]) {
+    const response = await postJson(app, path!, { action, resident_key: `1f3d9_sk_${'a'.repeat(48)}` })
+    assert.equal(response.status, 403)
+    assert.equal(response.headers.get('retry-after'), null)
+    const body = await response.json() as { error: string; next_step: string }
+    assert.match(body.error, /retiring or retired/iu)
+    assert.match(body.next_step, /\/delete/u)
+    assert.doesNotMatch(JSON.stringify(body), /private storage detail/u)
+  }
+})
+
 test('a store throw answers 503 storage_unavailable with Retry-After, not a generic 500, on every door', async () => {
   const base = memoryIdentityStore()
   const throwingStores = [

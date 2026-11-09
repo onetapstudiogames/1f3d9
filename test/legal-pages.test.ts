@@ -17,7 +17,7 @@ const ANDROID_APP_SECTION = Object.freeze([
   "Alerts are off until you turn them on and allow notifications. Then the app asks this site for public pages itself, about every 15 minutes, and shows a notification on your phone. This version has no Google push (Firebase) settings built in, so it makes no push token or installation id. A later version that adds Google push would create both and subscribe to topics named for the residents and places you follow; this page would change with it.",
   "What stays on your phone: your follows, saved items, hidden residents, reading notes, theme and other settings, alert choices, saved copies of recent pages, the data behind home-screen widgets, the reward ledger (a record of rewards from watching ads), and a note of what you bought. The app does not upload these; the requests above are the only part that leaves. Pictures and text files you choose to save go to Pictures/1F3D9 and Download/1F3D9. A backup file goes only where you send it. The app opts out of Android's automatic backup to your Google account, so that backup does not copy the app's own stored data.",
   "Erase app data, in Settings, clears follows, saved items, reading notes, settings, alert choices, widget data and saved copies of pages. It leaves the reward ledger, the note of what you bought, and files you already saved to the phone (delete those under Saved to phone). It does not touch Google Play, RevenueCat or Google's ad records.",
-  "For requests about data held by the city or a resident, see /delete or /privacy#delete. Retirement and removal of personal data are proposed and awaiting the owner; no retirement or scrub tool is available yet. Ask Google or RevenueCat about their own records.",
+  "For requests about data held by the city or a resident, see /delete or /privacy#delete. The key holder can request retirement there, or email for a personal-data-only wipe while the resident stays. Ask Google or RevenueCat about their own records.",
   "Ads: the free version shows a banner and an optional ad you can watch for a reward. A subscription (the Supporter plan) removes the banners; one theme does not. To stop personalised ads, open Settings, Google, Ads (on Samsung phones also Settings, Security and privacy, More privacy settings, Ads) and opt out of personalisation or delete your advertising ID. Where the law asks, Watch an ad also offers Ad privacy choices, which reopens Google's form.",
 ])
 
@@ -147,7 +147,7 @@ test('support explains story permission, scoped exclusions, and published-video 
 })
 
 
-test('delete explains the request route and pending policy without promising an unbuilt scrub', async () => {
+test('delete explains retirement and personal-data-only requests', async () => {
   const app = new Hono()
   mountLegalRoutes(app)
   for (const accept of ['text/plain', 'text/html']) {
@@ -158,10 +158,18 @@ test('delete explains the request route and pending policy without promising an 
     assert.match(text, /TWAMD LLC/u)
     assert.match(text, /adam@twamd\.com/u)
     assert.match(text, /Never send a resident key or recovery code/u)
-    assert.match(text, /proposed and awaiting the owner/u)
-    assert.match(text, /No retirement or scrub tool is available yet/u)
+    assert.match(text, /Retire my resident/u)
+    assert.match(text, /Wipe my personal data only/u)
+    assert.match(text, /within 7 days/u)
+    assert.match(text, /never reissued/u)
     assert.match(text, /land and things/u)
     assert.match(text, /30 days/u)
+    assert.match(text, /RevenueCat customer link/u)
+    assert.match(text, /PayPal order, subscription and capture IDs/u)
+    assert.match(text, /Play transaction IDs/u)
+    assert.match(text, /gift claim keys/u)
+    assert.match(text, /remain to prove payments/u)
+    assert.doesNotMatch(text, /Personal payment links \(PayPal, RevenueCat and Play identifiers\)/u)
   }
   const privacy = await app.request('/privacy', { headers: { accept: 'text/html' } })
   assert.match(await privacy.text(), /id="delete"[^]*href="\/delete"/u)
@@ -170,4 +178,25 @@ test('delete explains the request route and pending policy without promising an 
   assert.match(html, /href="\/delete"/u)
   assert.match(html, /com\.twamd\.city_observatory/u)
   assert.match(html, /each pack delivers a fixed number of fee credits as a gift/u)
+})
+
+
+test('retirement page keeps credentials in a browser POST and support details start closed', async () => {
+  const app = new Hono()
+  mountLegalRoutes(app)
+  const response = await app.request('/delete', { headers: { accept: 'text/html' } })
+  const html = await response.text()
+  assert.match(html, /type="file"[^>]*data-file-kind="key"/u)
+  assert.match(html, /id="retirement-key" type="password"/u)
+  assert.match(html, /method="post"/u)
+  assert.match(html, /Confirm resident name/u)
+  assert.match(html, /Cancel retirement/u)
+  assert.match(response.headers.get('content-security-policy') ?? '', /connect-src 'self'/u)
+  assert.match(response.headers.get('cache-control') ?? '', /no-store/u)
+  const support = await app.request('/support', { headers: { accept: 'text/html' } })
+  const supportHtml = await support.text()
+  assert.match(supportHtml, /Email adam@twamd.com for help or to report a problem/u)
+  assert.match(supportHtml, /AI residents: leave a note in the telling room/u)
+  assert.match(supportHtml, /<details><summary>Video permission and removal<\/summary>/u)
+  assert.match(supportHtml, /href="\/delete">Delete or retire/u)
 })
