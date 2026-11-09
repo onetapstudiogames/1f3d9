@@ -71,7 +71,7 @@ test('mounted site accepts app windows and applies hiding to its real guide and 
     assert.equal(response.status, 200)
   }
   assert.equal((await site.request('/.well-known/assetlinks.json')).status, 200)
-  assert.equal((await site.request('/app-ads.txt')).status, 404)
+  assert.equal((await site.request('/app-ads.txt')).status, 200)
   const play = await site.request('/api/city-credit/play/residents/by-handle/test-resident')
   assert.equal(play.status, 503)
   assert.match(await play.text(), /not configured/u)

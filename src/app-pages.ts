@@ -2,7 +2,7 @@ import type { Hono, MiddlewareHandler } from 'hono'
 
 // Public values supplied by the owner from Play Console and AdMob.
 const PLAY_APP_SIGNING_SHA256 = 'AF:55:52:4B:1C:DF:B2:1C:35:B0:41:6C:DC:C6:BD:D8:0B:D5:D8:7C:14:7B:AD:5B:D3:57:FC:B7:01:5A:6E:F5'
-const ADMOB_PUBLISHER_ID = '<ADMOB_PUBLISHER_ID>'
+const ADMOB_PUBLISHER_ID = 'pub-4229220191592088'
 
 export function mountAppPages(app: Hono, values: Readonly<{
   signingFingerprint: string
