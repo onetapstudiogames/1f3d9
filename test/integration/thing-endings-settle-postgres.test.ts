@@ -570,6 +570,116 @@ test('thing endings in the room settle, against PostgreSQL', { timeout: 900_000 
       assert.ok(logged.mock.calls.length > 0, 'the recorder failure is logged')
       assert.deepEqual((await row(lamp)).state, { woke: 1 })
     })
+
+    await t.test('claims leave transferred clocks and anchors untouched', async t => {
+      const { setEngineTransactionRunnerForTests } = await import('../../src/engine.ts')
+      const scenarios = [false, true].flatMap(anchor => ['active', 'retiring', 'retired']
+        .map(retirementState => ({ anchor, retirementState, phase: 'after candidates' })))
+      for (const { anchor, retirementState, phase } of [
+        ...scenarios,
+        { anchor: false, retirementState: 'active', phase: 'before candidates' },
+        { anchor: false, retirementState: 'active', phase: 'after protection' },
+      ]) {
+        await t.test(`${anchor ? 'anchor' : 'owed clock'} with ${retirementState} new owner ${phase}`, async () => {
+          await reset()
+          await db.query('UPDATE places SET wake_visitors = true WHERE id = $1', [home])
+          const coined = await coin(app, KEEPER.secret, 'clock', { wake: {
+            on: ['clock'], every_seconds: 10, then: [{ effect: 'write', key: 'ticks', op: 'add' }],
+          } })
+          assert.equal(coined.status, 201, JSON.stringify(coined.json))
+          const lamp = await waking(KEEPER.id, home,
+            await seedKind(KEEPER.id, 'clocks', [await traitId('clock')]), 'a clock')
+          if (!anchor) await db.query(`
+            INSERT INTO thing_wake_state (thing_id, clock_at) VALUES ($1, now() - interval '60 seconds')
+          `, [lamp])
+          const before = (await db.query('SELECT * FROM thing_wake_state WHERE thing_id = $1', [lamp])).rows
+          let transferred = false
+          let transferBlocked = false
+          setEngineTransactionRunnerForTests(async (_db, work) => {
+            const client = await db.connect()
+            const query = async (text: string, values: readonly unknown[] = []) => {
+              const result = await client.query(text, [...values])
+              if (phase === 'before candidates' && text.includes('state.last_try_at, state.clock_at')) {
+                assert.equal(result.rows.length, 1)
+                assert.equal(result.rows[0].owner_id, NEIGHBOUR.id, 'the new owner is eligible but was not locked')
+              }
+              const pauseHere = phase === 'before candidates' ? text.includes('FOR KEY SHARE OF owner')
+                : phase === 'after protection' ? text.includes('FOR SHARE SKIP LOCKED')
+                  : text.includes('state.last_try_at, state.clock_at')
+              if (!transferred && pauseHere) {
+                transferred = true
+                assert.equal(result.rows.length, 1, 'pause after reading the old owner candidate')
+                const transfer = await db.connect()
+                try {
+                  await transfer.query('BEGIN')
+                  await transfer.query("SET LOCAL lock_timeout = '500ms'")
+                  // The give path locks its actor, room, and thing in this order.
+                  await transfer.query('SELECT id FROM residents WHERE id = $1 FOR NO KEY UPDATE', [KEEPER.id])
+                  await transfer.query('SELECT id FROM places WHERE id = $1 FOR NO KEY UPDATE', [home])
+                  if (phase === 'after protection') {
+                    await assert.rejects(transfer.query('UPDATE things SET owner_id = $2 WHERE id = $1',
+                      [lamp, NEIGHBOUR.id]), { code: '55P03' }, 'even a direct ownership update waits for the claim')
+                    transferBlocked = true
+                    return result.rows
+                  }
+                  await transfer.query('SELECT id FROM things WHERE id = $1 FOR UPDATE', [lamp])
+                  await transfer.query('UPDATE things SET owner_id = $2 WHERE id = $1', [lamp, NEIGHBOUR.id])
+                  if (phase === 'before candidates') await transfer.query(
+                    'UPDATE things SET wake_enabled = true WHERE id = $1', [lamp])
+                  await transfer.query('COMMIT')
+                  if (retirementState !== 'active') await transfer.query(`
+                    UPDATE residents SET retirement_state = 'retiring',
+                      retirement_requested_at = clock_timestamp() - interval '31 days' WHERE id = $1
+                  `, [NEIGHBOUR.id])
+                  if (retirementState === 'retired') await transfer.query(`
+                    UPDATE residents SET retirement_state = 'retired', retired_at = clock_timestamp() WHERE id = $1
+                  `, [NEIGHBOUR.id])
+                } finally {
+                  await transfer.query('ROLLBACK')
+                  transfer.release()
+                }
+              }
+              return result.rows
+            }
+            const transaction = Object.assign((strings: TemplateStringsArray, ...values: unknown[]) =>
+              query(strings.reduce((text, part, index) =>
+                text + part + (index < values.length ? `$${index + 1}` : ''), ''), values), { query })
+            try {
+              await client.query('BEGIN')
+              const result = await work(transaction, true)
+              await client.query('COMMIT')
+              return result
+            } catch (error) {
+              await client.query('ROLLBACK')
+              throw error
+            } finally {
+              client.release()
+            }
+          })
+          const errors = mock.method(console, 'error')
+          const settled = await settleRoom(home, 'me', FOUNDER.id).finally(() => errors.mock.restore())
+          assert.equal(errors.mock.calls.length, 0, 'a swallowed settlement error must not look like a skipped claim')
+          assert.ok(transferred, 'the claim reached the chosen transfer interleaving')
+          if (phase === 'after protection') {
+            assert.ok(transferBlocked, 'ownership stayed protected through the claim')
+            assert.equal(settled?.tried, 6)
+            assert.equal(settled?.woke, 6)
+            assert.deepEqual((await row(lamp)).state, { ticks: 6 })
+            return
+          }
+          assert.deepEqual(await one(`
+            SELECT thing.owner_id, owner.retirement_state FROM things thing
+            JOIN residents owner ON owner.id = thing.owner_id WHERE thing.id = $1
+          `, [lamp]), { owner_id: NEIGHBOUR.id, retirement_state: retirementState })
+          assert.deepEqual((await db.query('SELECT * FROM thing_wake_state WHERE thing_id = $1', [lamp])).rows,
+            before, 'neither a new anchor nor an owed clock changes after ownership moves')
+          assert.equal(settled, null, 'no stale-owner tries are consumed or forfeited')
+          assert.equal(await count('SELECT count(*) AS n FROM wake_settles'), 0)
+          assert.equal(await count('SELECT count(*) AS n FROM wake_tries'), 0)
+          assert.deepEqual((await row(lamp)).state, {})
+        })
+      }
+    })
   } finally {
     await postgres.stop()
   }

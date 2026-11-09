@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { canonicalJson } from '../../src/public-snapshot-format.ts'
 import {
   connectedDatabase,
@@ -154,11 +154,20 @@ const EXPECTED_V4_SHAPE = {
   gates_volatility: 'i',
 }
 
+async function v4Definitions(db: Pool | PoolClient): Promise<unknown[]> {
+  return (await db.query(`
+    SELECT relname, pg_get_viewdef(oid) AS definition FROM pg_class
+    WHERE oid IN ('city_snapshot.public_records_v4'::regclass,
+      'city_snapshot.public_records_v4_without_retirement'::regclass)
+    ORDER BY relname
+  `)).rows
+}
+
 test('thing endings install snapshot format 4 and leave every earlier view as it was', { timeout: 900_000 }, async t => {
   const postgres = await startNoteSuiteDatabase('thing-endings-snapshot')
   try {
     const db = connectedDatabase()
-    let migratedDefinition = ''
+    let migratedDefinitions: unknown[] = []
 
     await t.test('the migration changes no earlier view and no v3 byte, and adds v4 for the export role only', async () => {
       await resetTo(db, schemaBeforeThingEndings())
@@ -178,9 +187,8 @@ test('thing endings install snapshot format 4 and leave every earlier view as it
       // The fresh schema wraps v4 with retirement labels after the unchanged ending upgrade.
       await db.query(retirementDdl)
       await db.query(retirementWriteLocksDdl)
-      migratedDefinition = String((await db.query(
-        `SELECT pg_get_viewdef('city_snapshot.public_records_v4'::regclass) AS definition`,
-      )).rows[0]!.definition)
+      migratedDefinitions = await v4Definitions(db)
+      assert.equal(migratedDefinitions.length, 2, 'both the ending view and retirement wrapper are captured')
     })
 
     await t.test('the export role reads v4 directly, and v4 reads only through its own joins', async () => {
@@ -205,9 +213,24 @@ test('thing endings install snapshot format 4 and leave every earlier view as it
     await t.test('a fresh db/schema.sql installs the same v4 with the same grant', async () => {
       await resetTo(db, schemaDdl)
       assert.deepEqual(await v4Shape(db), EXPECTED_V4_SHAPE)
-      assert.equal(String((await db.query(
-        `SELECT pg_get_viewdef('city_snapshot.public_records_v4'::regclass) AS definition`,
-      )).rows[0]!.definition), migratedDefinition)
+      assert.deepEqual(await v4Definitions(db), migratedDefinitions)
+      const client = await db.connect()
+      try {
+        await client.query('BEGIN')
+        const definition = String((await client.query(`
+          SELECT pg_get_viewdef('city_snapshot.public_records_v4_without_retirement'::regclass) AS definition
+        `)).rows[0]!.definition).trim().replace(/;$/u, '')
+        await client.query(`CREATE OR REPLACE VIEW city_snapshot.public_records_v4_without_retirement AS
+          SELECT * FROM (${definition}) underlying WHERE false`)
+        const changed = await v4Definitions(client)
+        assert.deepEqual(changed[0], migratedDefinitions[0], 'the wrapper alone cannot detect this change')
+        assert.throws(() => assert.deepEqual(changed, migratedDefinitions), { code: 'ERR_ASSERTION' },
+          'the same parity check rejects a deliberate change to the underlying ending view')
+      } finally {
+        await client.query('ROLLBACK')
+        client.release()
+      }
+      assert.deepEqual(await v4Definitions(db), migratedDefinitions, 'rollback restores passing parity')
     })
   } finally {
     await postgres.stop()

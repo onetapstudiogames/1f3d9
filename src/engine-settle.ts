@@ -295,20 +295,29 @@ async function claimSettle(
       randomCap: Number(place.wake_random_cap),
     }
     const now = Number(place.now_ms)
-    // Claims may advance wake clocks. Keep owners active for the entire claim,
-    // before selecting candidates or changing their anchors.
-    await transaction`
-      SELECT owner.id FROM residents owner
-      WHERE owner.retirement_state = 'active' AND EXISTS (
-        SELECT 1 FROM things thing WHERE thing.owner_id = owner.id AND thing.place_id = ${placeId}
-          AND thing.withdrawn_at IS NULL AND (thing.wake_enabled OR thing.end_program_state = 'pending')
-      )
-      ORDER BY owner.id FOR KEY SHARE
-    `
+    // Keep owners active and remember which things they owned when locked.
+    const ownedThings = await transaction`
+      SELECT thing.id, thing.owner_id FROM residents owner
+      JOIN things thing ON thing.owner_id = owner.id
+      WHERE owner.retirement_state = 'active' AND thing.place_id = ${placeId}
+        AND thing.withdrawn_at IS NULL AND (thing.wake_enabled OR thing.end_program_state = 'pending')
+      ORDER BY owner.id, thing.id FOR KEY SHARE OF owner
+    ` as Array<{ id: number; owner_id: number }>
+    const lockedOwners = new Map(ownedThings.map(thing => [Number(thing.id), Number(thing.owner_id)]))
     // End tries waiting in the room run first, outside wake_random_cap and the random pick.
     const endUnits: Unit[] = (await loadEndUnits(placeId, transaction))
       .map(thingId => Object.freeze({ thingId, unitIndex: 0, reason: 'end' as const, pinned: false }))
-    const candidates = await loadCandidates(placeId, transaction)
+    const candidates: Candidate[] = []
+    for (const candidate of await loadCandidates(placeId, transaction)) {
+      if (lockedOwners.get(candidate.thingId) !== candidate.ownerId) continue
+      // A give can finish after either read. Hold the unchanged ownership through
+      // every claim write, including anchors. Never wait on an in-flight try's thing.
+      const unchanged = await transaction`
+        SELECT id FROM things WHERE id = ${candidate.thingId} AND owner_id = ${candidate.ownerId}
+        FOR SHARE SKIP LOCKED
+      ` as Array<{ id: number }>
+      if (unchanged.length > 0) candidates.push(candidate)
+    }
     const plan = planUnits(candidates, room, trigger, now)
     const nowIso = new Date(now).toISOString()
     for (const thingId of plan.anchors) {
