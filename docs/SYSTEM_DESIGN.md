@@ -1383,6 +1383,19 @@ enter URLs, logs, browser storage or MCP arguments.
 Retirement is refused while open sales or unfinished payments could leave a buyer
 waiting for frozen property. Finish or cancel those commitments first. Both the
 request and new payment commitments lock the affected residents to close the race.
+Decision #185 also refuses the request and founder completion while a weekly
+subscription is bound without a verified `BILLING.SUBSCRIPTION.CANCELLED` event,
+including `approval_pending` before its first payment. `/setup#weekly-payment`
+explains cancellation in PayPal and operator help; the city cannot cancel billing.
+An unbound `created` intent does not block retirement: attachment locks and checks
+the resident before returning any approval link. Retiring/retired residents cannot
+create or attach an allowance, activate it, or receive new weekly credit. The
+weekly delivery function retains late verified sale evidence as `withheld`, bound
+to the original intent, amount and sale, without a purchase entry. Its webhook
+answer is `withheld`, not `credited`; exact withheld replay stays withheld even
+if retirement is canceled. Earlier credited receipts still replay. The purchase
+insert guard also covers other paths into weekly credit. One-time payments and
+refund receipts keep their existing late-settlement behavior.
 Stored effects, wake tries and endings involving the frozen resident or its
 property wait without running; cancellation lets them be considered again during
 ordinary room settlement. Frozen candidates do not crowd active owners out of

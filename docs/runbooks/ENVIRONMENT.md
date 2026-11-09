@@ -130,11 +130,21 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 
 ## Resident retirement activation
 
-Before this release serves requests, apply `resident-retirement` and then
-`resident-retirement-private-data` through the guarded migration runner. Both
+Before this release serves requests, apply `resident-retirement`, then
+`resident-retirement-private-data`, then `retirement-weekly` through the guarded
+migration runner. All three
 are additive and replayable; this job validates local Docker PostgreSQL 17 only.
 Preview and Production migrations and a deployed probe remain required before
 activation. There is no scheduled retirement task.
+Subscribe the PayPal webhook to `BILLING.SUBSCRIPTION.CANCELLED` before activation.
+Verify a real cancellation reaches the city and then permits retirement; pending
+approval and active subscriptions block until that verified notice is recorded.
+For missing notices, use PayPal's event resend after checking the subscription,
+never a caller's claim as cancellation proof. Inspect `paypal_credit_events`
+with `outcome='withheld'` for late weekly charges requiring operator follow-up;
+the original intent preserves subscription, recipient and amount. These records
+create no credit and stay withheld on replay. No real provider cycle was run by
+this local-only change.
 
 The founder lists due requests at `GET /api/founder/resident-retirements` with
 its current root key, then selects each resident for
@@ -204,7 +214,8 @@ Activate in this order:
 2. Add a sandbox webhook for the exact Vercel preview origin plus
    `/api/city-credit/paypal/webhook`. Subscribe to exactly the implemented credit-delivery
    and dispute-lifecycle events: `PAYMENT.CAPTURE.COMPLETED` for one-time Orders,
-   `PAYMENT.SALE.COMPLETED` for Subscription renewals, and
+   `PAYMENT.SALE.COMPLETED` for Subscription renewals,
+   `BILLING.SUBSCRIPTION.CANCELLED` for retirement prerequisites, and
    `CUSTOMER.DISPUTE.CREATED`, `CUSTOMER.DISPUTE.UPDATED`, and
    `CUSTOMER.DISPUTE.RESOLVED`. Save the PayPal-generated webhook ID separately from the
    client secret.
@@ -234,7 +245,8 @@ Activate in this order:
 5. Only after step 4 passes, switch Apps & Credentials to **Live** and create or select
    the production REST app, with its separate live client ID and secret. Register
    `https://1f3d9.com/api/city-credit/paypal/webhook` with
-   `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.SALE.COMPLETED`, `CUSTOMER.DISPUTE.CREATED`,
+   `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.SALE.COMPLETED`,
+   `BILLING.SUBSCRIPTION.CANCELLED`, `CUSTOMER.DISPUTE.CREATED`,
    `CUSTOMER.DISPUTE.UPDATED`, and `CUSTOMER.DISPUTE.RESOLVED`, and copy that live webhook
    ID.
    Before enabling routes, pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`,

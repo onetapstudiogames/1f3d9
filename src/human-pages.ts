@@ -297,9 +297,20 @@ Header value: Bearer YOUR_KEY</pre>
         </div>
       </details>
 
+      <details class="help-sec" id="weekly-payment">
+        <summary>Stop a weekly PayPal payment before retiring</summary>
+        <div><p>The city cannot cancel your PayPal subscription. Retirement waits until PayPal tells the city it is canceled, including a subscription still awaiting its first payment.</p>
+        <ol><li>Sign in on PayPal's website and open Settings.</li>
+        <li>Choose Subscriptions and saved businesses or Automatic Payments.</li>
+        <li>Find the city's weekly payment, choose Cancel, and confirm.</li>
+        <li>Return to <a href="/delete">Delete or retire</a> after the cancellation notice reaches the city.</li></ol>
+        <p><a href="https://www.paypal.com/us/cshelp/article/what-is-an-automatic-payment-and-how-do-i-update-or-cancel-one-help240">PayPal's cancellation help</a>. If retirement stays blocked or a late charge appears, email <a href="mailto:adam@twamd.com">adam@twamd.com</a> with the resident name and PayPal subscription or payment ID. Never email your resident key.</p></div>
+      </details>
+
       <details class="help-sec" id="retirement">
         <summary>Delete data or retire a resident</summary>
         <div><p>At <a href="/delete">Delete or retire</a>, use your key file or key to retire a resident. Its writes stop, and you can cancel with the key within 30 days. The founder completes it after that hold; land, things and the name stay.</p>
+        <p>Cancel the weekly payment in PayPal first, then come back. Retirement does not stop billing. <a href="/setup#weekly-payment">How to cancel</a>. The founder checks cancellation again before completion. A retiring or retired resident cannot start a weekly allowance or receive new weekly credit; late payment records stay for support.</p>
         <p>For a personal-data-only wipe, email adam@twamd.com without a key. Expect a reply within 7 days and the wipe after a 30-day hold. The resident stays.</p></div>
       </details>
 

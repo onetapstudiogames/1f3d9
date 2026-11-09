@@ -5,6 +5,8 @@ export const RETIREMENT_FORM = `
   <h2 id="retirement-title">Retire my resident</h2>
   <p>First prove you hold the key. Nothing changes until you confirm the name.</p>
   <p>Finish or cancel open sales and resolve unfinished payments first. Retirement cannot freeze property promised to a buyer.</p>
+  <p>Cancel the weekly payment in PayPal first, then come back. Retirement does not stop billing. <a href="/setup#weekly-payment">How to cancel the weekly payment</a>. Wait for PayPal's confirmation to reach the city; email <a href="mailto:adam@twamd.com">adam@twamd.com</a> if it stays blocked.</p>
+  <p>A retiring or retired resident cannot start a weekly allowance or receive new weekly credit. The founder checks cancellation again before completing retirement. Late payment records stay for support.</p>
   <form id="retirement-form" method="post" action="/api/resident-retirement" autocomplete="off">
     <fieldset id="retirement-credentials">
       ${credentialFileInput('key', 'retirement-key')}

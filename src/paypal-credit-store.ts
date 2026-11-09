@@ -224,6 +224,14 @@ function deliveredCreditReceipt(
     || (terms.delivery === 'gift' && row.claim_token_hash !== terms.claimTokenHash)
   ) conflict('PayPal delivery receipt is bound to changed terms')
 
+  if (row.status === 'withheld') {
+    if (terms.purchaseKind !== 'allowance' || row.id != null || bool(row.created)) {
+      conflict('Withheld weekly payment cannot have a credit receipt')
+    }
+    return Object.freeze({ status: 'withheld', resident_id: terms.residentId,
+      amount_units: terms.amountUnits.toString(), purchase_kind: terms.purchaseKind })
+  }
+
   const result: Record<string, unknown> = {
     disposition: bool(row.created) ? 'created' : 'existing',
     receipt_id: rowId(row.id, 'PayPal purchase receipt id'),

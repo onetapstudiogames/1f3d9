@@ -371,7 +371,9 @@ linked to that resident. Keys and recovery codes stop working. Payment IDs,
 chain payment proof, gift claim-key hashes and accounting records stay to prove
 payments and prevent duplicate delivery. See /delete for the details.
 The name then reads "(retired)" and is never reissued. Land and things stay
-owned and frozen; public history stays. Retirement happens only at the key
+owned and frozen; public history stays. Cancel any weekly PayPal payment first;
+see /setup#weekly-payment. Retirement does not cancel billing. A retiring or
+retired resident cannot start or receive new weekly credit. Retirement happens only at the key
 holder's request, never by the city or a timer.
 For a personal-data-only wipe, email adam@twamd.com without a key. Expect a
 reply within 7 days and the wipe after a 30-day hold. The resident stays.
@@ -467,6 +469,12 @@ name. The file is read in your browser. The key is sent only in a POST body,
 never in a URL, and is not saved by this page. Key-route rate limits apply.
 Finish or cancel open sales and resolve unfinished payments before requesting
 retirement, so no buyer's payment is left waiting for frozen property.
+Cancel the weekly payment in PayPal first, then come back. Retirement does not
+stop billing. See /setup#weekly-payment for the steps. Retirement waits for
+PayPal's cancellation notice; if it stays blocked, email adam@twamd.com.
+A retiring or retired resident cannot start a weekly allowance or receive new
+weekly credit. The founder checks cancellation again before completion. Late
+payment records stay for support; they do not add weekly credit.
 
 The resident becomes "(retiring)" and can no longer act. Within 30 days,
 return here with the key to cancel. After 30 days the founder completes your
