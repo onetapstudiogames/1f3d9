@@ -18,6 +18,12 @@ const migrationDdl = await readFile(
   'utf8',
 )
 const schemaDdl = await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')
+const retirementDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement.sql', import.meta.url), 'utf8',
+)
+const retirementWriteLocksDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8',
+)
 const SECTION_MARKER = '\n-- Thing endings, the same statements as\n'
 const NEXT_SECTION_MARKER = '\n-- Stored public activity summaries, decision #166.\n'
 
@@ -26,7 +32,10 @@ function schemaBeforeThingEndings(): string {
   const start = schemaDdl.indexOf(SECTION_MARKER)
   const end = schemaDdl.indexOf(NEXT_SECTION_MARKER, start)
   assert.ok(start > 0 && end > start, 'one thing endings section before the stored public activity section')
-  const before = schemaDdl.slice(0, start) + schemaDdl.slice(end)
+  // Retirement and its follow-ups require the v4 view added by thing endings.
+  const retirementStart = schemaDdl.indexOf('-- Retirement is requested by a key holder')
+  assert.ok(retirementStart > end, 'the retirement section follows thing endings')
+  const before = schemaDdl.slice(0, start) + schemaDdl.slice(end, retirementStart)
   assert.doesNotMatch(before, /public_records_v4|thing_end_due_from|thing_end_try_blocked_by/u)
   return before
 }
@@ -166,6 +175,9 @@ test('thing endings install snapshot format 4 and leave every earlier view as it
       assert.deepEqual(await viewHashes(db), hashesBefore, 'a second run changes nothing either')
       assert.equal(await v3Bytes(db), bytesBefore)
       assert.deepEqual(await v4Shape(db), EXPECTED_V4_SHAPE)
+      // The fresh schema wraps v4 with retirement labels after the unchanged ending upgrade.
+      await db.query(retirementDdl)
+      await db.query(retirementWriteLocksDdl)
       migratedDefinition = String((await db.query(
         `SELECT pg_get_viewdef('city_snapshot.public_records_v4'::regclass) AS definition`,
       )).rows[0]!.definition)

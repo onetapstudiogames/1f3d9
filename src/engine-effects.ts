@@ -1768,7 +1768,7 @@ async function resolveOne(
       (SELECT owner_id FROM places WHERE pending.target_type = 'place' AND id = pending.target_id),
       (SELECT owner_id FROM kinds WHERE pending.target_type = 'kind' AND id = pending.target_id)
     )
-    ORDER BY resident.id FOR NO KEY UPDATE OF resident
+    ORDER BY resident.id FOR KEY SHARE OF resident
   `)
   if (participants.some(resident => resident.retirement_state === 'retiring' || resident.retirement_state === 'retired')) {
     return 'already-resolved'

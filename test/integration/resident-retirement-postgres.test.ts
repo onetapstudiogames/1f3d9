@@ -28,6 +28,10 @@ test('requested retirement freezes writes, can be canceled, and only founder com
     await pool.query(await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8'))
     await pool.query(migration)
     await pool.query(migration)
+    const writeLocks = await readFile(new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8')
+    assert.ok((await readFile(new URL('../../db/schema.sql', import.meta.url), 'utf8')).endsWith(writeLocks.replace(/^BEGIN;\n/u, '').replace(/COMMIT;\n$/u, '')))
+    await pool.query(writeLocks)
+    await pool.query(writeLocks)
     await pool.query(`INSERT INTO residents (id,handle,model,secret_hash) VALUES
       (1,'founder','test',repeat('1',64)), (2,'retirement-test','test',repeat('2',64)), (3,'other-test','test',repeat('3',64))`)
     const key = '1f3d9_sk_' + randomBytes(24).toString('hex')
@@ -54,6 +58,26 @@ test('requested retirement freezes writes, can be canceled, and only founder com
     await pool.query(`INSERT INTO places(id,parent_id,place_kind,name,description,owner_id)
       SELECT 101,id,'continent','retirement-land','land',2 FROM places WHERE place_kind='world'`)
     await pool.query(`INSERT INTO things(id,name,body,owner_id,maker_id,place_id) VALUES (101,'retirement-thing','thing',2,2,101)`)
+    const activeWriter = await pool.connect()
+    const activeObserver = await pool.connect()
+    try {
+      await activeObserver.query("SET lock_timeout = '500ms'")
+      await activeWriter.query('BEGIN')
+      await activeWriter.query('UPDATE residents SET notes_today=notes_today+1 WHERE id=2')
+      await activeObserver.query("UPDATE things SET body='active owner can edit' WHERE id=101")
+      await activeWriter.query('ROLLBACK')
+      await activeWriter.query('BEGIN')
+      await activeWriter.query("UPDATE things SET body='active property write' WHERE id=101")
+      await activeObserver.query('UPDATE residents SET notes_today=notes_today+1 WHERE id=2')
+    } finally {
+      try {
+        await activeWriter.query('ROLLBACK')
+        await activeObserver.query('RESET lock_timeout')
+      } finally {
+        activeWriter.release()
+        activeObserver.release()
+      }
+    }
     await pool.query(`INSERT INTO resident_recovery_codes(resident_id,generation,code_hash) VALUES (2,1,repeat('a',64))`)
     const family = (await pool.query(`INSERT INTO oauth_token_families(resident_id,client_id,resource,scope,expires_at)
       VALUES(2,'test-client','https://1f3d9.com/mcp/connect','city:resident',now()+interval '30 days') RETURNING id`)).rows[0].id
@@ -100,6 +124,36 @@ test('requested retirement freezes writes, can be canceled, and only founder com
     } finally { await concurrentWriter.query('ROLLBACK'); concurrentWriter.release() }
     await pool.query('DELETE FROM identity_rate_limits')
     assert.equal((await request('cancel')).status, 200)
+    const retiringFirst = await pool.connect()
+    const waitingWriter = await pool.connect()
+    let lateWrite: Promise<unknown> | undefined
+    try {
+      await retiringFirst.query('BEGIN')
+      await retiringFirst.query("UPDATE residents SET retirement_state='retiring',retirement_requested_at=clock_timestamp() WHERE id=2")
+      const pid = (await waitingWriter.query('SELECT pg_backend_pid() AS pid')).rows[0].pid
+      lateWrite = assert.rejects(
+        waitingWriter.query("UPDATE things SET body='must not apply after retirement' WHERE id=101"), /retiring/,
+      )
+      let blocked = false
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const state = (await pool.query("SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1", [pid])).rows[0]
+        if (state?.wait_event_type === 'Lock') { blocked = true; break }
+        await delay(10)
+      }
+      assert.equal(blocked, true, 'a write must wait for an uncommitted retirement')
+      await retiringFirst.query('COMMIT')
+      await lateWrite
+      assert.equal((await pool.query('SELECT body FROM things WHERE id=101')).rows[0].body, 'last active edit')
+    } finally {
+      try {
+        await retiringFirst.query('ROLLBACK')
+        await lateWrite
+      } finally {
+        retiringFirst.release()
+        waitingWriter.release()
+      }
+    }
+    await pool.query("UPDATE residents SET retirement_state='active',retirement_requested_at=NULL WHERE id=2")
     await pool.query(`UPDATE residents SET retirement_state='retiring',retirement_requested_at=clock_timestamp()-interval '31 days' WHERE id=2`)
     await assert.rejects(pool.query('SELECT complete_resident_retirement(3,2)'), /founder/)
     await pool.query('SELECT complete_resident_retirement(1,2)')

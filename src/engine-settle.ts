@@ -303,7 +303,7 @@ async function claimSettle(
         SELECT 1 FROM things thing WHERE thing.owner_id = owner.id AND thing.place_id = ${placeId}
           AND thing.withdrawn_at IS NULL AND (thing.wake_enabled OR thing.end_program_state = 'pending')
       )
-      ORDER BY owner.id FOR NO KEY UPDATE
+      ORDER BY owner.id FOR KEY SHARE
     `
     // End tries waiting in the room run first, outside wake_random_cap and the random pick.
     const endUnits: Unit[] = (await loadEndUnits(placeId, transaction))

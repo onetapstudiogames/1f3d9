@@ -32,7 +32,10 @@ const THING_ENDINGS_END = '$thing_endings_shape$;'
 const thingEndingsStart = schemaDdl.indexOf(THING_ENDINGS_START)
 const thingEndingsEnd = schemaDdl.indexOf(THING_ENDINGS_END, thingEndingsStart) + THING_ENDINGS_END.length
 assert.ok(thingEndingsStart >= 0 && thingEndingsEnd > thingEndingsStart, 'the thing endings section is found')
-const preWave3SchemaDdl = (schemaDdl.slice(0, thingEndingsStart) + schemaDdl.slice(thingEndingsEnd)).replace(
+// Retirement guards later-holder marks, so it and its follow-ups also postdate this baseline.
+const retirementStart = schemaDdl.indexOf('-- Retirement is requested by a key holder')
+assert.ok(retirementStart > thingEndingsEnd, 'the retirement section follows thing endings')
+const preWave3SchemaDdl = (schemaDdl.slice(0, thingEndingsStart) + schemaDdl.slice(thingEndingsEnd, retirementStart)).replace(
   /-- A deliberate private pointer[\s\S]*?(?=CREATE OR REPLACE FUNCTION set_thing_maker_on_insert)/u,
   '',
 )

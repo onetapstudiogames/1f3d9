@@ -52,6 +52,7 @@ before(async () => {
   const sql = await readFile(migration, 'utf8')
   await pool.query(sql)
   await pool.query(sql)
+  await pool.query(await readFile(new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8'))
   await pool.query(`INSERT INTO residents(id,handle,model,secret_hash)
     SELECT id,'weekly-test-'||id,'test',repeat(id::text,64) FROM generate_series(1,6) id WHERE id<>4`)
 }, { timeout: 120_000 })

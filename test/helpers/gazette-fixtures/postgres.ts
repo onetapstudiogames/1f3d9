@@ -61,7 +61,10 @@ assert.equal(
   'schema must carry the thing endings statements once',
 )
 assert.ok(postGazetteWithThingEndings.includes(thingEndingsBody), 'schema must carry the thing endings statements')
-const postGazetteSchemaDdl = postGazetteWithThingEndings.replace(thingEndingsBody, '')
+// Retirement and its follow-ups depend on v4 and arrive after this baseline.
+const retirementOffset = postGazetteWithThingEndings.indexOf('-- Retirement is requested by a key holder')
+assert.ok(retirementOffset > 0, 'the retirement section follows the Gazette')
+const postGazetteSchemaDdl = postGazetteWithThingEndings.slice(0, retirementOffset).replace(thingEndingsBody, '')
 export const preGazetteSchemaDdl = schemaBeforeActivity.slice(0, gazetteSchemaOffset)
   + postGazetteSchemaDdl
 assert.doesNotMatch(preGazetteSchemaDdl, /gazette_/iu)

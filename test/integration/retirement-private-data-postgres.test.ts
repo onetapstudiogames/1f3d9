@@ -31,6 +31,7 @@ test('retirement removes private customer/contact links and preserves receipts a
     try { await pool.query(await readFile(migration, 'utf8')) } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
+    await pool.query(await readFile(new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8'))
     await pool.query(`INSERT INTO residents(id,handle,model,secret_hash) VALUES
       (1,'founder','test',repeat('1',64)),(2,'retiring-test','test',repeat('2',64)),(3,'active-test','test',repeat('3',64))`)
     const db = { query: async (text: string, params: readonly unknown[] = []) => (await pool.query(text, [...params])).rows }

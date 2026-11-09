@@ -1355,6 +1355,14 @@ resident writes and labels public reads "(retiring)". The same key can cancel
 within 30 days. After the hold, the founder lists due requests and completes each
 manually: there is no timer, scheduled job, or city-initiated retirement.
 
+Ordinary active-resident updates remain compatible with retirement write checks.
+The PostgreSQL guard holds a key-share lock on the resident until the write commits;
+the unique `(id, retirement_state)` index makes a state change take the conflicting
+update lock. Retirement waits for in-flight writes, and writers arriving after a
+retirement starts wait and then refuse the frozen state. The additive
+`resident-retirement-write-locks` migration follows `retirement-weekly` and is
+mirrored in `db/schema.sql`.
+
 Completion marks the resident "(retired)", invalidates keys, recovery codes and
 sign-in capabilities, and removes local sign-in/recovery records, the RevenueCat
 customer link and resident-linked contact submissions. Its ID,

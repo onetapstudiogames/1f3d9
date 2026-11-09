@@ -11,7 +11,10 @@ const migrationUrl = new URL('../../db/migrations/20261027_showing_room.sql', im
 const activationUrl = new URL('../../db/migrations/20261027_showing_room_activation.sql', import.meta.url)
 
 function beforeShowingRoom(schema: string, migration: string): string {
-  const normalized = schema.replaceAll('\r\n', '\n').trim()
+  // Play and retirement arrived later; retain the exact historical suffix assertion.
+  const playStart = schema.indexOf('-- Google Play fixed-pack gift rail.')
+  assert.ok(playStart > 0, 'the Play section follows showing room')
+  const normalized = schema.slice(0, playStart).replaceAll('\r\n', '\n').trim()
   const suffix = migration.replaceAll('\r\n', '\n').trim()
   const offset = normalized.indexOf(suffix)
   assert.ok(suffix.length > 0, 'the complete showing room migration must exist')

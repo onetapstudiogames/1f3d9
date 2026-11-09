@@ -113,7 +113,7 @@ async function recordOne(thingId: number, db: TaggedSql): Promise<boolean> {
     const owners = await rows(transaction`
       SELECT owner.retirement_state FROM residents owner
       JOIN things thing ON thing.owner_id = owner.id
-      WHERE thing.id = ${thingId} FOR NO KEY UPDATE OF owner
+      WHERE thing.id = ${thingId} FOR KEY SHARE OF owner
     `)
     if (owners.some(owner => owner.retirement_state === 'retiring' || owner.retirement_state === 'retired')) return false
     const locked = (await rows(transaction.query(LOCK_SQL, [thingId])))[0]

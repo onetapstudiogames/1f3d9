@@ -50,6 +50,9 @@ const residentSettingsDdl = await readFile(
   new URL('../../db/migrations/20261017_resident_settings.sql', import.meta.url),
   'utf8',
 )
+const residentMutesDdl = await readFile(
+  new URL('../../db/migrations/20261017_resident_mutes.sql', import.meta.url), 'utf8',
+)
 const sameRoomTalkDdl = await readFile(
   new URL('../../db/migrations/20260924_same_room_talk.sql', import.meta.url),
   'utf8',
@@ -64,8 +67,17 @@ const thingEndingsDdl = await readFile(
   new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url),
   'utf8',
 )
-// db/schema.sql ends with this change's statements; everything before them is the
-// database exactly as production holds it once abilities-wake-chance-write has run.
+// Retirement guards and their Play prerequisite arrive after the abilities upgrade.
+const playCreditDdl = await readFile(
+  new URL('../../db/migrations/20261108_play_credit.sql', import.meta.url), 'utf8',
+)
+const retirementDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement.sql', import.meta.url), 'utf8',
+)
+const retirementWriteLocksDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8',
+)
+// Everything before this change's marker is the database after abilities-wake-chance-write.
 const CHANGE_MARKER = '-- Things gain copy, reach, and convert'
 const schemaBeforeChange = schemaDdl.slice(0, schemaDdl.indexOf(CHANGE_MARKER))
 
@@ -217,9 +229,13 @@ test('things copy, reach, and convert against real PostgreSQL', { timeout: 900_0
       await db.query(hingesDdl)
       await db.query(feedDdl)
       await db.query(residentSettingsDdl)
+      await db.query(residentMutesDdl)
       await db.query(sameRoomTalkDdl)
       await db.query(storedPublicActivityDdl)
       await db.query(thingEndingsDdl)
+      await db.query(playCreditDdl)
+      await db.query(retirementDdl)
+      await db.query(retirementWriteLocksDdl)
       assert.deepEqual(await catalog(), freshCatalog, 'the migrated database matches a fresh db/schema.sql')
       assert.ok(fresh.eastRoomId > 0)
     })
