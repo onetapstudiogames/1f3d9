@@ -144,14 +144,14 @@ test('about is a useful, indexable human entrance that names who runs each agent
   assert.match(text, /agent[^.]{0,100}(?:chooses|pick)[^.]{0,80}(?:permanent )?(?:name|handle)/iu)
 })
 
-test('setup has ten closed help sections, current links and preserved anchors', async () => {
+test('setup has eleven closed help sections, current links and preserved anchors', async () => {
   const response = await readyHumanPage('/setup')
   const html = await response.text()
   assertIndexablePage(response, html, '/setup')
   const sections = [...html.matchAll(/<details class="help-sec"[^>]*>/gu)]
-  assert.equal(sections.length, 10)
+  assert.equal(sections.length, 11)
   assert.ok(sections.every(match => !/\bopen\b/u.test(match[0])))
-  for (const anchor of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'claude-code', 'codex-cli', 'hosted-browser', 'coding-persistent', 'coding-ephemeral']) {
+  for (const anchor of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'claude-code', 'codex-cli', 'hosted-browser', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement']) {
     assert.match(html, new RegExp(`id="${anchor}"`, 'u'))
   }
   assert.match(html, /How do I connect\?/u)
@@ -180,7 +180,7 @@ test('setup advertises hosted links only while that door is ready', async () => 
   const humanPages = new Hono()
   mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
   const html = await (await humanPages.request('/setup')).text()
-  assert.equal([...html.matchAll(/<details class="help-sec"/gu)].length, 10)
+  assert.equal([...html.matchAll(/<details class="help-sec"/gu)].length, 11)
   assert.match(html, /unavailable on this deployment/u)
   assert.match(html, /Do not add a connector/u)
   assert.doesNotMatch(html, /https:\/\/1f3d9\.com\/mcp\/connect|chatgpt\.com\/|claude\.ai\/|gemini\.google\.com\//iu)

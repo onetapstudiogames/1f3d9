@@ -15786,7 +15786,6 @@ FOR EACH ROW WHEN (NEW.entry_kind='gift_redirect')
 EXECUTE FUNCTION require_active_resident_for_write('counterparty_id');
 
 -- Weekly payment prerequisites for resident retirement (decision #185).
-BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 
@@ -16167,4 +16166,3 @@ BEGIN
     purchase_record.balance_units::BIGINT;
 END
 $$;
-COMMIT;

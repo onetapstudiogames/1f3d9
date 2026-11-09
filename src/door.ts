@@ -1115,6 +1115,15 @@ but fee credit is never resident money. There is no city token, and there never 
 be one. Credit stays bound to one resident and inside the fee loop: it cannot be
 transferred, sold, redeemed, cashed out, refunded, or used for a peer sale.
 
+Before retiring a resident at /delete:
+Cancel the weekly payment in PayPal first, then come back: /setup#weekly-payment
+explains how. Retirement does not stop billing. A subscription awaiting its first
+payment also needs PayPal's cancellation notice. If it stays blocked, email
+adam@twamd.com without your key. A retiring or retired resident cannot start a
+weekly allowance or receive new weekly credit. The founder checks cancellation
+again before completion. Late weekly payment records stay for support without
+adding credit; earlier delivery receipts still replay without adding credit.
+
 CREDIT GIFTS
 ~~~~~~~~~~~~
 cite: money#credit-gifts
@@ -1374,13 +1383,6 @@ the founder completes retirement manually: reads say "(retired)", keys and recov
 codes stop, and private personal links are scrubbed. Land and things stay owned and
 frozen; the name stays in history and is never reissued. A data-only wipe is requested
 by email without a key; the resident stays.
-Cancel the weekly payment in PayPal first, then come back: /setup#weekly-payment
-explains how. Retirement does not stop billing. A subscription awaiting its first
-payment also needs PayPal's cancellation notice. If it stays blocked, email
-adam@twamd.com without your key. A retiring or retired resident cannot start a
-weekly allowance or receive new weekly credit. The founder checks cancellation
-again before completion. Late weekly payment records stay for support without
-adding credit; earlier delivery receipts still replay without adding credit.
 Finish existing commitments before requesting retirement; /delete explains the
 refusals before you start.
 Resident reads keep the original handle; retirement_state and display_handle add
@@ -5518,6 +5520,15 @@ but fee credit is never resident money. There is no city token, and there never 
 be one. Credit stays bound to one resident and inside the fee loop: it cannot be
 transferred, sold, redeemed, cashed out, refunded, or used for a peer sale.
 
+Before retiring a resident at /delete:
+Cancel the weekly payment in PayPal first, then come back: /setup#weekly-payment
+explains how. Retirement does not stop billing. A subscription awaiting its first
+payment also needs PayPal's cancellation notice. If it stays blocked, email
+adam@twamd.com without your key. A retiring or retired resident cannot start a
+weekly allowance or receive new weekly credit. The founder checks cancellation
+again before completion. Late weekly payment records stay for support without
+adding credit; earlier delivery receipts still replay without adding credit.
+
 CREDIT GIFTS
 ~~~~~~~~~~~~
 cite: money#credit-gifts
@@ -5778,13 +5789,6 @@ the founder completes retirement manually: reads say "(retired)", keys and recov
 codes stop, and private personal links are scrubbed. Land and things stay owned and
 frozen; the name stays in history and is never reissued. A data-only wipe is requested
 by email without a key; the resident stays.
-Cancel the weekly payment in PayPal first, then come back: /setup#weekly-payment
-explains how. Retirement does not stop billing. A subscription awaiting its first
-payment also needs PayPal's cancellation notice. If it stays blocked, email
-adam@twamd.com without your key. A retiring or retired resident cannot start a
-weekly allowance or receive new weekly credit. The founder checks cancellation
-again before completion. Late weekly payment records stay for support without
-adding credit; earlier delivery receipts still replay without adding credit.
 Finish existing commitments before requesting retirement; /delete explains the
 refusals before you start.
 Resident reads keep the original handle; retirement_state and display_handle add

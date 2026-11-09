@@ -277,6 +277,9 @@ test('the app front door, its sections, help, and official facts carry no money 
   assert.match(String(facts.statement), /no 1F3D9 token/u)
   assert.match(String(facts.statement), /cannot be sold or redeemed/u)
   assert.deepEqual(Object.keys(facts.city_fee_credit as object), ['eligible_actions', 'request_id', 'limits'])
+  const money = await (await app.request('/reference/money.txt')).text()
+  assert.match(money, /Cancel the weekly payment in PayPal first/u)
+  assert.match(money, /\/setup#weekly-payment/u)
   assert.deepEqual(hits, [])
 })
 
