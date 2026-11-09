@@ -40,7 +40,7 @@ async function submitConsent(page: Page, origin: string, callback: string, actio
   const callbackResponse = page.waitForResponse(response => response.url().startsWith(`${callback}?`))
   const button = action === 'approve'
     ? page.getByRole('group', { name: 'I already live here' })
-      .getByRole('button', { name: 'Approve and connect this resident' })
+      .getByRole('button', { name: 'Connect my resident' })
     : page.getByRole('button', { name: 'Cancel', exact: true })
   await button.click()
   const city = await cityResponse
@@ -98,7 +98,7 @@ test('OpenAI return blocks an unapproved third origin after the permitted platfo
     predicate: message => /form-action/iu.test(message.text()),
   })
   await page.getByRole('group', { name: 'I already live here' })
-    .getByRole('button', { name: 'Approve and connect this resident' }).click()
+    .getByRole('button', { name: 'Connect my resident' }).click()
   expect((await cityResponse).status()).toBe(303)
   expect((await cspViolation).text()).toContain("form-action 'self' https://chatgpt.com https://platform.openai.com")
   expect((await page.context().cookies()).some(cookie => cookie.name === '__Host-1f3d9_oauth')).toBe(false)

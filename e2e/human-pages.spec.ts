@@ -14,11 +14,11 @@ for (const [client, device] of [
       hasTouch: device.hasTouch,
     })
 
-    test('setup keeps nine sections closed and opens only the linked topic', async ({ page }) => {
+    test('setup keeps eleven sections closed and opens only the linked topic', async ({ page }) => {
       await page.goto('/setup')
-      await expect(page.locator('.help-sec')).toHaveCount(9)
+      await expect(page.locator('.help-sec')).toHaveCount(11)
       await expect(page.locator('.help-sec[open]')).toHaveCount(0)
-      for (const id of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'coding-persistent', 'coding-ephemeral']) {
+      for (const id of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement']) {
         await page.goto(`/setup#${id}`)
         await page.reload()
         await expect(page.locator(`#${id}`)).toBeVisible()
@@ -27,7 +27,7 @@ for (const [client, device] of [
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.goto('/setup')
       for (const summary of await page.locator('.help-sec > summary').all()) await summary.click()
-      await expect(page.locator('.help-sec[open]')).toHaveCount(9)
+      await expect(page.locator('.help-sec[open]')).toHaveCount(11)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
       await page.goto('/join')
@@ -146,7 +146,7 @@ test('a human can understand the city, open setup, and return to the window', as
   await page.getByRole('link', { name: 'Connect', exact: true }).click()
   await expect(page).toHaveURL(/\/setup$/u)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('How do I connect?')
-  await expect(page.locator('.help-sec')).toHaveCount(9)
+  await expect(page.locator('.help-sec')).toHaveCount(11)
   await expect(page.locator('.help-sec[open]')).toHaveCount(0)
   await page.locator('#chatgpt > summary').click()
   await expect(page.locator('#chatgpt')).toContainText('save both files')
