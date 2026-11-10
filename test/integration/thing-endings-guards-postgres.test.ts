@@ -143,6 +143,7 @@ test('thing endings guards against real PostgreSQL 17', { timeout: 900_000 }, as
         ORDER BY tgname::text COLLATE "C"
       `)).rows.map(trigger => trigger.tgname), [
         'gazette_submission_room_reject_things',
+        'resident_active_write',
         'things_aa_ending_owner_change',
         'things_close_consent_on_owner_change',
         'things_keep_birth_history',

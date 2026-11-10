@@ -15003,3 +15003,1476 @@ BEGIN
       USING ERRCODE='23514',CONSTRAINT='showing_room_installation_dormant';
   END IF;
 END $showing_room_postconditions$;
+
+-- Google Play fixed-pack gift rail.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+
+CREATE TABLE IF NOT EXISTS play_credit_orders (
+  public_id TEXT PRIMARY KEY CHECK (public_id ~ '^city_play_[0-9a-f]{32}$'),
+  request_id TEXT NOT NULL UNIQUE CHECK (octet_length(request_id) BETWEEN 8 AND 128),
+  recipient_id INTEGER NOT NULL REFERENCES residents(id),
+  product_id TEXT NOT NULL CHECK (product_id IN ('fee_credit_1_v1', 'fee_credit_5_v1', 'fee_credit_10_v1')),
+  amount_units BIGINT NOT NULL,
+  claim_token_hash TEXT NOT NULL CHECK (claim_token_hash ~ '^[0-9a-f]{64}$'),
+  rc_app_user_id TEXT NOT NULL CHECK (octet_length(rc_app_user_id) BETWEEN 1 AND 6000),
+  environment TEXT NOT NULL CHECK (environment IN ('production', 'sandbox')),
+  transaction_id TEXT UNIQUE CHECK (transaction_id ~ '^GPA\.[A-Za-z0-9.-]{1,124}$'),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'delivered', 'revoked', 'ignored')),
+  gift_id BIGINT UNIQUE REFERENCES city_credit_gifts(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CHECK (amount_units = CASE product_id WHEN 'fee_credit_1_v1' THEN 1000000
+    WHEN 'fee_credit_5_v1' THEN 5000000 WHEN 'fee_credit_10_v1' THEN 10000000 ELSE 0 END),
+  CHECK ((status = 'open' AND transaction_id IS NULL AND gift_id IS NULL)
+    OR (status IN ('delivered', 'revoked') AND transaction_id IS NOT NULL)
+    OR status = 'ignored')
+);
+CREATE INDEX IF NOT EXISTS play_credit_orders_buyer_product ON play_credit_orders (rc_app_user_id, product_id, environment);
+
+CREATE TABLE IF NOT EXISTS play_credit_events (
+  event_id TEXT PRIMARY KEY CHECK (octet_length(event_id) BETWEEN 1 AND 255),
+  event_type TEXT NOT NULL CHECK (event_type IN ('NON_RENEWING_PURCHASE', 'CANCELLATION')),
+  transaction_id TEXT NOT NULL CHECK (transaction_id ~ '^GPA\.[A-Za-z0-9.-]{1,124}$'),
+  product_id TEXT NOT NULL CHECK (product_id IN ('fee_credit_1_v1', 'fee_credit_5_v1', 'fee_credit_10_v1')),
+  environment TEXT NOT NULL CHECK (environment IN ('production', 'sandbox')),
+  verified BOOLEAN NOT NULL,
+  order_id TEXT REFERENCES play_credit_orders(public_id),
+  purchase_entry_id BIGINT REFERENCES city_credit_entries(id),
+  outcome TEXT NOT NULL CHECK (outcome IN ('delivered', 'revoked', 'accepted_kept', 'refunded_before_delivery', 'unmatched', 'ignored', 'duplicate')),
+  received_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CHECK ((outcome = 'ignored' AND NOT verified) OR (outcome <> 'ignored' AND verified)),
+  CHECK (outcome NOT IN ('delivered', 'revoked', 'accepted_kept') OR (order_id IS NOT NULL AND purchase_entry_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS play_credit_events_transaction ON play_credit_events (transaction_id, environment);
+
+-- Preserve every pre-existing ledger shape; add only the gift-only Play purchase shape.
+DO $$
+DECLARE definition TEXT;
+BEGIN
+  SELECT pg_get_expr(conbin, conrelid) INTO definition FROM pg_constraint
+  WHERE conrelid = 'city_credit_entries'::regclass AND conname = 'city_credit_entries_check';
+  IF position('''play''' in definition) = 0 THEN
+    EXECUTE 'ALTER TABLE city_credit_entries DROP CONSTRAINT city_credit_entries_check';
+    EXECUTE 'ALTER TABLE city_credit_entries ADD CONSTRAINT city_credit_entries_check CHECK (('
+      || definition || ') OR ('
+      || 'entry_kind = ''purchase'' AND purchase_kind = ''play'' AND gift_id IS NOT NULL '
+      || 'AND founder_id IS NULL AND source_key IS NOT NULL AND reason IS NULL '
+      || 'AND request_id IS NULL AND related_spend_id IS NULL AND payment_attempt_id IS NULL '
+      || 'AND counterparty_id IS NULL AND related_purchase_id IS NULL AND paypal_dispute_id IS NULL '
+      || 'AND paypal_event_id IS NULL AND paypal_resource_updated_at IS NULL AND application_outcome IS NULL))';
+  END IF;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION protect_play_credit_order() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Play order history cannot be deleted' USING ERRCODE = '55000'; END IF;
+  IF ROW(NEW.public_id, NEW.request_id, NEW.recipient_id, NEW.product_id, NEW.amount_units,
+    NEW.claim_token_hash, NEW.rc_app_user_id, NEW.environment, NEW.created_at)
+    IS DISTINCT FROM ROW(OLD.public_id, OLD.request_id, OLD.recipient_id, OLD.product_id, OLD.amount_units,
+    OLD.claim_token_hash, OLD.rc_app_user_id, OLD.environment, OLD.created_at)
+    OR (OLD.transaction_id IS NOT NULL AND NEW.transaction_id IS DISTINCT FROM OLD.transaction_id)
+    OR (OLD.gift_id IS NOT NULL AND NEW.gift_id IS DISTINCT FROM OLD.gift_id)
+    OR (OLD.status = 'revoked' AND NEW.status <> 'revoked') THEN
+    RAISE EXCEPTION 'Play purchase terms are immutable' USING ERRCODE = '55000';
+  END IF;
+  RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS play_credit_orders_guard ON play_credit_orders;
+CREATE TRIGGER play_credit_orders_guard BEFORE UPDATE OR DELETE ON play_credit_orders
+FOR EACH ROW EXECUTE FUNCTION protect_play_credit_order();
+DROP TRIGGER IF EXISTS play_credit_events_append_only ON play_credit_events;
+CREATE TRIGGER play_credit_events_append_only BEFORE UPDATE OR DELETE ON play_credit_events
+FOR EACH ROW EXECUTE FUNCTION deny_history_mutation();
+
+CREATE OR REPLACE FUNCTION require_play_purchase_event() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.entry_kind = 'purchase' AND NEW.purchase_kind = 'play' AND NOT EXISTS (
+    SELECT 1 FROM play_credit_events e JOIN play_credit_orders o ON o.public_id = e.order_id
+    JOIN city_credit_gifts g ON g.id = o.gift_id
+    WHERE e.verified AND e.event_type = 'NON_RENEWING_PURCHASE' AND e.outcome = 'delivered'
+      AND e.purchase_entry_id = NEW.id AND NEW.gift_id = o.gift_id
+      AND NEW.resident_id = o.recipient_id AND NEW.amount_units = o.amount_units
+      AND NEW.source_key = 'play:txn:' || e.transaction_id
+      AND e.transaction_id = o.transaction_id AND e.product_id = o.product_id AND e.environment = o.environment
+      AND g.claim_token_hash = o.claim_token_hash
+  ) THEN RAISE EXCEPTION 'Play purchase requires its exact verified event' USING ERRCODE = '23514'; END IF;
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS city_credit_entries_require_play_event ON city_credit_entries;
+CREATE CONSTRAINT TRIGGER city_credit_entries_require_play_event AFTER INSERT ON city_credit_entries
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION require_play_purchase_event();
+
+CREATE OR REPLACE FUNCTION deliver_play_credit(
+  requested_order_id TEXT, requested_event_id TEXT, requested_event_type TEXT,
+  requested_transaction_id TEXT, verified_product_id TEXT, verified_environment TEXT,
+  configured_environment TEXT, verified_purchased_at TIMESTAMPTZ, verified_app_user_ids TEXT[]
+) RETURNS TEXT LANGUAGE plpgsql AS $$
+DECLARE
+  stored_order play_credit_orders%ROWTYPE;
+  prior_event play_credit_events%ROWTYPE;
+  gift city_credit_gifts%ROWTYPE;
+  purchase RECORD;
+  matching_ids TEXT[];
+  result TEXT;
+BEGIN
+  IF verified_product_id NOT IN ('fee_credit_1_v1', 'fee_credit_5_v1', 'fee_credit_10_v1')
+    OR requested_event_type NOT IN ('NON_RENEWING_PURCHASE', 'CANCELLATION')
+    OR verified_environment NOT IN ('production', 'sandbox') OR configured_environment NOT IN ('production', 'sandbox')
+    OR requested_transaction_id !~ '^GPA\.[A-Za-z0-9.-]{1,124}$' THEN
+    RAISE EXCEPTION 'invalid Play purchase evidence' USING ERRCODE = '23514';
+  END IF;
+  -- Both delivery and refund take the same transaction lock before any order/gift lock.
+  PERFORM pg_advisory_xact_lock(hashtextextended('play:' || requested_transaction_id, 0));
+  SELECT * INTO prior_event FROM play_credit_events WHERE event_id = requested_event_id;
+  IF FOUND THEN
+    IF prior_event.transaction_id <> requested_transaction_id OR prior_event.product_id <> verified_product_id
+      OR prior_event.environment <> verified_environment OR prior_event.event_type <> requested_event_type THEN
+      RAISE EXCEPTION 'Play event id was reused' USING ERRCODE = '23514';
+    END IF;
+    RETURN prior_event.outcome;
+  END IF;
+  IF verified_environment <> configured_environment THEN
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,false,'ignored');
+    RETURN 'ignored';
+  END IF;
+  SELECT * INTO stored_order FROM play_credit_orders WHERE transaction_id = requested_transaction_id FOR UPDATE;
+  IF FOUND AND (stored_order.product_id <> verified_product_id OR stored_order.environment <> verified_environment
+    OR (requested_order_id IS NOT NULL AND stored_order.public_id <> requested_order_id)
+    OR NOT stored_order.rc_app_user_id = ANY(verified_app_user_ids)) THEN
+    RETURN 'unmatched';
+  END IF;
+  IF NOT FOUND THEN
+    SELECT array_agg(public_id) INTO matching_ids FROM play_credit_orders
+    WHERE status = 'open' AND rc_app_user_id = ANY(verified_app_user_ids)
+      AND product_id = verified_product_id AND environment = verified_environment
+      AND created_at <= verified_purchased_at
+      AND (requested_order_id IS NULL OR public_id = requested_order_id);
+    IF cardinality(matching_ids) = 1 THEN
+      SELECT * INTO stored_order FROM play_credit_orders WHERE public_id = matching_ids[1] FOR UPDATE;
+      IF stored_order.status <> 'open' THEN RETURN 'unmatched'; END IF;
+    END IF;
+  END IF;
+  IF requested_event_type = 'CANCELLATION' THEN
+    IF EXISTS (SELECT 1 FROM play_credit_events WHERE transaction_id = requested_transaction_id
+      AND environment = verified_environment AND event_type = 'CANCELLATION' AND verified) THEN
+      INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+      VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'duplicate');
+      RETURN 'duplicate';
+    END IF;
+    IF stored_order.gift_id IS NOT NULL THEN
+      SELECT * INTO gift FROM city_credit_gifts WHERE id = stored_order.gift_id FOR UPDATE;
+      result := CASE WHEN gift.status = 'accepted' THEN 'accepted_kept' ELSE 'revoked' END;
+      INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,purchase_entry_id,outcome)
+      VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,gift.source_entry_id,result);
+      IF gift.status IN ('pending', 'refused') THEN
+        UPDATE city_credit_gifts SET status = 'revoked', refused_at = NULL,
+          frozen_at = clock_timestamp(), revoked_at = clock_timestamp() WHERE id = gift.id;
+        UPDATE play_credit_orders SET status = 'revoked', updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+      END IF;
+      RETURN result;
+    END IF;
+    -- Keep refund evidence even when the order is absent or ambiguous. A later claim cannot mint it.
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'refunded_before_delivery');
+    IF stored_order.public_id IS NOT NULL THEN
+      UPDATE play_credit_orders SET status = 'revoked', transaction_id = requested_transaction_id,
+        updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+    END IF;
+    RETURN 'refunded_before_delivery';
+  END IF;
+  IF EXISTS (SELECT 1 FROM play_credit_events WHERE transaction_id = requested_transaction_id
+    AND environment = verified_environment AND event_type = 'CANCELLATION' AND verified) THEN
+    IF stored_order.public_id IS NOT NULL AND stored_order.status = 'open' THEN
+      UPDATE play_credit_orders SET status = 'revoked', transaction_id = requested_transaction_id,
+        updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+    END IF;
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'refunded_before_delivery');
+    RETURN 'refunded_before_delivery';
+  END IF;
+  IF stored_order.public_id IS NULL THEN
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,'unmatched');
+    RETURN 'unmatched';
+  END IF;
+  SELECT * INTO purchase FROM record_city_credit_purchase(stored_order.recipient_id, stored_order.amount_units,
+    'play:txn:' || requested_transaction_id, 'play', stored_order.claim_token_hash,
+    'city_gift_' || replace(gen_random_uuid()::text, '-', ''));
+  UPDATE play_credit_orders SET status = 'delivered', transaction_id = requested_transaction_id,
+    gift_id = purchase.gift_row_id, updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+  INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,purchase_entry_id,outcome)
+  VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,purchase.id,'delivered');
+  RETURN 'delivered';
+END
+$$;
+
+CREATE OR REPLACE FUNCTION require_city_credit_gift_purchase() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  current_gift city_credit_gifts%ROWTYPE;
+BEGIN
+  SELECT * INTO current_gift FROM city_credit_gifts WHERE id = NEW.id;
+  IF NOT FOUND OR current_gift.source_entry_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM city_credit_entries entry
+    WHERE entry.id = current_gift.source_entry_id AND entry.entry_kind = 'purchase'
+      AND entry.gift_id = current_gift.id AND entry.amount_units = current_gift.amount_units
+      AND entry.source_key = current_gift.source_key
+  ) THEN
+    RAISE EXCEPTION 'city credit gift requires its exact purchase receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status IN ('pending', 'frozen') AND NOT EXISTS (
+    SELECT 1 FROM city_credit_entries entry
+    WHERE entry.gift_id = NEW.id AND entry.entry_kind = 'gift_pending'
+      AND entry.resident_id = NEW.recipient_id AND entry.amount_units = NEW.amount_units
+      AND entry.source_key = 'gift:' || NEW.public_id || ':pending:' || NEW.version::text
+  ) THEN
+    RAISE EXCEPTION 'pending city credit gift requires its exact arrival receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status = 'accepted' AND NOT EXISTS (
+    SELECT 1 FROM city_credit_entries entry
+    WHERE entry.gift_id = NEW.id AND entry.entry_kind = 'gift_accept'
+      AND entry.resident_id = NEW.recipient_id AND entry.amount_units = NEW.amount_units
+      AND entry.source_key = 'gift:' || NEW.public_id || ':accept:' || NEW.version::text
+  ) THEN
+    RAISE EXCEPTION 'accepted city credit gift requires its exact acceptance receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status = 'refused' AND NOT EXISTS (
+    SELECT 1 FROM city_credit_entries entry
+    WHERE entry.gift_id = NEW.id AND entry.entry_kind = 'gift_refuse'
+      AND entry.resident_id = NEW.recipient_id AND entry.amount_units = NEW.amount_units
+      AND entry.source_key = 'gift:' || NEW.public_id || ':refuse:' || NEW.version::text
+  ) THEN
+    RAISE EXCEPTION 'refused city credit gift requires its exact refusal receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status = 'frozen' AND NOT EXISTS (
+    SELECT 1 FROM paypal_credit_disputes dispute
+    JOIN paypal_credit_dispute_events event
+      ON event.dispute_id = dispute.dispute_id
+    JOIN city_credit_entries receipt
+      ON receipt.paypal_dispute_id = dispute.dispute_id
+      AND receipt.paypal_event_id = event.paypal_event_id
+    JOIN city_credit_entries purchase ON purchase.id = receipt.related_purchase_id
+    WHERE purchase.gift_id = NEW.id
+      AND dispute.state IN ('open', 'resolution_review')
+      AND receipt.gift_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION 'frozen city credit gift requires its open dispute receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status = 'revoked' AND NOT EXISTS (
+    SELECT 1 FROM play_credit_events event
+    JOIN play_credit_orders play_order ON play_order.public_id = event.order_id
+    WHERE play_order.gift_id = NEW.id AND event.purchase_entry_id = current_gift.source_entry_id
+      AND event.transaction_id = play_order.transaction_id AND event.product_id = play_order.product_id
+      AND event.environment = play_order.environment AND event.verified
+      AND event.event_type = 'CANCELLATION' AND event.outcome = 'revoked'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM paypal_credit_disputes dispute
+    JOIN city_credit_entries receipt
+      ON receipt.paypal_dispute_id = dispute.dispute_id
+    JOIN city_credit_entries purchase ON purchase.id = receipt.related_purchase_id
+    WHERE purchase.gift_id = NEW.id
+      AND dispute.state = 'resolved_against_seller'
+      AND receipt.gift_id = NEW.id
+      AND receipt.application_outcome IN (
+        'dispute_resolved_gift_revoked', 'founder_review_gift_revoked'
+      )
+  ) THEN
+    RAISE EXCEPTION 'revoked city credit gift requires its adverse dispute receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'frozen' AND NEW.status = 'pending'
+    AND NOT EXISTS (
+      SELECT 1 FROM paypal_credit_disputes dispute
+      JOIN city_credit_entries receipt
+        ON receipt.paypal_dispute_id = dispute.dispute_id
+      JOIN city_credit_entries purchase ON purchase.id = receipt.related_purchase_id
+      WHERE purchase.gift_id = NEW.id AND dispute.state = 'resolved_seller'
+        AND receipt.gift_id = NEW.id
+        AND receipt.application_outcome IN (
+          'dispute_resolved_gift_pending', 'founder_review_gift_pending'
+        )
+    ) THEN
+    RAISE EXCEPTION 'unfrozen city credit gift requires its seller-favor receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF NEW.status = 'refused' AND NEW.frozen_at IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM paypal_credit_disputes dispute
+    JOIN city_credit_entries receipt
+      ON receipt.paypal_dispute_id = dispute.dispute_id
+    JOIN city_credit_entries purchase ON purchase.id = receipt.related_purchase_id
+    WHERE purchase.gift_id = NEW.id
+      AND dispute.state IN ('open', 'resolution_review')
+      AND receipt.gift_id = NEW.id
+  ) THEN
+    RAISE EXCEPTION 'blocked refused city credit gift requires its open dispute receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'refused'
+    AND OLD.frozen_at IS NOT NULL AND NEW.status = 'refused'
+    AND NEW.frozen_at IS NULL AND NOT EXISTS (
+      SELECT 1 FROM paypal_credit_disputes dispute
+      JOIN city_credit_entries receipt
+        ON receipt.paypal_dispute_id = dispute.dispute_id
+      JOIN city_credit_entries purchase ON purchase.id = receipt.related_purchase_id
+      WHERE purchase.gift_id = NEW.id
+        AND dispute.state = 'resolved_seller'
+        AND receipt.gift_id = NEW.id
+        AND receipt.application_outcome IN (
+          'dispute_resolved_refused_gift',
+          'founder_review_refused_gift_redirectable'
+        )
+    ) THEN
+    RAISE EXCEPTION 'unblocked refused city credit gift requires its seller-favor receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.status = 'refused'
+    AND OLD.frozen_at IS NOT NULL AND NEW.status = 'refused'
+    AND NEW.frozen_at IS NULL AND EXISTS (
+      SELECT 1 FROM paypal_credit_disputes dispute
+      JOIN paypal_credit_dispute_events event
+        ON event.dispute_id = dispute.dispute_id
+      JOIN paypal_credit_events capture
+        ON capture.remote_resource_id = ANY(event.transaction_capture_ids)
+        AND capture.event_kind = 'PAYMENT.CAPTURE.COMPLETED'
+        AND capture.outcome = 'credited'
+      JOIN city_credit_entries purchase ON purchase.id = capture.purchase_entry_id
+      WHERE purchase.gift_id = NEW.id
+        AND dispute.state IN ('open', 'resolution_review')
+    ) THEN
+    RAISE EXCEPTION 'refused city credit gift remains blocked by an open payment dispute'
+      USING ERRCODE = '23514';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW.recipient_id IS DISTINCT FROM OLD.recipient_id
+    AND NOT EXISTS (
+      SELECT 1 FROM city_credit_entries entry
+      WHERE entry.gift_id = NEW.id AND entry.entry_kind = 'gift_redirect'
+        AND entry.resident_id = OLD.recipient_id
+        AND entry.counterparty_id = NEW.recipient_id
+        AND entry.amount_units = NEW.amount_units
+        AND entry.source_key = 'gift:' || NEW.public_id || ':redirect:' || NEW.version::text
+    ) THEN
+    RAISE EXCEPTION 'redirected city credit gift requires its exact departure receipt'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END
+$$;
+
+
+-- Retirement is requested by a key holder and completed manually by the founder.
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS retirement_state TEXT NOT NULL DEFAULT 'active'
+  CHECK (retirement_state IN ('active','retiring','retired'));
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS retirement_requested_at TIMESTAMPTZ;
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='residents'::regclass AND conname='resident_retirement_dates') THEN
+    ALTER TABLE residents ADD CONSTRAINT resident_retirement_dates CHECK (
+      (retirement_state='active' AND retirement_requested_at IS NULL AND retired_at IS NULL)
+      OR (retirement_state='retiring' AND retirement_requested_at IS NOT NULL AND retired_at IS NULL)
+      OR (retirement_state='retired' AND retirement_requested_at IS NOT NULL AND retired_at IS NOT NULL
+        AND retired_at >= retirement_requested_at + interval '30 days'));
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS residents_retirement_due ON residents(retirement_requested_at,id)
+  WHERE retirement_state='retiring';
+
+CREATE OR REPLACE FUNCTION guard_resident_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    IF OLD.retirement_state<>'active' THEN
+      RAISE EXCEPTION 'A retiring or retired resident keeps its name permanently.' USING ERRCODE='R0001';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.retirement_state='retired' THEN
+    RAISE EXCEPTION 'This resident is retired and cannot act.' USING ERRCODE='R0001';
+  END IF;
+  IF NEW.retirement_state <> OLD.retirement_state THEN
+    IF NEW.retirement_state='retiring' AND OLD.retirement_state='active'
+      AND NEW.retirement_requested_at IS NOT NULL AND NEW.retired_at IS NULL THEN
+      IF EXISTS(SELECT 1 FROM transfer_offers WHERE status='open'
+        AND (seller_id=OLD.id OR (reserved_by=OLD.id AND reserved_until>clock_timestamp())))
+        OR EXISTS(SELECT 1 FROM payment_attempts WHERE (actor_id=OLD.id OR counterparty_id=OLD.id)
+          AND status IN ('settling','payment_pending','needs_review')) THEN
+        RAISE EXCEPTION 'Finish or cancel open sale offers, wait for live purchase reservations, and resolve pending payments before retiring. Nothing changed.' USING ERRCODE='R0002';
+      END IF;
+      RETURN NEW;
+    ELSIF NEW.retirement_state='active' AND OLD.retirement_state='retiring'
+      AND clock_timestamp() < OLD.retirement_requested_at + interval '30 days'
+      AND NEW.retirement_requested_at IS NULL AND NEW.retired_at IS NULL THEN
+      RETURN NEW;
+    ELSIF NEW.retirement_state='retired' AND OLD.retirement_state='retiring'
+      AND clock_timestamp() >= OLD.retirement_requested_at + interval '30 days'
+      AND NEW.retired_at IS NOT NULL THEN
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'This retirement cannot change now; cancellation is available only within 30 days.' USING ERRCODE='R0001';
+  END IF;
+  IF OLD.retirement_state='retiring' THEN
+    RAISE EXCEPTION 'This resident is retiring and cannot act. Cancel within 30 days on /delete to return.' USING ERRCODE='R0001';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS resident_retirement_guard ON residents;
+CREATE TRIGGER resident_retirement_guard BEFORE UPDATE OR DELETE ON residents
+  FOR EACH ROW EXECUTE FUNCTION guard_resident_retirement();
+
+CREATE OR REPLACE FUNCTION require_active_resident_for_write() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE resident_id INTEGER; resident_state TEXT; row_value JSONB;
+BEGIN
+  row_value := CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  -- Expired staged credentials are cleared by unrelated callers' maintenance.
+  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('resident_recovery_codes','resident_key_rotations')
+    AND row_value->>'replacement_secret_hash' IS NULL
+    AND (to_jsonb(OLD)->>'replacement_secret_hash' IS NOT NULL
+      OR row_value->>'invalidated_at' IS NOT NULL OR row_value->>'canceled_at' IS NOT NULL) THEN RETURN NEW; END IF;
+  -- Activity counters describe visitors, not a change to the owner's land.
+  IF TG_TABLE_NAME='places' AND TG_OP='UPDATE'
+    AND (to_jsonb(NEW)-'last_public_action_at')=(to_jsonb(OLD)-'last_public_action_at') THEN RETURN NEW; END IF;
+  FOR resident_id IN
+    SELECT DISTINCT value::integer FROM jsonb_each_text(row_value) WHERE key=ANY(TG_ARGV)
+      AND value IS NOT NULL
+    UNION SELECT DISTINCT value::integer FROM jsonb_each_text(CASE WHEN TG_OP='UPDATE' THEN to_jsonb(OLD) ELSE '{}'::jsonb END)
+      WHERE key=ANY(TG_ARGV) AND value IS NOT NULL
+  LOOP
+    SELECT retirement_state INTO resident_state FROM residents WHERE id=resident_id FOR SHARE;
+    IF resident_state IN ('retiring','retired') THEN
+      RAISE EXCEPTION 'This resident is % and cannot act or change owned property. See /delete.', resident_state USING ERRCODE='R0001';
+    END IF;
+  END LOOP;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+DO $$
+DECLARE item TEXT[];
+BEGIN
+  FOREACH item SLICE 1 IN ARRAY ARRAY[
+    ['places','owner_id'],['things','owner_id'],['kinds','owner_id'],
+    ['notes','author_id'],['traits','coiner_id'],['agreements','created_by_id'],
+    ['agreement_signatures','resident_id'],['resident_presence','resident_id'],
+    ['resident_looking','resident_id'],['resident_settings','resident_id'],
+    ['resident_mutes','resident_id'],['room_lines','resident_id'],
+    ['action_runs','actor_id'],['pending_effects','actor_id'],['ping_operations','resident_id'],
+    ['thing_later_holder_marks','resident_id'],
+    ['resident_recovery_codes','resident_id'],['resident_key_rotations','resident_id'],
+    ['oauth_authorization_codes','resident_id'],['oauth_token_families','resident_id'],
+    ['pairing_codes','resident_id'],['oauth_authorization_requests','resident_id']
+  ] LOOP
+    IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public'
+      AND table_name=item[1] AND column_name=item[2]) THEN
+      RAISE EXCEPTION 'resident retirement guard column missing: %.%',item[1],item[2];
+    END IF;
+    EXECUTE format('DROP TRIGGER IF EXISTS resident_active_write ON %I',item[1]);
+    EXECUTE format('CREATE TRIGGER resident_active_write BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write(%L)',item[1],item[2]);
+  END LOOP;
+  FOREACH item SLICE 1 IN ARRAY ARRAY[['places','owner_id'],['things','owner_id'],['kinds','owner_id'],
+    ['resident_mutes','resident_id'],['resident_settings','resident_id'],['thing_later_holder_marks','resident_id']] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS resident_active_delete ON %I',item[1]);
+    EXECUTE format('CREATE TRIGGER resident_active_delete BEFORE DELETE ON %I FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write(%L)',item[1],item[2]);
+  END LOOP;
+END $$;
+
+CREATE OR REPLACE FUNCTION guard_retirement_token_write() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE state TEXT;
+BEGIN
+  SELECT resident.retirement_state INTO state FROM residents resident
+    JOIN oauth_token_families family ON family.resident_id=resident.id
+    WHERE family.id=NEW.family_id FOR SHARE OF resident;
+  IF state IN ('retiring','retired') THEN
+    RAISE EXCEPTION 'This resident is % and cannot sign in.',state USING ERRCODE='R0001';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS resident_active_write ON oauth_tokens;
+CREATE TRIGGER resident_active_write BEFORE INSERT OR UPDATE ON oauth_tokens
+  FOR EACH ROW EXECUTE FUNCTION guard_retirement_token_write();
+DROP TRIGGER IF EXISTS resident_active_maker ON things;
+CREATE TRIGGER resident_active_maker BEFORE INSERT ON things
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('maker_id');
+DROP TRIGGER IF EXISTS resident_active_recipient ON paypal_credit_intents;
+CREATE TRIGGER resident_active_recipient BEFORE INSERT ON paypal_credit_intents
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('recipient_id');
+DROP TRIGGER IF EXISTS resident_active_recipient ON play_credit_orders;
+CREATE TRIGGER resident_active_recipient BEFORE INSERT ON play_credit_orders
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('recipient_id');
+DROP TRIGGER IF EXISTS resident_active_sender ON pings;
+CREATE TRIGGER resident_active_sender BEFORE INSERT ON pings
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('sender_id');
+DROP TRIGGER IF EXISTS resident_active_target ON pings;
+CREATE TRIGGER resident_active_target BEFORE UPDATE ON pings
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('target_id');
+DROP TRIGGER IF EXISTS resident_active_payment ON payment_attempts;
+CREATE TRIGGER resident_active_payment BEFORE INSERT OR UPDATE ON payment_attempts
+  FOR EACH ROW WHEN (NEW.status IN ('settling','payment_pending','needs_review'))
+  EXECUTE FUNCTION require_active_resident_for_write('actor_id','counterparty_id');
+DROP TRIGGER IF EXISTS resident_active_offer ON transfer_offers;
+CREATE TRIGGER resident_active_offer BEFORE INSERT OR UPDATE ON transfer_offers
+  FOR EACH ROW WHEN (NEW.status='open')
+  EXECUTE FUNCTION require_active_resident_for_write('seller_id','buyer_id','reserved_by');
+DROP TRIGGER IF EXISTS resident_active_actor ON active_blocks;
+CREATE TRIGGER resident_active_actor BEFORE INSERT ON active_blocks
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('actor_id','resident_id');
+
+CREATE OR REPLACE FUNCTION guard_retired_property_effect() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE owner_number INTEGER; state TEXT; kind TEXT; number INTEGER;
+BEGIN
+  kind := CASE WHEN TG_TABLE_NAME='place_law_changes' THEN 'place' ELSE to_jsonb(NEW)->>'target_type' END;
+  number := (CASE WHEN TG_TABLE_NAME='place_law_changes' THEN to_jsonb(NEW)->>'place_id' ELSE to_jsonb(NEW)->>'target_id' END)::INTEGER;
+  IF kind='resident' THEN owner_number:=number;
+  ELSIF kind='place' THEN SELECT owner_id INTO owner_number FROM places WHERE id=number FOR SHARE;
+  ELSIF kind='thing' THEN SELECT owner_id INTO owner_number FROM things WHERE id=number FOR SHARE;
+  ELSIF kind='kind' THEN SELECT owner_id INTO owner_number FROM kinds WHERE id=number FOR SHARE;
+  END IF;
+  SELECT retirement_state INTO state FROM residents WHERE id=owner_number FOR SHARE;
+  IF state IN ('retiring','retired') THEN
+    RAISE EXCEPTION 'This resident is % and its property is frozen.',state USING ERRCODE='R0001';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS resident_active_actor ON active_labels;
+CREATE TRIGGER resident_active_actor BEFORE INSERT ON active_labels
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('actor_id');
+DROP TRIGGER IF EXISTS resident_frozen_property ON active_labels;
+CREATE TRIGGER resident_frozen_property BEFORE INSERT ON active_labels
+  FOR EACH ROW EXECUTE FUNCTION guard_retired_property_effect();
+DROP TRIGGER IF EXISTS resident_active_actor ON place_law_changes;
+CREATE TRIGGER resident_active_actor BEFORE INSERT ON place_law_changes
+  FOR EACH ROW EXECUTE FUNCTION require_active_resident_for_write('actor_id');
+DROP TRIGGER IF EXISTS resident_frozen_property ON place_law_changes;
+CREATE TRIGGER resident_frozen_property BEFORE INSERT ON place_law_changes
+  FOR EACH ROW EXECUTE FUNCTION guard_retired_property_effect();
+
+CREATE OR REPLACE FUNCTION complete_resident_retirement(founder_id INTEGER,target_id INTEGER)
+RETURNS BOOLEAN LANGUAGE plpgsql AS $$
+DECLARE target residents%ROWTYPE; token_id BIGINT;
+BEGIN
+  IF founder_id <> 1 THEN
+    RAISE EXCEPTION 'Only founder resident #1 may complete retirement.' USING ERRCODE='R0001';
+  END IF;
+  SELECT * INTO target FROM residents WHERE id=target_id FOR UPDATE;
+  IF target.retirement_state='retired' THEN RETURN TRUE; END IF;
+  IF target.retirement_state IS DISTINCT FROM 'retiring'
+    OR target.retirement_requested_at IS NULL
+    OR clock_timestamp() < target.retirement_requested_at + interval '30 days' THEN
+    RAISE EXCEPTION 'The key holder must request retirement and wait 30 days before the founder completes it.' USING ERRCODE='R0001';
+  END IF;
+  PERFORM scrub_resident_private_payment_data(target_id);
+  FOR token_id IN SELECT token.id FROM oauth_tokens token JOIN oauth_token_families family ON family.id=token.family_id
+    WHERE family.resident_id=target_id ORDER BY token.id DESC LOOP
+    DELETE FROM oauth_tokens WHERE id=token_id;
+  END LOOP;
+  DELETE FROM oauth_token_families WHERE resident_id=target_id;
+  DELETE FROM oauth_authorization_codes WHERE resident_id=target_id;
+  DELETE FROM oauth_authorization_requests WHERE resident_id=target_id;
+  DELETE FROM pairing_codes WHERE resident_id=target_id;
+  DELETE FROM resident_recovery_codes WHERE resident_id=target_id;
+  DELETE FROM resident_key_rotations WHERE resident_id=target_id;
+  DELETE FROM pending_resident_registrations WHERE resident_id=target_id;
+  UPDATE residents SET retirement_state='retired',retired_at=clock_timestamp(),
+    secret_hash=encode(sha256(convert_to(gen_random_uuid()::text,'UTF8')),'hex'),
+    recovery_generation=recovery_generation+1 WHERE id=target_id;
+  RETURN TRUE;
+END $$;
+-- Keep previously published bundles unchanged; new snapshots mark the permanent name.
+DO $resident_retirement_snapshot$
+BEGIN
+  IF to_regclass('city_snapshot.public_records_v4_without_retirement') IS NULL THEN
+    ALTER VIEW city_snapshot.public_records_v4 RENAME TO public_records_v4_without_retirement;
+  END IF;
+END
+$resident_retirement_snapshot$;
+REVOKE ALL ON city_snapshot.public_records_v4_without_retirement FROM PUBLIC;
+REVOKE ALL ON city_snapshot.public_records_v4_without_retirement FROM city_snapshot_export;
+CREATE OR REPLACE VIEW city_snapshot.public_records_v4
+WITH (security_barrier = true)
+AS
+SELECT base.class_name, base.record_id, base.sort_key,
+  CASE WHEN resident.retirement_state IN ('retiring', 'retired') AND base.payload->>'status' = 'exported'
+    THEN base.payload || jsonb_build_object(
+      'retirement_state', resident.retirement_state,
+      'display_handle', resident.handle || ' (' || resident.retirement_state || ')'
+    ) ELSE base.payload END AS payload
+FROM city_snapshot.public_records_v4_without_retirement base
+LEFT JOIN public.residents resident
+  ON base.class_name = 'residents' AND resident.id::TEXT = base.record_id;
+REVOKE ALL ON city_snapshot.public_records_v4 FROM PUBLIC;
+GRANT SELECT ON city_snapshot.public_records_v4 TO city_snapshot_export;
+
+
+
+
+
+
+
+-- Private customer/contact cleanup runs only inside founder completion.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+
+CREATE OR REPLACE FUNCTION protect_play_credit_order() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Play order history cannot be deleted' USING ERRCODE = '55000'; END IF;
+  -- Only remove the private customer link, never change the purchase receipt.
+  IF NEW.rc_app_user_id = 'retired:' || OLD.public_id
+    AND (to_jsonb(NEW) - 'rc_app_user_id') = (to_jsonb(OLD) - 'rc_app_user_id')
+    AND EXISTS (SELECT 1 FROM residents WHERE id=OLD.recipient_id
+      AND retirement_state='retiring'
+      AND retirement_requested_at <= clock_timestamp()-interval '30 days') THEN
+    RETURN NEW;
+  END IF;
+  IF ROW(NEW.public_id, NEW.request_id, NEW.recipient_id, NEW.product_id, NEW.amount_units,
+    NEW.claim_token_hash, NEW.rc_app_user_id, NEW.environment, NEW.created_at)
+    IS DISTINCT FROM ROW(OLD.public_id, OLD.request_id, OLD.recipient_id, OLD.product_id, OLD.amount_units,
+    OLD.claim_token_hash, OLD.rc_app_user_id, OLD.environment, OLD.created_at)
+    OR (OLD.transaction_id IS NOT NULL AND NEW.transaction_id IS DISTINCT FROM OLD.transaction_id)
+    OR (OLD.gift_id IS NOT NULL AND NEW.gift_id IS DISTINCT FROM OLD.gift_id)
+    OR (OLD.status = 'revoked' AND NEW.status <> 'revoked') THEN
+    RAISE EXCEPTION 'Play purchase terms are immutable' USING ERRCODE = '55000';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION scrub_resident_private_payment_data(target_id INTEGER)
+RETURNS VOID LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM 1 FROM residents WHERE id=target_id AND retirement_state='retiring'
+    AND retirement_requested_at <= clock_timestamp()-interval '30 days' FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Personal data is removed only when the founder completes retirement after 30 days.'
+      USING ERRCODE='R0001';
+  END IF;
+  UPDATE play_credit_orders SET rc_app_user_id='retired:' || public_id WHERE recipient_id=target_id;
+  DELETE FROM community_tool_submissions WHERE resident_id=target_id;
+  -- Retain financial receipts: provider order/subscription/capture/transaction ids,
+  -- ledger links, public-chain proof and exact request/response replay evidence.
+  -- Gift claim hashes belong to the buyer, not the retiring recipient.
+END
+$$;
+
+CREATE OR REPLACE FUNCTION deliver_play_credit(
+  requested_order_id TEXT, requested_event_id TEXT, requested_event_type TEXT,
+  requested_transaction_id TEXT, verified_product_id TEXT, verified_environment TEXT,
+  configured_environment TEXT, verified_purchased_at TIMESTAMPTZ, verified_app_user_ids TEXT[]
+) RETURNS TEXT LANGUAGE plpgsql AS $$
+DECLARE
+  stored_order play_credit_orders%ROWTYPE;
+  prior_event play_credit_events%ROWTYPE;
+  gift city_credit_gifts%ROWTYPE;
+  purchase RECORD;
+  matching_ids TEXT[];
+  result TEXT;
+  private_link_removed BOOLEAN := false;
+BEGIN
+  IF verified_product_id NOT IN ('fee_credit_1_v1', 'fee_credit_5_v1', 'fee_credit_10_v1')
+    OR requested_event_type NOT IN ('NON_RENEWING_PURCHASE', 'CANCELLATION')
+    OR verified_environment NOT IN ('production', 'sandbox') OR configured_environment NOT IN ('production', 'sandbox')
+    OR requested_transaction_id !~ '^GPA\.[A-Za-z0-9.-]{1,124}$' THEN
+    RAISE EXCEPTION 'invalid Play purchase evidence' USING ERRCODE = '23514';
+  END IF;
+  -- Both delivery and refund take the same transaction lock before any order/gift lock.
+  PERFORM pg_advisory_xact_lock(hashtextextended('play:' || requested_transaction_id, 0));
+  SELECT * INTO prior_event FROM play_credit_events WHERE event_id = requested_event_id;
+  IF FOUND THEN
+    IF prior_event.transaction_id <> requested_transaction_id OR prior_event.product_id <> verified_product_id
+      OR prior_event.environment <> verified_environment OR prior_event.event_type <> requested_event_type THEN
+      RAISE EXCEPTION 'Play event id was reused' USING ERRCODE = '23514';
+    END IF;
+    RETURN prior_event.outcome;
+  END IF;
+  IF verified_environment <> configured_environment THEN
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,false,'ignored');
+    RETURN 'ignored';
+  END IF;
+  SELECT * INTO stored_order FROM play_credit_orders WHERE transaction_id = requested_transaction_id FOR UPDATE;
+  IF FOUND THEN
+    private_link_removed := stored_order.rc_app_user_id = 'retired:' || stored_order.public_id
+      AND EXISTS (SELECT 1 FROM residents WHERE id=stored_order.recipient_id AND retirement_state='retired');
+    -- A verified refund still follows its existing transaction receipt after the
+    -- private customer id is removed. No new delivery uses this exception.
+    IF private_link_removed AND requested_event_type <> 'CANCELLATION' THEN RETURN 'unmatched'; END IF;
+  END IF;
+  IF stored_order.public_id IS NOT NULL AND (stored_order.product_id <> verified_product_id OR stored_order.environment <> verified_environment
+    OR (requested_order_id IS NOT NULL AND stored_order.public_id <> requested_order_id)
+    OR (NOT private_link_removed AND NOT stored_order.rc_app_user_id = ANY(verified_app_user_ids))) THEN
+    RETURN 'unmatched';
+  END IF;
+  IF stored_order.public_id IS NULL THEN
+    SELECT array_agg(public_id) INTO matching_ids FROM play_credit_orders
+    WHERE status = 'open' AND rc_app_user_id = ANY(verified_app_user_ids)
+      AND product_id = verified_product_id AND environment = verified_environment
+      AND created_at <= verified_purchased_at
+      AND (requested_order_id IS NULL OR public_id = requested_order_id);
+    IF cardinality(matching_ids) = 1 THEN
+      SELECT * INTO stored_order FROM play_credit_orders WHERE public_id = matching_ids[1] FOR UPDATE;
+      IF stored_order.status <> 'open' THEN RETURN 'unmatched'; END IF;
+    END IF;
+  END IF;
+  IF requested_event_type = 'CANCELLATION' THEN
+    IF EXISTS (SELECT 1 FROM play_credit_events WHERE transaction_id = requested_transaction_id
+      AND environment = verified_environment AND event_type = 'CANCELLATION' AND verified) THEN
+      INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+      VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'duplicate');
+      RETURN 'duplicate';
+    END IF;
+    IF stored_order.gift_id IS NOT NULL THEN
+      SELECT * INTO gift FROM city_credit_gifts WHERE id = stored_order.gift_id FOR UPDATE;
+      result := CASE WHEN gift.status = 'accepted' THEN 'accepted_kept' ELSE 'revoked' END;
+      INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,purchase_entry_id,outcome)
+      VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,gift.source_entry_id,result);
+      IF gift.status IN ('pending', 'refused') THEN
+        UPDATE city_credit_gifts SET status = 'revoked', refused_at = NULL,
+          frozen_at = clock_timestamp(), revoked_at = clock_timestamp() WHERE id = gift.id;
+        UPDATE play_credit_orders SET status = 'revoked', updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+      END IF;
+      RETURN result;
+    END IF;
+    -- Keep refund evidence even when the order is absent or ambiguous. A later claim cannot mint it.
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'refunded_before_delivery');
+    IF stored_order.public_id IS NOT NULL THEN
+      UPDATE play_credit_orders SET status = 'revoked', transaction_id = requested_transaction_id,
+        updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+    END IF;
+    RETURN 'refunded_before_delivery';
+  END IF;
+  IF EXISTS (SELECT 1 FROM play_credit_events WHERE transaction_id = requested_transaction_id
+    AND environment = verified_environment AND event_type = 'CANCELLATION' AND verified) THEN
+    IF stored_order.public_id IS NOT NULL AND stored_order.status = 'open' THEN
+      UPDATE play_credit_orders SET status = 'revoked', transaction_id = requested_transaction_id,
+        updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+    END IF;
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,'refunded_before_delivery');
+    RETURN 'refunded_before_delivery';
+  END IF;
+  IF stored_order.public_id IS NULL THEN
+    INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,outcome)
+    VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,'unmatched');
+    RETURN 'unmatched';
+  END IF;
+  SELECT * INTO purchase FROM record_city_credit_purchase(stored_order.recipient_id, stored_order.amount_units,
+    'play:txn:' || requested_transaction_id, 'play', stored_order.claim_token_hash,
+    'city_gift_' || replace(gen_random_uuid()::text, '-', ''));
+  UPDATE play_credit_orders SET status = 'delivered', transaction_id = requested_transaction_id,
+    gift_id = purchase.gift_row_id, updated_at = clock_timestamp() WHERE public_id = stored_order.public_id;
+  INSERT INTO play_credit_events(event_id,event_type,transaction_id,product_id,environment,verified,order_id,purchase_entry_id,outcome)
+  VALUES(requested_event_id,requested_event_type,requested_transaction_id,verified_product_id,verified_environment,true,stored_order.public_id,purchase.id,'delivered');
+  RETURN 'delivered';
+END
+$$;
+
+-- Resident acceptance and spending stop. Previously approved payments may still
+-- settle into immutable purchase/gift_pending receipts, and refunds/returns remain
+-- possible. Refusing those receipts would lose a payment made before retirement.
+DROP TRIGGER IF EXISTS resident_active_credit_entry ON city_credit_entries;
+CREATE TRIGGER resident_active_credit_entry BEFORE INSERT ON city_credit_entries
+FOR EACH ROW WHEN (NEW.entry_kind IN ('gift_accept','founder_issue','spend'))
+EXECUTE FUNCTION require_active_resident_for_write('resident_id');
+-- A buyer may move a pending gift away from a retired recipient. Only the new
+-- recipient must be active; the departure receipt still names the old resident.
+DROP TRIGGER IF EXISTS resident_active_credit_redirect ON city_credit_entries;
+CREATE TRIGGER resident_active_credit_redirect BEFORE INSERT ON city_credit_entries
+FOR EACH ROW WHEN (NEW.entry_kind='gift_redirect')
+EXECUTE FUNCTION require_active_resident_for_write('counterparty_id');
+
+-- Weekly payment prerequisites for resident retirement (decision #185).
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+
+CREATE OR REPLACE FUNCTION guard_weekly_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.retirement_state IN ('retiring','retired') AND NEW.retirement_state <> OLD.retirement_state
+    AND EXISTS (
+      SELECT 1 FROM paypal_credit_intents intent
+      WHERE intent.recipient_id=OLD.id AND intent.intent_kind='allowance'
+        AND intent.remote_subscription_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM paypal_credit_events event
+          WHERE event.event_kind='BILLING.SUBSCRIPTION.CANCELLED'
+            AND event.remote_resource_id=intent.remote_subscription_id AND event.outcome='ignored')
+    ) THEN
+    RAISE EXCEPTION 'Cancel the weekly payment in PayPal first, then come back. Retirement does not stop billing. Help: /setup#weekly-payment. If you already canceled, wait for confirmation or email adam@twamd.com. Nothing changed.' USING ERRCODE='R0003';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS resident_weekly_retirement_guard ON residents;
+CREATE TRIGGER resident_weekly_retirement_guard BEFORE UPDATE ON residents
+  FOR EACH ROW EXECUTE FUNCTION guard_weekly_retirement();
+
+-- Attachment must finish before a caller receives a PayPal approval link.
+-- Harmless receipt replays can still touch an already active intent.
+DROP TRIGGER IF EXISTS resident_active_weekly_attachment ON paypal_credit_intents;
+CREATE TRIGGER resident_active_weekly_attachment BEFORE UPDATE ON paypal_credit_intents
+  FOR EACH ROW WHEN (NEW.intent_kind='allowance' AND
+    (NEW.remote_subscription_id IS DISTINCT FROM OLD.remote_subscription_id OR NEW.status IS DISTINCT FROM OLD.status))
+  EXECUTE FUNCTION require_active_resident_for_write('recipient_id');
+-- AFTER INSERT leaves ON CONFLICT receipt replay alone, but rolls back new credit.
+DROP TRIGGER IF EXISTS resident_active_weekly_purchase ON city_credit_entries;
+CREATE TRIGGER resident_active_weekly_purchase AFTER INSERT ON city_credit_entries
+  FOR EACH ROW WHEN (NEW.entry_kind='purchase' AND NEW.purchase_kind='allowance')
+  EXECUTE FUNCTION require_active_resident_for_write('resident_id');
+
+-- Keep verified late weekly evidence without crediting a frozen resident.
+ALTER TABLE paypal_credit_events DROP CONSTRAINT IF EXISTS paypal_credit_events_outcome_check;
+ALTER TABLE paypal_credit_events ADD CONSTRAINT paypal_credit_events_outcome_check
+  CHECK (outcome IN ('credited','ignored','withheld'));
+ALTER TABLE paypal_credit_events DROP CONSTRAINT IF EXISTS paypal_credit_events_binding_check;
+ALTER TABLE paypal_credit_events ADD CONSTRAINT paypal_credit_events_binding_check CHECK (
+  (outcome='ignored' AND intent_public_id IS NULL AND source_key IS NULL AND purchase_entry_id IS NULL)
+  OR (outcome='credited' AND intent_public_id IS NOT NULL AND source_key IS NOT NULL
+    AND purchase_entry_id IS NOT NULL AND remote_resource_id IS NOT NULL
+    AND event_kind IN ('PAYMENT.CAPTURE.COMPLETED','PAYMENT.SALE.COMPLETED'))
+  OR (outcome='withheld' AND intent_public_id IS NOT NULL AND source_key IS NOT NULL
+    AND purchase_entry_id IS NULL AND remote_resource_id IS NOT NULL
+    AND event_kind='PAYMENT.SALE.COMPLETED' AND source_key='paypal:sale:'||remote_resource_id)
+);
+
+CREATE OR REPLACE FUNCTION require_paypal_credit_event_receipt()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  stored_intent paypal_credit_intents%ROWTYPE;
+  stored_entry city_credit_entries%ROWTYPE;
+  stored_gift city_credit_gifts%ROWTYPE;
+BEGIN
+  IF NEW.outcome = 'ignored' THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT * INTO stored_intent
+  FROM paypal_credit_intents intent
+  WHERE intent.public_id = NEW.intent_public_id;
+  IF NEW.outcome = 'withheld' THEN
+    IF stored_intent.intent_kind IS DISTINCT FROM 'allowance'
+      OR stored_intent.remote_subscription_id IS NULL OR stored_intent.delivery <> 'self' THEN
+      RAISE EXCEPTION 'Withheld weekly payment must match its original allowance' USING ERRCODE='23514';
+    END IF;
+    RETURN NULL;
+  END IF;
+  SELECT * INTO stored_entry
+  FROM city_credit_entries entry
+  WHERE entry.id = NEW.purchase_entry_id;
+
+  IF stored_intent.public_id IS NULL
+    OR stored_entry.id IS NULL
+    OR stored_entry.entry_kind <> 'purchase'
+    OR stored_entry.resident_id <> stored_intent.recipient_id
+    OR stored_entry.amount_units <> stored_intent.amount_units
+    OR stored_entry.source_key IS DISTINCT FROM NEW.source_key
+    OR (stored_intent.delivery = 'gift') <> (stored_entry.gift_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'PayPal event does not match one exact credit purchase'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF stored_intent.intent_kind = 'order' THEN
+    IF stored_intent.status <> 'captured'
+      OR stored_intent.remote_order_id IS NULL
+      OR stored_entry.purchase_kind <> 'paypal'
+      OR NEW.event_kind <> 'PAYMENT.CAPTURE.COMPLETED'
+      OR NEW.source_key IS DISTINCT FROM (
+        'paypal:capture:' || NEW.remote_resource_id
+      ) THEN
+      RAISE EXCEPTION 'PayPal capture event does not match its captured order'
+        USING ERRCODE = '23514';
+    END IF;
+  ELSIF stored_intent.intent_kind = 'allowance' THEN
+    IF stored_intent.status <> 'active'
+      OR stored_intent.remote_subscription_id IS NULL
+      OR stored_intent.delivery <> 'self'
+      OR stored_entry.purchase_kind <> 'allowance'
+      OR NEW.event_kind <> 'PAYMENT.SALE.COMPLETED'
+      OR NEW.source_key IS DISTINCT FROM (
+        'paypal:sale:' || NEW.remote_resource_id
+      ) THEN
+      RAISE EXCEPTION 'PayPal renewal event does not match its active allowance'
+        USING ERRCODE = '23514';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'PayPal event has an unknown intent kind'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF stored_entry.gift_id IS NULL THEN
+    IF stored_intent.claim_token_hash IS NOT NULL THEN
+      RAISE EXCEPTION 'self PayPal credit cannot retain gift terms'
+        USING ERRCODE = '23514';
+    END IF;
+  ELSE
+    SELECT * INTO stored_gift
+    FROM city_credit_gifts gift
+    WHERE gift.id = stored_entry.gift_id;
+    IF stored_gift.id IS NULL
+      OR stored_gift.source_entry_id <> stored_entry.id
+      OR stored_gift.recipient_id <> stored_intent.recipient_id
+      OR stored_gift.amount_units <> stored_intent.amount_units
+      OR stored_gift.source_key IS DISTINCT FROM NEW.source_key
+      OR stored_gift.claim_token_hash IS DISTINCT FROM stored_intent.claim_token_hash THEN
+      RAISE EXCEPTION 'PayPal gift event does not match its pending gift'
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
+  RETURN NULL;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION deliver_paypal_credit(
+  requested_purchase_id TEXT,
+  expected_delivery TEXT,
+  expected_recipient_id INTEGER,
+  expected_amount_units BIGINT,
+  expected_claim_token_hash TEXT,
+  expected_paypal_environment TEXT,
+  expected_remote_parent_id TEXT,
+  requested_source_key TEXT,
+  requested_purchase_kind TEXT,
+  requested_event_id TEXT,
+  requested_event_kind TEXT,
+  requested_remote_resource_id TEXT,
+  requested_gift_public_id TEXT
+) RETURNS TABLE (
+  id BIGINT,
+  resident_id INTEGER,
+  amount_units BIGINT,
+  source_key TEXT,
+  purchase_kind TEXT,
+  gift_row_id BIGINT,
+  gift_public_id TEXT,
+  claim_token_hash TEXT,
+  status TEXT,
+  created BOOLEAN,
+  balance_units BIGINT
+) LANGUAGE plpgsql AS $$
+#variable_conflict use_column
+DECLARE
+  stored_intent paypal_credit_intents%ROWTYPE;
+  stored_event paypal_credit_events%ROWTYPE;
+  purchase_record RECORD;
+  event_binding_count INTEGER;
+  required_intent_kind TEXT;
+  delivered_status TEXT;
+  reconciled_gift_status TEXT;
+  staged_dispute_id TEXT;
+  recipient_state TEXT;
+BEGIN
+  required_intent_kind := CASE requested_purchase_kind
+    WHEN 'paypal' THEN 'order'
+    WHEN 'allowance' THEN 'allowance'
+    ELSE NULL
+  END;
+  delivered_status := CASE requested_purchase_kind
+    WHEN 'paypal' THEN 'captured'
+    WHEN 'allowance' THEN 'active'
+    ELSE NULL
+  END;
+  IF required_intent_kind IS NULL
+    OR expected_delivery IS NULL
+    OR expected_delivery NOT IN ('self', 'gift')
+    OR expected_recipient_id IS NULL
+    OR expected_amount_units IS NULL
+    OR expected_paypal_environment IS NULL
+    OR expected_paypal_environment NOT IN ('sandbox', 'live')
+    OR requested_event_id IS NULL
+    OR octet_length(requested_event_id) NOT BETWEEN 1 AND 128
+    OR requested_event_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    OR requested_event_kind IS NULL
+    OR requested_remote_resource_id IS NULL
+    OR octet_length(requested_remote_resource_id) NOT BETWEEN 1 AND 255
+    OR requested_remote_resource_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    OR requested_source_key IS NULL
+    OR octet_length(requested_source_key) NOT BETWEEN 8 AND 300
+    OR requested_source_key !~ '^[A-Za-z0-9][A-Za-z0-9._:-]+$' THEN
+    RAISE EXCEPTION 'PayPal credit delivery input is invalid'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF (requested_purchase_kind = 'paypal' AND (
+      requested_event_kind <> 'PAYMENT.CAPTURE.COMPLETED'
+      OR requested_source_key <> 'paypal:capture:' || requested_remote_resource_id
+    )) OR (requested_purchase_kind = 'allowance' AND (
+      requested_event_kind <> 'PAYMENT.SALE.COMPLETED'
+      OR requested_source_key <> 'paypal:sale:' || requested_remote_resource_id
+    )) THEN
+    RAISE EXCEPTION 'PayPal event identity does not match the delivery rail'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF requested_purchase_kind = 'paypal' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      '1f3d9/paypal-credit/dispute-reconciliation', 0
+    ));
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      '1f3d9/paypal-credit/capture/' || requested_remote_resource_id, 0
+    ));
+  END IF;
+
+  SELECT * INTO stored_intent
+  FROM paypal_credit_intents intent
+  WHERE intent.public_id = requested_purchase_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PayPal credit intent was not found' USING ERRCODE = '55000';
+  END IF;
+
+  IF stored_intent.intent_kind <> required_intent_kind
+    OR stored_intent.delivery <> expected_delivery
+    OR stored_intent.recipient_id <> expected_recipient_id
+    OR stored_intent.amount_units <> expected_amount_units
+    OR stored_intent.claim_token_hash IS DISTINCT FROM expected_claim_token_hash
+    OR stored_intent.paypal_environment <> expected_paypal_environment
+    OR (
+      required_intent_kind = 'order'
+      AND stored_intent.remote_order_id IS DISTINCT FROM expected_remote_parent_id
+    )
+    OR (
+      required_intent_kind = 'allowance'
+      AND stored_intent.remote_subscription_id IS DISTINCT FROM expected_remote_parent_id
+    )
+    OR (
+      required_intent_kind = 'order'
+      AND stored_intent.status NOT IN ('approval_pending', 'captured')
+    )
+    OR (
+      required_intent_kind = 'allowance'
+      AND stored_intent.status NOT IN ('approval_pending', 'active')
+    )
+    OR (expected_delivery = 'gift' AND (
+      requested_purchase_kind <> 'paypal'
+      OR requested_gift_public_id IS NULL
+      OR requested_gift_public_id !~ '^city_gift_[0-9a-f]{32}$'
+    ))
+    OR (expected_delivery = 'self' AND requested_gift_public_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'PayPal delivery does not match the immutable intent terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT count(*) INTO event_binding_count
+  FROM paypal_credit_events event
+  WHERE event.event_id = requested_event_id
+    OR event.source_key = requested_source_key;
+  IF event_binding_count > 1 THEN
+    RAISE EXCEPTION 'PayPal event identity has conflicting durable bindings'
+      USING ERRCODE = '23514';
+  END IF;
+  SELECT * INTO stored_event
+  FROM paypal_credit_events event
+  WHERE event.event_id = requested_event_id
+    OR event.source_key = requested_source_key
+  LIMIT 1;
+  IF stored_event.event_id IS NOT NULL AND (
+    stored_event.intent_public_id <> stored_intent.public_id
+    OR stored_event.event_kind <> requested_event_kind
+    OR stored_event.remote_resource_id <> requested_remote_resource_id
+    OR stored_event.source_key <> requested_source_key
+    OR stored_event.outcome NOT IN ('credited','withheld')
+  ) THEN
+    RAISE EXCEPTION 'PayPal event identity is already bound to changed terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF requested_purchase_kind = 'allowance' THEN
+    SELECT retirement_state INTO recipient_state FROM residents
+      WHERE residents.id=stored_intent.recipient_id FOR SHARE;
+    IF stored_event.outcome = 'withheld'
+      OR (stored_event.event_id IS NULL AND recipient_state IN ('retiring','retired')) THEN
+      IF stored_event.event_id IS NULL THEN
+        INSERT INTO paypal_credit_events(event_id,intent_public_id,event_kind,remote_resource_id,source_key,outcome)
+        VALUES(requested_event_id,stored_intent.public_id,requested_event_kind,requested_remote_resource_id,requested_source_key,'withheld');
+      END IF;
+      RETURN QUERY SELECT NULL::BIGINT, stored_intent.recipient_id, stored_intent.amount_units,
+        requested_source_key, requested_purchase_kind, NULL::BIGINT, NULL::TEXT, NULL::TEXT,
+        'withheld'::TEXT, false, NULL::BIGINT;
+      RETURN;
+    END IF;
+  END IF;
+
+  SELECT * INTO purchase_record
+  FROM record_city_credit_purchase(
+    stored_intent.recipient_id,
+    stored_intent.amount_units,
+    requested_source_key,
+    requested_purchase_kind,
+    stored_intent.claim_token_hash,
+    requested_gift_public_id
+  );
+  IF purchase_record.id IS NULL
+    OR purchase_record.resident_id <> stored_intent.recipient_id
+    OR purchase_record.amount_units <> stored_intent.amount_units
+    OR purchase_record.source_key <> requested_source_key
+    OR purchase_record.purchase_kind <> requested_purchase_kind
+    OR (stored_intent.delivery = 'gift') <> (purchase_record.gift_row_id IS NOT NULL)
+    OR (
+      stored_intent.delivery = 'gift'
+      AND purchase_record.claim_token_hash IS DISTINCT FROM stored_intent.claim_token_hash
+    ) THEN
+    RAISE EXCEPTION 'PayPal purchase source is already bound to changed terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF stored_event.event_id IS NULL THEN
+    INSERT INTO paypal_credit_events (
+      event_id, intent_public_id, event_kind, remote_resource_id,
+      source_key, purchase_entry_id, outcome
+    ) VALUES (
+      requested_event_id, stored_intent.public_id, requested_event_kind,
+      requested_remote_resource_id, requested_source_key,
+      purchase_record.id, 'credited'
+    ) RETURNING * INTO stored_event;
+  ELSIF stored_event.purchase_entry_id <> purchase_record.id THEN
+    RAISE EXCEPTION 'PayPal event is already bound to another credit receipt'
+      USING ERRCODE = '23514';
+  END IF;
+
+  UPDATE paypal_credit_intents intent
+  SET status = delivered_status, updated_at = clock_timestamp()
+  WHERE intent.public_id = stored_intent.public_id
+  RETURNING intent.* INTO stored_intent;
+
+  IF requested_purchase_kind = 'paypal' THEN
+    FOR staged_dispute_id IN
+      SELECT DISTINCT event.dispute_id COLLATE "C" AS dispute_id
+      FROM paypal_credit_dispute_events event
+      WHERE requested_remote_resource_id = ANY(event.transaction_capture_ids)
+      ORDER BY dispute_id
+    LOOP
+      PERFORM reconcile_paypal_credit_dispute(staged_dispute_id);
+    END LOOP;
+  END IF;
+
+  reconciled_gift_status := purchase_record.status;
+  IF purchase_record.gift_row_id IS NOT NULL THEN
+    SELECT gift.status INTO reconciled_gift_status
+    FROM city_credit_gifts gift WHERE gift.id = purchase_record.gift_row_id;
+  END IF;
+
+  RETURN QUERY SELECT
+    purchase_record.id::BIGINT,
+    purchase_record.resident_id::INTEGER,
+    purchase_record.amount_units::BIGINT,
+    purchase_record.source_key::TEXT,
+    purchase_record.purchase_kind::TEXT,
+    purchase_record.gift_row_id::BIGINT,
+    purchase_record.gift_public_id::TEXT,
+    purchase_record.claim_token_hash::TEXT,
+    reconciled_gift_status::TEXT,
+    purchase_record.created::BOOLEAN,
+    purchase_record.balance_units::BIGINT;
+END
+$$;
+
+-- Resident retirement locks leave ordinary active writes concurrent.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
+-- PostgreSQL 17 treats columns in a nonpartial unique index as key columns.
+-- Changing retirement_state therefore takes FOR UPDATE before row triggers run.
+-- Writers hold KEY SHARE through commit: compatible with ordinary resident
+-- updates, but a retirement must wait and later writers must see its new state.
+CREATE UNIQUE INDEX IF NOT EXISTS residents_retirement_write_key
+  ON residents(id, retirement_state);
+
+CREATE OR REPLACE FUNCTION require_active_resident_for_write() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE resident_id INTEGER; resident_state TEXT; row_value JSONB;
+BEGIN
+  row_value := CASE WHEN TG_OP='DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  -- Expired staged credentials are cleared by unrelated callers' maintenance.
+  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('resident_recovery_codes','resident_key_rotations')
+    AND row_value->>'replacement_secret_hash' IS NULL
+    AND (to_jsonb(OLD)->>'replacement_secret_hash' IS NOT NULL
+      OR row_value->>'invalidated_at' IS NOT NULL OR row_value->>'canceled_at' IS NOT NULL) THEN RETURN NEW; END IF;
+  -- Activity counters describe visitors, not a change to the owner's land.
+  IF TG_TABLE_NAME='places' AND TG_OP='UPDATE'
+    AND (to_jsonb(NEW)-'last_public_action_at')=(to_jsonb(OLD)-'last_public_action_at') THEN RETURN NEW; END IF;
+  FOR resident_id IN
+    SELECT DISTINCT value::integer FROM jsonb_each_text(row_value) WHERE key=ANY(TG_ARGV)
+      AND value IS NOT NULL
+    UNION SELECT DISTINCT value::integer FROM jsonb_each_text(CASE WHEN TG_OP='UPDATE' THEN to_jsonb(OLD) ELSE '{}'::jsonb END)
+      WHERE key=ANY(TG_ARGV) AND value IS NOT NULL
+  LOOP
+    SELECT retirement_state INTO resident_state FROM residents WHERE id=resident_id FOR KEY SHARE;
+    IF resident_state IN ('retiring','retired') THEN
+      RAISE EXCEPTION 'This resident is % and cannot act or change owned property. See /delete.', resident_state USING ERRCODE='R0001';
+    END IF;
+  END LOOP;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION guard_retirement_token_write() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE state TEXT;
+BEGIN
+  SELECT resident.retirement_state INTO state FROM residents resident
+    JOIN oauth_token_families family ON family.resident_id=resident.id
+    WHERE family.id=NEW.family_id FOR KEY SHARE OF resident;
+  IF state IN ('retiring','retired') THEN
+    RAISE EXCEPTION 'This resident is % and cannot sign in.',state USING ERRCODE='R0001';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION guard_retired_property_effect() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE owner_number INTEGER; state TEXT; kind TEXT; number INTEGER;
+BEGIN
+  kind := CASE WHEN TG_TABLE_NAME='place_law_changes' THEN 'place' ELSE to_jsonb(NEW)->>'target_type' END;
+  number := (CASE WHEN TG_TABLE_NAME='place_law_changes' THEN to_jsonb(NEW)->>'place_id' ELSE to_jsonb(NEW)->>'target_id' END)::INTEGER;
+  IF kind='resident' THEN owner_number:=number;
+  ELSIF kind='place' THEN SELECT owner_id INTO owner_number FROM places WHERE id=number FOR SHARE;
+  ELSIF kind='thing' THEN SELECT owner_id INTO owner_number FROM things WHERE id=number FOR SHARE;
+  ELSIF kind='kind' THEN SELECT owner_id INTO owner_number FROM kinds WHERE id=number FOR SHARE;
+  END IF;
+  SELECT retirement_state INTO state FROM residents WHERE id=owner_number FOR KEY SHARE;
+  IF state IN ('retiring','retired') THEN
+    RAISE EXCEPTION 'This resident is % and its property is frozen.',state USING ERRCODE='R0001';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION deliver_paypal_credit(
+  requested_purchase_id TEXT,
+  expected_delivery TEXT,
+  expected_recipient_id INTEGER,
+  expected_amount_units BIGINT,
+  expected_claim_token_hash TEXT,
+  expected_paypal_environment TEXT,
+  expected_remote_parent_id TEXT,
+  requested_source_key TEXT,
+  requested_purchase_kind TEXT,
+  requested_event_id TEXT,
+  requested_event_kind TEXT,
+  requested_remote_resource_id TEXT,
+  requested_gift_public_id TEXT
+) RETURNS TABLE (
+  id BIGINT,
+  resident_id INTEGER,
+  amount_units BIGINT,
+  source_key TEXT,
+  purchase_kind TEXT,
+  gift_row_id BIGINT,
+  gift_public_id TEXT,
+  claim_token_hash TEXT,
+  status TEXT,
+  created BOOLEAN,
+  balance_units BIGINT
+) LANGUAGE plpgsql AS $$
+#variable_conflict use_column
+DECLARE
+  stored_intent paypal_credit_intents%ROWTYPE;
+  stored_event paypal_credit_events%ROWTYPE;
+  purchase_record RECORD;
+  event_binding_count INTEGER;
+  required_intent_kind TEXT;
+  delivered_status TEXT;
+  reconciled_gift_status TEXT;
+  staged_dispute_id TEXT;
+  recipient_state TEXT;
+BEGIN
+  required_intent_kind := CASE requested_purchase_kind
+    WHEN 'paypal' THEN 'order'
+    WHEN 'allowance' THEN 'allowance'
+    ELSE NULL
+  END;
+  delivered_status := CASE requested_purchase_kind
+    WHEN 'paypal' THEN 'captured'
+    WHEN 'allowance' THEN 'active'
+    ELSE NULL
+  END;
+  IF required_intent_kind IS NULL
+    OR expected_delivery IS NULL
+    OR expected_delivery NOT IN ('self', 'gift')
+    OR expected_recipient_id IS NULL
+    OR expected_amount_units IS NULL
+    OR expected_paypal_environment IS NULL
+    OR expected_paypal_environment NOT IN ('sandbox', 'live')
+    OR requested_event_id IS NULL
+    OR octet_length(requested_event_id) NOT BETWEEN 1 AND 128
+    OR requested_event_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    OR requested_event_kind IS NULL
+    OR requested_remote_resource_id IS NULL
+    OR octet_length(requested_remote_resource_id) NOT BETWEEN 1 AND 255
+    OR requested_remote_resource_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'
+    OR requested_source_key IS NULL
+    OR octet_length(requested_source_key) NOT BETWEEN 8 AND 300
+    OR requested_source_key !~ '^[A-Za-z0-9][A-Za-z0-9._:-]+$' THEN
+    RAISE EXCEPTION 'PayPal credit delivery input is invalid'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF (requested_purchase_kind = 'paypal' AND (
+      requested_event_kind <> 'PAYMENT.CAPTURE.COMPLETED'
+      OR requested_source_key <> 'paypal:capture:' || requested_remote_resource_id
+    )) OR (requested_purchase_kind = 'allowance' AND (
+      requested_event_kind <> 'PAYMENT.SALE.COMPLETED'
+      OR requested_source_key <> 'paypal:sale:' || requested_remote_resource_id
+    )) THEN
+    RAISE EXCEPTION 'PayPal event identity does not match the delivery rail'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF requested_purchase_kind = 'paypal' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      '1f3d9/paypal-credit/dispute-reconciliation', 0
+    ));
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      '1f3d9/paypal-credit/capture/' || requested_remote_resource_id, 0
+    ));
+  END IF;
+
+  SELECT * INTO stored_intent
+  FROM paypal_credit_intents intent
+  WHERE intent.public_id = requested_purchase_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PayPal credit intent was not found' USING ERRCODE = '55000';
+  END IF;
+
+  IF stored_intent.intent_kind <> required_intent_kind
+    OR stored_intent.delivery <> expected_delivery
+    OR stored_intent.recipient_id <> expected_recipient_id
+    OR stored_intent.amount_units <> expected_amount_units
+    OR stored_intent.claim_token_hash IS DISTINCT FROM expected_claim_token_hash
+    OR stored_intent.paypal_environment <> expected_paypal_environment
+    OR (
+      required_intent_kind = 'order'
+      AND stored_intent.remote_order_id IS DISTINCT FROM expected_remote_parent_id
+    )
+    OR (
+      required_intent_kind = 'allowance'
+      AND stored_intent.remote_subscription_id IS DISTINCT FROM expected_remote_parent_id
+    )
+    OR (
+      required_intent_kind = 'order'
+      AND stored_intent.status NOT IN ('approval_pending', 'captured')
+    )
+    OR (
+      required_intent_kind = 'allowance'
+      AND stored_intent.status NOT IN ('approval_pending', 'active')
+    )
+    OR (expected_delivery = 'gift' AND (
+      requested_purchase_kind <> 'paypal'
+      OR requested_gift_public_id IS NULL
+      OR requested_gift_public_id !~ '^city_gift_[0-9a-f]{32}$'
+    ))
+    OR (expected_delivery = 'self' AND requested_gift_public_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'PayPal delivery does not match the immutable intent terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT count(*) INTO event_binding_count
+  FROM paypal_credit_events event
+  WHERE event.event_id = requested_event_id
+    OR event.source_key = requested_source_key;
+  IF event_binding_count > 1 THEN
+    RAISE EXCEPTION 'PayPal event identity has conflicting durable bindings'
+      USING ERRCODE = '23514';
+  END IF;
+  SELECT * INTO stored_event
+  FROM paypal_credit_events event
+  WHERE event.event_id = requested_event_id
+    OR event.source_key = requested_source_key
+  LIMIT 1;
+  IF stored_event.event_id IS NOT NULL AND (
+    stored_event.intent_public_id <> stored_intent.public_id
+    OR stored_event.event_kind <> requested_event_kind
+    OR stored_event.remote_resource_id <> requested_remote_resource_id
+    OR stored_event.source_key <> requested_source_key
+    OR stored_event.outcome NOT IN ('credited','withheld')
+  ) THEN
+    RAISE EXCEPTION 'PayPal event identity is already bound to changed terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF requested_purchase_kind = 'allowance' THEN
+    SELECT retirement_state INTO recipient_state FROM residents
+      WHERE residents.id=stored_intent.recipient_id FOR KEY SHARE;
+    IF stored_event.outcome = 'withheld'
+      OR (stored_event.event_id IS NULL AND recipient_state IN ('retiring','retired')) THEN
+      IF stored_event.event_id IS NULL THEN
+        INSERT INTO paypal_credit_events(event_id,intent_public_id,event_kind,remote_resource_id,source_key,outcome)
+        VALUES(requested_event_id,stored_intent.public_id,requested_event_kind,requested_remote_resource_id,requested_source_key,'withheld');
+      END IF;
+      RETURN QUERY SELECT NULL::BIGINT, stored_intent.recipient_id, stored_intent.amount_units,
+        requested_source_key, requested_purchase_kind, NULL::BIGINT, NULL::TEXT, NULL::TEXT,
+        'withheld'::TEXT, false, NULL::BIGINT;
+      RETURN;
+    END IF;
+  END IF;
+
+  SELECT * INTO purchase_record
+  FROM record_city_credit_purchase(
+    stored_intent.recipient_id,
+    stored_intent.amount_units,
+    requested_source_key,
+    requested_purchase_kind,
+    stored_intent.claim_token_hash,
+    requested_gift_public_id
+  );
+  IF purchase_record.id IS NULL
+    OR purchase_record.resident_id <> stored_intent.recipient_id
+    OR purchase_record.amount_units <> stored_intent.amount_units
+    OR purchase_record.source_key <> requested_source_key
+    OR purchase_record.purchase_kind <> requested_purchase_kind
+    OR (stored_intent.delivery = 'gift') <> (purchase_record.gift_row_id IS NOT NULL)
+    OR (
+      stored_intent.delivery = 'gift'
+      AND purchase_record.claim_token_hash IS DISTINCT FROM stored_intent.claim_token_hash
+    ) THEN
+    RAISE EXCEPTION 'PayPal purchase source is already bound to changed terms'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF stored_event.event_id IS NULL THEN
+    INSERT INTO paypal_credit_events (
+      event_id, intent_public_id, event_kind, remote_resource_id,
+      source_key, purchase_entry_id, outcome
+    ) VALUES (
+      requested_event_id, stored_intent.public_id, requested_event_kind,
+      requested_remote_resource_id, requested_source_key,
+      purchase_record.id, 'credited'
+    ) RETURNING * INTO stored_event;
+  ELSIF stored_event.purchase_entry_id <> purchase_record.id THEN
+    RAISE EXCEPTION 'PayPal event is already bound to another credit receipt'
+      USING ERRCODE = '23514';
+  END IF;
+
+  UPDATE paypal_credit_intents intent
+  SET status = delivered_status, updated_at = clock_timestamp()
+  WHERE intent.public_id = stored_intent.public_id
+  RETURNING intent.* INTO stored_intent;
+
+  IF requested_purchase_kind = 'paypal' THEN
+    FOR staged_dispute_id IN
+      SELECT DISTINCT event.dispute_id COLLATE "C" AS dispute_id
+      FROM paypal_credit_dispute_events event
+      WHERE requested_remote_resource_id = ANY(event.transaction_capture_ids)
+      ORDER BY dispute_id
+    LOOP
+      PERFORM reconcile_paypal_credit_dispute(staged_dispute_id);
+    END LOOP;
+  END IF;
+
+  reconciled_gift_status := purchase_record.status;
+  IF purchase_record.gift_row_id IS NOT NULL THEN
+    SELECT gift.status INTO reconciled_gift_status
+    FROM city_credit_gifts gift WHERE gift.id = purchase_record.gift_row_id;
+  END IF;
+
+  RETURN QUERY SELECT
+    purchase_record.id::BIGINT,
+    purchase_record.resident_id::INTEGER,
+    purchase_record.amount_units::BIGINT,
+    purchase_record.source_key::TEXT,
+    purchase_record.purchase_kind::TEXT,
+    purchase_record.gift_row_id::BIGINT,
+    purchase_record.gift_public_id::TEXT,
+    purchase_record.claim_token_hash::TEXT,
+    reconciled_gift_status::TEXT,
+    purchase_record.created::BOOLEAN,
+    purchase_record.balance_units::BIGINT;
+END
+$$;

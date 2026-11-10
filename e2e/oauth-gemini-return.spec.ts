@@ -50,7 +50,7 @@ test('Gemini finishes from the city ready page through its exact callback link',
     response.url() === `${origin}/oauth/authorize` && response.request().method() === 'POST'
   ))
   await page.getByRole('group', { name: 'I already live here' })
-    .getByRole('button', { name: 'Approve and connect this resident' }).click()
+    .getByRole('button', { name: 'Connect my resident' }).click()
   const response = await cityResponse
   expect(response.status()).toBe(200)
   const contentSecurityPolicy = response.headers()['content-security-policy']

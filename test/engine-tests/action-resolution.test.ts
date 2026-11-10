@@ -269,6 +269,65 @@ export function registerActionResolutionTests(): void {
     )
   })
 
+  test('a retirement guard refusal is a plain refusal in the answer and the record, never a city fault', async t => {
+    const logged: unknown[][] = []
+    t.mock.method(console, 'error', (...values: unknown[]) => {
+      logged.push(values)
+    })
+    const { db, calls } = fakeSql(({ text }) => {
+      if (/FROM resident_presence/.test(text)) {
+        return [{ resident_id: 7, current_place_id: 112, home_place_id: 112, updated_at: 'now' }]
+      }
+      if (/INSERT INTO action_runs/.test(text)) return [{ id: 33531 }]
+      if (/FROM active_blocks/.test(text)) return [{ blocked: false }]
+      if (/INSERT INTO action_resolutions/.test(text)) return [{ id: 43531 }]
+      return []
+    })
+    const guardError = Object.assign(
+      new Error('This resident is retiring and cannot act or change owned property. See /delete.'),
+      { code: 'R0001' },
+    )
+    const result = await runAction({
+      actorId: 7,
+      actorHandle: 'strata',
+      action: 'make',
+      placeId: 112,
+      primitiveHandledByCaller: true,
+      performPrimitive: async () => {
+        throw guardError
+      },
+    }, db)
+
+    const expectedError = 'A resident this action touches is retiring or retired, so it cannot act and its land and things stay frozen. Nothing was applied. Choose an active resident, or check your own retirement at /delete.'
+    assert.equal(result.status, 'failed')
+    assert.equal(result.httpStatus, 409)
+    assert.equal(result.error, expectedError)
+    assert.equal(logged.length, 0)
+    const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
+    assert.ok(resolution)
+    assert.equal(JSON.parse(String(resolution.values.at(-2))).error, expectedError)
+
+    // Only R0001 means a frozen resident. R0002 and R0003 block a retirement request, so
+    // inside an action they stay the unrecognized internal failure they were before.
+    for (const code of ['R0002', 'R0003']) {
+      const other = await runAction({
+        actorId: 7,
+        actorHandle: 'strata',
+        action: 'make',
+        placeId: 112,
+        primitiveHandledByCaller: true,
+        performPrimitive: async () => {
+          throw Object.assign(new Error('retirement request refused'), { code })
+        },
+      }, db)
+      assert.equal(other.httpStatus, 500, code)
+      assert.notEqual(other.error, expectedError, code)
+      assert.match(other.error ?? '', /internal failure/u, code)
+    }
+    assert.equal(logged.length, 2)
+    assert.deepEqual(logged.map(values => (values[1] as { error_code?: unknown }).error_code), ['R0002', 'R0003'])
+  })
+
   test('an internal engine failure does not tell the caller to read action.error', async t => {
     const logged: unknown[][] = []
     t.mock.method(console, 'error', (...values: unknown[]) => {

@@ -16,6 +16,7 @@ import {
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import { ENDING_GIVE_REFUSAL, THING_ENDED_SKIP_REASON, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 import { giftsWaitFor, holdTransfer, type WaitingNote } from './waiting-transfers.ts'
+import { frozenRecipientRefusal } from './retirement-errors.ts'
 import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
@@ -1277,6 +1278,13 @@ async function transferableNow(target: RuntimeTarget, actorId: number, db: Tagge
   return rows.length > 0
 }
 
+async function recipientRetirementState(recipientId: number, db: TaggedSql): Promise<unknown> {
+  const rows = await queryRows<{ retirement_state?: unknown }>(db`
+    SELECT retirement_state FROM residents WHERE id = ${recipientId}
+  `)
+  return rows[0]?.retirement_state
+}
+
 /**
  * Decision #158: when the recipient muted the actor and has not let its gifts through, a
  * transfer that could move now is held instead. It writes one private waiting row, moves
@@ -1292,6 +1300,10 @@ export async function holdTransferIfWaiting(
 ): Promise<WaitingNote | null> {
   if (target.type === 'resident' || actorId === recipientId) return null
   if (!await giftsWaitFor(recipientId, actorId, db)) return null
+  // A retiring or retired recipient is refused, never held: the waiting table has no
+  // retirement guard of its own. A plain read; it locks nothing.
+  const frozen = frozenRecipientRefusal(await recipientRetirementState(recipientId, db))
+  if (frozen !== null) throw new EngineError(409, frozen)
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db)
     if (thing?.ownerId === actorId && thing.heldBy != null) throw new EngineError(409, HELD_THING_ERROR)
@@ -1621,6 +1633,18 @@ async function dueRows(placeId: number, db: TaggedSql): Promise<Record<string, u
     FROM pending_effects pending
     LEFT JOIN effect_resolutions resolution ON resolution.pending_effect_id = pending.id
     WHERE pending.place_id = ${placeId} AND pending.due_at <= now() AND resolution.id IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM residents frozen WHERE frozen.retirement_state <> 'active' AND frozen.id IN (
+          pending.actor_id, pending.recipient_id,
+          CASE WHEN pending.target_type = 'resident' THEN pending.target_id END,
+          (SELECT owner_id FROM things WHERE id = pending.source_thing_id),
+          (SELECT owner_id FROM things WHERE id::text = pending.payload #>> '{effect_origin,source_thing_id}'),
+          (SELECT owner_id FROM places WHERE id::text = pending.payload #>> '{effect_origin,source_place_id}'),
+          (SELECT owner_id FROM things WHERE pending.target_type = 'thing' AND id = pending.target_id),
+          (SELECT owner_id FROM places WHERE pending.target_type = 'place' AND id = pending.target_id),
+          (SELECT owner_id FROM kinds WHERE pending.target_type = 'kind' AND id = pending.target_id)
+        )
+      )
     ORDER BY pending.due_at ASC, pending.id ASC LIMIT ${DUE_BATCH_SIZE}
   `)
 }
@@ -1640,6 +1664,18 @@ async function lockAndLoadPending(
     LEFT JOIN effect_resolutions resolution ON resolution.pending_effect_id = pending.id
     WHERE pending.id = ${pendingId} AND pending.place_id = ${placeId}
       AND pending.due_at <= now() AND resolution.id IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM residents frozen WHERE frozen.retirement_state <> 'active' AND frozen.id IN (
+          pending.actor_id, pending.recipient_id,
+          CASE WHEN pending.target_type = 'resident' THEN pending.target_id END,
+          (SELECT owner_id FROM things WHERE id = pending.source_thing_id),
+          (SELECT owner_id FROM things WHERE id::text = pending.payload #>> '{effect_origin,source_thing_id}'),
+          (SELECT owner_id FROM places WHERE id::text = pending.payload #>> '{effect_origin,source_place_id}'),
+          (SELECT owner_id FROM things WHERE pending.target_type = 'thing' AND id = pending.target_id),
+          (SELECT owner_id FROM places WHERE pending.target_type = 'place' AND id = pending.target_id),
+          (SELECT owner_id FROM kinds WHERE pending.target_type = 'kind' AND id = pending.target_id)
+        )
+      )
     FOR UPDATE OF pending
   `)
   return rows[0] ?? null
@@ -1728,6 +1764,26 @@ async function resolveOne(
   if (!row) {
     await recordEffectResolution(pendingId, 'skipped', { error: 'invalid stored effect payload' }, db)
     return 'failed'
+  }
+  // Keep frozen work pending. Lock its current participants before anything can
+  // resolve it, so a concurrent retirement cannot turn a pause into a terminal failure.
+  const participants = await queryRows<{ retirement_state: string }>(db`
+    SELECT resident.retirement_state FROM residents resident
+    JOIN pending_effects pending ON pending.id = ${pendingId}
+    WHERE resident.id IN (
+      pending.actor_id, pending.recipient_id,
+      CASE WHEN pending.target_type = 'resident' THEN pending.target_id END,
+      (SELECT owner_id FROM things WHERE id = pending.source_thing_id),
+      (SELECT owner_id FROM things WHERE id::text = pending.payload #>> '{effect_origin,source_thing_id}'),
+      (SELECT owner_id FROM places WHERE id::text = pending.payload #>> '{effect_origin,source_place_id}'),
+      (SELECT owner_id FROM things WHERE pending.target_type = 'thing' AND id = pending.target_id),
+      (SELECT owner_id FROM places WHERE pending.target_type = 'place' AND id = pending.target_id),
+      (SELECT owner_id FROM kinds WHERE pending.target_type = 'kind' AND id = pending.target_id)
+    )
+    ORDER BY resident.id FOR KEY SHARE OF resident
+  `)
+  if (participants.some(resident => resident.retirement_state === 'retiring' || resident.retirement_state === 'retired')) {
+    return 'already-resolved'
   }
   if (row.reachMember !== null && row.target !== null
     && !await reachMemberStillConsents(row.reachMember, row.target.id, db)) {

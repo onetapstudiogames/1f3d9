@@ -119,6 +119,8 @@ async function resetLegacy(database: Pool): Promise<void> {
     DROP TABLE IF EXISTS paypal_credit_intents;
     DROP TABLE IF EXISTS paypal_credit_catalog;
     DROP TABLE IF EXISTS credit_purchase_rate_limits;
+    DROP TABLE IF EXISTS play_credit_events;
+    DROP TABLE IF EXISTS play_credit_orders;
     ALTER TABLE city_credit_entries DROP CONSTRAINT IF EXISTS city_credit_entries_gift_id_fkey;
     DROP TABLE IF EXISTS city_credit_gifts;
     DROP TABLE IF EXISTS city_credit_entries;

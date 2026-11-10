@@ -55,6 +55,7 @@ import {
 } from './waiting-transfers.ts'
 import { settleRoom, settleRoomAndRecord, settleTimers, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { frozenGiverAcceptRefusal, frozenRecipientRefusal } from './retirement-errors.ts'
 import {
   GAZETTE_ROOM_ID,
   GAZETTE_SUBMISSIONS_CLOSED_ERROR,
@@ -232,6 +233,11 @@ async function residentId(handle: string): Promise<number | null> {
     handle: string
   }[]
   return rows.find(row => row.handle === handle)?.id ?? null
+}
+
+async function residentRetirementState(id: number): Promise<unknown> {
+  const rows = await sql`SELECT retirement_state FROM residents WHERE id = ${id}` as { retirement_state?: unknown }[]
+  return rows[0]?.retirement_state
 }
 
 async function readOffer(id: number): Promise<OfferRow | null> {
@@ -669,6 +675,14 @@ export function mountSocietyRoutes(app: Hono): void {
     acceptingWaitingId: number | null,
   ): Promise<GiveOutcome> {
     const refused = (response: Response): GiveOutcome => Object.freeze({ kind: 'refused', response })
+    // A retiring or retired recipient, or the giver of a held gift being accepted, is refused
+    // before anything is written, as the action door does (plain reads, no locks).
+    const named = await residentId(toHandle)
+    const frozenRecipient = named ? frozenRecipientRefusal(await residentRetirementState(named)) : null
+    if (frozenRecipient !== null) return refused(err(c, 409, frozenRecipient))
+    const frozenGiver = acceptingWaitingId === null ? null
+      : frozenGiverAcceptRefusal(await residentRetirementState(resident.id))
+    if (frozenGiver !== null) return refused(err(c, 409, frozenGiver))
     // A thing's due end is recorded before any answer, so the refusals below name a remnant.
     const recordedThingIds = type === 'thing' ? await recordDueEndQuietly([id]) : []
     const asset = await ownerOf(type, id)
@@ -678,7 +692,7 @@ export function mountSocietyRoutes(app: Hono): void {
     if (type === 'thing' && asset.held_by != null) return refused(err(c, 409, HELD_THING_ERROR))
     if (asset.active_offer_id != null || await openOffer(type, id))
       return refused(err(c, 409, 'this asset already has an open transfer offer; cancel or finish that offer before transferring the asset'))
-    const recipient = await residentId(toHandle)
+    const recipient = named
     if (!recipient) return refused(err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`))
     if (recipient === resident.id) return refused(err(c, 400, 'you already own this asset; send a different current resident in to_handle'))
     if (type === 'thing') {

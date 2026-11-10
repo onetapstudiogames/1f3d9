@@ -72,7 +72,7 @@ function privateHeaders(c: Context): void {
 const CALLER_FAILURES = Object.freeze({
   lookup: Object.freeze({
     unavailable: 'Resident lookup is unavailable because PayPal is not configured. Ask the city owner to connect PayPal, then retry this lookup.',
-    temporary: 'Resident lookup is temporarily unavailable. Retry this lookup with the same resident number.',
+    temporary: 'Resident lookup is temporarily unavailable. Retry this lookup with the same name or number.',
     details: Object.freeze({ retry_same_lookup: true }),
   }),
   order: Object.freeze({
@@ -250,11 +250,14 @@ async function confirmRecipient(
   if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Open the city window and choose a current resident number. No payment was started.', {
     human_href: '/window',
   })
+  if (recipient.retirementState) throw new RouteFailure(409,
+    `That resident is ${recipient.retirementState} and cannot receive new fee credit. No payment was started.`)
   if (recipient.residentHandle !== expectedHandle) {
     throw new RouteFailure(409,
       'That resident number now has a different handle. Confirm the shown handle before paying.', {
         resident_number: recipient.residentNumber,
         resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
         payment_started: false,
       })
   }
@@ -546,6 +549,7 @@ async function createOrder(
       claim_token_shown: false,
       resident_number: recipient.residentNumber,
       resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
     })
   }
   try {
@@ -571,6 +575,7 @@ async function createOrder(
       claim_token_shown: intent.claimToken !== null,
       resident_number: recipient.residentNumber,
       resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
     }, intent.disposition === 'created' ? 201 : 200)
   } catch (error) {
     if (intent.delivery === 'gift') {
@@ -621,6 +626,7 @@ async function createAllowance(
         ready.environment, 'subscription', intent.remoteSubscriptionId),
       resident_number: recipient.residentNumber,
       resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
     })
   }
   const planId = await ensureAllowancePlan(dependencies, ready)
@@ -645,6 +651,7 @@ async function createAllowance(
     approval_url: subscription.approvalUrl,
     resident_number: recipient.residentNumber,
     resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
   }, intent.disposition === 'created' ? 201 : 200)
 }
 
@@ -669,6 +676,7 @@ async function capturedOrderResponse(
   return c.json({
     purchase_id: intent.purchaseId,
     resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
     amount_dollars: (intent.amountUnits / CITY_FEE_CREDIT_UNITS).toString(),
     delivery: intent.delivery,
     status: giftStatus ?? 'credited',
@@ -726,6 +734,11 @@ async function captureOrder(
     }
     return await capturedOrderResponse(c, dependencies, intent, credit)
   }
+  const recipient = await findPayPalCreditRecipient(dependencies.database, intent.recipientId)
+  if (!recipient) throw new RouteFailure(503,
+    'The resident confirmation is temporarily unavailable. Capture was not attempted. Retry the same purchase; do not start another payment.')
+  if (recipient?.retirementState) throw new RouteFailure(409,
+    `That resident is ${recipient.retirementState} and cannot receive new fee credit. Capture was not attempted. Email adam@twamd.com about an earlier payment.`)
   const capture = await capturePayPalCreditOrder(
     dependencies.environment ?? process.env,
     {
@@ -784,14 +797,14 @@ export function mountPayPalCreditRoutes(
     try {
       queryless(c)
       await requireRateSlot(c, dependencies, null, 'prepare')
-      const number = residentNumber(c.req.param('number'))
-      const recipient = await findPayPalCreditRecipient(dependencies.database, number)
-      if (!recipient) throw new RouteFailure(404, 'That resident number was not found. Open the city window and choose a current resident number. No payment was started.', {
+      const recipient = await findPayPalCreditRecipient(dependencies.database, c.req.param('number'))
+      if (!recipient) throw new RouteFailure(404, 'That resident was not found. Check the name or number. No payment was started.', {
         human_href: '/window',
       })
       return c.json({
         resident_number: recipient.residentNumber,
         resident_handle: recipient.residentHandle,
+      ...(recipient.retirementState ? { display_handle: `${recipient.residentHandle} (${recipient.retirementState})` } : {}),
       })
     } catch (error) {
       return responseFailure(c, error, 'lookup')

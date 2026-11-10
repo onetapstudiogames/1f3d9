@@ -26,6 +26,16 @@ const reviewsMigration = await readFile(
   new URL('../../db/migrations/20261015_moderation_reviews.sql', import.meta.url),
   'utf8',
 )
+// Recreated talk tables need the later retirement guards before comparing catalogs.
+const thingEndingsMigration = await readFile(
+  new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url), 'utf8',
+)
+const retirementMigration = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement.sql', import.meta.url), 'utf8',
+)
+const retirementWriteLocksMigration = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8',
+)
 
 const FOUNDER = Object.freeze({ id: 1, handle: 'founder', secret: '1f3d9_sk_' + '1'.repeat(48) })
 const SPEAKER = Object.freeze({ id: 2, handle: 'bell-maker', secret: '1f3d9_sk_' + '2'.repeat(48) })
@@ -40,6 +50,7 @@ type SeededRooms = Awaited<ReturnType<typeof resetCity>>
 const PRE_TALK_DDL = `
   DROP TRIGGER moderation_invalidate_public_activity ON moderation_actions;
   DROP VIEW city_snapshot.public_records_v4;
+  DROP VIEW city_snapshot.public_records_v4_without_retirement;
   DROP VIEW city_snapshot.public_records_v3;
   DROP TABLE wait_leases, ping_operations, ping_receipts, pings, line_minute_quota, line_quota, room_lines;
   DROP FUNCTION pings_answer_once();
@@ -319,6 +330,9 @@ test('same-room talk migration, snapshot v3, and feed markers use real PostgreSQ
       await db.query(migration)
       await db.query(holdsMigration)
       await db.query(reviewsMigration)
+      await db.query(thingEndingsMigration)
+      await db.query(retirementMigration)
+      await db.query(retirementWriteLocksMigration)
 
       assert.deepEqual(await talkCatalog(), installedCatalog)
       assert.deepEqual({

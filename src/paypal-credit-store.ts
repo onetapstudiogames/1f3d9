@@ -6,6 +6,7 @@ import {
   parseCityCreditSourceKey,
 } from './city-credit.ts'
 import { CREDIT_REQUEST_ID_SHAPE_REFUSAL } from './city-fee-facts.ts'
+import { HANDLE_RE } from './core-primitives.ts'
 import {
   createGiftClaimToken,
   hashGiftClaimToken,
@@ -223,6 +224,14 @@ function deliveredCreditReceipt(
     || (terms.delivery === 'gift' && row.claim_token_hash !== terms.claimTokenHash)
   ) conflict('PayPal delivery receipt is bound to changed terms')
 
+  if (row.status === 'withheld') {
+    if (terms.purchaseKind !== 'allowance' || row.id != null || bool(row.created)) {
+      conflict('Withheld weekly payment cannot have a credit receipt')
+    }
+    return Object.freeze({ status: 'withheld', resident_id: terms.residentId,
+      amount_units: terms.amountUnits.toString(), purchase_kind: terms.purchaseKind })
+  }
+
   const result: Record<string, unknown> = {
     disposition: bool(row.created) ? 'created' : 'existing',
     receipt_id: rowId(row.id, 'PayPal purchase receipt id'),
@@ -287,19 +296,31 @@ function sameIntentTerms(
 export async function findPayPalCreditRecipient(
   database: PayPalCreditStoreDatabase,
   residentNumberInput: unknown,
-): Promise<Readonly<{ residentNumber: number; residentHandle: string }> | null> {
-  const residentNumber = positiveResidentId(residentNumberInput)
+): Promise<Readonly<{ residentNumber: number; residentHandle: string; retirementState?: 'retiring' | 'retired' }> | null> {
+  const lookup = typeof residentNumberInput === 'string' ? residentNumberInput : null
+  const byHandle = lookup !== null && (lookup.startsWith('@') || !/^[0-9]+$/u.test(lookup))
+  if (lookup !== null && !byHandle && !/^[1-9][0-9]{0,9}$/u.test(lookup)) {
+    throw new TypeError('Use a positive resident number, or put @ before a name made of numbers.')
+  }
+  if (byHandle && !HANDLE_RE.test(lookup!.replace(/^@/u, ''))) {
+    throw new TypeError('Use a resident name or positive number. Put @ before a name made of numbers.')
+  }
+  const value = byHandle
+    ? safeHandle(lookup!.replace(/^@/u, ''))
+    : positiveResidentId(lookup === null ? residentNumberInput : Number(lookup))
   const rows = await database.query(`
     /* paypal-credit:recipient */
-    SELECT id, handle FROM residents WHERE id = $1::integer LIMIT 1
-  `, [residentNumber])
+    SELECT id, handle, retirement_state FROM residents WHERE ${byHandle ? 'handle = $1::text' : 'id = $1::integer'} LIMIT 1
+  `, [value])
   const row = rows[0]
   if (!row) return null
   const storedNumber = positiveResidentId(Number(row.id))
-  if (storedNumber !== residentNumber) throw new TypeError('resident confirmation changed')
+  if (byHandle ? row.handle !== value : storedNumber !== value) throw new TypeError('resident confirmation changed')
   return Object.freeze({
     residentNumber: storedNumber,
     residentHandle: safeHandle(row.handle),
+    ...((row.retirement_state === 'retiring' || row.retirement_state === 'retired')
+      ? { retirementState: row.retirement_state } : {}),
   })
 }
 

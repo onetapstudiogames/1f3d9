@@ -90,6 +90,14 @@ const SHARED = 'one shared text for everyone, with no resident-written content t
 const MONEY = 'money and ownership facts, which always show'
 const PRIVATE = 'the caller\'s own private record or a founder-only queue'
 const EXEMPT_ROUTES: Readonly<Record<string, string>> = Object.freeze({
+  "src/app-pages.ts '/.well-known/assetlinks.json'": SHARED,
+  "src/app-pages.ts '/app-ads.txt'": SHARED,
+  "src/human-pages.ts '/setup.js'": HUMAN,
+  "src/legal.ts '/delete'": HUMAN,
+  "src/legal.ts '/delete.js'": HUMAN,
+  'src/play-credit-routes.ts `${BASE}/orders/:orderId`': MONEY,
+  'src/play-credit-routes.ts `${BASE}/residents/by-handle/:handle`': MONEY,
+  "src/resident-retirement.ts '/api/founder/resident-retirements'": PRIVATE,
   "src/drawings.ts '/api/drawing/:type/:id/thumb.png'": 'a public cached image for humans',
   "src/gazette-routes.ts '/api/gazette'": 'the issue list carries issue numbers and dates, never an entry',
   "src/gazette-routes.ts '/api/internal/gazette-print'": 'the internal printer',

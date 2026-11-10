@@ -139,6 +139,7 @@ async function loadCandidates(placeId: number, db: TaggedSql): Promise<Candidate
     JOIN traits trait ON trait.id = link.trait_id
     LEFT JOIN thing_wake_state state ON state.thing_id = thing.id
     WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
+      AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = thing.owner_id AND owner.retirement_state = 'active')
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
       -- A thing whose end has come never wakes here; a thing with no end costs no more.
       AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
@@ -189,12 +190,14 @@ async function roomMayWake(placeId: number, db: TaggedSql): Promise<boolean> {
         AND link.revision = coalesce(thing.as_revision, thing.current_revision)
       JOIN traits trait ON trait.id = link.trait_id
       WHERE thing.place_id = ${placeId} AND thing.withdrawn_at IS NULL AND thing.wake_enabled
+        AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = thing.owner_id AND owner.retirement_state = 'active')
         AND (thing.ending_rule IS NULL OR (thing.ended_at IS NULL
           AND NOT coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)))
         AND trait.recipe ? 'wake'
     ) OR EXISTS (
       SELECT 1 FROM things pending
       WHERE pending.place_id = ${placeId} AND pending.end_program_state = 'pending'
+        AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = pending.owner_id AND owner.retirement_state = 'active')
         AND pending.withdrawn_at IS NULL
     ) AS waking
   ` as Array<{ waking?: unknown }>
@@ -295,7 +298,20 @@ async function claimSettle(
     // End tries waiting in the room run first, outside wake_random_cap and the random pick.
     const endUnits: Unit[] = (await loadEndUnits(placeId, transaction))
       .map(thingId => Object.freeze({ thingId, unitIndex: 0, reason: 'end' as const, pinned: false }))
-    const candidates = await loadCandidates(placeId, transaction)
+    const candidates: Candidate[] = []
+    for (const candidate of await loadCandidates(placeId, transaction)) {
+      // This is the claim's ownership check; a later transfer follows the claim.
+      // Hold retirement off through every clock/anchor write, without locking the
+      // thing: an action holding it must neither delay nor lose its owed tries.
+      const owners = await transaction`
+        /* wake:current-owner */
+        SELECT thing.owner_id FROM things thing
+        JOIN residents owner ON owner.id = thing.owner_id
+        WHERE thing.id = ${candidate.thingId} AND owner.retirement_state = 'active'
+        FOR KEY SHARE OF owner
+      ` as Array<{ owner_id: number }>
+      if (Number(owners[0]?.owner_id) === candidate.ownerId) candidates.push(candidate)
+    }
     const plan = planUnits(candidates, room, trigger, now)
     const nowIso = new Date(now).toISOString()
     for (const thingId of plan.anchors) {
@@ -404,6 +420,7 @@ async function stillEligible(
       AND link.trait_id = ${candidate.traitId}
     WHERE thing.id = ${candidate.thingId} AND thing.place_id = ${placeId}
       AND thing.owner_id = ${ownerId}
+      AND owner.retirement_state = 'active'
       AND thing.withdrawn_at IS NULL AND thing.wake_enabled
       AND thing.held_by IS NULL AND thing.active_offer_id IS NULL
       -- A thing whose end has come never wakes here; a thing with no end costs no more.

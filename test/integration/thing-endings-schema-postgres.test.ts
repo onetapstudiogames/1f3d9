@@ -22,7 +22,10 @@ function schemaBeforeThingEndings(): string {
   assert.ok(start > 0 && start === schemaDdl.lastIndexOf(SECTION_MARKER), 'one thing endings section')
   const end = schemaDdl.indexOf(NEXT_SECTION_MARKER, start)
   assert.ok(end > start && end === schemaDdl.lastIndexOf(NEXT_SECTION_MARKER), 'the thing endings section ends at the next one')
-  const before = schemaDdl.slice(0, start) + schemaDdl.slice(end)
+  // Retirement and its follow-ups require the v4 view added by thing endings.
+  const retirementStart = schemaDdl.indexOf('-- Retirement is requested by a key holder')
+  assert.ok(retirementStart > end, 'the retirement section follows thing endings')
+  const before = schemaDdl.slice(0, start) + schemaDdl.slice(end, retirementStart)
   assert.doesNotMatch(before, /thing_end_due|ending_policy|invented_by|thing_ending_changes/u)
   return before
 }

@@ -103,6 +103,10 @@ import {
 } from './public-pagination.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
 import { mountLegalRoutes } from './legal.ts'
+import { appPagePurchaseLinks, mountAppPages } from './app-pages.ts'
+import { mountPlayCreditRoutes } from './play-credit-routes.ts'
+import { mountResidentRetirementRoutes } from './resident-retirement.ts'
+import { residentRetirementRefusal } from './retirement-errors.ts'
 import { mountHumanPages } from './human-pages.ts'
 import { guidePage } from './human-guide-response.ts'
 import { prefersHtml } from './http-accept.ts'
@@ -618,7 +622,7 @@ function missingStreet() {
 }
 
 export function missingStreetHtml(requestId: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p>Request ID: <code>${escapeHtml(requestId)}</code></p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main></body></html>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found — 1F3D9</title></head><body><main><h1>Page not found</h1><p>There is no city page at this address.</p><p>Request ID: <code>${escapeHtml(requestId)}</code></p><p><a href="/">Open the city front page</a></p><p><a href="/window">Open the human city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`
 }
 
 function missingStreetResponse(c: Parameters<Parameters<typeof app.notFound>[0]>[0]) {
@@ -674,7 +678,10 @@ app.use('*', residentRefusalGuidance())
 app.use('*', apiFailureContract())
 app.use('*', publicResponseSafety)
 app.use('*', pendingPingSummary())
+app.use('*', appPagePurchaseLinks)
 app.onError((error, c) => {
+  const retirementRefusal = residentRetirementRefusal(error)
+  if (retirementRefusal) return err(c, 403, retirementRefusal)
   if (isPublicExactReadBusy(error)) {
     c.header('Retry-After', '1')
     return err(c, 503, PUBLIC_EXACT_READ_BUSY_MESSAGE)
@@ -771,12 +778,13 @@ mountCityHelpRoute(app)
 mountCityToolCatalogRoute(app, CITY_PUBLIC_TOOL_CATALOG)
 mountChangelogRoutes(app)
 mountLegalRoutes(app)
+mountAppPages(app)
 mountSeasonRoutes(app)
 app.get('/buy', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_BUY_CSP)
-  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'paper'))
+  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'window'))
 })
 app.get('/buy.css', c => {
   if (!PAYPAL_PURCHASES_READY) return unavailableBuy(c)
@@ -791,7 +799,7 @@ app.get('/buy.js', c => {
 app.get('/gift-redirect', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_GIFT_REDIRECT_CSP)
-  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'paper'))
+  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'window'))
 })
 app.get('/gift-redirect.css', c => {
   c.header('Cache-Control', 'no-store')
@@ -1021,6 +1029,11 @@ mountPayPalCreditRoutes(app, {
   database: runtimeDatabase,
   environment: process.env,
   publicOrigin: DOMAIN,
+})
+mountResidentRetirementRoutes(app)
+mountPlayCreditRoutes(app, {
+  database: runtimeDatabase,
+  environment: process.env,
 })
 mountLogDrainRoutes(app, {
   environment: process.env,

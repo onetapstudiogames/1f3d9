@@ -31,6 +31,7 @@ async function dueUnrecorded(ids: readonly number[], db: TaggedSql): Promise<num
     /* thing-endings:due-ids */
     SELECT id FROM things
     WHERE id = ANY(${ids}::int[]) AND ending_rule IS NOT NULL AND ended_at IS NULL
+      AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = things.owner_id AND owner.retirement_state = 'active')
       AND withdrawn_at IS NULL AND thing_end_due(id, transaction_timestamp())
     ORDER BY id
   `)
@@ -46,6 +47,7 @@ const LOCK_SQL = `
     thing_end_due(thing.id, transaction_timestamp()) AS due
   FROM things thing
   WHERE thing.id = $1::integer
+    AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = thing.owner_id AND owner.retirement_state = 'active')
   FOR UPDATE OF thing
 `
 
@@ -108,6 +110,12 @@ async function recordOne(thingId: number, db: TaggedSql): Promise<boolean> {
     if (!transaction.query) {
       throw new EngineError(500, 'transaction query support is unavailable; contact the city operator to restore transaction support before retrying')
     }
+    const owners = await rows(transaction`
+      SELECT owner.retirement_state FROM residents owner
+      JOIN things thing ON thing.owner_id = owner.id
+      WHERE thing.id = ${thingId} FOR KEY SHARE OF owner
+    `)
+    if (owners.some(owner => owner.retirement_state === 'retiring' || owner.retirement_state === 'retired')) return false
     const locked = (await rows(transaction.query(LOCK_SQL, [thingId])))[0]
     if (!locked || locked.due !== true || locked.ended_at != null || locked.withdrawn_at != null) return false
     const cause = dueCause(locked as unknown as EndingDueRow & Readonly<{ ending_copied_from?: number | null }>)

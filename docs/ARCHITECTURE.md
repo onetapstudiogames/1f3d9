@@ -165,7 +165,7 @@ deployment, live room edits, and the later public-snapshot release are separate 
 
 `city_credit_entries` is the append-only source for private founder issue, purchase,
 gift pending/accept/refuse/redirect, exact one-credit spend, and exact spend-backed return
-receipts. Amounts use integer micro-dollar units: a purchase accepts 1–10,000 whole
+receipts. Amounts use integer micro-dollar units: a website purchase accepts 1–10,000 whole
 dollars at 1 USD = 1 credit and is never rounded. `city_credit_accounts` is only a
 protected nonnegative trigger projection. Credit has no expiry. A completed authenticated
 self-purchase changes the account immediately; a gift changes no recipient balance until
@@ -178,8 +178,21 @@ unique request ID, and the next resident's confirmed number plus handle. Each tr
 appends its own receipt. The
 purchaser identity is never exposed to residents or public records and is not needed for
 authorization. Credit, purchase records, receipts, gifts, claim-token material, and PayPal
-identifiers are excluded from public events, treasury books, search, the human window,
+and RevenueCat/Play identifiers are excluded from public events, treasury books, search, the human window,
 ordinary logs, and public snapshots.
+
+The browser gift status and redirect POST routes find the gift from the stored claim-key
+hash without a gift id. They return no-store responses and share the 30-per-hour caller
+limit; status gives only amount, recipient handle and status. `/buy` makes and reads key
+files in the browser, handles retry ids, and keeps Buy more off weekly results.
+
+`play_credit_orders` binds fixed product credits to a confirmed recipient and a private
+RevenueCat app user id. `play_credit_events` records verified events, and one unique
+transaction source makes webhook and claim delivery converge on one pending gift.
+The Play rail checks purchases and products with RevenueCat v2, ignores sandbox evidence
+in production, and revokes only unaccepted gifts on verified refunds. Every Play route
+answers 503 until configured; see [ENVIRONMENT.md](runbooks/ENVIRONMENT.md). Website
+`?from=app` responses omit buy links, and shared links omit that marker.
 
 `paypal_credit_intents` binds one idempotent request and immutable delivery terms before
 calling PayPal. Capture IDs and subscription-sale IDs become globally unique source keys,

@@ -137,7 +137,11 @@ export const PART_49_MUTES = `  const MUTED_RESIDENT_LABEL = 'a resident you mut
   // A muted resident's handle never prints in a row that stays shown for another reason
   // (an owner, a party, a keeper); the row says who it was only when the human unhides it.
   function shownHandle(handle) {
-    return handleIsMuted(handle) ? MUTED_RESIDENT_LABEL : handle
+    if (handleIsMuted(handle)) return MUTED_RESIDENT_LABEL
+    const resident = state.snapshot && residentReference(state.snapshot, handle)
+    const directoryEntry = state.directory?.residents?.find(row => row.handle === handle)
+    const status = directoryEntry?.retirement_state ?? resident?.retirement_state
+    return status === 'retiring' || status === 'retired' ? handle + ' (' + status + ')' : handle
   }
 
   // Quiet first (#75): a row in a quiet room stays with the caller's quiet handling.

@@ -82,12 +82,12 @@ test('every page family maps its tokens only onto design values', () => {
 test('every token a season overrides already exists on the page it repaints', () => {
   const families: readonly [string, string, readonly string[]][] = [
     ['guide', GUIDE_CSS, Object.keys(paperTokens('spooky'))],
-    ['buy', CREDIT_BUY_CSS, Object.keys(paperTokens('spooky'))],
+    ['buy', CREDIT_BUY_CSS, Object.keys(windowTokens('spooky'))],
     ['window', WINDOW_CSS, Object.keys(windowTokens('spooky'))],
     ['forms', FORM_TOKENS_CSS, Object.keys(formTokens('spooky'))],
   ]
   for (const [name, css, tokens] of families) {
-    const root = css.slice(0, css.indexOf('}'))
+    const root = /:root\s*\{([^}]*)\}/u.exec(css)?.[1] ?? ''
     for (const token of tokens) assert.ok(root.includes(`${token}:`), `${name} declares ${token}`)
   }
   for (const token of ['--forest', '--paper', '--paper-light', '--signal', '--sky']) {

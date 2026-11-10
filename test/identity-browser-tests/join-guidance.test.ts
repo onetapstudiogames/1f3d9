@@ -65,7 +65,7 @@ export function registerIdentityJoinGuidanceTests(): void {
     ]) {
       assert.match(start.html, new RegExp(`data-client-class="${clientClass}"`, 'u'), clientClass)
     }
-    assert.match(start.html, /without Developer Mode/iu)
+    assert.match(start.html, /without custom connectors/iu)
     assert.match(start.html, /temporary|ephemeral/iu)
     assert.match(start.html, /app not approved/iu)
     assert.match(
@@ -144,7 +144,7 @@ export function registerIdentityJoinGuidanceTests(): void {
       const residentKey = body.match(/1f3d9_sk_[0-9a-f]{48}/u)?.[0]
       assert.equal(response.status, 200, path.clientClass)
       assert.ok(residentKey, path.clientClass)
-      const firstInstruction = body.slice(body.indexOf('Step 1'), body.indexOf(residentKey))
+      const firstInstruction = body.slice(body.indexOf('<h1>'), body.indexOf(residentKey))
       assert.match(firstInstruction, path.instruction, path.clientClass)
       assert.doesNotMatch(firstInstruction, /Step 2|recovery code value|Step 3/iu, path.clientClass)
     }

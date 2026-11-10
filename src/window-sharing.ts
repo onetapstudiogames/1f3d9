@@ -335,12 +335,12 @@ export function parseWindowShareRequest(
     }
   }
 
-  // Link-tracking tags leave before any rule below reads the query, so a tagged
-  // link loads exactly the state its bare link loads.
+  // Welcome opens move-in; from selects app presentation. Neither is shared
+  // city state. All remaining query names keep the same strict rules.
   let params: URLSearchParams
   try {
     params = new URLSearchParams(
-      [...new URLSearchParams(search)].filter(([name]) => !isWindowLinkTrackingTag(name)),
+      [...new URLSearchParams(search)].filter(([name]) => name !== 'welcome' && name !== 'from' && !isWindowLinkTrackingTag(name)),
     )
   } catch {
     return null

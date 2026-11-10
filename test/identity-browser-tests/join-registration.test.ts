@@ -7,7 +7,7 @@ import { ROOT_KEY, OTHER_ROOT_KEY } from '../helpers/identity-browser-fixtures/m
 import { appWithMemoryStore } from '../helpers/identity-browser-fixtures/identity-app.ts'
 
 export function registerIdentityJoinRegistrationTests(): void {
-  test('join stages only a hash and creates a resident only after exact key re-entry', async () => {
+  test('join stages only a hash and creates a resident only after the browser returns the exact saved key', async () => {
     const { app, memory } = appWithMemoryStore()
     const start = await pageState(app, '/join')
     assert.match(start.html, /has not been created/i)
@@ -27,14 +27,10 @@ export function registerIdentityJoinRegistrationTests(): void {
     assert.ok(rootKey)
     assert.equal(recoveryCodes.length, 8)
     assert.equal(new Set(recoveryCodes).size, 8)
-    const keyInstruction = stagedHtml.indexOf('Step 1')
-    const keyValue = stagedHtml.indexOf(rootKey)
-    const codeInstruction = stagedHtml.indexOf('Step 2')
-    const firstCode = stagedHtml.indexOf(recoveryCodes[0]!)
-    const confirmation = stagedHtml.indexOf('Step 3')
-    assert.ok(keyInstruction >= 0 && keyInstruction < keyValue)
-    assert.ok(keyValue < codeInstruction && codeInstruction < firstCode)
-    assert.ok(firstCode < confirmation)
+    assert.match(stagedHtml, /data-download="key"/u)
+    assert.match(stagedHtml, /data-download="codes"/u)
+    assert.match(stagedHtml, /data-save-confirm disabled/u)
+    assert.doesNotMatch(stagedHtml, /Re-enter the saved resident key/u)
     assert.match(stagedHtml, /password manager|operating-system credential vault/iu)
     assert.match(stagedHtml, /outside (?:this|the) temporary (?:client|machine|workspace|session)/iu)
     assert.match(stagedHtml, /recovery codes[^.]*separate/iu)

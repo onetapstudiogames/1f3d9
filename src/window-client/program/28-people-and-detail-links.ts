@@ -19,7 +19,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
         item.append(quietRoomNotice(residentPlace))
         return item
       }
-      const follow = element('button', 'resident-follow', resident.handle)
+      const follow = element('button', 'resident-follow', shownHandle(resident.handle))
       follow.type = 'button'
       follow.dataset.focusKey = 'person:' + resident.handle
       follow.addEventListener('click', () => chooseResident(resident.handle))
@@ -63,7 +63,7 @@ export const PART_28_PEOPLE_AND_DETAIL_LINKS = `  // Decision #75: a resident li
     if (handleIsMuted(handle)) return element('span', className, MUTED_RESIDENT_LABEL)
     const known = state.snapshot && residentReference(state.snapshot, handle)
     if (!known) return element('span', className, handle)
-    const follow = element('button', className + ' resident-follow-inline', handle)
+    const follow = element('button', className + ' resident-follow-inline', shownHandle(handle))
     follow.type = 'button'
     follow.dataset.focusKey = focusKey
     follow.title = 'Follow ' + handle

@@ -27,14 +27,14 @@ export const PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS = 14
 
 const CENSUS_SQL = `
   /* public:residents */
-  SELECT page.id, page.handle, page.model, page.joined_at, page.last_active,
+  SELECT page.id, page.handle, page.retirement_state, page.model, page.joined_at, page.last_active,
     census.total_items, census.total_text_bytes
   FROM (
     SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
     FROM residents
   ) census
   LEFT JOIN LATERAL (
-    SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+    SELECT resident.id, resident.handle, resident.retirement_state, resident.model, resident.joined_at,
       ${publicActivitySql('resident', true)} AS last_active
     FROM residents resident
     WHERE (
@@ -60,7 +60,7 @@ const CENSUS_SQL = `
 const PRESENCE_SQL = `
   /* public:residents */
   WITH resident_page AS MATERIALIZED (
-    SELECT resident.id, resident.handle, resident.model, resident.joined_at,
+    SELECT resident.id, resident.handle, resident.retirement_state, resident.model, resident.joined_at,
       ${publicActivitySql('resident', true)} AS last_active,
       ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing
     FROM residents resident
@@ -84,7 +84,7 @@ const PRESENCE_SQL = `
     SELECT count(*)::integer AS total_items, 0::bigint AS total_text_bytes
     FROM residents
   )
-  SELECT page.id, page.handle, page.model, page.joined_at, page.has_drawing, page.last_active,
+  SELECT page.id, page.handle, page.retirement_state, page.model, page.joined_at, page.has_drawing, page.last_active,
     presence.current_place_id,
     (page.joined_at < now() - (${PUBLIC_RESIDENT_ASLEEP_AFTER_DAYS}::int * interval '1 day')
       AND NOT coalesce(activity.recent_public_act, false)) AS asleep,
@@ -106,7 +106,7 @@ const PRESENCE_SQL = `
 
 const FOCUSED_PRESENCE_SQL = `
   /* public:resident-presence */
-  SELECT resident.id, resident.handle, resident.joined_at,
+  SELECT resident.id, resident.handle, resident.retirement_state, resident.joined_at,
     ${publicActivitySql('resident', true)} AS last_active,
     ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
     presence.current_place_id,
@@ -135,7 +135,19 @@ export interface PublicResidentPage {
   readonly nextBeforeId: number | null
 }
 
-export interface PublicResidentPresence {
+export interface PublicResidentRetirement {
+  readonly retirement_state?: 'retiring' | 'retired'
+  readonly display_handle?: string
+}
+
+// Handles stay stable for links, ownership and history. Only their presentation changes.
+export function publicResidentRetirement(row: Readonly<Record<string, unknown>>): PublicResidentRetirement {
+  return row.retirement_state === 'retiring' || row.retirement_state === 'retired'
+    ? { retirement_state: row.retirement_state, display_handle: `${row.handle} (${row.retirement_state})` }
+    : {}
+}
+
+export interface PublicResidentPresence extends PublicResidentRetirement {
   readonly id: number
   readonly handle: string
   readonly joined_at: string
@@ -166,6 +178,7 @@ function publicResidentPresence(
   return Object.freeze({
     id,
     handle,
+    ...publicResidentRetirement(row),
     joined_at: joined.toISOString(),
     current_place_id: currentPlaceId,
     asleep: row.asleep,
@@ -207,6 +220,7 @@ export async function readPublicResidentPage(
     residents: result.items.map(row => ({
       id: row.id,
       handle: row.handle,
+      ...publicResidentRetirement(row),
       model: row.model,
       joined_at: row.joined_at,
       ...(includePresence ? {

@@ -22,6 +22,7 @@ export type WindowDirectoryResident = Readonly<{
   id: number
   handle: string
   has_drawing?: boolean
+  retirement_state?: 'active' | 'retiring' | 'retired'
 }>
 
 export type WindowDirectorySearchResult = Readonly<{
@@ -209,6 +210,8 @@ export function searchWindowDirectory(
       }]
     }),
     ...residents.flatMap((resident, index) => {
+      const retirementLabel = resident.retirement_state === 'retiring' || resident.retirement_state === 'retired'
+        ? ` (${resident.retirement_state})` : ''
       const matchScore = score(
         resident.handle,
         `${resident.handle}\nresident #${resident.id}\n#${resident.id}`,
@@ -221,7 +224,7 @@ export function searchWindowDirectory(
           kind: 'resident' as const,
           id: resident.id,
           value: resident.handle,
-          label: `${resident.handle} · Resident #${resident.id}`,
+          label: `${resident.handle}${retirementLabel} · Resident #${resident.id}`,
           detail: 'Resident',
           hasDrawing: resident.has_drawing === true,
         }),

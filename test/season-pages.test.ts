@@ -22,11 +22,11 @@ const { treasuryDocument } = await import('../src/treasury-page.ts')
 const { authorizationUrl, fixture } = await import('./oauth-flow-tests/fixture.ts')
 
 const GUIDE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'none'; style-src 'self'; img-src 'self'; font-src 'none'; connect-src 'none'; manifest-src 'none'"
-// Each page's policy exactly as main served it before seasons. Only /gift-redirect
-// gains img-src 'self', so its masthead can show the city's own icon.
+// Identity pages allow only their nonce script and the city's own seasonal sheets.
+const IDENTITY_CSP = /^default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-[A-Za-z0-9+/=]+'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'$/u
 const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/about': GUIDE_CSP,
-  '/setup': GUIDE_CSP,
+  '/setup': GUIDE_CSP.replace("script-src 'none'", "script-src 'self'"),
   '/market': GUIDE_CSP,
   '/changelog': GUIDE_CSP,
   '/terms': GUIDE_CSP,
@@ -39,19 +39,19 @@ const MAIN_CSP: Readonly<Record<string, string | RegExp>> = {
   '/gazette/7': /^default-src 'none'; base-uri 'none'; object-src 'self'; frame-ancestors 'none'; form-action 'none'; script-src 'sha256-[A-Za-z0-9+/=]+'; style-src 'unsafe-inline' https:\/\/fonts\.googleapis\.com; font-src https:\/\/fonts\.gstatic\.com; img-src 'self'; connect-src 'none'; manifest-src 'none'$/u,
   '/buy': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   '/gift-redirect': "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
-  '/join': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  '/rotate': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  '/recovery': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-  oauth: "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chat.example.test; base-uri 'none'; frame-ancestors 'none'",
+  '/join': IDENTITY_CSP,
+  '/rotate': IDENTITY_CSP,
+  '/recovery': IDENTITY_CSP,
+  oauth: /^default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-[A-Za-z0-9+/=]+'; form-action 'self' https:\/\/chat.example.test; base-uri 'none'; frame-ancestors 'none'$/u,
 }
 
-type Family = 'paper' | 'window' | 'gazette' | 'form'
-const PAGES: readonly (readonly [string, Family, boolean])[] = [
+type Family = 'paper' | 'window' | 'gazette'
+const PAGES: readonly (readonly [string, Family, boolean, boolean?])[] = [
   ['/about', 'paper', true], ['/setup', 'paper', true], ['/market', 'paper', true], ['/changelog', 'paper', true],
   ['/terms', 'paper', true], ['/privacy', 'paper', true], ['/support', 'paper', true], ['/treasury', 'paper', true],
   ['/tools', 'paper', true], ['/window', 'window', true], ['/window/things', 'window', true], ['/gazette/7', 'gazette', true],
-  ['/buy', 'paper', true], ['/gift-redirect', 'paper', true],
-  ['/join', 'form', false], ['/rotate', 'form', false], ['/recovery', 'form', false], ['oauth', 'form', false],
+  ['/buy', 'window', true, false], ['/gift-redirect', 'window', true, false],
+  ['/join', 'window', false], ['/rotate', 'window', false], ['/recovery', 'window', false], ['oauth', 'window', false],
 ]
 
 const extra = new Hono()
@@ -90,7 +90,7 @@ async function season(): Promise<{
   return await (await app.request('/api/season')).json()
 }
 
-test('every human page keeps its Content-Security-Policy, with img-src added only on /gift-redirect', async () => {
+test('every human page keeps its scoped Content-Security-Policy', async () => {
   for (const date of ['2026-07-08', '2027-12-25']) {
     onDay(date)
     for (const [path] of PAGES) {
@@ -104,12 +104,12 @@ test('every human page keeps its Content-Security-Policy, with img-src added onl
   }
 })
 
-test('on a dressed day every page wears the palette, and every page with a masthead wears the icon and slogan', async () => {
+test('on a dressed day each page wears its palette and dresses its existing icon and slogan', async () => {
   onDay('2027-12-25')
   const today = await season()
   const words = today.slogan.parts.filter(part => typeof part !== 'string') as { word: string; key: string; image: string }[]
   assert.deepEqual(words.map(word => word.word), ['candlelit', 'jolly'])
-  for (const [path, family, masthead] of PAGES) {
+  for (const [path, family, masthead, slogan = true] of PAGES) {
     const html = await (await page(path)).text()
     assert.match(html, /<meta name="1f3d9-season-date" content="2027-12-25">/u, path)
     assert.doesNotMatch(html, /season:head|season:style/u, `${path} keeps no marker`)
@@ -118,8 +118,6 @@ test('on a dressed day every page wears the palette, and every page with a masth
     } else if (family === 'gazette') {
       assert.match(html, /:root\{--ground:#eef3f7;--sheet:#ffffff;--line:#8d9caa;--accent:#b3262c\}/u, path)
       assert.match(html, /@media \(prefers-color-scheme:dark\)\{:root\{--ground:#08111e;--sheet:#0f1d30;/u, path)
-    } else {
-      assert.match(html, /:root\{--bg:#08111e;--panel:#0f1d30;--border:#1d3350;--text:#e6eef5;--accent:#f3d27a;--field-border:#8d9caa\}/u, path)
     }
     if (!masthead) {
       assert.doesNotMatch(html, /data-season-icon|season-word/u, path)
@@ -132,6 +130,10 @@ test('on a dressed day every page wears the palette, and every page with a masth
       assert.ok(image.includes(`alt="${today.icon.label}"`), `${path} ${image}`)
     }
     assert.ok(html.includes(`<link data-season-icon rel="icon" href="${today.icon.url}" type="image/svg+xml">`), path)
+    if (!slogan) {
+      assert.doesNotMatch(html, /data-season-slogan|season-word/u, `${path} has an icon-only carousel heading`)
+      continue
+    }
     for (const word of words) {
       assert.ok(html.includes(`<img class="season-word season-word--${word.key}" src="${word.image}" alt="${word.word}"`), `${path} ${word.word}`)
     }
@@ -143,12 +145,12 @@ test('on a dressed day every page wears the palette, and every page with a masth
 test('on a plain or quiet day pages keep their usual icon and slogan and link no palette', async () => {
   for (const date of ['2026-07-08', '2027-10-11']) {
     onDay(date)
-    for (const [path, , masthead] of PAGES) {
+    for (const [path, , masthead, slogan = true] of PAGES) {
       const html = await (await page(path)).text()
       assert.match(html, new RegExp(`<meta name="1f3d9-season-date" content="${date}">`, 'u'), path)
       assert.doesNotMatch(html, /season-style|\/season\/|season-word|season:head|season:style/u, `${date} ${path}`)
       if (masthead) {
-        assert.match(html, /<span[^>]*data-season-slogan>The city where agents live<\/span>|<small data-season-slogan>The city where agents live<\/small>|<p class="mast-slogan machine" data-season-slogan>The city where agents live<\/p>/u, path)
+        if (slogan) assert.match(html, /<span[^>]*data-season-slogan>The city where agents live<\/span>|<small data-season-slogan>The city where agents live<\/small>|<p class="mast-slogan machine" data-season-slogan>The city where agents live<\/p>/u, path)
         for (const match of html.matchAll(/<(?:img|link)\b[^>]*\bdata-season-icon\b[^>]*>/gu)) {
           assert.match(match[0], /(?:src|href)="\/(?:favicon\.svg|og-image\.png)"/u, `${path} ${match[0]}`)
         }

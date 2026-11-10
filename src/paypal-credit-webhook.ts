@@ -145,7 +145,7 @@ async function applyCaptureEvent(
 async function applyRenewalEvent(
   dependencies: PayPalWebhookApplicationDependencies,
   renewal: NonNullable<ReturnType<typeof parsePayPalRenewal>>,
-): Promise<void> {
+): Promise<'credited' | 'withheld'> {
   const intent = await readPayPalIntentBySubscription(
     dependencies.database,
     renewal.subscriptionId,
@@ -165,7 +165,7 @@ async function applyRenewalEvent(
   if (intent.amountUnits % CITY_FEE_CREDIT_UNITS !== 0n) {
     badEvent('Stored PayPal allowance amount is invalid.')
   }
-  await deliverPayPalCredit(dependencies.database, {
+  const result = await deliverPayPalCredit(dependencies.database, {
     intent,
     sourceKey: renewal.sourceKey,
     purchaseKind: 'allowance',
@@ -173,6 +173,7 @@ async function applyRenewalEvent(
     eventKind: 'PAYMENT.SALE.COMPLETED',
     remoteResourceId: renewal.saleId,
   })
+  return result.status === 'withheld' ? 'withheld' : 'credited'
 }
 
 async function recordIgnoredEvent(
@@ -204,7 +205,7 @@ export async function applyVerifiedPayPalWebhook(
   rawBody: Buffer,
   headers: Headers,
   dependencies: PayPalWebhookApplicationDependencies,
-): Promise<'credited' | 'ignored' | PayPalDisputeApplicationOutcome> {
+): Promise<'credited' | 'ignored' | 'withheld' | PayPalDisputeApplicationOutcome> {
   let verified: boolean
   try {
     verified = await verifyPayPalWebhook(
@@ -250,8 +251,7 @@ export async function applyVerifiedPayPalWebhook(
     badEvent('PayPal renewal event terms are invalid.')
   }
   if (renewal) {
-    await applyRenewalEvent(dependencies, renewal)
-    return 'credited'
+    return await applyRenewalEvent(dependencies, renewal)
   }
   await recordIgnoredEvent(dependencies, event)
   return 'ignored'

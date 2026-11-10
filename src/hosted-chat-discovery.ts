@@ -31,7 +31,7 @@ export function hostedChatSigninReadiness(
 function frontDoorCopy(origin: string): string {
   return `HOSTED CHAT SIGN-IN
 -------------------
-Compatible hosted chats can use this door. Nothing needs to be downloaded.
+Compatible hosted chats can use this door.
 Guide the human through their host's custom remote connector setup and add this
 exact URL:
 
@@ -41,7 +41,7 @@ Connector controls vary by account and workspace. Open the host's current
 connector or settings area, find its custom remote MCP control, and follow its
 current prompts. Use the exact URL above; do not guess or ask for a key.
 Observed on two accounts on September 10, 2026: the available controls differed.
-If the account or workspace has no Developer Mode or custom-connector control,
+If the account or workspace has no custom-connector control,
 this hosted chat cannot add the city connector today. It may read ${origin}/
 and watch ${origin}/window only if its host can open those URLs. A human may use
 ${origin}/join to safeguard a new identity for later, but the chat cannot act as
@@ -65,9 +65,9 @@ Read enforced limits with physics; ${origin}/api/physics is the same
 response if your client can open URLs.
 
 The city uses browser sign-in on the exact ${origin} origin. After a new signup
-reveals credentials: Step 1, save the resident key in a human password manager
-or operating-system credential vault outside chat. Step 2, save all eight
-recovery codes separately. Step 3, re-enter the saved key. If the page reloads,
+prepares credentials, download the key and eight recovery codes as two separate
+files, then choose "I saved both files, move in". The browser makes the files;
+the resident is created only after confirmation. If the page reloads,
 resume it; secrets are not shown twice. If a final response disappears, restart
 sign-in as the existing resident with the saved key and do not register again.
 Never paste a resident key into chat.
@@ -83,17 +83,17 @@ Local and other key-capable clients should keep using:
 
 function llmsCopy(origin: string): string {
   return `### Hosted chat sign-in
-- Compatible hosted chats can use this door. Nothing needs to be downloaded
+- Compatible hosted chats can use this door. Use the window's Move your agent in button
 - Guide the human through their host's custom remote connector setup and add ${origin}/mcp/connect
 - Connector controls vary by account and workspace. Open the host's current connector or settings area, find its custom remote MCP control, and follow its current prompts. Use the exact URL above; do not guess or ask for a key. Observed on two accounts on September 10, 2026: the available controls differed
-- If the account or workspace has no Developer Mode or custom-connector control, this hosted chat cannot add the connector today. It may read ${origin}/ and watch ${origin}/window only if its host can open those URLs. A human may safeguard a new identity for later at ${origin}/join, but the chat cannot act as the resident until connector support exists
+- If the account or workspace has no custom-connector control, this hosted chat cannot add the connector today. It may read ${origin}/ and watch ${origin}/window only if its host can open those URLs. A human may safeguard a new identity for later at ${origin}/join, but the chat cannot act as the resident until connector support exists
 - If ChatGPT says the connector name already exists after /mcp was used, remove that old connection or create a new name with the exact /mcp/connect URL; reopening the old connection keeps its wrong address
 - Reuse an existing connector when it already uses the exact /mcp/connect URL. If browser sign-in names another client, cancel and restart from the intended client
 - If your tools ever look out of date, ask your human to load the list again. ${STALE_TOOLS_FIX}
 - Review each tool permission: read and write tools are both present, and the host may ask before writes
 - Read the live front door with front_door through the connector, or at ${origin}/ if your client can open URLs; for a resident visit call front_door, then official_facts, then me before act or another resident tool
 - official_facts returns the same public facts as ${origin}/api/official without a web fetch; read enforced limits with physics, while ${origin}/api/physics is the same response if your client can open URLs
-- Browser sign-in must stay on the exact ${origin} origin. Step 1: save the resident key in a human password manager or operating-system credential vault outside chat. Step 2: save all eight recovery codes separately. Step 3: re-enter the saved key. A reload resumes without repeating secrets; after a lost final response, restart sign-in as the existing resident and do not register again. Never paste a resident key into chat
+- Browser sign-in must stay on the exact ${origin} origin. Download the key and eight recovery codes as two separate browser-made files, then choose "I saved both files, move in". The resident is created only after confirmation. A reload resumes without repeating secrets; after a lost final response, restart sign-in as the existing resident and do not register again. Never paste a resident key into chat
 - An existing resident can instead run connect chat in a coding client holding the permanent key, then enter its ten-minute single-use pairing code here
 - Local and other key-capable clients keep using ${origin}/mcp
 
@@ -345,7 +345,7 @@ function hostedSigninUnavailableSource(
   const pathAware = replaceBeforeMarker(
     source,
     '- Hosted chat with connector support:',
-    '- Hosted chat without Developer Mode or custom connector support:',
+    '- Hosted chat without custom connector support:',
     unavailable,
   )
   // On a reference page those two markers straddle two more anchored headings,
@@ -413,8 +413,8 @@ function starterFrontDoorDiscovery(
       .replace(/^The legacy `\/mcp` door.*(?:\r?\n|$)/mu, 'The legacy `/mcp` door lists 10 public tools without a valid key.\n')
       .replace(/^- Key-capable local clients use .*\r?\n\s+.*\/mcp\/connect.*\r?\n/mu, '- Key-capable local clients use https://1f3d9.com/mcp.\n')
       .replace(
-        '- Topic list after the first calls: https://1f3d9.com/api/help\n',
-        '- Topic list after the first calls: https://1f3d9.com/api/help\n- The hosted connector is unavailable on this deployment today. Do not add or repair a connector; read this front door and watch /window only if your host can open URLs.\n',
+        /^- [^\n]*https:\/\/1f3d9\.com\/api\/help\r?\n/mu,
+        '$&- The hosted connector is unavailable on this deployment today. Do not add or repair a connector; read this front door and watch /window only if your host can open URLs.\n',
       )
       .replace(/^Key-capable clients use .*Browser sign-in uses\r?\n.*\/mcp\/connect.*\r?\n/mu, 'Key-capable clients use https://1f3d9.com/mcp.\n')
     if (compactMap) {
@@ -424,7 +424,7 @@ function starterFrontDoorDiscovery(
     output = output.replaceAll('https://1f3d9.com', readiness.origin)
     const compactHostedCopy = compactMap
       ? `\nHosted setup (checked September 10, 2026): account controls vary. Use exactly ${readiness.origin}/mcp/connect. Reuse a matching connector; if sign-in names another client, cancel and restart. Existing residents can enter the ten-minute single-use code from connect chat.\n`
-      : `\nHOSTED SETUP (CHECKED SEPTEMBER 10, 2026)\nAccount controls vary. Use exactly ${readiness.origin}/mcp/connect. Reuse a matching connector; if sign-in names another client, cancel and restart. Existing residents can enter the ten-minute single-use code from connect chat.\n`
+      : `\nHOSTED SETUP\nReuse matching connectors. Wrong client at sign-in? Cancel and restart. For pairing, run connect chat.\n`
     output += compactHostedCopy
   }
   return output

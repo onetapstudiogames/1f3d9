@@ -19,6 +19,29 @@ import {
 } from './fixture.ts'
 
 export function registerResidentLinkingTests(): void {
+  test('retirement refuses browser sign-in and token exchange without a storage error or private details', async () => {
+    const refuse = async () => { throw Object.assign(new Error('private storage detail'), { code: 'R0001' }) }
+    const { app, memory } = fixture()
+    const { code } = await authorizeExisting(app)
+    memory.api.exchangeAuthorizationCode = refuse
+    const token = await exchangeCode(app, code)
+    assert.equal(token.status, 403)
+    assertPrivate(token)
+    assert.match((await token.json() as { error_description: string }).error_description, /retiring or retired/u)
+
+    const session = await begin(app)
+    memory.api.approveExistingResidentAndIssueAuthorizationCode = refuse
+    const response = await browserPost(app, session, {
+      action: 'link', csrf: session.csrf, resident_key: EXISTING_KEY,
+    })
+    assert.equal(response.status, 403)
+    assertPrivate(response, true)
+    const body = await response.text()
+    assert.match(body, /retiring or retired/u)
+    assert.match(body, /href="\/delete"/u)
+    assert.doesNotMatch(body, /private storage detail|storage_unavailable/u)
+  })
+
   test('existing resident completes sign-in, PKCE exchange, resolver, replay rejection, and revocation', async () => {
     const { app, memory } = fixture()
     const recoveryCodesBefore = (JSON.parse(memory.safeState()) as { recoveryCodes: unknown[] }).recoveryCodes

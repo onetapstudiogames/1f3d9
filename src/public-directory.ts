@@ -3,6 +3,7 @@ import { sql } from './db.ts'
 import { positiveId, publicLabel } from './input.ts'
 import { MODERATED_TEXT } from './moderation.ts'
 import { PUBLIC_RESIDENT_HAS_DRAWING_SQL } from './public-drawing-presence.ts'
+import { publicResidentRetirement, type PublicResidentRetirement } from './public-residents.ts'
 
 const DIRECTORY_CACHE_MS = 30_000
 
@@ -13,6 +14,7 @@ const DIRECTORY_SQL = `
     place.parent_id,
     CASE WHEN latest_moderation.action = 'remove' THEN $1::text ELSE place.name END AS name,
     NULL::text AS handle,
+    NULL::text AS retirement_state,
     NULL::boolean AS has_drawing,
     place.quiet
   FROM places place
@@ -31,6 +33,7 @@ const DIRECTORY_SQL = `
     NULL::integer AS parent_id,
     NULL::text AS name,
     resident.handle,
+    resident.retirement_state,
     ${PUBLIC_RESIDENT_HAS_DRAWING_SQL} AS has_drawing,
     NULL::boolean AS quiet
   FROM residents resident
@@ -50,7 +53,7 @@ export interface PublicDirectoryPlace {
   readonly quiet: boolean
 }
 
-export interface PublicDirectoryResident {
+export interface PublicDirectoryResident extends PublicResidentRetirement {
   readonly type: 'resident'
   readonly id: number
   readonly handle: string
@@ -85,6 +88,7 @@ function publicDirectoryResident(row: Readonly<Record<string, unknown>>): Public
     type: 'resident' as const,
     id,
     handle,
+    ...publicResidentRetirement(row),
     has_drawing: row.has_drawing === true,
   })
 }

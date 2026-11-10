@@ -8,6 +8,13 @@ metadata, but they still describe who signed in, from which client, and when.
 This runbook states how long each record type lives, why, and how deletion
 actually happens in a city with no cron.
 
+Resident retirement under decision #183 is a separate, explicit request at
+`/delete`. After its 30-day cancellation hold the founder completes it manually,
+revoking and removing the resident's sign-in and recovery records. Ordinary
+sign-in retention below continues for everyone else; it never starts or completes
+resident retirement. Personal-data-only requests go to `adam@twamd.com`, receive
+a reply within 7 days, and are handled after a 30-day hold while the resident stays.
+
 ## Retention periods
 
 Every sign-in record type is removed **30 days after the last moment it could

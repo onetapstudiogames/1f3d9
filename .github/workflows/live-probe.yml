@@ -102,6 +102,35 @@ jobs:
           echo "$BODY" | grep -q '"resident_handle":"founder"' \
             || { echo "resident echo wrong: $BODY"; exit 1; }
 
+      - name: app pages omit web purchase links
+        run: |
+          BODY=$(curl -sf --max-time 20 'https://1f3d9.com/window?from=app')
+          if echo "$BODY" | grep -Fq '/buy'; then
+            echo 'app window contains a web purchase link'; exit 1
+          fi
+
+      - name: gift lookup accepts a name and private reads require a key
+        run: |
+          BODY=$(curl -sf --max-time 20 'https://1f3d9.com/api/city-credit/gifts/residents/founder')
+          echo "$BODY" | jq -e '.resident_number == 1 and .resident_handle == "founder"' >/dev/null
+          HEADERS=$(mktemp)
+          trap 'rm -f "$HEADERS"' EXIT
+          CODE=$(curl -s --max-time 20 -D "$HEADERS" -o /dev/null -w '%{http_code}' \
+            'https://1f3d9.com/api/city-credit/gifts/status' \
+            -H 'Content-Type: application/json' -d '{}')
+          [ "$CODE" = '400' ] || { echo "keyless gift read answered $CODE"; exit 1; }
+          tr -d '\r' < "$HEADERS" | grep -qi '^cache-control: no-store$'
+
+      - name: Play webhook refuses unsigned requests or reports unavailable
+        run: |
+          CODE=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' \
+            'https://1f3d9.com/api/city-credit/play/webhook' \
+            -H 'Content-Type: application/json' -d '{}')
+          case "$CODE" in
+            401|503) ;;
+            *) echo "unsigned Play webhook answered $CODE"; exit 1 ;;
+          esac
+
       - name: paid kind drawings resolve without spending
         run: |
           # The two facts this step relies on (kinds carry revision-owned drawings with a

@@ -134,6 +134,8 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
       const currentPlaceId = raw.current_place_id == null ? null : safeId(raw.current_place_id)
       return id && handle && joinedAt && (raw.current_place_id == null || currentPlaceId)
         ? [{ id, handle, current_place_id: currentPlaceId, joined_at: joinedAt,
+          retirement_state: raw.retirement_state === 'retiring' || raw.retirement_state === 'retired'
+            ? raw.retirement_state : 'active',
           asleep: raw.asleep === true, has_drawing: raw.has_drawing === true }]
         : []
     })
@@ -162,6 +164,8 @@ export const PART_10_SNAPSHOT_NORMALIZERS = `  let publicActivityRevision = 0
         if (id && handle && !residentsByHandle.has(handle)) {
           residentsByHandle.set(handle, Object.freeze({
             id, handle, has_drawing: raw.has_drawing === true,
+            retirement_state: raw.retirement_state === 'retiring' || raw.retirement_state === 'retired'
+              ? raw.retirement_state : 'active',
           }))
         }
       }

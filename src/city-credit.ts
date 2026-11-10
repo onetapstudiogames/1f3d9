@@ -62,7 +62,7 @@ export type CityCreditEntryKind =
   | 'paypal_dispute_updated'
   | 'paypal_dispute_resolved'
   | 'paypal_dispute_reviewed'
-export type CityCreditPurchaseKind = 'paypal' | 'allowance' | 'x402'
+export type CityCreditPurchaseKind = 'paypal' | 'allowance' | 'x402' | 'play'
 export type CityCreditReceiptOperation = CityFeeCreditOperation | 'credit_purchase'
 
 type QueryRow = Record<string, unknown>
@@ -764,7 +764,7 @@ function mapHistoryEntry(row: QueryRow): CityCreditHistoryEntry {
     ? 0n
     : ['spend', 'admin_debit'].includes(kind) ? -unsignedUnits : unsignedUnits
   const purchaseKind = row.purchase_kind == null ? null : String(row.purchase_kind)
-  if (purchaseKind != null && !['paypal', 'allowance', 'x402'].includes(purchaseKind)) {
+  if (purchaseKind != null && !['paypal', 'allowance', 'x402', 'play'].includes(purchaseKind)) {
     throw new TypeError('city credit purchase receipt kind is invalid')
   }
   const operation = row.operation == null

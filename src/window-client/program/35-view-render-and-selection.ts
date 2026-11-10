@@ -134,7 +134,7 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
     })
   }
 
-  async function loadDirectory(force, scheduleRecheck = true) {
+  async function loadDirectory(force) {
     if (state.directory.loading) return
     if (force) window.clearTimeout(state.directory.recheckTimer)
     state = {
@@ -181,12 +181,11 @@ export const PART_35_VIEW_RENDER_AND_SELECTION = `  function renderView() {
       renderAll()
     } finally {
       window.clearTimeout(timeout)
-      if (force && scheduleRecheck) {
-        const recheckTimer = window.setTimeout(() => void loadDirectory(true, false), 31_000)
-        state = {
-          ...state,
-          directory: Object.freeze({ ...state.directory, recheckTimer }),
-        }
+      // Retirement changes a name's presentation without adding city-authored history.
+      const recheckTimer = window.setTimeout(() => void loadDirectory(true), 30_000)
+      state = {
+        ...state,
+        directory: Object.freeze({ ...state.directory, recheckTimer }),
       }
     }
   }

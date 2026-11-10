@@ -41,8 +41,16 @@ function appFor(input: {
         if (text.includes('paypal-credit:rate-limit')) {
           return input.redirectRateLimited ? [] : [{ used: 1 }]
         }
-        if (text.includes('prepaid-credit-routes:resident-lookup')) {
-          return input.targetMatches === false ? [] : [{ id: 8, handle: 'resident-eight' }]
+        if (text.includes('paypal-credit:recipient')) {
+          return input.targetMatches === false ? [] : [{ id: 8, handle: params[0] === '431' ? '431' : 'resident-eight' }]
+        }
+        if (text.includes('prepaid-credit:gift-status')) {
+          return input.missingGiftAction ? [] : [{
+            amount_units: '3000000', recipient_handle: 'resident-eight',
+            status: input.giftStatus ?? 'pending',
+            frozen_at: input.disputeBlocked ? new Date().toISOString() : null,
+            buyer_email: 'must-not-be-returned@example.invalid',
+          }]
         }
         if (text.includes('prepaid-credit-routes:resident-confirmation')) {
           return input.targetMatches === false ? [] : [{ id: 8, handle: 'resident-eight' }]
@@ -96,7 +104,63 @@ test('gift destination lookup stays available without PayPal configuration', asy
 
   const missing = appFor({ targetMatches: false })
   assert.equal((await missing.app.request('/api/city-credit/gifts/residents/8')).status, 404)
-  assert.equal((await found.app.request('/api/city-credit/gifts/residents/not-a-number')).status, 400)
+  assert.equal((await found.app.request('/api/city-credit/gifts/residents/!')).status, 400)
+})
+
+test('gift destination lookup accepts names and @digits without confusing them with resident numbers', async () => {
+  for (const [name, parameter, handle] of [['resident-eight', 'resident-eight', 'resident-eight'], ['@431', '431', '431']] as const) {
+    const found = appFor()
+    const response = await found.app.request(`/api/city-credit/gifts/residents/${encodeURIComponent(name)}`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { resident_number: 8, resident_handle: handle })
+    assert.deepEqual(found.calls.at(-1)?.params, [parameter])
+    assert.match(found.calls.at(-1)!.text, /WHERE handle = \$1::text/u)
+  }
+})
+
+test('claim-key status is POST-only, private, bounded, and reveals just amount, recipient and state', async () => {
+  for (const state of ['pending', 'refused', 'accepted', 'frozen', 'revoked'] as const) {
+    const found = appFor({ giftStatus: state })
+    const response = await found.app.request('/api/city-credit/gifts/status', postJson({ claim_token: CLAIM_TOKEN }))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(await response.json(), { amount_usd: '3.00', recipient_handle: 'resident-eight', status: state })
+    assert.deepEqual(found.calls.at(-1)?.params, [expectHash()])
+  }
+  const frozen = appFor({ giftStatus: 'refused', disputeBlocked: true })
+  const response = await frozen.app.request('/api/city-credit/gifts/status', postJson({ claim_token: CLAIM_TOKEN }))
+  assert.equal((await response.json() as {status: string}).status, 'frozen')
+  const missing = appFor({ missingGiftAction: true })
+  assert.equal((await missing.app.request('/api/city-credit/gifts/status', postJson({ claim_token: CLAIM_TOKEN }))).status, 404)
+  assert.equal((await missing.app.request('/api/city-credit/gifts/status')).status, 404)
+  assert.equal((await missing.app.request('/api/city-credit/gifts/status', postJson({ claim_token: CLAIM_TOKEN, extra: true }))).status, 400)
+  assert.equal((await missing.app.request('/api/city-credit/gifts/status?claim_token=not-a-key', postJson({ claim_token: CLAIM_TOKEN }))).status, 400)
+  assert.equal((await missing.app.request('/api/city-credit/gifts/status', { method: 'POST', body: ' '.repeat(1025) })).status, 400)
+  for (const path of ['status', 'redirect']) {
+    const rejected = await missing.app.request(`/api/city-credit/gifts/${path}?unexpected=true`, postJson({ claim_token: CLAIM_TOKEN }))
+    assert.equal(rejected.status, 400)
+    assert.equal(rejected.headers.get('cache-control'), 'no-store')
+  }
+})
+
+test('key-only redirect reuses the atomic hash-bound redirect and shares status and legacy rate limits', async () => {
+  const body = { claim_token: CLAIM_TOKEN, recipient_number: 8, recipient_handle: 'resident-eight', request_id: 'key-only-move-0001' }
+  const found = appFor()
+  const moved = await found.app.request('/api/city-credit/gifts/redirect', postJson(body))
+  assert.equal(moved.status, 200)
+  assert.equal(moved.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(found.calls.at(-1)?.params, [null, expectHash(), 8, 'key-only-move-0001'])
+  const hashes = []
+  for (const path of ['status', 'redirect', `${GIFT_ID}/redirect`]) {
+    const limited = appFor({ redirectRateLimited: true })
+    const response = await limited.app.request(`/api/city-credit/gifts/${path}`, postJson(path === 'status' ? { claim_token: CLAIM_TOKEN } : body))
+    assert.equal(response.status, 429)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.equal(response.headers.get('retry-after'), '3600')
+    assert.equal(limited.calls.length, 1)
+    hashes.push(limited.calls[0]!.params[0])
+  }
+  assert.equal(new Set(hashes).size, 1)
 })
 
 test('gift accept and refuse require the recipient key and accept an empty action body', async () => {
@@ -252,7 +316,7 @@ test('frozen gifts allow recipient refusal while revoked gifts refuse every acti
         const message = String((await response.json() as { error: unknown }).error)
         assert.match(message, status === 'frozen'
           ? /payment dispute is open.*purchase that funded/iu
-          : /either PayPal resolved.*against.*or founder resident #1 chose buyer favour.*ambiguous.*permanently revoked.*never add credit/iu)
+          : /funding payment was refunded or its dispute was resolved against the seller.*permanently revoked.*never add credit/iu)
       }
     }
     const blockedRedirect = appFor({ giftStatus: status })
@@ -264,7 +328,7 @@ test('frozen gifts allow recipient refusal while revoked gifts refuse every acti
     const redirectMessage = String((await redirect.json() as { error: unknown }).error)
     assert.match(redirectMessage, status === 'frozen'
       ? /payment dispute is open.*purchase that funded/iu
-      : /either PayPal resolved.*against.*or founder resident #1 chose buyer favour.*ambiguous.*permanently revoked.*never add credit/iu)
+      : /funding payment was refunded or its dispute was resolved against the seller.*permanently revoked.*never add credit/iu)
   }
 })
 

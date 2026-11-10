@@ -63,7 +63,8 @@ test('OAuth refusal points to a working bearer setup path and the city front doo
 
   await page.getByRole('link', { name: /bearer setup/iu }).click()
   await expect(page).toHaveURL(/\/setup#oauth-refused$/u)
-  await expect(page.locator('#oauth-refused')).toContainText('Authorization: Bearer')
+  await page.locator('#oauth-refused').getByRole('link', { name: 'Apps that hold the key' }).click()
+  await expect(page.locator('#other-local')).toContainText('Bearer')
 })
 
 test('an invalid OAuth request tells the chat client how to restart', async ({ page }) => {
@@ -115,6 +116,24 @@ async function expectNoResidentKeyOutsidePage(
   for (const surface of surfaces) {
     for (const secret of forbidden) expect(surface.includes(secret)).toBe(false)
   }
+}
+
+async function revealSavedFiles(page: Page): Promise<void> {
+  await page.getByText("Download didn't work?", { exact: true }).click()
+  await page.getByRole('button', { name: 'Show them on this page' }).click()
+  await expect(page.locator('[data-save-confirm]')).toBeEnabled()
+}
+
+async function downloadedFile(page: Page, kind: 'key' | 'codes'): Promise<Buffer> {
+  const ready = page.waitForEvent('download')
+  await page.locator(`[data-download="${kind}"]`).click()
+  const download = await ready
+  const stream = await download.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  const contents = Buffer.concat(chunks)
+  await download.delete()
+  return contents
 }
 
 function callbackCode(page: Page): string {
@@ -196,6 +215,10 @@ async function withStrippedBrowserHeaders(page: Page, path: string, action: () =
   })
   try {
     await action()
+    // Keep interception installed until the destination's stylesheet finishes.
+    // Removing it at navigation commit can strand /window.css and the page's
+    // parser, so the save-file controls never become ready for interaction.
+    await page.waitForLoadState('load')
   } finally {
     await page.unroute(`**${path}`)
   }
@@ -209,10 +232,10 @@ test('shows a clear consent page without exposing a resident key', async ({ page
   await expect(page.getByRole('heading', { name: 'Let this chat enter 1F3D9?' })).toBeVisible()
   await expect(page.getByText('Hosted Chat Browser Test')).toBeVisible()
   await expect(page.getByLabel('Current resident key')).toBeVisible()
-  await expect(page.getByLabel('Agent-chosen city name')).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'This agent is moving in' })).toBeVisible()
   await expect(
     page.getByRole('group', { name: 'I already live here' })
-      .getByRole('button', { name: 'Approve and connect this resident' }),
+      .getByRole('button', { name: 'Connect my resident' }),
   ).toBeVisible()
   expect(response?.headers()['cache-control']).toContain('no-store')
   expect(response?.headers()['x-frame-options']).toBe('DENY')
@@ -231,7 +254,7 @@ test('signs in, redeems the callback code, and enters through the protected conn
 
   await page.getByLabel('Current resident key').fill(existingResidentKey)
   await page.getByRole('group', { name: 'I already live here' })
-    .getByRole('button', { name: 'Approve and connect this resident' }).click()
+    .getByRole('button', { name: 'Connect my resident' }).click()
 
   await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
   const callback = new URL(page.url())
@@ -274,11 +297,20 @@ test('signs in, redeems the callback code, and enters through the protected conn
 test('shows a new resident key once and waits for saved confirmation', async ({ page }) => {
   const observations = observeSecretSurfaces(page)
   await page.goto(authorizationPath())
-  await page.getByLabel('Agent-chosen city name').fill('goldfish-browser')
+  await page.getByRole('tab', { name: 'This agent is moving in' }).click()
+  if (process.env.A1_CAPTURE_UI === 'true') {
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.screenshot({ path: '../answers/signin-new-375.png', fullPage: true })
+  }
+  await page.getByLabel("Your agent's name").fill('goldfish-browser')
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
-  await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
+  await page.getByRole('button', { name: 'Next: save two files' }).click()
 
-  expect(await page.getByRole('heading', { name: "Save goldfish-browser's resident key" }).isVisible()).toBe(true)
+  expect(await page.getByRole('heading', { name: 'Save two files' }).isVisible()).toBe(true)
+  if (process.env.A1_CAPTURE_UI === 'true') {
+    await expect(page.locator('[data-file-values]')).toBeHidden()
+    await page.screenshot({ path: '../answers/signin-save-files-375.png', fullPage: true })
+  }
   const codeValues = (await page.locator('code').allTextContents()).map(text => text.trim())
   const residentKey = codeValues.find(text => /^1f3d9_sk_[0-9a-f]{48}$/.test(text)) ?? ''
   const recoveryCodes = codeValues.filter(text => /^1f3d9_rc_[0-9a-f]{64}$/.test(text))
@@ -286,14 +318,17 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   expect(recoveryCodes).toHaveLength(8)
   expect(new Set(recoveryCodes).size).toBe(8)
   const initialSecrets = [residentKey, ...recoveryCodes]
-  expect(await page.getByText('It is shown once').isVisible()).toBe(true)
-  expect(await page.getByText('This resident has not been created yet.').isVisible()).toBe(true)
+  expect(await page.getByText('has not been created yet.', { exact: false }).isVisible()).toBe(true)
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
-  await page.getByRole('button', { name: 'Create resident and continue' }).click()
-  expect(await page.getByRole('heading', { name: "Save goldfish-browser's resident key" }).isVisible()).toBe(true)
-  await page.getByLabel('Re-enter the saved resident key').fill(residentKey)
-  await page.getByRole('button', { name: 'Create resident and continue' }).click()
+  await expect(page.locator('[data-save-confirm]')).toBeDisabled()
+  const keyFile = await downloadedFile(page, 'key')
+  await expect(page.locator('[data-save-confirm]')).toBeDisabled()
+  const codesFile = await downloadedFile(page, 'codes')
+  expect(keyFile.toString().trim() === residentKey).toBe(true)
+  expect(codesFile.toString().trim().split('\n').length).toBe(8)
+  await expect(page.locator('[data-save-confirm]')).toBeEnabled()
+  await page.getByRole('button', { name: 'I saved both files, move in' }).click()
   await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
 
   const callback = new URL(page.url())
@@ -303,15 +338,26 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   for (const secret of initialSecrets) expect(callbackPage.includes(secret)).toBe(false)
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
+  await page.goto(authorizationPath())
+  await page.getByLabel('Pick key file').setInputFiles({ name: 'key.txt', mimeType: 'text/plain', buffer: keyFile })
+  await expect(page.getByText('Key ready.', { exact: true })).toBeVisible()
+  expect(await page.getByLabel('Current resident key').inputValue() === residentKey).toBe(true)
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.goto('/recovery')
-  await page.getByLabel('Unused recovery code').fill(recoveryCodes[0]!)
+  await page.getByLabel('Pick recovery codes file').setInputFiles({ name: 'recovery-codes.txt', mimeType: 'text/plain', buffer: Buffer.from(codesFile.toString().replace(/(?<=1f3d9_rc_)[0-9a-f]+/g, value => value.toUpperCase())) })
+  await page.getByLabel('Choose an unused code from the file').selectOption({ label: 'Code 1' })
+  const recoveryPost = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/recovery'))
   await page.getByRole('button', { name: 'Show a replacement key' }).click()
+  const submitted = new URLSearchParams((await recoveryPost).postData() ?? '')
+  expect(submitted.get('recovery_code') === recoveryCodes[0]).toBe(true)
+  expect([...submitted.keys()].sort()).toEqual(['action', 'csrf', 'recovery_code'])
+  expect((submitted.toString().match(/1f3d9_rc_/g) ?? []).length).toBe(1)
   await expect(page.getByRole('heading', { name: "Save goldfish-browser's replacement key" })).toBeVisible()
   const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
   expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
   initialSecrets.push(replacementKey)
-  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
-  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await revealSavedFiles(page)
+  await page.getByRole('button', { name: 'I saved it, replace the old key' }).click()
   await expect(page.getByRole('heading', { name: 'goldfish-browser is recovered' })).toBeVisible()
 
   await page.goto('/rotate')
@@ -336,22 +382,30 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
 test('rejects a different well-formed key during new-resident confirmation', async ({ page }) => {
   const observations = observeSecretSurfaces(page)
   await page.goto(authorizationPath())
-  await page.getByLabel('Agent-chosen city name').fill('wrong-confirmation-browser')
+  await page.getByRole('tab', { name: 'This agent is moving in' }).click()
+  await page.getByLabel("Your agent's name").fill('wrong-confirmation-browser')
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
-  await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
+  await page.getByRole('button', { name: 'Next: save two files' }).click()
   const initialSecrets = (await page.locator('code').allTextContents()).map(text => text.trim())
   expect(initialSecrets).toHaveLength(9)
   const residentKey = initialSecrets.find(secret => /^1f3d9_sk_[0-9a-f]{48}$/.test(secret)) ?? ''
   expect(residentKey).toMatch(/^1f3d9_sk_[0-9a-f]{48}$/)
 
-  await page.getByLabel('Re-enter the saved resident key').fill(existingResidentKey)
+  await revealSavedFiles(page)
+  await page.route('**/oauth/authorize', async route => {
+    const values = new URLSearchParams(route.request().postData() ?? '')
+    values.set('resident_key', existingResidentKey)
+    await route.continue({ postData: values.toString() })
+  })
   const rejectionPromise = page.waitForResponse(response => (
     response.url().endsWith('/oauth/authorize') &&
     response.request().method() === 'POST' &&
     response.status() === 403
   ))
-  await page.getByRole('button', { name: 'Create resident and continue' }).click()
+  await page.getByRole('button', { name: 'I saved both files, move in' }).click()
   const rejection = await rejectionPromise
+  await page.waitForLoadState('load')
+  await page.unroute('**/oauth/authorize')
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
   expect(rejection.headers()['x-1f3d9-reason']).toBe('confirmation_rejected')
@@ -380,11 +434,11 @@ test('joins through the first-party page and an initial recovery code works', as
   expect(response?.headers()['cache-control']).toContain('no-store')
   expect(response?.headers()['referrer-policy']).toBe('same-origin')
 
-  await page.getByRole('radio', { name: /Hosted chat without Developer Mode/iu }).check()
+  await page.getByRole('radio', { name: /Hosted chat without custom connectors/iu }).check()
   await page.getByLabel('City name').fill('standalone-browser')
   await page.getByLabel('Model label (optional)').fill('browser-test-model')
-  await page.getByRole('button', { name: 'Show the new resident key' }).click()
-  await expect(page.getByRole('heading', { name: "Save standalone-browser's resident key" })).toBeVisible()
+  await page.getByRole('button', { name: 'Next: save two files' }).click()
+  await expect(page.getByRole('heading', { name: 'Save two files' })).toBeVisible()
   const codeValues = (await page.locator('code').allTextContents()).map(code => code.trim())
   const residentKey = codeValues.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
   const recoveryCodes = codeValues.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))
@@ -394,8 +448,8 @@ test('joins through the first-party page and an initial recovery code works', as
   const initialSecrets = [residentKey, ...recoveryCodes]
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
-  await page.getByLabel('Re-enter the saved resident key').fill(residentKey)
-  await page.getByRole('button', { name: 'Create this resident' }).click()
+  await revealSavedFiles(page)
+  await page.getByRole('button', { name: 'I saved both files, move in' }).click()
   await expect(page.getByRole('heading', { name: 'standalone-browser now lives in 1F3D9' })).toBeVisible()
   const successPage = await page.content()
   for (const secret of initialSecrets) expect(successPage.includes(secret)).toBe(false)
@@ -409,8 +463,8 @@ test('joins through the first-party page and an initial recovery code works', as
   expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
   initialSecrets.push(replacementKey)
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
-  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
-  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await revealSavedFiles(page)
+  await page.getByRole('button', { name: 'I saved it, replace the old key' }).click()
   await expect(page.getByRole('heading', { name: 'standalone-browser is recovered' })).toBeVisible()
   const recoverySuccess = await page.content()
   for (const secret of initialSecrets) expect(recoverySuccess.includes(secret)).toBe(false)
@@ -450,25 +504,27 @@ for (const profile of [
     const observedSecrets: string[] = []
 
     try {
-      const joinHandle = `${profile.label}-header-join`
+      // The server survives repeat-each runs and retries, so each attempt
+      // needs its own permanent names even when a previous attempt timed out.
+      const attempt = `${test.info().repeatEachIndex}-${test.info().retry}`
+      const joinHandle = `${profile.label}-header-join-${attempt}`
       await page.goto('/join')
-      await page.getByRole('radio', { name: /Hosted chat without Developer Mode/iu }).check()
+      await page.getByRole('radio', { name: /Hosted chat without custom connectors/iu }).check()
       await page.getByLabel('City name').fill(joinHandle)
       await page.getByLabel('Model label (optional)').fill('browser-test-model')
       await withStrippedBrowserHeaders(page, '/join', async () => {
-        await page.getByRole('button', { name: 'Show the new resident key' }).click()
+        await page.getByRole('button', { name: 'Next: save two files' }).click()
       })
-      await expect(page.getByRole('heading', { name: `Save ${joinHandle}'s resident key` })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Save two files' })).toBeVisible()
       const joinedSecrets = (await page.locator('code').allTextContents()).map(code => code.trim())
       expect(joinedSecrets.filter(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code))).toHaveLength(1)
       expect(joinedSecrets.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))).toHaveLength(8)
       expect(new Set(joinedSecrets).size).toBe(9)
       observedSecrets.push(...joinedSecrets)
       await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
-      const joinedKey = joinedSecrets.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
-      await page.getByLabel('Re-enter the saved resident key').fill(joinedKey)
+      await revealSavedFiles(page)
       await withStrippedBrowserHeaders(page, '/join', async () => {
-        await page.getByRole('button', { name: 'Create this resident' }).click()
+        await page.getByRole('button', { name: 'I saved both files, move in' }).click()
       })
       await expect(page.getByRole('heading', { name: `${joinHandle} now lives in 1F3D9` })).toBeVisible()
       const joinSuccess = await page.content()
@@ -489,24 +545,24 @@ for (const profile of [
       })
       await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
 
-      const oauthHandle = `${profile.label}-header-oauth`
+      const oauthHandle = `${profile.label}-header-oauth-${attempt}`
       await page.goto(authorizationPath())
-      await page.getByLabel('Agent-chosen city name').fill(oauthHandle)
+      await page.getByRole('tab', { name: 'This agent is moving in' }).click()
+  await page.getByLabel("Your agent's name").fill(oauthHandle)
       await page.getByLabel('Model label (optional)').fill('browser-test-model')
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
-        await page.getByRole('button', { name: 'Prepare resident and show its key' }).click()
+        await page.getByRole('button', { name: 'Next: save two files' }).click()
       })
-      await expect(page.getByRole('heading', { name: `Save ${oauthHandle}'s resident key` })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Save two files' })).toBeVisible()
       const oauthSecrets = (await page.locator('code').allTextContents()).map(code => code.trim())
       expect(oauthSecrets.filter(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code))).toHaveLength(1)
       expect(oauthSecrets.filter(code => /^1f3d9_rc_[0-9a-f]{64}$/.test(code))).toHaveLength(8)
       expect(new Set(oauthSecrets).size).toBe(9)
       observedSecrets.push(...oauthSecrets)
       await expectNoResidentKeyOutsidePage(page, observedSecrets, observations)
-      const oauthKey = oauthSecrets.find(code => /^1f3d9_sk_[0-9a-f]{48}$/.test(code)) ?? ''
-      await page.getByLabel('Re-enter the saved resident key').fill(oauthKey)
+      await revealSavedFiles(page)
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
-        await page.getByRole('button', { name: 'Create resident and continue' }).click()
+        await page.getByRole('button', { name: 'I saved both files, move in' }).click()
       })
       await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
       const oauthSuccess = await page.content()
@@ -518,7 +574,7 @@ for (const profile of [
       await page.getByLabel('Current resident key').fill(existingResidentKey)
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
         await page.getByRole('group', { name: 'I already live here' })
-          .getByRole('button', { name: 'Approve and connect this resident' }).click()
+          .getByRole('button', { name: 'Connect my resident' }).click()
       })
       await expect(page.getByRole('heading', { name: 'Chat callback reached' })).toBeVisible()
       observedSecrets.push(existingResidentKey)
@@ -529,7 +585,7 @@ for (const profile of [
   })
 }
 
-test('rotates a resident key only after the private replacement is re-entered', async ({ page }) => {
+test('rotates a resident key only after saving the replacement file', async ({ page }) => {
   const response = await page.goto('/rotate')
   await expect(page.getByRole('heading', { name: 'Rotate a resident key' })).toBeVisible()
   expect(response?.headers()['cache-control']).toContain('no-store')
@@ -543,8 +599,8 @@ test('rotates a resident key only after the private replacement is re-entered', 
   expect(replacementKey).not.toBe(existingResidentKey)
   await expectNoResidentKeyOutsidePage(page, replacementKey)
 
-  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
-  await page.getByRole('button', { name: 'Activate the replacement key' }).click()
+  await revealSavedFiles(page)
+  await page.getByRole('button', { name: 'I saved it, activate the new key' }).click()
   await expect(page.getByRole('heading', { name: "browser-resident's key is rotated" })).toBeVisible()
   expect((await page.content()).includes(replacementKey)).toBe(false)
   await expectNoResidentKeyOutsidePage(page, replacementKey)
@@ -570,8 +626,8 @@ test('generated recovery codes replace a lost key once and revoke the old key an
   await expect(page.getByRole('heading', { name: "Save recovery-browser's replacement key" })).toBeVisible()
   const replacementKey = (await page.locator('code').textContent())?.trim() ?? ''
   expect(/^1f3d9_sk_[0-9a-f]{48}$/.test(replacementKey)).toBe(true)
-  await page.getByLabel('Re-enter the replacement resident key').fill(replacementKey)
-  await page.getByRole('button', { name: 'Replace the lost key' }).click()
+  await revealSavedFiles(page)
+  await page.getByRole('button', { name: 'I saved it, replace the old key' }).click()
   await expect(page.getByRole('heading', { name: 'recovery-browser is recovered' })).toBeVisible()
 
   await page.goto('/rotate')
@@ -615,7 +671,7 @@ test('stops approval submitted from a different browser origin', async ({ page, 
   await page.goto(`${foreignOrigin}${authorizationPath()}`)
   await page.getByLabel('Current resident key').fill(existingResidentKey)
   await page.getByRole('group', { name: 'I already live here' })
-    .getByRole('button', { name: 'Approve and connect this resident' }).click()
+    .getByRole('button', { name: 'Connect my resident' }).click()
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
   await expect(page.getByText('did not come from the 1F3D9 sign-in page')).toBeVisible()

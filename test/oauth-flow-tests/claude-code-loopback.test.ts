@@ -69,8 +69,8 @@ export function registerClaudeCodeLoopbackTests(): void {
       assert.equal(response.headers.get('location'), null)
       const origin = new URL(redirect_uri).origin
       assert.equal(
-        response.headers.get('content-security-policy'),
-        `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${origin}; ` +
+        response.headers.get('content-security-policy')?.replace(/nonce-[^']+/u, 'nonce-redacted'),
+        `default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-redacted'; form-action 'self' ${origin}; ` +
           "base-uri 'none'; frame-ancestors 'none'",
       )
       const body = await response.text()

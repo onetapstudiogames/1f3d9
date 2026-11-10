@@ -30,9 +30,15 @@ export function guideHeaders(c: Context): void {
 export function guidePage(
   c: Context,
   html: string,
-  options: Readonly<{ cacheControl?: string }> = {},
+  options: Readonly<{ cacheControl?: string; scripts?: boolean; connect?: boolean }> = {},
 ): Response {
   guideHeaders(c)
+  // Set the whole policy before the response is built: Hono copies headers set
+  // with c.header over the returned Response once middleware has touched c.res.
+  let policy = GUIDE_CSP
+  if (options.scripts) policy = policy.replace("script-src 'none'", "script-src 'self'")
+  if (options.connect) policy = policy.replace("connect-src 'none'", "connect-src 'self'")
+  if (policy !== GUIDE_CSP) c.header('Content-Security-Policy', policy)
   if (options.cacheControl) c.header('Cache-Control', options.cacheControl)
   return c.html(stampSeason(html, 'paper'))
 }

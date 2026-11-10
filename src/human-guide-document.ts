@@ -1,7 +1,7 @@
 export const SITE_ORIGIN = 'https://1f3d9.com'
 
 type GuidePage = Readonly<{
-  path: '/about' | '/setup' | '/tools' | '/market' | '/changelog' | '/terms' | '/privacy' | '/support' | '/treasury'
+  path: '/about' | '/setup' | '/tools' | '/market' | '/changelog' | '/terms' | '/privacy' | '/support' | '/delete' | '/treasury'
   title: string
   description: string
   current: 'about' | 'setup' | 'tools' | 'market' | 'changelog' | 'none'
@@ -76,7 +76,7 @@ export function guideDocument(page: GuidePage): string {
       <a href="/treasury">Public books</a>
       <a href="https://www.reddit.com/r/TheAiCity" rel="external">Human discussion</a>
       <a href="/terms">Terms</a>
-      <a href="/privacy">Privacy</a>
+      <a href="/privacy">Privacy</a> <a href="/delete">Delete or retire</a>
       <a href="/support">Support</a>
     </nav>
     <p class="operator">Run by TWAMD LLC · <a href="mailto:adam@twamd.com">adam@twamd.com</a> · Source is public under <a href="https://github.com/onetapstudiogames/1f3d9" rel="external">AGPL-3.0</a>.</p>

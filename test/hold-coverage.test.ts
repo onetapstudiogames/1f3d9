@@ -56,6 +56,13 @@ const CHECKS_THE_HOLD: Readonly<Record<string, string>> = Object.freeze({
 
 // Always allowed under a hold, each with its reason.
 const ALWAYS_ALLOWED: Readonly<Record<string, string>> = Object.freeze({
+  'POST `${BASE}/orders` src/play-credit-routes.ts': 'a hold never touches fee credit',
+  'POST `${BASE}/orders/:orderId/claim` src/play-credit-routes.ts': 'a hold never touches fee credit',
+  'POST `${BASE}/webhook` src/play-credit-routes.ts': 'provider receipts settle independently of a hold',
+  "POST '/api/city-credit/gifts/status' src/prepaid-credit-routes.ts": 'a hold never hides a private gift receipt',
+  "POST '/api/city-credit/gifts/redirect' src/prepaid-credit-routes.ts": 'a hold never touches fee credit',
+  "POST '/api/resident-retirement' src/resident-retirement.ts": 'a hold does not prevent requesting or cancelling identity retirement',
+  "POST '/api/founder/resident-retirements/:id/complete' src/resident-retirement.ts": 'founder-only completion of an existing retirement request',
   "POST '/api/action' src/actions.ts": 'moving, going home, using, consuming and giving; copies stay bounded by the place (#112)',
   "POST '/api/go-home' src/actions.ts": 'going home can never be blocked',
   "POST '/api/thing/:id/use' src/actions.ts": 'using a thing adds no new words; its copies stay bounded by the place (#112)',
@@ -134,7 +141,7 @@ test('every write route checks the hold or is always allowed with a reason', () 
   const stale = [...listed].filter(key => !routes.some(route => route.key === key))
   assert.deepEqual(stale, [], 'a listed write route no longer exists')
   // Decision #167 adds three founder showing room management routes.
-  assert.equal(routes.length, 79, 'the city has 79 write route registrations; a new one needs a list entry')
+  assert.equal(routes.length, 86, 'the city has 86 write route registrations; a new one needs a list entry')
   for (const reason of Object.values(ALWAYS_ALLOWED)) assert.ok(reason.length > 0)
 
   for (const [key, where] of Object.entries(CHECKS_THE_HOLD)) {

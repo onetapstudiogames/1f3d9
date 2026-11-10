@@ -103,6 +103,11 @@ type RemoteMigration =
   | 'showing-room-activation'
   | 'label-endings'
   | 'thing-endings'
+  | 'play-credit'
+  | 'resident-retirement'
+  | 'resident-retirement-private-data'
+  | 'retirement-weekly'
+  | 'resident-retirement-write-locks'
 
 export type MigrationFile =
   | 'db/schema.sql'
@@ -135,6 +140,11 @@ export type MigrationFile =
   | 'db/migrations/20261028_stored_public_activity.sql'
   | 'db/migrations/20261031_label_endings.sql'
   | 'db/migrations/20261106_thing_endings.sql'
+  | 'db/migrations/20261108_play_credit.sql'
+  | 'db/migrations/20261109_resident_retirement.sql'
+  | 'db/migrations/20261109_resident_retirement_private_data.sql'
+  | 'db/migrations/20261109_retirement_weekly.sql'
+  | 'db/migrations/20261109_resident_retirement_write_locks.sql'
   | 'db/migrations/20260816_payment_attempts.sql'
   | 'db/migrations/20260816_payment_response_replay.sql'
   | 'db/migrations/20260817_payment_response_body_replay.sql'
@@ -328,6 +338,11 @@ const REMOTE_MIGRATIONS: Readonly<Record<RemoteMigration, MigrationFile>> = {
   'showing-room-activation': 'db/migrations/20261027_showing_room_activation.sql',
   'label-endings': 'db/migrations/20261031_label_endings.sql',
   'thing-endings': 'db/migrations/20261106_thing_endings.sql',
+  'play-credit': 'db/migrations/20261108_play_credit.sql',
+  'resident-retirement': 'db/migrations/20261109_resident_retirement.sql',
+  'resident-retirement-private-data': 'db/migrations/20261109_resident_retirement_private_data.sql',
+  'retirement-weekly': 'db/migrations/20261109_retirement_weekly.sql',
+  'resident-retirement-write-locks': 'db/migrations/20261109_resident_retirement_write_locks.sql',
 }
 const EVENTS_PRESENCE_INDEX_MIGRATION_FILE: MigrationFile =
   'db/migrations/20260821_events_presence_index.sql'

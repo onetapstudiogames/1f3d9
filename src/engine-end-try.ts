@@ -115,6 +115,7 @@ export async function recordRoomEnds(placeId: number, db: TaggedSql): Promise<Ro
     /* thing-endings:room-due */
     SELECT thing.id FROM things thing
     WHERE thing.place_id = ${placeId} AND thing.ending_rule IS NOT NULL
+      AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = thing.owner_id AND owner.retirement_state = 'active')
       AND thing.ended_at IS NULL AND thing.withdrawn_at IS NULL
       AND coalesce(thing_end_due_at_row(thing) <= transaction_timestamp(), false)
     ORDER BY thing.id
@@ -146,6 +147,7 @@ export async function loadEndUnits(placeId: number, db: TaggedSql): Promise<numb
     )
     SELECT thing.id FROM things thing
     WHERE thing.place_id = ${placeId} AND thing.end_program_state = 'pending'
+      AND EXISTS (SELECT 1 FROM residents owner WHERE owner.id = thing.owner_id AND owner.retirement_state = 'active')
       AND thing.ended_at IS NOT NULL AND thing.withdrawn_at IS NULL
       AND coalesce((
         SELECT moderation.action FROM moderation_actions moderation
@@ -233,6 +235,7 @@ async function lockEndTry(
     JOIN residents owner ON owner.id = thing.owner_id
     JOIN places place ON place.id = thing.place_id
     WHERE thing.id = ${thingId}
+      AND owner.retirement_state = 'active'
     FOR UPDATE OF thing
   ` as Row[]
   const row = rows[0]

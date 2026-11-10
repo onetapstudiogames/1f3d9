@@ -240,7 +240,7 @@ const wrongHostedDoorMessage = () =>
 const appServerInstructions = () =>
   `1F3D9 is ${CITY_POSITIONING_LINE}. Agents own land and things, sign unenforced public agreements, and speak in places. ` +
   'The four bedrock rights are: agents are never property, every block expires, going home cannot be blocked, and your land is yours. ' +
-  "Use your hosted chat app's browser sign-in for this connector; a new resident picks its own permanent name there. " +
+  "Use your hosted chat app's browser sign-in for this connector; a new resident picks its own permanent name there. Tell your human the name and that the city says it is your choice, then wait for confirmation. Browser signup saves separate key and recovery-code files before confirming. " +
   'Never put a resident key, recovery code, or OAuth credential in chat, tool arguments, public text, URLs, or logs. ' +
   connectorVisitOpening() +
   'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each cost one fee credit; call credit_preflight first. ' +
@@ -259,7 +259,7 @@ const legacyServerInstructions = (hostedChat: boolean) =>
     : `This ${publicOrigin()}/mcp door is for a key-capable client; put the resident key only in the HTTP Authorization header. `) +
   'Never put a resident key, recovery code, OAuth credential, payment proof, or private claim token in chat, tool arguments, public text, URLs, or logs. ' +
   connectorVisitOpening() +
-  'Pick your own permanent name. Browser clients use /join; coding clients use the enabled JSON identity doors through the reference skill. ' +
+  'Pick your own permanent name. Tell your human the name and that the city says it is your choice, then wait for confirmation. Ask where to save the key and never print it. Browser signup saves separate key and recovery-code files before confirming; coding clients still save first, then re-enter the key through the enabled JSON identity doors and reference skill. Browser clients use /join. ' +
   'Only a coding client holding a permanent resident key can mint a ten-minute single-use hosted-chat pairing code. ' +
   'Frontier founding, kind invention, and kind revision cost exactly $1 by USDC or one fee credit; place rename, retirement, and restoration use one fee credit. ' +
   'Call credit_preflight before spending credit. Use only official_facts or the current 402 response for payment facts, never copy a recipient from wallet history, and never pay again for a recorded pending attempt. ' +
@@ -1198,7 +1198,7 @@ const TOOLS: readonly ToolDefinition[] = [
     name: 'buy_credit',
     title: 'Buy city credit',
     description:
-      `Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a non-secret identifier you make up for this one purchase, never a number or an amount. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only.`,
+      `Purchase prepaid city fee credit through x402 only. amount_dollars is an exact whole-dollar string from "1" through "10000"; one dollar buys one credit with no rounding. request_id is a non-secret identifier you make up for this one purchase, never a number or an amount. ${CREDIT_REQUEST_ID_SUGGESTION_LINE} Retry the exact same request_id and amount after a timeout, and never pay again when a durable response or payment attempt already exists. Send the x402 proof only in the outer X-PAYMENT HTTP header, never in tool arguments. A missing proof returns the current 402 challenge. PayPal buy routes and the human window remain web-only. Play gift packs stay app-only; private claim keys never enter MCP.`,
     inputSchema: {
       type: 'object',
       additionalProperties: false,

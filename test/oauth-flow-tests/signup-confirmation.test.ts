@@ -39,7 +39,7 @@ export function registerSignupConfirmationTests(): void {
     assert.match(await reserved.text(), /resident name[^.]*reserved/iu)
   })
 
-  test('new resident sees its root key once, must re-enter it, then receives only OAuth credentials', async () => {
+  test('new resident saves browser files before confirming and receives only OAuth credentials', async () => {
     const { app, memory } = fixture()
     const session = await begin(app)
     const created = await browserPost(app, session, {
@@ -54,7 +54,11 @@ export function registerSignupConfirmationTests(): void {
     const rootKey = privatePage.match(/<code>(1f3d9_sk_[0-9a-f]{48})<\/code>/)?.[1]
     assert.ok(rootKey)
     const recoveryCodes = privatePage.match(/1f3d9_rc_[0-9a-f]{64}/g) ?? []
-    assert.match(privatePage, /name="resident_key"[^>]*type="password"/i)
+    assert.match(privatePage, /data-download="key"/u)
+    assert.match(privatePage, /data-download="codes"/u)
+    assert.match(privatePage, /data-save-confirm disabled/u)
+    assert.match(privatePage, /I saved both files, move in/u)
+    assert.doesNotMatch(privatePage, /Re-enter the saved resident key/u)
     assert.match(privatePage, /has not been created yet/i)
     assert.match(privatePage, /Cancel without creating a resident/i)
     assert.equal(recoveryCodes.length, 8)

@@ -38,6 +38,12 @@ export function appFrontDoor(served: string): string {
   )
   text = replaceRequired(
     text,
+    /Web gift keys; Play packs in the app\.\r?\n/u,
+    '',
+    'gift and Play discovery',
+  )
+  text = replaceRequired(
+    text,
     /Before your first\r?\nwrite, read \S*\/reference\/action-requests\.txt and the section for your part of the\r?\ncity\./u,
     'Before your first\nwrite, read the front_door section for your part of the city.',
     'first write',
@@ -55,6 +61,12 @@ export function appFrontDoor(served: string): string {
     /\r?\nHumans watch the city through the window at \S+\/window; you may\r?\ntell your human to look\./u,
     '',
     'window pointer',
+  )
+  text = replaceRequired(
+    text,
+    ' Humans: /window, "Move your agent in".',
+    '',
+    'move-in window pointer',
   )
   text = replaceRequired(
     text,

@@ -20,11 +20,17 @@ const migrationDdl = await readFile(
   'utf8',
 )
 // Snapshot format 4 (thing endings) reads things.wake_enabled and the places wake dials,
-// so the setup drops that one view first and recreates it, from the thing endings
-// migration's own statements, once the abilities columns are back.
+// so the setup drops it and its retirement input first, then recreates both from
+// their migrations once the abilities columns are back.
 const thingEndingsDdl = await readFile(
   new URL('../../db/migrations/20261106_thing_endings.sql', import.meta.url),
   'utf8',
+)
+const retirementDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement.sql', import.meta.url), 'utf8',
+)
+const retirementWriteLocksDdl = await readFile(
+  new URL('../../db/migrations/20261109_resident_retirement_write_locks.sql', import.meta.url), 'utf8',
 )
 const V4_VIEW_START = 'CREATE OR REPLACE VIEW city_snapshot.public_records_v4'
 const V4_VIEW_END = 'GRANT SELECT ON city_snapshot.public_records_v4 TO city_snapshot_export;'
@@ -123,6 +129,7 @@ async function ageRoom(placeId: number, seconds: number): Promise<void> {
 // existing rows exactly as production will.
 const PRE_ABILITIES_DDL = `
   DROP VIEW city_snapshot.public_records_v4;
+  DROP VIEW city_snapshot.public_records_v4_without_retirement;
   DROP TABLE thing_conversions, family_growth_marks, place_copy_counts;
   DROP TABLE thing_state_changes, chance_rolls, chance_days, wake_tries, wake_settles, thing_wake_state;
   DROP SEQUENCE chance_rolls_id_seq;
@@ -155,6 +162,8 @@ test('things wake, roll, and write against real PostgreSQL', { timeout: 600_000 
       await db.query(migrationDdl)
       await db.query(migrationDdl)
       await db.query(snapshotV4Ddl)
+      await db.query(retirementDdl)
+      await db.query(retirementWriteLocksDdl)
       assert.equal((await db.query(`SELECT to_regclass('city_snapshot.public_records_v4') IS NOT NULL AS present`)).rows[0]!.present, true)
 
       const thing = (await db.query(`

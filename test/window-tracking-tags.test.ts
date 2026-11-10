@@ -85,6 +85,17 @@ test('every other unknown name still refuses the window link exactly as before',
   }
 })
 
+test('welcome opens the window without weakening its public query rules', async () => {
+  const app = windowApp()
+  for (const search of ['?welcome', '?welcome=1', '?welcome&utm_source=reddit', '?welcome&welcome']) {
+    assert.deepEqual(sharing.parseWindowShareRequest('/window', search), sharing.parseWindowShareRequest('/window', ''))
+    assert.equal((await app.request('/window' + search)).status, 200)
+  }
+  for (const search of ['?welcome&unknown=yes', '?Welcome', '?welcome&place=0']) {
+    assert.equal((await app.request('/window' + search)).status, 404)
+  }
+})
+
 test('tagged window pages answer 200 with the same page and never echo the tag', async () => {
   const app = windowApp()
   const pairs: ReadonlyArray<readonly [string, string]> = [

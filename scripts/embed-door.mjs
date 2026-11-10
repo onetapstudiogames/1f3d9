@@ -87,6 +87,7 @@ Allow: /treasury
 Allow: /gazette/1
 Allow: /terms
 Allow: /privacy
+Allow: /delete
 Allow: /support
 Allow: /changelog
 Disallow: /

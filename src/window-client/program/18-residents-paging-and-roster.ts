@@ -212,7 +212,7 @@ export const PART_18_RESIDENTS_PAGING_AND_ROSTER = `  function residentRequestUr
       const standing = visible.filter(candidate => candidate.current_place_id === placeId)
       for (const resident of [...standing.filter(r => !r.asleep), ...standing.filter(r => r.asleep)]) {
         const row = element('div', resident.asleep ? 'resident-row asleep' : 'resident-row')
-        const follow = element('button', 'resident-follow', resident.handle)
+        const follow = element('button', 'resident-follow', shownHandle(resident.handle))
         follow.type = 'button'
         follow.dataset.focusKey = 'roster:' + resident.handle
         follow.addEventListener('click', () => chooseResident(resident.handle))

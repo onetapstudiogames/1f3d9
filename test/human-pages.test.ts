@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import { CITY_HELP_DOORS } from '../src/city-help.ts'
-import { STALE_TOOLS_FIX } from '../src/tool-list-change.ts'
 
 process.env.DATABASE_URL = ''
 process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
@@ -55,7 +54,7 @@ function assertIndexablePage(
     assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'self'/u)
     assert.match(response.headers.get('content-security-policy') ?? '', /form-action 'self'/u)
   } else {
-    assert.match(response.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
+    assert.match(response.headers.get('content-security-policy') ?? '', path === '/setup' ? /script-src 'self'/u : /script-src 'none'/u)
   }
   assert.match(html, /^<!doctype html>/iu)
   assert.match(html, /<meta name="robots" content="index, follow">/iu)
@@ -75,6 +74,7 @@ function assertIndexablePage(
   assert.match(html, /Run by TWAMD LLC · <a href="mailto:adam@twamd\.com">adam@twamd\.com<\/a>/iu)
   assert.doesNotMatch(html, /Gentry,\s*Arkansas/iu)
   if (path === '/tools') assert.match(html, /<script src="\/tools\.js" defer><\/script>/u)
+  else if (path === '/setup') assert.match(html, /<script src="\/setup\.js" defer><\/script>/u)
   else assert.doesNotMatch(html, /<script\b/iu)
 }
 
@@ -144,228 +144,58 @@ test('about is a useful, indexable human entrance that names who runs each agent
   assert.match(text, /agent[^.]{0,100}(?:chooses|pick)[^.]{0,80}(?:permanent )?(?:name|handle)/iu)
 })
 
-test('setup keeps permanent rules separate from dated menu paths and explains both doors', async () => {
+test('setup has eleven closed help sections, current links and preserved anchors', async () => {
   const response = await readyHumanPage('/setup')
   const html = await response.text()
   assertIndexablePage(response, html, '/setup')
-
-  const permanent = section(html, 'permanent-facts')
-  const dated = section(html, 'dated-steps')
-  assert.ok(html.indexOf(permanent) < html.indexOf(dated))
-  assert.doesNotMatch(visibleText(permanent), /profile icon|security and login|plugins tab|browse plugins|settings > connectors/iu)
-
-  const permanentText = visibleText(permanent)
-  assert.match(permanentText, /ChatGPT[\s\S]{0,120}Claude[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp\/connect/iu)
-  assert.match(permanentText, /(?:Claude Code|Codex CLI)[\s\S]{0,240}https:\/\/1f3d9\.com\/mcp/iu)
-  assert.match(permanentText, /(?:not interchangeable|(?:can't|cannot|do not) swap|different doors)/iu)
-  const keyWarning = permanent.match(/<aside class="key-warning">([\s\S]*?)<\/aside>/iu)
-  assert.ok(keyWarning, 'missing key warning')
-  const keyWarningText = visibleText(keyWarning[1]!)
-  assert.match(
-    keyWarningText,
-    /key[\s\S]{0,240}(?:1F3D9's own|1F3D9’s own)[\s\S]{0,240}(?:JSON identity doors|private key setting|local settings)[\s\S]{0,240}never[\s\S]{0,80}chat/iu,
-  )
-
-  const text = visibleText(html)
-  assert.match(text, /Authorization:\s*Bearer\s+1f3d9_sk_\.\.\./iu)
-  assert.match(html, /reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"[\s\S]{0,180}\/api\/register/iu)
-  assert.match(text, /existing resident[\s\S]{0,140}key rotation[\s\S]{0,120}\/api\/rotate[\s\S]{0,140}\/api\/recovery/iu)
-  assert.match(text, /manual bearer setup[\s\S]{0,160}already (?:have|holds?) a permanent (?:resident )?key/iu)
-  assert.doesNotMatch(text, /1f3d9_sk_[a-f0-9]{48}/iu)
-  assert.doesNotMatch(
-    text,
-    /(?:^|[.!?]\s+)(?:paste|put|save|store|send) (?:the |your )?(?:real )?key (?:in|into|through) (?:a )?(?:chat|\.mcp\.json|config\.toml)/iu,
-  )
-  assert.match(html, /<time datetime="2026-09-10">/iu)
-  assert.match(text, /Hosted chats[^.]{0,160}observed on two accounts/iu)
-  assert.match(text, /connect chat[^.]{0,160}ten-minute single-use/iu)
-  assert.match(text, /reuse an existing connector[^.]{0,160}exact address/iu)
-  assert.match(text, /names another client[^.]{0,100}cancel and restart/iu)
-  assert.doesNotMatch(text, /Security and login|Browse plugins|Add custom connector/iu)
-  assert.match(text, /Claude Code[^.]{0,240}Codex CLI[^.]{0,240}(?:checked|confirmed)[^.]{0,120}(?:locally|on this machine)[^.]{0,160}(?:vendor|documentation|docs)/iu)
-  assert.match(text, /VS Code[\s\S]{0,260}(?:documentation|docs)[\s\S]{0,140}(?:not tested|not run|not confirmed|weren't run|wasn't tested)/iu)
-  assert.doesNotMatch(text, /\bCursor\b/iu)
-
-  assert.match(html, /claude mcp list/iu)
-  assert.match(html, /codex mcp add 1f3d9 --url https:\/\/1f3d9\.com\/mcp --bearer-token-env-var ONEF3D9_AGENT_SECRET/iu)
-  assert.match(html, /bearer_token_env_var\s*=\s*"ONEF3D9_AGENT_SECRET"/iu)
-  assert.match(text, /(?:Use|run|call)[^.]{0,80}\bme\b[^.]{0,160}(?:handle|city name|resident name)/iu)
-})
-
-test('ready connected setup opens a visit through connector tools before acting', async () => {
-  const response = await readyHumanPage('/setup')
-  const html = await response.text()
-  assert.equal(response.status, 200)
-
-  for (const id of ['chatgpt', 'claude', 'claude-code', 'codex-cli', 'vs-code'] as const) {
-    const guide = html.match(
-      new RegExp(`<article id="${id}"[^>]*>([\\s\\S]*?)<\\/article>`, 'u'),
-    )?.[1]
-    assert.ok(guide, `missing #${id} setup guide`)
-
-    const positions = ['front_door', 'official_facts', 'me', 'act'].map(tool => {
-      const position = guide.indexOf(`<code>${tool}</code>`)
-      assert.ok(position >= 0, `#${id}: missing ${tool}`)
-      return position
-    })
-    assert.ok(
-      positions.every((position, index) => index === 0 || positions[index - 1]! < position),
-      `#${id}: front_door -> official_facts -> me -> act order`,
-    )
+  const sections = [...html.matchAll(/<details class="help-sec"[^>]*>/gu)]
+  assert.equal(sections.length, 11)
+  assert.ok(sections.every(match => !/\bopen\b/u.test(match[0])))
+  for (const anchor of ['claude', 'chatgpt', 'gemini', 'hosted-connector', 'other-local', 'vs-code', 'oauth-refused', 'claude-code', 'codex-cli', 'hosted-browser', 'coding-persistent', 'coding-ephemeral', 'weekly-payment', 'retirement']) {
+    assert.match(html, new RegExp(`id="${anchor}"`, 'u'))
   }
+  assert.match(html, /How do I connect\?/u)
+  assert.match(html, /directoryTab=personal/u)
+  assert.doesNotMatch(html, /directoryTab=openai|Developer Mode/iu)
+  assert.match(html, /custom_mcp_action=auth_complete&amp;mcp_url=/u)
+  assert.match(html, /save both files/u)
+  assert.match(html, /Pick your key file, type your key, or use a pairing code/u)
+  assert.match(html, /recovery codes file/u)
+  assert.match(html, /Apps that hold the key/u)
+  assert.match(html, /Authorization[\s\S]{0,80}Bearer YOUR_KEY/u)
+  assert.doesNotMatch(html, /1f3d9_sk_[a-f0-9]{48}/iu)
 })
 
-test('setup gives each client an honest path and keeps the safe ceremony to three steps', async () => {
-  const response = await readyHumanPage('/setup')
-  const html = await response.text()
-  const text = visibleText(html)
-
-  for (const id of [
-    'hosted-connector',
-    'hosted-browser',
-    'coding-persistent',
-    'coding-ephemeral',
-    'oauth-refused',
-  ]) {
-    assert.match(html, new RegExp(`id="${id}"`, 'u'), id)
-  }
-  assert.match(text, /without Developer Mode[^.]{0,220}(?:cannot|can't)[^.]{0,120}(?:add|install|connect)[^.]{0,100}connector/iu)
-  assert.match(html, /id="hosted-browser"[\s\S]{0,520}href="\/window"[\s\S]{0,220}href="\/join"/iu)
-  assert.match(text, /persistent coding[\s\S]{0,420}(?:password manager|operating-system credential vault|secret manager)/iu)
-  assert.match(html, /id="coding-persistent"[\s\S]{0,760}reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"/iu)
-  assert.match(
-    text,
-    /(?:several agents|more than one agent)[^.]{0,120}(?:this|one|the same) machine[^.]{0,160}(?:its own|a separate|each) credential path/iu,
-    'shared-machine credential path warning',
-  )
-  assert.match(text, /ephemeral coding[\s\S]{0,520}(?:never|do not|don't)[^.]{0,180}(?:workspace|container|context|session)[\s\S]{0,220}(?:password manager|credential vault|secret manager)/iu)
-  assert.match(html, /id="coding-ephemeral"[\s\S]{0,920}reference skill[\s\S]{0,180}href="\/reference\/coding-identity\.txt"/iu)
-  assert.match(text, /browser new-resident ceremony/iu)
-  assert.match(text, /app not approved[\s\S]{0,420}\/join[\s\S]{0,220}Authorization[\s\S]{0,100}Bearer/iu)
-  assert.match(
-    text,
-    /cannot send that header[\s\S]{0,140}cannot add a connector[\s\S]{0,180}watch[\s\S]{0,100}only if (?:its|the) host can open (?:those )?URLs/iu,
-  )
-  assert.match(
-    html,
-    /data-ceremony-path="hosted-connector"[\s\S]{0,520}\/mcp\/connect[\s\S]{0,320}(?:stored request|where you stopped)/iu,
-  )
-  assert.match(
-    html,
-    /data-ceremony-path="browser-join"[\s\S]{0,420}href="\/join"[\s\S]{0,280}same private cookie/iu,
-  )
-
-  const stepOne = html.indexOf('data-ceremony-step="1"')
-  const stepTwo = html.indexOf('data-ceremony-step="2"')
-  const stepThree = html.indexOf('data-ceremony-step="3"')
-  assert.ok(stepOne >= 0 && stepOne < stepTwo && stepTwo < stepThree)
-  assert.match(html.slice(stepOne, stepTwo), /resident key/iu)
-  assert.match(html.slice(stepTwo, stepThree), /eight recovery codes/iu)
-  assert.match(html.slice(stepThree), /re-enter/iu)
-})
-
-test('setup advertises the hosted connector only while that door is ready', async () => {
-  for (const ready of [false, true]) {
-    const humanPages = new Hono()
-    mountHumanPages(humanPages, { hostedChatSigninReady: () => ready })
-    const response = await humanPages.request('/setup')
-    const html = await response.text()
-    const hostedPath = html.match(
-      /<article id="hosted-connector"[^>]*>([\s\S]*?)<\/article>/u,
-    )?.[1]
-    const chatGptGuide = html.match(
-      /<article id="chatgpt"[^>]*>([\s\S]*?)<\/article>/u,
-    )?.[1]
-    const claudeGuide = html.match(
-      /<article id="claude"[^>]*>([\s\S]*?)<\/article>/u,
-    )?.[1]
-
-    assert.equal(response.status, 200)
-    assert.ok(hostedPath)
-    assert.ok(chatGptGuide)
-    assert.ok(claudeGuide)
-    if (ready) {
-      assert.match(html, /https:\/\/1f3d9\.com\/mcp\/connect/u)
-      assert.ok(html.includes('<li><p>Click add, then Create MCP app.</p></li>'))
-      assert.doesNotMatch(hostedPath, /unavailable on this deployment/iu)
-    } else {
-      assert.doesNotMatch(html, /(?:https:\/\/1f3d9\.com)?\/mcp\/connect/iu)
-      assert.equal(html.includes('Create MCP app'), false)
-      assert.equal(html.includes('chatgpt.com/'), false)
-      assert.match(hostedPath, /unavailable on this deployment/iu)
-      assert.match(hostedPath, /href="\/"[\s\S]*href="\/window"/u)
-      assert.match(hostedPath, /do not add a connector/iu)
-      assert.doesNotMatch(chatGptGuide, /turn on <strong>Developer mode<\/strong>|Open the <strong>Plugins<\/strong>/iu)
-      assert.doesNotMatch(claudeGuide, /Click <strong>Connectors<\/strong>|Add custom connector/iu)
-      for (const guide of [chatGptGuide, claudeGuide]) {
-        assert.match(guide, /unavailable on this deployment/iu)
-        assert.match(guide, /href="#hosted-browser"/u)
-        assert.match(guide, /href="\/"[\s\S]*href="\/window"[\s\S]*href="\/join"/u)
-      }
-    }
-  }
-})
-
-const STEPS = [
-  '<li><p>To refresh ChatGPT tools, open a browser and go to <a href="https://chatgpt.com/settings/plugins-settings" rel="external"><code>https://chatgpt.com/settings/plugins-settings</code></a></p></li>',
-  '<li><p>Click on the 1F3D9 plugin.</p></li>',
-  '<li><p>Scroll to the bottom of the page and click "Refresh tools"</p></li>',
-  '<p>To re-add the connector:</p>',
-  '<li><p>In a browser, go to <a href="https://chatgpt.com/plugins?directoryTab=openai" rel="external"><code>https://chatgpt.com/plugins?directoryTab=openai</code></a></p></li>',
-  '<li><p>Delete your old 1F3D9 connections (make sure you have your keys; a lost key needs a recovery code at <a href="/recovery"><code>https://1f3d9.com/recovery</code></a>, which makes a new key and ends other connections).</p></li>',
-  '<li><p>Click add, then Create MCP app.</p></li>',
-  '<li><p>In the name field, name it whatever you want.</p></li>',
-  '<li><p>In the connection field enter: <code>https://1f3d9.com/mcp/connect</code></p></li>',
-  '<li><p>Check the box that says "I understand and want to continue"</p></li>',
-  '<li><p>Click create</p></li>',
-  '<li><p>A page should open to go to 1F3D9, in that screen, under "I already live here", enter your resident key and click connect.</p></li>',
-] as const
-
-test('setup gives humans the owner\'s ChatGPT steps after the one fix, ending at the sign-in page\'s I already live here', async () => {
+test('setup keeps the coding name approval and saved-key proof distinct from browser downloads', async () => {
   const html = await (await readyHumanPage('/setup')).text()
-  const answer = html.match(/<summary>Your agent's tools look out of date<\/summary>\s*<div class="answer">([\s\S]*?)<\/div>\s*<\/details>/u)?.[1]
-  assert.ok(answer, 'stale-tools answer found')
-  let at = answer.indexOf(STALE_TOOLS_FIX)
-  assert.ok(at >= 0, 'the one fix comes first')
-  for (const part of STEPS) {
-    const next = answer.indexOf(part, at)
-    assert.ok(next > at, part)
-    at = next
-  }
-  assert.equal(answer.match(/<ol class="numbered-steps">/gu)?.length, 2)
-  assert.doesNotMatch(answer, /[\u2013\u2014\u2018\u2019\u201c\u201d]/u)
-  const signIn = readFileSync(new URL('../src/oauth.ts', import.meta.url), 'utf8')
-  assert.ok(signIn.includes('<legend><strong>I already live here</strong></legend>'), 'the last step names the sign-in page\'s own label')
+  assert.match(html, /city says[^.]*agent's choice/u)
+  assert.match(html, /wait[^.]*confirm/iu)
+  assert.match(html, /Ask where to save/u)
+  assert.match(html, /never print the key/u)
+  assert.match(html, /coding-identity\.txt/u)
+  assert.match(html, /JSON[^.]*save[^.]*re-enter/iu)
 })
 
-test('setup names the likely failures, including the public look trap', async () => {
-  const response = await readyHumanPage('/setup')
-  const html = await response.text()
-  const text = visibleText(html)
+test('setup advertises hosted links only while that door is ready', async () => {
+  const humanPages = new Hono()
+  mountHumanPages(humanPages, { hostedChatSigninReady: () => false })
+  const html = await (await humanPages.request('/setup')).text()
+  assert.equal([...html.matchAll(/<details class="help-sec"/gu)].length, 11)
+  assert.match(html, /unavailable on this deployment/u)
+  assert.match(html, /Do not add a connector/u)
+  assert.doesNotMatch(html, /https:\/\/1f3d9\.com\/mcp\/connect|chatgpt\.com\/|claude\.ai\/|gemini\.google\.com\//iu)
+})
 
-  const staleToolsAnswer = html.match(
-    /Your agent's tools look out of date<\/summary>\s*<div class="answer"><p>([\s\S]*?)<\/p>/u,
-  )?.[1]
-  assert.ok(staleToolsAnswer, 'stale-tools answer body found')
-  assert.doesNotMatch(
-    staleToolsAnswer!,
-    /tools look[^.]{0,80}(?:out of date|stale|outdated)/iu,
-    'stale-tools answer does not restate its own summary',
-  )
-
-  assert.match(text, /\blook\b[^.]{0,120}(?:is public|public)[^.]{0,160}(?:does not|doesn't|won't|never)[^.]{0,100}prove[^.]{0,100}key/iu)
-  assert.match(text, /\bme\b[^.]{0,140}(?:real|actual)[^.]{0,100}(?:check|proof)/iu)
-  assert.match(text, /ChatGPT[^.]{0,220}\/mcp[^.]{0,180}(?:remove|delete)[^.]{0,180}(?:new|again|recreate)[^.]{0,120}\/mcp\/connect/iu)
-  assert.match(text, /connector name already exists[^.]{0,180}(?:remove|delete)[^.]{0,100}(?:old|connection)[^.]{0,120}(?:new name|another name|choose a new)/iu)
-  assert.equal(
-    staleToolsAnswer,
-    `Connectors keep their own copy of the tool list, and reconnecting can keep the old copy. ${STALE_TOOLS_FIX} Do this by hand: your agent's <code>me</code> answer says when the city's tools changed, but only you can reload the list.`,
-    'stale connector tool-list guidance gives the one fix',
-  )
-  assert.match(text, /resident sign-in failed because Authorization: Bearer is missing or does not contain a current city key/iu)
-  assert.match(text, /resident sign-in failed[^.]{0,320}(?:\/mcp|Authorization|Bearer|key)/iu)
-  assert.match(text, /\/recovery[^.]{0,180}(?:lost|recover)/iu)
-  assert.match(text, /\/rotate[^.]{0,180}(?:exposed|leaked|shared|seen)/iu)
+test('setup serves a local anchor script without allowing scripts on other guide pages', async () => {
+  const setup = await readyHumanPage('/setup')
+  assert.match(setup.headers.get('content-security-policy') ?? '', /script-src 'self'/u)
+  assert.match(await setup.text(), /<script src="\/setup\.js" defer><\/script>/u)
+  const script = await (await app.request('/setup.js')).text()
+  assert.match(script, /hashchange/u)
+  assert.match(script, /closest\('details'\)/u)
+  assert.match(script, /section\.open = true/u)
+  const about = await readyHumanPage('/about')
+  assert.match(about.headers.get('content-security-policy') ?? '', /script-src 'none'/u)
 })
 
 test('tools sends official city doors elsewhere instead of duplicating their catalogue', async () => {

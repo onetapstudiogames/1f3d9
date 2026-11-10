@@ -44,7 +44,7 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
         : []
       if (missingResident[0]) missingResident[0].value = state.resident
       const options = [element('option', '', 'All residents'), ...residents.map(resident => {
-        const option = element('option', '', resident.handle + ' · Resident #' + String(resident.id))
+        const option = element('option', '', shownHandle(resident.handle) + ' · Resident #' + String(resident.id))
         option.value = resident.handle
         return option
       }), ...missingResident]
@@ -246,7 +246,7 @@ export const PART_16_FILTERS_AND_REFERENCES = `  function populateFilters(snapsh
     chip.addEventListener('click', () => chooseResident(resident.handle))
     chip.append(
       portraitNode('resident', resident.id, resident.handle, resident.has_drawing, 'occupant-portrait'),
-      document.createTextNode(resident.handle),
+      document.createTextNode(shownHandle(resident.handle)),
     )
     return chip
   }

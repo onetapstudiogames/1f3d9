@@ -109,6 +109,12 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `PAYPAL_CLIENT_SECRET` | Server-only secret for that same PayPal REST app. Never expose it to the browser, logs, source, or a command line. |
 | `PAYPAL_ENV` | Exact value `sandbox` or `live`. Activation always starts with `sandbox`; use `live` only after the complete sandbox order, capture, webhook, gift, and allowance checks pass. |
 | `PAYPAL_WEBHOOK_ID` | PayPal's ID for the webhook registered to this deployment and the same sandbox/live app. It is not the webhook URL or secret. |
+| `REVENUECAT_SECRET_KEY` | Server-only RevenueCat v2 key with `customer_information:purchases:read` and `project_configuration:products:read`. Never expose it to the app, browser, logs or source. |
+| `REVENUECAT_PROJECT_ID` | RevenueCat project containing the Play products and customers; required for server-side v2 purchase and product verification. |
+| `REVENUECAT_WEBHOOK_AUTH` | Exact Authorization header value configured for the RevenueCat webhook, compared in constant time. Required. |
+| `REVENUECAT_WEBHOOK_SECRET` | Optional RevenueCat webhook HMAC signing secret. When configured, every webhook must have a valid timestamped `X-RevenueCat-Webhook-Signature`. |
+| `PLAY_CREDIT_CALLER_HASH_SECRET` | Server-only secret for HMAC of the caller address in the Play order limiter. Required; never store raw caller addresses in the rate bucket. |
+| `PLAY_CREDIT_ENVIRONMENT` | Required exact `production` or `sandbox`. Sandbox transactions never mint when this is production or the host is a production deployment. |
 | `CRON_SECRET` | Bearer secret protecting the five-minute `/api/internal/payment-recovery` cron and Monday 16:00 UTC `/api/internal/gazette-print` cron. 32–512 printable characters. |
 | `LOG_DRAIN_SECRET` | HMAC secret protecting `POST /api/internal/log-drain`. It must exactly match the Vercel drain delivery secret and be 64 lowercase hexadecimal characters (32 random bytes). Until this is set and the drain is created, the receiver is dormant. |
 | `LATER_HOLDER_CURSOR_KEY` | Server-only 64-hex key deriving per-resident later-holder cursor tokens. Absent or malformed, that index answers 503. Rotation invalidates outstanding cursors; readers restart from the first page. Preview and production may differ; keep each stable. |
@@ -121,6 +127,65 @@ and Vercel's [deployment retention guide](https://vercel.com/docs/deployment-ret
 | `HOSTED_CHAT_CIMD_ORIGINS` | Allowed client-ID-metadata-document origins. |
 | `GEMINI_DCR_SIGNING_KEY` | Stable server-only 32-byte random key, encoded as exactly 64 lowercase hex characters, for signed Gemini client IDs. Provision separately in Preview and Production without printing it. Missing or malformed means registration returns 503 and Gemini client IDs are refused; other clients are unaffected. Rotation invalidates existing Gemini IDs, code exchanges and refreshes, requiring re-registration and reconnect; existing access tokens keep their ten-minute maximum lifetime. Never use a resident key here. |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_URL`, `NODE_ENV` | Platform and environment detection. `VERCEL_ENV` selects the preview database path above. When the configured public origin is a Vercel Preview alias, share metadata uses only this project's injected branch URL, then its exact deployment URL; malformed or foreign values fall back to the configured origin. |
+
+## Resident retirement activation
+
+Before this release serves requests, apply `resident-retirement`, then
+`resident-retirement-private-data`, then `retirement-weekly` through the guarded
+migration runner. All three
+are additive and replayable; this job validates local Docker PostgreSQL 17 only.
+Preview and Production migrations and a deployed probe remain required before
+activation. There is no scheduled retirement task.
+Subscribe the PayPal webhook to `BILLING.SUBSCRIPTION.CANCELLED` before activation.
+Verify a real cancellation reaches the city and then permits retirement; pending
+approval and active subscriptions block until that verified notice is recorded.
+For missing notices, use PayPal's event resend after checking the subscription,
+never a caller's claim as cancellation proof. Inspect `paypal_credit_events`
+with `outcome='withheld'` for late weekly charges requiring operator follow-up;
+the original intent preserves subscription, recipient and amount. These records
+create no credit and stay withheld on replay. No real provider cycle was run by
+this local-only change.
+
+The founder lists due requests at `GET /api/founder/resident-retirements` with
+its current root key, then selects each resident for
+`POST /api/founder/resident-retirements/:id/complete`. The operator's manual
+alternative uses private direct database access, including when founder resident
+#1 has retired:
+
+```text
+node --experimental-strip-types scripts/resident-retirements.ts --list
+node --experimental-strip-types scripts/resident-retirements.ts --complete <resident-number>
+```
+
+Supply `DATABASE_URL` privately through the operator's environment, never in the
+command or a log. List alone changes nothing. Completion checks the key-holder
+request and 30-day hold again and commits its changes together. List again after
+each batch of up to 100. No script or route starts retirement for someone else.
+
+## Google Play fee-credit activation
+
+Every `/api/city-credit/play` route returns an operation-specific 503 until all five
+required values above exist. `REVENUECAT_WEBHOOK_SECRET` is optional; once set it is
+required on each webhook. The server uses RevenueCat v2 purchase and product reads
+because the v1 subscriber shape does not establish both store transaction and refund
+state. Set Play prices in Play Console, never in site code. Webhooks wait for
+durable recording before returning 200, with a shared 15-second provider-read
+deadline. This deliberately narrows the guide's acknowledge-then-process advice:
+there is no durable queue, so returning before the write could lose serverless work.
+
+The webhook address is `https://1f3d9.com/api/city-credit/play/webhook`. Register the
+same authorization value in RevenueCat and Vercel without placing it in a command,
+log or checked-in file. Start in sandbox on a Preview deployment. Verify a real
+purchase, webhook retry, claim retry and refund before enabling production. No real
+RevenueCat purchase or webhook run has been recorded for job A2. Validate its
+migration on local Docker PostgreSQL 17 first; Preview and Production migration
+runs remain to do before activation.
+
+The operator must also replace the public Play app signing SHA-256 placeholder and
+AdMob publisher placeholder in `src/app-pages.ts`.
+`/.well-known/assetlinks.json` and `/app-ads.txt` return 404 until those values are
+filled. They are public identifiers, not secrets. The app package is
+`com.twamd.city_observatory`.
 
 ## PayPal prepaid-credit activation (dormant until all four values are set)
 
@@ -149,7 +214,8 @@ Activate in this order:
 2. Add a sandbox webhook for the exact Vercel preview origin plus
    `/api/city-credit/paypal/webhook`. Subscribe to exactly the implemented credit-delivery
    and dispute-lifecycle events: `PAYMENT.CAPTURE.COMPLETED` for one-time Orders,
-   `PAYMENT.SALE.COMPLETED` for Subscription renewals, and
+   `PAYMENT.SALE.COMPLETED` for Subscription renewals,
+   `BILLING.SUBSCRIPTION.CANCELLED` for retirement prerequisites, and
    `CUSTOMER.DISPUTE.CREATED`, `CUSTOMER.DISPUTE.UPDATED`, and
    `CUSTOMER.DISPUTE.RESOLVED`. Save the PayPal-generated webhook ID separately from the
    client secret.
@@ -179,7 +245,8 @@ Activate in this order:
 5. Only after step 4 passes, switch Apps & Credentials to **Live** and create or select
    the production REST app, with its separate live client ID and secret. Register
    `https://1f3d9.com/api/city-credit/paypal/webhook` with
-   `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.SALE.COMPLETED`, `CUSTOMER.DISPUTE.CREATED`,
+   `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.SALE.COMPLETED`,
+   `BILLING.SUBSCRIPTION.CANCELLED`, `CUSTOMER.DISPUTE.CREATED`,
    `CUSTOMER.DISPUTE.UPDATED`, and `CUSTOMER.DISPUTE.RESOLVED`, and copy that live webhook
    ID.
    Before enabling routes, pre-set `NEON_API_KEY`, `NEON_PROJECT_ID`,

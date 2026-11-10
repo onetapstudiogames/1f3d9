@@ -318,6 +318,13 @@ code { overflow-wrap: anywhere; }
 .code-block { position: relative; margin: 1rem 0; }
 .code-label { display: block; width: fit-content; padding: 0.25rem 0.5rem; color: var(--paper-light); background: var(--brick); font: 800 0.62rem/1.3 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var(--ink); border: 3px solid var(--forest); font-size: 0.76rem; line-height: 1.65; overflow-x: auto; }
+#retirement-form { max-width: 36rem; }
+#retirement-form fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+#retirement-form label { display: block; margin: 1rem 0 0.35rem; font-weight: 800; }
+#retirement-form input { width: 100%; max-width: 100%; min-width: 0; padding: 0.65rem; font: inherit; border: 2px solid var(--ink); background: var(--paper-light); color: var(--ink); }
+#retirement-form button { margin: 0.75rem 0; padding: 0.75rem; border: 2px solid var(--ink); background: var(--forest); color: var(--paper-light); font: inherit; cursor: pointer; }
+#retirement-form button:disabled { opacity: 0.6; cursor: not-allowed; }
+#retirement-form [hidden] { display: none; }
 .legal-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
 .treasury-page dl { display: grid; grid-template-columns: minmax(10rem, 0.5fr) minmax(0, 1fr); gap: 0.65rem 1.25rem; }
 .treasury-page dt { font-weight: 850; }
@@ -337,6 +344,22 @@ pre { max-width: 100%; margin: 0; padding: 1rem; color: #f5f1e8; background: var
 .success-example pre { border-color: var(--signal); }
 
 .trouble-list { border-top: 3px solid var(--ink); }
+/* The compact move-in help keeps each topic closed until chosen. */
+.setup-help { max-width: 48rem; }
+.setup-help .guide-section { margin-top: 1rem; }
+.help-sec { margin: 0 0 0.6rem; border: 3px solid var(--ink); background: var(--paper-light); }
+.help-sec > summary { padding: 0.75rem 0.9rem; cursor: pointer; color: var(--paper-light); background: var(--forest); font: 900 1.1rem var(--sans); text-transform: uppercase; list-style: none; }
+.help-sec > summary::-webkit-details-marker { display: none; }
+.help-sec > summary::before { content: "▸ "; color: var(--signal); }
+.help-sec[open] > summary::before { content: "▾ "; }
+.help-sec > div { padding: 0.8rem 0.9rem 0.3rem; font-size: 0.92rem; line-height: 1.5; overflow-wrap: anywhere; }
+.help-sec p, .help-sec ol, .help-sec ul { margin: 0 0 0.7rem; }
+.help-sec ol, .help-sec ul { padding-inline-start: 1.3rem; }
+.help-sec li + li { margin-top: 0.25rem; }
+.help-sec h4 { margin: 0.9rem 0 0.35rem; font: 900 1rem var(--sans); }
+.help-sec pre { padding: 0.6rem; overflow-x: auto; background: var(--paper); border: 2px solid var(--ink); font: 0.75rem/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.help-sec code { font: 700 0.85em var(--mono); }
+
 .trouble-list details { border-bottom: 1px solid var(--line); }
 .trouble-list summary { padding: 1.1rem 2.5rem 1.1rem 0; cursor: pointer; font: 800 1.05rem/1.4 var(--serif); }
 .trouble-list details[open] summary { color: var(--brick); }

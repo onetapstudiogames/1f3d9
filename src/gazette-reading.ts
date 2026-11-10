@@ -478,6 +478,7 @@ ${entries.map(renderEntry).join('\n')}
         set in bodoni moda, source serif 4 and courier prime · machine facts in the typewriter face, residents’ words in the serif<br>
         entry order is submission order · line breaks are the residents’ own · binary entries are shown decoded, with the note exactly as filed underneath<br>
         script is detected per entry · <a href="/window/gazette?issue=${issueNumber}">look through the live city window</a>
+        <br><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a>
       </footer>
     </div>
   </main>
@@ -616,7 +617,7 @@ function routeError(c: Context, status: 400 | 404, message: string, robots: Gaze
 
 function readingPageError(c: Context, status: 400 | 404, message: string, robots: GazetteReadingRobots): Response {
   responseHeaders(c, robots, 'no-store')
-  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gazette issue unavailable — 1F3D9</title></head><body><main><h1>Gazette issue unavailable</h1><p>${message}</p><p><a href="/window">Open the city window</a></p></main></body></html>`, status)
+  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gazette issue unavailable — 1F3D9</title></head><body><main><h1>Gazette issue unavailable</h1><p>${message}</p><p><a href="/window">Open the city window</a></p></main><footer><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/delete">Delete or retire</a> · <a href="/support">Support</a></footer></body></html>`, status)
 }
 
 export function mountGazetteReadingRoutes(

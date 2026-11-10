@@ -1,98 +1,59 @@
-import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
-
-// Interpolated inside CREDIT_BUY_JS's private IIFE. It uses the validated
-// same-origin request helpers and the standalone gift-redirect form binding.
-export const CREDIT_BUY_RETURN_CLIENT = `
-  const pendingGiftRelayLine = ${JSON.stringify(PENDING_GIFT_RELAY_LINE)}
-  const completeReturn = async (purchaseId, paypalOrderId) => {
-    showOnly(resultStep, resultHeading, 'paypal')
-    resultNewPurchase.hidden = true
-    statusLine.textContent = 'Checking PayPal capture. This request is safe to retry.'
-    try {
-      const payload = await postJson(
-        orderPath + '/' + encodeURIComponent(purchaseId) + '/capture',
-        { paypal_order_id: paypalOrderId },
-      )
-      const handle = cleanMessage(payload.resident_handle, 'the confirmed resident')
-      const amount = cleanMessage(payload.amount_dollars, '')
-      const delivery = payload.delivery
-      resultGiftReceipt.hidden = true
-      resultGiftId.textContent = ''
-      resultGiftRedirectLink.hidden = false
-      resultHeading.textContent = delivery === 'gift' ? 'Gift purchase captured.' : 'Credit purchase complete.'
-      if (delivery === 'gift') {
-        const giftId = typeof payload.gift_id === 'string' ? payload.gift_id : ''
-        if (!/^city_gift_[0-9a-f]{32}$/u.test(giftId)) {
-          throw new Error('The city did not return the gift receipt ID. Do not start another payment; reload to retry this capture.')
-        }
-        resultGiftId.textContent = giftId
-        resultGiftReceipt.hidden = false
-        if (redirectGiftIdInput instanceof HTMLInputElement) redirectGiftIdInput.value = giftId
-        const giftStatus = payload.status
-        if (!['pending', 'accepted', 'refused', 'frozen', 'revoked'].includes(giftStatus)) {
-          throw new Error('The city did not return the current gift status. Do not start another payment; reload to retry this capture.')
-        }
-        const blockedReason = cleanMessage(payload.blocked_reason, '')
-        if (giftStatus === 'accepted') {
-          resultHeading.textContent = 'Gift accepted.'
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' was accepted. Its durable receipt is in /api/me.'
-          resultGiftRedirectHelp.textContent = 'This gift was accepted and can no longer be redirected.'
-          resultGiftRedirectLink.hidden = true
-        } else if (giftStatus === 'frozen') {
-          resultHeading.textContent = 'Gift purchase frozen.'
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is frozen. ' + (blockedReason || 'A payment dispute is open on the purchase that funded it.') + ' The recipient may still refuse it in /api/me.'
-          resultGiftRedirectHelp.textContent = 'Save this gift ID and private key. Redirect is blocked while the funding payment dispute is open.'
-          resultGiftRedirectLink.hidden = true
-        } else if (giftStatus === 'revoked') {
-          resultHeading.textContent = 'Gift permanently revoked.'
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is revoked. ' + (blockedReason || 'It can never add credit or be redirected.')
-          resultGiftRedirectHelp.textContent = 'Keep this gift ID as the receipt reference. This revoked gift cannot be redirected.'
-          resultGiftRedirectLink.hidden = true
-        } else if (giftStatus === 'refused') {
-          resultHeading.textContent = 'Gift refused.'
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' was refused and added no credit.' + (blockedReason ? ' ' + blockedReason : ' The saved private key can redirect it to another confirmed resident.')
-          resultGiftRedirectHelp.textContent = blockedReason
-            ? 'Save this gift ID and private key. Redirect is blocked while the funding payment dispute is open.'
-            : 'Save this gift ID with the private redirect key. Both are needed to redirect this refused gift.'
-          resultGiftRedirectLink.hidden = Boolean(blockedReason)
-        } else if (giftStatus === 'pending') {
-          resultMessage.textContent = 'The ' + amount + '-credit gift for @' + handle + ' is pending. It adds nothing until that resident accepts it in /api/me. ' + pendingGiftRelayLine
-          resultGiftRedirectHelp.textContent = 'Save this gift ID with the private redirect key. Both are needed to redirect this pending gift.'
-        }
-      } else {
-        resultMessage.textContent = amount + ' credits were added to @' + handle + '. The resident can read the durable receipt in /api/me.'
-      }
-      statusLine.textContent = ''
-      resultNewPurchase.hidden = false
-      history.replaceState(null, '', location.pathname)
-    } catch (error) {
-      statusLine.textContent = ''
-      showError(error instanceof Error ? error.message : 'The PayPal return could not be checked. Reload this page to retry the same capture.')
-      if (canRetryExactly(error)) {
-        resultHeading.textContent = 'Capture not confirmed.'
-        resultMessage.textContent = 'No new payment should be started. Reload this return page to retry the same capture safely.'
-      } else {
-        resultHeading.textContent = 'Capture needs resolution.'
-        resultMessage.textContent = 'Do not pay again. Keep this return URL. Restore the matching saved purchase and PayPal order facts, or ask the city owner to resolve this same purchase.'
-      }
-    }
-  }
-
+// Runs inside the buy carousel's private closure. A return never assumes that
+// PayPal approval proves payment; exact capture is the only self-credit receipt.
+export const CREDIT_BUY_RETURN_CLIENT = String.raw`
   const query = new URLSearchParams(location.search)
   const purchaseId = query.get('purchase_id')
   const paypalOrderId = query.get('token')
-  if (query.get('paypal') === 'return' && purchaseId && /^[A-Za-z0-9._:-]{1,128}$/u.test(purchaseId) && paypalOrderId && /^[A-Za-z0-9._:-]{1,128}$/u.test(paypalOrderId)) {
-    void completeReturn(purchaseId, paypalOrderId)
-  } else if (query.get('paypal') === 'allowance-return' && purchaseId && /^[A-Za-z0-9._:-]{1,128}$/u.test(purchaseId)) {
-    showOnly(resultStep, resultHeading, 'paypal')
-    resultNewPurchase.hidden = true
-    resultHeading.textContent = 'Returned from allowance approval.'
-    resultMessage.textContent = 'This return page does not prove payment. Credit arrives only after PayPal reports a completed weekly payment. Each successful payment will create a private /api/me receipt. Do not start another allowance until that completed payment and receipt are known.'
-    history.replaceState(null, '', location.pathname)
-  } else if ((query.get('paypal') === 'cancel' || query.get('paypal') === 'allowance-cancel') && purchaseId && /^[A-Za-z0-9._:-]{1,128}$/u.test(purchaseId)) {
-    showOnly(resultStep, resultHeading, 'paypal')
-    resultNewPurchase.hidden = true
-    resultHeading.textContent = 'PayPal approval was cancelled.'
-    resultMessage.textContent = 'Approval was cancelled in this browser tab. That does not prove whether another tab or a PayPal callback completed the payment. Do not start another payment yet. Keep this URL so the purchase ID remains available, and ask the city owner to resolve this same purchase before paying again.'
+  const identifier = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value)
+  const completeReturn = async () => {
+    $('retry-return').hidden = true
+    $('result-heading').textContent = 'Checking PayPal'
+    $('result-message').textContent = 'Wait while PayPal confirms the payment.'
+    $('result-status').textContent = 'Checking'
+    try {
+      const payload = await postJson(root.dataset.orderPath + '/' + encodeURIComponent(purchaseId) + '/capture', { paypal_order_id: paypalOrderId })
+      if (!/^[a-z0-9][a-z0-9-]{2,31}$/.test(payload.resident_handle) || !/^(?:[1-9][0-9]{0,3}|10000)$/.test(payload.amount_dollars) || !['gift','self'].includes(payload.delivery)) throw new Error('The payment receipt could not be read.')
+      const amount = payload.amount_dollars
+      const handle = payload.display_handle || payload.resident_handle
+      if (payload.delivery === 'gift') {
+        if (!/^city_gift_[0-9a-f]{32}$/.test(payload.gift_id) || !['pending','accepted','refused','frozen','revoked'].includes(payload.status)) throw new Error('The gift receipt could not be read.')
+        set({ path: 'gift' })
+        $('result-heading').textContent = 'Gift bought'
+        $('result-message').textContent = amount + ' credits for @' + handle
+        $('result-status').textContent = LABEL[payload.status]
+        $('result-gift-id').hidden = false; $('result-gift-id').textContent = 'Receipt ' + payload.gift_id
+        $('result-relay').hidden = payload.status !== 'pending'
+        $('result-gift-redirect-link').hidden = !['pending','refused'].includes(payload.status) || Boolean(payload.blocked_reason)
+      } else {
+        $('result-heading').textContent = 'Done'
+        $('result-message').textContent = amount + ' credits added to @' + handle + '. Paid $' + amount + ' with PayPal.'
+        $('result-status').textContent = 'Added'
+      }
+      set({ resultCanBuy: true }); returnLocked = false
+      history.replaceState(null, '', location.pathname)
+    } catch (error) {
+      $('result-heading').textContent = 'Payment not confirmed'
+      $('result-message').textContent = 'Do not pay again. Keep this return page. Try Retry, or email adam@twamd.com for help.'
+      $('result-status').textContent = 'Needs checking'
+      $('retry-return').hidden = !canRetryExactly(error)
+      showError(cleanMessage(error.message, 'PayPal could not be checked.'))
+    }
+  }
+  $('retry-return').addEventListener('click', () => run(completeReturn))
+  if (!moveOnly && query.has('paypal')) {
+    returnLocked = true; set({ resultCanBuy: false }); go('done')
+    if (query.get('paypal') === 'return' && identifier(purchaseId) && identifier(paypalOrderId)) {
+      void run(completeReturn)
+    } else if (query.get('paypal') === 'allowance-return' && identifier(purchaseId)) {
+      $('result-heading').textContent = 'Every week'
+      $('result-message').textContent = 'Back from PayPal approval. Credit arrives after each completed payment. Stop it in PayPal. Do not start another allowance while the first payment is being checked.'
+      $('result-status').textContent = 'Starts at first payment'; $('result-done').hidden = false
+      history.replaceState(null, '', location.pathname)
+    } else {
+      $('result-heading').textContent = query.get('paypal') === 'cancel' || query.get('paypal') === 'allowance-cancel' ? 'PayPal approval cancelled' : 'Payment needs checking'
+      $('result-message').textContent = 'This page does not prove whether a payment completed. Do not pay again. Keep this URL and email adam@twamd.com for help.'
+      $('result-status').textContent = 'Needs checking'; $('result-done').hidden = false
+    }
+    render()
   }
 `

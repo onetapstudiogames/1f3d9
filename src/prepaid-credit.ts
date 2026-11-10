@@ -69,7 +69,7 @@ function disputeBlockedGift(
     )
   }
   throw new PrepaidCreditConflictError(
-    `This gift cannot be ${action} because either PayPal resolved the funding dispute against the city seller, or founder resident #1 chose buyer favour after PayPal returned an ambiguous outcome. The gift was permanently revoked and can never add credit; use another valid gift instead.`,
+    `This gift cannot be ${action} because its funding payment was refunded or its dispute was resolved against the seller. The gift was permanently revoked and can never add credit; use another valid gift instead.`,
   )
 }
 
@@ -235,13 +235,13 @@ export async function refuseCreditGift(
 export async function redirectCreditGift(
   database: CityCreditDatabase,
   input: Readonly<{
-    giftId: string
+    giftId?: string
     claimToken: string
     residentId: number
     requestId: string
   }>,
 ) {
-  const id = giftId(input.giftId)
+  const id = input.giftId === undefined ? null : giftId(input.giftId)
   const targetResidentId = positiveResidentId(input.residentId)
   const claimHash = hashGiftClaimToken(input.claimToken)
   // A redirect has no fee credit and no credit_preflight, so it says the same rule
@@ -261,7 +261,7 @@ export async function redirectCreditGift(
     WITH prior AS MATERIALIZED (
       SELECT gift.*
       FROM city_credit_gifts gift
-      WHERE gift.public_id = $1::text AND gift.claim_token_hash = $2::text
+      WHERE ($1::text IS NULL OR gift.public_id = $1::text) AND gift.claim_token_hash = $2::text
       FOR UPDATE
     ), existing_redirect AS MATERIALIZED (
       SELECT receipt.gift_id, receipt.counterparty_id
@@ -336,6 +336,38 @@ export async function redirectCreditGift(
     gift_id: giftId(row.gift_id),
     status: storedStatus,
     amount_units: exactCreditUnits(row.amount_units).toString(),
+  })
+}
+
+/** Buyer possession read. Only the claim hash is sent to storage, never buyer data. */
+export async function readCreditGiftStatus(database: CityCreditDatabase, claimToken: unknown) {
+  const rows = await database.query(`
+    /* prepaid-credit:gift-status */
+    WITH gift AS MATERIALIZED (
+      SELECT amount_units, recipient_id, status, frozen_at
+      FROM city_credit_gifts WHERE claim_token_hash = $1::text
+    ), found AS (
+      SELECT amount_units, recipient_id, status, frozen_at FROM gift
+      UNION ALL
+      SELECT amount_units, recipient_id, 'unpaid'::text AS status, NULL::timestamptz AS frozen_at
+      FROM paypal_credit_intents
+      WHERE claim_token_hash = $1::text AND delivery = 'gift'
+        AND status IN ('created', 'approval_pending')
+        AND NOT EXISTS (SELECT 1 FROM gift)
+    )
+    SELECT found.amount_units::text, found.status, found.frozen_at,
+      residents.handle AS recipient_handle, residents.retirement_state
+    FROM found JOIN residents ON residents.id = found.recipient_id LIMIT 1
+  `, [hashGiftClaimToken(claimToken)]) as readonly QueryRow[]
+  const row = rows[0]
+  if (!row) return null
+  const status = row.status === 'unpaid' ? 'unpaid' : resultStatus(row.status)
+  return Object.freeze({
+    amount_usd: `${exactCreditUnits(row.amount_units) / CITY_FEE_CREDIT_UNITS}.00`,
+    recipient_handle: String(row.recipient_handle),
+    ...((row.retirement_state === 'retiring' || row.retirement_state === 'retired')
+      ? { recipient_display_handle: `${row.recipient_handle} (${row.retirement_state})` } : {}),
+    status: status !== 'accepted' && status !== 'revoked' && row.frozen_at != null ? 'frozen' : status,
   })
 }
 

@@ -49,6 +49,21 @@ const KIND = 'none: kinds and traits; a kind answer names no thing'
 const TRANSFER_RECEIPT = 'none: a receipt naming the moved thing by type and asset_id only; the thing read carries its end'
 
 const ROUTES: Readonly<Record<string, RouteDecision>> = Object.freeze<Record<string, RouteDecision>>({
+  'src/app-pages.ts GET /.well-known/assetlinks.json': PAGE,
+  'src/app-pages.ts GET /app-ads.txt': PAGE,
+  'src/human-pages.ts GET /setup.js': PAGE,
+  'src/legal.ts GET /delete': PAGE,
+  'src/legal.ts GET /delete.js': PAGE,
+  'src/play-credit-routes.ts GET ${BASE}/orders/:orderId': CREDIT,
+  'src/play-credit-routes.ts GET ${BASE}/residents/by-handle/:handle': CREDIT,
+  'src/play-credit-routes.ts POST ${BASE}/orders': CREDIT,
+  'src/play-credit-routes.ts POST ${BASE}/orders/:orderId/claim': CREDIT,
+  'src/play-credit-routes.ts POST ${BASE}/webhook': CREDIT,
+  'src/prepaid-credit-routes.ts POST /api/city-credit/gifts/redirect': CREDIT,
+  'src/prepaid-credit-routes.ts POST /api/city-credit/gifts/status': CREDIT,
+  'src/resident-retirement.ts GET /api/founder/resident-retirements': FOUNDER_TOOLS,
+  'src/resident-retirement.ts POST /api/founder/resident-retirements/:id/complete': FOUNDER_TOOLS,
+  'src/resident-retirement.ts POST /api/resident-retirement': SIGN_IN,
   'src/actions.ts POST /api/action':
     'none: an action receipt names things by id only (copied_thing_ids, converted_thing_ids, carried_thing_id); a settle inside it counts ends and names none',
   'src/actions.ts POST /api/go-home': 'none: going home moves the resident; carried things are named by id only',
@@ -425,6 +440,7 @@ type ReadDecision = `${'full' | 'short' | 'count' | 'check' | 'exempt'}: ${strin
 // never a row. check: a door, engine or ending read that answers no thing row. exempt: with
 // the reason.
 const READ_SITES: Readonly<Record<string, ReadDecision>> = Object.freeze({
+  'src/thing-ending-record.ts recordOne SELECT#1': 'check: locks the current owner before the ending row lock and due-end check; returns no public thing row',
   'src/agreement-action.ts thingLinksExist SELECT#1': 'check: agree checks each linked thing exists and is not withdrawn',
   'src/agreement-action.ts createAgreementAction SELECT#1': 'check: the same check inside the agreement write',
   'src/agreement-thing-links.ts agreementThingLinksJson SELECT#1': 'short: each agreement thing link with asset_state and ends',

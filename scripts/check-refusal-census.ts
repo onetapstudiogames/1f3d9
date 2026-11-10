@@ -92,6 +92,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/paypal-credit-dispute.ts:TypeError',
   'src/paypal-credit-store.ts:TypeError',
   'src/paypal-credit.ts:Error',
+  'src/play-credit.ts:Error',
   'src/place-permission.ts:Error',
   'src/public-changes.ts:Error',
   'src/public-directory.ts:Error',
@@ -106,6 +107,7 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/reading-cost.ts:Error',
   'src/refusal-text.ts:Error',
   'src/resident-refusal.ts:Error',
+  'src/resident-retirement.ts:Error',
   'src/runtime-logs.ts:Error',
   'src/runtime-logs.ts:RangeError',
   'src/runtime-logs.ts:TypeError',
@@ -834,6 +836,7 @@ function scanCandidates(projectRoot: URL): { candidates: Candidate[]; unresolved
         const callerAdapter = CALLER_ERROR_MESSAGE_ADAPTERS.get(`${relativeFile}:${className}`)
         const statusFirst = className === 'EngineError'
           || className === 'RouteFailure'
+          || className === 'PlayCreditFailure'
           || className === 'PayPalWebhookApplicationError'
         const message = creation.arguments?.[callerAdapter?.messageArgument ?? (statusFirst ? 1 : 0)]
         if (message) {

@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:https'
 import { getRequestListener } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
+import { cors } from 'hono/cors'
 import { auth, setOAuthResidentResolver } from '../src/core.ts'
 import { mcp } from '../src/mcp.ts'
 import { mountIdentityRoutes } from '../src/identity-browser.ts'
 import { mountOAuthRoutes, oauthChallenge, residentByOAuthAccessToken } from '../src/oauth.ts'
+import { mountLegalRoutes } from '../src/legal.ts'
 import { mountHumanPages } from '../src/human-pages.ts'
 import {
   CREDIT_BUY_CSP,
@@ -169,6 +171,10 @@ mountHumanPages(featureOffHumanPages, {
   submitCommunityTool: submitCommunityToolForBrowserTest,
 })
 app.route('/feature-off', featureOffHumanPages)
+// Production runs cors on every path before the page handler; keep that here
+// so the retirement page is served the way the deployment serves it.
+app.use('/delete', cors({ origin: '*' }))
+mountLegalRoutes(app)
 mountHumanPages(app, {
   environment,
   hostedChatSigninReady: () => true,
@@ -189,7 +195,7 @@ mountGazetteReadingRoutes(app, {
 app.get('/buy', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_BUY_CSP)
-  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'paper'))
+  return c.html(stampSeason(renderCreditBuyPage({ weeklyAllowanceEnabled: true }), 'window'))
 })
 app.get('/buy.css', c => {
   c.header('Cache-Control', 'no-store')
@@ -202,7 +208,7 @@ app.get('/buy.js', c => {
 app.get('/gift-redirect', c => {
   c.header('Cache-Control', 'no-store')
   c.header('Content-Security-Policy', CREDIT_GIFT_REDIRECT_CSP)
-  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'paper'))
+  return c.html(stampSeason(renderCreditGiftRedirectPage(), 'window'))
 })
 app.get('/gift-redirect.css', c => {
   c.header('Cache-Control', 'no-store')
@@ -234,7 +240,7 @@ app.get('/share/thing.png', c => windowShareImage(c, 'thing'))
 app.get('/share/note.png', c => windowShareImage(c, 'note'))
 app.get('/api/city-credit/paypal/residents/:number', c => {
   c.header('Cache-Control', 'no-store')
-  if (c.req.param('number') !== '193') {
+  if (!['193','keeps-the-maybe','@keeps-the-maybe'].includes(c.req.param('number'))) {
     return c.json({
       error: 'that resident number was not found; no payment was started',
       human_href: '/window',
@@ -305,12 +311,18 @@ app.post('/api/city-credit/paypal/orders/:purchaseId/capture', async c => {
 })
 app.get('/api/city-credit/gifts/residents/:number', c => {
   c.header('Cache-Control', 'no-store')
-  if (c.req.param('number') !== '194') {
+  if (!['194','devnull','@devnull'].includes(c.req.param('number'))) {
     return c.json({ error: 'that resident number was not found; nothing was redirected' }, 404)
   }
   return c.json({ resident_number: 194, resident_handle: 'devnull' })
 })
-app.post('/api/city-credit/gifts/:giftId/redirect', async c => {
+app.post('/api/city-credit/gifts/status', async c => {
+  c.header('Cache-Control', 'no-store')
+  const input = await c.req.json()
+  if (input.claim_token !== creditClaimToken) return c.json({ error: 'Gift not found' }, 404)
+  return c.json({ amount_usd: '3.00', recipient_handle: 'keeps-the-maybe', status: 'pending' })
+})
+app.post('/api/city-credit/gifts/redirect', async c => {
   c.header('Cache-Control', 'no-store')
   let body: unknown
   try {
@@ -326,8 +338,7 @@ app.post('/api/city-credit/gifts/:giftId/redirect', async c => {
       'claim_token,recipient_handle,recipient_number,request_id'
     : false
   if (
-    c.req.param('giftId') !== creditGiftId
-    || !input || !exactKeys
+    !input || !exactKeys
     || input.claim_token !== creditClaimToken
     || input.recipient_number !== '194'
     || input.recipient_handle !== 'devnull'
