@@ -3,13 +3,18 @@
 // the same sign-in and residents as /mcp/connect, with no purchase, gift, payment
 // recheck, or world-sale tools and no money rails in any answer. Since decision 147 no door
 // carries app-block advice; the one sentence lives in the reference only.
-// This file imports nothing from the rest of the city, so core.ts and city-facts.ts
+// This file imports only the leaf module of app door wording, so core.ts and city-facts.ts
 // can read it without a cycle.
+
+import { APP_ARGUMENT_DESCRIPTION_EDITS, APP_DESCRIPTION_EDITS } from './app-door-descriptions.ts'
 
 export type DoorName = 'key' | 'connect' | 'app'
 export type MoneyFacts = 'full' | 'credit-only'
 
 type Hints = Readonly<{ readOnlyHint?: boolean; destructiveHint?: boolean }>
+
+/** One exact wording change: the first text, found exactly once, becomes the second. */
+export type DescriptionEdit = readonly [from: string, to: string]
 
 export interface DoorProfile {
   readonly name: DoorName
@@ -36,6 +41,12 @@ export interface DoorProfile {
   /** tool -> the annotation note this door shows, or null for none. Absent keeps the catalog note. */
   readonly annotationNotes: Readonly<Record<string, string | null>>
   readonly descriptionTokens: Readonly<Record<string, string>>
+  /** Whether every tool description ends with the short front-door pointer (decision 188). */
+  readonly toolPointer: boolean
+  /** tool -> exact wording changes to the description this door serves. */
+  readonly descriptionEdits: Readonly<Record<string, readonly DescriptionEdit[]>>
+  /** tool -> argument -> exact wording changes to every description inside that argument. */
+  readonly argumentDescriptionEdits: Readonly<Record<string, Readonly<Record<string, readonly DescriptionEdit[]>>>>
 }
 
 export const APP_DOOR_PATH = '/mcp/app'
@@ -165,6 +176,9 @@ const KEY_PROFILE: DoorProfile = Object.freeze({
   destructiveHintsOffUntil: null,
   annotationNotes: Object.freeze({}),
   descriptionTokens: FULL_DESCRIPTION_TOKENS,
+  toolPointer: true,
+  descriptionEdits: Object.freeze({}),
+  argumentDescriptionEdits: Object.freeze({}),
 })
 
 const CONNECT_PROFILE: DoorProfile = Object.freeze({
@@ -214,6 +228,11 @@ const APP_PROFILE: DoorProfile = Object.freeze({
   destructiveHintsOffUntil: null,
   annotationNotes: Object.freeze({ look: null }),
   descriptionTokens: APP_DESCRIPTION_TOKENS,
+  // Decision 188: these descriptions name no other tool, give no call order, and point at no
+  // outside source; that guidance lives in the server instructions, help, and the front door.
+  toolPointer: false,
+  descriptionEdits: APP_DESCRIPTION_EDITS,
+  argumentDescriptionEdits: APP_ARGUMENT_DESCRIPTION_EDITS,
 })
 
 export const DOOR_PROFILES: Readonly<Record<DoorName, DoorProfile>> = Object.freeze({
@@ -270,4 +289,17 @@ export function narrowSectionPointers(text: string, profile: DoorProfile): strin
   )
   // A dropped closing sentence leaves the space that came before it.
   return /\s$/u.test(text) ? narrowed : narrowed.trimEnd()
+}
+
+/** Apply each exact wording change once; a change whose text is missing or repeated fails the build. */
+export function applyDescriptionEdits(text: string, edits: readonly DescriptionEdit[], label: string): string {
+  let edited = text
+  for (const [from, to] of edits) {
+    const at = edited.indexOf(from)
+    if (at < 0 || edited.indexOf(from, at + 1) >= 0) {
+      throw new Error(`${label}: wording to change must appear exactly once: ${from.slice(0, 60)}`)
+    }
+    edited = edited.slice(0, at) + to + edited.slice(at + from.length)
+  }
+  return edited
 }

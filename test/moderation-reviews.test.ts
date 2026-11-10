@@ -42,9 +42,14 @@ for (const door of ['key', 'connect', 'app'] as const) {
 
     const flag = tool('flag')
     assert.ok((flag.inputSchema.properties.target_type!.enum as string[]).includes('moderation'))
-    assert.match(flag.description, /target_type moderation with the record id from browse view=moderation/u)
+    // Decision #188: the app door says the same thing without naming browse or me.
+    assert.match(flag.description, door === 'app'
+      ? /target_type moderation with the id of a public moderation record/u
+      : /target_type moderation with the record id from browse view=moderation/u)
     assert.match(flag.description, /one open request per record at a time/u)
-    assert.match(flag.description, /only in your own me under review_requests/u)
+    assert.match(flag.description, door === 'app'
+      ? /only in your own private resident read under review_requests/u
+      : /only in your own me under review_requests/u)
 
     const say = tool('say')
     assert.deepEqual(say.inputSchema.properties.reply_to_moderation_id, {

@@ -127,7 +127,7 @@ for (const name of ['invent_kind', 'revise_kind']) {
     const { result } = await response.json() as { result: { tools: Tool[] } }
     const tool = result.tools.find(tool => tool.name === name)!
     assert.ok(tool.description.includes(
-      'Before any fee, it refuses a trait using law_place or convert with into_kind; those steps are for laws.',
+      'Before any fee, it refuses a trait using law_place or convert with into_kind; those steps belong to a law.',
     ), `/mcp/app: ${name} law-only refusal before fees`)
     assert.ok(tool.description.includes('A kind may list only one trait with a wake key.'))
     assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS)
@@ -151,7 +151,7 @@ test('the app door lists exactly the 36 tools the owner kept', async () => {
   const laws = routeTools.find(tool => tool.name === 'laws')!.description
   assert.match(laws, /law_place names this law's original defining place while the same owner chain still holds, checked again after a wait; it never follows a hinge/u)
   assert.match(laws, /A law_place label requires seconds from 1 to 86400, and its check reads active labels only/u)
-  assert.match(laws, /Repeated labels last while any matching row remains active; inspect the defining place with look/u)
+  assert.match(laws, /Repeated labels last while any matching row remains active/u)
 })
 
 test('the other doors keep their counts, and no door carries the app-block sentence (decision 147)', async () => {
@@ -160,12 +160,81 @@ test('the other doors keep their counts, and no door carries the app-block sente
   for (const door of ['key', 'connect', 'app'] as const) {
     for (const tool of await toolsOn(door)) {
       assert.equal(count(tool.description, APP_SAFETY_BLOCK_GUIDANCE), 0, `${door} ${tool.name}`)
-      assert.ok(tool.description.endsWith(' Lost? Call front_door.'), `${door} ${tool.name}`)
+      // Decision #188: only the app door drops the closing pointer; the other doors keep it.
+      assert.equal(tool.description.endsWith(' Lost? Call front_door.'), door !== 'app', `${door} ${tool.name}`)
       assert.ok(tool.description.length <= TOOL_DESCRIPTION_MAX_CHARACTERS, `${door} ${tool.name}`)
       assert.doesNotMatch(tool.description, /\{\{|  /u, `${door} ${tool.name}`)
     }
     assert.equal(count(await instructionsOn(door), APP_SAFETY_BLOCK_GUIDANCE), 0, door)
   }
+})
+
+// Words of another tool's name that are also a value this tool's own description must name.
+const APP_DESCRIPTION_VALUE_WORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  coin_trait: ['make'], // the recipe action key make, not the tool
+})
+
+interface DescribedText { readonly where: string, readonly text: string }
+
+/** Every description in one schema, with the property names and string values the schema itself defines. */
+function schemaWords(node: unknown, where: string, texts: DescribedText[], own: Set<string>): void {
+  if (Array.isArray(node)) { node.forEach((child, index) => schemaWords(child, `${where}[${index}]`, texts, own)); return }
+  if (!node || typeof node !== 'object') return
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'properties' && value && typeof value === 'object') for (const name of Object.keys(value)) own.add(name)
+    if (key === 'enum' && Array.isArray(value)) for (const item of value) if (typeof item === 'string') own.add(item)
+    if (key === 'const' && typeof value === 'string') own.add(value)
+    if (key === 'description' && typeof value === 'string') texts.push({ where: `${where}.description`, text: value })
+    else schemaWords(value, `${where}.${key}`, texts, own)
+  }
+}
+
+test('app door descriptions name no other tool, give no call order, and point at no outside source (decision #188)', async () => {
+  const appTools = await toolsOn('app')
+  const everyName = new Set([...(await toolsOn('key')).map(tool => tool.name), ...APP_DROPPED_TOOLS, 'moderate'])
+  const hits: string[] = []
+  for (const tool of appTools) {
+    const texts: DescribedText[] = [{ where: 'description', text: tool.description }]
+    const own = new Set([tool.name, ...(APP_DESCRIPTION_VALUE_WORDS[tool.name] ?? [])])
+    schemaWords(tool.inputSchema, 'inputSchema', texts, own)
+    const others = [...everyName].filter(name => !own.has(name))
+    const otherName = new RegExp(`\b(?:${others.join('|')})\b`, 'giu')
+    for (const { where, text } of texts) {
+      for (const match of text.matchAll(otherName)) hits.push(`${tool.name} ${where} names ${match[0]}`)
+      if (text.includes('Lost?')) hits.push(`${tool.name} ${where} says Lost?`)
+      if (tool.name !== 'front_door' && text.includes('front_door')) hits.push(`${tool.name} ${where} names front_door`)
+      for (const match of text.matchAll(/https?:\/\/|\/api\/|reference\.txt|\b(?:GET|POST|PUT|PATCH) \//gu)) {
+        hits.push(`${tool.name} ${where} points at ${match[0]}`)
+      }
+      if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/u.test(text)) {
+        hits.push(`${tool.name} ${where} carries hidden characters`)
+      }
+    }
+  }
+  assert.deepEqual(hits, [])
+  // The guidance those sentences carried lives in the server instructions.
+  const instructions = await instructionsOn('app')
+  for (const part of [
+    'call front_door, then official_facts, then me before act or another resident tool',
+    'suggested_request_id',
+    'Room #454 is the gazette submission room',
+    'withdrawal_contract',
+    'read_here',
+    'physics',
+    'waiting_id',
+  ]) assert.ok(instructions.includes(part), part)
+})
+
+test('every input field on every door states its JSON type', async () => {
+  for (const door of ['key', 'connect', 'app'] as const) {
+    for (const tool of await toolsOn(door)) {
+      for (const [name, property] of Object.entries(tool.inputSchema.properties) as Array<[string, Record<string, unknown>]>) {
+        assert.ok('type' in property || 'anyOf' in property, `${door} ${tool.name}.${name} has no type`)
+      }
+    }
+  }
+  const stateClear = (await toolsOn('connect')).find(tool => tool.name === 'thing_edit')!.inputSchema.properties.state_clear
+  assert.deepEqual(stateClear, { type: 'boolean', const: true, description: "true empties this thing's state box" })
 })
 
 test('every dropped tool is refused by name on the app door, though the other doors still have it', async () => {

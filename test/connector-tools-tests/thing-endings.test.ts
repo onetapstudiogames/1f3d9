@@ -102,6 +102,31 @@ const CLAUSES: Readonly<Record<string, readonly string[]>> = {
   ],
 }
 
+// Decision #188: the app door names no other tool and points at no front-door section, so these
+// clauses read differently there; every other clause is the same on every door.
+const APP_CLAUSES: Readonly<Record<string, Readonly<Record<string, string | null>>>> = {
+  make: { 'Endings: front_door section things-ending.': null },
+  thing_edit: {
+    'Once the end has come the thing is a remnant: its owner can only carry, give or withdraw it.':
+      'Once the end has come the thing is a remnant: its owner can only carry it, give it away, or permanently remove it.',
+    'Endings: front_door section things-ending.': null,
+  },
+  coin_trait: { 'End keys: front_door section things-ending.': null },
+  agree: {
+    'Optional thing_links names up to 16 things that exist and are not withdrawn, remnants included, stored for good; a link moves nothing and changes no terms.':
+      'Optional thing_links names up to 16 things that exist and are not withdrawn, remnants included, stored for good; a link moves nothing and alters no terms.',
+  },
+}
+
+function clausesOn(door: DoorName, name: string, phrases: readonly string[]): string[] {
+  const changed = door === 'app' ? APP_CLAUSES[name] ?? {} : {}
+  return phrases.flatMap(phrase => {
+    if (!Object.hasOwn(changed, phrase)) return [phrase]
+    const replacement = changed[phrase]
+    return replacement === null || replacement === undefined ? [] : [replacement]
+  })
+}
+
 // The key and connect doors say this about sale offers; the app door has no offers to say it about.
 const OFFER_CLAUSE = 'A remnant cannot be offered, and a claim refuses a thing whose end has come or would come within the payment window.'
 
@@ -126,11 +151,11 @@ export function registerThingEndingToolTests(): void {
           `${door} ${name} ending_policy`,
         )
       }
-      assert.deepEqual(
-        tool(tools, 'agree').inputSchema.properties.thing_links,
-        tool(key, 'agree').inputSchema.properties.thing_links,
-        `${door} agree thing_links`,
-      )
+      const { description: linksDescription, ...links } = tool(tools, 'agree').inputSchema.properties.thing_links
+      const { description: keyLinksDescription, ...keyLinks } = tool(key, 'agree').inputSchema.properties.thing_links
+      assert.deepEqual(links, keyLinks, `${door} agree thing_links`)
+      // Decision #188: on the app door the same words say "alters" where the others say "changes".
+      assert.equal(linksDescription, door === 'app' ? keyLinksDescription.replace('changes no terms', 'alters no terms') : keyLinksDescription)
     }
   })
 
@@ -206,7 +231,7 @@ export function registerThingEndingToolTests(): void {
           continue
         }
         const { description } = tool(tools, name)
-        for (const phrase of phrases) assert.ok(description.includes(phrase), `${door} ${name}: ${phrase}`)
+        for (const phrase of clausesOn(door, name, phrases)) assert.ok(description.includes(phrase), `${door} ${name}: ${phrase}`)
         if (door === 'app') assert.doesNotMatch(description, APP_BANNED_TEXT, `app ${name}`)
         assert.doesNotMatch(description, /[\u2013\u2014\u2018\u2019\u201c\u201d]/u, `${door} ${name} punctuation`)
       }
