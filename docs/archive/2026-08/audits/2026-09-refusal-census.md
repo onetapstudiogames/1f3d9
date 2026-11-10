@@ -319,7 +319,8 @@ refusals; Gemini tests also exercise those paths with registered clients. Regist
 returns only the supported Google callback subset; all omitted addresses remain refused
 at authorization and never enter the signed client ID.
 Since 2026-11-10 (decision 186) Google's opaque user-bound form is also supported, and
-a refused registration writes one shapes-only host record; that adds no throw and no
+a registration refused for its return addresses (400 `invalid_redirect_uri`) writes
+one shapes-only host record; that adds no throw and no
 caller-facing description, so these counts still do not change.
 
 The scan found **162 non-identity route registrations**, plus the

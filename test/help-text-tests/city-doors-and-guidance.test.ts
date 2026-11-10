@@ -59,6 +59,15 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 167 \|[^\n]*Exactly three services may run on a schedule: the Gazette print under #56, bounded payment recovery under #41, and this founder-scheduled act\. Nothing else may be scheduled without a decision row\./u)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
     assert.match(decisions, /\| 186 \|[^\n]*opaque user-bound return address[^\n]*16 to 64 ASCII letters or digits[^\n]*every other word of #143 stands[^\n]*LOCKED \(owner, 2026-11-10, "yes to both"\)/u)
+    for (const [name, text] of [
+      ['decision 186', decisions.split('\n').find(line => line.startsWith('| 186 |')) ?? ''],
+      ['system design', specification],
+      ['refusal census', read('../docs/archive/2026-08/audits/2026-09-refusal-census.md')],
+    ] as const) {
+      const flat = text.replace(/\s+/gu, ' ')
+      assert.doesNotMatch(flat, /\b(?:each|a) refused registration writes/iu, `${name}: only a refusal for the return addresses writes a diagnostic`)
+      assert.match(flat, /registration refused for its return addresses \(400 `?invalid_redirect_uri`?\) writes one shapes-only/iu, `${name}: names the one refusal that writes a diagnostic`)
+    }
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
     assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
     assert.match(decisions, /\| 146 \|[^\n]*No unattended, recurring copying of outside content into shared views[^\n]*search, events, changes[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)

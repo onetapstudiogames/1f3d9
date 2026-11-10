@@ -64,7 +64,9 @@ cannot guarantee how a new owner will act.
   either the October form naming the configured city host (decision 143, LOCKED) or
   Google's newer opaque form of 16 to 64 letters or digits, which names no server
   (decision 186, LOCKED), selecting only those supported addresses from the requested
-  list and returning them. A refused registration writes one shapes-only diagnostic. Signed public client IDs need no client table; 60 attempts per network
+  list and returning them. A registration refused for its return addresses (400
+  `invalid_redirect_uri`) writes one shapes-only diagnostic. Signed public client
+  IDs need no client table; 60 attempts per network
   per UTC hour use a separate existing OAuth rate bucket. The fixed consent name
   is Gemini, public PKCE S256 is required, and no client secret is issued or
   accepted. Resident proof stays on the city's page. Final Gemini approval ends
