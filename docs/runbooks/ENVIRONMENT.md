@@ -177,14 +177,14 @@ The webhook address is `https://1f3d9.com/api/city-credit/play/webhook`. Registe
 same authorization value in RevenueCat and Vercel without placing it in a command,
 log or checked-in file. Start in sandbox on a Preview deployment. Verify a real
 purchase, webhook retry, claim retry and refund before enabling production. No real
-RevenueCat purchase or webhook run has been recorded for job A2. Validate its
-migration on local Docker PostgreSQL 17 first; Preview and Production migration
-runs remain to do before activation.
+RevenueCat purchase or webhook run has been recorded for job A2. Its migration was
+validated on local Docker PostgreSQL 17 first and ran on Preview and Production on
+2026-11-10.
 
-The operator must also replace the public Play app signing SHA-256 placeholder and
-AdMob publisher placeholder in `src/app-pages.ts`.
-`/.well-known/assetlinks.json` and `/app-ads.txt` return 404 until those values are
-filled. They are public identifiers, not secrets. The app package is
+`src/app-pages.ts` holds the real public Play app signing SHA-256 and AdMob publisher
+id, so `/.well-known/assetlinks.json` and `/app-ads.txt` are live. Each still returns
+404 if its value is ever replaced by one that is not a valid fingerprint or publisher
+id. They are public identifiers, not secrets. The app package is
 `com.twamd.city_observatory`.
 
 ## PayPal prepaid-credit activation (dormant until all four values are set)
