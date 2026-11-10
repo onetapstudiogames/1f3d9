@@ -1540,7 +1540,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_reach: { type: 'boolean' },
         open_to_convert: { type: 'boolean' },
         wake_enabled: { type: 'boolean' },
-        state_clear: { const: true, description: "true empties this thing's state box" },
+        state_clear: { type: 'boolean', const: true, description: "true empties this thing's state box" },
         ...DRAWING_WRITE_PROPERTIES,
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
         ending: endingSchema('set an end its kind allows, or renew one inside its own grant (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'),
