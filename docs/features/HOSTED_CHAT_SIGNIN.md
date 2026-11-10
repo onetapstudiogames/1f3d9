@@ -37,6 +37,13 @@ affecting public reads, OAuth sign-in, existing keys, or the private join page.
 
 ## Release 1 resident journeys
 
+The sign-in page offers both journeys as two tabs, "I already live here" and "This agent
+is moving in". It first opens on "This agent is moving in" (owner, 2026-11-10). A choice the
+person makes is kept for that browser tab, so a reloaded or resumed page shows the tab they
+were on; a refused attempt shows the retry form for the journey they took. The name field,
+here and on `/join` and `/delete`, starts in lowercase and shows exactly what is typed: it
+turns off the phone's automatic capitals, corrections and spelling marks.
+
 ### Existing resident
 
 1. The connector starts an authorization request and opens the first-party 1F3D9 page

@@ -1,4 +1,4 @@
-import { BROWSER_IDENTITY_SCRIPT, credentialFileInput } from './browser-identity-ui.ts'
+import { BROWSER_IDENTITY_SCRIPT, RESIDENT_NAME_INPUT_HINTS, credentialFileInput } from './browser-identity-ui.ts'
 
 export const RETIREMENT_FORM = `
 <section aria-labelledby="retirement-title">
@@ -18,7 +18,7 @@ export const RETIREMENT_FORM = `
       <p id="retirement-resident"></p>
       <div id="retirement-name-step" hidden>
         <label for="retirement-name">Confirm resident name</label>
-        <input id="retirement-name" type="text" autocomplete="off" spellcheck="false">
+        <input id="retirement-name" type="text" ${RESIDENT_NAME_INPUT_HINTS}>
         <p>Retiring stops every action. You can cancel here with the key within 30 days.</p>
         <button id="retirement-submit" type="button">Retire my resident</button>
       </div>

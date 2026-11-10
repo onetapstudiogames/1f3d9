@@ -231,8 +231,13 @@ test('shows a clear consent page without exposing a resident key', async ({ page
   expect([...new URL(page.url()).searchParams.keys()].some(name => name.startsWith('_1f3d9_cookie_'))).toBe(false)
   await expect(page.getByRole('heading', { name: 'Let this chat enter 1F3D9?' })).toBeVisible()
   await expect(page.getByText('Hosted Chat Browser Test')).toBeVisible()
+  // The page first opens on the new-resident choice (owner, 2026-11-10).
+  await expect(page.getByRole('tab', { name: 'This agent is moving in' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByLabel("Your agent's name")).toBeVisible()
+  await expect(page.getByLabel('Current resident key')).toBeHidden()
+  await page.getByRole('tab', { name: 'I already live here' }).click()
+  await expect(page.getByRole('tab', { name: 'I already live here' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByLabel('Current resident key')).toBeVisible()
-  await expect(page.getByRole('tab', { name: 'This agent is moving in' })).toBeVisible()
   await expect(
     page.getByRole('group', { name: 'I already live here' })
       .getByRole('button', { name: 'Connect my resident' }),
@@ -251,6 +256,7 @@ test('signs in, redeems the callback code, and enters through the protected conn
   const requestUrls: string[] = []
   page.on('request', request => requestUrls.push(request.url()))
   await page.goto(authorizationPath())
+  await page.getByRole('tab', { name: 'I already live here' }).click()
 
   await page.getByLabel('Current resident key').fill(existingResidentKey)
   await page.getByRole('group', { name: 'I already live here' })
@@ -339,6 +345,7 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
   await page.goto(authorizationPath())
+  await page.getByRole('tab', { name: 'I already live here' }).click()
   await page.getByLabel('Pick key file').setInputFiles({ name: 'key.txt', mimeType: 'text/plain', buffer: keyFile })
   await expect(page.getByText('Key ready.', { exact: true })).toBeVisible()
   expect(await page.getByLabel('Current resident key').inputValue() === residentKey).toBe(true)
@@ -571,6 +578,7 @@ for (const profile of [
 
       await page.goto(authorizationPath())
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await page.getByRole('tab', { name: 'I already live here' }).click()
       await page.getByLabel('Current resident key').fill(existingResidentKey)
       await withStrippedBrowserHeaders(page, '/oauth/authorize', async () => {
         await page.getByRole('group', { name: 'I already live here' })
@@ -648,6 +656,7 @@ test('generated recovery codes replace a lost key once and revoke the old key an
 
 test('stops a form whose CSRF proof was changed in the browser', async ({ page }) => {
   await page.goto(authorizationPath())
+  await page.getByRole('tab', { name: 'I already live here' }).click()
   await page.getByLabel('Current resident key').fill(existingResidentKey)
   await page.locator('form').first().evaluate(element => {
     const form = element as HTMLFormElement
@@ -669,6 +678,7 @@ test('stops a form whose CSRF proof was changed in the browser', async ({ page }
 test('stops approval submitted from a different browser origin', async ({ page, baseURL }) => {
   const foreignOrigin = baseURL!.replace('127.0.0.1', 'localhost')
   await page.goto(`${foreignOrigin}${authorizationPath()}`)
+  await page.getByRole('tab', { name: 'I already live here' }).click()
   await page.getByLabel('Current resident key').fill(existingResidentKey)
   await page.getByRole('group', { name: 'I already live here' })
     .getByRole('button', { name: 'Connect my resident' }).click()

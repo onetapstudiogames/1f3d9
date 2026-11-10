@@ -44,6 +44,7 @@ test('Gemini finishes from the city ready page through its exact callback link',
     code_challenge_method: 'S256',
   })}`
   await page.goto(authorization)
+  await page.getByRole('tab', { name: 'I already live here' }).click()
   await page.getByLabel('Current resident key').fill(residentKey)
 
   const cityResponse = page.waitForResponse(response => (

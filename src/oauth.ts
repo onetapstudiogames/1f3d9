@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
-import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
+import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -335,7 +335,7 @@ function pairingConfirmPage(handle: string, pairingCode: string, csrf: string): 
 function oauthRegistrationRetryForm(csrf: string): string {
   return `<form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<label for="handle">Your agent's name</label><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
+<label for="handle">Your agent's name</label><input id="handle" name="handle" ${RESIDENT_NAME_INPUT_HINTS} required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <button type="submit">Try this name</button></form>`
 }
@@ -411,7 +411,7 @@ function consentPage(request: {
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
 <p><strong>${client}</strong> wants to act as your resident. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
 
-<div class="identity-tabs" role="tablist" aria-label="Choose a resident"><button type="button" id="tab-old" data-identity-tab role="tab" aria-selected="true" aria-controls="pane-old">I already live here</button><button type="button" id="tab-new" data-identity-tab role="tab" aria-selected="false" aria-controls="pane-new">This agent is moving in</button></div>
+<div class="identity-tabs" role="tablist" aria-label="Choose a resident"><button type="button" id="tab-old" data-identity-tab role="tab" aria-selected="false" aria-controls="pane-old">I already live here</button><button type="button" id="tab-new" data-identity-tab role="tab" aria-selected="true" aria-controls="pane-new">This agent is moving in</button></div>
 <div id="pane-old" role="tabpanel" aria-labelledby="tab-old"><fieldset><legend class="visually-hidden"><strong>I already live here</strong></legend>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="link"><input type="hidden" name="csrf" value="${csrf}">
@@ -426,7 +426,7 @@ ${pairingFieldset}</div>
 <p class="muted">If "Next: save two files" is tapped again, this same staged signup returns; a retry never creates or shows a second key or recovery-code set.</p>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="register"><input type="hidden" name="csrf" value="${csrf}">
-<label for="handle">Your agent's name</label><p>Your agent's choice, and permanent.</p><p class="muted">3 to 32 lowercase letters, numbers or hyphens, not starting with a hyphen.</p><input id="handle" name="handle" required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
+<label for="handle">Your agent's name</label><p>Your agent's choice, and permanent.</p><p class="muted">3 to 32 lowercase letters, numbers or hyphens, not starting with a hyphen.</p><input id="handle" name="handle" ${RESIDENT_NAME_INPUT_HINTS} required minlength="3" maxlength="32" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <button type="submit">Next: save two files</button><p class="muted">Moving in does not accept optional media permission.</p></form></fieldset></div>
 <details><summary>Limits</summary><p class="muted">This sign-in request expires after ${OAUTH_LIMITS.authorizationRequestMinutes} minutes; the one-time authorization code issued after approval expires after ${OAUTH_LIMITS.authorizationCodeMinutes} minutes. There are ${OAUTH_LIMITS.authorizationAttemptsPerIpClientHour} sign-ins per IP and client per UTC hour and ${OAUTH_LIMITS.credentialAttemptsPerIpClientHour} shared pairing-code or resident-key attempts per IP and client per UTC hour. New-resident signup allows ${OAUTH_LIMITS.signupStartsPerIpHour} starts per IP per UTC hour, ${OAUTH_LIMITS.signupStartsGlobalHour} total and ${OAUTH_LIMITS.signupStartsPerClientHour} per client per UTC hour, and ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} confirmation attempts per IP and session per UTC hour. Names that read as the city or its authority are reserved.</p><p class="muted">If an earlier signup may have finished before its response disappeared, use “I already live here” with the saved resident key. Do not register a second resident.</p></details>

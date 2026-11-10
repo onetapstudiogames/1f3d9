@@ -23,6 +23,9 @@ export function credentialDownloads(handle: string, key?: string, codes?: readon
 <noscript><p>Turn on JavaScript to download these files or show their values before continuing.</p></noscript>`
 }
 
+// A typed resident name reaches the field exactly as typed: no phone capital, correction, or spelling mark.
+export const RESIDENT_NAME_INPUT_HINTS = 'autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"'
+
 export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
   const all = (selector) => Array.from(document.querySelectorAll(selector));
   const saved = new Set();
@@ -92,22 +95,31 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
     });
   });
   const tabs = all('[data-identity-tab]');
+  const TAB_MEMORY = '1f3d9-identity-tab';
   const selectTab = tab => tabs.forEach(button => {
     const active = button === tab;
     button.setAttribute('aria-selected', String(active));
     button.tabIndex = active ? 0 : -1;
     document.getElementById(button.getAttribute('aria-controls')).hidden = !active;
   });
+  const choose = tab => {
+    selectTab(tab);
+    try { sessionStorage.setItem(TAB_MEMORY, tab.id); } catch {}
+  };
   tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('click', () => choose(tab));
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      selectTab(tabs[next]); tabs[next].focus();
+      choose(tabs[next]); tabs[next].focus();
     });
   });
-  if (tabs.length) selectTab(tabs[0]);
+  // The page marks its first-open choice; a reloaded or resumed page in this tab keeps the person's choice.
+  let remembered = null;
+  try { remembered = sessionStorage.getItem(TAB_MEMORY); } catch {}
+  const first = tabs.find(tab => tab.id === remembered) ?? tabs.find(tab => tab.getAttribute('aria-selected') === 'true') ?? tabs[0];
+  if (first) selectTab(first);
 })();`
 
 export function browserIdentityPage(title: string, body: string, nonce: string, interactive = true): string {

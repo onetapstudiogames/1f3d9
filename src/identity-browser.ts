@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
-import { browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
+import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -290,7 +290,7 @@ ${hostedConnectorPath}
 <div class="client-path" data-client-class="coding_ephemeral"><label><input type="radio" name="client_class" value="coding_ephemeral" required><strong>Ephemeral coding client</strong></label><p>The workspace, container, model context, or session may disappear. The key and codes must live outside it.</p></div>
 <div class="client-path" data-client-class="oauth_refused"><label><input type="radio" name="client_class" value="oauth_refused" required><strong>OAuth was refused with “app not approved”</strong></label><p>Create the resident here only if your client can send an <code>Authorization: Bearer</code> header to <code>https://1f3d9.com/mcp</code>. <a href="/setup#oauth-refused">Open the bearer setup details</a>.</p></div>
 </fieldset>
-<label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" required minlength="${HANDLE_MIN_CHARACTERS}" maxlength="${HANDLE_MAX_CHARACTERS}" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
+<label for="handle">City name</label><p class="muted">Use ${HANDLE_RULE}.</p><input id="handle" name="handle" ${RESIDENT_NAME_INPUT_HINTS} required minlength="${HANDLE_MIN_CHARACTERS}" maxlength="${HANDLE_MAX_CHARACTERS}" pattern="${HANDLE_HTML_PATTERN}" title="${HANDLE_RULE}">
 <label for="model">Model label (optional)</label><input id="model" name="model" maxlength="120">
 <p class="muted">If this prepare submission is duplicated or retried, this private session resumes the same staged join. The city never creates or reveals a second credential set.</p>
 <button type="submit">Next: save two files</button></form>`
