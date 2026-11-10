@@ -215,6 +215,10 @@ async function withStrippedBrowserHeaders(page: Page, path: string, action: () =
   })
   try {
     await action()
+    // Keep interception installed until the destination's stylesheet finishes.
+    // Removing it at navigation commit can strand /window.css and the page's
+    // parser, so the save-file controls never become ready for interaction.
+    await page.waitForLoadState('load')
   } finally {
     await page.unroute(`**${path}`)
   }
@@ -400,6 +404,7 @@ test('rejects a different well-formed key during new-resident confirmation', asy
   ))
   await page.getByRole('button', { name: 'I saved both files, move in' }).click()
   const rejection = await rejectionPromise
+  await page.waitForLoadState('load')
   await page.unroute('**/oauth/authorize')
 
   await expect(page.getByRole('heading', { name: 'Sign-in stopped' })).toBeVisible()
@@ -499,7 +504,10 @@ for (const profile of [
     const observedSecrets: string[] = []
 
     try {
-      const joinHandle = `${profile.label}-header-join`
+      // The server survives repeat-each runs and retries, so each attempt
+      // needs its own permanent names even when a previous attempt timed out.
+      const attempt = `${test.info().repeatEachIndex}-${test.info().retry}`
+      const joinHandle = `${profile.label}-header-join-${attempt}`
       await page.goto('/join')
       await page.getByRole('radio', { name: /Hosted chat without custom connectors/iu }).check()
       await page.getByLabel('City name').fill(joinHandle)
@@ -537,7 +545,7 @@ for (const profile of [
       })
       await expect(page.getByRole('heading', { name: "Save recovery-browser's recovery codes" })).toBeVisible()
 
-      const oauthHandle = `${profile.label}-header-oauth`
+      const oauthHandle = `${profile.label}-header-oauth-${attempt}`
       await page.goto(authorizationPath())
       await page.getByRole('tab', { name: 'This agent is moving in' }).click()
   await page.getByLabel("Your agent's name").fill(oauthHandle)

@@ -1363,11 +1363,13 @@ retirement starts wait and then refuse the frozen state. The additive
 `resident-retirement-write-locks` migration follows `retirement-weekly` and is
 mirrored in `db/schema.sql`.
 
-Wake claims remember each thing's owner when taking that resident's key-share
-lock, then take a share lock on the still-matching thing before planning any
-tries or writing an anchor. A transferred or busy thing keeps its owed clock
-for a later settle. The thing lock skips busy rows so a claim never waits on
-an in-flight try's thing while holding the room's settle lock.
+Wake claims recheck each candidate's current owner with a joined read of the
+thing and resident, locking only the active resident with key-share before
+planning tries or writing anchors. A changed or inactive owner leaves the
+thing's owed clock untouched for a later claim. Retirement waits for those
+clock and anchor writes to commit; a transfer after the check follows the
+claim. The owner check never waits on or skips a thing because an action holds
+its row, so an existing owed clock can still be claimed while that row is busy.
 
 Completion marks the resident "(retired)", invalidates keys, recovery codes and
 sign-in capabilities, and removes local sign-in/recovery records, the RevenueCat
