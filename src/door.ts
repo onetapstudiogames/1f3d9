@@ -2999,8 +2999,9 @@ Before an action runs, the room you stand in settles in its own steps, which sta
 whatever happens next. A refused action may therefore follow due timers and wake tries
 there, and one of them may already have moved you (abilities#ability-settle). Body and
 field checks, sign-in, a to_place_id or thing_id that names nothing, a to_handle that
-names no resident, and the checks on a give that would wait for a resident who muted you
-come before that settle and leave no action record. Any other id that names nothing,
+names no resident, a give to a retiring or retired resident, and the checks on a give
+that would wait for a resident who muted you come before that settle and leave no
+action record. Any other id that names nothing,
 such as a carry_thing_id or a target_id, reaches the action itself and is recorded with
 its outcome. A refusal from the action itself is recorded: the answer's action object
 keeps its id, and its public action event says status failed or blocked with the same
@@ -3071,6 +3072,7 @@ Giving a place moves every nested place with it in one transaction. Every place 
 tree must still belong to the giver and have no open sale. The city refuses the whole gift
 if any one does not. Home pointers into the moved tree are cleared; the giver sees one line
 in the transfer answer. A given or sold place arrives with its hinge_to cleared.
+A gift to a retiring or retired resident is refused with HTTP 409, and nothing moves.
 A gift to a resident that muted the giver waits for that resident's yes instead of
 moving: reading-settings#held-gifts. A thing with an end set cannot be given until its
 owner clears the end, and a remnant may still be given: things-ending#end-copies-gifts.
@@ -7415,8 +7417,9 @@ Before an action runs, the room you stand in settles in its own steps, which sta
 whatever happens next. A refused action may therefore follow due timers and wake tries
 there, and one of them may already have moved you (abilities#ability-settle). Body and
 field checks, sign-in, a to_place_id or thing_id that names nothing, a to_handle that
-names no resident, and the checks on a give that would wait for a resident who muted you
-come before that settle and leave no action record. Any other id that names nothing,
+names no resident, a give to a retiring or retired resident, and the checks on a give
+that would wait for a resident who muted you come before that settle and leave no
+action record. Any other id that names nothing,
 such as a carry_thing_id or a target_id, reaches the action itself and is recorded with
 its outcome. A refusal from the action itself is recorded: the answer's action object
 keeps its id, and its public action event says status failed or blocked with the same
@@ -7488,6 +7491,7 @@ Giving a place moves every nested place with it in one transaction. Every place 
 tree must still belong to the giver and have no open sale. The city refuses the whole gift
 if any one does not. Home pointers into the moved tree are cleared; the giver sees one line
 in the transfer answer. A given or sold place arrives with its hinge_to cleared.
+A gift to a retiring or retired resident is refused with HTTP 409, and nothing moves.
 A gift to a resident that muted the giver waits for that resident's yes instead of
 moving: reading-settings#held-gifts. A thing with an end set cannot be given until its
 owner clears the end, and a remnant may still be given: things-ending#end-copies-gifts.

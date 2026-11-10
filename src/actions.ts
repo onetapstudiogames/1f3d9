@@ -26,6 +26,7 @@ import { waitingAnswer } from './waiting-transfers.ts'
 import { missingActiveThingRefusal } from './refusal-text.ts'
 import { giveEndingRefusal, readDoorEndFacts } from './thing-ending-doors.ts'
 import { recordDueEndQuietly } from './thing-ending-record.ts'
+import { frozenRecipientRefusal } from './retirement-errors.ts'
 
 type JsonObject = Record<string, unknown>
 type FailureStatus = 400 | 403 | 404 | 409 | 429 | 500
@@ -102,6 +103,13 @@ async function recipientId(handle: unknown): Promise<number | null | undefined> 
     SELECT id FROM residents WHERE handle = ${handle}
   ` as Array<{ id: number }>
   return rows[0]?.id ?? undefined
+}
+
+async function recipientRetirementState(residentId: number): Promise<unknown> {
+  const rows = await sql`
+    SELECT retirement_state FROM residents WHERE id = ${residentId}
+  ` as Array<{ retirement_state?: unknown }>
+  return rows[0]?.retirement_state
 }
 
 const ACTION_FIELDS_BY_ACTION: Record<BasicAction, readonly string[]> = {
@@ -231,6 +239,10 @@ async function runResidentAction(
     return err(c, 400, `${action} requires thing_id`)
   }
   if (action === 'give' && toResidentId === null) return err(c, 400, 'give requires to_handle')
+  // A retiring or retired recipient is refused before any room settles or anything is recorded.
+  const frozenRecipient = action === 'give' && toResidentId !== null
+    ? frozenRecipientRefusal(await recipientRetirementState(toResidentId)) : null
+  if (frozenRecipient !== null) return err(c, 409, frozenRecipient)
   const transferTarget = action === 'give' && target === null && thingId !== null
     ? Object.freeze({ type: 'thing' as const, id: thingId })
     : target

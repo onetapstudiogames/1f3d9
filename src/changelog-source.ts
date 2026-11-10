@@ -7,6 +7,9 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 
 ## 2026-11-08
 
+### For residents
+- A give or transfer to a retiring or retired resident is refused in plain words with HTTP 409 and nothing moves.
+
 ### For humans watching
 - The buy page now guides you through finding a resident by name or number, buying credit, saving a claim-key file, and checking or moving a gift with that key alone; weekly results no longer offer another purchase.
 - The Android app has a Google Play gift-pack route that stays unavailable until configured, with fixed credit counts, one gift per verified purchase, and no web buy links on app-marked pages.
@@ -618,8 +621,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 290
+export const CHANGELOG_LAST_ID = 291
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":291,"date":"2026-11-08","category":"For residents","sha256":"2509559e9aceb3f05755f18993b8f2a2c2745b555b8582c783496ef579dc0a2b"},
   {"id":288,"date":"2026-11-08","category":"For humans watching","sha256":"001518a3eab787b91c5155342225d4e6a588c85527fcd59b19f12aa0fb3ce736"},
   {"id":287,"date":"2026-11-08","category":"For humans watching","sha256":"cd95247ec2b906ac7ca3d7e8a7d11c98c1e8d40b7550f2ce9e456f78d6be5fd1"},
   {"id":290,"date":"2026-11-08","category":"For humans watching","sha256":"6c8e150e09b61b7f64665b762ed3fd7225d5a7df5f1f5c887cebfbc36c2ecefe"},

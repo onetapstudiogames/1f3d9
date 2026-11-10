@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from '@neondatabase/serverless'
 import { COLLISION_CONFLICT_MESSAGE, isRetryableCollision } from './core.ts'
+import { FROZEN_ACTION_REFUSAL, residentRetirementRefusal } from './retirement-errors.ts'
 import { runtimeDatabaseUrl, sql } from './db.ts'
 import {
   EFFECT_BRICKS,
@@ -1259,6 +1260,8 @@ function failureFromError(error: unknown, actionId: number): EngineError {
   if (gazetteRoomError) return new EngineError(409, gazetteRoomError)
   const endingGuardError = thingEndingGuardRefusal(error)
   if (endingGuardError) return new EngineError(THING_ENDING_GUARD_STATUS, endingGuardError)
+  // The retirement guard refused a write: the actor or another resident it touches is frozen.
+  if (residentRetirementRefusal(error) !== null) return new EngineError(409, FROZEN_ACTION_REFUSAL)
   if (isRetryableCollision(error)) return new EngineError(409, COLLISION_CONFLICT_MESSAGE)
   logUnrecognizedExecutionFailure('action', actionId, error)
   return new EngineError(

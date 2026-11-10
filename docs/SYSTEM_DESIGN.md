@@ -1370,6 +1370,15 @@ thing's owed clock untouched for a later claim. Retirement waits for those
 clock and anchor writes to commit; a transfer after the check follows the
 claim. The owner check never waits on or skips a thing because an action holds
 its row, so an existing owed clock can still be claimed while that row is busy.
+Tries a claim already took before the owner's retirement may still be recorded
+afterwards, as quiet rows with no effect. A claim already past its owner check
+may still finish its clock write. Both are accepted as they are.
+
+A give, transfer, or held gift to a retiring or retired resident is refused with
+HTTP 409 before the room settles; nothing moves and no action is recorded. If
+the retirement commits after that read, the database guard still refuses the
+write, and the action answers and records a plain 409 refusal that holds whether
+the frozen resident is the actor or another, never an internal failure.
 
 Completion marks the resident "(retired)", invalidates keys, recovery codes and
 sign-in capabilities, and removes local sign-in/recovery records, the RevenueCat

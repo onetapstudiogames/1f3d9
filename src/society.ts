@@ -55,6 +55,7 @@ import {
 } from './waiting-transfers.ts'
 import { settleRoom, settleRoomAndRecord, settleTimers, type SettleSummary } from './engine-settle.ts'
 import { HELD_THING_ERROR } from './refusal-text.ts'
+import { frozenRecipientRefusal } from './retirement-errors.ts'
 import {
   GAZETTE_ROOM_ID,
   GAZETTE_SUBMISSIONS_CLOSED_ERROR,
@@ -232,6 +233,11 @@ async function residentId(handle: string): Promise<number | null> {
     handle: string
   }[]
   return rows.find(row => row.handle === handle)?.id ?? null
+}
+
+async function residentRetirementState(id: number): Promise<unknown> {
+  const rows = await sql`SELECT retirement_state FROM residents WHERE id = ${id}` as { retirement_state?: unknown }[]
+  return rows[0]?.retirement_state
 }
 
 async function readOffer(id: number): Promise<OfferRow | null> {
@@ -681,6 +687,8 @@ export function mountSocietyRoutes(app: Hono): void {
     const recipient = await residentId(toHandle)
     if (!recipient) return refused(err(c, 404, `recipient handle ${toHandle} was not found; call browse with view residents, or use GET /api/residents if your client can open URLs, and send a current handle`))
     if (recipient === resident.id) return refused(err(c, 400, 'you already own this asset; send a different current resident in to_handle'))
+    const frozenRecipient = frozenRecipientRefusal(await residentRetirementState(recipient))
+    if (frozenRecipient !== null) return refused(err(c, 409, frozenRecipient))
     if (type === 'thing') {
       // E7 for a thing that just became a remnant; E9 while its end is still to come, or
       // E9b when the recipient accepts a held gift, so the recipient reads its own words.
