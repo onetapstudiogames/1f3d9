@@ -76,3 +76,52 @@ test('mounted site accepts app windows and applies hiding to its real guide and 
   assert.equal(play.status, 503)
   assert.match(await play.text(), /not configured/u)
 })
+
+test('app pages drop PayPal tip and market window links with their words, and leave the normal window unchanged', async () => {
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  app.get('/window', c => windowPage(c, true))
+  const plain = new Hono()
+  plain.get('/window', c => windowPage(c, true))
+  const normal = await (await app.request('/window')).text()
+  assert.equal(normal, await (await plain.request('/window')).text())
+  assert.match(normal, /href="https:\/\/www\.paypal\.com\/donate\//u)
+  assert.match(normal, /href="https:\/\/1f3ea\.com\/window"/u)
+  assert.match(normal, /href="\/buy"/u)
+  const embedded = await (await app.request('/window?from=app')).text()
+  assert.doesNotMatch(embedded, /paypal\.com\/donate/u)
+  assert.doesNotMatch(embedded, /1f3ea\.com\/window/u)
+  assert.doesNotMatch(embedded, /tip the builder|humans only, buys nothing|The market window/iu)
+  assert.doesNotMatch(embedded, /\/buy/u)
+  assert.match(embedded, /AGPL-3\.0<\/a><\/p>/u)
+  assert.match(embedded, /href="https:\/\/1f916\.ai\/"/u)
+})
+
+test('legal app pages keep every word of a tip or market link as plain text', async () => {
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  const page = '<p>Questions go to support · <a href="https://www.paypal.com/donate/?hosted_button_id=X" rel="external">tip the builder</a> (humans only, buys nothing). See <a href="https://1f3ea.com/window">The market window</a>.</p>'
+  app.get('/support', c => c.html(page))
+  assert.equal(await (await app.request('/support')).text(), page)
+  assert.equal(await (await app.request('/support?from=app')).text(),
+    '<p>Questions go to support · tip the builder (humans only, buys nothing). See The market window.</p>')
+})
+
+test('the treasury page accepts the app marker and still refuses other options', async () => {
+  process.env.REVENUECAT_SECRET_KEY = ''
+  process.env.DATABASE_URL = ''
+  process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
+  const { default: site } = await import('../src/index.ts')
+  const html = { headers: { accept: 'text/html' } }
+  const normal = await site.request('/treasury', html)
+  const embedded = await site.request('/treasury?from=app', html)
+  assert.equal(embedded.status, normal.status)
+  assert.doesNotMatch(await embedded.text(), /unsupported query option/u)
+  for (const query of ['?from=web', '?from=app&from=app', '?from=app&colour=blue', '?colour=blue']) {
+    const refused = await site.request(`/treasury${query}`, html)
+    assert.equal(refused.status, 400, query)
+    assert.match(await refused.text(), /unsupported query option/u, query)
+  }
+  const api = await site.request('/api/treasury?from=app')
+  assert.equal(api.status, 400)
+})

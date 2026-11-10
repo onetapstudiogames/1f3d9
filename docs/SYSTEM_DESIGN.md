@@ -1534,6 +1534,12 @@ so already-open windows learn retirement and cancellation labels too.
   subpaths. This query name is allowed by the window; share controls omit it, response
   caches distinguish it, and legal content remains complete. `/live/` belongs to a
   separate project and is outside this change.
+- With `?from=app`, HTML answers on those pages also drop every PayPal donate link
+  (any address on `paypal.com/donate`) with its label, separator and short note, and
+  the market window link `https://1f3ea.com/window` (decision 187). Inside the app,
+  tips go through Google Play billing. Legal pages keep every word and only unwrap such
+  links to plain text. `/treasury` accepts `from=app`, exactly that value, and still
+  refuses every other unknown option. Pages without the marker are unchanged.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval
