@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import { Hono } from 'hono'
 import { sha256 } from '../src/core.ts'
-import { mountOAuthRoutes, residentByOAuthAccessToken } from '../src/oauth.ts'
+import { mountOAuthRoutes, residentByOAuthAccessToken, type OAuthDiagnosticRecord } from '../src/oauth.ts'
 import { OAUTH_LIMITS } from '../src/oauth-limits.ts'
 import { registerGeminiClient, resolveGeminiClient } from '../src/oauth-gemini.ts'
 import { EXISTING_KEY, MemoryOAuthStore, rateLimitResult } from './oauth-flow-tests/memory-oauth-store.ts'
@@ -13,11 +13,13 @@ const REDIRECT = 'https://oauth-redirect.googleusercontent.com/r/user_bound_cust
 const SECOND_REDIRECT = 'https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-654321-1f3d9_com'
 const signingKey = randomBytes(32).toString('hex')
 
-function fixture(patch: Record<string, string> = {}, memory = new MemoryOAuthStore(), pairingEnabled = false) {
+type Sink = (record: Readonly<OAuthDiagnosticRecord>) => void
+
+function fixture(patch: Record<string, string> = {}, memory = new MemoryOAuthStore(), pairingEnabled = false, diagnostics: Sink = () => undefined) {
   const env = { ...environment, GEMINI_DCR_SIGNING_KEY: signingKey, ...patch }
   const app = new Hono()
   mountOAuthRoutes(app, {
-    environment: env, store: memory.api, diagnostics: () => undefined,
+    environment: env, store: memory.api, diagnostics,
     pairingEnabled,
     fetcher: (async () => { throw new Error('Gemini registration must not fetch metadata') }) as typeof fetch,
   })
@@ -36,8 +38,8 @@ async function client(app: Hono, redirects = [REDIRECT]): Promise<string> {
   return (await response.json()).client_id
 }
 
-async function consent(app: Hono, clientId: string) {
-  const location = authorizationUrl({ client_id: clientId, redirect_uri: REDIRECT })
+async function consent(app: Hono, clientId: string, redirect = REDIRECT) {
+  const location = authorizationUrl({ client_id: clientId, redirect_uri: redirect })
   const started = await app.request(location)
   assert.equal(started.status, 200)
   const html = await started.text()
@@ -48,7 +50,7 @@ async function consent(app: Hono, clientId: string) {
   const approval = await browserPost(app, { cookie, csrf, html, location, rawSession: '' }, {
     action: 'link', csrf, resident_key: EXISTING_KEY,
   })
-  const callback = await assertGeminiReturnPage(approval, REDIRECT, 'client-state-that-must-survive')
+  const callback = await assertGeminiReturnPage(approval, redirect, 'client-state-that-must-survive')
   return callback.searchParams.get('code')!
 }
 
@@ -161,7 +163,7 @@ test('Gemini refuses every raw near-match and malformed registration', async () 
   assert.equal((await register(app, { redirect_uris: oversized })).status, 400)
 })
 
-// Gemini's real backend sends these six variants; its UI copies only the third.
+// In October 2026 Gemini's backend sent these six variants; its UI copied only the third.
 // The numeric account component is synthetic; host and path shapes are recorded Preview evidence.
 for (const host of ['1f3d9.com', '1f3d9-git-feat-gemini-google-ae6fcd-onetapstudiogames-projects.vercel.app']) {
   test(`Gemini selects only the supported callback from its six-address registration for ${host}`, async () => {
@@ -333,4 +335,264 @@ test('Gemini registration uses one isolated per-network OAuth allowance and fail
   assert.equal(memory.safeState(), initialState)
   memory.api.consumeOAuthRateLimit = async () => { throw new Error('database unavailable') }
   assert.equal((await register(app)).status, 503)
+})
+
+// Since November 2026 Google sends an opaque user-bound segment with no server name.
+// Every segment below is invented; none comes from a real Google account.
+const OPAQUE_PREFIX = 'https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-'
+const OPAQUE_SEGMENT = '4815162342c0ffee15deadbe'
+const OPAQUE = `${OPAQUE_PREFIX}${OPAQUE_SEGMENT}`
+const opaqueAt = (segment: string) => `${OPAQUE_PREFIX}${segment}`
+
+function revoke(app: Hono, clientId: string, token: string) {
+  return app.request('/oauth/revoke', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token, client_id: clientId }),
+  })
+}
+
+async function assertRefused(app: Hono, redirect: string): Promise<void> {
+  const response = await register(app, { redirect_uris: [redirect] })
+  assert.equal(response.status, 400, JSON.stringify(redirect))
+  assert.equal((await response.json()).error, 'invalid_redirect_uri')
+  const mixed = await register(app, { redirect_uris: [redirect, OPAQUE] })
+  assert.equal(mixed.status, 201, JSON.stringify(redirect))
+  assert.deepEqual((await mixed.json()).redirect_uris, [OPAQUE])
+}
+
+for (const host of ['1f3d9.com', '1f3d9-git-feat-gemini-google-ae6fcd-onetapstudiogames-projects.vercel.app']) {
+  test(`Gemini selects only the supported callback from its opaque six-address registration for ${host}`, async () => {
+    const { app } = fixture({ PUBLIC_ORIGIN: `https://${host}` })
+    const redirects = ['r', 'a'].flatMap(path => ['oauth-redirect-sandbox', 'oauth-redirect-test', 'oauth-redirect']
+      .map(domain => `https://${domain}.googleusercontent.com/${path}/user_bound_custom-mcp-${OPAQUE_SEGMENT}`))
+    const response = await register(app, {
+      redirect_uris: redirects, grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+      token_endpoint_auth_method: 'none', client_name: 'Google',
+    }, { 'user-agent': 'OpenAuth' })
+    assert.equal(response.status, 201)
+    const registered = await response.json()
+    assert.deepEqual(registered.redirect_uris, [redirects[2]])
+    assert.equal(registered.client_name, 'Gemini')
+    for (const redirect of redirects) {
+      const authorization = await app.request(authorizationUrl({ client_id: registered.client_id,
+        redirect_uri: redirect, resource: `https://${host}/mcp/connect` }))
+      assert.equal(authorization.status, redirect === redirects[2] ? 200 : 400, redirect)
+      assert.equal(authorization.headers.get('location'), null)
+    }
+    assert.equal((await register(app, { redirect_uris: redirects.filter(uri => uri !== redirects[2]) })).status, 400)
+  })
+}
+
+test('Gemini accepts opaque segments of 16 to 64 letters or digits and refuses 15 or 65', async () => {
+  const { app } = fixture()
+  for (const segment of ['a1'.repeat(8), 'f0'.repeat(32), '1234567890123456', 'AbCdEf0123456789XyZ', 'ABCDEF0123456789']) {
+    const response = await register(app, { redirect_uris: [opaqueAt(segment)] })
+    assert.equal(response.status, 201, segment)
+    assert.deepEqual((await response.json()).redirect_uris, [opaqueAt(segment)])
+  }
+  for (const segment of ['a1'.repeat(7) + 'a', 'f0'.repeat(32) + 'f', '']) await assertRefused(app, opaqueAt(segment))
+})
+
+test('Gemini refuses every opaque near-match on another host, path or spelling', async () => {
+  const { app } = fixture()
+  const bad = [
+    OPAQUE.replace('oauth-redirect.', 'oauth-redirect-test.'), OPAQUE.replace('oauth-redirect.', 'oauth-redirect-sandbox.'),
+    OPAQUE.replace('/r/', '/a/'), OPAQUE.replace('https:', 'http:'), OPAQUE.replace('googleusercontent', 'GOOGLEUSERCONTENT'),
+    ...['.', '/', '%2e', '-', '_', '~', '+', '='].map(mark => opaqueAt(`4815162342${mark}c0ffee15deadbe`)),
+    OPAQUE + '\n', OPAQUE + ' ', OPAQUE + '\t', OPAQUE + '?', OPAQUE + '?x=1', OPAQUE + '#', OPAQUE + '#x',
+    OPAQUE.replace('.com/r', '.com:443/r'), OPAQUE.replace('https://', 'https://user@'), OPAQUE.replace('https://', 'https://@'),
+    OPAQUE + '/more', OPAQUE.replace('/r/', '/%72/'), OPAQUE.replace('/r/', '/other/../r/'),
+  ]
+  for (const redirect of bad) await assertRefused(app, redirect)
+})
+
+test('Gemini keeps both address forms anchored to the one Google host and path', async () => {
+  const { app } = fixture()
+  for (const redirect of [
+    `https://evil.example/r/user_bound_custom-mcp-${OPAQUE_SEGMENT}`,
+    OPAQUE.replace('googleusercontent.com', 'googleusercontent.com.evil.test'),
+    `https://x.example/?${OPAQUE}`,
+    `https://x.example/r/user_bound_custom-mcp-1-1f3d9_com${OPAQUE_SEGMENT}`,
+    `${REDIRECT}${OPAQUE_SEGMENT}`, `${REDIRECT}abcdef0123456789`,
+  ]) await assertRefused(app, redirect)
+})
+
+test('Gemini still binds October-form addresses to this city host', async () => {
+  const { app } = fixture()
+  for (const redirect of [
+    REDIRECT.replace('1f3d9_com', 'other_com'), REDIRECT.replace('1f3d9_com', 'evil_example'),
+    REDIRECT.replace('-123456-', '-abc-'), REDIRECT.replace('-123456-', '--'), REDIRECT.replace('-123456-', '-'),
+  ]) await assertRefused(app, redirect)
+  const preview = fixture({ PUBLIC_ORIGIN: 'https://city-preview.example' }).app
+  assert.equal((await register(preview)).status, 400)
+})
+
+test('Gemini never signs a foreign callback beside an opaque one', async () => {
+  const { app, env } = fixture()
+  const foreign = OPAQUE.replace('oauth-redirect.googleusercontent.com', 'evil.example')
+  const response = await register(app, { redirect_uris: [foreign, OPAQUE, OPAQUE] })
+  assert.equal(response.status, 201)
+  const registered = await response.json()
+  assert.deepEqual(registered.redirect_uris, [OPAQUE])
+  assert.equal((await app.request(authorizationUrl({ client_id: registered.client_id, redirect_uri: foreign }))).status, 400)
+  assert.equal(resolveGeminiClient(registerGeminiClient([OPAQUE, foreign], env)!, env), null)
+})
+
+test('Gemini opaque client IDs are tied to the exact ID, origin and key', async () => {
+  const { app, env, memory } = fixture()
+  const id = await client(app, [OPAQUE])
+  assert.deepEqual(resolveGeminiClient(id, env)?.redirectUris, [OPAQUE])
+  for (const changed of [id.slice(0, -1) + (id.endsWith('A') ? 'B' : 'A'), id + 'x']) {
+    assert.equal((await app.request(authorizationUrl({ client_id: changed, redirect_uri: OPAQUE }))).status, 400)
+  }
+  const otherOrigin = fixture({ PUBLIC_ORIGIN: 'https://city-preview.example' }).app
+  assert.equal((await otherOrigin.request(authorizationUrl({ client_id: id, redirect_uri: OPAQUE, resource: 'https://city-preview.example/mcp/connect' }))).status, 400)
+  const otherKey = fixture({ GEMINI_DCR_SIGNING_KEY: randomBytes(32).toString('hex') }).app
+  assert.equal((await otherKey.request(authorizationUrl({ client_id: id, redirect_uri: OPAQUE }))).status, 400)
+  const code = await consent(app, id, OPAQUE)
+  const unconfigured = fixture({ GEMINI_DCR_SIGNING_KEY: '' }, memory).app
+  assert.equal((await register(unconfigured, { redirect_uris: [OPAQUE] })).status, 503)
+  assert.equal((await exchangeCode(unconfigured, code, { client_id: id, redirect_uri: OPAQUE })).status, 400)
+  const pair = await readTokenPair(await exchangeCode(app, code, { client_id: id, redirect_uri: OPAQUE }))
+  assert.equal((await refresh(unconfigured, id, pair.refresh_token)).status, 400)
+})
+
+test('Gemini opaque registrations of ten longest addresses fit the client ID, eleven do not', async () => {
+  const { app } = fixture()
+  const ten = Array.from({ length: 10 }, (_, i) => opaqueAt(String(i).repeat(64)))
+  const response = await register(app, { redirect_uris: ten })
+  assert.equal(response.status, 201)
+  const registered = await response.json()
+  assert.deepEqual(registered.redirect_uris, ten)
+  assert.ok(registered.client_id.length <= 2048)
+  assert.equal((await register(app, { redirect_uris: [...ten, OPAQUE] })).status, 400)
+})
+
+test('Gemini completes consent, exchange, refresh and revocation with an opaque address', async () => {
+  const { app, env, memory } = fixture()
+  const id = await client(app, [OPAQUE])
+  const code = await consent(app, id, OPAQUE)
+  assert.equal((await exchangeCode(app, code, { client_id: id, redirect_uri: OPAQUE, code_verifier: 'wrong' })).status, 400)
+  assert.equal((await exchangeCode(app, code, { client_id: id, redirect_uri: REDIRECT })).status, 400)
+  const pair = await readTokenPair(await exchangeCode(app, code, { client_id: id, redirect_uri: OPAQUE }))
+  assert.equal((await residentByOAuthAccessToken(pair.access_token, env, memory.api))?.handle, 'chatty')
+  const second = await readTokenPair(await refresh(app, id, pair.refresh_token))
+  assert.notEqual(second.refresh_token, pair.refresh_token)
+  assert.equal((await refresh(app, id, pair.refresh_token)).status, 400)
+  assert.equal(await residentByOAuthAccessToken(second.access_token, env, memory.api), null)
+
+  const again = await readTokenPair(await exchangeCode(app, await consent(app, id, OPAQUE), { client_id: id, redirect_uri: OPAQUE }))
+  assert.equal((await revoke(app, id, again.refresh_token)).status, 200)
+  assert.equal((await refresh(app, id, again.refresh_token)).status, 400)
+})
+
+// Minted before November 2026 with the October rule, a fixed test key and https://1f3d9.com.
+// It stands for the live connection that carries an October-form address in its ID.
+const FROZEN_KEY = '5e'.repeat(32)
+const FROZEN_REDIRECT = 'https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-123456789012345678901-1f3d9_com'
+const FROZEN_ID = 'gemini.v1.WyJodHRwczovL29hdXRoLXJlZGlyZWN0Lmdvb2dsZXVzZXJjb250ZW50LmNvbS9yL3VzZXJfYm91bmRfY3VzdG9tLW1jcC0xMjM0NTY3ODkwMTIzNDU2Nzg5MDEtMWYzZDlfY29tIl0.qBQ1tiKJ840-Vc-UyJ1VbtTs9JsbRxVOhTyRTs05k8s'
+
+test('a frozen October-form Gemini client ID still resolves at authorize, exchange, refresh and revoke', async () => {
+  const { app, env } = fixture({ GEMINI_DCR_SIGNING_KEY: FROZEN_KEY })
+  assert.deepEqual(resolveGeminiClient(FROZEN_ID, env)?.redirectUris, [FROZEN_REDIRECT])
+  assert.equal(registerGeminiClient([FROZEN_REDIRECT], env), FROZEN_ID)
+  const code = await consent(app, FROZEN_ID, FROZEN_REDIRECT)
+  const pair = await readTokenPair(await exchangeCode(app, code, { client_id: FROZEN_ID, redirect_uri: FROZEN_REDIRECT }))
+  const second = await readTokenPair(await refresh(app, FROZEN_ID, pair.refresh_token))
+  assert.equal((await revoke(app, FROZEN_ID, second.refresh_token)).status, 200)
+  assert.equal((await refresh(app, FROZEN_ID, second.refresh_token)).status, 400)
+})
+
+const REFUSAL_KEYS = ['address_count', 'addresses', 'elapsed_ms', 'error_class', 'event', 'request_id', 'stage', 'status', 'ua_class']
+const SHAPE_KEYS = ['has_port_query_fragment_userinfo_whitespace', 'host_class', 'non_string', 'path_class',
+  'prefix_match', 'scheme_ok', 'segment_class', 'segment_length']
+
+function refusal(record: Readonly<OAuthDiagnosticRecord> | undefined) {
+  assert.ok(record?.stage === 'client_registration')
+  return record
+}
+
+function recording(patch: Record<string, string> = {}) {
+  const records: Readonly<OAuthDiagnosticRecord>[] = []
+  return { ...fixture(patch, undefined, false, record => { records.push(record) }), records }
+}
+
+test('a refused Gemini registration writes one shapes-only record', async () => {
+  const { app, records } = recording()
+  const refused = await register(app, { redirect_uris: [
+    OPAQUE.replace('/r/', '/a/'), OPAQUE.replace('oauth-redirect.', 'oauth-redirect-test.'),
+    REDIRECT.replace('1f3d9_com', 'other_com'), `${OPAQUE}?x=1`, 4,
+  ] }, { 'user-agent': 'OpenAuth' })
+  assert.equal(refused.status, 400)
+  assert.equal(records.length, 1)
+  const record = refusal(records[0])
+  assert.equal(refused.headers.get('x-request-id'), record.request_id)
+  assert.deepEqual(Object.keys(record).sort(), REFUSAL_KEYS)
+  assert.equal(record.event, 'oauth_failure')
+  assert.equal(record.error_class, 'invalid_redirect_uri')
+  assert.equal(record.status, 400)
+  assert.equal(record.ua_class, 'OpenAuth')
+  assert.equal(record.address_count, 5)
+  for (const shape of record.addresses) assert.deepEqual(Object.keys(shape).sort(), SHAPE_KEYS)
+  assert.deepEqual(record.addresses.map(shape => [shape.host_class, shape.path_class, shape.prefix_match, shape.segment_length,
+    shape.segment_class, shape.has_port_query_fragment_userinfo_whitespace, shape.scheme_ok, shape.non_string]), [
+    ['main', 'a', true, 24, 'hex_lower', false, true, false],
+    ['test', 'r', true, 24, 'hex_lower', false, true, false],
+    ['main', 'r', true, 16, 'old_other_host', false, true, false],
+    ['main', 'r', true, 24, 'hex_lower', true, true, false],
+    ['other', 'other', false, 0, 'empty', false, false, true],
+  ])
+})
+
+test('a hostile refused Gemini address leaves none of its text in the record', async () => {
+  const { app, records } = recording()
+  const run = '987654321098765432109'
+  const hostile = `https://quote"line\nbreak.example/r/user_bound_custom-mcp-${run}-zz"\n{"stage":"forged"}`
+  const response = await register(app, { redirect_uris: [hostile, `${OPAQUE}\n`] }, { 'user-agent': 'OpenAuth-but-not-quite' })
+  assert.equal(response.status, 400)
+  assert.equal(records.length, 1)
+  const serialized = JSON.stringify(records[0])
+  for (const fragment of [run, '98765', 'quote', 'break', 'example', 'forged', 'zz', OPAQUE_SEGMENT, 'OpenAuth-but', '\\n', '\\"']) {
+    assert.equal(serialized.includes(fragment), false, fragment)
+  }
+  const { request_id: requestId, addresses, ...rest } = refusal(records[0])
+  assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u)
+  assert.equal(rest.ua_class, 'other')
+  const allowed = new Set(['oauth_failure', 'client_registration', 'invalid_redirect_uri', 'other', 'main', 'test', 'sandbox',
+    'r', 'a', 'digits', 'hex_lower', 'alnum', 'old_this_city', 'old_other_host', 'base64url', 'has_dot_slash_percent', 'empty'])
+  for (const value of [...Object.values(rest), ...addresses.flatMap(shape => Object.values(shape))]) {
+    if (typeof value === 'string') assert.ok(allowed.has(value), value)
+    else if (typeof value === 'number') assert.ok(Number.isInteger(value) && value >= 0 && value <= 60_000)
+    else assert.equal(typeof value, 'boolean')
+  }
+})
+
+test('Gemini registration writes no record on success, a full allowance, missing setup or bad JSON', async () => {
+  const ok = recording()
+  assert.equal((await register(ok.app, { redirect_uris: [OPAQUE] })).status, 201)
+  assert.equal((await register(ok.app, { redirect_uris: [REDIRECT] })).status, 201)
+  const badJson = await ok.app.request('/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' })
+  assert.equal(badJson.status, 400)
+  assert.deepEqual(ok.records, [])
+  const limited = recording()
+  limited.memory.api.consumeOAuthRateLimit = async () => rateLimitResult(false, 17)
+  assert.equal((await register(limited.app, { redirect_uris: ['nope'] })).status, 429)
+  assert.deepEqual(limited.records, [])
+  const unready = recording({ GEMINI_DCR_SIGNING_KEY: '' })
+  assert.equal((await register(unready.app, { redirect_uris: ['nope'] })).status, 503)
+  assert.deepEqual(unready.records, [])
+})
+
+test('a failing diagnostics sink never changes the Gemini registration answer', async () => {
+  const quiet = await register(fixture().app, { redirect_uris: ['nope'] })
+  const loud = await register(fixture({}, undefined, false, () => { throw new Error('sink down') }).app, { redirect_uris: ['nope'] })
+  assert.equal(loud.status, 400)
+  assert.deepEqual(await loud.json(), await quiet.json())
+})
+
+test('the Gemini refusal text fits both address forms and names no city', async () => {
+  const body = await (await register(fixture().app, { redirect_uris: ['nope'] })).json()
+  assert.equal(body.error, 'invalid_redirect_uri')
+  assert.doesNotMatch(body.error_description, /for this city/u)
+  assert.match(body.error_description, /Google Gemini user-bound return address/u)
 })

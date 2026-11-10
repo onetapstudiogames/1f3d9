@@ -11,7 +11,7 @@ export type OAuthFailureStage =
   | 'token_refresh'
   | 'revocation'
 
-export interface OAuthDiagnosticRecord {
+export interface OAuthStageFailureRecord {
   event: 'oauth_failure'
   stage: OAuthFailureStage
   request_id: string
@@ -21,6 +21,42 @@ export interface OAuthDiagnosticRecord {
   status: number
   elapsed_ms: number
 }
+
+/** The shape of one submitted return address: enums, booleans and integers, never its text. */
+export interface RedirectShape {
+  host_class: 'main' | 'test' | 'sandbox' | 'other'
+  scheme_ok: boolean
+  path_class: 'r' | 'a' | 'other'
+  prefix_match: boolean
+  segment_length: number
+  segment_class: 'empty' | 'digits' | 'hex_lower' | 'alnum' | 'old_this_city' | 'old_other_host'
+    | 'base64url' | 'has_dot_slash_percent' | 'other'
+  has_port_query_fragment_userinfo_whitespace: boolean
+  non_string: boolean
+}
+
+export interface RegistrationShapes {
+  addressCount: number
+  addresses: readonly RedirectShape[]
+  userAgentClass: 'OpenAuth' | 'other'
+}
+
+/** Decision 186: a refused Gemini registration, described by shape only. */
+export interface OAuthRegistrationRefusalRecord {
+  event: 'oauth_failure'
+  stage: 'client_registration'
+  request_id: string
+  error_class: 'invalid_redirect_uri'
+  status: 400
+  elapsed_ms: number
+  address_count: number
+  ua_class: RegistrationShapes['userAgentClass']
+  addresses: readonly RedirectShape[]
+  client_origin?: never
+  failed_check?: never
+}
+
+export type OAuthDiagnosticRecord = OAuthStageFailureRecord | OAuthRegistrationRefusalRecord
 
 export type OAuthDiagnosticSink = (record: Readonly<OAuthDiagnosticRecord>) => void
 
@@ -63,15 +99,19 @@ export function traceForClient(
   return { ...trace, clientOrigin: safeClientOrigin(clientId, staticClients) }
 }
 
+function elapsedSince(trace: OAuthRequestTrace): number {
+  return Math.max(0, Math.min(60_000, Date.now() - trace.startedAt))
+}
+
 export function recordFailure(
   diagnostics: OAuthDiagnosticSink,
   trace: OAuthRequestTrace,
   stage: OAuthFailureStage,
   errorClass: string,
   status: number,
-  failedCheck?: OAuthDiagnosticRecord['failed_check'],
+  failedCheck?: OAuthStageFailureRecord['failed_check'],
 ): void {
-  const elapsed = Math.max(0, Math.min(60_000, Date.now() - trace.startedAt))
+  const elapsed = elapsedSince(trace)
   try {
     diagnostics(Object.freeze({
       event: 'oauth_failure',
@@ -82,6 +122,30 @@ export function recordFailure(
       ...(failedCheck ? { failed_check: failedCheck } : {}),
       status,
       elapsed_ms: elapsed,
+    }))
+  } catch {
+    // Diagnostics must never change OAuth behavior or expose a second error path.
+  }
+}
+
+/** Describing the request happens inside the guard, so logging never changes the answer. */
+export function recordRegistrationRefusal(
+  diagnostics: OAuthDiagnosticSink,
+  trace: OAuthRequestTrace,
+  describe: () => RegistrationShapes,
+): void {
+  try {
+    const shapes = describe()
+    diagnostics(Object.freeze({
+      event: 'oauth_failure',
+      stage: 'client_registration',
+      request_id: trace.requestId,
+      error_class: 'invalid_redirect_uri',
+      status: 400,
+      elapsed_ms: elapsedSince(trace),
+      address_count: shapes.addressCount,
+      ua_class: shapes.userAgentClass,
+      addresses: shapes.addresses,
     }))
   } catch {
     // Diagnostics must never change OAuth behavior or expose a second error path.
