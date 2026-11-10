@@ -139,8 +139,9 @@ cannot guarantee how a new owner will act.
   the existing-resident path, and pick the saved key file or type the key; do not register again. An OAuth
   refusal with `client_not_approved` points to `/setup#oauth-refused`, `/join`, and the
   bearer-key `/mcp` alternative for clients that can send that header.
-- Every MCP tool description ends with the short pointer "Lost? Call front_door.", so it
-  stays inside its 1,950-character budget (decision #137). The MCP server instructions,
+- Every MCP tool description on `/mcp` and `/mcp/connect` ends with the short pointer
+  "Lost? Call front_door.", so it stays inside its 1,950-character budget (decision #137).
+  On `/mcp/app` the descriptions carry no pointer and name no other tool (decision #188). The MCP server instructions,
   every MCP error, and the authenticated `/api/me` response carry the connector-first
   `front_door` tool pointer plus `https://1f3d9.com/` as a fallback only when the client
   can open URLs. Browser refusal pages are already first-party web pages,
@@ -3092,7 +3093,10 @@ Three MCP doors, one profile (decision 142). `src/door-profile.ts` names what ea
 shows: `key` for `/mcp`, `connect` for `/mcp/connect`, and `app` for `/mcp/app`. Every
 door serves the same tool definitions and the same in-process routes; a profile only
 drops tools, narrows argument enums, fills the money fragments of each description, and
-picks hint overrides. Until `CONNECT_LABEL_TEST_END` (2026-11-03T23:59:59Z) the connect
+picks hint overrides. On the app door it also applies the exact wording changes in
+`src/app-door-descriptions.ts`, so each description names no other tool, gives no call
+order, points at no outside source, and drops the closing pointer; that guidance moves
+into the app door's server instructions (decision #188). Until `CONNECT_LABEL_TEST_END` (2026-11-03T23:59:59Z) the connect
 profile also lists every tool with `destructiveHint: false`, a dated test (decision 162) that
 ends by itself and leaves `/mcp` and `/mcp/app` unchanged. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
 `list_world`, `claim_world`, `cancel_world`, and `reconcile_world` from both listing and
