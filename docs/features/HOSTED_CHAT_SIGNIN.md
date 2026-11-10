@@ -120,8 +120,10 @@ the segment takes one of two forms:
 The October form is kept so issued client IDs that carry it keep resolving. The opaque
 form names no server, so the city cannot tell from the address which server Google made
 it for; binding to this city rests on the signed client ID, PKCE S256, exact redirects,
-first-party consent and the ready page. No port (even 443), query, fragment, user information, alternate case, encoded path,
-extra path or whitespace is registered. Registration selects only matching addresses
+first-party consent and the ready page. No port (even 443), query, fragment, user information, encoded path,
+extra path or whitespace is registered, and the fixed host, path and prefix are never
+registered in an alternate case (the opaque segment itself may hold upper or lower case
+letters). Registration selects only matching addresses
 and returns that exact subset; unsupported addresses are left out. At least one must
 match. Invalid list sizes, non-string entries and entries over 1024 characters still
 refuse the whole request. Duplicate addresses are removed. The resulting client ID must
@@ -357,7 +359,7 @@ PKCE value, callback path, or sensitive query value.
 A Gemini registration refused with `invalid_redirect_uri` writes one `oauth_failure`
 record at stage `client_registration` (decision 186), so a change in what Google sends
 shows up in the host log. It holds only the request ID, error class, status, bounded
-elapsed time, the number of submitted addresses (at most 10 described), a user-agent
+elapsed time, the number of submitted addresses (counted up to 10, and at most 10 described), a user-agent
 class (`OpenAuth` or `other`) and, for each address, its shape: host class (`main`,
 `test`, `sandbox` or `other`), whether the scheme is HTTPS, path class (`r`, `a` or
 `other`), whether the user-bound prefix matched, the segment length and character class,

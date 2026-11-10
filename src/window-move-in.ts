@@ -47,7 +47,7 @@ export const WINDOW_MOVE_IN_HTML = `
       <h3>Add 1F3D9 to Claude<span data-move-returning hidden> again</span></h3>
       ${ASK_NAME}<p class="move-ask" data-move-returning hidden>First, remove the old 1F3D9 connector, if there is one.</p>
       <p><a class="move-btn move-wide" href="${escapeHtml(CLAUDE_CONNECT_URL)}" target="_blank" rel="noopener">Add 1F3D9 to Claude ↗</a></p>
-      <ol class="move-steps"><li>Tap <b>Add</b>, then <b>Connect</b>.</li><li>${CITY_CHOICE}</li></ol>
+      <ol class="move-steps"><li>Tap <b>Continue</b>, then <b>Add</b>.</li><li>Ask Claude a first question about the city. When it shows "Authorization required", tap <b>Reconnect</b>.<span data-move-returning hidden> If Claude answers right away, you are already connected.</span></li><li>${CITY_CHOICE} Then ask again.</li></ol>
     </section>
     <section class="move-slide" data-move-slide="app-chatgpt" hidden>
       <h3>Add 1F3D9 to ChatGPT<span data-move-returning hidden> again</span></h3>

@@ -26,13 +26,35 @@ const APP_PAGE_PATHS = new Set([
   '/terms', '/privacy', '/delete', '/support', '/reference.txt', '/llms.txt',
 ])
 const LEGAL_PATHS = new Set(['/terms', '/privacy', '/delete', '/support'])
+// In the app, tips go through Google Play billing, so pages there point at no payment outside it.
+const OUTSIDE_LINK_PATTERNS = [
+  /(?:\s*·\s*)?<a\b[^>]*\bhref=["']https:\/\/(?:www\.)?paypal\.com\/donate(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>(?:\s*\([^()<]*\))?/giu,
+  /<a\b[^>]*\bhref=["']https:\/\/1f3ea\.com\/window(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
+] as const
+
+function isAppPagePath(path: string): boolean {
+  return APP_PAGE_PATHS.has(path) || path.startsWith('/window/') ||
+    path.startsWith('/gazette/') || path.startsWith('/reference/')
+}
+
+/** The app marker chooses a presentation, not a page option: covered pages accept it and read without it. */
+export function withoutAppMarker<T extends Readonly<Record<string, readonly string[] | undefined>>>(path: string, queries: T): T {
+  const from = queries.from
+  if (!isAppPagePath(path) || from?.length !== 1 || from[0] !== 'app') return queries
+  return Object.fromEntries(Object.entries(queries).filter(([name]) => name !== 'from')) as T
+}
+
+/** Legal pages keep every word as plain text; other pages drop the link, its separator and its note. */
+function withoutOutsidePaymentLinks(html: string, legal: boolean): string {
+  return OUTSIDE_LINK_PATTERNS.reduce((content, pattern) => content.replace(pattern, (match, label: string) => (
+    legal ? match.replace(/<a\b[^>]*>[\s\S]*?<\/a>/iu, label) : ''
+  )), html)
+}
 
 /** Apply the Android presentation at the response boundary, including cached source pages. */
 export const appPagePurchaseLinks: MiddlewareHandler = async (c, next) => {
   await next()
-  if (c.req.query('from') !== 'app' || !(APP_PAGE_PATHS.has(c.req.path) ||
-      c.req.path.startsWith('/window/') || c.req.path.startsWith('/gazette/') ||
-      c.req.path.startsWith('/reference/'))) return
+  if (c.req.query('from') !== 'app' || !isAppPagePath(c.req.path)) return
   const contentType = c.res.headers.get('content-type') ?? ''
   if (!contentType.includes('text/html') && !contentType.includes('text/plain')) return
   // Hono retains prior response headers when replacing its body. Update them first.
@@ -50,7 +72,7 @@ export const appPagePurchaseLinks: MiddlewareHandler = async (c, next) => {
     /<a\b[^>]*\bhref=["'](?:https:\/\/1f3d9\.com)?\/buy(?:[?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
     (_anchor, label: string) => legal ? label : '',
   )
-  const body = legal || html ? withoutBuyLinks : withoutBuyLinks.split(/\n\s*\n/u).map(paragraph =>
+  const body = html ? withoutOutsidePaymentLinks(withoutBuyLinks, legal) : legal ? withoutBuyLinks : withoutBuyLinks.split(/\n\s*\n/u).map(paragraph =>
         paragraph.split(/(?<=[.!?])\s+/u).filter(sentence => !sentence.includes('/buy')).join(' '),
       ).join('\n\n')
   const headers = new Headers(c.res.headers)

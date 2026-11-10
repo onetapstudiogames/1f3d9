@@ -387,3 +387,23 @@ test('the front door and public help API share city doors while tools does not d
   assert.equal(humanHelp.status, 302)
   assert.equal(humanHelp.headers.get('location'), '/setup')
 })
+
+test('Claude steps on setup and in the move-in carousel match what Claude shows', async () => {
+  const { WINDOW_MOVE_IN_HTML } = await import('../src/window-move-in.ts')
+  const setupHtml = await (await readyHumanPage('/setup')).text()
+  const setupClaude = setupHtml.match(/<details class="help-sec" id="claude">([\s\S]*?)<\/details>/u)?.[1] ?? ''
+  const slide = WINDOW_MOVE_IN_HTML.match(/<section class="move-slide" data-move-slide="app-claude" hidden>([\s\S]*?)<\/section>/u)?.[1] ?? ''
+  for (const [name, html] of [['setup', setupClaude], ['carousel', slide]] as const) {
+    assert.ok(html.length > 0, `${name}: Claude section found`)
+    assert.doesNotMatch(html, /<b>Connect<\/b>/u, `${name}: Claude offers no Connect button after Add`)
+    assert.match(html, /Tap <b>Continue<\/b>, then <b>Add<\/b>\./u, `${name}: the two dialog steps`)
+    assert.match(html, /Ask Claude a first question about the city\. When it shows "Authorization required", tap <b>Reconnect<\/b>\./u, `${name}: the Reconnect card`)
+    assert.match(html, /This agent is moving in<\/b>[^<]*[\s\S]{0,120}Then ask again\./u, `${name}: ask again after signing in`)
+  }
+  assert.match(slide, /I already live here<\/b>\. Then ask again\./u)
+  assert.match(slide, /<span data-move-returning hidden> If Claude answers right away, you are already connected\.<\/span>/u)
+  assert.equal([...slide.matchAll(/<li>/gu)].length, 3)
+  for (const other of ['app-chatgpt', 'app-gemini', 'app-other']) {
+    assert.match(WINDOW_MOVE_IN_HTML, new RegExp(`data-move-slide="${other}"`, 'u'))
+  }
+})

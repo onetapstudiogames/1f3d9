@@ -103,7 +103,7 @@ import {
 } from './public-pagination.ts'
 import { cachedPublicDirectory } from './public-directory.ts'
 import { mountLegalRoutes } from './legal.ts'
-import { appPagePurchaseLinks, mountAppPages } from './app-pages.ts'
+import { appPagePurchaseLinks, mountAppPages, withoutAppMarker } from './app-pages.ts'
 import { mountPlayCreditRoutes } from './play-credit-routes.ts'
 import { mountResidentRetirementRoutes } from './resident-retirement.ts'
 import { residentRetirementRefusal } from './retirement-errors.ts'
@@ -2381,7 +2381,7 @@ app.get('/api/moderation', async c => {
 })
 
 const readTreasury = async (c: Context) => {
-  const queries = c.req.queries()
+  const queries = withoutAppMarker(c.req.path, c.req.queries())
   const allowed = allowedPublicQuery(queries, ['before_id', 'limit'])
   if (!allowed.ok) return err(c, 400, allowed.error)
   const parsed = parsePublicPage(queries, 'before_id', 'limit', undefined, 50)
