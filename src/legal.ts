@@ -591,11 +591,8 @@ function legalDocument(path: '/terms' | '/privacy' | '/support' | '/delete', tit
 function legalText(c: Context, path: '/terms' | '/privacy' | '/support' | '/delete', title: string, body: string) {
   c.header('Vary', 'Accept')
   if (prefersHtml(c.req.header('accept'), 'text/plain')) {
-    const response = guidePage(c, legalDocument(path, title, body), path === '/delete'
-      ? { scripts: true, cacheControl: 'no-store' } : {})
-    if (path === '/delete') response.headers.set('Content-Security-Policy',
-      response.headers.get('Content-Security-Policy')!.replace("connect-src 'none'", "connect-src 'self'"))
-    return response
+    return guidePage(c, legalDocument(path, title, body), path === '/delete'
+      ? { scripts: true, connect: true, cacheControl: 'no-store' } : {})
   }
   c.header('Cache-Control', 'public, max-age=300')
   return c.text(body)

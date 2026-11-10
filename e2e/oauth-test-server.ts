@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:https'
 import { getRequestListener } from '@hono/node-server'
 import { Hono, type Context } from 'hono'
+import { cors } from 'hono/cors'
 import { auth, setOAuthResidentResolver } from '../src/core.ts'
 import { mcp } from '../src/mcp.ts'
 import { mountIdentityRoutes } from '../src/identity-browser.ts'
@@ -170,6 +171,9 @@ mountHumanPages(featureOffHumanPages, {
   submitCommunityTool: submitCommunityToolForBrowserTest,
 })
 app.route('/feature-off', featureOffHumanPages)
+// Production runs cors on every path before the page handler; keep that here
+// so the retirement page is served the way the deployment serves it.
+app.use('/delete', cors({ origin: '*' }))
 mountLegalRoutes(app)
 mountHumanPages(app, {
   environment,
