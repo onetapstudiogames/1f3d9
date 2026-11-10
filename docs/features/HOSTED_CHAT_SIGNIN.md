@@ -97,21 +97,30 @@ its server-created backing request; the same token is rejected at `/mcp` and dir
 |---------|----------|
 | Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
 | Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
-| Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects for this city's configured public host; no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
+| Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
 | Refresh throttle | Each token family (one connector connection) has its own 3,600-attempt UTC-hour allowance (decision #138, which replaces only the figure 120 in #63). Malformed, unknown, expired, and revoked refresh requests use a separate per-network junk allowance and cannot spend a live connection's capacity. A full live-connection or junk allowance returns HTTP `429`, a `Retry-After` header containing the exact seconds until the next UTC hour, `temporarily_unavailable`, and an instruction to wait that many seconds and retry. An actually invalid grant still returns `invalid_grant` |
 | Revocation | Two requests contending for the same refresh token during one live database rotation have one winner; the loser gets `invalid_grant` without revoking the winner's family. There is no grace period after the winner commits: later reuse revokes the whole family. The revocation endpoint can end a connector grant without changing the resident key |
 
 ### Gemini registration
 
-The owner approved this narrow registration route on 2026-10-11; decision 143 is
-PROPOSED until the owner locks the row. Send a JSON object of at most 8192 bytes
-with `redirect_uris`, an array of 1 to 10 strings, each at most 1024 characters.
-Each registered raw address must be
-`https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<digits>-<city-host>`.
-The digits are one or more ASCII digits; city-host is the hostname from
-`PUBLIC_ORIGIN` with dots replaced by underscores and hyphens kept (`1f3d9_com` in production).
-No port (even 443), query, fragment, user information, alternate case, encoded path,
+The owner approved this narrow registration route on 2026-10-11 (decision 143, LOCKED)
+and widened the address rule on 2026-11-10 (decision 186, LOCKED). Send a JSON object
+of at most 8192 bytes with `redirect_uris`, an array of 1 to 10 strings, each at most
+1024 characters. Each registered raw address must be
+`https://oauth-redirect.googleusercontent.com/r/user_bound_custom-mcp-<segment>`, where
+the segment takes one of two forms:
+
+- October form: `<digits>-<city-host>`. The digits are one or more ASCII digits;
+  city-host is the hostname from `PUBLIC_ORIGIN` with dots replaced by underscores and
+  hyphens kept (`1f3d9_com` in production).
+- Opaque form: 16 to 64 ASCII letters or digits and nothing else, for example
+  `4815162342c0ffee15deadbe` (an invented sample).
+
+The October form is kept so issued client IDs that carry it keep resolving. The opaque
+form names no server, so the city cannot tell from the address which server Google made
+it for; binding to this city rests on the signed client ID, PKCE S256, exact redirects,
+first-party consent and the ready page. No port (even 443), query, fragment, user information, alternate case, encoded path,
 extra path or whitespace is registered. Registration selects only matching addresses
 and returns that exact subset; unsupported addresses are left out. At least one must
 match. Invalid list sizes, non-string entries and entries over 1024 characters still
@@ -152,6 +161,9 @@ automatically. The page clears its sign-in cookie and sends no referrer.
 The 2026-10-11 Preview observation found six Gemini callbacks: the configured host
 with dots changed to underscores, on `oauth-redirect`, `oauth-redirect-test` and
 `oauth-redirect-sandbox` under `googleusercontent.com`, with both `/r/` and `/a/` paths.
+The 2026-11-10 Preview observation found the same six hosts and paths, but the part
+after `user_bound_custom-mcp-` had become 24 letters and digits with no city host, so
+every live registration was refused until decision 186 added the opaque form.
 Only `oauth-redirect.googleusercontent.com/r/` is registered. The other five never
 enter the client ID and cannot receive a code. Gemini's copy button shows only the
 supported callback. This is RFC 7591 metadata selection, not a wider callback rule.
@@ -341,6 +353,18 @@ OAuth failures receive a request ID and one small host diagnostic containing onl
 stage, safe client origin, error class, status, and bounded elapsed time. It never stores
 or logs a resident key, authorization code, access or refresh token, raw form, state,
 PKCE value, callback path, or sensitive query value.
+
+A Gemini registration refused with `invalid_redirect_uri` writes one `oauth_failure`
+record at stage `client_registration` (decision 186), so a change in what Google sends
+shows up in the host log. It holds only the request ID, error class, status, bounded
+elapsed time, the number of submitted addresses (at most 10 described), a user-agent
+class (`OpenAuth` or `other`) and, for each address, its shape: host class (`main`,
+`test`, `sandbox` or `other`), whether the scheme is HTTPS, path class (`r`, `a` or
+`other`), whether the user-bound prefix matched, the segment length and character class,
+whether a port, query, fragment, user information or whitespace appeared, and whether it
+was a string. It never logs any character of an address or a hash of one, so callback
+paths are still never logged; nor the network address, the raw user agent, the body or
+the client name. Successful, throttled and unavailable registrations write nothing.
 
 ### Tool-call arrival and reply diagnostics
 

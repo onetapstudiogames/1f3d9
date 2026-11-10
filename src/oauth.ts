@@ -47,6 +47,7 @@ import {
   beginTrace,
   defaultDiagnostics,
   recordFailure as recordDiagnosticFailure,
+  recordRegistrationRefusal,
   traceForClient,
   type OAuthDiagnosticRecord,
   type OAuthDiagnosticSink,
@@ -57,7 +58,14 @@ import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
 import { PAIRING_CODE_RE } from './pair.ts'
 import { HANDLE_HTML_PATTERN, HANDLE_RULE } from './core-primitives.ts'
 import { PAIRING_LIMITS } from './pairing-limits.ts'
-import { GEMINI_CLIENT_PREFIX, geminiRedirects, geminiSigningReady, registerGeminiClient, resolveGeminiClient } from './oauth-gemini.ts'
+import {
+  GEMINI_CLIENT_PREFIX,
+  geminiRedirects,
+  geminiRegistrationShapes,
+  geminiSigningReady,
+  registerGeminiClient,
+  resolveGeminiClient,
+} from './oauth-gemini.ts'
 import { OAUTH_ACCESS_TOKEN_SECONDS, OAUTH_LIMITS, OAUTH_REFRESH_TOKEN_SECONDS } from './oauth-limits.ts'
 import {
   postgresOAuthStore,
@@ -699,6 +707,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
   }))
 
   app.post('/oauth/register', async c => {
+    const trace = beginTrace(c)
     privateHeaders(c)
     if (!geminiSigningReady(oauth.environment)) {
       return c.json({ error: 'temporarily_unavailable', error_description: 'Gemini registration is not ready. Ask the city owner to finish setup.' }, 503)
@@ -725,10 +734,13 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       if ('software_statement' in body) {
         return c.json({ error: 'unapproved_software_statement', error_description: 'Send the return addresses directly, without a software statement.' }, 400)
       }
-      const redirects = geminiRedirects((body as Record<string, unknown>).redirect_uris, oauth.environment, true)
+      const requested = (body as Record<string, unknown>).redirect_uris
+      const redirects = geminiRedirects(requested, oauth.environment, true)
       const clientId = redirects ? registerGeminiClient(redirects, oauth.environment) : null
       if (!redirects || !clientId) {
-        return c.json({ error: 'invalid_redirect_uri', error_description: 'Include a Google Gemini user-bound return address for this city, with no port, query, fragment or user information; send 1 to 10 addresses, each at most 1024 characters. Only supported addresses are registered and must fit a 2048-character client ID.' }, 400)
+        recordRegistrationRefusal(oauth.diagnostics, trace,
+          () => geminiRegistrationShapes(requested, c.req.header('user-agent'), oauth.environment))
+        return c.json({ error: 'invalid_redirect_uri', error_description: 'Include a Google Gemini user-bound return address, with no port, query, fragment or user information; send 1 to 10 addresses, each at most 1024 characters. Only supported addresses are registered and must fit a 2048-character client ID.' }, 400)
       }
       return c.json({ client_id: clientId, client_name: 'Gemini', redirect_uris: redirects,
         token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'],

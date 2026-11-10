@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 185 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 185)
+    assert.deepEqual(recorded, Array.from({ length: 186 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 186)
     assert.match(decisions, /\| 171 \|[^\n]*only if its kind allows it and its owner chooses it[^\n]*LOCKED on merge \(owner, 2026-11-06, in chat: "Trimmed version with label and links"/u)
     assert.match(decisions, /\| 172 \|[^\n]*narrows #30[^\n]*#62 and #108[^\n]*#105, #112, #113 and #114[^\n]*"Sure"/u)
     assert.match(decisions, /\| 173 \|[^\n]*narrows #155 and #156[^\n]*extends #106[^\n]*#167 unchanged[^\n]*#37 unchanged/u)
@@ -58,6 +58,16 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 169 \|[^\n]*`POST \/api\/founder\/labels\/end`[^\n]*never the label's name[^\n]*LOCKED on merge \(owner, 2026-10-31, in chat: "if they want them removed they may ask in the telling room/u)
     assert.match(decisions, /\| 167 \|[^\n]*Exactly three services may run on a schedule: the Gazette print under #56, bounded payment recovery under #41, and this founder-scheduled act\. Nothing else may be scheduled without a decision row\./u)
     assert.match(decisions, /\| 143 \|[^\n]*Gemini[^\n]*LOCKED/u)
+    assert.match(decisions, /\| 186 \|[^\n]*opaque user-bound return address[^\n]*16 to 64 ASCII letters or digits[^\n]*every other word of #143 stands[^\n]*LOCKED \(owner, 2026-11-10, "yes to both"\)/u)
+    for (const [name, text] of [
+      ['decision 186', decisions.split('\n').find(line => line.startsWith('| 186 |')) ?? ''],
+      ['system design', specification],
+      ['refusal census', read('../docs/archive/2026-08/audits/2026-09-refusal-census.md')],
+    ] as const) {
+      const flat = text.replace(/\s+/gu, ' ')
+      assert.doesNotMatch(flat, /\b(?:each|a) refused registration writes/iu, `${name}: only a refusal for the return addresses writes a diagnostic`)
+      assert.match(flat, /registration refused for its return addresses \(400 `?invalid_redirect_uri`?\) writes one shapes-only/iu, `${name}: names the one refusal that writes a diagnostic`)
+    }
     assert.match(decisions, /\| 144 \|[^\n]*seasons and holidays by the UTC date[^\n]*LOCKED \(owner, 2026-10-14, "Okay, ship it"\)/u)
     assert.match(decisions, /\| 145 \|[^\n]*never removed for an opinion or point of view alone[^\n]*at most 90 days[^\n]*no bans, a resident is never deleted, every block expires[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
     assert.match(decisions, /\| 146 \|[^\n]*No unattended, recurring copying of outside content into shared views[^\n]*search, events, changes[^\n]*LOCKED \(owner, 2026-10-14, in chat: "Go and yes\."/u)
@@ -77,7 +87,7 @@ export function registerCityDoorsAndGuidanceTests(): void {
     assert.match(decisions, /\| 160 \|[^\n]*A human may mute residents, places, notes, things and kinds in their own browser[^\n]*Neither founder account, residents #1 and #2, can be muted \(#159\)[^\n]*#9, #71 and docs\/INVARIANTS\.md item 21 are unchanged in substance[^\n]*LOCKED \(owner, 2026-10-14, proposal decisions section C[^\n]*"Go 11", 2026-10-18\)/u)
     assert.match(decisions, /\| 161 \|[^\n]*muted words judge encoded text on its translation, whatever its encoded-text filter says[^\n]*never on the encoded digits or symbols[^\n]*narrows #157's "it runs after describe"[^\n]*for the resident who chose describe or who keeps muted words[^\n]*LOCKED \(owner, 2026-10-19, in chat: "For number 1, it can be "translated" and checked for words in block/u)
     assert.match(decisions, /\| 162 \|[^\n]*On `\/mcp\/connect` only, from the deploy until 2026-11-03T23:59:59Z[^\n]*`CONNECT_LABEL_TEST_END`[^\n]*deliberately less than honest[^\n]*narrows #135 for `\/mcp\/connect` only[^\n]*LOCKED \(owner, 2026-10-20: "Should we try a temp fix of marking everything non destructive to see what happens"[^\n]*"I'd say yeah\. Let's try it on old connector"\)/u)
-    assert.match(contributorGuide, /\(185 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
+    assert.match(contributorGuide, /\(186 recorded decisions[^)]*do not relitigate locked\s+rows\)/u)
     assert.match(decisions, /\| 134 \|[^\n]*founded before renaming went live[^\n]*after-room-place-<place_id>-rename[^\n]*LOCKED/iu)
     assert.match(decisions, /\| 135 \|[^\n]*destructiveHint[^\n]*follows the MCP spec[^\n]*delete, overwrite, spend, or transfer[^\n]*LOCKED/iu)
     const normalizedReference = referenceSource.replace(/\s+/gu, ' ')
