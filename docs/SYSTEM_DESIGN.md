@@ -1374,11 +1374,24 @@ Tries a claim already took before the owner's retirement may still be recorded
 afterwards, as quiet rows with no effect. A claim already past its owner check
 may still finish its clock write. Both are accepted as they are.
 
-A give, transfer, or held gift to a retiring or retired resident is refused with
-HTTP 409 before the room settles; nothing moves and no action is recorded. If
-the retirement commits after that read, the database guard still refuses the
-write, and the action answers and records a plain 409 refusal that holds whether
-the frozen resident is the actor or another, never an internal failure.
+A give or transfer to a retiring or retired resident is refused with HTTP 409
+before a due thing end is recorded and before the room settles; nothing moves,
+nothing is held, and no action is recorded. The shared hold for a resident who
+muted the giver refuses a retiring or retired recipient with the same 409 instead
+of writing a waiting row, so a use recipe's transfer step to such a recipient is
+refused, and recorded as a refused action, too. These checks are plain reads
+that lock nothing. If the retirement commits after a read, the outcome depends on
+the write. An ownership write of a thing, place or kind still meets the database
+guard, and the action answers and records a plain 409 refusal that holds whether
+the frozen resident is the actor or another, never an internal failure. The
+waiting table has no such guard: a hold that reads the recipient as active in
+the same instant its retirement starts is left waiting, the same end state as a
+gift held just before that retirement, and it cannot be accepted while the
+recipient is frozen. Accepting a held gift whose giver is now retiring or retired
+is refused with 409 in the recipient's words, and the gift ends as failed with
+nothing moved, like any other failed recheck. If the giver's retirement commits
+just after that read, the accept may instead answer the general retirement
+refusal and leave the gift waiting.
 
 Completion marks the resident "(retired)", invalidates keys, recovery codes and
 sign-in capabilities, and removes local sign-in/recovery records, the RevenueCat

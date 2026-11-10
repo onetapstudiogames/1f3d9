@@ -306,6 +306,26 @@ export function registerActionResolutionTests(): void {
     const resolution = calls.find(call => /INSERT INTO action_resolutions/.test(call.text))
     assert.ok(resolution)
     assert.equal(JSON.parse(String(resolution.values.at(-2))).error, expectedError)
+
+    // Only R0001 means a frozen resident. R0002 and R0003 block a retirement request, so
+    // inside an action they stay the unrecognized internal failure they were before.
+    for (const code of ['R0002', 'R0003']) {
+      const other = await runAction({
+        actorId: 7,
+        actorHandle: 'strata',
+        action: 'make',
+        placeId: 112,
+        primitiveHandledByCaller: true,
+        performPrimitive: async () => {
+          throw Object.assign(new Error('retirement request refused'), { code })
+        },
+      }, db)
+      assert.equal(other.httpStatus, 500, code)
+      assert.notEqual(other.error, expectedError, code)
+      assert.match(other.error ?? '', /internal failure/u, code)
+    }
+    assert.equal(logged.length, 2)
+    assert.deepEqual(logged.map(values => (values[1] as { error_code?: unknown }).error_code), ['R0002', 'R0003'])
   })
 
   test('an internal engine failure does not tell the caller to read action.error', async t => {

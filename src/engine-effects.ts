@@ -16,6 +16,7 @@ import {
 import { HELD_THING_ERROR } from './refusal-text.ts'
 import { ENDING_GIVE_REFUSAL, THING_ENDED_SKIP_REASON, THING_REMNANT_REFUSAL } from './thing-ending-refusals.ts'
 import { giftsWaitFor, holdTransfer, type WaitingNote } from './waiting-transfers.ts'
+import { frozenRecipientRefusal } from './retirement-errors.ts'
 import {
   MAX_EFFECT_GENERATIONS,
   MAX_TIMER_SECONDS,
@@ -1277,6 +1278,13 @@ async function transferableNow(target: RuntimeTarget, actorId: number, db: Tagge
   return rows.length > 0
 }
 
+async function recipientRetirementState(recipientId: number, db: TaggedSql): Promise<unknown> {
+  const rows = await queryRows<{ retirement_state?: unknown }>(db`
+    SELECT retirement_state FROM residents WHERE id = ${recipientId}
+  `)
+  return rows[0]?.retirement_state
+}
+
 /**
  * Decision #158: when the recipient muted the actor and has not let its gifts through, a
  * transfer that could move now is held instead. It writes one private waiting row, moves
@@ -1292,6 +1300,10 @@ export async function holdTransferIfWaiting(
 ): Promise<WaitingNote | null> {
   if (target.type === 'resident' || actorId === recipientId) return null
   if (!await giftsWaitFor(recipientId, actorId, db)) return null
+  // A retiring or retired recipient is refused, never held: the waiting table has no
+  // retirement guard of its own. A plain read; it locks nothing.
+  const frozen = frozenRecipientRefusal(await recipientRetirementState(recipientId, db))
+  if (frozen !== null) throw new EngineError(409, frozen)
   if (target.type === 'thing') {
     const thing = await thingState(target.id, db)
     if (thing?.ownerId === actorId && thing.heldBy != null) throw new EngineError(409, HELD_THING_ERROR)

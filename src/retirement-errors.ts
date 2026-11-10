@@ -8,10 +8,21 @@ export function residentRetirementRefusal(error: unknown): string | null {
   return null
 }
 
+/** True only for the guard's frozen-resident refusal (R0001), never R0002 or R0003. */
+export function isFrozenResidentGuardError(error: unknown): boolean {
+  return postgresErrorCode(error) === 'R0001'
+}
+
 /** A give names its recipient: a retiring or retired one cannot receive, and nothing moves. */
 export function frozenRecipientRefusal(state: unknown): string | null {
   if (state !== 'retiring' && state !== 'retired') return null
   return `That resident is ${state} and cannot receive things, land or kinds. Nothing moved. Choose an active resident in to_handle.`
+}
+
+/** Accepting a held gift whose giver is now retiring or retired: said to the recipient. */
+export function frozenGiverAcceptRefusal(state: unknown): string | null {
+  if (state !== 'retiring' && state !== 'retired') return null
+  return `This gift can no longer be accepted because its giver is ${state}. It stays with the giver.`
 }
 
 /** An action whose write met the retirement guard, true whether the frozen resident is the actor or another. */
