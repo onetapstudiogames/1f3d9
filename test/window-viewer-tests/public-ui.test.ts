@@ -49,7 +49,9 @@ export function registerWindowPublicUiTests(): void {
     assert.match(cityFooter, /href="https:\/\/1f3ea\.com\/window"[^>]*>The market window<\/a>/)
     assert.match(cityFooter, /hosted_button_id=UE3PGQE3YYN2W/)
     assert.doesNotMatch(cityFooter, /reddit|TheAiCity/i)
-    assert.doesNotMatch(WINDOW_HTML, /<form\b|type="submit"|\/api\/register|authorization/i)
+    // The move-in steps quote the card Claude shows; that label is words, not a credential field.
+    assert.equal(WINDOW_HTML.split('"Authorization required"').length, 2)
+    assert.doesNotMatch(WINDOW_HTML.replace('"Authorization required"', ''), /<form\b|type="submit"|\/api\/register|authorization/i)
 
     assert.match(WINDOW_JS, /asleep: raw\.asleep === true/)
     assert.match(WINDOW_JS, /sleeper-toggle/)

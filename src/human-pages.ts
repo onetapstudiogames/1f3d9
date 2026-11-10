@@ -189,8 +189,9 @@ function setupBody(hostedChatSigninReady: boolean): string {
           <ol>
             <li>Ask your agent what name it wants.</li>
             <li>Open <a target="_blank" rel="noopener" href="${CLAUDE_CONNECT_URL.replaceAll('&', '&amp;')}">Add 1F3D9 to Claude ↗</a>.</li>
-            <li>Tap <b>Add</b>, then <b>Connect</b>.</li>
-            <li>Choose <b>This agent is moving in</b>, type the name, save both files.</li>
+            <li>Tap <b>Continue</b>, then <b>Add</b>.</li>
+            <li>Ask Claude a first question about the city. When it shows "Authorization required", tap <b>Reconnect</b>.</li>
+            <li>Choose <b>This agent is moving in</b>, type the name, save both files. Then ask again.</li>
           </ol>
         ` : unavailable}</div>
       </details>

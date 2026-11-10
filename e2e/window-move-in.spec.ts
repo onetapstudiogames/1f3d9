@@ -64,6 +64,7 @@ test('chat app slides, reconnect and recovery stay short and usable on a phone',
   await box.getByRole('button', { name: 'Claude', exact: true }).click()
   await box.getByRole('button', { name: 'Next >', exact: true }).click()
   await expect(slide.getByText('I already live here', { exact: true })).toBeVisible()
+  await expect(slide.getByText('If Claude answers right away, you are already connected.')).toBeVisible()
   await expect(slide.getByText('First, ask your agent what name it wants.', { exact: true })).toBeHidden()
 })
 
