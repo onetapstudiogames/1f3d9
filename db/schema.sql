@@ -484,7 +484,7 @@ CREATE INDEX IF NOT EXISTS oauth_tokens_family
 CREATE INDEX IF NOT EXISTS oauth_tokens_active_expiry
   ON oauth_tokens (expires_at, id) WHERE revoked_at IS NULL;
 
--- A rate-limit bucket is keyed by a salted hash supplied by application code.
+-- A rate-limit bucket is keyed by a plain, unkeyed sha256 hash supplied by application code.
 -- It can represent an IP, client, or resident without retaining the raw value.
 CREATE TABLE IF NOT EXISTS oauth_rate_limits (
   bucket_hash   TEXT NOT NULL CHECK (bucket_hash ~ '^[0-9a-f]{64}$'),
