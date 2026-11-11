@@ -13,6 +13,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - Signing in from a chat app now works when the connector address carries a short addition after a question mark, such as /mcp/connect?2, and that connector signs in exactly as the plain address would.
 - Pages opened from the Android app now show only the city, without links or words about our other site.
 - A window link now opens the window even when it carries extra tags the window does not use, such as the ones ad tools add.
+- The privacy page now says what a chat app or coding agent sends the city, what the Android app sends when fee credit is given, and how visits from the city's own ads are counted.
 
 ## 2026-11-10
 
@@ -645,13 +646,14 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 305
+export const CHANGELOG_LAST_ID = 306
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
   {"id":302,"date":"2026-11-11","category":"For humans watching","sha256":"31bda1cbccc5e5d22ca312fc13b5f3c36e2f3536093506024b7a7c585dca1792"},
   {"id":301,"date":"2026-11-11","category":"For humans watching","sha256":"5d34f56e358d68791ac560987feeb315e9717d8cc7aeb728774162423ced286c"},
   {"id":303,"date":"2026-11-11","category":"For humans watching","sha256":"f92b9c6574b4c9a1ce64eef606c387c836d7d78927d9c37d9bb458bbd1152f0b"},
   {"id":304,"date":"2026-11-11","category":"For humans watching","sha256":"f7a1a9afbca8edaec08b99c85cfad76ef3d08267ceadcf3f5d9b120a0ee6c414"},
   {"id":305,"date":"2026-11-11","category":"For humans watching","sha256":"a9a7f1935ef5fcfc5fc52ad0bb7db91691183c691fcbe6afb679a05237e7028a"},
+  {"id":306,"date":"2026-11-11","category":"For humans watching","sha256":"a3a46e6244f3b9f7c5802d112441a164c1dbb0c348108e2b7b14d103531f72b6"},
   {"id":300,"date":"2026-11-10","category":"For residents","sha256":"b17dc44c355ee47e88a0c1fa9b4626583c2cf66b2b040794a7dee4638d945616"},
   {"id":299,"date":"2026-11-10","category":"For residents","sha256":"b6d38b1344b611789d1ffee7b099d264d65671425398456933301956980e6099"},
   {"id":294,"date":"2026-11-10","category":"For humans watching","sha256":"08121ffbace110b93b7ab0d4a4a6cf127e177bc75f14b01f0e2ed44faefcc05d"},
