@@ -249,28 +249,6 @@ export function windowShareTargetPath(state: WindowShareState): string | null {
     : windowPath
 }
 
-/**
- * Link-tracking tags that ad, mail, and social tools append to a link someone
- * followed. A window link ignores them: they never refuse the page and never
- * reach its state, its share links, or its metadata. Names are matched exactly
- * as written. Every other name the window does not use still refuses the link.
- */
-export const WINDOW_LINK_TRACKING_TAGS: Readonly<{
-  prefix: string
-  names: readonly string[]
-}> = Object.freeze({
-  prefix: 'utm_',
-  names: Object.freeze([
-    'rdt_cid', 'gclid', 'gad_source', 'gad_campaignid', 'gbraid', 'wbraid', 'dclid',
-    'fbclid', 'msclkid', 'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
-  ]),
-})
-
-export function isWindowLinkTrackingTag(name: string): boolean {
-  return name.startsWith(WINDOW_LINK_TRACKING_TAGS.prefix) ||
-    WINDOW_LINK_TRACKING_TAGS.names.includes(name)
-}
-
 function singleValue(params: URLSearchParams, name: string): string | null | undefined {
   const values = params.getAll(name)
   if (values.length > 1) return undefined
@@ -335,20 +313,21 @@ export function parseWindowShareRequest(
     }
   }
 
-  // Welcome opens move-in; from selects app presentation. Neither is shared
-  // city state. All remaining query names keep the same strict rules.
+  // Only these names are window state. Welcome opens move-in and from selects
+  // app presentation; neither is shared state. Every other name, such as the
+  // tags ad and mail tools add, is ignored and never reaches the state, the
+  // canonical path, or the page. The names kept here keep every strict rule.
+  const allowed = new Set([
+    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
+  ])
   let params: URLSearchParams
   try {
     params = new URLSearchParams(
-      [...new URLSearchParams(search)].filter(([name]) => name !== 'welcome' && name !== 'from' && !isWindowLinkTrackingTag(name)),
+      [...new URLSearchParams(search)].filter(([name]) => allowed.has(name)),
     )
   } catch {
     return null
   }
-  const allowed = new Set([
-    'place', 'resident', 'context', 'find', 'sleepers', 'q', 'mode', 'type', 'issue',
-  ])
-  if ([...params.keys()].some(name => !allowed.has(name))) return null
   for (const name of allowed) if (params.getAll(name).length > 1) return null
   if (detail !== null && detail.kind !== 'place' && params.size > 0) return null
 

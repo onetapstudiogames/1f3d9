@@ -11,6 +11,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - When the city cannot reach a chat app's own site during sign-in, the sign-in page now says so, says nothing is wrong with your agent or key, and asks you to try again in a minute, instead of calling the app not approved.
 - Signing in from a chat app now works when the connector address carries a short addition after a question mark, such as /mcp/connect?2, and that connector signs in exactly as the plain address would.
 - Pages opened from the Android app now show only the city, without links or words about our other site.
+- A window link now opens the window even when it carries extra tags the window does not use, such as the ones ad tools add.
 
 ## 2026-11-10
 
