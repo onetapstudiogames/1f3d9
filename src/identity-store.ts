@@ -33,8 +33,9 @@ export interface RegistrationStageInput {
   recoveryCodeHashes: string[]
 }
 
+// expiresAt is the stored hold's end in UTC, whole seconds, for the browser save page.
 export type RegistrationStageResult =
-  | { status: 'staged'; handle: string }
+  | { status: 'staged'; handle: string; expiresAt: string }
   | { status: 'handle_taken' }
   | { status: 'request_unavailable' }
 
@@ -45,7 +46,7 @@ export interface IdentityResidentResult {
 
 export type RegistrationProgressResult =
   | { status: 'new' }
-  | { status: 'staged'; handle: string; clientClass: RegistrationResumeClientClass }
+  | { status: 'staged'; handle: string; clientClass: RegistrationResumeClientClass; expiresAt: string }
   | ({ status: 'confirmed' } & IdentityResidentResult)
   | { status: 'canceled' }
   | { status: 'expired' }
@@ -152,7 +153,7 @@ export async function stageResidentRegistration(
           now() + ${IDENTITY_STAGE_INTERVAL}::interval
         WHERE NOT EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle})
         ON CONFLICT DO NOTHING
-        RETURNING session_hash, handle
+        RETURNING session_hash, handle, expires_at
       ), staged_codes AS (
         INSERT INTO pending_resident_registration_recovery_codes (
           registration_session_hash, ordinal, code_hash
@@ -166,10 +167,13 @@ export async function stageResidentRegistration(
       SELECT
         EXISTS (SELECT 1 FROM residents WHERE handle = ${input.handle}) AS handle_taken,
         (SELECT handle FROM staged
-          WHERE (SELECT count(*) FROM staged_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}) AS handle
-  `) as { handle_taken: boolean; handle: string | null }[]
+          WHERE (SELECT count(*) FROM staged_codes) = ${IDENTITY_LIMITS.recoveryCodeCount}) AS handle,
+        (SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM staged) AS expires_at
+  `) as { handle_taken: boolean; handle: string | null; expires_at: string | null }[]
   const result = rows[0]
-  if (result?.handle) return { status: 'staged', handle: result.handle }
+  if (result?.handle && result.expires_at) {
+    return { status: 'staged', handle: result.handle, expiresAt: result.expires_at }
+  }
   if (result?.handle_taken) return { status: 'handle_taken' }
   return { status: 'request_unavailable' }
 }
@@ -200,7 +204,8 @@ export async function getResidentRegistrationProgress(input: {
     END AS status,
     pending.resident_id,
     COALESCE(resident.handle, pending.handle) AS handle,
-    pending.client_class
+    pending.client_class,
+    to_char(pending.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS expires_at
     FROM pending_resident_registrations pending
     LEFT JOIN residents resident ON resident.id = pending.resident_id
     WHERE pending.session_hash = ${input.sessionHash}
@@ -211,6 +216,7 @@ export async function getResidentRegistrationProgress(input: {
     resident_id: number | null
     handle: string | null
     client_class: RegistrationClientClass | null
+    expires_at: string
   }>
   const result = rows[0]
   if (!result) return { status: 'new' }
@@ -224,6 +230,7 @@ export async function getResidentRegistrationProgress(input: {
       status: 'staged',
       handle: result.handle,
       clientClass: result.client_class ?? 'legacy_unknown',
+      expiresAt: result.expires_at,
     }
   }
   return { status: result.status }

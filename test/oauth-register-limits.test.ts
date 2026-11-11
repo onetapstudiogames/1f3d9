@@ -41,6 +41,7 @@ function fakeStore() {
         new_handle: null,
         new_model: null,
         root_key_confirmed_at: null,
+        expires_at: '2026-11-11T06:02:00Z',
       }
     },
     async getAuthorizationRequestProgress() {
@@ -50,7 +51,7 @@ function fakeStore() {
       throw new Error('existing-resident link is not part of this test')
     },
     async stageNewResidentRegistration(input: { handle: string }) {
-      return { status: 'staged' as const, handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle, expiresAt: '2026-11-11T06:02:00Z' }
     },
     async cancelAuthorizationRequest() {
       throw new Error('cancel is not part of this test')

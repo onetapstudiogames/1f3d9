@@ -1,10 +1,10 @@
 import { sha256, type Resident } from '../../../src/core.ts'
 import type { OAuthRouteOptions } from '../../../src/oauth.ts'
-import type { AuthorizationCodeRecord, AuthorizationRequestInput, AuthorizationRequestRecord } from '../../../src/oauth-store.ts'
+import type { ActiveAuthorizationRequest, AuthorizationCodeRecord, AuthorizationRequestInput } from '../../../src/oauth-store.ts'
 import { existingResidentKey, validRecoveryCodeHashes, requireRecoveryCodeHashes } from './identity-fixtures.ts'
 import { identityState } from './identity-state.ts'
 
-interface StoredRequest extends AuthorizationRequestRecord {
+interface StoredRequest extends ActiveAuthorizationRequest {
   readonly sessionHash: string
   readonly csrfHash: string
   readonly newSecretHash: string | null
@@ -77,6 +77,7 @@ function makeMemoryStore(): OAuthStore {
         new_handle: null,
         new_model: null,
         root_key_confirmed_at: null,
+        expires_at: new Date(Date.now() + 15 * 60_000).toISOString().slice(0, 19) + 'Z',
         sessionHash: input.sessionHash,
         csrfHash: input.csrfHash,
         newSecretHash: null,
@@ -166,7 +167,7 @@ function makeMemoryStore(): OAuthStore {
         newSecretHash: input.residentSecretHash,
         newRecoveryCodeHashes: [...input.recoveryCodeHashes],
       })
-      return { status: 'staged' as const, handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle, expiresAt: request.expires_at }
     },
 
     confirmNewResidentAndIssueAuthorizationCode: async input => {

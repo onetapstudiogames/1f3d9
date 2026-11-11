@@ -43,8 +43,13 @@ export type AuthorizationRequestProgress =
   | { status: 'confirmed'; request: AuthorizationRequestRecord; residentId: number; handle: string }
   | { status: 'canceled' | 'expired' | 'unavailable'; request: AuthorizationRequestRecord }
 
+// expires_at and expiresAt are the stored sign-in hold's end in UTC, whole seconds.
+export interface ActiveAuthorizationRequest extends AuthorizationRequestRecord {
+  expires_at: string
+}
+
 export type PendingRegistrationResult =
-  | { status: 'staged'; handle: string }
+  | { status: 'staged'; handle: string; expiresAt: string }
   | { status: 'handle_taken' }
   | { status: 'request_unavailable' }
 
@@ -166,17 +171,18 @@ export async function createAuthorizationRequest(input: AuthorizationRequestInpu
 
 export async function getAuthorizationRequest(
   sessionHash: string,
-): Promise<AuthorizationRequestRecord | null> {
+): Promise<ActiveAuthorizationRequest | null> {
   const rows = (await sql`
     SELECT id, client_id, client_display_name, redirect_uri, resource, scope,
       state, code_challenge, intent, resident_id, new_handle, new_model,
-      root_key_confirmed_at
+      root_key_confirmed_at,
+      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS expires_at
     FROM oauth_authorization_requests
     WHERE session_hash = ${sessionHash}
       AND used_at IS NULL
       AND expires_at > now()
     LIMIT 1
-  `) as AuthorizationRequestRecord[]
+  `) as ActiveAuthorizationRequest[]
   return rows[0] ?? null
 }
 
@@ -362,7 +368,7 @@ export async function stageNewResidentRegistration(input: {
           AND NOT EXISTS (
             SELECT 1 FROM residents WHERE handle = ${input.handle}
           )
-        RETURNING request.id, request.new_handle AS handle
+        RETURNING request.id, request.new_handle AS handle, request.expires_at
       ), staged_codes AS (
         INSERT INTO oauth_authorization_request_recovery_codes (
           request_id, ordinal, code_hash
@@ -376,12 +382,13 @@ export async function stageNewResidentRegistration(input: {
       SELECT
         EXISTS (SELECT 1 FROM eligible) AS eligible,
         (SELECT handle FROM staged
-          WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle
-    `) as { eligible: boolean; handle: string | null }[]
+          WHERE (SELECT count(*) FROM staged_codes) = 8) AS handle,
+        (SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM staged) AS expires_at
+    `) as { eligible: boolean; handle: string | null; expires_at: string | null }[]
   const result = rows[0]
   if (!result?.eligible) return { status: 'request_unavailable' }
-  return result.handle
-    ? { status: 'staged', handle: result.handle }
+  return result.handle && result.expires_at
+    ? { status: 'staged', handle: result.handle, expiresAt: result.expires_at }
     : { status: 'handle_taken' }
 }
 

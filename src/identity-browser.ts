@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
-import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
+import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput, moveInNotice } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -318,25 +318,32 @@ function joinKeyWithRecoveryCodes(
   recoveryCodes: RecoveryCodeSet,
   csrf: string,
   clientClass: RegistrationClientClass,
+  expiresAt: string,
 ): string {
   return `<h1>Save two files</h1>
-<p><strong>${escapeHtml(handle)}</strong> has not been created yet.</p>
 <p>${escapeHtml(keyStorageInstruction(clientClass))}</p>
 <p>Keep the key in a password manager and the recovery codes separate, both outside the chat.</p>
 ${credentialDownloads(handle, residentKey, recoveryCodes)}
+${moveInNotice(handle, 'I saved both files, move in', expiresAt)}
 <form method="post" action="/join"><input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
-<button type="submit" data-save-confirm disabled>I saved both files, move in</button></form>
-<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>
+<button type="submit" class="primary-action" data-save-confirm disabled>I saved both files, move in</button></form>
+<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit" class="secondary-action">Cancel without creating a resident</button></form>
 <details><summary>Limits</summary><p class="muted">This staged join expires 15 minutes after it was prepared. Confirmation is limited to 10 attempts per IP and session per UTC hour.</p></details>`
 }
 
-function resumedJoin(handle: string, clientClass: RegistrationResumeClientClass, csrf: string): string {
+function resumedJoin(
+  handle: string,
+  clientClass: RegistrationResumeClientClass,
+  csrf: string,
+  expiresAt: string,
+): string {
   return `<h1>Continue creating ${escapeHtml(handle)}</h1>
 <p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
 <p>${escapeHtml(keyStorageInstruction(clientClass))}</p>
 <p><strong>If you saved the key and all eight codes,</strong> pick the saved key file or type the key below. <strong>If you did not save both,</strong> cancel this uncreated resident and start a fresh join.</p>
+${moveInNotice(handle, 'Create this resident', expiresAt)}
 ${residentKeyRetryForm('/join', 'confirm', csrf, 'Re-enter the saved resident key', 'Create this resident')}
-<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel this uncreated resident</button></form>
+<form method="post" action="/join"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit" class="secondary-action">Cancel this uncreated resident</button></form>
 ${frontDoorPointer()}`
 }
 
@@ -367,7 +374,7 @@ function renderJoinProgress(
     return html(c, 200, 'Move in', joinStart(csrf, '', hostedChatSigninReady))
   }
   if (progress.status === 'staged') {
-    return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf))
+    return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf, progress.expiresAt))
   }
   if (progress.status === 'confirmed') {
     return html(c, 200, 'Resident created', residentCreated(
@@ -644,7 +651,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
 
     if (progress.status === 'staged') {
       refreshJoinCookie(c, sessionCookie)
-      return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf))
+      return html(c, 200, 'Continue moving in', resumedJoin(progress.handle, progress.clientClass, csrf, progress.expiresAt))
     }
     if (progress.status === 'confirmed') {
       refreshJoinCookie(c, sessionCookie)
@@ -710,7 +717,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       const current = await store.getResidentRegistrationProgress({ sessionHash, csrfHash })
       if (current.status === 'staged') {
         refreshJoinCookie(c, sessionCookie)
-        return html(c, 200, 'Continue moving in', resumedJoin(current.handle, current.clientClass, csrf))
+        return html(c, 200, 'Continue moving in', resumedJoin(current.handle, current.clientClass, csrf, current.expiresAt))
       }
       if (current.status === 'confirmed') {
         refreshJoinCookie(c, sessionCookie)
@@ -760,7 +767,7 @@ export function mountIdentityRoutes(app: Hono, options: IdentityRouteOptions = {
       c,
       200,
       'Save the resident key',
-      joinKeyWithRecoveryCodes(staged.handle, residentKey, recoveryCodes, csrf, clientClass),
+      joinKeyWithRecoveryCodes(staged.handle, residentKey, recoveryCodes, csrf, clientClass, staged.expiresAt),
     )
   }))
 

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { residentRetirementRefusal } from './retirement-errors.ts'
 import type { Context, Hono } from 'hono'
-import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput } from './browser-identity-ui.ts'
+import { RESIDENT_NAME_INPUT_HINTS, browserIdentityPage, credentialDownloads, credentialFileInput, moveInNotice } from './browser-identity-ui.ts'
 import { stampSeason } from './season/stamp.ts'
 import {
   clearBrowserSessionCookie,
@@ -76,6 +76,7 @@ import {
   resolveOAuthAccessTokenPassive,
   type AuthorizationRequestInput,
   type AuthorizationRequestProgress,
+  type ActiveAuthorizationRequest,
   type AuthorizationRequestRecord,
 } from './oauth-store.ts'
 
@@ -473,22 +474,24 @@ function rootKeyPage(
   secret: string,
   recoveryCodes: RecoveryCodeSet,
   csrf: string,
+  expiresAt: string,
 ): string {
   return `<h1>Save two files</h1>
-<p><strong>${escapeHtml(handle)}</strong> has not been created yet.</p>
 <p>Keep the key in a password manager and the recovery codes separate, both outside the chat.</p>
 ${credentialDownloads(handle, secret, recoveryCodes)}
+${moveInNotice(handle, 'I saved both files, move in', expiresAt)}
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="resident_key">
-<button type="submit" data-save-confirm disabled>I saved both files, move in</button></form>
-<form method="post" action="/oauth/authorize"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Cancel without creating a resident</button></form>
+<button type="submit" class="primary-action" data-save-confirm disabled>I saved both files, move in</button></form>
+<form method="post" action="/oauth/authorize"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit" class="secondary-action">Cancel without creating a resident</button></form>
 <details><summary>Limits</summary><p class="muted">This staged signup expires ${OAUTH_LIMITS.authorizationRequestMinutes} minutes after the sign-in request began. Confirmation is limited to ${OAUTH_LIMITS.signupConfirmsPerIpSessionHour} attempts per IP and session per UTC hour.</p></details>`
 }
 
-function resumedRootKeyPage(handle: string, csrf: string): string {
+function resumedRootKeyPage(handle: string, csrf: string, expiresAt: string): string {
   return `<h1>Continue creating ${escapeHtml(handle)}</h1>
 <p>You are back where you stopped. This page cannot show the resident key or recovery codes again.</p>
 <p>If you saved the key and all eight codes outside this chat, pick the saved key file or type the key below. If you did not save both, cancel this uncreated resident and start again to generate a new set.</p>
+${moveInNotice(handle, 'Create resident and continue', expiresAt)}
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="confirm"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
 ${credentialFileInput('key', 'resident_key')}
@@ -496,20 +499,20 @@ ${credentialFileInput('key', 'resident_key')}
 <button type="submit">Create resident and continue</button></form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}">
-<button type="submit">Cancel this uncreated resident</button></form>
+<button type="submit" class="secondary-action">Cancel this uncreated resident</button></form>
 <p class="muted"><a href="/">Lost? Read the city front door.</a></p>`
 }
 
 function stagedAuthorizationResponse(
   c: Context,
-  request: AuthorizationRequestRecord,
+  request: ActiveAuthorizationRequest,
   csrf: string,
 ): Response {
   return html(
     c,
     200,
     'Continue creating the resident',
-    resumedRootKeyPage(request.new_handle!, csrf),
+    resumedRootKeyPage(request.new_handle!, csrf, request.expires_at),
     registeredCallbackOrigin(request.redirect_uri),
   )
 }
@@ -859,7 +862,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )
     const renderActiveRequest = (
-      existing: AuthorizationRequestRecord,
+      existing: ActiveAuthorizationRequest,
       sessionCookie: BrowserSessionCookie,
     ): Response => {
       if (existing.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(existing.client_id, oauth.environment)) {
@@ -1416,7 +1419,7 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         c,
         200,
         'Save the resident key',
-        rootKeyPage(pending.handle, residentSecret, recoveryCodes, csrf),
+        rootKeyPage(pending.handle, residentSecret, recoveryCodes, csrf, pending.expiresAt),
         registeredCallbackOrigin(request.redirect_uri),
       )
     } catch (error) {

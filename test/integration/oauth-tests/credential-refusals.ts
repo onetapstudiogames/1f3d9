@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import type { TestContext } from 'node:test'
 import {
   database,
@@ -61,7 +62,7 @@ export async function registerCredentialRefusalsTests(
     const pending = stagedRegistration('new-key-retry', 'new-key-retry')
     await store.createAuthorizationRequest(request)
     assert.deepEqual(
-      await store.stageNewResidentRegistration(pending),
+      withoutStoredExpiry(await store.stageNewResidentRegistration(pending)),
       { status: 'staged', handle: pending.handle },
     )
     const requestBefore = await requestState(request.sessionHash)
@@ -152,14 +153,14 @@ export async function registerCredentialRefusalsTests(
 
     await store.createAuthorizationRequest(request)
     assert.deepEqual(
-      await store.stageNewResidentRegistration({
+      withoutStoredExpiry(await store.stageNewResidentRegistration({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
         handle: 'raced-handle',
         model: 'pending-model',
         residentSecretHash: pendingSecretHash,
         recoveryCodeHashes: pendingRecoveryCodeHashes,
-      }),
+      })),
       { status: 'staged', handle: 'raced-handle' },
     )
 

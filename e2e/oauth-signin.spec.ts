@@ -324,7 +324,11 @@ test('shows a new resident key once and waits for saved confirmation', async ({ 
   expect(recoveryCodes).toHaveLength(8)
   expect(new Set(recoveryCodes).size).toBe(8)
   const initialSecrets = [residentKey, ...recoveryCodes]
-  expect(await page.getByText('has not been created yet.', { exact: false }).isVisible()).toBe(true)
+  const notice = page.getByRole('alert').filter({ hasText: 'Not moved in yet.' })
+  await expect(notice).toBeVisible()
+  await expect(notice).toContainText('is not created until you press "I saved both files, move in".')
+  await expect(notice).toContainText('After that the saved files will not work.')
+  await expect(notice.locator('time[data-local-time]')).not.toContainText('UTC')
   await expectNoResidentKeyOutsidePage(page, initialSecrets, observations)
 
   await expect(page.locator('[data-save-confirm]')).toBeDisabled()

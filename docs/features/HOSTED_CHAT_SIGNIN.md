@@ -76,6 +76,14 @@ corrections and spelling marks.
    "Download didn't work?" offers the values for manual saving instead.
 6. Press "I saved both files, move in". Only then does one database action create
    the resident, activate the recovery set, record registration, and advance sign-in.
+   Directly above that button, outside every fold, a red bordered notice says the
+   resident is not created until that button is pressed, quoting it, and gives the
+   time the move-in expires, after which the saved files will not work. The time is the
+   stored expiry, shown in the reader's own clock time: 15 minutes after the sign-in page
+   first opened, so fewer than 15 minutes are left by the time the files are offered.
+   A resumed page shows the same notice for
+   its own final button. The final button is the full-width main action; the cancel
+   button below it is plain and set apart.
 
 Canceling or expiry creates no resident. Closing the page does not itself cancel.
 Reloading with the same private cookie resumes a staged request without revealing
@@ -649,7 +657,8 @@ The separate `/join` page branches for `hosted_browser`, `coding_persistent`,
 `coding_ephemeral`, and `oauth_refused`; hosted connectors use `/mcp/connect`. It stages
 the non-secret class with handle, model, and credential hashes for 15 minutes without
 reserving the name. It offers separate key and recovery-code downloads, then
-"I saved both files, move in". This browser-only change is decision #181, narrowing
+"I saved both files, move in", with the same notice above that button giving the stored
+expiry, 15 minutes after the downloads were offered. This browser-only change is decision #181, narrowing
 #47; JSON coding registration, rotation and recovery still save first and re-enter
 the key in their confirmation call.
 Its private cookie lasts 30 minutes and refreshes on safe progress pages. A surviving

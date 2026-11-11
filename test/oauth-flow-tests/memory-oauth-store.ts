@@ -1,5 +1,6 @@
 import { sha256, type Resident } from '../../src/core.ts'
 import type {
+  ActiveAuthorizationRequest,
   AuthorizationCodeRecord,
   AuthorizationRequestInput,
   AuthorizationRequestRecord,
@@ -15,6 +16,11 @@ type TestOAuthStore = OAuthStore & {
 }
 
 export const EXISTING_KEY = `1f3d9_sk_${'ab'.repeat(24)}`
+
+/** The store reports a hold's end as PostgreSQL does here: UTC, whole seconds. */
+function utcSecond(at: number): string {
+  return new Date(at).toISOString().slice(0, 19) + 'Z'
+}
 const RECOVERY_CODE_HASH = /^[0-9a-f]{64}$/
 
 export function rateLimitResult(admitted: boolean, retryAfterSeconds = 17): OAuthRateLimitResult {
@@ -141,9 +147,9 @@ export class MemoryOAuthStore {
 
     getAuthorizationRequest: async (
       sessionHash: string,
-    ): Promise<AuthorizationRequestRecord | null> => {
+    ): Promise<ActiveAuthorizationRequest | null> => {
       const request = this.validRequest(sessionHash)
-      return request ? { ...request } : null
+      return request ? { ...request, expires_at: utcSecond(request.expiresAt) } : null
     },
 
     getAuthorizationRequestProgress: async (input: {
@@ -221,7 +227,7 @@ export class MemoryOAuthStore {
       request.new_model = input.model
       request.pendingSecretHash = input.residentSecretHash
       request.pendingRecoveryCodeHashes = [...input.recoveryCodeHashes]
-      return { status: 'staged' as const, handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle, expiresAt: utcSecond(request.expiresAt) }
     },
 
     cancelAuthorizationRequest: async (input: {
@@ -470,6 +476,11 @@ export class MemoryOAuthStore {
   expirePairingCode(codeHash: string): void {
     const pairing = this.pairingCodes.get(codeHash)
     if (pairing) pairing.expiresAt = Date.now() - 1
+  }
+
+  setRequestExpiresAt(rawSession: string, at: number): void {
+    const request = this.requests.get(sha256(rawSession))
+    if (request) request.expiresAt = at
   }
 
   expireBrowserSession(rawSession: string): void {

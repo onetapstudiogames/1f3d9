@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import type { TestContext } from 'node:test'
 import type { Pool } from 'pg'
 import {
@@ -172,10 +173,10 @@ export async function registerMigrationsTests(
               AND conname = 'pending_resident_registrations_client_class_valid') AS validated`,
     )
     assert.deepEqual(upgraded.rows, [{ columns: '1', validated: true }])
-    assert.deepEqual(await store.getResidentRegistrationProgress({
+    assert.deepEqual(withoutStoredExpiry(await store.getResidentRegistrationProgress({
       sessionHash: legacy.sessionHash,
       csrfHash: legacy.csrfHash,
-    }), {
+    })), {
       status: 'staged', handle: legacy.handle, clientClass: 'legacy_unknown',
     })
 
