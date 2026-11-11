@@ -12,9 +12,13 @@ const REFUSAL = 'that public city window link is not available; return to /windo
 const NAMED_TAGS = [
   'rdt_cid', 'gclid', 'gad_source', 'gad_campaignid', 'gbraid', 'wbraid', 'dclid',
   'fbclid', 'msclkid', 'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
+  'oppref', 'olref',
 ] as const
 
-const TAG_TEXT = /rdt_cid|utm_|fbclid|gclid|gad_|ad-click/u
+const TAG_TEXT = /rdt_cid|utm_|fbclid|gclid|gad_|ad-click|oppref|olref|gAAAAA/u
+
+// A made-up token in the shape a ChatGPT ad click carries: long URL-safe base64.
+const AD_TOKEN = 'gAAAAA' + 'Bk9x-Q_z7mT2pL4vN8cR1sW6yH3jF0dK5eU-aZ_'.repeat(4) + 'Xq=='
 
 function windowApp() {
   const app = new Hono()
@@ -119,6 +123,40 @@ test('tagged window pages answer 200 with the same page and never echo the tag',
   }
 
   for (const refused of ['/window?notes=open', '/window?rdt_cid=x&notes=open', '/window/note/301?place=310&fbclid=x']) {
+    const response = await app.request(refused)
+    assert.equal(response.status, 404, refused)
+    assert.equal(await response.text(), REFUSAL, refused)
+  }
+})
+
+test('a window link from a ChatGPT ad opens the same window as the bare link', async () => {
+  const app = windowApp()
+  assert.ok(AD_TOKEN.length > 150)
+  const tags = `oppref=${AD_TOKEN}&olref=${AD_TOKEN.replace('Xq', 'Zr')}`
+  const pairs: ReadonlyArray<readonly [string, string]> = [
+    [`/window?welcome=&${tags}`, '/window?welcome='],
+    [`/window?${tags}`, '/window'],
+    [`/window?welcome&${tags}&utm_source=chatgpt.com`, '/window?welcome'],
+    [`/window/map?place=310&${tags}`, '/window/map?place=310'],
+    [`/window/note/301?${tags}`, '/window/note/301'],
+  ]
+  for (const [tagged, bare] of pairs) {
+    const taggedUrl = new URL(tagged, 'https://1f3d9.com')
+    const bareUrl = new URL(bare, 'https://1f3d9.com')
+    const parsed = sharing.parseWindowShareRequest(taggedUrl.pathname, taggedUrl.search)
+    assert.deepEqual(parsed, sharing.parseWindowShareRequest(bareUrl.pathname, bareUrl.search), tagged)
+    assert.doesNotMatch(parsed?.canonicalPath ?? '', TAG_TEXT, tagged)
+    const taggedResponse = await app.request(tagged)
+    const bareResponse = await app.request(bare)
+    assert.equal(bareResponse.status, 200, bare)
+    assert.equal(taggedResponse.status, 200, tagged)
+    const taggedHtml = await taggedResponse.text()
+    assert.equal(taggedHtml, await bareResponse.text(), tagged)
+    assert.doesNotMatch(taggedHtml, TAG_TEXT, tagged)
+  }
+  // The welcome pop-up reads the address bar, which still carries welcome.
+  assert.equal(new URLSearchParams(`?welcome=&${tags}`).has('welcome'), true)
+  for (const refused of [`/window?welcome=&${tags}&x=1`, '/window?x=1', '/window?welcome&x=1', '/window?Oppref=a']) {
     const response = await app.request(refused)
     assert.equal(response.status, 404, refused)
     assert.equal(await response.text(), REFUSAL, refused)

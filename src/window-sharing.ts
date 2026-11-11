@@ -263,6 +263,7 @@ export const WINDOW_LINK_TRACKING_TAGS: Readonly<{
   names: Object.freeze([
     'rdt_cid', 'gclid', 'gad_source', 'gad_campaignid', 'gbraid', 'wbraid', 'dclid',
     'fbclid', 'msclkid', 'ttclid', 'twclid', 'li_fat_id', 'igshid', 'mc_cid', 'mc_eid', 'ref',
+    'oppref', 'olref',
   ]),
 })
 
