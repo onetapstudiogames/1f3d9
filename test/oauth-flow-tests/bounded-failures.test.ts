@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { OAuthDiagnosticRecord } from '../../src/oauth.ts'
+import { Hono } from 'hono'
+import { mountOAuthRoutes, type OAuthDiagnosticRecord } from '../../src/oauth.ts'
+import { CLIENT_REFUSAL_CHECKS } from '../../src/oauth-diagnostics.ts'
 import { EXISTING_KEY, MemoryOAuthStore, rateLimitResult } from './memory-oauth-store.ts'
 import {
   CLIENT_ID,
   RESOURCE,
   appFor,
+  environment,
   assertPrivate,
   authorizationUrl,
   authorizeExisting,
@@ -140,6 +143,38 @@ export function registerBoundedFailureTests(): void {
       assert.equal(records[0]?.error_class, 'storage_unavailable')
       assert.doesNotMatch(JSON.stringify(records), new RegExp(leakedCredential, 'i'))
     }
+  })
+
+  test('client refusal records add only a closed failed check and a closed status class (decision 189)', async () => {
+    const records: OAuthDiagnosticRecord[] = []
+    const app = new Hono()
+    mountOAuthRoutes(app, {
+      environment: { ...environment, HOSTED_CHAT_CIMD_ORIGINS: JSON.stringify(['https://chat.example.test']) },
+      store: new MemoryOAuthStore().api,
+      fetcher: (async () => new Response('body-text-never-logged', { status: 502 })) as typeof fetch,
+      diagnostics: record => records.push(record),
+    })
+    for (const clientId of [
+      'https://chat.example.test/oauth/caller-path-never-logged.json',
+      'caller-name-never-logged',
+    ]) {
+      await app.request(authorizationUrl({ client_id: clientId, redirect_uri: 'https://chat.example.test/caller-callback-never-logged' }))
+    }
+
+    assert.equal(records.length, 2)
+    const base = ['client_origin', 'elapsed_ms', 'error_class', 'event', 'failed_check', 'request_id', 'stage', 'status']
+    assert.deepEqual(Object.keys(records[0] ?? {}).sort(), [...base, 'upstream_status_class'].sort())
+    assert.deepEqual(Object.keys(records[1] ?? {}).sort(), base)
+    for (const record of records) {
+      assert.ok((CLIENT_REFUSAL_CHECKS as readonly unknown[]).includes(record.failed_check))
+      assert.ok([undefined, '2xx', '3xx', '4xx', '5xx'].includes(
+        (record as { upstream_status_class?: string }).upstream_status_class))
+    }
+    assert.deepEqual(records.map(record => [record.failed_check, record.error_class, record.status]), [
+      ['metadata_error_status', 'client_check_unavailable', 503],
+      ['client_unknown', 'client_not_approved', 400],
+    ])
+    assert.doesNotMatch(JSON.stringify(records), /never-logged|caller-|chat\.example\.test\//u)
   })
 
 }

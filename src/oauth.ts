@@ -30,6 +30,7 @@ import {
   OAUTH_REFRESH_TOKEN_PREFIX,
   OAUTH_SCOPE,
   loopbackCallbackOrigin,
+  OAuthClientRefusal,
   oauthEnabled,
   oauthResource,
   oauthResourceFor,
@@ -45,14 +46,17 @@ import {
 } from './oauth-config.ts'
 import {
   beginTrace,
+  clientCheckIsTemporary,
   defaultDiagnostics,
   recordFailure as recordDiagnosticFailure,
   recordRegistrationRefusal,
   traceForClient,
   type OAuthDiagnosticRecord,
   type OAuthDiagnosticSink,
+  type OAuthFailedCheck,
   type OAuthFailureStage,
   type OAuthRequestTrace,
+  type UpstreamStatusClass,
 } from './oauth-diagnostics.ts'
 import { newRecoveryCodeSet, type RecoveryCodeSet } from './oauth-recovery.ts'
 import { PAIRING_CODE_RE } from './pair.ts'
@@ -138,9 +142,10 @@ function recordFailure(
   stage: OAuthFailureStage,
   errorClass: string,
   status: number,
-  failedCheck?: OAuthDiagnosticRecord['failed_check'],
+  failedCheck?: OAuthFailedCheck,
+  upstreamStatusClass?: UpstreamStatusClass,
 ): void {
-  recordDiagnosticFailure(oauth.diagnostics, trace, stage, errorClass, status, failedCheck)
+  recordDiagnosticFailure(oauth.diagnostics, trace, stage, errorClass, status, failedCheck, upstreamStatusClass)
 }
 
 function opaque(prefix = ''): string {
@@ -240,6 +245,34 @@ function browserError(
     `<h1>Sign-in stopped</h1><p>${escapeHtml(message)}</p><p class="muted">Reason: <code>${escapeHtml(reference.reason)}</code></p><p class="muted">Request ID: <code>${escapeHtml(reference.requestId)}</code></p>${nextStep}<p class="muted"><a href="/">Lost? Read the city front door.</a></p>`,
     callbackOrigin,
   )
+}
+
+// Decision 189: a refused chat app is told the true kind of reason.
+const CLIENT_NOT_ACCEPTED = "The city does not accept sign-in from this chat app, or from this way of connecting it. Either the app is not one the city knows, or the details it sent do not meet the city's sign-in rules."
+const CLIENT_CHECK_UNAVAILABLE = "The city could not check this chat app's sign-in details just now. The chat app's own site could not be reached, did not answer in time, or answered with an error. Nothing is wrong with your agent or your key."
+const CLIENT_CHECK_RETRY_SECONDS = 60
+
+/**
+ * The one answer for a refused client on every sign-in page. A temporary check failure
+ * is a 503 that says to try again; a real refusal stays 400 client_not_approved and
+ * never invites a retry. The log names the failed check and nothing the caller chose.
+ */
+function clientRefusalResponse(
+  c: Context,
+  oauth: OAuthRuntime,
+  trace: OAuthRequestTrace,
+  stage: OAuthFailureStage,
+  refusal: OAuthClientRefusal,
+  notAcceptedNextStepHtml: string,
+): Response {
+  if (clientCheckIsTemporary(refusal.check)) {
+    recordFailure(oauth, trace, stage, 'client_check_unavailable', 503, refusal.check, refusal.upstreamStatusClass)
+    c.header('Retry-After', String(CLIENT_CHECK_RETRY_SECONDS))
+    return browserError(c, 503, 'client_check_unavailable', CLIENT_CHECK_UNAVAILABLE,
+      '<p>Wait a minute, then return to the chat app and start sign-in again. If it stops here again, the request ID on this page lets the city find which check failed.</p>')
+  }
+  recordFailure(oauth, trace, stage, 'client_not_approved', 400, refusal.check, refusal.upstreamStatusClass)
+  return browserError(c, 400, 'client_not_approved', CLIENT_NOT_ACCEPTED, notAcceptedNextStepHtml)
 }
 
 function returnToChatApp(): string {
@@ -765,25 +798,24 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       )
     }
     trace = traceForClient(trace, query.client_id, oauth.staticClients)
+    const clientId = typeof query.client_id === 'string' ? query.client_id : ''
     let client
-    try {
-      const clientId = typeof query.client_id === 'string' ? query.client_id : ''
-      client = clientId.startsWith(GEMINI_CLIENT_PREFIX) ? resolveGeminiClient(clientId, oauth.environment) : await resolveOAuthClient(
-        clientId,
-        oauth.staticClients,
-        oauth.cimdOrigins,
-        oauth.fetcher,
-      )
-      if (!client) throw new Error('unknown OAuth client')
-    } catch {
-      recordFailure(oauth, trace, 'client_metadata', 'client_not_approved', 400)
-      return browserError(
-        c,
-        400,
-        'client_not_approved',
-        'The requesting chat app is not approved.',
-        unapprovedClientAlternative(oauth.origin),
-      )
+    let refusal: OAuthClientRefusal | undefined
+    if (clientId.startsWith(GEMINI_CLIENT_PREFIX)) {
+      client = resolveGeminiClient(clientId, oauth.environment)
+      if (!client) refusal = new OAuthClientRefusal('gemini_client_unrecognized')
+    } else {
+      try {
+        client = await resolveOAuthClient(clientId, oauth.staticClients, oauth.cimdOrigins, oauth.fetcher)
+      } catch (error) {
+        // Anything else is a city fault and reaches the generic error handler.
+        if (!(error instanceof OAuthClientRefusal)) throw error
+        refusal = error
+      }
+    }
+    if (!client) {
+      return clientRefusalResponse(c, oauth, trace, 'client_metadata',
+        refusal ?? new OAuthClientRefusal('client_unknown'), unapprovedClientAlternative(oauth.origin))
     }
 
     let request
@@ -831,7 +863,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       sessionCookie: BrowserSessionCookie,
     ): Response => {
       if (existing.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(existing.client_id, oauth.environment)) {
-        return browserError(c, 400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+        return clientRefusalResponse(c, oauth, trace, 'client_metadata',
+          new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
       }
       if (isInitialAuthorizationRequest(existing)) return renderConsent(sessionCookie, existing)
       if (isStagedAuthorizationRequest(existing)) {
@@ -1015,7 +1048,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         const progress = await oauth.store.getAuthorizationRequestProgress({ sessionHash, csrfHash })
         if (!progress) return null
         if (progress.request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(progress.request.client_id, oauth.environment)) {
-          return fail(400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+          return clientRefusalResponse(c, oauth, trace, 'browser_approval',
+            new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
         }
         trace = traceForClient(trace, progress.request.client_id, oauth.staticClients)
         return terminalAuthorizationResponse(c, oauth, trace, 'browser_approval', progress)
@@ -1033,7 +1067,8 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
       trace = traceForClient(trace, request.client_id, oauth.staticClients)
       if (request.client_id.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(request.client_id, oauth.environment)) {
-        return fail(400, 'client_not_approved', 'The requesting chat app is not approved.', returnToChatApp())
+        return clientRefusalResponse(c, oauth, trace, 'browser_approval',
+          new OAuthClientRefusal('gemini_client_unrecognized'), returnToChatApp())
       }
       const callbackOrigin = registeredCallbackOrigin(request.redirect_uri)
 

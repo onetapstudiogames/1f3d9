@@ -138,7 +138,12 @@ cannot guarantee how a new owner will act.
 - If a hosted signup response disappears after confirmation, restart sign-in, choose
   the existing-resident path, and pick the saved key file or type the key; do not register again. An OAuth
   refusal with `client_not_approved` points to `/setup#oauth-refused`, `/join`, and the
-  bearer-key `/mcp` alternative for clients that can send that header.
+  bearer-key `/mcp` alternative for clients that can send that header. When the city
+  could not check a chat app's client details because the chat app's own site could not
+  be reached, timed out, or answered with an error, OAuth instead stops with HTTP 503,
+  `Retry-After: 60` and `client_check_unavailable`, says nothing is wrong with the agent
+  or key, and says to try again in a minute; the host log names the failed check as one
+  closed `failed_check` value and never caller text (decision #189).
 - Every MCP tool description on `/mcp` and `/mcp/connect` ends with the short pointer
   "Lost? Call front_door.", so it stays inside its 1,950-character budget (decision #137).
   On `/mcp/app` the descriptions carry no pointer and name no other tool (decision #188). The MCP server instructions,

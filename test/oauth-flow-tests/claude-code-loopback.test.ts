@@ -8,9 +8,11 @@ import { CALLBACK, CLIENT_ID, ORIGIN, RESOURCE, STATE, CHALLENGE, environment } 
 const CLAUDE_CODE_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata'
 const CLAUDE_CODE_CALLBACKS = ['http://localhost/callback', 'http://127.0.0.1/callback']
 
-function claudeCodeMetadata(): Response {
+const LOOKALIKE_CLIENT_ID = 'https://claude.ai/oauth/other-client'
+
+function claudeCodeMetadata(clientId = CLAUDE_CODE_CLIENT_ID): Response {
   return new Response(JSON.stringify({
-    client_id: CLAUDE_CODE_CLIENT_ID,
+    client_id: clientId,
     client_name: 'Claude Code',
     redirect_uris: CLAUDE_CODE_CALLBACKS,
     token_endpoint_auth_method: 'none',
@@ -28,6 +30,8 @@ function loopbackApp(): Hono {
     store: new MemoryOAuthStore().api,
     fetcher: (async input => {
       if (String(input) === CLAUDE_CODE_CLIENT_ID) return claudeCodeMetadata()
+      // A lookalike on the same origin that asks for the same loopback callbacks.
+      if (String(input) === LOOKALIKE_CLIENT_ID) return claudeCodeMetadata(LOOKALIKE_CLIENT_ID)
       throw new Error(`unexpected network call: ${String(input)}`)
     }) as typeof fetch,
   })
@@ -93,7 +97,7 @@ export function registerClaudeCodeLoopbackTests(): void {
 
     // A lookalike client on the same approved metadata origin is not the
     // verified Claude Code client and gets no loopback callback.
-    await assertRefused(app, authorizeUrl({ client_id: 'https://claude.ai/oauth/other-client' }))
+    await assertRefused(app, authorizeUrl({ client_id: LOOKALIKE_CLIENT_ID }))
 
     // Neither does an approved HTTPS client that asked for one.
     await assertRefused(app, authorizeUrl({
