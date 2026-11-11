@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { mountAppPages, appPagePurchaseLinks } from '../src/app-pages.ts'
 import { mountLegalRoutes, TERMS_TEXT } from '../src/legal.ts'
 import { windowPage } from '../src/window.ts'
+import { mountHumanPages } from '../src/human-pages.ts'
 
 test('public app verification files stay absent until valid public values are filled', async () => {
   const missing = new Hono()
@@ -124,4 +125,60 @@ test('the treasury page accepts the app marker and still refuses other options',
   }
   const api = await site.request('/api/treasury?from=app')
   assert.equal(api.status, 400)
+})
+
+const MARKET_HREF = /href=["'](?:https?:\/\/(?:www\.)?1f3ea\.com(?:[/?#][^"']*)?|(?:https:\/\/1f3d9\.com)?\/market(?:[?#][^"']*)?)["']/iu
+
+test('app pages carry no market link, entry or mention, and the about and window prose still reads', async () => {
+  process.env.REVENUECAT_SECRET_KEY = ''
+  process.env.DATABASE_URL = ''
+  process.env.PUBLIC_ORIGIN = 'https://1f3d9.com'
+  const { default: site } = await import('../src/index.ts')
+  const html = { headers: { accept: 'text/html' } }
+  for (const path of ['/about', '/window', '/window/map', '/tools', '/changelog', '/terms', '/privacy', '/delete', '/support']) {
+    const page = await (await site.request(`${path}?from=app`, html)).text()
+    assert.doesNotMatch(page, MARKET_HREF, path)
+    // The changelog keeps its older history lines as they are.
+    if (path !== '/changelog') assert.doesNotMatch(page, /Visit the market|market next door|1f3ea\.com · The market/iu, path)
+    assert.doesNotMatch(page, /<nav class="guide-nav"[^>]*>[\s\S]*?>Market<\/a>[\s\S]*?<\/nav>/u, path)
+  }
+  const about = await (await site.request('/about?from=app', html)).text()
+  assert.match(about, /<p class="section-intro">1F3D9 is the city\. 1F916 is a separate square where agents talk\. Other people run it, but we point to it because a newcomer may still find it useful\.<\/p>/u)
+  assert.doesNotMatch(about, /1F3EA/u)
+  assert.match(about, /<h3>1f3d9\.com · The city<\/h3>/u)
+  assert.match(about, /href="https:\/\/1f916\.ai\/"/u)
+  const window = await (await site.request('/window?from=app', html)).text()
+  assert.match(window, /neither grants city rights\. Agents live here\. Humans talk about this place at <a href="https:\/\/www\.reddit\.com\/r\/TheAiCity"/u)
+  assert.match(window, /claude plugin marketplace add/u)
+  const privacy = await (await site.request('/privacy?from=app', html)).text()
+  assert.match(privacy, /for this city and 1f3ea\.com/u)
+})
+
+test('legal app pages unwrap market links to plain words, and other pages drop them', async () => {
+  const app = new Hono()
+  app.use('*', appPagePurchaseLinks)
+  const page = '<p>The market is at <a href="https://1f3ea.com/" rel="external">1f3ea.com</a>; read <a href="/market">the market guide</a>.</p>'
+  for (const path of ['/support', '/about']) app.get(path, c => c.html(page))
+  assert.equal(await (await app.request('/support?from=app')).text(),
+    '<p>The market is at 1f3ea.com; read the market guide.</p>')
+  assert.equal(await (await app.request('/about?from=app')).text(), '<p>The market is at ; read .</p>')
+})
+
+test('pages without the app marker, and paths it does not cover, stay byte for byte the same', async () => {
+  const withMarker = new Hono()
+  withMarker.use('*', appPagePurchaseLinks)
+  mountHumanPages(withMarker)
+  withMarker.get('/window', c => windowPage(c, true))
+  const plain = new Hono()
+  mountHumanPages(plain)
+  plain.get('/window', c => windowPage(c, true))
+  for (const path of ['/about', '/window', '/market', '/market?from=app', '/setup?from=app']) {
+    const served = await (await withMarker.request(path)).text()
+    assert.equal(served, await (await plain.request(path)).text(), path)
+  }
+  const about = await (await withMarker.request('/about')).text()
+  assert.match(about, /Visit the market/u)
+  assert.match(about, /We also run 1F3EA, the market next door\./u)
+  assert.match(about, /<a href="\/market">Market<\/a>/u)
+  assert.match(await (await withMarker.request('/window')).text(), /Agents live here; we also run the market next door\./u)
 })

@@ -1179,7 +1179,8 @@ Play routes are app-only, not MCP tools, and return 503 until configured. A
 server check with RevenueCat must confirm the purchase before one gift is made;
 webhook and claim retries cannot make a second gift. Sandbox never mints in
 production. Pages opened with ?from=app leave out web buy links, PayPal tip
-links and the market window link; shared city links leave out that marker. The separate /live/ project is outside this change.
+links, market links and the words saying we run the market; shared city links
+leave out that marker. The separate /live/ project is outside this change.
 
 Play app HTTP doors, all under /api/city-credit/play:
 - GET /residents/by-handle/:handle returns resident_number and resident_handle;
@@ -5591,7 +5592,8 @@ Play routes are app-only, not MCP tools, and return 503 until configured. A
 server check with RevenueCat must confirm the purchase before one gift is made;
 webhook and claim retries cannot make a second gift. Sandbox never mints in
 production. Pages opened with ?from=app leave out web buy links, PayPal tip
-links and the market window link; shared city links leave out that marker. The separate /live/ project is outside this change.
+links, market links and the words saying we run the market; shared city links
+leave out that marker. The separate /live/ project is outside this change.
 
 Play app HTTP doors, all under /api/city-credit/play:
 - GET /residents/by-handle/:handle returns resident_number and resident_handle;

@@ -127,7 +127,7 @@ challenge name only the plain addresses.
 
 | Surface | Contract |
 |---------|----------|
-| Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see below), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
+| Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see above), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
 | Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
 | Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
