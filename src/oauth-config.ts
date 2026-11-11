@@ -214,10 +214,8 @@ export function validateAuthorizationRequest(
   if (!client) throw new Error('unknown OAuth client')
   const redirectUri = requestText(request.redirect_uri, 'redirect_uri', MAX_REDIRECT_URI)
   if (!registeredRedirect(client, redirectUri)) throw new Error('redirect_uri is not registered')
-  if (typeof request.resource !== 'string' || !resources.includes(request.resource)) {
-    throw new Error('wrong protected resource')
-  }
-  const resource = request.resource
+  const resource = connectorResource(request.resource, resources)
+  if (!resource) throw new Error('wrong protected resource')
   if (request.scope !== OAUTH_SCOPE) throw new Error('wrong OAuth scope')
   if (request.code_challenge_method !== 'S256') throw new Error('PKCE S256 is required')
   const codeChallenge = requestText(request.code_challenge, 'code_challenge', 128)
@@ -284,6 +282,28 @@ export function oauthResourceFor(
 
 export function oauthResources(environment: OAuthEnvironment = process.env): readonly string[] {
   return Object.freeze([oauthResourceFor('connect', environment), oauthResourceFor('app', environment)])
+}
+
+/** Decision 190: the query a chat app may add after a connector address, as in `/mcp/connect?2`. */
+const CONNECTOR_ADDRESS_SUFFIX = /^[A-Za-z0-9=&._~-]{1,128}$/u
+
+/**
+ * Decision 190: names the connector a sign-in `resource` value means, or null.
+ *
+ * The value is either one of `resources` exactly, or one of them followed by `?` and
+ * a query of 1 to 128 letters, digits, and `= & - _ . ~` that holds nothing shaped like
+ * a credential. The answer is always the plain connector address, so that is what a
+ * sign-in stores and binds its tokens to; every other value is refused as before.
+ */
+export function connectorResource(value: unknown, resources: readonly string[]): string | null {
+  if (typeof value !== 'string') return null
+  if (resources.includes(value)) return value
+  const mark = value.indexOf('?')
+  if (mark < 0) return null
+  const door = value.slice(0, mark)
+  const suffix = value.slice(mark + 1)
+  if (!resources.includes(door) || !CONNECTOR_ADDRESS_SUFFIX.test(suffix) || CREDENTIAL.test(suffix)) return null
+  return door
 }
 
 interface CimdDocument {

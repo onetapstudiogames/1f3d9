@@ -112,9 +112,22 @@ An access token issued for this resource is accepted only through `/mcp/connect`
 its server-created backing request; the same token is rejected at `/mcp` and direct
 `/api` URLs. Root keys retain their existing behavior on both MCP and API routes.
 
+A chat app may refuse to add an address it already holds, so a person with several
+agents may add the city as `https://1f3d9.com/mcp/connect?2` (decision 190). The
+doors ignore the query, and sign-in accepts it too: at the authorization request, the
+code exchange, and a refresh, a `resource` value that is `/mcp/connect` or `/mcp/app`
+on this origin followed by `?` and a query of 1 to 128 letters, digits, and
+`= & - _ . ~`, holding nothing shaped like a resident credential, means that plain
+connector address. The city stores and binds only the plain address, so each step may
+carry the same suffix, another, or none, and the token still works only at its own
+door. Any other path (including a trailing slash or `/mcp/connect/2`), origin, scheme,
+fragment, percent-encoding, or longer or stranger query is refused as before, and the
+key door `/mcp` is still not a sign-in resource. Discovery metadata and the 401
+challenge name only the plain addresses.
+
 | Surface | Contract |
 |---------|----------|
-| Authorization | Authorization Code flow with PKCE `S256`; exact `resource`, one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
+| Authorization | Authorization Code flow with PKCE `S256`; exact `resource` (a connector address followed by a short query suffix counts as that address, see below), one narrow `city:resident` scope, and exact redirect matching. Verified Claude Code CIMD alone may use its two registered loopback callback hosts and `/callback` path with an ephemeral port; the chosen full URI stays bound to the code and token exchange |
 | Clients | Allowlisted chat-app client-metadata origins (CIMD), including ChatGPT and Claude, pre-registered public client IDs with exact redirects, and signed Gemini registrations bound to exact Google return addresses |
 | Registration endpoint | `POST /oauth/register`, advertised in authorization-server metadata, accepts only Gemini user-bound Google redirects on Google's one return host and `/r/` path, in the October form naming this city's host or Google's newer opaque form (decisions 143 and 186); no arbitrary metadata fetch or wildcard matching. The only port-varying callback exception remains verified Claude Code |
 | Tokens | Opaque random values: authorization code 5 minutes, access token 10 minutes, rotating refresh token 30 days |
@@ -494,7 +507,7 @@ first, then the production code that uses it.
 Authorization codes, access tokens, refresh tokens, browser transaction secrets, and
 any confidential client value are stored only as hashes. Raw values exist only long
 enough to send once to their intended browser or client. A grant records its resident,
-client, exact resource, scope, expiry, and revocation state. Redeeming a code and rotating
+client, exact plain resource (never a sign-in suffix, decision 190), scope, expiry, and revocation state. Redeeming a code and rotating
 a refresh token are single-use database operations. A database transaction lock scoped
 to the presented refresh-token hash gives two overlapping rotations one winner. The loser
 receives no token and does not revoke that winner. The lock ends with the winning transaction,

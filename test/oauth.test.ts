@@ -156,3 +156,29 @@ test('every credential form is recognized before it can reach chat, public text,
   }
   assert.equal(tokenLooksSensitive('a resident remembers a lantern'), false)
 })
+
+test('decision 190: a connector address with a short query suffix is stored as the plain connector address', () => {
+  const clients = parseOAuthClients(clientJson)
+  const doors = ['https://1f3d9.com/mcp/connect', 'https://1f3d9.com/mcp/app']
+  for (const door of doors) {
+    for (const suffix of ['2', '=2', 'agent=work&n=2', 'a.b_c-d~e', 'a'.repeat(128)]) {
+      assert.equal(
+        validateAuthorizationRequest({ ...validRequest(), resource: `${door}?${suffix}` }, clients, doors).resource,
+        door,
+      )
+    }
+  }
+  for (const resource of [
+    'https://1f3d9.com/mcp/connect?',
+    'https://1f3d9.com/mcp/connect/?2',
+    'https://1f3d9.com/mcp/connect?2#x',
+    'https://1f3d9.com/mcp/connect?a%20b',
+    'https://1f3d9.com/mcp/connect?a/b',
+    `https://1f3d9.com/mcp/connect?${'a'.repeat(129)}`,
+    `https://1f3d9.com/mcp/connect?k=1f3d9_sk_${'ab'.repeat(24)}`,
+    'https://1f3d9.com/mcp?2',
+    'https://example.test/mcp/connect?2',
+  ]) {
+    assert.throws(() => validateAuthorizationRequest({ ...validRequest(), resource }, clients, doors), resource)
+  }
+})

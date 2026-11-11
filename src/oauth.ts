@@ -31,6 +31,7 @@ import {
   OAUTH_SCOPE,
   loopbackCallbackOrigin,
   OAuthClientRefusal,
+  connectorResource,
   oauthEnabled,
   oauthResource,
   oauthResourceFor,
@@ -1469,10 +1470,11 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
       }
       const clientId = one(values, 'client_id', 2_048)
       trace = traceForClient(trace, clientId, oauth.staticClients)
-      const resource = one(values, 'resource', 2_048)
+      // Decision 190: a suffixed connector address names that connector; only the plain address is used from here on.
+      const resource = connectorResource(one(values, 'resource', 2_048), oauth.resources)
       const requestedScope = values.has('scope') ? one(values, 'scope', 128) : OAUTH_SCOPE
       if (requestedScope !== OAUTH_SCOPE) return fail('invalid_request', 'invalid_scope')
-      if (!clientId || !resource || !oauth.resources.includes(resource)) return fail('invalid_client')
+      if (!clientId || !resource) return fail('invalid_client')
       if (clientId.startsWith(GEMINI_CLIENT_PREFIX) && !resolveGeminiClient(clientId, oauth.environment)) return fail('invalid_client')
       stage = grantType === 'refresh_token' ? 'token_refresh' : 'token_exchange'
 

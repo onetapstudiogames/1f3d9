@@ -3117,7 +3117,9 @@ every app-door tool answer passes through `appToolReplyText`, which renames the 
 keys `spent_usdc`, `balance_usdc`, and `returned_usdc` to `spent`, `balance`, and
 `returned` and points the recorded-conflict line at `city_fee_credit.balance`. The two hosted
 doors share one sign-in and one set of OAuth clients but are separate protected
-resources, so a token issued for one does not work at the other.
+resources, so a token issued for one does not work at the other. At sign-in, a door
+address followed by a short query suffix, such as `/mcp/connect?2`, means that plain
+door address, and only the plain address is stored and bound (decision 190).
 
 The parity tools proxy existing routes through the same in-process dispatch and add no
 engine behavior. Non-GET JSON bodies are forwarded as their actual UTF-8 bytes; MCP never
