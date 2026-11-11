@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  OAuthClientRefusal,
   oauthResource,
   publicOrigin,
   resolveOAuthClient,
@@ -92,7 +93,7 @@ test('CIMD metadata fetch is aborted after four seconds', async t => {
   assert.equal(requestSignal?.aborted, false)
   t.mock.timers.tick(1)
 
-  await assert.rejects(pending, /metadata could not be verified/i)
+  await assert.rejects(pending, (error: unknown) => error instanceof OAuthClientRefusal && error.check === 'metadata_timeout')
   assert.equal(requestSignal?.aborted, true)
 })
 
@@ -158,14 +159,14 @@ test('CIMD rejects declared and actual metadata bodies larger than 64 KiB', asyn
   })) as typeof fetch
   await assert.rejects(
     resolveOAuthClient(CLIENT_ID, [], [ALLOWED_ORIGIN], declaredTooLarge),
-    /too large/i,
+    (error: unknown) => error instanceof OAuthClientRefusal && error.check === 'metadata_too_large',
   )
 
   const oversizedBody = JSON.stringify({ padding: 'x'.repeat(65_536) })
   const actualTooLarge = (async () => jsonResponse(oversizedBody)) as typeof fetch
   await assert.rejects(
     resolveOAuthClient(CLIENT_ID, [], [ALLOWED_ORIGIN], actualTooLarge),
-    /too large/i,
+    (error: unknown) => error instanceof OAuthClientRefusal && error.check === 'metadata_too_large',
   )
 })
 

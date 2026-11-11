@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { PUBLIC_CREDENTIAL_PATTERN_SOURCE } from './credential-safety.ts'
+import type { ClientRefusalCheck, UpstreamStatusClass } from './oauth-diagnostics.ts'
 
 export const OAUTH_RESOURCE = 'https://1f3d9.com/mcp/connect'
 export const OAUTH_SCOPE = 'city:resident'
@@ -293,34 +294,57 @@ interface CimdDocument {
   token_endpoint_auth_methods_supported?: unknown
 }
 
+/**
+ * Decision 189: a refused client carries the one closed check that failed, and, when
+ * the chat app's site answered, only that answer's status class. Neither ever holds
+ * caller text, so callers can log it and choose the honest page from it.
+ */
+export class OAuthClientRefusal extends Error {
+  readonly check: ClientRefusalCheck
+  readonly upstreamStatusClass: UpstreamStatusClass | undefined
+
+  constructor(check: ClientRefusalCheck, upstreamStatusClass?: UpstreamStatusClass) {
+    super(check)
+    this.name = 'OAuthClientRefusal'
+    this.check = check
+    this.upstreamStatusClass = upstreamStatusClass
+  }
+}
+
+function statusClass(status: number): UpstreamStatusClass {
+  if (status >= 500) return '5xx'
+  if (status >= 400) return '4xx'
+  if (status >= 300) return '3xx'
+  return '2xx'
+}
+
 export async function resolveOAuthClient(
   clientId: string,
   staticClients: readonly OAuthClient[],
   cimdOrigins: readonly string[],
   fetcher: typeof fetch = fetch,
 ): Promise<OAuthClient> {
-  if (tokenLooksSensitive(clientId)) throw new Error('unknown OAuth client')
+  if (tokenLooksSensitive(clientId)) throw new OAuthClientRefusal('client_unknown')
   const configured = staticClients.find(client => client.clientId === clientId)
   if (configured) return configured
-  if (clientId.length > MAX_CLIENT_ID) throw new Error('unknown OAuth client')
+  if (clientId.length > MAX_CLIENT_ID) throw new OAuthClientRefusal('client_unknown')
 
   let metadataUrl: URL
   try {
     metadataUrl = new URL(clientId)
   } catch {
-    throw new Error('unknown OAuth client')
+    throw new OAuthClientRefusal('client_unknown')
   }
   if (
     metadataUrl.protocol !== HTTPS ||
     metadataUrl.username ||
     metadataUrl.password ||
     metadataUrl.pathname === '/' ||
-    metadataUrl.search ||
-    metadataUrl.hash ||
     !cimdOrigins.includes(metadataUrl.origin)
   ) {
-    throw new Error('unknown OAuth client')
+    throw new OAuthClientRefusal('client_unknown')
   }
+  if (metadataUrl.search || metadataUrl.hash) throw new OAuthClientRefusal('client_address_query_or_fragment')
   // Any client-metadata document on an allowlisted origin is read and held to
   // exact https callbacks. Hosted Claude (claude.ai web, desktop, mobile, Cowork)
   // presents its own claude.ai document with an https callback and passes that
@@ -339,56 +363,80 @@ export async function resolveOAuthClient(
       headers: { accept: 'application/json' },
     })
   } catch {
-    throw new Error('OAuth client metadata could not be verified')
+    throw new OAuthClientRefusal(controller.signal.aborted ? 'metadata_timeout' : 'metadata_unreachable')
   } finally {
     clearTimeout(timeout)
   }
-  if (!response.ok || response.status >= 300) throw new Error('OAuth client metadata was rejected')
+  const answered = response.type === 'opaqueredirect' ? '3xx' : statusClass(response.status)
+  // A redirect is refused because the city reads only the exact address the client named.
+  if (answered === '3xx') throw new OAuthClientRefusal('metadata_redirect', answered)
+  if (!response.ok) throw new OAuthClientRefusal('metadata_error_status', answered)
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
   if (contentType && !/^application\/(?:[a-z0-9.+-]+\+)?json$/i.test(contentType)) {
-    throw new Error('OAuth client metadata must be JSON')
+    throw new OAuthClientRefusal('metadata_not_json', answered)
   }
   const declaredLength = Number(response.headers.get('content-length') ?? 0)
-  if (declaredLength > 65_536) throw new Error('OAuth client metadata is too large')
-  const body = await response.text()
-  if (Buffer.byteLength(body, 'utf8') > 65_536) throw new Error('OAuth client metadata is too large')
+  if (declaredLength > 65_536) throw new OAuthClientRefusal('metadata_too_large', answered)
+  let body: string
+  try {
+    body = await response.text()
+  } catch {
+    throw new OAuthClientRefusal('metadata_unreachable', answered)
+  }
+  if (Buffer.byteLength(body, 'utf8') > 65_536) throw new OAuthClientRefusal('metadata_too_large', answered)
 
+  // Each check below names its own failure; a shared helper's wording is never kept.
   let decoded: CimdDocument
   try {
     decoded = record(JSON.parse(body), 'OAuth client metadata') as CimdDocument
   } catch {
-    throw new Error('OAuth client metadata is invalid')
+    throw new OAuthClientRefusal('metadata_invalid_json', answered)
   }
   if (decoded.client_id !== clientId) {
-    throw new Error('OAuth client metadata identity mismatch')
+    throw new OAuthClientRefusal('metadata_identity_mismatch', answered)
   }
   const method = decoded.token_endpoint_auth_method
   const supportedMethods = decoded.token_endpoint_auth_methods_supported
   if (method === undefined && supportedMethods === undefined) {
-    throw new Error('OAuth client authentication method is required')
+    throw new OAuthClientRefusal('auth_method_missing', answered)
   }
-  const supportedMethodNames = supportedMethods === undefined
-    ? undefined
-    : stringArray(supportedMethods, 'token_endpoint_auth_methods_supported')
+  let supportedMethodNames: string[] | undefined
+  try {
+    supportedMethodNames = supportedMethods === undefined
+      ? undefined
+      : stringArray(supportedMethods, 'token_endpoint_auth_methods_supported')
+  } catch {
+    throw new OAuthClientRefusal('auth_method_unsupported', answered)
+  }
   const chatGptCanUsePublicExchange =
     metadataUrl.origin === CHATGPT_CIMD_ORIGIN &&
     method === 'private_key_jwt' &&
     supportedMethodNames?.includes('private_key_jwt') === true &&
     supportedMethodNames.includes('none')
   if (method !== undefined && method !== 'none' && !chatGptCanUsePublicExchange) {
-    throw new Error('OAuth client authentication method is unsupported')
+    throw new OAuthClientRefusal('auth_method_unsupported', answered)
   }
   if (supportedMethodNames !== undefined && !supportedMethodNames.includes('none')) {
-    throw new Error('OAuth client must support public PKCE exchange')
+    throw new OAuthClientRefusal('public_pkce_missing', answered)
   }
-  const clientName = text(decoded.client_name, 'client_name', MAX_CLIENT_NAME)
+  let clientName: string
+  try {
+    clientName = text(decoded.client_name, 'client_name', MAX_CLIENT_NAME)
+  } catch {
+    throw new OAuthClientRefusal('client_name_invalid', answered)
+  }
   const claudeCodeLoopback = clientId === CLAUDE_CODE_CLIENT_ID
-  const redirectUris = [...new Set(
-    stringArray(decoded.redirect_uris, 'redirect_uris').map(claudeCodeLoopback ? claudeCodeRedirect : exactHttpsRedirect),
-  )]
+  let redirectUris: string[]
+  try {
+    redirectUris = [...new Set(
+      stringArray(decoded.redirect_uris, 'redirect_uris').map(claudeCodeLoopback ? claudeCodeRedirect : exactHttpsRedirect),
+    )]
+  } catch {
+    throw new OAuthClientRefusal('callback_invalid', answered)
+  }
   if (claudeCodeLoopback && (
     redirectUris.length !== CLAUDE_CODE_CALLBACKS.length ||
     CLAUDE_CODE_CALLBACKS.some(callback => !redirectUris.includes(callback))
-  )) throw new Error('Claude Code callback metadata does not match its registered loopback paths')
+  )) throw new OAuthClientRefusal('claude_code_callbacks_mismatch', answered)
   return { clientId, clientName, redirectUris, ...(claudeCodeLoopback ? { claudeCodeLoopback: true } : {}) }
 }

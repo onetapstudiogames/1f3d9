@@ -11,13 +11,59 @@ export type OAuthFailureStage =
   | 'token_refresh'
   | 'revocation'
 
+/**
+ * Decision 189: the closed list of reasons a chat app's sign-in client is refused.
+ * The host log records exactly one of these, never the client address, callback,
+ * query values or document body. The first three are temporary: the city could not
+ * check the chat app's details, so the person may try again.
+ */
+export const CLIENT_REFUSAL_CHECKS = [
+  'metadata_unreachable',
+  'metadata_timeout',
+  'metadata_error_status',
+  'client_unknown',
+  'client_address_query_or_fragment',
+  'metadata_redirect',
+  'metadata_not_json',
+  'metadata_too_large',
+  'metadata_invalid_json',
+  'metadata_identity_mismatch',
+  'auth_method_missing',
+  'auth_method_unsupported',
+  'public_pkce_missing',
+  'client_name_invalid',
+  'callback_invalid',
+  'claude_code_callbacks_mismatch',
+  'gemini_client_unrecognized',
+] as const
+
+export type ClientRefusalCheck = typeof CLIENT_REFUSAL_CHECKS[number]
+
+const TEMPORARY_CLIENT_CHECKS: ReadonlySet<ClientRefusalCheck> = new Set([
+  'metadata_unreachable',
+  'metadata_timeout',
+  'metadata_error_status',
+])
+
+export function clientCheckIsTemporary(check: ClientRefusalCheck): boolean {
+  return TEMPORARY_CLIENT_CHECKS.has(check)
+}
+
+/** Only the hundreds digit of an answer from the chat app's site, never the answer itself. */
+export type UpstreamStatusClass = '2xx' | '3xx' | '4xx' | '5xx'
+
+export type OAuthFailedCheck =
+  | 'not_a_code' | 'code_not_accepted' | 'connection_allowance' | 'junk_allowance'
+  | ClientRefusalCheck
+
 export interface OAuthStageFailureRecord {
   event: 'oauth_failure'
   stage: OAuthFailureStage
   request_id: string
   client_origin: string
   error_class: string
-  failed_check?: 'not_a_code' | 'code_not_accepted' | 'connection_allowance' | 'junk_allowance'
+  failed_check?: OAuthFailedCheck
+  upstream_status_class?: UpstreamStatusClass
   status: number
   elapsed_ms: number
 }
@@ -54,6 +100,7 @@ export interface OAuthRegistrationRefusalRecord {
   addresses: readonly RedirectShape[]
   client_origin?: never
   failed_check?: never
+  upstream_status_class?: never
 }
 
 export type OAuthDiagnosticRecord = OAuthStageFailureRecord | OAuthRegistrationRefusalRecord
@@ -109,7 +156,8 @@ export function recordFailure(
   stage: OAuthFailureStage,
   errorClass: string,
   status: number,
-  failedCheck?: OAuthStageFailureRecord['failed_check'],
+  failedCheck?: OAuthFailedCheck,
+  upstreamStatusClass?: UpstreamStatusClass,
 ): void {
   const elapsed = elapsedSince(trace)
   try {
@@ -120,6 +168,7 @@ export function recordFailure(
       client_origin: trace.clientOrigin,
       error_class: errorClass,
       ...(failedCheck ? { failed_check: failedCheck } : {}),
+      ...(upstreamStatusClass ? { upstream_status_class: upstreamStatusClass } : {}),
       status,
       elapsed_ms: elapsed,
     }))

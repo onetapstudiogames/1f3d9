@@ -11,6 +11,7 @@ export interface BrowserRefusalReference {
 export const BROWSER_REFUSAL_REASONS = [
   'browser_cookie_mismatch',
   'browser_cookie_missing',
+  'client_check_unavailable',
   'client_not_approved',
   'confirmation_not_ready',
   'confirmation_rejected',
