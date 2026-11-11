@@ -17,6 +17,7 @@ function makeIdentityStore(): NonNullable<IdentityRouteOptions['store']> {
     clientClass: 'coding_ephemeral' | 'coding_persistent' | 'hosted_browser' | 'oauth_refused'
     residentSecretHash: string
     recoveryCodeHashes: readonly string[]
+    expiresAt: string
   }>>()
   let completedRegistrations = new Map<string, Readonly<{
     csrfHash: string
@@ -62,6 +63,7 @@ function makeIdentityStore(): NonNullable<IdentityRouteOptions['store']> {
         status: 'staged' as const,
         handle: staged.handle,
         clientClass: staged.clientClass,
+        expiresAt: staged.expiresAt,
       }
     },
     stageResidentRegistration: async input => {
@@ -72,6 +74,7 @@ function makeIdentityStore(): NonNullable<IdentityRouteOptions['store']> {
         return { status: 'handle_taken' as const }
       }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
+      const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString().slice(0, 19) + 'Z'
       stagedRegistrations = new Map(stagedRegistrations).set(input.sessionHash, {
         csrfHash: input.csrfHash,
         handle: input.handle,
@@ -79,8 +82,9 @@ function makeIdentityStore(): NonNullable<IdentityRouteOptions['store']> {
         clientClass: input.clientClass,
         residentSecretHash: input.residentSecretHash,
         recoveryCodeHashes: [...input.recoveryCodeHashes],
+        expiresAt,
       })
-      return { status: 'staged' as const, handle: input.handle }
+      return { status: 'staged' as const, handle: input.handle, expiresAt }
     },
     confirmResidentRegistration: async input => {
       const completed = completedRegistrations.get(input.sessionHash)

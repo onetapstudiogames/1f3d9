@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import type { TestContext } from 'node:test'
 import {
   database,
@@ -54,14 +55,14 @@ export async function registerRequestLifecycleTests(
     )
     await store.createAuthorizationRequest(request)
     assert.deepEqual(
-      await store.stageNewResidentRegistration({
+      withoutStoredExpiry(await store.stageNewResidentRegistration({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
         handle: 'atomic-new-agent',
         model: 'hosted-chat',
         residentSecretHash: pendingSecretHash,
         recoveryCodeHashes: pendingRecoveryCodeHashes,
-      }),
+      })),
       { status: 'staged', handle: 'atomic-new-agent' },
     )
     const requestBefore = await requestState(request.sessionHash)
@@ -110,7 +111,13 @@ export async function registerRequestLifecycleTests(
     assert.ok(current)
     assert.equal(String(current.id), '1')
     const { id: _databaseId, ...requestWithoutDatabaseId } = current
-    assert.deepEqual(requestWithoutDatabaseId, {
+    const storedHold = await database!.query<{ expires_at: Date }>(
+      `SELECT date_trunc('second', expires_at) AS expires_at
+         FROM oauth_authorization_requests WHERE session_hash = $1`,
+      [request.sessionHash],
+    )
+    assert.equal(Date.parse(current.expires_at), storedHold.rows[0]!.expires_at.getTime(), 'the request reports its stored hold')
+    assert.deepEqual(withoutStoredExpiry(requestWithoutDatabaseId), {
       client_id: request.clientId,
       client_display_name: request.clientName,
       redirect_uri: request.redirectUri,

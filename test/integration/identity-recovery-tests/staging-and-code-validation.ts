@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import type { TestContext } from 'node:test'
 import type { Pool } from 'pg'
 import { IDENTITY_LIMITS } from '../../../src/identity-limits.ts'
@@ -87,10 +88,10 @@ export async function registerStagingAndCodeValidationTests(
       loser.recoveryCodeHashes.some(hash => persisted.rows[0]!.code_hashes.includes(hash)),
       false,
     )
-    assert.deepEqual(await store.getResidentRegistrationProgress({
+    assert.deepEqual(withoutStoredExpiry(await store.getResidentRegistrationProgress({
       sessionHash: first.sessionHash,
       csrfHash: first.csrfHash,
-    }), {
+    })), {
       status: 'staged', handle: winner.handle, clientClass: winner.clientClass,
     })
   })

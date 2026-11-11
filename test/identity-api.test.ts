@@ -40,6 +40,7 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
     recoveryCodeHashes: string[]
     status: 'staged' | 'confirmed' | 'canceled'
     residentId?: number
+    expiresAt: string
   }>()
   const recoveryCodes = new Map<string, { residentId: number; generation: number; used: boolean; invalidated: boolean }>()
   const rotations = new Map<string, {
@@ -102,7 +103,7 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
         return { status: 'confirmed', residentId: pending.residentId, handle: pending.handle }
       }
       if (pending.status === 'canceled') return { status: 'canceled' }
-      return { status: 'staged', handle: pending.handle, clientClass: pending.clientClass }
+      return { status: 'staged', handle: pending.handle, clientClass: pending.clientClass, expiresAt: pending.expiresAt }
     },
 
     async stageResidentRegistration(input: RegistrationStageInput): Promise<RegistrationStageResult> {
@@ -114,8 +115,9 @@ function memoryIdentityStore(options: MemoryOptions = {}) {
         secretHash: input.residentSecretHash,
         recoveryCodeHashes: [...input.recoveryCodeHashes],
         status: 'staged',
+        expiresAt: new Date(Date.now() + 15 * 60_000).toISOString().slice(0, 19) + 'Z',
       })
-      return { status: 'staged', handle: input.handle }
+      return { status: 'staged', handle: input.handle, expiresAt: registrations.get(key(input.sessionHash, input.csrfHash))!.expiresAt }
     },
 
     async confirmResidentRegistration(input: {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
 import {
@@ -58,14 +59,14 @@ export async function registerRegistrationConfirmationTests(
       { status: 'handle_taken' },
     )
     assert.deepEqual(
-      await store.stageNewResidentRegistration({
+      withoutStoredExpiry(await store.stageNewResidentRegistration({
         sessionHash: request.sessionHash,
         csrfHash: request.csrfHash,
         handle: 'new-resident',
         model: 'hosted-chat',
         residentSecretHash,
         recoveryCodeHashes,
-      }),
+      })),
       { status: 'staged', handle: 'new-resident' },
     )
 

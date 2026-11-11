@@ -8,6 +8,7 @@
 // existed) -- never this branch's schema.sql, which already carries that
 // migration's additions.
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../helpers/stored-expiry.ts'
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -144,7 +145,7 @@ test('the browser join, rotate, and recovery flows run unchanged with the flag o
       residentSecretHash: sha256('flag-off-join:root-key'),
       recoveryCodeHashes,
     })
-    assert.deepEqual(staged, { status: 'staged', handle: 'flag-off-resident' })
+    assert.deepEqual(withoutStoredExpiry(staged), { status: 'staged', handle: 'flag-off-resident' })
 
     const confirmed = await store.confirmResidentRegistration({
       sessionHash,

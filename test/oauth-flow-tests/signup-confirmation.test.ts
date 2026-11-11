@@ -59,7 +59,7 @@ export function registerSignupConfirmationTests(): void {
     assert.match(privatePage, /data-save-confirm disabled/u)
     assert.match(privatePage, /I saved both files, move in/u)
     assert.doesNotMatch(privatePage, /Re-enter the saved resident key/u)
-    assert.match(privatePage, /has not been created yet/i)
+    assert.match(privatePage, /is not created until you press "I saved both files, move in"/u)
     assert.match(privatePage, /Cancel without creating a resident/i)
     assert.equal(recoveryCodes.length, 8)
     assert.equal(new Set(recoveryCodes).size, 8)

@@ -39,6 +39,7 @@ export type MemoryStoreOptions = {
   registrationProgressOutcome?: 'error' | 'normal' | 'unavailable'
   registrationProgressAfterFailedStage?: 'canceled' | 'expired' | 'unavailable'
   registrationResumeClientClass?: 'legacy_unknown'
+  registrationExpiresAt?: string
   registrationStageBarrier?: () => Promise<void>
   registrationStageOutcome?: 'error' | 'handle_taken' | 'missing' | 'staged'
   registrationConfirmOutcome?: 'error' | 'handle_taken' | 'normal' | 'request_unavailable'
@@ -49,6 +50,7 @@ export type MemoryStoreOptions = {
 
 export function memoryStore(options: MemoryStoreOptions = {}) {
   let registration: Registration | null = null
+  let registrationExpiresAt: string | null = null
   let confirmed = false
   let canceledRegistration: { sessionHash: string; csrfHash: string } | null = null
   let recoveryGeneration = 0
@@ -103,6 +105,7 @@ export function memoryStore(options: MemoryStoreOptions = {}) {
         status: 'staged' as const,
         handle: registration.handle,
         clientClass: options.registrationResumeClientClass ?? registration.clientClass,
+        expiresAt: registrationExpiresAt!,
       }
     },
     async stageResidentRegistration(input: Registration) {
@@ -119,7 +122,9 @@ export function memoryStore(options: MemoryStoreOptions = {}) {
       }
       requireRecoveryCodeHashes(input.recoveryCodeHashes)
       registration = { ...input, recoveryCodeHashes: [...input.recoveryCodeHashes] }
-      return { status: 'staged' as const, handle: input.handle }
+      registrationExpiresAt = options.registrationExpiresAt ??
+        new Date(Date.now() + 15 * 60_000).toISOString().slice(0, 19) + 'Z'
+      return { status: 'staged' as const, handle: input.handle, expiresAt: registrationExpiresAt }
     },
     async confirmResidentRegistration(input: {
       sessionHash: string
@@ -269,6 +274,7 @@ export function memoryStore(options: MemoryStoreOptions = {}) {
     registration: () => registration
       ? { ...registration, recoveryCodeHashes: [...registration.recoveryCodeHashes] }
       : null,
+    registrationExpiresAt: () => registrationExpiresAt,
     confirmed: () => confirmed,
     recovered: () => recovered,
     stagedRotation: () => stagedRotation,

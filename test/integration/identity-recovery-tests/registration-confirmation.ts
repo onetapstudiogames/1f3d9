@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withoutStoredExpiry } from '../../helpers/stored-expiry.ts'
 import type { TestContext } from 'node:test'
 import type { Pool } from 'pg'
 import {
@@ -16,15 +17,27 @@ export async function registerRegistrationConfirmationTests(
   await t.test('registration stores only hashes and creates nothing before exact key confirmation', async () => {
     await resetDatabase()
     const pending = registration('staged')
-    assert.deepEqual(await store.stageResidentRegistration(pending), {
+    const staged = await store.stageResidentRegistration(pending)
+    assert.deepEqual(withoutStoredExpiry(staged), {
       status: 'staged', handle: 'new-resident',
     })
-    assert.deepEqual(await store.getResidentRegistrationProgress({
+    const progress = await store.getResidentRegistrationProgress({
       sessionHash: pending.sessionHash,
       csrfHash: pending.csrfHash,
-    }), {
+    })
+    assert.deepEqual(withoutStoredExpiry(progress), {
       status: 'staged', handle: 'new-resident', clientClass: 'coding_ephemeral',
     })
+    const storedHold = await database!.query<{ expires_at: Date; held_seconds: number }>(
+      `SELECT date_trunc('second', expires_at) AS expires_at,
+           extract(epoch FROM expires_at - created_at)::int AS held_seconds
+         FROM pending_resident_registrations WHERE session_hash = $1`,
+      [pending.sessionHash],
+    )
+    assert.equal(storedHold.rows[0]!.held_seconds, 15 * 60)
+    assert.ok(staged.status === 'staged' && progress.status === 'staged')
+    assert.equal(Date.parse(staged.expiresAt), storedHold.rows[0]!.expires_at.getTime(), 'the stage reports the stored hold')
+    assert.equal(progress.expiresAt, staged.expiresAt, 'a resume reports the same stored hold')
     const before = await database!.query(
       `SELECT handle, model, client_class, secret_hash, ip_hash, resident_id, confirmed_at, canceled_at
          FROM pending_resident_registrations WHERE session_hash = $1`,
