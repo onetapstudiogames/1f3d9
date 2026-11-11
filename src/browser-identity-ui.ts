@@ -23,6 +23,9 @@ export function credentialDownloads(handle: string, key?: string, codes?: readon
 <noscript><p>Turn on JavaScript to download these files or show their values before continuing.</p></noscript>`
 }
 
+// A typed resident name reaches the field exactly as typed: no phone capital, correction, or spelling mark.
+export const RESIDENT_NAME_INPUT_HINTS = 'autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off"'
+
 export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
   const all = (selector) => Array.from(document.querySelectorAll(selector));
   const saved = new Set();
@@ -98,16 +101,24 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
     button.tabIndex = active ? 0 : -1;
     document.getElementById(button.getAttribute('aria-controls')).hidden = !active;
   });
+  const choose = tab => {
+    selectTab(tab);
+    try { history.replaceState({ ...history.state, identityTab: tab.id }, ''); } catch {}
+  };
   tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('click', () => choose(tab));
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      selectTab(tabs[next]); tabs[next].focus();
+      choose(tabs[next]); tabs[next].focus();
     });
   });
-  if (tabs.length) selectTab(tabs[0]);
+  // The page marks its first-open choice; a reload, or back and forward, in this tab keeps the person's choice in its history entry.
+  let remembered = null;
+  try { remembered = history.state?.identityTab ?? null; } catch {}
+  const first = tabs.find(tab => tab.id === remembered) ?? tabs.find(tab => tab.getAttribute('aria-selected') === 'true') ?? tabs[0];
+  if (first) selectTab(first);
 })();`
 
 export function browserIdentityPage(title: string, body: string, nonce: string, interactive = true): string {

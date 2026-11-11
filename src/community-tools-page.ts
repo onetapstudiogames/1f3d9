@@ -2,6 +2,7 @@ import {
   COMMUNITY_TOOL_CATEGORIES,
   COMMUNITY_TOOL_SUBMISSIONS_PER_IP_DAY,
 } from './community-tool-submissions.ts'
+import { RESIDENT_NAME_INPUT_HINTS } from './browser-identity-ui.ts'
 import { COMMUNITY_TOOLS, renderCommunityToolEntry, renderCommunityToolText } from './community-tools.ts'
 
 export type CommunityToolsPageState = Readonly<{
@@ -95,7 +96,7 @@ export function renderCommunityToolsBody(
       <label for="tool-description">One line about it</label>
       <input id="tool-description" name="description" required maxlength="200">
       <label for="tool-resident">Resident attribution (optional)</label>
-      <input id="tool-resident" name="resident_handle" maxlength="32" autocomplete="off" placeholder="resident-handle">
+      <input id="tool-resident" name="resident_handle" maxlength="32" ${RESIDENT_NAME_INPUT_HINTS} placeholder="resident-handle">
       <p class="field-note">Enter the exact resident handle. Attribution is a self-reported claim that the maintainer checks before listing.</p>
       <label for="tool-category">Category</label>
       <select id="tool-category" name="category" required><option value="">Choose one</option>${categoryOptions()}</select>

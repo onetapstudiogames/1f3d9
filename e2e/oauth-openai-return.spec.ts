@@ -33,7 +33,10 @@ function authorizationPath(origin: string, callback: string): string {
 }
 
 async function submitConsent(page: Page, origin: string, callback: string, action: 'approve' | 'cancel') {
-  if (action === 'approve') await page.getByLabel('Current resident key').fill(residentKey)
+  if (action === 'approve') {
+    await page.getByRole('tab', { name: 'I already live here' }).click()
+    await page.getByLabel('Current resident key').fill(residentKey)
+  }
   const cityResponse = page.waitForResponse(response => (
     response.url() === `${origin}/oauth/authorize` && response.request().method() === 'POST'
   ))
@@ -88,6 +91,7 @@ test('OpenAI return blocks an unapproved third origin after the permitted platfo
   const callback = 'https://chatgpt.com/connector/oauth/e2e-unapproved-hop'
   await page.request.post('/__e2e/reset-openai-return-requests')
   await page.goto(authorizationPath(baseURL!, callback))
+  await page.getByRole('tab', { name: 'I already live here' }).click()
   await page.getByLabel('Current resident key').fill(residentKey)
   const cityResponse = page.waitForResponse(response => (
     response.url() === `${baseURL}/oauth/authorize` && response.request().method() === 'POST'

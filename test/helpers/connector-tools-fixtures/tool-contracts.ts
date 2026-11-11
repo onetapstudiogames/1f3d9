@@ -192,7 +192,7 @@ export const expectedToolContracts: Readonly<Record<string, Readonly<{
         open_to_reach: { type: 'boolean' },
         open_to_convert: { type: 'boolean' },
         wake_enabled: { type: 'boolean' },
-        state_clear: { const: true, description: "true empties this thing's state box" },
+        state_clear: { type: 'boolean', const: true, description: "true empties this thing's state box" },
         ...drawingWriteProperties,
         drawing_variant_name: drawingSelectionSchema,
         ending: endingSchema(THING_EDIT_ENDING),

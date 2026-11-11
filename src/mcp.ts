@@ -21,8 +21,10 @@ import {
   APP_PAYMENT_REQUIRED_REFUSAL,
   destructiveHintsOff,
   doorProfile,
+  applyDescriptionEdits,
   narrowSectionPointers,
   renderDescriptionTokens,
+  type DescriptionEdit,
   type DoorName,
   type DoorProfile,
 } from './door-profile.ts'
@@ -244,6 +246,15 @@ const appServerInstructions = () =>
   'Never put a resident key, recovery code, or OAuth credential in chat, tool arguments, public text, URLs, or logs. ' +
   connectorVisitOpening() +
   'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each cost one fee credit; call credit_preflight first. ' +
+  'Show its cost and its before and after balance, then send its fresh suggested_request_id as the new city_credit_request_id instead of inventing a number. ' +
+  // Decision 188: this door's tool descriptions name no other tool, so how the tools work together lives here.
+  'Before writing a trait recipe, read physics for every brick, field, default and limit; front_door sections explain each part of the city before your first write there. ' +
+  'Room #454 is the gazette submission room: before any work there, call browse with view gazette and no issue_number, then follow its live submission_room and withdrawal_contract. ' +
+  "read_here opens the body of a walk-to-read note where you stand, and look with view lines reads a room's lines. " +
+  'me shows your pending pings and your review answers; me with settings "show" lists the waiting_id values that transfer needs to accept or decline. ' +
+  'browse with view moderation gives the record ids flag can ask to review. ' +
+  'drawing and drawing_history read a portrait and its revisions before draw_self, place_edit, thing_edit, invent_kind or revise_kind changes a drawing. ' +
+  'look with thing_id opens one item from later_holder_items, and look at a place shows the laws in force there. ' +
   'There is no city token. Everything else is free. ' +
   TOOL_FRONT_DOOR_POINTER
 
@@ -1540,7 +1551,7 @@ const TOOLS: readonly ToolDefinition[] = [
         open_to_reach: { type: 'boolean' },
         open_to_convert: { type: 'boolean' },
         wake_enabled: { type: 'boolean' },
-        state_clear: { const: true, description: "true empties this thing's state box" },
+        state_clear: { type: 'boolean', const: true, description: "true empties this thing's state box" },
         ...DRAWING_WRITE_PROPERTIES,
         drawing_variant_name: DRAWING_SELECTION_SCHEMA,
         ending: endingSchema('set an end its kind allows, or renew one inside its own grant (with no kind, only its maker while owning it), or null to clear it; free; a copy may only clear its end'),
@@ -2941,17 +2952,47 @@ function doorDescription(tool: ToolDefinition, profile: DoorProfile): string {
     ? profile.annotationNotes[tool.name]
     : cityToolFacts(tool.name).annotationNote ?? null
   const rendered = renderDescriptionTokens(tool.description, profile, DESCRIPTION_VALUES)
-  return `${narrowSectionPointers(rendered, profile)}${note ? ` Annotation: ${note}` : ''} ${TOOL_FRONT_DOOR_POINTER}`
+  const described = applyDescriptionEdits(
+    `${narrowSectionPointers(rendered, profile)}${note ? ` Annotation: ${note}` : ''}`,
+    profile.descriptionEdits[tool.name] ?? [],
+    `${profile.name} door ${tool.name}`,
+  )
+  return profile.toolPointer ? `${described} ${TOOL_FRONT_DOOR_POINTER}` : described
+}
+
+/** Apply one argument's wording changes to every description inside it, each change exactly once. */
+function editedArgument(
+  property: Record<string, unknown>,
+  edits: readonly DescriptionEdit[],
+  label: string,
+): Record<string, unknown> {
+  const used = new Map<string, number>()
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk)
+    if (!node || typeof node !== 'object') return node
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => {
+      if (key !== 'description' || typeof value !== 'string') return [key, walk(value)]
+      const applicable = edits.filter(([from]) => value.includes(from))
+      for (const [from] of applicable) used.set(from, (used.get(from) ?? 0) + 1)
+      return [key, applyDescriptionEdits(value, applicable, label)]
+    }))
+  }
+  const edited = walk(property) as Record<string, unknown>
+  for (const [from] of edits) {
+    if (used.get(from) !== 1) throw new Error(`${label}: wording to change must appear exactly once: ${from.slice(0, 60)}`)
+  }
+  return edited
 }
 
 function narrowedSchema(tool: ToolDefinition, profile: DoorProfile): Record<string, unknown> {
   const enums = profile.narrowedEnums[tool.name] ?? {}
   const dropped = profile.droppedArguments[tool.name] ?? []
   const descriptions = profile.argumentDescriptions[tool.name] ?? {}
+  const edits = profile.argumentDescriptionEdits[tool.name] ?? {}
   const hidden = tool.name === 'changes' ? profile.hiddenEventKinds : []
   if (
     Object.keys(enums).length === 0 && dropped.length === 0
-    && Object.keys(descriptions).length === 0 && hidden.length === 0
+    && Object.keys(descriptions).length === 0 && Object.keys(edits).length === 0 && hidden.length === 0
   ) return tool.inputSchema
   const properties = tool.inputSchema.properties as Record<string, Record<string, unknown>>
   const narrowed: Record<string, unknown> = {}
@@ -2970,9 +3011,10 @@ function narrowedSchema(tool: ToolDefinition, profile: DoorProfile): Record<stri
       next = { ...next, enum: (next.enum as readonly string[]).filter(kind => !hidden.includes(kind)) }
     }
     if (Object.hasOwn(descriptions, key)) next = { ...next, description: descriptions[key] }
+    if (Object.hasOwn(edits, key)) next = editedArgument(next, edits[key]!, `${profile.name} door ${tool.name}.${key}`)
     narrowed[key] = next
   }
-  for (const key of [...dropped, ...Object.keys(enums), ...Object.keys(descriptions)]) {
+  for (const key of [...dropped, ...Object.keys(enums), ...Object.keys(descriptions), ...Object.keys(edits)]) {
     if (!Object.hasOwn(properties, key)) {
       throw new Error(`${profile.name} door names missing argument ${tool.name}.${key}`)
     }
@@ -3003,6 +3045,9 @@ function buildDoorTools(profile: DoorProfile): ReadonlyMap<string, DoorTool> {
       description,
       annotations: Object.freeze({ ...presentation.annotations, ...overrides }),
     }))
+  }
+  for (const name of [...Object.keys(profile.descriptionEdits), ...Object.keys(profile.argumentDescriptionEdits)]) {
+    if (!tools.has(name)) throw new Error(`${profile.name} door changes the wording of unlisted tool ${name}`)
   }
   return tools
 }
