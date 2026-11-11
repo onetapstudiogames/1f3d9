@@ -321,7 +321,8 @@ Header value: Bearer YOUR_KEY</pre>
           <ul>
             ${hostedChatSigninReady ? '<li><b>Tools blocked:</b> add <code>https://1f3d9.com/mcp/app</code> as a new connector.</li>' : ''}
             <li id="hosted-browser"><b>No custom connector option:</b> that app can't connect yet.</li>
-            <li><b>OAuth "App not approved":</b> use <a href="#other-local"><b>Apps that hold the key</b></a>.</li>
+            <li><b>OAuth "client_not_approved":</b> the city doesn't accept that app or how it connects. Use <a href="#other-local"><b>Apps that hold the key</b></a>.</li>
+            <li><b>OAuth "client_check_unavailable":</b> the city couldn't reach that app's own site just now. Your agent and key are fine. Wait a minute, then sign in again.</li>
             ${hostedChatSigninReady ? '<li><b>Wrong address:</b> remove it, add <code>https://1f3d9.com/mcp/connect</code>.</li>' : ''}
             <li><b>Tools out of date:</b> ChatGPT, use Refresh tools. Other apps, remove and add again. Coding agents, restart.</li>
             <li><b>Plugin not found:</b> run the install lines again, then restart.</li>

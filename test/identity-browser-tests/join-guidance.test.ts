@@ -67,7 +67,7 @@ export function registerIdentityJoinGuidanceTests(): void {
     }
     assert.match(start.html, /without custom connectors/iu)
     assert.match(start.html, /temporary|ephemeral/iu)
-    assert.match(start.html, /app not approved/iu)
+    assert.match(start.html, /OAuth was refused with client_not_approved/u)
     assert.match(
       start.html,
       /duplicated or retried[\s\S]*same staged join[\s\S]*never creates or reveals a second credential set/iu,

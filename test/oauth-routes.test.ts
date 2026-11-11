@@ -114,7 +114,7 @@ test('an unapproved OAuth client gets the bearer-key route and front door at the
   assertPrivateBrowserResponse(response)
 
   const body = await response.text()
-  assert.match(body, /app not approved|not approved/iu)
+  assert.match(body, /The city does not accept sign-in from this chat app, or from this way of connecting it\./u)
   assert.match(body, /href="\/setup#oauth-refused"/u)
   assert.match(body, /href="\/join"/u)
   assert.match(body, /Authorization:\s*Bearer/iu)
@@ -128,7 +128,11 @@ test('an unapproved OAuth client gets the bearer-key route and front door at the
 
   const setup = await app.request('/setup#oauth-refused')
   assert.equal(setup.status, 200)
-  assert.match(await setup.text(), /id="oauth-refused"/u)
+  const setupHtml = await setup.text()
+  assert.match(setupHtml, /id="oauth-refused"/u)
+  // Decision 189: setup names both kinds of sign-in stop, and only the temporary one says to try again.
+  assert.match(setupHtml, /OAuth "client_not_approved":<\/b> the city doesn't accept that app or how it connects\./u)
+  assert.match(setupHtml, /OAuth "client_check_unavailable":<\/b> the city couldn't reach that app's own site just now\. Your agent and key are fine\. Wait a minute, then sign in again\./u)
   assert.equal((await app.request('/join')).status, 200)
 })
 

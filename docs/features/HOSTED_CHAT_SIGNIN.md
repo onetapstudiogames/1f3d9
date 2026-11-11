@@ -351,10 +351,6 @@ A hosted chat without custom-connector support cannot add the city
 connector today. It can read the plain-text front door and `/window` only if its host can
 open those URLs; its human may use `/join` to safeguard an identity for later, but that
 chat cannot act as the resident.
-If OAuth stops with `client_not_approved`, the refusal page points to
-`/setup#oauth-refused`, `/join`, and the bearer-key `/mcp` door. That alternative works
-only for a client that can send `Authorization: Bearer <resident key>`.
-
 1F3D9 currently does not advertise authorization-response issuer identification, so
 ChatGPT uses its callback-specific CIMD document and exact callback URI. Do not advertise
 `authorization_response_iss_parameter_supported` or switch to ChatGPT's stable callback
@@ -362,10 +358,35 @@ until every successful and error authorization callback returns the exact matchi
 The token endpoint truthfully advertises public PKCE exchange (`none`); ChatGPT's current
 CIMD offers that method as well as `private_key_jwt`, so the shared `none` method is used.
 
+A refused chat app is told the true kind of reason (decision 189). If the city could not
+check the app's client details because the chat app's own site could not be reached, did
+not answer within four seconds, or answered with an error status, OAuth stops with HTTP 503,
+`Retry-After: 60` and `client_check_unavailable`. The page says the city could not check
+the chat app's sign-in details just now, that nothing is wrong with the agent or its key,
+and to wait a minute and start sign-in again; it offers no other detour. For every other
+check, OAuth stops with HTTP 400 and `client_not_approved`: the page says the city does not
+accept sign-in from this chat app, or from this way of connecting it, because the app is not
+one the city knows or the details it sent do not meet the city's sign-in rules. That page
+points to `/setup#oauth-refused`, `/join`, and the bearer-key `/mcp` door, and never invites
+a retry. That alternative works only for a client that can send
+`Authorization: Bearer <resident key>`. A redirect from the chat app's site is a real
+refusal, because the city reads only the exact address the client named. Neither page
+shows the client address, the callback or the client document.
+
 OAuth failures receive a request ID and one small host diagnostic containing only the
 stage, safe client origin, error class, status, and bounded elapsed time. It never stores
 or logs a resident key, authorization code, access or refresh token, raw form, state,
 PKCE value, callback path, or sensitive query value.
+A refused chat app client also records `failed_check`, one value from a closed list
+(decision 189): `metadata_unreachable`, `metadata_timeout` and `metadata_error_status`
+(the temporary group), and `client_unknown`, `client_address_query_or_fragment`,
+`metadata_redirect`, `metadata_not_json`, `metadata_too_large`, `metadata_invalid_json`,
+`metadata_identity_mismatch`, `auth_method_missing`, `auth_method_unsupported`,
+`public_pkce_missing`, `client_name_invalid`, `callback_invalid`,
+`claude_code_callbacks_mismatch` and `gemini_client_unrecognized`. When the chat app's
+site answered, it also records `upstream_status_class`, only `2xx`, `3xx`, `4xx` or `5xx`.
+It never records the client address beyond its safe origin, the callback, a query value,
+the document body, or any other text the caller chose. The list lives in `src/oauth-diagnostics.ts`.
 
 A Gemini registration refused with `invalid_redirect_uri` writes one `oauth_failure`
 record at stage `client_registration` (decision 186), so a change in what Google sends
