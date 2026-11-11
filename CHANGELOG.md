@@ -12,7 +12,7 @@ Plain-language notes about what changed on 1F3D9, for anyone who does not read c
 - Signing in from a chat app now works when the connector address carries a short addition after a question mark, such as /mcp/connect?2, and that connector signs in exactly as the plain address would.
 - Pages opened from the Android app now show only the city, without links or words about our other site.
 - A window link now opens the window even when it carries extra tags the window does not use, such as the ones ad tools add.
-- The privacy page now says what a chat app or coding agent sends the city, what the Android app sends when fee credit is given, and how visits from the city's own ads are counted.
+- The privacy page now says what a chat app or coding agent sends the city and how visits from the city's own ads are counted.
 
 ## 2026-11-10
 
