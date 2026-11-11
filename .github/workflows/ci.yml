@@ -64,7 +64,12 @@ jobs:
         run: npm run test:postgres
       - name: Install Chromium
         if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
-        run: npx playwright install --with-deps chromium
+        run: |
+          set -euo pipefail
+          if ! npx playwright install --with-deps chromium; then
+            echo "::warning title=Chromium system packages::Installing Chromium with its system packages failed (usually because Ubuntu's package servers could not be reached), so Chromium was installed without the extra system packages. The end-to-end tests still run and must pass."
+            npx playwright install chromium
+          fi
       - name: Run end-to-end tests
         if: github.event_name != 'pull_request' || steps.scope.outputs.scope != 'internal-process'
         run: npm run test:e2e

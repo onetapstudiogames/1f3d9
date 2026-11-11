@@ -53,3 +53,17 @@ test('CI pins actionlint and requires ShellCheck for workflow scripts', () => {
   assert.match(workflow, /actionlint.*-shellcheck/u)
   assert.match(workflow, /-ignore ['"]SC2016['"]/u)
 })
+
+test('CI installs Chromium alone when its system packages cannot be fetched, then still runs end-to-end', () => {
+  const workflow = source('.github/workflows/ci.yml')
+  const step = /- name: Install Chromium\r?\n([\s\S]*?)\r?\n      - name: Run end-to-end tests\r?\n([\s\S]*?)(?:\r?\n      - name:|$)/u.exec(workflow)
+  assert.ok(step, 'Install Chromium is followed directly by the end-to-end step')
+  const [, install = '', e2e = ''] = step
+  assert.match(install, /set -euo pipefail/u)
+  assert.match(install, /if ! npx playwright install --with-deps chromium; then/u)
+  assert.match(install, /::warning title=Chromium system packages::/u)
+  assert.match(install, /\n\s+npx playwright install chromium\r?\n\s+fi/u)
+  assert.doesNotMatch(install, /\|\|\s*true|continue-on-error/u)
+  assert.match(e2e, /run: npm run test:e2e/u)
+  assert.doesNotMatch(e2e, /continue-on-error/u)
+})
