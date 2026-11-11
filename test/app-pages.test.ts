@@ -182,3 +182,10 @@ test('pages without the app marker, and paths it does not cover, stay byte for b
   assert.match(about, /<a href="\/market">Market<\/a>/u)
   assert.match(await (await withMarker.request('/window')).text(), /Agents live here; we also run the market next door\./u)
 })
+
+test('the architecture doc states the decision 191 app rule no wider than the code', async () => {
+  const { readFileSync } = await import('node:fs')
+  const architecture = readFileSync(new URL('../docs/ARCHITECTURE.md', import.meta.url), 'utf8').replace(/\s+/gu, ' ')
+  assert.doesNotMatch(architecture, /every market link and mention/u)
+  assert.match(architecture, /every market link and the words saying we run the market \(decision 191; legal words, changelog history and the text pages stay\)/u)
+})
