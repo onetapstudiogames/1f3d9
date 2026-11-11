@@ -83,6 +83,8 @@ const INTERNAL_ERROR_MESSAGE_ADAPTERS = new Set([
   'src/me-around-you.ts:TypeError',
   'src/moderation-review.ts:Error',
   'src/oauth-config.ts:Error',
+  // Decision 189: its message is a closed check name for the host log; callers see the page sentence.
+  'src/oauth-config.ts:OAuthClientRefusal',
   'src/pay.ts:Error',
   'src/pay.ts:TypeError',
   'src/payment-attempts.ts:TypeError',
