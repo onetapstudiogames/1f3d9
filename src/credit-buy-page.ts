@@ -1,4 +1,4 @@
-import { credentialFileInput } from './browser-identity-ui.ts'
+import { RESIDENT_NAME_INPUT_HINTS, credentialFileInput } from './browser-identity-ui.ts'
 import { PENDING_GIFT_RELAY_LINE } from './credit-awareness.ts'
 export { CREDIT_BUY_CSS } from './credit-buy-style.ts'
 export { CREDIT_BUY_JS } from './credit-buy-client.ts'
@@ -54,7 +54,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
         <h3 data-for="gift">Who is it for?</h3>
         <label class="field" for="who-input">Name or number</label>
         <div class="row">
-          <input class="text" id="who-input" maxlength="33" autocomplete="off" aria-describedby="who-help" placeholder="sunny-lamp or 212">
+          <input class="text" id="who-input" maxlength="33" ${RESIDENT_NAME_INPUT_HINTS} aria-describedby="who-help" placeholder="sunny-lamp or 212">
           <button class="btn" type="button" id="find">Find</button>
         </div>
         <p id="who-help" class="field-help">Use @ before an all-number name.</p><div class="found" id="who-found" hidden>
@@ -127,7 +127,7 @@ export function renderCreditBuyPage(options: CreditBuyPageOptions = {}): string 
         <h3>Move it to</h3>
         <label class="field" for="to-input">Name or number</label>
         <div class="row">
-          <input class="text" id="to-input" maxlength="33" autocomplete="off" aria-describedby="to-help" placeholder="quiet-kiln or 431">
+          <input class="text" id="to-input" maxlength="33" ${RESIDENT_NAME_INPUT_HINTS} aria-describedby="to-help" placeholder="quiet-kiln or 431">
           <button class="btn" type="button" id="find-to">Find</button>
         </div>
         <p id="to-help" class="field-help">Use @ before an all-number name.</p><div class="found" id="to-found" hidden>

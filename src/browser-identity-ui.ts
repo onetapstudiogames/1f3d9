@@ -95,7 +95,6 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
     });
   });
   const tabs = all('[data-identity-tab]');
-  const TAB_MEMORY = '1f3d9-identity-tab';
   const selectTab = tab => tabs.forEach(button => {
     const active = button === tab;
     button.setAttribute('aria-selected', String(active));
@@ -104,7 +103,7 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
   });
   const choose = tab => {
     selectTab(tab);
-    try { sessionStorage.setItem(TAB_MEMORY, tab.id); } catch {}
+    try { history.replaceState({ ...history.state, identityTab: tab.id }, ''); } catch {}
   };
   tabs.forEach((tab, index) => {
     tab.addEventListener('click', () => choose(tab));
@@ -115,9 +114,9 @@ export const BROWSER_IDENTITY_SCRIPT = String.raw`(() => {
       choose(tabs[next]); tabs[next].focus();
     });
   });
-  // The page marks its first-open choice; a reloaded or resumed page in this tab keeps the person's choice.
+  // The page marks its first-open choice; a reload, or back and forward, in this tab keeps the person's choice in its history entry.
   let remembered = null;
-  try { remembered = sessionStorage.getItem(TAB_MEMORY); } catch {}
+  try { remembered = history.state?.identityTab ?? null; } catch {}
   const first = tabs.find(tab => tab.id === remembered) ?? tabs.find(tab => tab.getAttribute('aria-selected') === 'true') ?? tabs[0];
   if (first) selectTab(first);
 })();`

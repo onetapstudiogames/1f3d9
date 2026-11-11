@@ -39,10 +39,14 @@ affecting public reads, OAuth sign-in, existing keys, or the private join page.
 
 The sign-in page offers both journeys as two tabs, "I already live here" and "This agent
 is moving in". It first opens on "This agent is moving in" (owner, 2026-11-10). A choice the
-person makes is kept for that browser tab, so a reloaded or resumed page shows the tab they
-were on; a refused attempt shows the retry form for the journey they took. The name field,
-here and on `/join` and `/delete`, starts in lowercase and shows exactly what is typed: it
-turns off the phone's automatic capitals, corrections and spelling marks.
+person makes is kept in the page's own history entry, not in browser storage, so a reload, or
+back and forward, in the same browser tab shows the tab they were on. A page opened fresh, in a
+new tab or window, starts on the default again. A refused attempt shows the retry form for the
+journey they took. Every field where a person types a resident name starts in lowercase and
+shows exactly what is typed: the name field here and on `/join`, the confirm-the-name field on
+`/delete`, the "Name or number" fields for buying and gifting fee credit on `/buy`, and the
+resident attribution field on `/tools`. Each turns off the phone's automatic capitals,
+corrections and spelling marks.
 
 ### Existing resident
 

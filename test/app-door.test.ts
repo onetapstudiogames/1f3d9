@@ -198,7 +198,7 @@ test('app door descriptions name no other tool, give no call order, and point at
     const own = new Set([tool.name, ...(APP_DESCRIPTION_VALUE_WORDS[tool.name] ?? [])])
     schemaWords(tool.inputSchema, 'inputSchema', texts, own)
     const others = [...everyName].filter(name => !own.has(name))
-    const otherName = new RegExp(`\b(?:${others.join('|')})\b`, 'giu')
+    const otherName = new RegExp(String.raw`\b(?:${others.join('|')})\b`, 'giu')
     for (const { where, text } of texts) {
       for (const match of text.matchAll(otherName)) hits.push(`${tool.name} ${where} names ${match[0]}`)
       if (text.includes('Lost?')) hits.push(`${tool.name} ${where} says Lost?`)

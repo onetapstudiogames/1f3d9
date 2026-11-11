@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { BROWSER_IDENTITY_SCRIPT } from '../src/browser-identity-ui.ts'
 import { RETIREMENT_FORM } from '../src/retirement-page.ts'
+import { renderCreditBuyPage } from '../src/credit-buy-page.ts'
+import { renderCommunityToolsBody } from '../src/community-tools-page.ts'
 import { begin, browserPost, fixture } from './oauth-flow-tests/fixture.ts'
 import { pageState } from './helpers/identity-browser-fixtures/browser-session.ts'
 import { appWithMemoryStore } from './helpers/identity-browser-fixtures/identity-app.ts'
@@ -50,7 +52,7 @@ function element(id: string, attributes: Record<string, string> = {}): FakeEleme
 }
 
 /** Run the real page script against the two tabs as the consent page serves them. */
-function openPage(html: string, storage: Storage | null) {
+function openPage(html: string, history: PageHistory | null) {
   const tabs = ['tab-old', 'tab-new'].map(id => element(id, {
     'aria-selected': tag(html, id).match(/aria-selected="(true|false)"/u)![1]!,
     'aria-controls': id.replace('tab-', 'pane-'),
@@ -61,11 +63,11 @@ function openPage(html: string, storage: Storage | null) {
     querySelector: () => null,
     getElementById: (id: string) => panes.get(id) ?? null,
   }
-  const sessionStorage = storage ?? {
-    getItem() { throw new Error('storage blocked') },
-    setItem() { throw new Error('storage blocked') },
+  const pageHistory = history ?? {
+    get state(): unknown { throw new Error('history blocked') },
+    replaceState() { throw new Error('history blocked') },
   }
-  new Function('document', 'sessionStorage', BROWSER_IDENTITY_SCRIPT)(document, sessionStorage)
+  new Function('document', 'history', BROWSER_IDENTITY_SCRIPT)(document, pageHistory)
   const shown = () => {
     const selected = tabs.filter(tab => tab.getAttribute('aria-selected') === 'true').map(tab => tab.id)
     assert.equal(selected.length, 1)
@@ -78,12 +80,18 @@ function openPage(html: string, storage: Storage | null) {
   return { shown, click }
 }
 
-function memoryStorage(): Storage {
-  const values = new Map<string, string>()
+interface PageHistory {
+  readonly state: unknown
+  replaceState(state: unknown, unused: string): void
+}
+
+/** One browser tab's history entry: its state survives a reload and back or forward in that tab. */
+function tabHistory(): PageHistory {
+  let state: unknown = null
   return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value) },
-  } as Storage
+    get state() { return state },
+    replaceState(next: unknown) { state = structuredClone(next) },
+  }
 }
 
 test('the sign-in page first opens on "This agent is moving in"', async () => {
@@ -91,20 +99,25 @@ test('the sign-in page first opens on "This agent is moving in"', async () => {
   assert.ok(tag(html, 'tab-new').includes('aria-selected="true"'))
   assert.ok(tag(html, 'tab-old').includes('aria-selected="false"'))
   assert.match(html, />I already live here<\/button>/u, 'both choices stay')
-  assert.equal(openPage(html, memoryStorage()).shown(), 'tab-new')
-  assert.equal(openPage(html, null).shown(), 'tab-new', 'blocked storage still opens on the default')
+  assert.equal(openPage(html, tabHistory()).shown(), 'tab-new')
+  assert.equal(openPage(html, null).shown(), 'tab-new', 'a page that cannot keep history still opens on the default')
 })
 
 test('a re-shown sign-in page keeps the choice the person was on', async () => {
   const { html } = await begin(fixture().app)
-  const storage = memoryStorage()
-  const first = openPage(html, storage)
+  const history = tabHistory()
+  const first = openPage(html, history)
   first.click('tab-old')
   assert.equal(first.shown(), 'tab-old')
-  assert.equal(openPage(html, storage).shown(), 'tab-old', 'a reload or resumed page stays on the existing resident')
-  const again = openPage(html, storage)
+  assert.equal(openPage(html, history).shown(), 'tab-old', 'a reload, or back and forward, in this tab stays on the existing resident')
+  const again = openPage(html, history)
   again.click('tab-new')
-  assert.equal(openPage(html, storage).shown(), 'tab-new')
+  assert.equal(openPage(html, history).shown(), 'tab-new')
+  assert.equal(openPage(html, tabHistory()).shown(), 'tab-new', 'a fresh tab opens on the default')
+})
+
+test('the sign-in page script keeps no web storage', () => {
+  assert.doesNotMatch(BROWSER_IDENTITY_SCRIPT, /localStorage|sessionStorage|indexedDB|document[.]cookie/u)
 })
 
 test('every first-party field where a person types a resident name starts in lowercase', async () => {
@@ -117,4 +130,8 @@ test('every first-party field where a person types a resident name starts in low
   const join = await pageState(appWithMemoryStore().app, '/join')
   assertPlainNameField(join.html, 'handle', '/join')
   assertPlainNameField(RETIREMENT_FORM, 'retirement-name', '/delete')
+  const buy = renderCreditBuyPage()
+  assertPlainNameField(buy, 'who-input', '/buy credit for')
+  assertPlainNameField(buy, 'to-input', '/buy gift to')
+  assertPlainNameField(renderCommunityToolsBody({ waitingCount: 0, submissionsAvailable: true }, 'csrf'), 'tool-resident', '/tools resident attribution')
 })
