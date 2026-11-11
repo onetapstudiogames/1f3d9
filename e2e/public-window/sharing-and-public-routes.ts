@@ -159,7 +159,7 @@ export function registerPublicWindowSharingAndPublicRoutes() {
     await expect(page.locator('#directory-search')).toHaveValue('field')
   })
 
-  test('link-tracking tags load the same window and leave its clean address', async ({ page }) => {
+  test('names the window does not use load the same window and leave its clean address', async ({ page }) => {
     const cleanPath = () => new URL(page.url()).pathname + new URL(page.url()).search
 
     const tagged = await page.goto('/window?rdt_cid=ad-click&utm_source=reddit')
@@ -180,7 +180,12 @@ export function registerPublicWindowSharingAndPublicRoutes() {
     await expect(page.locator('#record-detail')).toBeVisible()
     expect(cleanPath()).toBe('/window/note/301')
 
-    const refused = await page.goto('/window?notes=open')
+    const unknown = await page.goto('/window?oppref=gAAAAA-made-up-token&olref=x&notes=open')
+    expect(unknown?.status()).toBe(200)
+    await expect(page.locator('#window-status')).toContainText('Watching')
+    expect(cleanPath()).toBe('/window/map')
+
+    const refused = await page.goto('/window?place=abc&notes=open')
     expect(refused?.status()).toBe(404)
   })
 

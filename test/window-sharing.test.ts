@@ -294,9 +294,9 @@ test('shared Archive questions use the public search byte, normalization, and le
   assert.equal(path('---', 'phrase')?.startsWith('/window/archive?q='), true)
 })
 
-test('server-visible share requests round-trip canonical paths and reject unknown shapes', () => {
+test('server-visible share requests round-trip canonical paths, ignore unknown names, and reject bad shapes', () => {
   assert.equal(parseWindowShareRequest('/window/live', '?place=310'), null)
-  assert.equal(parseWindowShareRequest('/window/map', '?notes=open'), null)
+  assert.deepEqual(parseWindowShareRequest('/window/map', '?notes=open'), parseWindowShareRequest('/window/map', ''))
 
   const things = parseWindowShareRequest('/window/things', '?place=310')
   assert.ok(things)
@@ -329,10 +329,10 @@ test('server-visible share requests round-trip canonical paths and reject unknow
   assert.equal(parseWindowShareRequest('/window/thing/2147483647', '')?.state.detail?.id, 2_147_483_647)
   assert.equal(parseWindowShareRequest('/window/thing/2147483648', ''), null)
   assert.equal(parseWindowShareRequest('/window/unknown', ''), null)
-  assert.equal(parseWindowShareRequest('/window/map', '?unknown=1'), null)
+  assert.deepEqual(parseWindowShareRequest('/window/map', '?unknown=1'), parseWindowShareRequest('/window/map', ''))
   assert.equal(parseWindowShareRequest('/window/map', '?place=1&place=2'), null)
   assert.equal(parseWindowShareRequest('/window/place/310', '?place=310'), null)
-  assert.equal(parseWindowShareRequest('/window/place/310', '?drawing=current'), null)
+  assert.deepEqual(parseWindowShareRequest('/window/place/310', '?drawing=current'), parseWindowShareRequest('/window/place/310', ''))
   assert.equal(parseWindowShareRequest('/window/map', '?find=quiet%0Aroom'), null)
   assert.equal(
     parseWindowShareRequest(

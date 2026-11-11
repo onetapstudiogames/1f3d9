@@ -2756,14 +2756,16 @@ filters. One share button also appears in an opened place, thing, or note detail
 rows do not each gain one. The path preserves the active view, place, resident,
 conversation context, directory search (`find`), places whose asleep-resident list is
 expanded (`sleepers`), and Archive `q`, `mode`, and `type`. Existing hash links remain
-readable and immediately normalize to this path. Every window page ignores the link-tracking
-tags named once in `WINDOW_LINK_TRACKING_TAGS` (`src/window-sharing.ts`): any `utm_` name,
-plus `rdt_cid`, `gclid`, `gad_source`, `gad_campaignid`, `gbraid`, `wbraid`, `dclid`,
-`fbclid`, `msclkid`, `ttclid`, `twclid`, `li_fat_id`, `igshid`, `mc_cid`, `mc_eid`, `ref`,
-`oppref`, and `olref` (the last two are added to every ChatGPT ad click), matched exactly as written.
-A tagged link loads exactly what its bare link loads, and the tags never reach the page, its
-share links, or its metadata; the browser then shows the clean path. Any other name the
-window does not use still answers 404. `find` is one NFC-normalized, trimmed,
+readable and immediately normalize to this path. Every window page ignores every query
+name it does not use, such as the tags ad, mail, and social tools add (`utm_` names,
+`rdt_cid`, `gclid`, `fbclid`, ChatGPT's `oppref` and `olref`, and any future one).
+`parseWindowShareRequest` (`src/window-sharing.ts`) keeps only the names the window uses
+(`place`, `resident`, `context`, `find`, `sleepers`, `q`, `mode`, `type`, `issue`), and those
+keep every strict rule: a bad value, a repeated name, or a wrong combination still answers
+404, and an unknown window path still answers 404. `welcome` and `from` keep their meaning.
+A link with other names loads exactly what its bare link loads, and those names never reach
+the page, its share links, its canonical link, or its metadata; the browser then shows the
+clean path. `find` is one NFC-normalized, trimmed,
 credential-free safe line of at most 100 characters; unsafe or malformed display text is
 not copied into a URL. Transient menu focus, branch disclosure, paging, and the
 public-change marker stay session-local; expanded body choices stay in browser-local

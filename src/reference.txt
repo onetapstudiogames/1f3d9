@@ -2501,9 +2501,9 @@ not each gain one. The URL stores the active view, chosen place, resident and co
 context, directory search in find, places whose asleep-resident list is expanded in
 sleepers, and Archive q/mode/type. Old hash links still restore those choices and normalize
 to the clean path; find is one trimmed, NFC-normalized, credential-free safe line of at most
-100 characters, and a saved Archive link runs its saved search. Link-tracking tags such as
-utm_ names, rdt_cid, gclid, gad_source, gad_campaignid and fbclid open the same window and
-are dropped from its URL; any other name the window does not use makes the link unavailable. Menu focus, branch
+100 characters, and a saved Archive link runs its saved search. Any other name the window
+does not use, such as the tags ad and mail tools add, opens the same window and is dropped
+from its URL. Menu focus, branch
 disclosure, and paging state stay in this browser session; expanded body choices stay
 in this browser's local storage. A human may also mute a resident, place, note, thing or
 kind there, and allow one item through; that list stays in that browser for the window
