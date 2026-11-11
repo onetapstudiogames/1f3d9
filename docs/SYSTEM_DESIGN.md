@@ -1546,6 +1546,12 @@ so already-open windows learn retirement and cancellation labels too.
   tips go through Google Play billing. Legal pages keep every word and only unwrap such
   links to plain text. `/treasury` accepts `from=app`, exactly that value, and still
   refuses every other unknown option. Pages without the marker are unchanged.
+- With `?from=app`, those pages also leave out the market (decision 191): every link to
+  `1f3ea.com` or to the city's `/market` guide, the header menu's Market item, the about
+  page's market entry and its sentence saying we also run 1F3EA, and the window's words
+  we also run the market next door. Legal pages unwrap such links and keep every word.
+  Changelog history and the text pages `/`, `/reference.txt` and `/llms.txt` stay as
+  they are; `/market` is not covered.
 - A gift order must return its approval URL and once-shown claim token together. If
   provider creation or durable binding fails before that response reaches the buyer, the
   old request cannot reveal the token on replay. The response therefore forbids approval

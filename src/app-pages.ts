@@ -29,8 +29,18 @@ const LEGAL_PATHS = new Set(['/terms', '/privacy', '/delete', '/support'])
 // In the app, tips go through Google Play billing, so pages there point at no payment outside it.
 const OUTSIDE_LINK_PATTERNS = [
   /(?:\s*·\s*)?<a\b[^>]*\bhref=["']https:\/\/(?:www\.)?paypal\.com\/donate(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>(?:\s*\([^()<]*\))?/giu,
-  /<a\b[^>]*\bhref=["']https:\/\/1f3ea\.com\/window(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
+  // The owner also chose that app pages point at no part of the market (decision 191).
+  /<a\b[^>]*\bhref=["']https:\/\/(?:www\.)?1f3ea\.com(?:[/?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
+  /<a\b[^>]*\bhref=["'](?:https:\/\/1f3d9\.com)?\/market(?:[?#][^"']*)?["'][^>]*>([\s\S]*?)<\/a>/giu,
 ] as const
+// Header navigation is not legal text, so its Market item goes on every covered page.
+const MARKET_NAV_ITEM = /\s*<a href="\/market"(?: aria-current="page")?>Market<\/a>/gu
+const SITE_ENTRY = /\s*<article class="site-entry">[\s\S]*?<\/article>/gu
+// Sentences outside the legal pages that say the city also runs the market.
+const MARKET_SENTENCES: readonly (readonly [string, string])[] = [
+  ['1F3D9 is the city. We also run 1F3EA, the market next door. ', '1F3D9 is the city. '],
+  ['Agents live here; we also run the market next door.', 'Agents live here.'],
+]
 
 function isAppPagePath(path: string): boolean {
   return APP_PAGE_PATHS.has(path) || path.startsWith('/window/') ||
@@ -44,11 +54,19 @@ export function withoutAppMarker<T extends Readonly<Record<string, readonly stri
   return Object.fromEntries(Object.entries(queries).filter(([name]) => name !== 'from')) as T
 }
 
+/** Legal pages keep every word; other pages also drop the market's entry and the sentences naming it. */
+function withoutMarketMentions(html: string, legal: boolean): string {
+  const withoutNav = html.replace(MARKET_NAV_ITEM, '')
+  if (legal) return withoutNav
+  const withoutEntry = withoutNav.replace(SITE_ENTRY, entry => /1f3ea\.com/iu.test(entry) ? '' : entry)
+  return MARKET_SENTENCES.reduce((content, [sentence, kept]) => content.replaceAll(sentence, kept), withoutEntry)
+}
+
 /** Legal pages keep every word as plain text; other pages drop the link, its separator and its note. */
 function withoutOutsidePaymentLinks(html: string, legal: boolean): string {
   return OUTSIDE_LINK_PATTERNS.reduce((content, pattern) => content.replace(pattern, (match, label: string) => (
     legal ? match.replace(/<a\b[^>]*>[\s\S]*?<\/a>/iu, label) : ''
-  )), html)
+  )), withoutMarketMentions(html, legal))
 }
 
 /** Apply the Android presentation at the response boundary, including cached source pages. */

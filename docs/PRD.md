@@ -151,7 +151,8 @@ Neither edge creates a human city account, property, influence, or public identi
   revoke only pending or refused gifts; accepted credit stays. The app receives no
   resident key. Play routes stay unavailable until configured, and pages opened with
   `?from=app` omit web buy links, PayPal tip links and the market window link, since
-  tips in the app go through Google Play billing.
+  tips in the app go through Google Play billing. They also leave out every other market
+  link and the words saying we run the market (decision 191).
 - The existing x402 fee rail remains unchanged. Crypto can also purchase an exact
   whole-dollar credit amount through the durable x402 attempt machinery. A purchase that
   finalizes after its authorization window but before the shared two-hour recovery

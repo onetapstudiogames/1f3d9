@@ -192,8 +192,9 @@ transaction source makes webhook and claim delivery converge on one pending gift
 The Play rail checks purchases and products with RevenueCat v2, ignores sandbox evidence
 in production, and revokes only unaccepted gifts on verified refunds. Every Play route
 answers 503 until configured; see [ENVIRONMENT.md](runbooks/ENVIRONMENT.md). Website
-`?from=app` responses omit buy links, PayPal tip links and the market window link
-(decision 187), `/treasury` accepts that marker, and shared links omit it.
+`?from=app` responses omit buy links, PayPal tip links (decision 187) and every market
+link and the words saying we run the market (decision 191; legal words, changelog history
+and the text pages stay), `/treasury` accepts that marker, and shared links omit it.
 
 `paypal_credit_intents` binds one idempotent request and immutable delivery terms before
 calling PayPal. Capture IDs and subscription-sale IDs become globally unique source keys,
