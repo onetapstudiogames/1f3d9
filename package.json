@@ -20,6 +20,7 @@
     "test:e2e": "playwright test",
     "test:postgres": "node --test --test-concurrency=1 --experimental-strip-types --experimental-test-module-mocks test/integration/*.test.ts",
     "backup": "node --experimental-strip-types scripts/backup.ts",
+    "snapshots:prune": "node --experimental-strip-types scripts/snapshot-cap.ts",
     "restore:drill": "node --experimental-strip-types scripts/restore-drill.ts",
     "credential:scan": "node --experimental-strip-types scripts/credential-exposure-scan.ts",
     "snapshot:export": "node --experimental-strip-types scripts/export-public-snapshot.ts",

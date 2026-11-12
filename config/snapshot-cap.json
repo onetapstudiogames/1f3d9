@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "cap": 10,
+  "maxDeletionsPerCeremony": 3,
+  "keep": [
+    {
+      "name": "open-to-use-20260815-094119",
+      "reason": "Taken the day the city opened to residents; the owner keeps it outside the cap."
+    }
+  ]
+}

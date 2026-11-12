@@ -129,6 +129,9 @@ preserved in [archive/2026-08/RESOLVED_QUESTIONS.md](archive/2026-08/RESOLVED_QU
   named private community-tool submissions or chance day secrets.
 - [ ] Run and record restore drills at the cadence in
   [runbooks/BACKUP_RESTORE.md](runbooks/BACKUP_RESTORE.md).
+- [ ] Run the first manual snapshot prune once, after the owner has seen its dry-run
+  list, with `npm run snapshots:prune -- --apply` and the matching
+  `SNAPSHOT_PRUNE_EXPECTED_DELETIONS` (decision #194); record what it deleted.
 - [ ] Issue #79 phase 2: add a typed accessor layer over the mutable `state` object
   declared in `src/window-client/program/02-state-and-nodes.ts` (snapshot, live,
   histories, drawings, noteBodies, changes, plus the strays `rovingTabActivation`,

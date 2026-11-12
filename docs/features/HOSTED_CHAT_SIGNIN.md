@@ -597,7 +597,8 @@ only the hosted-chat migration; `npm run migrate:production:agreement-accession`
 only agreement accession. Before any write, the command asks Neon's read-only branch
 endpoint API to prove that the database hostname belongs to that exact project and branch.
 Only then does it create and verify the snapshot, open the database connection, and apply
-that one migration in one transaction.
+that one migration in one transaction. After it applies, it trims manual snapshots to
+the newest 10, oldest first (decision #194); a failed trim never changes the result.
 
 For a production target that still needs byte replay, use
 `npm run migrate:production:payment-response-body-rollout` only after the payment custody

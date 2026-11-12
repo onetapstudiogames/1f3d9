@@ -20,6 +20,7 @@ import {
   verifyNeonDatabaseTarget,
 } from './database-target.ts'
 import { withoutInheritedGitEnvironment } from './child-process-environment.ts'
+import { applyCeremonySnapshotCap, explainSnapshotRefusal } from './snapshot-cap.ts'
 
 export { publicSearchIndexRecoveryStatements } from './public-search-index-migration.ts'
 
@@ -741,14 +742,18 @@ export async function createProductionSnapshot(
   const base = `https://console.neon.tech/api/v2/projects/${snapshot.projectId}`
   const url = new URL(`${base}/branches/${snapshot.branchId}/snapshot`)
   url.searchParams.set('name', snapshot.name)
-  const created = await responseJson(await fetcher(url, {
+  const response = await fetcher(url, {
     method: 'POST',
     redirect: 'error',
     headers: {
       accept: 'application/json',
       authorization: `Bearer ${apiKey}`,
     },
-  }), 'Neon snapshot creation') as SnapshotResponse
+  })
+  if (!response.ok) {
+    throw await explainSnapshotRefusal(snapshot.projectId, apiKey, response.status, fetcher)
+  }
+  const created = await responseJson(response, 'Neon snapshot creation') as SnapshotResponse
   const record = created.snapshot
   if (
     !record || !isSafeIdentifier(record.id) ||
@@ -1200,7 +1205,16 @@ type MigrationOperations = Readonly<{
     migrationFile: MigrationFile,
     ddl: string,
   ) => Promise<number>
+  capManualSnapshots: (
+    snapshot: NonNullable<MigrationRun['snapshot']>,
+    justMadeId: string,
+    apiKey: string,
+  ) => Promise<string>
 }>
+
+const SNAPSHOT_CAP_UNEXPECTED =
+  'snapshot cap NOT applied: the trim stopped unexpectedly; nothing more was deleted; ' +
+  'the migration result above is unaffected'
 
 const DEFAULT_MIGRATION_OPERATIONS: MigrationOperations = Object.freeze({
   verifyGazetteLocalCandidate,
@@ -1208,20 +1222,37 @@ const DEFAULT_MIGRATION_OPERATIONS: MigrationOperations = Object.freeze({
   verifyPreviewDatabaseTarget,
   prepareProductionMigration,
   applyMigration,
+  capManualSnapshots: (snapshot, justMadeId, apiKey) =>
+    applyCeremonySnapshotCap({ snapshot, justMadeId, apiKey }),
 })
+
+/** Trim manual snapshots after the migration; a failed trim never fails the ceremony. */
+async function capAfterMigration(
+  operations: MigrationOperations,
+  snapshot: NonNullable<MigrationRun['snapshot']>,
+  justMadeId: string,
+  apiKey: string,
+): Promise<string> {
+  try {
+    return await operations.capManualSnapshots(snapshot, justMadeId, apiKey)
+  } catch {
+    return SNAPSHOT_CAP_UNEXPECTED
+  }
+}
 
 /**
  * Run one resolved migration. Gazette activation first binds the source and DDL
  * to a clean local candidate, then proves the application once before target
  * preparation and again after it; the second live proof is the last awaited
- * operation before the room-opening DDL starts.
+ * operation before the room-opening DDL starts. A production run trims manual
+ * snapshots to the cap only after its own snapshot is made and its DDL applied.
  */
 export async function executeMigrationRun(
   run: MigrationRun,
   ddl: string,
   apiKey: string,
   operations: MigrationOperations = DEFAULT_MIGRATION_OPERATIONS,
-): Promise<Readonly<{ statementCount: number; snapshotId?: string }>> {
+): Promise<Readonly<{ statementCount: number; snapshotId?: string; snapshotCap?: string }>> {
   if (run.liveDeployment) {
     try {
       await operations.verifyGazetteLocalCandidate(run.liveDeployment.commit)
@@ -1261,9 +1292,9 @@ export async function executeMigrationRun(
     run.migrationFile,
     reviewedDdl,
   )
-  return snapshotId === undefined
-    ? Object.freeze({ statementCount })
-    : Object.freeze({ statementCount, snapshotId })
+  if (snapshotId === undefined) return Object.freeze({ statementCount })
+  const snapshotCap = await capAfterMigration(operations, run.snapshot!, snapshotId, apiKey)
+  return Object.freeze({ statementCount, snapshotId, snapshotCap })
 }
 
 async function main(): Promise<void> {
@@ -1285,6 +1316,7 @@ async function main(): Promise<void> {
     console.log(`verified production snapshot ${result.snapshotId}`)
   }
   console.log(`applied ${result.statementCount} statements from ${run.migrationFile} to ${run.target}`)
+  if (result.snapshotCap) console.log(result.snapshotCap)
 }
 
 const entrypoint = process.argv[1]
