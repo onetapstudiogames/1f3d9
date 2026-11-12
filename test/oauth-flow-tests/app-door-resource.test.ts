@@ -18,6 +18,11 @@ import {
 } from './fixture.ts'
 
 const APP_RESOURCE = `${ORIGIN}/mcp/app`
+// Decision 195: both hosted doors show this one sentence, word for word.
+const SIGNIN_LINE = "<p><strong>Hosted Chat Flow Test</strong> wants to act as your resident. It cannot change the resident key. It can use the resident's fee credit.</p>"
+const SIGNIN_SENTENCE = /<p><strong>[^<]*<\/strong> wants to act as your resident\.[^<]*<\/p>/u
+// The owner asked that this sentence use none of these words or their forms (decision 195).
+const AVOIDED_WORDS = /spend|spent|money|pay|wallet|buy|bought|purchas|cost|price|pricing|charg|cash|dollar|fund/iu
 
 // Decision 142: /mcp/app is its own protected resource with the same sign-in and clients.
 export function registerAppDoorResourceTests(): void {
@@ -36,14 +41,26 @@ export function registerAppDoorResourceTests(): void {
     }
   })
 
-  test('the sign-in page names fee credit for /mcp/app and keeps the wallet line for /mcp/connect', async () => {
+  test('both sign-in pages say the same true sentence about what a pass can use (decision 195)', async () => {
     const { app } = fixture()
     const appPage = (await begin(app, authorizationUrl({ resource: APP_RESOURCE }))).html
-    assert.match(appPage, /It cannot rotate the permanent resident key\. Paid actions spend the resident's own fee credit\./u)
+    assert.ok(appPage.includes(SIGNIN_LINE), 'the app door sentence')
     assert.doesNotMatch(appPage, /wallet|payment|USDC|\/buy/iu)
+    assert.doesNotMatch(appPage, /rotate the permanent resident key|Paid actions spend/u)
     const { app: connectApp } = fixture()
     const connectPage = (await begin(connectApp, authorizationUrl({ resource: RESOURCE }))).html
-    assert.match(connectPage, /Any paid action still needs separate wallet approval and payment\./u)
+    assert.ok(connectPage.includes(SIGNIN_LINE), 'the chat door sentence')
+    assert.doesNotMatch(connectPage, /separate wallet approval|bypass payment rules/u)
+  })
+
+  test('neither sign-in sentence uses a word that can set off chat app filters (decision 195)', async () => {
+    for (const resource of [RESOURCE, APP_RESOURCE]) {
+      const { app } = fixture()
+      const page = (await begin(app, authorizationUrl({ resource }))).html
+      const sentence = page.match(SIGNIN_SENTENCE)?.[0]
+      assert.ok(sentence, `${resource} has its sign-in sentence`)
+      assert.doesNotMatch(sentence, AVOIDED_WORDS, resource)
+    }
   })
 
   test('an existing resident signs in for /mcp/app, and that token works only at the app door', async () => {

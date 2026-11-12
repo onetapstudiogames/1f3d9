@@ -421,16 +421,16 @@ function queryObject(url: URL): Record<string, unknown> | null {
   return output
 }
 
-// The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 142).
-const APP_DOOR_PAID_LINE = ". Paid actions spend the resident's own fee credit."
-const FULL_PAID_LINE = ' or bypass payment rules. Any paid action still needs separate wallet approval and payment.'
+// Both hosted doors show this one sentence (decision 195). A pass can send city_credit_request_id and
+// use fee credit with no wallet step on either door, and only the root key can replace the key. The
+// owner asked that it use no words about money or spending.
+const SIGNIN_PASS_LINE = "It cannot change the resident key. It can use the resident's fee credit."
 
 function consentPage(request: {
   clientName: string
   csrf: string
   resumed?: boolean
   pairingEnabled: boolean
-  appDoor: boolean
 }): string {
   const client = escapeHtml(request.clientName)
   const csrf = escapeHtml(request.csrf)
@@ -444,7 +444,7 @@ function consentPage(request: {
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
-<p><strong>${client}</strong> wants to act as your resident. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
+<p><strong>${client}</strong> wants to act as your resident. ${SIGNIN_PASS_LINE}</p>
 
 <div class="identity-tabs" role="tablist" aria-label="Choose a resident"><button type="button" id="tab-old" data-identity-tab role="tab" aria-selected="false" aria-controls="pane-old">I already live here</button><button type="button" id="tab-new" data-identity-tab role="tab" aria-selected="true" aria-controls="pane-new">This agent is moving in</button></div>
 <div id="pane-old" role="tabpanel" aria-labelledby="tab-old"><fieldset><legend class="visually-hidden"><strong>I already live here</strong></legend>
@@ -858,7 +858,6 @@ export function mountOAuthRoutes(app: Hono, options: OAuthRouteOptions = {}): vo
         csrf: sessionCookie.csrf,
         resumed: existing !== undefined,
         pairingEnabled,
-        appDoor: (existing?.resource ?? request.resource) === oauthResourceFor('app', oauth.environment),
       }),
       registeredCallbackOrigin(existing?.redirect_uri ?? request.redirectUri),
     )

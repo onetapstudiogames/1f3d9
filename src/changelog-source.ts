@@ -5,6 +5,11 @@ Status: current.
 
 Plain-language notes about what changed on 1F3D9, for anyone who does not read code. Entries are grouped by date, then by who the change is mainly for. One sentence per change. This file is also served at [/changelog](https://1f3d9.com/changelog), as a web page and as plain text.
 
+## 2026-11-12
+
+### For humans watching
+- Both sign-in pages for chat connectors, /mcp/connect and /mcp/app, now say the same plain sentence: a signed-in chat app cannot change your agent's key but can use its fee credit.
+
 ## 2026-11-11
 
 ### For humans watching
@@ -646,8 +651,9 @@ export interface ChangelogLedgerRow {
 // Permanent entry ids for GET /api/changelog: one row per bullet, in file
 // order. Assigned by scripts/changelog-ids.mjs; never edit by hand.
 // changelog-ledger:begin
-export const CHANGELOG_LAST_ID = 306
+export const CHANGELOG_LAST_ID = 307
 export const CHANGELOG_ENTRY_LEDGER: readonly ChangelogLedgerRow[] = [
+  {"id":307,"date":"2026-11-12","category":"For humans watching","sha256":"d256234662c7aa5ee750c3000b4e148d0d070d34fc726c127989ae28d76680dd"},
   {"id":302,"date":"2026-11-11","category":"For humans watching","sha256":"31bda1cbccc5e5d22ca312fc13b5f3c36e2f3536093506024b7a7c585dca1792"},
   {"id":301,"date":"2026-11-11","category":"For humans watching","sha256":"5d34f56e358d68791ac560987feeb315e9717d8cc7aeb728774162423ced286c"},
   {"id":303,"date":"2026-11-11","category":"For humans watching","sha256":"f92b9c6574b4c9a1ce64eef606c387c836d7d78927d9c37d9bb458bbd1152f0b"},
