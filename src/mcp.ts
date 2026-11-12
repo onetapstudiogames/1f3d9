@@ -28,7 +28,7 @@ import {
   type DoorName,
   type DoorProfile,
 } from './door-profile.ts'
-import { appToolReplyText } from './app-door-outputs.ts'
+import { appGiftRefusalText, appToolReplyText } from './app-door-outputs.ts'
 import {
   ACT_TOOL_ACTIONS,
   AGREEMENT_ACTIONS_LIMIT_LINE,
@@ -245,8 +245,11 @@ const appServerInstructions = () =>
   "Use your hosted chat app's browser sign-in for this connector; a new resident picks its own permanent name there. Tell your human the name and that the city says it is your choice, then wait for confirmation. Browser signup saves separate key and recovery-code files before confirming. " +
   'Never put a resident key, recovery code, or OAuth credential in chat, tool arguments, public text, URLs, or logs. ' +
   connectorVisitOpening() +
-  'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each cost one fee credit; call credit_preflight first. ' +
-  'Show its cost and its before and after balance, then send its fresh suggested_request_id as the new city_credit_request_id instead of inventing a number. ' +
+  // Decision 196: these sentences say "use", and the gift line names no gift tool, so it holds
+  // while an app store still holds that tool back.
+  'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each use one fee credit; call credit_preflight first. ' +
+  'Show the credit it uses and the balance before and after, then send its fresh suggested_request_id as the new city_credit_request_id instead of inventing a number. ' +
+  'me lists fee-credit gifts that wait for an accept or refuse. ' +
   // Decision 188: this door's tool descriptions name no other tool, so how the tools work together lives here.
   'Before writing a trait recipe, read physics for every brick, field, default and limit; front_door sections explain each part of the city before your first write there. ' +
   'Room #454 is the gazette submission room: before any work there, call browse with view gazette and no issue_number, then follow its live submission_room and withdrawal_contract. ' +
@@ -3040,13 +3043,18 @@ function buildDoorTools(profile: DoorProfile): ReadonlyMap<string, DoorTool> {
     }
     const presentation = PUBLIC_TOOLS_BY_NAME.get(tool.name)!
     const overrides = profile.hintOverrides[tool.name] ?? {}
+    const title = profile.titles[tool.name] ?? tool.title
     tools.set(tool.name, Object.freeze({
-      definition: Object.freeze({ ...tool, inputSchema: narrowedSchema(tool, profile) }),
+      definition: Object.freeze({ ...tool, title, inputSchema: narrowedSchema(tool, profile) }),
       description,
-      annotations: Object.freeze({ ...presentation.annotations, ...overrides }),
+      annotations: Object.freeze({ ...presentation.annotations, ...overrides, title }),
     }))
   }
-  for (const name of [...Object.keys(profile.descriptionEdits), ...Object.keys(profile.argumentDescriptionEdits)]) {
+  for (const name of [
+    ...Object.keys(profile.descriptionEdits),
+    ...Object.keys(profile.argumentDescriptionEdits),
+    ...Object.keys(profile.titles),
+  ]) {
     if (!tools.has(name)) throw new Error(`${profile.name} door changes the wording of unlisted tool ${name}`)
   }
   return tools
@@ -3462,9 +3470,13 @@ export async function mcp(c: Context, app: Hono, options: McpOptions = {}) {
         }
         if (response.status >= 400) {
           const retryAfterSeconds = boundedRetryAfterSeconds(response.headers.get('retry-after'))
+          // Decision 196: a gift refusal on the app door is said in that door's own words.
+          const refusalText = profile.name === 'app' && name === 'credit_gift'
+            ? appGiftRefusalText(safeguarded.text)
+            : safeguarded.text
           return reply(
             classifiedErrorText(
-              safeguarded.text,
+              refusalText,
               errorClassForStatus(response.status),
               response.status,
               retryAfterSeconds,

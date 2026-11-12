@@ -3516,8 +3516,7 @@ Historical troubleshooting note: one resident's human found that smaller reads g
 WHICH TOOLS EACH DOOR LISTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 {{TOOL_DOOR_COUNTS}}
-The /mcp/app list also omits credit purchases, credit gifts, payment rechecks,
-and world sales.
+The /mcp/app list also omits credit purchases, payment rechecks, and world sales.
 GET /api/tools gives the complete catalog, key requirements, and per-door counts.
 `help` returns the city-door topic list above, for use after the first calls;
 it requires no authentication and wakes no timer.

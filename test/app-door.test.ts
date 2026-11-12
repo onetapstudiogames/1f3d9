@@ -32,6 +32,12 @@ const {
   APP_BANNED_TEXT,
   APP_DROPPED_TOOLS,
   APP_FRONT_DOOR_SECTIONS,
+  APP_GIFT_CANCELLED_REFUSAL,
+  APP_GIFT_ID_REFUSAL,
+  APP_GIFT_NOT_WAITING_REFUSAL,
+  APP_GIFT_ON_HOLD_REFUSAL,
+  APP_INSUFFICIENT_CREDIT_REFUSAL,
+  APP_PAYMENT_REQUIRED_REFUSAL,
 } = await import('../src/door-profile.ts')
 const { appMeAnswer, appOfficialFacts, appToolReplyText } = await import('../src/app-door-outputs.ts')
 const { publicHold } = await import('../src/resident-hold.ts')
@@ -54,7 +60,7 @@ const APP_TOOLS = Object.freeze([
   'front_door', 'help', 'official_facts', 'physics', 'search', 'changes', 'look', 'browse',
   'drawing', 'drawing_history', 'credit_preflight', 'found', 'place_edit', 'coin_trait',
   'invent_kind', 'revise_kind', 'make', 'thing_edit', 'thing_upgrade', 'draw_self', 'act', 'laws',
-  'home', 'withdraw', 'transfer', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping',
+  'home', 'withdraw', 'credit_gift', 'transfer', 'agree', 'open_agreement_accession', 'sign', 'say', 'ping',
   'wait_here', 'read_here', 'flag', 'later_holder_items', 'mark_for_later', 'me',
 ])
 
@@ -134,10 +140,14 @@ for (const name of ['invent_kind', 'revise_kind']) {
   })
 }
 
-test('the app door lists exactly the 36 tools the owner kept', async () => {
+test('the app door lists exactly the 37 tools the owner kept (decision #196)', async () => {
   const tools = await toolsOn('app')
   assert.deepEqual(tools.map(tool => tool.name), APP_TOOLS)
+  assert.equal(tools.length, 37)
   assert.equal(tools.length, CITY_TOOL_DOOR_COUNTS['/mcp/app'].count)
+  assert.deepEqual([...APP_DROPPED_TOOLS], [
+    'buy_credit', 'payment_attempt', 'list_world', 'claim_world', 'cancel_world', 'reconcile_world',
+  ])
   const viaRoute = await app.request('/mcp/app', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -303,7 +313,11 @@ test('no description, schema, or server instruction on the app door names money 
   assert.doesNotMatch(instructions, /https?:\/\/|\/api\/tools|reference\.txt/u)
   assert.ok(instructions.endsWith('Lost? Call front_door.'))
   assert.match(instructions, /going home cannot be blocked/u)
-  assert.match(instructions, /each cost one fee credit; call credit_preflight first\./u)
+  assert.match(instructions, /each use one fee credit; call credit_preflight first\./u)
+  assert.match(instructions, /Show the credit it uses and the balance before and after, then send/u)
+  // Decision #196: the instructions say gifts wait, and name no gift tool, so they hold while an app store holds the tool.
+  assert.ok(instructions.includes('me lists fee-credit gifts that wait for an accept or refuse.'))
+  assert.doesNotMatch(instructions, /credit_gift/u)
 })
 
 test('the app front door, its sections, help, and official facts carry no money rail or app-block wording', async () => {
@@ -327,6 +341,7 @@ test('the app front door, its sections, help, and official facts carry no money 
   const help = await appText('help')
   hits.push(...bannedHits('help', help))
   assert.doesNotMatch(help, /buy_credit|credit_gift|1f3ea|\/api\/tools|\/window|abilities\.txt/u)
+  assert.ok(help.includes('Fee-credit gifts: me lists them, and each can be accepted or refused.'))
   const pointer = "A law can share a temporary label through law_place inside the parent chain of one owner; physics gives the fields and limits."
   const helpDoors = JSON.parse(help) as { doors: string[] }
   const lawsLine = helpDoors.doors.find(line => line.startsWith('Laws:'))!
@@ -498,16 +513,28 @@ const FULL_ME = Object.freeze({
       { id: '2', kind: 'founder_issue', amount: '3.000000', amount_units: '3000000', operation: null, request_id: null, target_key: null, related_spend_id: null, reason: 'review credit', created_at: 't', purchase_kind: null, gift_id: null, source_key: 'openai-review-2026-10-09' },
     ],
     page: { has_more: false, next_before_credit_id: null },
-    pending_gifts: [{ gift_id: 'city_gift_00000000000000000000000000000001' }],
+    pending_gifts: [
+    {
+      gift_id: 'city_gift_00000000000000000000000000000001', status: 'pending', amount: '1.000000', amount_units: '1000000',
+      source: 'purchase', buyer: 'private', created_at: '2026-11-12T00:00:00.000Z',
+      next_actions: { accept: 'POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/accept', refuse: 'POST /api/city-credit/gifts/city_gift_00000000000000000000000000000001/refuse' },
+    },
+    {
+      gift_id: 'city_gift_00000000000000000000000000000002', status: 'frozen', amount: '5.000000', amount_units: '5000000',
+      source: 'purchase', buyer: 'private', created_at: '2026-11-11T00:00:00.000Z',
+      blocked_reason: 'A payment dispute is open on the purchase that funded this gift, or PayPal resolved it ambiguously.',
+      next_actions: { refuse: 'POST /api/city-credit/gifts/city_gift_00000000000000000000000000000002/refuse' },
+    },
+  ],
   },
-  pages: { offers: { has_more: false }, pending_gifts: { has_more: false }, places: { has_more: false } },
+  pages: { offers: { has_more: false }, pending_gifts: { has_more: false, next_before_gift_id: null }, places: { has_more: false } },
 })
 
-test('the app me answer keeps fee credit held, spends, and credit received, and nothing about buying', () => {
+test('the app me answer keeps fee credit held, used, and received, and nothing about buying', () => {
   const answer = appMeAnswer(FULL_ME) as Record<string, any>
   const text = JSON.stringify(answer)
   assert.deepEqual(bannedHits('me', text), [])
-  assert.doesNotMatch(text, /gift|offers|if_blocked|\/api\/help|\/changelog|https?:/u)
+  assert.doesNotMatch(text, /offers|if_blocked|\/api\/|\/changelog|https?:|bought|buyer|dispute|PayPal|source/u)
   assert.equal(answer.city_fee_credit.balance, '4.000000')
   assert.deepEqual(answer.city_fee_credit.receipts.map((entry: { kind: string }) => entry.kind), ['spend', 'received', 'founder_issue'])
   assert.equal(answer.city_fee_credit.receipts[0].operation, 'frontier')
@@ -515,7 +542,37 @@ test('the app me answer keeps fee credit held, spends, and credit received, and 
   assert.equal(answer.since_last_visit.fee_credit_received.amount, '6.000000')
   assert.equal(answer.since_last_visit.city_updates.count, 2)
   assert.equal(Object.hasOwn(answer.since_last_visit, 'tools_changed'), false)
-  assert.deepEqual(Object.keys(answer.pages), ['places'])
+  assert.deepEqual(Object.keys(answer.pages), ['places', 'pending_gifts'])
+  assert.deepEqual(answer.pages.pending_gifts, { has_more: false })
+})
+
+test('the app me answer shows waiting gifts by id, amount, status and time only (decision #196)', () => {
+  const answer = appMeAnswer(FULL_ME) as Record<string, any>
+  assert.deepEqual(answer.city_fee_credit.pending_gifts, [
+    { gift_id: 'city_gift_00000000000000000000000000000001', status: 'pending', amount: '1.000000', amount_units: '1000000', created_at: '2026-11-12T00:00:00.000Z' },
+    { gift_id: 'city_gift_00000000000000000000000000000002', status: 'frozen', amount: '5.000000', amount_units: '5000000', created_at: '2026-11-11T00:00:00.000Z' },
+  ])
+  assert.deepEqual(answer.since_last_visit.fee_credit_received.pending_gifts, {
+    count: 1, sentence: '1 fee-credit gift waits for an accept or refuse.',
+  })
+  const many = appMeAnswer({
+    ...FULL_ME,
+    since_last_visit: {
+      ...FULL_ME.since_last_visit,
+      fee_credit_received: { ...FULL_ME.since_last_visit.fee_credit_received, pending_gifts: { ...FULL_ME.since_last_visit.fee_credit_received.pending_gifts, count: 3 } },
+    },
+  }) as Record<string, any>
+  assert.equal(many.since_last_visit.fee_credit_received.pending_gifts.sentence, '3 fee-credit gifts wait for an accept or refuse.')
+  const none = appMeAnswer({
+    ...FULL_ME,
+    since_last_visit: {
+      ...FULL_ME.since_last_visit,
+      fee_credit_received: { ...FULL_ME.since_last_visit.fee_credit_received, pending_gifts: { count: 0, record_link: 'city_fee_credit.pending_gifts', items: [], page: { has_more: false, next_before_gift_id: null } } },
+    },
+    city_fee_credit: { ...FULL_ME.city_fee_credit, pending_gifts: [] },
+  }) as Record<string, any>
+  assert.deepEqual(none.since_last_visit.fee_credit_received.pending_gifts, { count: 0, sentence: null })
+  assert.deepEqual(none.city_fee_credit.pending_gifts, [])
 })
 
 test('the app me answer carries a founder hold in plain words, with nothing about buying and no web address', () => {
@@ -669,4 +726,110 @@ test('the app me answer keeps the around-you scope line without its web pointer'
   assert.equal(answer.since_last_visit.around_you.scope, AROUND_YOU_SCOPE_LINE)
   assert.equal(answer.since_last_visit.around_you.available, true)
   assert.doesNotMatch(JSON.stringify(answer), /https?:|money/u)
+})
+
+// Decision #196: the one gift tool the app door gained, in its own words.
+const APP_CREDIT_GIFT_DESCRIPTION =
+  'Accept or refuse one fee-credit gift waiting for this resident. Accept adds its exact credit; refuse adds nothing. Repeating either alters nothing. A gift on hold (status frozen) can only be refused.'
+
+test('the app door credit_gift accepts or refuses only, in its own words, with the same hints as the chat door (decision #196)', async () => {
+  const appTool = (await toolsOn('app')).find(tool => tool.name === 'credit_gift')!
+  const connectTool = (await toolsOn('connect')).find(tool => tool.name === 'credit_gift')!
+  assert.equal(appTool.title, 'Accept or refuse a fee-credit gift')
+  assert.equal(appTool.annotations.title, 'Accept or refuse a fee-credit gift')
+  assert.equal(appTool.description, APP_CREDIT_GIFT_DESCRIPTION)
+  assert.deepEqual(appTool.inputSchema.properties.action!.enum, ['accept', 'refuse'])
+  assert.deepEqual(Object.keys(appTool.inputSchema.properties), ['action', 'gift_id'])
+  assert.equal(appTool.inputSchema.properties.gift_id!.description, 'opaque id of one fee-credit gift waiting for this resident')
+  const { title: _appTitle, ...appHints } = appTool.annotations
+  const { title: _connectTitle, ...connectHints } = connectTool.annotations
+  assert.deepEqual(appHints, connectHints)
+  assert.deepEqual(appHints, { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false })
+  const schemes = (tool: Tool) => (tool as unknown as Record<string, unknown>).securitySchemes
+  assert.deepEqual(schemes(appTool), schemes(connectTool))
+  // The other doors keep their own title and description word for word.
+  assert.equal(connectTool.title, 'Accept or refuse a credit gift')
+  assert.match(connectTool.description, /^Act on one pending or dispute-frozen prepaid fee-credit gift after me points to city_fee_credit\.pending_gifts\./u)
+  assert.ok(connectTool.description.endsWith('The buyer stays private, and no buyer claim token belongs in this tool. Lost? Call front_door.'))
+  const unsupported = await rpc('app', 'tools/call', { name: 'credit_gift', arguments: { action: 'redirect', gift_id: `city_gift_${'a'.repeat(32)}` } })
+  assert.match(unsupported.body.result.content[0].text, /Unsupported action value for credit_gift\. Use one of: accept, refuse\./u)
+})
+
+// The owner's words for what chat apps read (2026-11-12): none of these in a new or changed sentence.
+const AVOIDED_WORDS = /\b(?:spend\w*|spent|money|pay|paid|pays|paying|payments?|wallets?|buy\w*|bought|purchas\w*|costs?|costing|prices?|priced|charg\w*|cash|dollars?|fund\w*)\b/iu
+
+test('the app door sentences the owner asked about say use, and the chat door keeps its words (decision #196)', async () => {
+  const served = JSON.stringify(await toolsOn('app')) + (await instructionsOn('app'))
+  for (const old of [
+    'spends exactly one fee credit', 'Paid acts are separate', 'Each costs one fee credit', 'Refusals spend nothing',
+    'the next paid action', 'or spend credit', 'held and spent', 'spends no quota', 'spends nothing',
+    'a paid frontier continent', 'each cost one fee credit', 'Show its cost', 'The revision spends one fee credit',
+  ]) assert.equal(served.includes(old), false, old)
+  for (const now of [
+    'A frontier claim uses exactly one fee credit when sent with a new city_credit_request_id.',
+    'The invention uses exactly one fee credit when sent with a new city_credit_request_id.',
+    'The revision uses one fee credit when sent with a new city_credit_request_id.',
+    'Fee credit acts are separate:', 'Each uses one fee credit and never mixes with another edit.',
+    'Refusals use nothing; a race after debit returns the credit.',
+    'Its answer is current for the next fee credit action that sends city_credit_request_id; if another action uses the credit first,',
+    'reserve, accept, or use credit.', 'fee credit held and used', 'and uses no quota.', 'it says nothing, uses nothing, and alters nothing lasting.',
+    'null or the world id for a frontier continent',
+    'It also returns one fresh suggested_request_id and pending_gifts_count, the number of fee-credit gifts waiting for this resident, including any on hold.',
+    'Fee-credit gifts waiting for an accept or refuse are listed in city_fee_credit.pending_gifts by id, amount, status and time.',
+  ]) assert.ok(served.includes(now), now)
+  // Each new or changed app door sentence is free of the avoided words.
+  const changedSentences = [
+    APP_CREDIT_GIFT_DESCRIPTION,
+    'opaque id of one fee-credit gift waiting for this resident',
+    APP_PAYMENT_REQUIRED_REFUSAL, APP_INSUFFICIENT_CREDIT_REFUSAL,
+    APP_GIFT_NOT_WAITING_REFUSAL, APP_GIFT_ID_REFUSAL, APP_GIFT_ON_HOLD_REFUSAL, APP_GIFT_CANCELLED_REFUSAL,
+    'me lists fee-credit gifts that wait for an accept or refuse.',
+    'Fee-credit gifts: me lists them, and each can be accepted or refused.',
+    'Founding a frontier continent, inventing or revising a kind, and renaming, retiring or restoring a place each use one fee credit; call credit_preflight first.',
+    'Show the credit it uses and the balance before and after, then send its fresh suggested_request_id as the new city_credit_request_id instead of inventing a number.',
+  ]
+  for (const sentence of changedSentences) assert.doesNotMatch(sentence, AVOIDED_WORDS, sentence)
+  const connect = JSON.stringify(await toolsOn('connect'))
+  for (const kept of ['Paid acts are separate', 'Refusals spend nothing', 'spends no quota', 'spends nothing']) {
+    assert.ok(connect.includes(kept), kept)
+  }
+  assert.match(await instructionsOn('connect'), /Frontier founding, kind invention, and kind revision cost exactly \$1 by USDC or one fee credit/u)
+})
+
+test('the app door fee-credit refusals say use and where credit comes from in one fact (decision #196)', () => {
+  assert.equal(APP_PAYMENT_REQUIRED_REFUSAL,
+    'This action uses one fee credit. Call credit_preflight, then send a new city_credit_request_id. Nothing was used.')
+  assert.equal(APP_INSUFFICIENT_CREDIT_REFUSAL,
+    'This action uses one fee credit and this resident has none. Fee credit is added outside this app. Nothing was used.')
+  for (const text of [APP_PAYMENT_REQUIRED_REFUSAL, APP_INSUFFICIENT_CREDIT_REFUSAL]) {
+    assert.deepEqual(bannedHits('refusal', text), [])
+    assert.doesNotMatch(text, /https?:|\/buy|window|credit_gift/u)
+  }
+})
+
+test('the app door answers a gift refusal in its own words, with no web address or money words (decision #196)', async () => {
+  const { giftBlockedRefusal, GIFT_NOT_PENDING_REFUSAL, GIFT_ID_REJECTED_REFUSAL } = await import('../src/prepaid-credit.ts')
+  const cases: ReadonlyArray<readonly [400 | 409, string, string]> = [
+    [409, giftBlockedRefusal('frozen', 'accepted'), APP_GIFT_ON_HOLD_REFUSAL],
+    [409, giftBlockedRefusal('revoked', 'accepted'), APP_GIFT_CANCELLED_REFUSAL],
+    [409, giftBlockedRefusal('revoked', 'refused'), APP_GIFT_CANCELLED_REFUSAL],
+    [409, GIFT_NOT_PENDING_REFUSAL, APP_GIFT_NOT_WAITING_REFUSAL],
+    [400, GIFT_ID_REJECTED_REFUSAL, APP_GIFT_ID_REFUSAL],
+  ]
+  for (const [status, backingText, appWords] of cases) {
+    const backing = new Hono()
+    backing.post('/api/city-credit/gifts/:id/:action', c => c.json({ error: backingText }, status))
+    const args = { action: 'accept', gift_id: `city_gift_${'b'.repeat(32)}` }
+    const onApp = await rpc('app', 'tools/call', { name: 'credit_gift', arguments: args }, backing)
+    assert.equal(onApp.body.result.isError, true)
+    const text = onApp.body.result.content[0].text as string
+    const answer = JSON.parse(text) as Record<string, unknown>
+    assert.equal(answer.error, appWords)
+    assert.equal(answer.http_status, status)
+    assert.deepEqual(bannedHits('gift refusal', text), [])
+    assert.doesNotMatch(text, /https?:|\/api\/|PayPal|dispute|refund|funding|seller/iu)
+    // The chat door keeps the backing words.
+    const onConnect = await rpc('connect', 'tools/call', { name: 'credit_gift', arguments: args }, backing)
+    assert.equal(JSON.parse(onConnect.body.result.content[0].text).error, backingText)
+  }
 })

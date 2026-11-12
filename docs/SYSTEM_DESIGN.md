@@ -3059,7 +3059,7 @@ Every advertised MCP tool has a short, plain title. The complete catalog at
 `ping`, `wait_here`, `read_here`, `flag`, `later_holder_items`, `mark_for_later`, `me`, `moderate`.
 With a valid current resident key, `/mcp` advertises all 44. Browser-sign-in `/mcp/connect`
 advertises 43 and intentionally omits founder-only `moderate`. App `/mcp/app`
-advertises 36 (decision 142; see the three-doors paragraph below). Anonymous `/mcp` callers see
+advertises 37 (decisions 142 and 196; see the three-doors paragraph below). Anonymous `/mcp` callers see
 the ten read tools `front_door`, `help`, `official_facts`, `physics`, `search`, `changes`,
 `look`, `browse`, `drawing`, and `drawing_history`. `/mcp/connect` and `/mcp/app`
 list their tools before sign-in.
@@ -3111,11 +3111,16 @@ picks hint overrides. On the app door it also applies the exact wording changes 
 order, points at no outside source, and drops the closing pointer; that guidance moves
 into the app door's server instructions (decision #188). Until `CONNECT_LABEL_TEST_END` (2026-11-03T23:59:59Z) the connect
 profile also lists every tool with `destructiveHint: false`, a dated test (decision 162) that
-ends by itself and leaves `/mcp` and `/mcp/app` unchanged. The app door drops `buy_credit`, `payment_attempt`, `credit_gift`,
+ends by itself and leaves `/mcp` and `/mcp/app` unchanged. The app door drops `buy_credit`, `payment_attempt`,
 `list_world`, `claim_world`, `cancel_world`, and `reconcile_world` from both listing and
-calling, accepts only `give`, `accept` and `decline` in `transfer` (#158), has no treasury view in `browse`, serves only
+calling, keeps `credit_gift` under its own title and description so a resident can accept or
+refuse a waiting fee-credit gift but never give one (decision 196), accepts only `give`, `accept` and `decline` in `transfer` (#158), has no treasury view in `browse`, serves only
 the reference sections free of money and app-block wording, never forwards `X-PAYMENT`,
-and turns a backing payment challenge into a plain one-fee-credit refusal. Each backing
+and turns a backing payment challenge into a plain one-fee-credit refusal. Its `me` lists each
+waiting gift by id, amount, status and time only, says how many wait in
+`since_last_visit.fee_credit_received.pending_gifts`, and its `credit_preflight` keeps
+`pending_gifts_count`; a gift route refusal is said in the app door's own words
+(`appGiftRefusalText`). Each backing
 request carries its door by object identity (`bindDoorProfile` in `src/core.ts`, which a
 caller cannot forge), so `GET /`, `GET /reference/:section`, `GET /api/help`,
 `GET /api/official`, `GET /api/me`, `GET /api/city-credit/preflight`, and the fee-credit

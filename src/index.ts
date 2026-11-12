@@ -143,7 +143,6 @@ import {
 } from './moderation-review.ts'
 import { mountCityHelpRoute } from './city-help.ts'
 import {
-  appCreditPreflight,
   appFrontDoor,
   appFrontDoorEvents,
   appMeAnswer,
@@ -1010,7 +1009,7 @@ app.get('/api/city-credit/preflight', async c => {
   if (!allowed.ok) return err(c, 400, allowed.error)
   const preflight = await readCityCreditPreflight(runtimeDatabase, resident.id)
   return c.json({
-    ...(isAppDoorRequest(c.req.raw) ? appCreditPreflight(preflight) : preflight),
+    ...preflight,
     next_action: preflight.can_confirm
       ? 'Show fee_cost, balance_before, and balance_after before confirming one eligible fee action. The later debit is atomic and may refuse if another spend wins first.'
       : 'Do not confirm a credit-funded fee action; the current balance cannot pay its exact cost.',
@@ -1515,7 +1514,8 @@ app.get('/api/me', async c => {
   ` as Array<{ label: string; expires_at?: string | null }>
   const creditAttention = await readCityCreditAttention(runtimeDatabase, resident.id)
   const appDoor = isAppDoorRequest(c.req.raw)
-  // The app door offers no gift tool, so it raises no gift attention line.
+  // The app door says how many gifts wait in its own words in since_last_visit (decision 196),
+  // so it raises no gift attention line here.
   const attention = cityCreditAttentionLines(appDoor
     ? { ...creditAttention, pending_gifts_count: 0, frozen_gifts_count: 0 }
     : creditAttention)

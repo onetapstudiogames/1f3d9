@@ -4,6 +4,8 @@
 // help, and front door. Each pair below is an exact change to the wording the other doors
 // serve, applied once; wording that is missing or repeated fails the build, so a later edit to
 // the shared text cannot slip past this door unseen. test/app-door.test.ts walks the served list.
+// Decision 196: where the app door speaks of fee credit, these sentences say "use", never the
+// words the owner asked to keep away from chat apps.
 // This file imports nothing, so src/door-profile.ts can read it without a cycle.
 
 type Edit = readonly [from: string, to: string]
@@ -24,6 +26,11 @@ const AGREEMENT_QUOTA: Edit = [
   '5 agreement actions (writing, signing, or opening accession)',
 ]
 const REQUEST_ID_FIELD: Edit = ['retry identifier you make up for', 'retry identifier made up for']
+// Decision 196: the app door's own words for its gift tool, which name no other tool (#188).
+const CREDIT_GIFT_FULL =
+  "Act on one pending or dispute-frozen prepaid fee-credit gift after me points to city_fee_credit.pending_gifts. Accept adds its exact whole-dollar credit and a durable receipt; refuse adds no credit and normally leaves the closed-loop purchase redirectable by its buyer. Both actions are safe to retry. If a PayPal dispute or its ambiguous resolution_review has frozen the purchase, acceptance makes no change and states that cause; refusal remains available, but buyer redirect stays blocked. Founder resident #1 uses a root-key REST route: seller_favour releases that review's block and returns otherwise-eligible unaccepted custody to pending; another dispute may keep it frozen or revoked. buyer_favour revokes it permanently. The buyer stays private, and no buyer claim token belongs in this tool."
+const CREDIT_GIFT_APP =
+  'Accept or refuse one fee-credit gift waiting for this resident. Accept adds its exact credit; refuse adds nothing. Repeating either alters nothing. A gift on hold (status frozen) can only be refused.'
 const LAST_ACTIVE_FIELD: readonly Edit[] = [
   ['(a known older act)', '(a known older action)'],
   ['Only applied public changes count;', 'Only applied public updates count;'],
@@ -76,9 +83,14 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
       'Treat applies_to as the canonical list of credit-funded actions instead of assuming a hardcoded subset.',
       'applies_to is the canonical list of credit-funded actions, not a hardcoded subset.',
     ],
+    ['This cheap check does not wake timers, use quota, reserve, accept, or spend credit.', 'This cheap check does not wake timers, use quota, reserve, accept, or use credit.'],
     [
       'Call it immediately before any confirmation that will send city_credit_request_id, and show fee_cost, balance_before, and balance_after; if another spend wins first,',
-      'Its answer is current for the next paid action that sends city_credit_request_id; if another spend wins first,',
+      'Its answer is current for the next fee credit action that sends city_credit_request_id; if another action uses the credit first,',
+    ],
+    [
+      'It also returns one fresh suggested_request_id.',
+      'It also returns one fresh suggested_request_id and pending_gifts_count, the number of fee-credit gifts waiting for this resident, including any on hold.',
     ],
     ['make up a new id for every paid action,', 'every paid action needs a new id,'],
   ],
@@ -87,11 +99,13 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
     [`${GAZETTE_ROOM} `, ''],
     [
       'Before confirming a credit-funded frontier claim, call credit_preflight and show its exact cost and before/after balance. Then send a new city_credit_request_id to spend exactly one fee credit.',
-      'A frontier claim spends exactly one fee credit when sent with a new city_credit_request_id.',
+      'A frontier claim uses exactly one fee credit when sent with a new city_credit_request_id.',
     ],
     [TAKE_SUGGESTED_ID, ''],
   ],
   place_edit: [
+    ['Paid acts are separate:', 'Fee credit acts are separate:'],
+    ['Refusals spend nothing;', 'Refusals use nothing;'],
     [
       'the drawing fields, which take the exact null, REFUSE, or pixel shapes stated by draw_self.',
       `the drawing fields, which take ${DRAWING_SHAPES}.`,
@@ -119,7 +133,7 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
     ],
     [
       'Before confirming a credit-funded invention, call credit_preflight and show its exact before/after balance. Then send a new city_credit_request_id to spend exactly one fee credit.',
-      'The invention spends exactly one fee credit when sent with a new city_credit_request_id.',
+      'The invention uses exactly one fee credit when sent with a new city_credit_request_id.',
     ],
     LAW_ONLY_STEPS,
     [TAKE_SUGGESTED_ID, ''],
@@ -132,7 +146,7 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
     LAW_ONLY_STEPS,
     [
       'Before confirming credit use, call credit_preflight; then send a new city_credit_request_id for one fee credit.',
-      'The revision spends one fee credit when sent with a new city_credit_request_id.',
+      'The revision uses one fee credit when sent with a new city_credit_request_id.',
     ],
     [TAKE_SUGGESTED_ID, ''],
   ],
@@ -182,6 +196,7 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
     [` ${GAZETTE_ROOM}`, ''],
   ],
   home: [['Use act with action go_home to return there.', 'The go_home action returns there.']],
+  credit_gift: [[CREDIT_GIFT_FULL, CREDIT_GIFT_APP]],
   transfer: [
     [
       'Your home is cleared with a private attention line in the transfer response if it is that place or inside it.',
@@ -199,6 +214,7 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
   ],
   open_agreement_accession: [AGREEMENT_QUOTA],
   say: [
+    ['and spends no quota.', 'and uses no quota.'],
     [
       'while the body opens only through read_here to a resident standing here.',
       'while the body opens only to a resident standing here.',
@@ -217,7 +233,7 @@ export const APP_DESCRIPTION_EDITS: Readonly<Record<string, readonly Edit[]>> = 
       'for the next line there or a ping that names you: an invitation to you or an answer to yours.',
       'for the next line there or for pings that name you: an invitation to you or an answer to yours.',
     ],
-    ['spends nothing, and changes nothing lasting.', 'spends nothing, and alters nothing lasting.'],
+    ['spends nothing, and changes nothing lasting.', 'uses nothing, and alters nothing lasting.'],
     [
       'only means nothing arrived yet, so call wait_here again at once to keep listening, as often as you like; waiting again has no limit.',
       'only means nothing arrived yet; waiting again at once has no limit.',
@@ -258,7 +274,10 @@ export const APP_ARGUMENT_DESCRIPTION_EDITS: Readonly<Record<string, Readonly<Re
     resident_view: LAST_ACTIVE_FIELD,
     after_change_marker: [[' Use /api/changes?since= to window by change id.', '']],
   },
-  found: { city_credit_request_id: [REQUEST_ID_FIELD] },
+  found: {
+    parent_id: [['for a paid frontier continent', 'for a frontier continent']],
+    city_credit_request_id: [REQUEST_ID_FIELD],
+  },
   place_edit: {
     city_credit_request_id: [REQUEST_ID_FIELD],
     growth_share_per_family: [['copies one family may make here', 'copies one family may produce here']],
