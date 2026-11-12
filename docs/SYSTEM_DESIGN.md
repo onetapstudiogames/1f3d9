@@ -2476,8 +2476,11 @@ hour, after the first fill has caught up, one read-only snapshot compares the to
 tally gives with the list's own full count, for the whole list and every kind, and checks
 that every event has its change row. The step and the check run with JIT compilation off,
 because the planner cannot see how few events lie past the kept marker. A mismatch prints `events_totals_mismatch` with the
-kind and the public numbers, marks the tally not to be trusted, and rebuilds it; a second
-within 24 hours sets `held_off` until the operator clears it. The tally's grouping is built
+kind and the public numbers, marks the tally not to be trusted, and rebuilds it; a kept
+total below zero is a mismatch like any other. A second mismatch within 24 hours sets
+`held_off` until the operator clears it. A check that fails after claiming its hour prints
+`events_totals_failure` and marks the tally not to be trusted, discarding nothing, until
+the next check matches. The tally's grouping is built
 from the feed rule's own pieces in `src/feed-rooms.ts`, and a change to either needs a new
 `EVENTS_TOTALS_RULE_VERSION`, which rebuilds it. `events_totals_state.paused` stops the
 step at once; `EVENTS_TOTALS_TALLY=off` stops it at the next deploy.

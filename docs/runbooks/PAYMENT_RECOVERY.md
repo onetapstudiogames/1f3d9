@@ -62,7 +62,10 @@ tally with a full recount in one read-only snapshot. Nothing answers a caller fr
 Its failure prints one fixed `events_totals_failure` line with the error name and
 PostgreSQL code only. A mismatch prints `events_totals_mismatch` in the runtime logs, and
 `events_totals_state` records `last_check_ok` false and `last_mismatch_at`; that is where a
-person sees one. The operator stops the step at once with one recorded write,
+person sees one. A kept total below zero is a mismatch like any other. A check that fails
+after claiming its hour prints `events_totals_failure` and records `last_check_ok` false and
+`trusted` false, with `last_mismatch_at` unchanged; nothing is discarded, and the next check
+that matches trusts the tally again. The operator stops the step at once with one recorded write,
 `UPDATE events_totals_state SET paused = TRUE`, and starts it again with `paused = FALSE`;
 after a second mismatch within 24 hours the tally stays untrusted until the operator,
 having found the cause, runs `UPDATE events_totals_state SET held_off = FALSE`.

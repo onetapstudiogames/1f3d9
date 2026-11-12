@@ -12,7 +12,8 @@ import {
 // kind, and the totals the list's own SQL gives by counting every event, and compares
 // every field. It runs on the maintenance cron, never on a caller, with its own time
 // limit. A mismatch discards the tally, which then rebuilds; a second one within 24
-// hours keeps it untrusted until the operator clears held_off.
+// hours keeps it untrusted until the operator clears held_off. A check that fails
+// after claiming its hour marks the tally untrusted until the next check matches.
 
 const CHECK_STATEMENT_TIMEOUT = '30s'
 const RECORD_LOCK_TIMEOUT = '5s'
@@ -89,10 +90,19 @@ function roomIds(value: unknown): readonly number[] {
   return Object.freeze([...new Set(ids)].sort((a, b) => a - b))
 }
 
-function totalsFrom(row: Readonly<Record<string, unknown>> | undefined): EventsTotals {
+// A full count is never below zero. The kept side is the tally's "all" row minus its
+// left-out rows plus what came after the marker, so a wrong tally row can drive it below
+// zero: that is a wrong count to record as a mismatch, not a reason for the check to stop.
+const NATURAL_COUNT = /^(0|[1-9][0-9]*)$/u
+const SIGNED_COUNT = /^(0|-?[1-9][0-9]*)$/u
+
+type CountShape = 'natural' | 'signed'
+
+function totalsFrom(row: Readonly<Record<string, unknown>> | undefined, shape: CountShape = 'natural'): EventsTotals {
+  const pattern = shape === 'signed' ? SIGNED_COUNT : NATURAL_COUNT
   const text = (value: unknown): string => {
     const shown = String(value ?? '0')
-    if (!/^(0|[1-9][0-9]*)$/u.test(shown)) throw new Error('events totals count is invalid')
+    if (!pattern.test(shown)) throw new Error('events totals count is invalid')
     return shown
   }
   return Object.freeze({
@@ -153,7 +163,7 @@ async function keptTotalsByKind(
   for (const kind of kinds) {
     const read = await timed(async () => await transaction.query(EVENTS_TALLY_TOTALS_SQL, [kind]))
     if (count(read.value[0]?.state_rows, 'state rows') !== 1) throw new Error('events totals state row is missing')
-    totals.set(kind, totalsFrom(read.value[0]))
+    totals.set(kind, totalsFrom(read.value[0], 'signed'))
     ms[kind ?? '(all)'] = read.ms
   }
   return Object.freeze({ totals, ms })
@@ -289,6 +299,32 @@ export async function runHourlyEventsTotalsCheck(
     return await transaction.query(CLAIM_HOUR_SQL, [now.toISOString()])
   })
   if (claimed.length === 0) return Object.freeze({ state: 'not_due' })
-  const observation = await observeEventsTotals(database)
+  let observation: EventsTotalsObservation
+  try {
+    observation = await observeEventsTotals(database)
+  } catch (error) {
+    await markCheckFailed(database, now, error)
+    throw error
+  }
   return await recordObservation(database, observation, now)
+}
+
+const RECORD_FAILED_SQL = `/* events-totals:record-failed */
+  UPDATE events_totals_state
+  SET last_check_at = $1::timestamptz, last_check_ok = FALSE, trusted = FALSE
+  WHERE singleton`
+
+// The hour is already claimed, so a check that fails would otherwise leave an older
+// "trusted" standing until the next hour. It is marked not to be trusted, without
+// discarding anything: a failed check is not a mismatch, and the next check that
+// matches trusts the tally again. The cron reports the check's own error.
+async function markCheckFailed(database: EventsTotalsDatabase, now: Date, cause: unknown): Promise<void> {
+  try {
+    await database.transaction(async transaction => {
+      await transaction.query(`SET LOCAL lock_timeout = '${RECORD_LOCK_TIMEOUT}'`)
+      await transaction.query(RECORD_FAILED_SQL, [now.toISOString()])
+    })
+  } catch (markError) {
+    throw new AggregateError([cause, markError], 'events totals check failed and could not be marked')
+  }
 }

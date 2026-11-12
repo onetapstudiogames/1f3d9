@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { Pool } from 'pg'
+import type { EventsTotalsQuery } from '../../src/events-totals-tally.ts'
 import { FEED_ROOM_EVENT_KINDS, feedRoomEventLateralSql, feedRoomIdsSql } from '../../src/feed-rooms.ts'
 import { FOUNDER, GROWER, NEIGHBOUR, type CityApp } from '../helpers/abilities-fixtures.ts'
 import {
@@ -503,6 +504,67 @@ test('the kept events tally against real PostgreSQL', { timeout: 1_800_000 }, as
       const ran = await tallyState(pool)
       assert.equal(ran.trusted, true)
       assert.equal(ran.last_check_ok, true)
+    })
+
+    await t.test('a wrong room row that drives a kept total below zero is a mismatch; a check that fails after its claim leaves the tally untrusted', async () => {
+      const { runEventsTotalsMaintenance } = await import('../../src/events-totals-maintenance.ts')
+      const rooms = await cityWithRooms(pool)
+      await setFeed(pool, rooms.westRoomId, true)
+      // Every line_said is in the feed room, so its kind's kept total is all minus left out.
+      await insertEvents(pool, [
+        { kind: 'line_said', detail: { place_id: rooms.westRoomId, body: 'only in the feed room' } },
+        { kind: 'note', detail: { place_id: rooms.eastRoomId, body: 'kept in' } },
+      ])
+      assert.equal((await runEventsTotalsMaintenance(db, {}, new Date('2026-11-13T05:00:00Z'))).state, 'ran')
+      let state = await tallyState(pool)
+      assert.equal(state.trusted, true)
+      assert.equal(state.last_check_ok, true)
+
+      await pool.query(`UPDATE events_totals_tally SET items = items * 2, text_bytes = text_bytes * 2
+        WHERE key_type = 'place' AND kind = 'line_said'`)
+      assert.equal((await tally.checkKeptCountCheaply(db)).state, 'ok', 'the per-kind sums still add up')
+      const errorLines: string[] = []
+      const consoleError = console.error
+      console.error = (...parts: unknown[]) => { errorLines.push(parts.map(String).join(' ')) }
+      try {
+        assert.equal((await runEventsTotalsMaintenance(db, {}, new Date('2026-11-13T06:00:00Z'))).state, 'ran')
+      } finally {
+        console.error = consoleError
+      }
+      state = await tallyState(pool)
+      assert.equal(state.last_check_ok, false, 'the negative kept total was recorded as a mismatch')
+      assert.equal(state.trusted, false)
+      assert.equal(state.kept_change_id, '0', 'the tally was discarded to rebuild')
+      assert.notEqual(state.last_mismatch_at, null)
+      assert.equal(state.held_off, false, 'one mismatch does not hold the tally off')
+      const mismatchLines = errorLines.filter(line => line.startsWith('events_totals_mismatch'))
+      assert.ok(mismatchLines.some(line => line.includes('"kind":"line_said"') && line.includes('"items":"-1"')),
+        JSON.stringify(errorLines))
+      await foldAll(pool)
+      await assertKeptMatchesList(pool, 'rebuilt after the negative total')
+
+      const matched = await check.runHourlyEventsTotalsCheck(db, new Date('2026-11-13T07:00:00Z'))
+      assert.equal(matched.state === 'recorded' && matched.trusted, true)
+      const failing: typeof db = Object.freeze({
+        query: db.query,
+        transaction: async <T>(work: (transaction: EventsTotalsQuery) => Promise<T>): Promise<T> => await db.transaction(async transaction => (
+          await work({
+            query: async (text, params) => {
+              if (text.includes('/* events-totals:full */')) throw new Error('the full count failed')
+              return await transaction.query(text, params)
+            },
+          })
+        )),
+      })
+      await assert.rejects(check.runHourlyEventsTotalsCheck(failing, new Date('2026-11-13T08:00:00Z')), /the full count failed/u)
+      state = await tallyState(pool)
+      assert.equal(state.trusted, false, 'a check that fails after claiming its hour leaves no older trusted standing')
+      assert.equal(state.last_check_ok, false)
+      assert.equal(state.kept_change_id === '0', false, 'a failed check is not a mismatch: nothing is discarded')
+      assert.equal((await check.runHourlyEventsTotalsCheck(db, new Date('2026-11-13T08:30:00Z'))).state, 'not_due')
+      const recovered = await check.runHourlyEventsTotalsCheck(db, new Date('2026-11-13T09:00:00Z'))
+      assert.equal(recovered.state === 'recorded' && recovered.trusted, true, 'the next matching check trusts it again')
+      assert.equal((await tallyState(pool)).held_off, false)
     })
 
     await t.test('a fold takes only share locks on events and the change log, and no lock any writer waits on', async () => {
