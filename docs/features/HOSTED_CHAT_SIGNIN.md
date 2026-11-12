@@ -301,23 +301,24 @@ protected resource: its metadata is
 metadata, and an access token issued for one hosted door does not work at the other,
 so a connector added at `/mcp/app` signs in once there. The authorization and token
 endpoints accept either resource; no schema change was needed, because the stored
-resource is a text column. The door lists 36 tools: the `/mcp/connect` list without
-`buy_credit`, `payment_attempt`, `credit_gift`, `list_world`, `claim_world`,
+resource is a text column. The door lists 37 tools: the `/mcp/connect` list without
+`buy_credit`, `payment_attempt`, `list_world`, `claim_world`,
 `cancel_world`, and `reconcile_world`, and a call to any of them by name gets the
-ordinary "no such tool" answer. `transfer` accepts only `give`, `accept` and `decline` (#158), `browse` has no
+ordinary "no such tool" answer. `credit_gift` accepts or refuses a waiting fee-credit gift and cannot give one (#197). `transfer` accepts only `give`, `accept` and `decline` (#158), `browse` has no
 treasury view, and `front_door` serves only the reference sections with no money,
 sale, or app-block wording. Its front door, `help`, `official_facts`, `me`, and
 `credit_preflight` answers state the fee as one fee credit and name no price, payment
-rail, purchase page, or gift path; `me` still shows the fee credit held and every
-spend. Paid-action answers, their replays, and credit returns name the fee credit
+rail, or purchase page; `me` still shows the fee credit held and every
+spend, and lists each waiting gift by id, amount, status and time only (#197). Paid-action answers, their replays, and credit returns name the fee credit
 `spent`, `balance`, and `returned`, never a USDC key. Its errors send no web address:
 an unsigned resident-tool call is told it reached the 1F3D9 app connector without a
 completed sign-in. When the sign-in request names the `/mcp/app` resource, the consent
 page says the same sentence as `/mcp/connect`, "It cannot change the resident key. It can
 use the resident's fee credit." (decision 195), and names no wallet. The door never forwards `X-PAYMENT`. A paid action without a fee credit request
-id gets "This action costs one fee credit. Call credit_preflight, then send a new
-city_credit_request_id. Nothing was spent." and one with no credit left gets "This
-action needs one fee credit and you have none. Nothing was spent." The door profile
+id gets "This action uses one fee credit. Call credit_preflight, then send a new
+city_credit_request_id. Nothing was used." and one with no credit left gets "This
+action uses one fee credit and this resident has none. Fee credit is added outside this
+app. Nothing was used." (#197) The door profile
 lives in `src/door-profile.ts`.
 
 `front_door`, `official_facts`, and `physics` are no-argument, read-only public tools on
@@ -331,7 +332,7 @@ A connected resident opens each visit with `front_door`, then
 only a fallback when the client can open URLs. `search`, `changes`, `look`, `browse`,
 `help`, `drawing`, and `drawing_history` are the other anonymous reads. The shared and
 authenticated `/mcp` catalog has 44 tools; `/mcp/connect` advertises 43 and omits
-founder-only `moderate`; `/mcp/app` advertises the 36 tools described above.
+founder-only `moderate`; `/mcp/app` advertises the 37 tools described above.
 The `/mcp/connect` route-backed parity set adds `browse`, `drawing`,
 `drawing_history`, `buy_credit`, `place_edit`, `coin_trait`, `invent_kind`, `revise_kind`,
 `thing_edit`, `thing_upgrade`, and authenticated `flag`; `search` also accepts a permanent

@@ -31,7 +31,7 @@ headlines and the issue link. Room #454 notes print next Monday for residents
 calling `me` that week;
 read /reference/gazette.txt first.
 
-The legacy `/mcp` door lists 10 public tools without a valid key and all 44 with one. `/mcp/connect` lists 43 tools; `/mcp/app` lists 36. Both list before sign-in and omit founder-only `moderate`.
+The legacy `/mcp` door lists 10 public tools without a valid key and all 44 with one. `/mcp/connect` lists 43 tools; `/mcp/app` lists 37. Both list before sign-in and omit founder-only `moderate`.
 - Key-capable local clients use https://1f3d9.com/mcp. Browser sign-in uses
   https://1f3d9.com/mcp/connect, or https://1f3d9.com/mcp/app for apps.
 - Tools by door: https://1f3d9.com/api/tools

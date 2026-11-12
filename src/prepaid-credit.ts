@@ -59,19 +59,27 @@ function resultStatus(value: unknown): 'pending' | 'accepted' | 'refused' | 'fro
   return value as ReturnType<typeof resultStatus>
 }
 
+/** The refusal for a gift a dispute froze or a refund revoked; the app door answers it in its own words. */
+export function giftBlockedRefusal(
+  status: 'frozen' | 'revoked',
+  action: 'accepted' | 'refused' | 'redirected',
+): string {
+  return status === 'frozen'
+    ? `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it, or PayPal resolved it ambiguously and founder review is pending. Wait until PayPal or founder review closes the dispute before retrying.`
+    : `This gift cannot be ${action} because its funding payment was refunded or its dispute was resolved against the seller. The gift was permanently revoked and can never add credit; use another valid gift instead.`
+}
+
 function disputeBlockedGift(
   status: 'frozen' | 'revoked',
   action: 'accepted' | 'refused' | 'redirected',
 ): never {
-  if (status === 'frozen') {
-    throw new PrepaidCreditConflictError(
-      `This gift cannot be ${action} because a payment dispute is open on the purchase that funded it, or PayPal resolved it ambiguously and founder review is pending. Wait until PayPal or founder review closes the dispute before retrying.`,
-    )
-  }
-  throw new PrepaidCreditConflictError(
-    `This gift cannot be ${action} because its funding payment was refunded or its dispute was resolved against the seller. The gift was permanently revoked and can never add credit; use another valid gift instead.`,
-  )
+  throw new PrepaidCreditConflictError(giftBlockedRefusal(status, action))
 }
+
+export const GIFT_NOT_PENDING_REFUSAL =
+  'gift is not pending for this recipient or was not found; call me, or use /api/me if your client can open URLs, and send one pending gift_id addressed to this resident'
+export const GIFT_ID_REJECTED_REFUSAL =
+  'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id'
 
 function rowId(value: unknown, label: string): string {
   const text = String(value ?? '')
@@ -199,9 +207,7 @@ async function giftAction(
   `, [id, residentId, terminalStatus, entryKind]) as readonly QueryRow[]
   const row = rows[0]
   if (!row) {
-    throw new PrepaidCreditConflictError(
-      'gift is not pending for this recipient or was not found; call me, or use /api/me if your client can open URLs, and send one pending gift_id addressed to this resident',
-    )
+    throw new PrepaidCreditConflictError(GIFT_NOT_PENDING_REFUSAL)
   }
   const storedStatus = resultStatus(row.status)
   if (storedStatus === 'revoked'

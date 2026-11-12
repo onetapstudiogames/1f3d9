@@ -5,6 +5,7 @@ import { HANDLE_RE, RESIDENT_AUTH_REFUSAL } from './core.ts'
 import { findPayPalCreditRecipient, takePayPalCreditRateLimit } from './paypal-credit-store.ts'
 import {
   acceptCreditGift,
+  GIFT_ID_REJECTED_REFUSAL,
   PrepaidCreditConflictError,
   redirectCreditGift,
   readCreditGiftStatus,
@@ -252,7 +253,7 @@ export function mountPrepaidCreditGiftRoutes(
       if (!resident) return c.json({ error: RESIDENT_AUTH_REFUSAL }, 401)
       const giftId = safeGiftId(c.req.param('giftId'))
       if (!giftId) return c.json({
-        error: 'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id',
+        error: GIFT_ID_REJECTED_REFUSAL,
       }, 400)
       const bodyFailure = await emptyActionBodyFailure(c, action)
       if (bodyFailure) return bodyFailure
@@ -274,7 +275,7 @@ export function mountPrepaidCreditGiftRoutes(
     const suppliedId = c.req.param('giftId')
     const giftId = suppliedId === undefined ? undefined : safeGiftId(suppliedId)
     if (giftId === null) return c.json({
-      error: 'gift id was rejected because it does not match a city gift id; call me, or use GET /api/me if your client can open URLs, and send a current gift id',
+      error: GIFT_ID_REJECTED_REFUSAL,
     }, 400)
     const rateLimitResponse = await requireGiftRedirectRateSlot(c, deps)
     if (rateLimitResponse) return rateLimitResponse

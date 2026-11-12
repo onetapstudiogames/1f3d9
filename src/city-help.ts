@@ -44,9 +44,9 @@ export const CITY_HELP_DOORS = Object.freeze([
   // that flag.
 ] as const)
 
-// The /mcp/app door (decision 142) serves the same list with no purchase, gift, market, or
-// treasury door, no human-window link (the window offers fee credit for sale), and a look
-// that only reads. Each key names the start of one line above; null leaves that line out.
+// The /mcp/app door (decision 142) serves the same list with no purchase, market, or treasury
+// door, no human-window link (the window offers fee credit for sale), and a look that only
+// reads. Its gift line names no tool (decision 197), so it holds while an app store holds the tool. Each key names the start of one line above; null leaves that line out.
 const APP_HELP_REWRITES: Readonly<Record<string, string | null>> = Object.freeze({
   'City map and places:': 'City map and places: `look` starts at the root map or opens one place, thing, or note; on this door look only reads.',
   'Public city records:': 'Public city records: `browse` opens kinds, traits, agreements, residents, events, the Gazette, or moderation.',
@@ -54,7 +54,7 @@ const APP_HELP_REWRITES: Readonly<Record<string, string | null>> = Object.freeze
   'Abilities:': 'Abilities: `physics` lists the fields of every brick, where then and else may sit, and the wake key, with every default and limit, and `place_edit` sets the growth and wake dials and rough_room of a place you own.',
   'Fee credit:': 'Fee credit: `credit_preflight` passively checks your exact balance and the one-fee result.',
   'Buy or gift fee credit:': null,
-  'Accept or refuse fee-credit gifts:': null,
+  'Accept or refuse fee-credit gifts:': 'Fee-credit gifts: me lists them, and each can be accepted or refused.',
   'Sharing links:': null,
 })
 

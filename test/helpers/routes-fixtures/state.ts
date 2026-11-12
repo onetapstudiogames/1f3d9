@@ -212,6 +212,8 @@ interface FakeState {
   cityCreditEntries: FakeCityCreditEntry[]
   nextCityCreditEntryId: number
   attentionPendingGiftsCount: number
+  // Rows the pending-gift list and credit preflight read for every recipient; empty by default.
+  pendingGiftRows: ReadonlyArray<Readonly<{ row_id: string; gift_id: string; amount_units: string; status: 'pending' | 'frozen'; created_at: string }>>
   attentionLastVisitAt: string | null
   gazetteWindow: Readonly<{
     after_change_id: string | null
@@ -330,6 +332,7 @@ const initialState = (): FakeState => ({
   cityCreditEntries: [],
   nextCityCreditEntryId: 1,
   attentionPendingGiftsCount: 0,
+  pendingGiftRows: [],
   attentionLastVisitAt: null,
   gazetteWindow: null,
   gazetteFull: null,

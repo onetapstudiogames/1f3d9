@@ -55,9 +55,13 @@ test('repeated numeric and provider validation families state cause and next ste
 })
 
 test('route, stored-record, operator, and internal refusals give a safe recovery', () => {
+  // The gift id refusal is one constant in prepaid-credit.ts, so every door that reworded it reads one source.
   const giftRoutes = source('prepaid-credit-routes.ts')
   assert.doesNotMatch(giftRoutes, /'gift id is invalid'/u)
-  assert.match(giftRoutes, /gift id was rejected because it does not match a city gift id; call me, or use GET \/api\/me if your client can open URLs, and send a current gift id/u)
+  assert.match(giftRoutes, /error: GIFT_ID_REJECTED_REFUSAL/u)
+  const giftCredit = source('prepaid-credit.ts')
+  assert.doesNotMatch(giftCredit, /'gift id is invalid'/u)
+  assert.match(giftCredit, /GIFT_ID_REJECTED_REFUSAL =\s*'gift id was rejected because it does not match a city gift id; call me, or use GET \/api\/me if your client can open URLs, and send a current gift id/u)
 
   const world = source('world.ts')
   assert.doesNotMatch(world, /'place text, front matter, or permissions are invalid'|'stored kind drawing(?: variants)? are? invalid'/u)

@@ -35,15 +35,16 @@ export function registerAppDoorRoutesTests(): void {
     }
   }
 
-  async function callAppTool(
+  async function callDoorTool(
+    door: 'app' | 'connect',
     name: string,
     args: Record<string, unknown>,
     extraHeaders: Record<string, string> = {},
   ): Promise<ToolReply> {
     return withHostedFlag(async () => {
       const gateway = new Hono()
-      gateway.post('/mcp/app', c => mcp(c, app, { door: 'app' }))
-      const response = await gateway.request('/mcp/app', {
+      gateway.post(`/mcp/${door}`, c => mcp(c, app, { door }))
+      const response = await gateway.request(`/mcp/${door}`, {
         method: 'POST',
         headers: { ...authHeaders(), ...extraHeaders },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
@@ -52,6 +53,14 @@ export function registerAppDoorRoutesTests(): void {
       const payload = await response.json() as { result: { isError: boolean; content: Array<{ text: string }> } }
       return { isError: payload.result.isError, text: payload.result.content[0]!.text }
     })
+  }
+
+  async function callAppTool(
+    name: string,
+    args: Record<string, unknown>,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<ToolReply> {
+    return callDoorTool('app', name, args, extraHeaders)
   }
 
   test('app door: a frontier with no fee credit gets the plain one-credit refusal, never a payment challenge', async () => {
@@ -98,15 +107,22 @@ export function registerAppDoorRoutesTests(): void {
     assert.match(payload.result.content[0]!.text, /insufficient city fee credit; buy or receive one city fee credit/u)
   })
 
-  test('app door: me keeps fee credit held and drops gifts, offers, web pointers, and app-block advice', async () => {
-    reset({ attentionPendingGiftsCount: 2, cityCreditBalances: new Map([[7, 3_000_000n]]) })
+  // Decision 197: me lists each waiting gift by id, amount, status and time only.
+  const APP_GIFT_KEYS = ['amount', 'amount_units', 'created_at', 'gift_id', 'status'] as const
+  const WAITING_GIFT_ROWS = [
+    { row_id: '12', gift_id: `city_gift_${'b'.repeat(32)}`, amount_units: '5000000', status: 'pending', created_at: '2026-11-12T10:00:00.000Z' },
+    { row_id: '11', gift_id: `city_gift_${'a'.repeat(32)}`, amount_units: '1000000', status: 'frozen', created_at: '2026-11-11T10:00:00.000Z' },
+  ] as const
+
+  test('app door: me keeps fee credit held, lists waiting gifts by id, amount, status and time, and drops offers, web pointers, and app-block advice', async () => {
+    reset({ attentionPendingGiftsCount: 2, pendingGiftRows: WAITING_GIFT_ROWS, cityCreditBalances: new Map([[7, 3_000_000n]]) })
     const reply = await callAppTool('me', {})
     assert.equal(reply.isError, false, reply.text)
     assert.doesNotMatch(reply.text, APP_BANNED_TEXT)
     const body = JSON.parse(reply.text) as Record<string, unknown> & {
       attention: string[]
-      city_fee_credit: Record<string, unknown>
-      since_last_visit: Record<string, unknown>
+      city_fee_credit: Record<string, unknown> & { pending_gifts: Array<Record<string, unknown>> }
+      since_last_visit: Record<string, unknown> & { fee_credit_received: Record<string, unknown> }
       pages: Record<string, unknown>
     }
     for (const key of ['offers', 'if_blocked', 'help', 'front_door']) {
@@ -116,12 +132,34 @@ export function registerAppDoorRoutesTests(): void {
     assert.equal(body.city_fee_credit.balance, '3.000000')
     assert.equal(body.city_fee_credit.balance_units, '3000000')
     assert.ok(Array.isArray(body.city_fee_credit.receipts))
-    assert.equal(Object.hasOwn(body.city_fee_credit, 'pending_gifts'), false)
+    assert.deepEqual(body.city_fee_credit.pending_gifts, [
+      { gift_id: `city_gift_${'b'.repeat(32)}`, status: 'pending', amount: '5.000000', amount_units: '5000000', created_at: '2026-11-12T10:00:00.000Z' },
+      { gift_id: `city_gift_${'a'.repeat(32)}`, status: 'frozen', amount: '1.000000', amount_units: '1000000', created_at: '2026-11-11T10:00:00.000Z' },
+    ])
+    for (const gift of body.city_fee_credit.pending_gifts) {
+      assert.deepEqual(Object.keys(gift).sort(), [...APP_GIFT_KEYS])
+    }
     assert.equal(Object.hasOwn(body.pages, 'offers'), false)
-    assert.equal(Object.hasOwn(body.pages, 'pending_gifts'), false)
+    assert.deepEqual(body.pages.pending_gifts, { has_more: false })
     assert.deepEqual(body.attention, [])
-    assert.ok(Object.hasOwn(body.since_last_visit, 'fee_credit_received'))
-    assert.doesNotMatch(reply.text, /gift/iu)
+    assert.deepEqual(body.since_last_visit.fee_credit_received.pending_gifts, {
+      count: 2,
+      sentence: '2 fee-credit gifts wait for an accept or refuse.',
+    })
+    assert.doesNotMatch(reply.text, /buyer|giver|from_handle|from_resident|purchase|paypal|dispute|next_actions|\/api\//iu)
+  })
+
+  test('chat door: me still lists the same waiting gifts with its own buyer, source and next-step fields', async () => {
+    reset({ pendingGiftRows: WAITING_GIFT_ROWS, cityCreditBalances: new Map([[7, 3_000_000n]]) })
+    const reply = await callDoorTool('connect', 'me', {})
+    assert.equal(reply.isError, false, reply.text)
+    const body = JSON.parse(reply.text) as { city_fee_credit: { pending_gifts: Array<Record<string, unknown>> } }
+    assert.equal(body.city_fee_credit.pending_gifts.length, 2)
+    for (const gift of body.city_fee_credit.pending_gifts) {
+      assert.equal(gift.buyer, 'private')
+      assert.equal(gift.source, 'purchase')
+      assert.ok(gift.next_actions)
+    }
   })
 
   test('app door: me refuses the offer and gift paging arguments it does not advertise', async () => {
@@ -189,13 +227,13 @@ export function registerAppDoorRoutesTests(): void {
     assert.match(reply.text, /"scope":"Owned places include where you stand\."/u)
   })
 
-  test('app door: credit_preflight shows the one-fee result without a gift count', async () => {
-    reset({ cityCreditBalances: new Map([[7, 1_000_000n]]) })
+  test('app door: credit_preflight shows the one-fee result with the waiting gift count', async () => {
+    reset({ pendingGiftRows: WAITING_GIFT_ROWS, cityCreditBalances: new Map([[7, 1_000_000n]]) })
     const reply = await callAppTool('credit_preflight', {})
     assert.equal(reply.isError, false, reply.text)
     assert.doesNotMatch(reply.text, APP_BANNED_TEXT)
     const body = JSON.parse(reply.text) as Record<string, unknown>
-    assert.equal(Object.hasOwn(body, 'pending_gifts_count'), false)
+    assert.equal(body.pending_gifts_count, 2)
     assert.equal(body.can_confirm, true)
     assert.equal(body.balance_before, '1.000000')
   })

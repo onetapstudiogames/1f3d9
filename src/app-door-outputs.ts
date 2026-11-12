@@ -1,7 +1,7 @@
 // What the /mcp/app door's own reads say (decision 142): the front door, official facts,
-// me, and credit_preflight, each built from the one full answer with the money rails,
-// purchase and gift paths, sale offers, and human-window links taken out.
-// A resident there still holds, spends, and sees fee credit.
+// and me, each built from the one full answer with the money rails, purchase paths, sale
+// offers, and human-window links taken out. A resident there still holds, uses, and sees fee
+// credit, and since decision 197 sees and answers its waiting fee-credit gifts.
 import {
   APP_DOOR_DROPPED_LIMIT_LINES,
   CITY_LIMIT_LINES,
@@ -11,8 +11,13 @@ import {
 import {
   APP_BANNED_TEXT,
   APP_FRONT_DOOR_SECTIONS,
+  APP_GIFT_CANCELLED_REFUSAL,
+  APP_GIFT_ID_REFUSAL,
+  APP_GIFT_NOT_WAITING_REFUSAL,
+  APP_GIFT_ON_HOLD_REFUSAL,
   APP_HIDDEN_EVENT_KINDS,
 } from './door-profile.ts'
+import { GIFT_ID_REJECTED_REFUSAL, GIFT_NOT_PENDING_REFUSAL, giftBlockedRefusal } from './prepaid-credit.ts'
 import { AROUND_YOU_SCOPE_LINE, AROUND_YOU_SCOPE_REFERENCE } from './me-around-you.ts'
 
 export const APP_DOOR_TOOL_COUNT = CITY_TOOL_DOOR_COUNTS['/mcp/app'].count
@@ -156,12 +161,6 @@ export function appOfficialFacts(full: Json): Json {
   })
 }
 
-/** credit_preflight on the app door: the balance and the one-fee result, with no gift count. */
-export function appCreditPreflight<T extends Json>(preflight: T): Json {
-  const { pending_gifts_count: _gifts, ...rest } = preflight
-  return Object.freeze(rest)
-}
-
 // Receipts keep every balance change; funding detail becomes "received".
 const RECEIPT_KINDS: Readonly<Record<string, string>> = Object.freeze({
   founder_issue: 'founder_issue',
@@ -201,10 +200,34 @@ function formatCredit(unitsValue: bigint): string {
   return `${whole}.${fraction}`
 }
 
+/** A waiting gift on the app door: its id, amount, status and time, never how it was given or by whom. */
+function appPendingGift(gift: Json): Json {
+  return Object.freeze({
+    gift_id: gift.gift_id,
+    status: gift.status,
+    amount: gift.amount,
+    amount_units: gift.amount_units,
+    created_at: gift.created_at,
+  })
+}
+
+/** The since-last-visit count of gifts waiting for an accept or refuse, in one plain sentence. */
+function appWaitingGifts(pendingGifts: unknown): Json {
+  const count = Number(((pendingGifts ?? {}) as Json).count ?? 0)
+  const waiting = Number.isSafeInteger(count) && count > 0 ? count : 0
+  return Object.freeze({
+    count: waiting,
+    sentence: waiting === 0
+      ? null
+      : `${waiting} fee-credit ${waiting === 1 ? 'gift waits' : 'gifts wait'} for an accept or refuse.`,
+  })
+}
+
 /**
- * me on the app door. It keeps fee credit held, every spend and return in its receipts, and
- * credit received since the last visit; it drops sale offers, pending gifts, purchase
- * detail, and web pointers.
+ * me on the app door. It keeps fee credit held, every spend and return in its receipts,
+ * credit received since the last visit, and waiting fee-credit gifts by id, amount, status and
+ * time (decision 197); it drops sale offers, purchase detail, how a gift was given, and web
+ * pointers.
  */
 export function appMeAnswer(answer: Json): Json {
   const {
@@ -218,7 +241,8 @@ export function appMeAnswer(answer: Json): Json {
   } = answer
   const credit = (fullCredit ?? {}) as Json
   const receipts = Array.isArray(credit.receipts) ? credit.receipts as Json[] : []
-  const { offers: _offerPage, pending_gifts: _giftPage, ...appPages } = (pages ?? {}) as Json
+  const { offers: _offerPage, pending_gifts: giftPage, ...appPages } = (pages ?? {}) as Json
+  const pendingGifts = Array.isArray(credit.pending_gifts) ? credit.pending_gifts as Json[] : []
   const since = (fullSince ?? {}) as Json
   const {
     tools_changed: _toolsChanged,
@@ -242,6 +266,7 @@ export function appMeAnswer(answer: Json): Json {
         amount: formatCredit(receivedUnits),
         amount_units: receivedUnits.toString(),
         founder_issues: receivedRecord.founder_issues ?? null,
+        pending_gifts: appWaitingGifts(receivedRecord.pending_gifts),
       }),
       ...sinceRest,
       ...(appAroundYou === undefined ? {} : { around_you: appAroundYou }),
@@ -252,8 +277,13 @@ export function appMeAnswer(answer: Json): Json {
       balance_units: credit.balance_units,
       receipts: receipts.map(appReceipt).filter(entry => entry !== null),
       page: credit.page ?? null,
+      pending_gifts: Object.freeze(pendingGifts.map(appPendingGift)),
     }),
-    pages: Object.freeze(appPages),
+    // The app door takes no gift paging arguments, so it says only whether more gifts wait.
+    pages: Object.freeze({
+      ...appPages,
+      pending_gifts: Object.freeze({ has_more: ((giftPage ?? {}) as Json).has_more === true }),
+    }),
   })
 }
 
@@ -287,4 +317,28 @@ export function appToolReplyText(text: string): string {
   } catch {
     return text.replaceAll(FULL_BALANCE_FIELD, APP_BALANCE_FIELD)
   }
+}
+
+// The backing gift refusals name the payment rail, a dispute, or a web address; the app door
+// says what happened in its own words (decision 197).
+const APP_GIFT_REFUSALS: ReadonlyMap<string, string> = new Map([
+  [GIFT_NOT_PENDING_REFUSAL, APP_GIFT_NOT_WAITING_REFUSAL],
+  [GIFT_ID_REJECTED_REFUSAL, APP_GIFT_ID_REFUSAL],
+  [giftBlockedRefusal('frozen', 'accepted'), APP_GIFT_ON_HOLD_REFUSAL],
+  [giftBlockedRefusal('revoked', 'accepted'), APP_GIFT_CANCELLED_REFUSAL],
+  [giftBlockedRefusal('revoked', 'refused'), APP_GIFT_CANCELLED_REFUSAL],
+])
+
+/** A credit_gift refusal on the app door, with each known backing refusal in the app door's words. */
+export function appGiftRefusalText(text: string): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return text
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return text
+  const record = parsed as Json
+  const replacement = typeof record.error === 'string' ? APP_GIFT_REFUSALS.get(record.error) : undefined
+  return replacement === undefined ? text : JSON.stringify({ ...record, error: replacement })
 }

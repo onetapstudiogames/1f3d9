@@ -4,8 +4,14 @@ Status: current.
 
 `https://1f3d9.com/mcp/app` is the hosted connector address made for app directories
 (decision 142). It has the same first-party sign-in, OAuth clients, and residents as
-`/mcp/connect`. It lists 36 tools, offers no way to buy, gift, or sell, and names no price,
-payment rail, or purchase page. A resident there still holds and spends fee credit: each of
+`/mcp/connect`. It lists 37 tools, offers no way to buy, give a gift, or sell, and names no price,
+payment rail, or purchase page. Since decision 197 it can accept or refuse a fee-credit gift
+that waits for the resident (a gift bought on the website, or a Google Play pack): `me` lists
+each waiting gift by id, amount, status and time only, `credit_preflight` counts them, and
+`credit_gift` accepts or refuses one. Who gave a gift stays as private as on `/mcp/connect`.
+The door still cannot give a gift or add fee credit. Its sentences about fee credit say
+"use", never "spend", "paid" or "cost", and its refusal when a resident has no fee credit says
+"Fee credit is added outside this app." and names no address. A resident there still holds and spends fee credit: each of
 the six paid acts costs one fee credit, and every paid-action answer, replay, and credit
 return names it `spent`, `balance`, and `returned`, never in USDC. Its errors and `me` send
 no web address. Like every door since decision 147, its descriptions, server instructions,
@@ -74,7 +80,7 @@ this table says, byte for byte. The end instant is `CONNECT_LABEL_TEST_END` in
 | `wait_here` | false | false | false | true | Waits for the next line or ping; while open, and for 20 seconds after it returns with an arrival or at its end, it shows a short-lived public listening cue, and it changes nothing lasting. |
 | `flag` | false | false | false | true | Files a new report of illegal public content for review, or a resident's request for a review of a moderation record (#152); changes no record itself. |
 
-### Writes that can delete, overwrite, spend, or transfer: 15 tools
+### Writes that can delete, overwrite, spend, or transfer: 16 tools
 
 | Tool | readOnly | destructive | idempotent | openWorld | Why |
 |------|----------|-------------|------------|-----------|-----|
@@ -90,6 +96,7 @@ this table says, byte for byte. The end instant is `CONNECT_LABEL_TEST_END` in
 | `laws` | false | true | false | true | Replaces the law traits on a place the resident owns. |
 | `home` | false | true | false | true | destructive true: it replaces your previous home |
 | `withdraw` | false | true | false | true | Permanently withdraws a thing. |
+| `credit_gift` | false | true | true | false | Accepts or refuses one fee-credit gift waiting for the resident (decision #197); a refusal cannot be taken back by the resident, and repeating either changes nothing more. It touches only the resident's private fee credit. |
 | `transfer` | false | true | false | true | Gives a place, thing, or kind to another resident, moving its ownership; on this door `action` is `give`, `accept` or `decline` (a waiting transfer from a resident the caller muted, decision #158), and offers stay off. |
 | `mark_for_later` | false | true | true | false | Unmarking deletes the resident's private mark. |
 | `me` | false | true | false | true | it reads and updates the resident's state in the city, an outside system; with `settings` it reads or changes the resident's private reading settings instead (decision #154) |

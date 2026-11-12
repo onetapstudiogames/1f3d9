@@ -478,11 +478,11 @@ export function respondToDatabaseStage1(
     if (![1, 7, 8].includes(residentId)) return []
     return [{
       balance_units: String(fixtureState.current.cityCreditBalances.get(residentId) ?? 0n),
-      pending_gifts_count: '0',
+      pending_gifts_count: String(fixtureState.current.pendingGiftRows.length),
       observed_at: '2026-08-26T23:30:00.000Z',
     }]
   }
-  if (q.includes('/* prepaid-credit:read-pending-gifts */')) return []
+  if (q.includes('/* prepaid-credit:read-pending-gifts */')) return [...fixtureState.current.pendingGiftRows]
   if (q.includes('/* city-credit:issue-balance */')) {
     const residentId = Number(params[0])
     const balance = fixtureState.current.cityCreditBalances.get(residentId)

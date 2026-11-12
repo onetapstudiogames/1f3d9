@@ -1,7 +1,8 @@
 // One home for what each MCP door shows (decision 142). /mcp is the key-capable door,
 // /mcp/connect the hosted-chat door, and /mcp/app the hosted door made for app stores:
-// the same sign-in and residents as /mcp/connect, with no purchase, gift, payment
-// recheck, or world-sale tools and no money rails in any answer. Since decision 147 no door
+// the same sign-in and residents as /mcp/connect, with no purchase, payment recheck, or
+// world-sale tools and no money rails in any answer. Since decision 197 it accepts and refuses
+// a waiting fee-credit gift, and still cannot give one or add fee credit. Since decision 147 no door
 // carries app-block advice; the one sentence lives in the reference only.
 // This file imports only the leaf module of app door wording, so core.ts and city-facts.ts
 // can read it without a cycle.
@@ -26,6 +27,8 @@ export interface DoorProfile {
   readonly narrowedEnums: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>>
   /** tool -> arguments this door neither advertises nor accepts. */
   readonly droppedArguments: Readonly<Record<string, readonly string[]>>
+  /** tool -> the title this door advertises for it. Absent keeps the catalog title. */
+  readonly titles: Readonly<Record<string, string>>
   /** tool -> argument -> the description this door advertises for it. */
   readonly argumentDescriptions: Readonly<Record<string, Readonly<Record<string, string>>>>
   /** null means every reference section. */
@@ -56,12 +59,11 @@ export const APP_DOOR_PATH = '/mcp/app'
 // decision 135 labels again with no deploy. Every other hint and door is unchanged.
 export const CONNECT_LABEL_TEST_END = '2026-11-03T23:59:59Z'
 
-// The seven tools the owner left off the app door on 2026-10-09. Founder-only moderate is
-// dropped from both hosted doors as before.
+// The tools the owner left off the app door on 2026-10-09, less credit_gift, which came back
+// on 2026-11-12 (decision 197). Founder-only moderate is dropped from both hosted doors as before.
 export const APP_DROPPED_TOOLS = Object.freeze([
   'buy_credit',
   'payment_attempt',
-  'credit_gift',
   'list_world',
   'claim_world',
   'cancel_world',
@@ -104,10 +106,23 @@ export const APP_HIDDEN_EVENT_KINDS = Object.freeze([
 export const APP_BANNED_TEXT =
   /\$\s?\d|USDC|x402|X-PAYMENT|PayPal|\/buy|\bbuy|purchase|wallet|dollar|treasury|sale\b|safety|(?<!cannot be |never )blocked|its filter/iu
 
+// Decision 197: the app door's fee-credit refusals say "use", and the one with no credit says
+// where credit comes from in one fact with no address.
 export const APP_PAYMENT_REQUIRED_REFUSAL =
-  'This action costs one fee credit. Call credit_preflight, then send a new city_credit_request_id. Nothing was spent.'
+  'This action uses one fee credit. Call credit_preflight, then send a new city_credit_request_id. Nothing was used.'
 export const APP_INSUFFICIENT_CREDIT_REFUSAL =
-  'This action needs one fee credit and you have none. Nothing was spent.'
+  'This action uses one fee credit and this resident has none. Fee credit is added outside this app. Nothing was used.'
+
+// Decision 197: what the app door says when a gift cannot be accepted or refused. The other
+// doors keep the backing words, which name the payment rail and a web address.
+export const APP_GIFT_NOT_WAITING_REFUSAL =
+  'That gift is not waiting for this resident, or it was not found. Call me and send one gift_id from city_fee_credit.pending_gifts.'
+export const APP_GIFT_ID_REFUSAL =
+  'That gift id does not match a city gift id. Call me and send one gift_id from city_fee_credit.pending_gifts.'
+export const APP_GIFT_ON_HOLD_REFUSAL =
+  'This gift is on hold and cannot be accepted now. It can still be refused. Nothing changed.'
+export const APP_GIFT_CANCELLED_REFUSAL =
+  'This gift was cancelled and can never add credit. Nothing changed.'
 
 // Money fragments inside tool descriptions. Each description keeps one text; the door
 // fills these tokens, and the key and connect doors get exactly the words they had.
@@ -145,15 +160,15 @@ const APP_DESCRIPTION_TOKENS: Readonly<Record<DescriptionToken, string>> = Objec
   '{{FOUND_PAYMENT_CHOICE}}': 'Then send a new city_credit_request_id to spend exactly one fee credit.',
   '{{SALE_OFFER}}': 'offer',
   '{{OPEN_SALE}}': 'open offer',
-  '{{PLACE_EDIT_PAYMENT}}': 'Each costs one fee credit and never mixes with another edit.',
+  '{{PLACE_EDIT_PAYMENT}}': 'Each uses one fee credit and never mixes with another edit.',
   '{{KIND_FEE}}': 'one fee credit',
   '{{INVENT_PAYMENT_CHOICE}}': 'Then send a new city_credit_request_id to spend exactly one fee credit.',
   '{{REVISE_PAYMENT_CHOICE}}': 'then send a new city_credit_request_id for one fee credit.',
   '{{GO_HOME_ALWAYS}}': 'always works',
   '{{REFUSED_OR_BLOCKED}}': 'refused or stopped',
   '{{LOOK_CUE}}': 'On this door look only reads; it publishes no looking cue.',
-  '{{ME_COLLECTIONS}}': 'notes, labels, quotas, fee credit held and spent, and changes since your last visit',
-  '{{ME_PENDING_GIFTS}}': '',
+  '{{ME_COLLECTIONS}}': 'notes, labels, quotas, fee credit held and used, and changes since your last visit',
+  '{{ME_PENDING_GIFTS}}': 'Fee-credit gifts waiting for an accept or refuse are listed in city_fee_credit.pending_gifts by id, amount, status and time. ',
   '{{TRANSFER_DESCRIPTION}}': 'Give one place, thing, or kind you own to another resident. action may be omitted or give; give requires type, id, and to_handle. When giving a place, its nested places move with it. Your home is cleared with a private attention line in the transfer response if it is that place or inside it. A nested place with another owner or an open offer blocks the whole gift. A give to a resident that muted you waits for its yes: nothing moves, and the answer\'s waiting_transfers says it is held until that resident accepts and stays yours meanwhile; for a place holding your home, its attention line says your home will be cleared if it is accepted. accept or decline requires waiting_id, from waiting_transfers in your own me settings "show": accept makes that give then, with every rule checked again, and decline leaves it with the giver. A thing with an end set cannot be given until its owner clears the end, and a held gift whose giver has since set one cannot be accepted; a remnant can be given.',
 })
 
@@ -166,6 +181,7 @@ const KEY_PROFILE: DoorProfile = Object.freeze({
   droppedTools: NO_TOOLS,
   narrowedEnums: Object.freeze({}),
   droppedArguments: Object.freeze({}),
+  titles: Object.freeze({}),
   argumentDescriptions: Object.freeze({}),
   frontDoorSections: null,
   hiddenEventKinds: Object.freeze([]),
@@ -209,7 +225,9 @@ const APP_PROFILE: DoorProfile = Object.freeze({
     transfer: Object.freeze(['price_usdc', 'seller_wallet', 'offer_id', 'buyer_wallet']),
     me: Object.freeze(['before_offer_id', 'offer_limit', 'before_gift_id', 'gift_limit']),
   }),
+  titles: Object.freeze({ credit_gift: 'Accept or refuse a fee-credit gift' }),
   argumentDescriptions: Object.freeze({
+    credit_gift: Object.freeze({ gift_id: 'opaque id of one fee-credit gift waiting for this resident' }),
     transfer: Object.freeze({
       id: 'id of the place, thing, or kind to give',
       to_handle: 'recipient handle',
