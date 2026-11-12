@@ -1062,6 +1062,11 @@ export async function consumeOAuthRateLimit(input: {
   // the request it references, and every token row of a family goes (newest
   // rotation link first) before the family row itself, which keeps refresh
   // reuse detection intact for the family's whole forensic window.
+  // Token rows are found through their retired family first: the family list
+  // is small and indexed by expiry, and each family's rows come from the
+  // family index. The OFFSET 0 keeps PostgreSQL from flattening that lookup
+  // into a walk of the whole token table backwards from the newest row, which
+  // is what it chose when it could (docs/runbooks/SIGNIN_RETENTION.md).
   const rows = (await sql`
     WITH current_window AS MATERIALIZED (
       SELECT date_trunc('hour', now(), 'UTC') AS window_start,
@@ -1100,8 +1105,13 @@ export async function consumeOAuthRateLimit(input: {
       RETURNING request.id
     ), retired_tokens AS MATERIALIZED (
       SELECT token.id
-      FROM oauth_tokens token
-      JOIN oauth_token_families family ON family.id = token.family_id
+      FROM oauth_token_families family
+      CROSS JOIN LATERAL (
+        SELECT family_token.id
+        FROM oauth_tokens family_token
+        WHERE family_token.family_id = family.id
+        OFFSET 0
+      ) token
       WHERE family.expires_at <= now() - ${SIGNIN_RETENTION_WINDOW}::interval
       ORDER BY token.id DESC
       LIMIT ${SIGNIN_RETENTION_BATCH}
