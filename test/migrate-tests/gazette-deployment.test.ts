@@ -119,6 +119,7 @@ export function registerGazetteDeploymentTests(): void {
         events.push(`ddl:${ddl}`)
         return 1
       },
+      capManualSnapshots: async () => assert.fail('this run must not trim manual snapshots'),
     })
 
     assert.deepEqual(events, [
@@ -158,6 +159,7 @@ export function registerGazetteDeploymentTests(): void {
         events.push(`ddl:${ddl}`)
         return 1
       },
+      capManualSnapshots: async () => assert.fail('this run must not trim manual snapshots'),
     })
 
     assert.deepEqual(events, ['database-proof', 'ddl:SELECT dormant_ddl'])
@@ -194,6 +196,10 @@ export function registerGazetteDeploymentTests(): void {
         events.push('ddl')
         return 1
       },
+      capManualSnapshots: async (_snapshot, justMadeId) => {
+        events.push(`snapshot-cap:${justMadeId}`)
+        return 'snapshot cap: nothing removed'
+      },
     })
 
     assert.deepEqual(events, [
@@ -202,8 +208,13 @@ export function registerGazetteDeploymentTests(): void {
       'verified-snapshot',
       'deployment-proof',
       'ddl',
+      'snapshot-cap:snapshot-one',
     ])
-    assert.deepEqual(result, { statementCount: 1, snapshotId: 'snapshot-one' })
+    assert.deepEqual(result, {
+      statementCount: 1,
+      snapshotId: 'snapshot-one',
+      snapshotCap: 'snapshot cap: nothing removed',
+    })
   })
 
   test('a stale second Gazette deployment proof leaves room activation unapplied', async () => {
@@ -236,6 +247,7 @@ export function registerGazetteDeploymentTests(): void {
           applied = true
           return 1
         },
+        capManualSnapshots: async () => assert.fail('this run must not trim manual snapshots'),
       }),
       /deployed commit changed during preparation/iu,
     )
@@ -274,6 +286,7 @@ export function registerGazetteDeploymentTests(): void {
           remoteOperation()
           return 1
         },
+        capManualSnapshots: async () => assert.fail('this run must not trim manual snapshots'),
       }),
       /requires a clean local candidate/iu,
     )

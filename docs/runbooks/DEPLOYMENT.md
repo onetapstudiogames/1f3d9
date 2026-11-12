@@ -21,6 +21,11 @@ final commit and a skeptical reviewer in a fresh clone approves that commit. Run
 verify required migrations before the merge, never chained with it. Vercel deploys
 `main`; verify the live result after deployment using [Verify production](#verify-production).
 
+Every "required Production snapshot" step below is made by the migrator itself. After
+the migration applies, the migrator trims manual snapshots to the newest 10 and prints
+one `snapshot cap` line; copy it into the migrate record. A snapshot is not permanent
+(decision #194, [the manual snapshot cap](BACKUP_RESTORE.md#the-manual-snapshot-cap)).
+
 ## Hand releases
 
 The operator runs `scripts/deploy.sh --prepare` and confirms its release prerequisites

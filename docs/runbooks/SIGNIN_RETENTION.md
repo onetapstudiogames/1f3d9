@@ -85,8 +85,9 @@ retention bounds how long a deleted sign-in record can outlive the live delete:
 - Neon point-in-time history covers 6 hours; automatic provider snapshots run
   daily and are retained for 14 days. A pruned sign-in record therefore leaves
   every provider recovery layer at most 14 days after it leaves the live
-  database (plus the lifetime of any named permanent snapshot, which should be
-  deleted when its release risk has passed).
+  database, plus the life of a manual snapshot: each is kept until 10 newer manual
+  snapshots exist, and `open-to-use-20260815-094119` is kept by name (decision #194,
+  [BACKUP_RESTORE.md](BACKUP_RESTORE.md#the-manual-snapshot-cap)).
 - Manual `pg_dump` archives contain the sign-in tables and are exactly as
   sensitive as the live rows. Keep them in the owner-private directory the
   backup runbook requires, and delete an archive once it is no longer needed

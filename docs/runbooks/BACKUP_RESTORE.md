@@ -20,6 +20,10 @@ The production database is Neon PostgreSQL 17:
 - main branch: `br-lively-sunset-avksnwos`
 - point-in-time history: 6 hours
 - automatic snapshots: daily at 08:00 UTC, retained for 14 days
+- manual snapshots: capped at the newest 10 on the main branch, oldest removed first,
+  never by an expiry date; `open-to-use-20260815-094119` is kept by name outside the
+  cap (decision #194, [`config/snapshot-cap.json`](../../config/snapshot-cap.json),
+  [the manual snapshot cap](#the-manual-snapshot-cap))
 
 ## 1. Create an archive backup
 
@@ -139,7 +143,46 @@ neon snapshots list --project-id bold-union-44728141
 
 Confirm that the schedule still says daily at 08:00 UTC with 14-day retention,
 that recent snapshots exist, and that the oldest required recovery point has not
-expired. Create a named permanent snapshot before a high-risk release.
+expired. Create a named manual snapshot before a high-risk release. It is not
+permanent: it is kept until 10 newer manual snapshots exist, then removed oldest
+first.
+
+### The manual snapshot cap
+
+Neon allows at most 100 manual snapshots on a paid plan; scheduled snapshots do not
+count. The city keeps the newest 10 manual snapshots of the main branch and removes
+older ones oldest first (decision #194). There are no expiry dates.
+
+- Every `migrate:production:*` run trims after its own snapshot is made and its
+  migration has applied. It removes at most 3 in one run and never removes a
+  scheduled snapshot, a snapshot of another branch, the snapshot it just made, the
+  newest 10, or a name on the keep list. It reads the whole snapshot list first and
+  deletes nothing if the list cannot be read in full. It prints one line, either
+  `snapshot cap: removed ...` or `snapshot cap NOT applied: <reason>; ...`; copy that
+  line into the migrate record. A failed trim never changes the migration's result or
+  exit code; the next run trims again.
+- A snapshot made by hand (for example during a key restore) does not trim. The next
+  production migration or a first-prune run does.
+- To keep one snapshot longer, add its exact name and a reason to the keep list in
+  `config/snapshot-cap.json` in a reviewed pull request before it would be removed.
+- If Neon refuses a delete (for example for a snapshot a branch still depends on),
+  the trim reports it and stops. Never force it.
+- If Neon refuses to make a migration's snapshot because the project is at the
+  limit, the migrator says so and stops before any migration. Run the first prune.
+
+The first prune brings a backlog down to the cap. It is a dry run unless both the
+`--apply` flag and `SNAPSHOT_PRUNE_EXPECTED_DELETIONS` are given, and it stops,
+deleting nothing, when that number differs from what it would delete:
+
+```sh
+NEON_API_KEY=... NEON_PROJECT_ID=bold-union-44728141 NEON_PRODUCTION_BRANCH_ID=br-lively-sunset-avksnwos npm run snapshots:prune
+
+SNAPSHOT_PRUNE_EXPECTED_DELETIONS=<count from the dry run> NEON_API_KEY=... NEON_PROJECT_ID=bold-union-44728141 NEON_PRODUCTION_BRANCH_ID=br-lively-sunset-avksnwos npm run snapshots:prune -- --apply
+```
+
+The dry run prints every snapshot it would keep and delete with its name, date and
+size. Deleted snapshots cannot be recovered, so the owner sees the dry-run list
+before the first real run, and the run is recorded.
 
 ## 4. Run a safe Neon snapshot drill
 
