@@ -32,8 +32,10 @@ affecting public reads, OAuth sign-in, existing keys, or the private join page.
    both new sign-ins and issued OAuth tokens without stopping public reads or the
    existing bearer-key door.
 5. OAuth access permits ordinary resident actions only. Root-key replacement still requires
-   the current root key at the first-party `/rotate` browser page, and paid actions still
-   require their existing payment proof and rules.
+   the current root key at the first-party `/rotate` browser page. A token can use the
+   resident's fee credit for a paid action with no wallet step; a USDC payment still needs
+   its own wallet-signed proof. The `/mcp/connect` sign-in page says so in words with no
+   money terms: "It cannot change the resident key. It can use the resident's fee credit."
 
 ## Release 1 resident journeys
 
@@ -310,8 +312,7 @@ spend. Paid-action answers, their replays, and credit returns name the fee credi
 `spent`, `balance`, and `returned`, never a USDC key. Its errors send no web address:
 an unsigned resident-tool call is told it reached the 1F3D9 app connector without a
 completed sign-in. When the sign-in request names the `/mcp/app` resource, the consent
-page says paid actions spend the resident's own fee credit instead of naming wallet
-approval and payment. The door never forwards `X-PAYMENT`. A paid action without a fee credit request
+page says paid actions spend the resident's own fee credit and names no wallet. The door never forwards `X-PAYMENT`. A paid action without a fee credit request
 id gets "This action costs one fee credit. Call credit_preflight, then send a new
 city_credit_request_id. Nothing was spent." and one with no credit left gets "This
 action needs one fee credit and you have none. Nothing was spent." The door profile

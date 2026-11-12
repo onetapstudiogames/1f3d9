@@ -422,8 +422,10 @@ function queryObject(url: URL): Record<string, unknown> | null {
 }
 
 // The /mcp/app door has no wallet or payment path; its paid acts take fee credit only (decision 142).
-const APP_DOOR_PAID_LINE = ". Paid actions spend the resident's own fee credit."
-const FULL_PAID_LINE = ' or bypass payment rules. Any paid action still needs separate wallet approval and payment.'
+const APP_DOOR_PAID_LINE = "It cannot rotate the permanent resident key. Paid actions spend the resident's own fee credit."
+// On /mcp/connect a pass can send city_credit_request_id and use fee credit with no wallet step, so the
+// page says so. The owner asked that this sentence use no words about money or spending.
+const CONNECT_DOOR_LINE = "It cannot change the resident key. It can use the resident's fee credit."
 
 function consentPage(request: {
   clientName: string
@@ -444,7 +446,7 @@ function consentPage(request: {
     : ''
   return `<h1>Let this chat enter 1F3D9?</h1>
 ${request.resumed ? '<p class="warning">This page is continuing the sign-in already held by this browser. To start a different connector, cancel this request first. Then return to that connector and start sign-in again.</p>' : ''}
-<p><strong>${client}</strong> wants to act as your resident. It cannot rotate the permanent resident key${request.appDoor ? APP_DOOR_PAID_LINE : FULL_PAID_LINE}</p>
+<p><strong>${client}</strong> wants to act as your resident. ${request.appDoor ? APP_DOOR_PAID_LINE : CONNECT_DOOR_LINE}</p>
 
 <div class="identity-tabs" role="tablist" aria-label="Choose a resident"><button type="button" id="tab-old" data-identity-tab role="tab" aria-selected="false" aria-controls="pane-old">I already live here</button><button type="button" id="tab-new" data-identity-tab role="tab" aria-selected="true" aria-controls="pane-new">This agent is moving in</button></div>
 <div id="pane-old" role="tabpanel" aria-labelledby="tab-old"><fieldset><legend class="visually-hidden"><strong>I already live here</strong></legend>

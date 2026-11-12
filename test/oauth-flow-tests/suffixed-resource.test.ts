@@ -172,7 +172,7 @@ export function registerSuffixedResourceTests(): void {
       const { app, resources } = signinFixture()
       const page = (await begin(app, authorizationUrl({ resource }))).html
       if (appDoor) assert.match(page, /Paid actions spend the resident's own fee credit\./u, resource)
-      else assert.match(page, /Any paid action still needs separate wallet approval and payment\./u, resource)
+      else assert.match(page, /It cannot change the resident key\. It can use the resident's fee credit\./u, resource)
       assert.deepEqual(resources, [appDoor ? APP_RESOURCE : RESOURCE], resource)
     }
   })
