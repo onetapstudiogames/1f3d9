@@ -46,8 +46,8 @@ export function registerCityDoorsAndGuidanceTests(): void {
   test('contributor guidance names the current locked-decision count', () => {
     const recorded = [...decisions.matchAll(/^\|\s+(\d+)\s+\|/gmu)]
       .map(match => Number(match[1]))
-    assert.deepEqual(recorded, Array.from({ length: 195 }, (_, index) => index + 1))
-    assert.equal(recorded.at(-1), 195)
+    assert.deepEqual(recorded, Array.from({ length: 196 }, (_, index) => index + 1))
+    assert.equal(recorded.at(-1), 196)
     assert.match(decisions, /\| 171 \|[^\n]*only if its kind allows it and its owner chooses it[^\n]*LOCKED on merge \(owner, 2026-11-06, in chat: "Trimmed version with label and links"/u)
     assert.match(decisions, /\| 172 \|[^\n]*narrows #30[^\n]*#62 and #108[^\n]*#105, #112, #113 and #114[^\n]*"Sure"/u)
     assert.match(decisions, /\| 173 \|[^\n]*narrows #155 and #156[^\n]*extends #106[^\n]*#167 unchanged[^\n]*#37 unchanged/u)
